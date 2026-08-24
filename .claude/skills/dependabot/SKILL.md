@@ -107,9 +107,9 @@ PR_NUMBER=<the number for this PR>
 
 # Poll CI: every 30s, max 10 minutes.
 # coverage.yml now runs on pull_request into develop/main (dependabot targets develop), so a
-# Dependabot PR DOES report a "Test coverage" check — wait for it, and merge only when green.
-# coverage.yml sets fail-on-error: false on the Coveralls upload step, so a red "Test
-# coverage" check is always a real pytest failure — never an upload/secrets artifact.
+# Dependabot PR DOES report a "Full test suite" check — wait for it, and merge only when green.
+# coverage.yml sets fail-on-error: false on the Coveralls upload step, so a red "Full
+# test suite" check is always a real pytest failure — never an upload/secrets artifact.
 deadline=$(( $(date +%s) + 600 ))
 state="pending"
 while [ "$(date +%s)" -lt "$deadline" ]; do

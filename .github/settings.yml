@@ -62,7 +62,18 @@ branches:
         required_approving_review_count: 0
         dismiss_stale_reviews: true
         require_code_owner_reviews: false
-      required_status_checks: null
+      required_status_checks:
+        # `strict: false` on purpose: `true` would demand every PR be rebased onto develop
+        # before merging, so each merge would stale every other open PR.
+        strict: false
+        contexts:
+          # Must equal `jobs.coverage.name` in .github/workflows/coverage.yml EXACTLY --
+          # GitHub reports a job's `name:` as the check-run name. It is not the workflow's
+          # own `name:`. A context that never reports blocks every PR permanently, and
+          # enforce_admins is true here, so that includes the owner.
+          # `coverage/coveralls` is deliberately NOT required: a third-party status, and
+          # requiring it would put an external service on the merge path.
+          - Full test suite
       enforce_admins: true
       required_linear_history: false
       allow_force_pushes: true
