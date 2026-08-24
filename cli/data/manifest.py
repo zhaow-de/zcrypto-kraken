@@ -167,16 +167,27 @@ def read_manifest(path: Path) -> Manifest:
         _check_key(key, where=str(path))
         _check_leaf(key, leaf, where=str(path))
 
-    identity = raw.get("identity", "set")
+    set_sha256 = raw.get("set_sha256")
+    _check_digest(set_sha256, "set_sha256", str(path))
     subset_sha256 = raw.get("subset_sha256") or {}
+    if not isinstance(subset_sha256, dict):
+        raise ManifestError(f"{path}: subset_sha256 must be an object")
+    for name, digest in subset_sha256.items():
+        _check_digest(digest, f"subset_sha256[{name!r}]", str(path))
+    identity = raw.get("identity", "set")
+    if not isinstance(identity, str):
+        raise ManifestError(f"{path}: identity must be a string, got {identity!r}")
     if identity != "set" and identity.removeprefix("subset:") not in subset_sha256:
         raise ManifestError(f"{path}: identity {identity!r} names no declared subset")
+    written_at = raw.get("written_at")
+    if not isinstance(written_at, str) or not written_at:
+        raise ManifestError(f"{path}: written_at must be a non-empty string")
 
     return Manifest(
         schema_version=version,
-        written_at=raw.get("written_at", ""),
+        written_at=written_at,
         identity=identity,
-        set_sha256=raw.get("set_sha256", ""),
+        set_sha256=set_sha256,
         subset_sha256=dict(subset_sha256),
         series=series,
         provenance=dict(raw.get("provenance") or {}),
@@ -209,9 +220,13 @@ def _check_leaf(key: str, leaf: Any, where: str = "") -> None:
         raise ManifestError(f"{prefix}series[{key!r}] has one span bound null and the other set")
     if not isinstance(leaf["rows"], int) or isinstance(leaf["rows"], bool) or leaf["rows"] < 0:
         raise ManifestError(f"{prefix}series[{key!r}].rows must be a non-negative integer")
-    digest = leaf["sha256"]
-    if not isinstance(digest, str) or len(digest) != 64:
-        raise ManifestError(f"{prefix}series[{key!r}].sha256 must be 64 hex characters")
+    _check_digest(leaf["sha256"], f"series[{key!r}].sha256", where)
+
+
+def _check_digest(value: Any, field: str, where: str = "") -> None:
+    prefix = f"{where}: " if where else ""
+    if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+        raise ManifestError(f"{prefix}{field} must be 64 lowercase hex characters, got {value!r}")
 
 
 def conformant_paths(root: Path) -> Iterable[Path]:
@@ -271,13 +286,18 @@ def convert_dataset(root: Path, *, apply: bool = False) -> dict[str, Any]:
     subsets = {name: members for name, members in (("continuous", continuous), ("detached", detached)) if members}
     identity = "subset:continuous" if detached and continuous else "set"
 
-    # Everything the legacy document carried that the contract does not name is preserved verbatim:
-    # reach's seam evidence was computed against a REST window that has expired, and each set's
-    # original `fetched_at` is a freeze moment nothing else records.
-    legacy = {k: v for k, v in raw.items() if k != "series"}
+    # The WHOLE legacy document, `series` included. The per-series rows are where the evidence that
+    # cannot be recomputed actually lives -- reach records `rest_first`/`rest_last` per row against a
+    # REST window that has since expired -- so excluding `series` here erases exactly what this
+    # clause exists to keep. It did: the first run of this converter destroyed the seam record of
+    # `ohlc-reach-20260813`, whose top-level keys survived and whose rows did not.
+    legacy = dict(raw)
+    written_at = str(legacy.get("fetched_at") or legacy.get("built_at") or legacy.get("pulled_at") or "")
+    if not written_at:
+        raise ManifestError(f"{root.name}: refusing to convert -- the legacy manifest carries no timestamp to carry forward")
     built = build_manifest(
         series,
-        written_at=str(legacy.get("fetched_at") or legacy.get("built_at") or legacy.get("pulled_at") or ""),
+        written_at=written_at,
         identity=identity,
         subsets=subsets if len(subsets) > 1 else None,
         provenance={"legacy": legacy},

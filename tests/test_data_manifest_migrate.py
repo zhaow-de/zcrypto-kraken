@@ -88,6 +88,62 @@ def test_a_detached_set_declares_both_subsets_and_names_continuous_as_its_identi
     assert m.identity_digest == m.subset_sha256["continuous"] != m.set_sha256
 
 
+def test_per_series_legacy_evidence_survives_conversion(tmp_path):
+    """The case the first version of this guard did NOT construct, and the omission cost real data.
+
+    Reach records its seam evidence PER ROW -- `rest_first`/`rest_last` name a REST window that
+    expires, so they are recoverable from nothing once dropped. The original converter preserved
+    only top-level legacy keys and the original test asserted only top-level fields, so the guard
+    passed while `ohlc-reach-20260813`'s per-series record was erased.
+    """
+    root = tmp_path / "ohlc-reachlike"
+    frames = {"ADA/EUR/1440.parquet": to_frame(_rows(5)), "ADA/EUR/60.detached.parquet": to_frame(_rows(3))}
+    for relpath, frame in frames.items():
+        write_parquet(frame, root / relpath)
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "built_at": "2026-08-13T03:00:00+00:00",
+                "min_seam_overlap": 600,
+                "series": [
+                    {
+                        "symbol": "ADA",
+                        "interval": 1440,
+                        "status": "continuous",
+                        "sha256": dataset_hash(frames["ADA/EUR/1440.parquet"]),
+                        "rest_first": "2026-08-01T00:00:00+00:00",
+                        "rest_last": "2026-08-13T00:00:00+00:00",
+                        "overlap_bars": 607,
+                        "gap_bars": 0,
+                        "appended": 113,
+                    },
+                    {
+                        "symbol": "ADA",
+                        "interval": 60,
+                        "status": "detached",
+                        "sha256": dataset_hash(frames["ADA/EUR/60.detached.parquet"]),
+                        "rest_first": "2026-08-01T00:00:00+00:00",
+                        "rest_last": "2026-08-13T00:00:00+00:00",
+                        "overlap_bars": 0,
+                        "gap_bars": 42,
+                        "appended": 3,
+                    },
+                ],
+            }
+        )
+    )
+
+    convert_dataset(root, apply=True)
+
+    rows = read_manifest(root / "manifest.json").provenance["legacy"]["series"]
+    assert len(rows) == 2, "the per-series legacy rows must survive, not just the top-level keys"
+    cont = next(r for r in rows if r["status"] == "continuous")
+    # These five are recoverable from nothing: the REST window they describe has expired.
+    assert cont["rest_first"] == "2026-08-01T00:00:00+00:00"
+    assert cont["rest_last"] == "2026-08-13T00:00:00+00:00"
+    assert cont["overlap_bars"] == 607 and cont["gap_bars"] == 0 and cont["appended"] == 113
+
+
 def test_legacy_fields_the_contract_does_not_name_are_preserved_verbatim(tmp_path):
     # Reach's seam evidence was computed against a REST window that has since expired, and each
     # set's original fetched_at is a freeze moment nothing else records.

@@ -177,6 +177,35 @@ def test_a_series_key_that_is_not_a_relative_parquet_path_is_refused(bad):
         read_manifest_from(build_manifest(s, written_at=WRITTEN_AT))
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("set_sha256", None),
+        ("set_sha256", "not-a-hash"),
+        ("set_sha256", "z" * 64),
+        ("written_at", ""),
+        ("identity", 7),
+    ],
+)
+def test_the_documents_own_identity_fields_are_refused_when_malformed(field, value):
+    # This reader feeds committed provenance citations, so "refusing beats guessing" has to hold
+    # for the document's identity, not only for its series. A missing set_sha256 used to read as
+    # the empty string and be cited as a dataset's identity.
+    raw = build_manifest(_two(), written_at=WRITTEN_AT)
+    raw[field] = value
+    with pytest.raises(ManifestError):
+        read_manifest_from(raw)
+
+
+def test_a_subset_digest_that_is_not_a_digest_is_refused():
+    raw = build_manifest(
+        _two(), written_at=WRITTEN_AT, subsets={"continuous": ["ADA/EUR/1440.parquet"]}, identity="subset:continuous"
+    )
+    raw["subset_sha256"]["continuous"] = None
+    with pytest.raises(ManifestError, match="subset_sha256"):
+        read_manifest_from(raw)
+
+
 def test_an_empty_series_map_is_refused_at_build():
     with pytest.raises(ManifestError, match="empty"):
         build_manifest({}, written_at=WRITTEN_AT)
