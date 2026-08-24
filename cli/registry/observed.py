@@ -17,7 +17,8 @@ from pathlib import Path
 
 import polars as pl
 
-from cli.data.sync import _manifest_sha256s
+from cli.data.errors import DataSyncError
+from cli.data.sync import _manifest_sha256s, sidecar_hash_by_path, sidecar_hashes
 from cli.ohlc.dataset import dataset_hash, read_parquet
 from cli.registry.errors import RegistryError
 
@@ -49,11 +50,15 @@ class ObservedReader:
     def _vouched_for(self, dataset: str) -> set[str]:
         if dataset not in self._vouched:
             manifest = self._root / dataset / "manifest.json"
+            try:
+                from_sidecar = sidecar_hashes(dataset)
+            except DataSyncError as exc:  # a corrupt sidecar must refuse in THIS surface's dialect
+                raise RegistryError(f"{dataset}: committed attestations are unreadable — {exc}") from exc
             if not manifest.exists():
-                self._vouched[dataset] = set()
+                self._vouched[dataset] = from_sidecar
             else:
                 try:
-                    self._vouched[dataset] = _manifest_sha256s(json.loads(manifest.read_text()))
+                    self._vouched[dataset] = _manifest_sha256s(json.loads(manifest.read_text())) | from_sidecar
                 except ValueError as exc:  # unparseable manifest: refuse typed, not with a raw JSONDecodeError
                     raise RegistryError(
                         f"{dataset}: manifest.json is unparseable — refusing to read a dataset whose freeze record is corrupt: {exc}"
@@ -81,7 +86,18 @@ class ObservedReader:
             # hashes (dataset_hash = sha256 of canonical CSV), never file-byte hashes -- a byte-grade
             # membership test here refuses every healthy read of ohlc-full/ohlc-15m (the round-1 blocker).
             # Checked on the FULL frame, before windowing: the freeze vouched the whole series.
-            if vouched and dataset_hash(full) not in vouched:
+            # Path-BOUND when a committed attestation names this exact path: swapping two series
+            # inside one set leaves the hash SET unchanged, so a membership test passes on both
+            # halves of the swap and this does not. Sets attested only by their own manifest stay on
+            # membership, because deriving a path per hash needs per-set layout knowledge the
+            # manifests do not share a shape for (T0132 owns that).
+            if (expected := sidecar_hash_by_path(dataset).get(relpath)) is not None:
+                if dataset_hash(full) != expected:
+                    raise RegistryError(
+                        f"{dataset}/{relpath}: frame-content hash is not what the committed attestation "
+                        f"names for THAT path — the data changed since the freeze, or two series were swapped"
+                    )
+            elif vouched and dataset_hash(full) not in vouched:
                 raise RegistryError(
                     f"{dataset}/{relpath}: frame-content hash absent from the manifest's vouched set — the data changed since the freeze"
                 )

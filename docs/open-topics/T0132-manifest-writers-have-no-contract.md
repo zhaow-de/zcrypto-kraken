@@ -23,6 +23,7 @@ Four `series` shapes, two set-digest spellings, two timestamp keys, and one data
 Two further hazards measured 2026-08-08:
 
 - **`ohlc-reach` carries a per-run nonce.** Its `series_digest` moves on every rebuild with zero content change — so any consumer hashing it reads a false drift alarm.
+- **Shape does not determine PATH, measured 2026-08-24 across the live hub.** `derivatives-funding` and `derivatives-oi` share the identical `series[SYMBOL].sha256` shape yet lay their files out as `SYMBOL/funding.parquet` and `SYMBOL/oi.parquet`. So a contract that normalises only the `series` SHAPE still leaves a consumer unable to map a hash to a file — the path convention has to be part of it, or be declared in the manifest.
 - **`ohlc-15m`'s `source` is an absolute machine-local path.** A manifest rebuilt on another host changes it, so any consumer including `source` in a digest gets a false difference between nodes holding identical bytes.
 
 ## Why this matters
@@ -45,6 +46,7 @@ So nothing is blocked on this today, and that is precisely the risk: the zoo is 
 
 ## Suggested next steps
 
+- **(waiting consumer — the first one that is real)** [[T0133]] wanted `_verify_new_files` and `ObservedReader.read_series` bound to PATHS rather than hash membership, because two series swapped inside one set leave the hash SET unchanged and pass every membership test. It shipped path binding for sets attested by the committed sidecar (`docs/reference/vouched-dataset-hashes.jsonl`, which carries a `relpath` per line), and **consciously kept membership for sets attested by their own manifest**, because deriving a path per hash is exactly the per-set knowledge this topic exists to remove — a fifth hard-coded reader would have been the wrong payment. So when the contract lands, path-binding those sets is owed, and the residual until then is that a swap inside `ohlc-full`/`ohlc-15m`/`derivatives-*`/`ohlc-reach` is invisible at both consumers.
 - **(design, when triggered)** Decide the contract: required keys (`series`, a set digest under ONE name, a timestamp under ONE name), a single `series` shape, and an explicit rule for per-run values — a nonce like `ohlc-reach`'s `series_digest` and a machine-local `source` must be OUTSIDE anything a consumer would hash, or absent.
 - **(autonomous, after that)** A single shared writer/reader in `cli/` that every producer calls, so the shape cannot drift per-writer again; plus a test walking every `data/*/manifest.json` on disk and asserting conformance.
 - **(decide explicitly)** Whether existing manifests are migrated, versioned in place, or left as legacy shapes behind adapters. They are gitignored data, so a migration is a rebuild, not a rewrite of history.
