@@ -501,15 +501,10 @@ class _ActiveIntent:
     # truth the intent was authorized against. Instrument-scoped, because SIZING trades the real
     # book: what the operator holds is part of what this engine must size against.
     position_before: float = 0.0
-    # The same read, scoped to THIS engine's own strategy. The post-terminal reconciliation
-    # subtracts against this one instead, so a holding the engine never ordered cannot enter the
-    # comparison -- NETTING position ids are `f"{instrument_id}-{strategy_id}"`, so an external fill
-    # lands in a separate position and a scoped read excludes it by construction.
-    # NOT captured at the same instant as `position_before`, and it does not need to be: the Cache
-    # is mutated from the asyncio loop thread while this runs on a timer callback, so the two reads
-    # can straddle an event. Nothing compares them to each other -- an own-strategy fill landing
-    # between them enters this baseline AND persists into the terminal read, so it cancels; an
-    # external one is excluded from both by the scoping above.
+    # The same read scoped to THIS engine's strategy, which the post-terminal reconciliation
+    # subtracts against instead: NETTING position ids are `f"{instrument_id}-{strategy_id}"`, so an
+    # external fill lands in a separate position and a scoped read excludes it by construction.
+    # The two baselines are never compared to each other, so they need not be simultaneous.
     own_position_before: float = 0.0
     order: object | None = None
     order_payload: dict | None = None
@@ -1768,13 +1763,10 @@ class ProbeExecutor:
         """The post-terminal reconciliation: what this intent's fills say this engine's OWN position
         should now be, against what the Cache says it is.
 
-        Scoped to this engine's strategy on BOTH ends, never to the instrument. An instrument-scoped
-        read carries every holding on the symbol, including one this engine never ordered -- and
-        spec 00098 D1's scope property says an operator's hand settle reaches no trip, no row and no
-        cancel. Reading the whole instrument broke that promise on a path D1 never covered: the
-        operator's holding entered the comparison, diverged from what this engine's fills account
-        for, and latched the kill switch on a sanctioned action. `position_before` stays
-        instrument-scoped because SIZING trades the real book; only this comparison is narrowed.
+        Scoped to this engine's strategy on BOTH ends, never to the instrument: an instrument-scoped
+        read carries holdings this engine never ordered, and an operator's hand settle must reach no
+        trip, no row and no cancel (spec 00098 D1). `position_before` stays instrument-scoped
+        because SIZING trades the real book; only this comparison is narrowed.
 
         The tolerance is the instrument's own lot step -- the smallest quantity the venue can even
         express, so nothing tradeable hides under it. Anything larger is either a fill this engine
