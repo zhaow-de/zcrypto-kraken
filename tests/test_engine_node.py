@@ -280,6 +280,14 @@ def test_shadow_strategy_bare_construction_defaults(tmp_path):
     assert strategy._next_cycle_ts is None
 
 
+def test_the_strategys_order_id_tag_is_explicit_not_positional(tmp_path):
+    """`order_id_tag` is assigned as `f"{len(order_id_tags):03d}"` for a strategy that passes no
+    config -- so registering a SECOND strategy silently changes this one's client-order-id prefix,
+    which is visible at the venue. Pinned so a registration-order change is a red test."""
+    strategy = ShadowStrategy(_config(tmp_path))
+    assert strategy.order_id_tag == "000"  # measured by registering through Trader.add_strategy
+
+
 def test_schedule_alert_sets_state_and_timer(tmp_path):
     # _schedule_alert against a minimal stub: unique per-boundary timer name, the alert time as
     # given, the strategy's own handler as callback, and the boundary recorded for the handler.

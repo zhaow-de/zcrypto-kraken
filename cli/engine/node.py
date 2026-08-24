@@ -20,7 +20,7 @@ from nautilus_trader.config import InstrumentProviderConfig, LiveExecEngineConfi
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import AccountType
 from nautilus_trader.model.identifiers import StrategyId
-from nautilus_trader.trading.strategy import Strategy
+from nautilus_trader.trading.strategy import Strategy, StrategyConfig
 
 from cli.config import EngineConfig
 
@@ -35,6 +35,11 @@ logger = get_logger("engine.node")
 
 _H4 = timedelta(hours=4)
 _TRADER_ID = "SHADOW-001"
+# Tag-less, `Trader.add_strategy` would assign this positionally (`f"{len(order_id_tags):03d}"`,
+# counted off the strategies already registered) -- so a second strategy registered ahead of this
+# one would silently change its client-order-id prefix, a venue-visible identifier. Pinned to the
+# value this strategy gets today as the only one registered; tests/test_engine_node.py holds it.
+_ORDER_ID_TAG = "000"
 # The probe executor's tick cadence. Restated here rather than imported because
 # `cli.engine.executor` is imported lazily (inside `_probe_executor_factory`) while this is needed
 # at on_start time; tests/test_engine_node.py pins the two equal.
@@ -147,12 +152,12 @@ class ShadowStrategy(Strategy):
 
     The four executor forwarders below are the ONLY inputs the order path has, and each carries
     exactly what nautilus routes to this strategy. `on_order_event` in particular is the
-    `events.order.<this strategy's id>` subscription `Strategy.register` installs, and this class
-    passes no `StrategyConfig`, so the strategy's external-order claim list stays empty: an order
-    the engine did not submit -- the account owner settling a position by hand mid-probe -- keeps
-    nautilus's `EXTERNAL` strategy id and structurally never arrives on that topic. That scoping is
-    the precondition the executor's unknown-order kill trip rests on; widening it would latch the
-    kill switch on a sanctioned act.
+    `events.order.<this strategy's id>` subscription `Strategy.register` installs, and this class's
+    `StrategyConfig` claims no instruments, so the strategy's external-order claim list stays
+    empty: an order the engine did not submit -- the account owner settling a position by hand
+    mid-probe -- keeps nautilus's `EXTERNAL` strategy id and structurally never arrives on that
+    topic. That scoping is the precondition the executor's unknown-order kill trip rests on;
+    widening it would latch the kill switch on a sanctioned act.
 
     `events.order.EXTERNAL` is ADDITIONALLY subscribed (spec 00098 D1), and neither half of that
     scoping moves. The claim list stays empty, so the own topic still carries only orders this
@@ -173,7 +178,7 @@ class ShadowStrategy(Strategy):
         clock: Callable = _utc_now,
         executor_factory: Callable | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(config=StrategyConfig(order_id_tag=_ORDER_ID_TAG))
         self._engine_config = config
         self._run_cycle_fn = run_cycle_fn
         self._now = clock
