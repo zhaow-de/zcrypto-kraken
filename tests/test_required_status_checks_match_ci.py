@@ -25,27 +25,49 @@ def _required_contexts(branch: str) -> list[str]:
     raise AssertionError(f"no protection block for branch {branch!r} in {SETTINGS}")
 
 
-def _check_names_reported_on_prs_into(branch: str) -> dict[str, Path]:
-    """Every check-run name a PR into `branch` can produce, mapped to its workflow file.
+def _conditional_trigger_reason(pr: object, branch: str) -> str | None:
+    """Why a `pull_request` trigger might NOT fire for some PR into `branch`, or None if it always does.
 
-    A job's `name:` is what GitHub reports; absent it, the job's id is. Only workflows whose
-    `pull_request` trigger admits this branch can report at all -- one that does not is exactly
-    the never-arrives case this guards.
+    A required context has to arrive for EVERY pull request, so any filter that can skip a run is
+    disqualifying -- not merely a branch mismatch. `paths`/`paths-ignore` is the live danger rather
+    than a hypothetical: `capture-image.yml` in this same directory already uses one, so "add a
+    paths filter to save CI minutes" is an established idiom here, and a doc-only PR would then get
+    no check at all and sit BLOCKED with nothing red to explain why.
+    """
+    if not isinstance(pr, dict):
+        return None  # bare `pull_request:` -- no filters, fires for everything
+    if (targets := pr.get("branches")) is not None and branch not in targets:
+        return f"its `branches` is {targets!r}, which excludes {branch!r}"
+    if (excluded := pr.get("branches-ignore")) is not None and branch in excluded:
+        return f"its `branches-ignore` {excluded!r} excludes {branch!r}"
+    for key in ("paths", "paths-ignore"):
+        if pr.get(key) is not None:
+            return f"it has a `{key}` filter {pr[key]!r}, so a PR touching none of those files gets no run"
+    if (types := pr.get("types")) is not None and not {"opened", "synchronize"} <= set(types):
+        return f"its `types` is {types!r}, which does not cover both `opened` and `synchronize`"
+    return None
+
+
+def _check_names_reported_on_prs_into(branch: str) -> tuple[dict[str, Path], list[str]]:
+    """Check-run names that ALWAYS report for a PR into `branch`, plus why any workflow was excluded.
+
+    A job's `name:` is what GitHub reports; absent it, the job's id is.
     """
     names: dict[str, Path] = {}
+    skipped: list[str] = []
     for path in sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml")):
         wf = yaml.safe_load(path.read_text(encoding="utf-8"))
         # PyYAML parses the bare key `on:` as the boolean True (YAML 1.1), not the string.
         triggers = wf.get("on", wf.get(True)) or {}
-        pr = triggers.get("pull_request") if isinstance(triggers, dict) else None
-        if pr is None:
+        if not isinstance(triggers, dict) or "pull_request" not in triggers:
             continue
-        targets = (pr or {}).get("branches") if isinstance(pr, dict) else None
-        if targets is not None and branch not in targets:
+        jobs = list((wf.get("jobs") or {}).items())
+        if (reason := _conditional_trigger_reason(triggers["pull_request"], branch)) is not None:
+            skipped.append(f"{path.name}: {reason}")
             continue
-        for job_id, job in (wf.get("jobs") or {}).items():
+        for job_id, job in jobs:
             names[(job or {}).get("name") or job_id] = path
-    return names
+    return names, skipped
 
 
 def test_settings_yml_is_parseable_and_pins_develop():
@@ -55,11 +77,13 @@ def test_settings_yml_is_parseable_and_pins_develop():
 
 @pytest.mark.parametrize("context", _required_contexts("develop"))
 def test_every_required_context_is_a_job_that_runs_on_prs_into_develop(context):
-    reported = _check_names_reported_on_prs_into("develop")
+    reported, skipped = _check_names_reported_on_prs_into("develop")
     assert context in reported, (
-        f"required context {context!r} is not produced by any workflow that runs on pull requests "
-        f"into develop. GitHub would wait for it forever and no PR could merge. "
-        f"Names actually reported: {sorted(reported)}"
+        f"required context {context!r} is not UNCONDITIONALLY produced by a workflow running on "
+        f"pull requests into develop, so some PR would wait for it forever and could never merge "
+        f"(enforce_admins is true -- the owner could not override). "
+        f"Names always reported: {sorted(reported)}. "
+        f"Workflows excluded because their trigger is conditional: {skipped or 'none'}"
     )
 
 

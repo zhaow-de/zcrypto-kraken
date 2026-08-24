@@ -12,6 +12,9 @@ jobs:
     # This string IS the required status-check context on develop (.github/settings.yml).
     # GitHub reports a job's `name:` as the check-run name, so renaming it here without
     # updating that contexts list blocks every PR on a check that never reports.
+    # Renaming ALSO strands every pull request open at that moment: their runs already
+    # reported under the old name, and a re-run replays the old workflow file, so each
+    # needs a fresh run (push a commit, or close and reopen) before it can merge again.
     # Named for what it gates -- the whole suite; the coverage upload is a by-product.
     name: Full test suite
     runs-on: ubuntu-latest
