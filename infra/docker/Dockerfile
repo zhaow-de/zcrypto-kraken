@@ -3,7 +3,7 @@ FROM python:3.14-slim
 LABEL org.opencontainers.image.source="https://github.com/zhaow-de/zcrypto-kraken"
 
 # Pinned, static uv binary copied from the official image — no apt/curl install step needed.
-COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /usr/local/bin/
 
 # rsync + ssh client: the archive-pull service (Role A, spec 00048) shells out to `rsync -e ssh`
 # to pull segments from the VPS. The capture/engine services don't use them but share this image.
