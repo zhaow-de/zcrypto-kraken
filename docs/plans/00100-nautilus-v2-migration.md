@@ -14,7 +14,7 @@ Spec: `docs/specs/00100-nautilus-v2-migration-design.md`. Every `D<N>` below ref
 
 - **Pinned wheel:** `nautilus-trader==2.0.0rc4.dev20260824`. Exact, never floating. Bumping it is a deliberate act that re-runs Task 1's pin.
 - **The suite is the proof.** It resolves against `pyproject.toml`, so it can only prove the version it runs against. This is why the flip is Phase B, not the end.
-- **The branch is red from Task 5 until Phase C completes.** Expected, not a failure. `coverage.yml` triggers on `pull_request` only, and the PR opens at component completion — so no CI noise and no PR until green.
+- **The branch is red from Task 4 until Phase C completes.** Expected, not a failure. `coverage.yml` triggers on `pull_request` only, and the PR opens at component completion — so no CI noise and no PR until green.
 - **Live-trade-path changes take the Fable review floor** (`.claude/rules/spec-plan-locations.md`). `cli/engine/{node,executor,execgate,command}.py` are all live trade path.
 - **Never construct a `MessageBus`** (D3). It registers itself globally and replaces the engine's own: orders freeze at `INITIALIZED`, no events fire, nothing raises.
 - **`external_order_claims` stays unset** on every strategy, and the token stays absent from `cli/` — the existing structural ban.
@@ -37,7 +37,7 @@ Per `.claude/rules/spec-plan-locations.md`, the pair gets a cold review before T
 
 ______________________________________________________________________
 
-**D6 is landed but NOT yet v2-safe.** The fix shipped on this branch because the defect exists on v1 today, but it reads `self._client.id` at `cli/engine/executor.py:1092` and `:1788`, and v2 renames that attribute to `strategy_id` (measured: `hasattr(Strategy, "id")` is `False` on the pinned wheel). Task 7a re-points it. **Its own tests cannot catch this**: `StubClient` sets `self.id`, so the three `test_reconcile_terminal_*` tests stay green while production raises — at `:1788` inside `_reconcile_terminal`'s own `except`, which calls `_trip_kill`, latching the kill switch after every completed intent.
+**D6 is landed but NOT yet v2-safe.** The fix shipped on this branch because the defect exists on v1 today, but it reads `self._client.id` at its two call sites in `cli/engine/executor.py` (grep it — the read in `_start_intent` and the one in `_reconcile_terminal`), and v2 renames that attribute to `strategy_id` (measured: `hasattr(Strategy, "id")` is `False` on the pinned wheel). Task 7a re-points it. **Its own tests cannot catch this**: `StubClient` sets `self.id`, so the three `test_reconcile_terminal_*` tests stay green while production raises — at `:1788` inside `_reconcile_terminal`'s own `except`, which calls `_trip_kill`, latching the kill switch after every completed intent.
 
 ## Phase A — guards that must be proved on v1
 
@@ -118,9 +118,8 @@ PINNED_ENUM_VALUES = {
     "OrderSide": {"NO_ORDER_SIDE": 0, "BUY": 1, "SELL": 2},
     "TimeInForce": {"GTC": 1, "IOC": 2, "FOK": 3, "GTD": 4},
     "AccountType": {"CASH": 1, "MARGIN": 2, "BETTING": 3},
-    # Compared against the library's own values and consumed by the adopted-terminal map, so a
-    # silent renumbering mis-books a terminal order.
-    "OrderStatus": {"INITIALIZED": 1, "FILLED": 14, "CANCELED": 8, "REJECTED": 6, "EXPIRED": 15},
+    # Exactly the members cli/engine references. Generated from the installed wheel, never typed.
+    "OrderStatus": {"CANCELED": 8, "DENIED": 2, "EXPIRED": 9, "FILLED": 14, "REJECTED": 7},
 }
 
 
@@ -343,8 +342,9 @@ The cold review found this: D6's landed fix reads `self._client.id`, v2 renames 
 
 **Files:** `cli/engine/executor.py`, `tests/test_engine_executor.py`
 
-- [ ] **Step 1:** Re-point `cli/engine/executor.py:1092` and `:1788` to `self._client.strategy_id`, and rename `StubClient.id` → `strategy_id` to match production.
+- [ ] **Step 1:** Re-point both `self._client.id` call sites in `cli/engine/executor.py` to `self._client.strategy_id`, and rename `StubClient.id` → `strategy_id` to match production.
 - [ ] **Step 2: Re-express Task 3's tag pin against the effective identity** — assert the *registered* strategy's `strategy_id` and its client-order-id prefix, parametrised over both registration orders (observer first, observer second). v2 exposes no `order_id_tag` attribute, and the config input is not what the venue sees.
+- [ ] **Step 2b: Prove the own-position read's guard.** The try/except around it is unreachable by any current fixture — `StubCache(raises=True)` raises in `instrument()`, which the earlier venue-truth guard catches first. Build a cache that raises only when `strategy_id is not None`, and confirm the intent is refused rather than the exception escaping. Without it, deleting that try passes the whole suite.
 - [ ] **Step 3: Add the guard that generalises this.** Assert every attribute and method `ProbeExecutor` calls on `self._client` exists on the real nautilus `Strategy`. A stub is a contract restatement, and an unverified restatement drifts silently — which is exactly how this defect stayed green.
 - [ ] **Step 4: Prove BOTH halves bite, separately.** Step 3's guard derives the checked set from production's calls and asserts them against the real `Strategy`, so a defect planted in the stub cannot trip it. Run two probes: (a) revert the stub attribute to `id` — the contract test must fail; (b) point production at a name the real `Strategy` lacks — the real-class assertion must fail. **Record which failure fired each time**; a red exit can be the guard misfiring on a healthy path rather than catching the planted defect.
 - [ ] **Step 5:** Restore, then commit.
@@ -371,10 +371,10 @@ Measured, and the reason this is spelled out: supplying a tag yields `strategy_i
 The first draft listed eight and left `cancel_orders`, `modify_orders` and `post_market_exit` live — which is why Step 3 derives the set rather than trusting this list.
 - [ ] **Step 3: Test that each one raises, and that the list is COMPLETE.** Derive the mutating surface — everything on `Strategy` that is absent from `DataActor`, minus `on_*` handlers and the read-only queries — and assert every member of it is sealed. A hand-enumerated seal regains a hole the next time upstream adds a method, silently; a derived one fails loudly and names it. This is the barrier: on an EXTERNAL-registered strategy every scoping default points its authority at the operator's book.
 - [ ] **Step 4:** Extend `test_the_strategy_claims_no_external_orders` and `_ORDER_STREAM_WIDENERS` to cover the observer; retire the `msgbus` allowance, which is now zero.
-- [ ] **Step 6 (D3): Give the prohibition a guard, because the existing one cannot see it.** `_ORDER_STREAM_WIDENERS` is a `text.count(name)` walk over lowercase `msgbus`, and `"MessageBus".count("msgbus")` is **0** — so a `MessageBus(...)` constructed in `cli/` passes every check in the repo today. Add `"MessageBus": {}` to that map (allowed nowhere) and prove it bites by temporarily constructing one under `cli/`. Text-count, matching the guard's own stated reasoning.
+- [ ] **Step 5 (D3): Give the prohibition a guard, because the existing one cannot see it.** `_ORDER_STREAM_WIDENERS` is a `text.count(name)` walk over lowercase `msgbus`, and `"MessageBus".count("msgbus")` is **0** — so a `MessageBus(...)` constructed in `cli/` passes every check in the repo today. Add `"MessageBus": {}` to that map (allowed nowhere) and prove it bites by temporarily constructing one under `cli/`. Text-count, matching the guard's own stated reasoning.
 
 This matters most during Phase C specifically: the red suite hands an implementer failing external-topic tests whose most obvious repair is the forbidden one, and its failure mode is an engine that accepts orders and never sends them.
-- [ ] **Step 5:** Commit.
+- [ ] **Step 6:** Commit.
 
 ### Task 10: Supervision and the watchdog
 
@@ -395,7 +395,7 @@ This matters most during Phase C specifically: the red suite hands an implemente
 - [ ] **Step 1: Pin `use_ws_trade=False`** (D10). The default is True, which would move submission to WebSocket; the REST classification is the one this project derived against a real venue, and re-deriving for WS needs live submissions this plan cannot reach — the same constraint that moved Task 16 out.
 - [ ] **Step 2: Verify the classification still applies over REST on v2**, rather than re-deriving it. `OrderRejected`/`OrderDenied` still carry only a string `reason` (and lost `venue_order_id`), so `_KRAKEN_ERROR_MARKERS` stays string-shaped and applicable. Pin `use_ws_trade`'s value in Task 1's defaults section so a later default flip is a red test rather than a silent transport change.
 - [ ] **Step 3:** Record that adopting WS is deliberately deferred and is its own change with its own evidence — not a follow-up hiding in this one.
-- [ ] **Step 3:** Commit.
+- [ ] **Step 4:** Commit.
 
 ### Task 12: Rounding fixtures
 
@@ -408,7 +408,7 @@ The spec's framing of this was corrected by the cold review: a quantity rounding
 - [ ] **Step 1: Re-measure all three against a REAL nautilus `Instrument`**, not a `Quantity` constructed by hand — the rounding lives in the instrument's precision, so a hand-built value tests a different code path than production takes.
 - [ ] **Step 2:** Add fixtures on the **divergent** values from that measurement. Class 3 is the one to get right: it is silent, it changes an order's quantity, and no existing test would see it.
 - [ ] **Step 3:** Decide and record whether class 2's raise needs containment — `instrument.make_qty(sized.qty)` sits outside the only `try` wrapping sizing.
-- [ ] **Step 3:** Commit.
+- [ ] **Step 4:** Commit.
 
 ### Task 12a: Verify every stub that stands in for a nautilus type
 
