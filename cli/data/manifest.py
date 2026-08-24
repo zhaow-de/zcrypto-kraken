@@ -37,12 +37,17 @@ def series_entry(frame: pl.DataFrame, relpath: str) -> dict[str, Any]:
     """One series leaf. `relpath` is accepted so a caller cannot build an entry for a key it has
     not validated -- the key and the file must be the same thing."""
     _check_key(relpath)
+    # An EMPTY series is a healthy producer output, not a fault: `derivatives-funding` and
+    # `derivatives-oi` already emit `first_ts: None` for a perp with no rows yet. The span is
+    # therefore nullable, while the KEY must always be present -- absent means "the writer forgot",
+    # null means "there is no span", and those are different failures.
+    empty = frame.height == 0
     return {
         "sha256": dataset_hash(frame),
         "rows": frame.height,
         # ISO-8601 T-form, which is what every writer already emits, so conversion is a no-op here.
-        "first_ts": frame["ts"].min().isoformat(),
-        "last_ts": frame["ts"].max().isoformat(),
+        "first_ts": None if empty else frame["ts"].min().isoformat(),
+        "last_ts": None if empty else frame["ts"].max().isoformat(),
     }
 
 
@@ -193,6 +198,12 @@ def _check_leaf(key: str, leaf: Any, where: str = "") -> None:
     for field in _LEAF_FIELDS:
         if field not in leaf:
             raise ManifestError(f"{prefix}series[{key!r}] is missing {field}")
+    for span in ("first_ts", "last_ts"):
+        value = leaf[span]
+        if value is not None and not isinstance(value, str):
+            raise ManifestError(f"{prefix}series[{key!r}].{span} must be an ISO-8601 string or null")
+    if (leaf["first_ts"] is None) != (leaf["last_ts"] is None):
+        raise ManifestError(f"{prefix}series[{key!r}] has one span bound null and the other set")
     if not isinstance(leaf["rows"], int) or isinstance(leaf["rows"], bool) or leaf["rows"] < 0:
         raise ManifestError(f"{prefix}series[{key!r}].rows must be a non-negative integer")
     digest = leaf["sha256"]

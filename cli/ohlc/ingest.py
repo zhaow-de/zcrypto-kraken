@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from cli.data.manifest import build_manifest, series_entry
 from cli.ohlc.dataset import dataset_hash, to_frame, write_parquet
 from cli.ohlc.fetch import fetch_ohlc
 
@@ -23,21 +24,15 @@ def ingest_basket(
     last_ts, dataset_hash); writes it to `out_dir/manifest.json` and returns it. Deterministic given
     a fixed `fetched_at` and `fetch_fn`.
     """
-    series = []
+    series: dict[str, dict] = {}
     for symbol, pair_key in pair_keys.items():
         for interval in intervals:
             frame = to_frame(fetch_fn(pair_key, interval))
-            write_parquet(frame, out_dir / symbol / f"{interval}.parquet")
-            series.append(
-                {
-                    "symbol": symbol,
-                    "interval": interval,
-                    "rows": frame.height,
-                    "first_ts": frame["ts"].min().isoformat(),
-                    "last_ts": frame["ts"].max().isoformat(),
-                    "dataset_hash": dataset_hash(frame),
-                }
-            )
-    manifest = {"fetched_at": fetched_at, "series": series}
+            relpath = f"{symbol}/{interval}.parquet"
+            write_parquet(frame, out_dir / relpath)
+            series[relpath] = series_entry(frame, relpath)
+    # v0 emitted its content hash under the key `dataset_hash` while every other writer used
+    # `sha256`, so `_manifest_sha256s` never saw it -- one of the four shapes this contract retires.
+    manifest = build_manifest(series, written_at=fetched_at, provenance={"fetched_at": fetched_at})
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return manifest

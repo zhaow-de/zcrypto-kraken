@@ -31,6 +31,7 @@ from pathlib import Path
 
 import polars as pl
 
+from cli.data.manifest import build_manifest, series_entry
 from cli.derivatives.errors import DerivativesError
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.logging import get_logger
@@ -325,21 +326,11 @@ def build_oi_substrate(
         else:
             frame = backfill_oi(perp, start=start, now=now, opener=opener)
             write_parquet(frame, target)
-        series[perp] = {
-            "rows": frame.height,
-            "first_ts": frame["ts"].min().isoformat() if frame.height else None,
-            "last_ts": frame["ts"].max().isoformat() if frame.height else None,
-            "sha256": dataset_hash(frame),
-        }
+        relpath = f"{perp}/oi.parquet"
+        series[relpath] = series_entry(frame, relpath)
 
-    basket_sha256 = hashlib.sha256("".join(series[perp]["sha256"] for perp in sorted(series)).encode()).hexdigest()
-
-    manifest = {
-        "fetched_at": now.isoformat(),
-        "source": _BASE_URL,
-        "series": series,
-        "basket_sha256": basket_sha256,
-    }
+    fetched_at = now.isoformat()
+    manifest = build_manifest(series, written_at=fetched_at, provenance={"fetched_at": fetched_at, "source": _BASE_URL})
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return manifest
 

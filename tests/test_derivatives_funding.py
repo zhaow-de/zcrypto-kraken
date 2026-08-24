@@ -206,21 +206,22 @@ def test_build_writes_parquet_manifest_and_roundtrips(tmp_path):
     assert (tmp_path / "ETHUSDT" / "funding.parquet").exists()
     assert (tmp_path / "manifest.json").exists()
 
-    assert set(manifest["series"]) == {"BTCUSDT", "ETHUSDT"}
-    assert manifest["series"]["BTCUSDT"]["rows"] == 2
-    assert manifest["series"]["ETHUSDT"]["rows"] == 1
+    assert set(manifest["series"]) == {"BTCUSDT/funding.parquet", "ETHUSDT/funding.parquet"}
+    assert manifest["series"]["BTCUSDT/funding.parquet"]["rows"] == 2
+    assert manifest["series"]["ETHUSDT/funding.parquet"]["rows"] == 1
     for key in ("rows", "first_ts", "last_ts", "sha256"):
-        assert key in manifest["series"]["BTCUSDT"]
-    assert manifest["source"] == _BASE_URL
-    assert manifest["fetched_at"] == clock().isoformat()
+        assert key in manifest["series"]["BTCUSDT/funding.parquet"]
+    # `source` is a fixed URL and `fetched_at` a wall clock: both quarantined, outside the digest.
+    assert manifest["provenance"]["source"] == _BASE_URL
+    assert manifest["provenance"]["fetched_at"] == clock().isoformat()
 
     expected_basket = hashlib.sha256(
         "".join(manifest["series"][p]["sha256"] for p in sorted(manifest["series"])).encode()
     ).hexdigest()
-    assert manifest["basket_sha256"] == expected_basket
+    assert manifest["set_sha256"] == expected_basket
 
     # manifest.json on disk mirrors the returned dict
-    assert json.loads((tmp_path / "manifest.json").read_text())["basket_sha256"] == expected_basket
+    assert json.loads((tmp_path / "manifest.json").read_text())["set_sha256"] == expected_basket
 
     # round-trip read
     df = read_funding_series(tmp_path, "BTCUSDT")

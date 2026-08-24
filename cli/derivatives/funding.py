@@ -12,6 +12,7 @@ from pathlib import Path
 
 import polars as pl
 
+from cli.data.manifest import build_manifest, series_entry
 from cli.derivatives.errors import DerivativesError
 from cli.logging import get_logger
 from cli.ohlc.dataset import dataset_hash, read_parquet, write_parquet
@@ -195,21 +196,11 @@ def build_funding_substrate(
     for perp in perps.values():
         frame = backfill_funding(perp, clock=clock, opener=opener)
         write_parquet(frame, out_root / perp / "funding.parquet")
-        series[perp] = {
-            "rows": frame.height,
-            "first_ts": frame["ts"].min().isoformat() if frame.height else None,
-            "last_ts": frame["ts"].max().isoformat() if frame.height else None,
-            "sha256": dataset_hash(frame),
-        }
+        relpath = f"{perp}/funding.parquet"
+        series[relpath] = series_entry(frame, relpath)
 
-    basket_sha256 = hashlib.sha256("".join(series[perp]["sha256"] for perp in sorted(series)).encode()).hexdigest()
-
-    manifest = {
-        "fetched_at": clock().isoformat(),
-        "source": _BASE_URL,
-        "series": series,
-        "basket_sha256": basket_sha256,
-    }
+    fetched_at = clock().isoformat()
+    manifest = build_manifest(series, written_at=fetched_at, provenance={"fetched_at": fetched_at, "source": _BASE_URL})
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return manifest
 

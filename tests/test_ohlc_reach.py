@@ -75,10 +75,13 @@ def test_overlapping_rest_tail_merges_into_one_continuous_series(tmp_path):
     assert merged["ts"].n_unique() == merged.height
     assert not (out / "BTC" / "EUR" / "60.detached.parquet").exists()
 
-    # An all-continuous set must report NO detached hash -- an empty string, not a hash of nothing.
+    # An all-continuous set must report NO detached hash. The old writer said so with an empty
+    # STRING; the contract says so by not declaring the subset at all, because sha256("") is a
+    # sentinel two unrelated empty sets would share.
     manifest = json.loads((out / "manifest.json").read_text())
-    assert manifest["basket_sha256"]
-    assert manifest["detached_sha256"] == ""
+    assert manifest["subset_sha256"]["continuous"]
+    assert "detached" not in manifest["subset_sha256"]
+    assert manifest["identity"] == "subset:continuous"
 
 
 def test_detached_tail_is_kept_but_under_a_name_canonical_readers_do_not_glob(tmp_path):
@@ -106,11 +109,12 @@ def test_detached_tail_is_kept_but_under_a_name_canonical_readers_do_not_glob(tm
     # The continuous filename must be absent -- this is the structural guard, not a doc note.
     assert not (out / "BTC" / "EUR" / "60.parquet").exists()
 
-    # Nothing was joinable, so the CONTINUOUS basket hash must be empty rather than quietly
-    # hashing the detached segment -- the failure this split exists to prevent.
+    # Nothing was joinable, so there is no CONTINUOUS subset to declare -- the writer must not
+    # quietly hash the detached segment into one, which is the failure this split exists to prevent.
     manifest = json.loads((out / "manifest.json").read_text())
-    assert manifest["basket_sha256"] == ""
-    assert manifest["detached_sha256"]
+    assert "continuous" not in manifest["subset_sha256"]
+    assert manifest["subset_sha256"]["detached"]
+    assert manifest["identity"] == "set", "with no continuous legs the set cannot claim one as its identity"
 
 
 def test_seam_close_mismatch_aborts(tmp_path):
@@ -172,14 +176,18 @@ def test_manifest_records_per_series_status_so_a_mixed_set_cannot_be_read_as_uni
     report = reach_round(canonical, out, fetch_fn=_fetch, clock=lambda: now, sleep_fn=_no_sleep)
 
     manifest = json.loads((out / "manifest.json").read_text())
-    # The continuous basket hash must NOT absorb the detached segment -- that split is the point.
-    assert manifest["basket_sha256"]
-    assert manifest["detached_sha256"]
-    assert manifest["basket_sha256"] != manifest["detached_sha256"]
-    assert all("sha256" in e and e["rows"] for e in manifest["series"])
-    by_key = {(e["symbol"], e["interval"]): e for e in manifest["series"]}
-    assert by_key[("BTC/EUR", 240)]["status"] == "continuous"
-    assert by_key[("BTC/EUR", 60)]["status"] == "detached"
+    # The continuous subset must NOT absorb the detached segment -- that split is the point, and
+    # it is now the set's declared identity rather than an unwritten convention.
+    assert manifest["subset_sha256"]["continuous"]
+    assert manifest["subset_sha256"]["detached"]
+    assert manifest["subset_sha256"]["continuous"] != manifest["subset_sha256"]["detached"]
+    assert manifest["identity"] == "subset:continuous"
+    assert all(e["sha256"] and e["rows"] for e in manifest["series"].values())
+    # The status now lives in the FILENAME, which is the series key -- readers glob on it already.
+    assert "BTC/EUR/240.parquet" in manifest["series"]
+    assert "BTC/EUR/60.detached.parquet" in manifest["series"]
+    assert manifest["provenance"]["series"]["BTC/EUR/240.parquet"]["status"] == "continuous"
+    assert manifest["provenance"]["series"]["BTC/EUR/60.detached.parquet"]["status"] == "detached"
     assert {e.status for e in report.entries} == {"continuous", "detached"}
 
 
@@ -242,4 +250,6 @@ def test_manifest_entries_are_keyed_by_full_symbol(tmp_path):
     )
 
     manifest = json.loads((out / "manifest.json").read_text())
-    assert {e["symbol"] for e in manifest["series"]} == {"ETH/EUR", "ETH/BTC"}
+    # Keyed by path relative to the dataset root, so the quote is unambiguous in the key itself --
+    # which is exactly what a base-only key could not express.
+    assert set(manifest["series"]) == {"ETH/EUR/60.parquet", "ETH/BTC/60.parquet"}

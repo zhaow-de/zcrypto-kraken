@@ -229,3 +229,65 @@ def test_path_order_re_anchors_the_local_reach_detached_digest():
     assert set_digest(series) == "5907b1e31f45237831449c72e00185299bfa8a604ee7c4f10ed4133c931032d9"
     assert set_digest(series) != raw["detached_sha256"]
     assert raw["detached_sha256"] == "0c07900fb9cf68419630dd8d14d62894e144f2d8f66a07c8bd130964007d53e0"
+
+
+def test_an_empty_series_is_a_healthy_producer_output_not_a_fault():
+    # derivatives-funding and -oi already emit first_ts: None for a perp with no rows. Refusing
+    # that would refuse a healthy run; the KEY must still be present, because absent means the
+    # writer forgot and null means there is no span.
+    entry = series_entry(to_frame([]), "PF_XBTUSD/funding.parquet")
+    assert entry["rows"] == 0 and entry["first_ts"] is None and entry["last_ts"] is None
+    m = read_manifest_from(build_manifest({"PF_XBTUSD/funding.parquet": entry}, written_at=WRITTEN_AT))
+    assert m.vouched == {entry["sha256"]}
+
+
+def test_one_span_bound_null_and_the_other_set_is_refused():
+    s = _two()
+    s["ADA/EUR/1440.parquet"]["last_ts"] = None
+    with pytest.raises(ManifestError, match="span"):
+        read_manifest_from(build_manifest(s, written_at=WRITTEN_AT))
+
+
+# --- every writer, one contract --------------------------------------------------------------------
+
+
+def test_every_writer_emits_a_manifest_the_reader_accepts(tmp_path, monkeypatch):
+    """CI-runnable, and the point of the whole exercise: five producers, one shape.
+
+    Asserted through `read_manifest` rather than by comparing dicts, because the reader is what a
+    consumer actually uses -- a shape that only a bespoke assertion accepts is the zoo again.
+    """
+    from cli.backfill.backfill import backfill_basket
+    from cli.ohlc.ingest import ingest_basket
+
+    written = []
+
+    # backfill: previously nested symbol -> interval, two levels deep
+    import zipfile
+
+    src = tmp_path / "src"
+    src.mkdir()
+    minute = "\n".join(f"{1577836800 + i * 60},1,2,0.5,1.5,10,3" for i in range(60)) + "\n"
+    with zipfile.ZipFile(src / "Kraken_OHLCVT.zip", "w") as zf:
+        zf.writestr("master_q4/XBTEUR_1.csv", minute)
+    out = tmp_path / "full"
+    backfill_basket(src, ["BTC/EUR"], ["60"], out, WRITTEN_AT)
+    written.append(out / "manifest.json")
+
+    # v0 ingest: previously a LIST of rows, hashing under the key `dataset_hash`
+    out_v0 = tmp_path / "v0"
+    ingest_basket(
+        {"BTC/EUR": "XXBTZEUR"},
+        [1440],
+        out_v0,
+        WRITTEN_AT,
+        fetch_fn=lambda *_: [[1577836800, "1", "2", "0.5", "1.5", "1.2", "10", 3]],
+    )
+    written.append(out_v0 / "manifest.json")
+
+    for path in written:
+        m = read_manifest(path)
+        assert m.schema_version == SCHEMA_VERSION
+        assert m.identity_digest, path
+        assert m.vouched, path
+        assert all(k.endswith(".parquet") for k in m.series), path

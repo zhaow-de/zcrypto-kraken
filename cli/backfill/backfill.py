@@ -8,7 +8,8 @@ import polars as pl
 
 from cli.backfill.aggregate import aggregate_minutes
 from cli.backfill.read import read_minute_rows
-from cli.ohlc.dataset import dataset_hash, to_frame, write_parquet
+from cli.data.manifest import build_manifest, series_entry
+from cli.ohlc.dataset import to_frame, write_parquet
 from cli.ohlc.qa import INTERVAL_SECONDS
 
 
@@ -43,23 +44,12 @@ def backfill_basket(
         frames = backfill_pair(source_dir, symbol, intervals)
         base, quote = symbol.split("/")
         for interval, frame in frames.items():
-            write_parquet(frame, out_root / base / quote / f"{interval}.parquet")
-            series.setdefault(symbol, {})[interval] = {
-                "rows": frame.height,
-                "first_ts": frame["ts"].min().isoformat(),
-                "last_ts": frame["ts"].max().isoformat(),
-                "sha256": dataset_hash(frame),
-            }
+            relpath = f"{base}/{quote}/{interval}.parquet"
+            write_parquet(frame, out_root / relpath)
+            series[relpath] = series_entry(frame, relpath)
 
-    basket_sha256 = hashlib.sha256(
-        "".join(series[symbol][interval]["sha256"] for symbol in sorted(series) for interval in sorted(series[symbol])).encode()
-    ).hexdigest()
-
-    manifest = {
-        "fetched_at": fetched_at,
-        "source": str(source_dir),
-        "series": series,
-        "basket_sha256": basket_sha256,
-    }
+    # `source` is machine-local and `fetched_at` is a wall clock: both move without content moving,
+    # so both are quarantined in `provenance`, outside every digest.
+    manifest = build_manifest(series, written_at=fetched_at, provenance={"fetched_at": fetched_at, "source": str(source_dir)})
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return manifest

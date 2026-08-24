@@ -61,12 +61,15 @@ def test_backfill_basket_writes_tree_and_returns_manifest(tmp_path):
 
     manifest = backfill_basket(source_dir, ["BTC/EUR", "ETH/EUR"], ["60"], out_root, FETCHED_AT)
 
-    assert manifest["fetched_at"] == FETCHED_AT
+    # Contract shape (spec 00099): series keyed by the path relative to the dataset root, the
+    # wall-clock stamp quarantined in provenance, one digest name.
+    assert manifest["written_at"] == FETCHED_AT
+    assert manifest["provenance"]["fetched_at"] == FETCHED_AT
     assert (out_root / "BTC" / "EUR" / "60.parquet").exists()
     assert (out_root / "ETH" / "EUR" / "60.parquet").exists()
-    assert manifest["series"]["BTC/EUR"]["60"]["rows"] == 2
-    assert len(manifest["series"]["BTC/EUR"]["60"]["sha256"]) == 64
-    assert len(manifest["basket_sha256"]) == 64
+    assert manifest["series"]["BTC/EUR/60.parquet"]["rows"] == 2
+    assert len(manifest["series"]["BTC/EUR/60.parquet"]["sha256"]) == 64
+    assert len(manifest["set_sha256"]) == 64
 
     manifest_path = out_root / "manifest.json"
     assert manifest_path.exists()
