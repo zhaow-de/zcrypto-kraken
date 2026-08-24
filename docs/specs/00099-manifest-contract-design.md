@@ -20,7 +20,8 @@ Three further measurements that decide the design:
 
 - **The holdout is a shape mismatch, not a missing field.** Its series key is `ADA` while the file is `ADA/EUR/1440.parquet` — the path is not derivable from the key. Its `manifest_sha256` is opaque: 367 reconstruction candidates, zero matches, so it maps to no slot of known grade.
 - **Identity must be frame content, never file bytes.** `ohlc-full` rebuilds byte-identically (36/36), but `ohlc-15m` does not — polars moved row-group boundaries between 1.42.1 and 1.43.2 — while `dataset_hash` recomputes 36/36 and 12/12. The repo's existing grade is correct and this contract must not introduce a byte grade.
-- **Live manifest consumers are exactly two**: `_manifest_sha256s` (collects the key `sha256`, feeding `_verify_new_files`, `_verify_outgoing`, `ObservedReader._vouched_for`) and `cli/data/rebuild.py:260` (`["basket_sha256"]`, raising on `KeyError`).
+- **Live manifest touch points are four, not two**: `_manifest_sha256s` (feeding `_verify_new_files` and `_verify_outgoing`), `ObservedReader._vouched_for` — which does **not** route through `_attestation_failure` and so needs its own change — `cli/data/rebuild.py:260` (`["basket_sha256"]`, raising on `KeyError`), and two data-gated tests that read a digest key directly and skip in CI, so they run nowhere else.
+- **The converter derives every relative path by walking the parquet tree, never from the series keys.** That is what makes the hub's `ohlc-reach` convertible at all — its keys are base-only (`ADA`) against `ADA/EUR/1440.parquet` — and it is the reason a key that cannot be mapped is not a blocker.
 
 ## The contract
 
@@ -30,6 +31,7 @@ A conformant manifest is exactly:
 {
   "schema_version": 1,
   "written_at": "2026-08-24T09:00:00+00:00",
+  "identity": "set",
   "set_sha256": "<64 hex>",
   "series": {
     "ADA/EUR/1440.parquet": {"sha256": "<64 hex>", "rows": 2842,
@@ -44,15 +46,27 @@ A conformant manifest is exactly:
 
 **`sha256` is `dataset_hash`** — sha256 of the frame's canonical CSV — the grade every writer already vouches and both consumers already compare. Not file bytes (measured unstable across polars versions).
 
-**`set_sha256`** is sha256 over the concatenated per-series `sha256` values in sorted key order — the existing `basket_sha256` recipe, applied to **every** series in the set, and reproducible by construction.
+**`set_sha256`** is sha256 over the concatenated per-series `sha256` values, **in ascending lexicographic order of the series key** — i.e. of the relative path. The digest follows the key order, so it needs no knowledge of what a key part means.
+
+**That ordering is a decision, not an inheritance, because there is no single existing recipe to inherit.** The spec's earlier claim that this is "the existing `basket_sha256` recipe" was false: `cli/backfill/backfill.py` sorts interval keys as **strings** (`'1440' < '240' < '60'`) while `cli/ohlc/reach.py` sorts them as **integers** (`60 < 240 < 1440`). Path order agrees with the first and inverts the second, so one recipe cannot reproduce both and something must move.
+
+**What moves is the summary, never the content, and the converter proves it.** Before writing anything it recomputes every series hash and asserts it equals what the legacy manifest attested, refusing the whole conversion on any mismatch. So a re-anchored digest is provably a re-ordering of identical content. `ohlc-reach`'s committed values change — `8a826898…` and `dc8beef0…` in `docs/reference/data-catalog-full.md`, `d77fff97…` cited by the 2026-08-13 point-in-time universe. Each is re-pointed in the same change, with the legacy value preserved verbatim under `provenance` so the historical citation stays verifiable, and the docs rewritten in place rather than annotated.
+
+**A digest over an empty series set is refused, not emitted.** An empty input otherwise yields sha256("") — a fixed sentinel that would compare equal across two unrelated empty sets.
 
 **`subset_sha256` is optional, and it exists because one set's digest is deliberately not set-wide.** `cli/ohlc/reach.py` excludes detached series from `basket_sha256` on purpose — "that hash names the joinable basket, and mixing in a segment the module just refused to join would contradict the split the filenames exist to enforce" — and that continuous-only value is **cited in committed state**: `docs/universe/point-in-time-universe.md` records `d77fff97c819f5af…` for `data/ohlc-reach-20260813`, and `data/universe-20260813/point-in-time-universe.json` carries the same. A single all-series digest would break that citation chain permanently, and no re-pointing could repair it, because the all-series value is a different number.
 
-So the contract carries an optional `subset_sha256: {name: hex}`, each computed by the same recipe over a named subset of the series keys. `ohlc-reach` declares `continuous`, which reproduces `d77fff97…` exactly. This is a uniform mechanism any set may use — not a per-set branch in the reader — and `rebuild.py` and the universe provenance read the *named subset*, never the set-wide digest.
+So the contract carries an optional `subset_sha256: {name: hex}`, each computed by the same recipe over a named subset of the series keys. `ohlc-reach` declares **both** `continuous` and `detached`, so the documented split and its second committed citation survive rather than being dropped in silence.
+
+**And the manifest declares which digest IS its identity.** A `subset_sha256` alone would move the special case rather than remove it: a caller would still have to know that reach's identity is its continuous subset while `ohlc-full`'s is set-wide — per-set knowledge one layer up, which is the disease. Instead `identity` names the digest that identifies the set (`"set"`, or `"subset:<name>"`), the reader exposes exactly one `identity_digest` accessor, and `rebuild.py` reads that with **no dataset name anywhere in its code path**. A set whose identity subset is empty is refused at write time.
 
 **`written_at`** is when the manifest was written. That is well-defined for every writer, unlike the three spellings it replaces, whose *meanings* genuinely differ (retrieved / assembled / pulled-from-elsewhere). Collapsing three spellings is a rename; collapsing three meanings is a semantic decision, so it is taken explicitly here: the source-specific meaning moves into `provenance`.
 
-**`provenance` is the quarantine.** Machine-local paths, wall-clock stamps, per-run windows (`rest_first`/`rest_last`), and anything else that moves without content moving live here. It is free-form, **excluded from `set_sha256` by construction**, and no consumer may depend on it. This is what stops a false drift alarm without naming individual keys.
+**`provenance` is the quarantine, and the quarantine is enforced in code rather than asserted in prose.** Machine-local paths, wall-clock stamps, per-run windows (`rest_first`/`rest_last`), and anything else that moves without content moving live here. It is free-form, excluded from every digest by construction, and no consumer may depend on it.
+
+The prose alone would have been false of shipped code: `_manifest_sha256s` walks *any* JSON for the key `sha256`, so a hash appearing anywhere under `provenance` would silently enter the vouched set and attest content nothing checked. For a conformant manifest the vouched set is therefore read from `series[*].sha256` explicitly, never by walking — and a test plants a `sha256` inside `provenance` and asserts it does **not** reach the vouched set.
+
+**Timestamps are ISO-8601 with the `T` separator**, which is what every writer already emits via `.isoformat()`, so the converter is a no-op on that field.
 
 ## Scope: which manifests this binds
 
