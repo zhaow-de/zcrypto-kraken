@@ -2,6 +2,10 @@
 data/
 runs/
 docs/
+# ...except this one file, which `cli.data.sync` READS AT RUNTIME to verify frozen datasets whose
+# own manifest vouches nothing. Excluding it makes that verification silently inert in-image, and
+# the image runs `push_hot`. A later pattern re-includes it; docs/ stays excluded otherwise.
+!docs/reference/vouched-dataset-hashes.jsonl
 tests/
 .venv/
 __pycache__/
