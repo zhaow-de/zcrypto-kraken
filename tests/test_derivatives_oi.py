@@ -337,8 +337,8 @@ def test_resume_reuses_existing_perp_files_and_only_fetches_the_missing(tmp_path
     assert not any("BTCUSDT" in u for u in fetched), "resume must NOT re-fetch the completed BTCUSDT"
     assert any("ETHUSDT" in u for u in fetched), "the missing ETHUSDT must be fetched"
     # the manifest covers the full set, reusing the existing BTC series
-    assert set(manifest["series"]) == {"BTCUSDT", "ETHUSDT"}
-    assert manifest["series"]["BTCUSDT"]["rows"] == 1  # the reused frame
+    assert set(manifest["series"]) == {"BTCUSDT/oi.parquet", "ETHUSDT/oi.parquet"}
+    assert manifest["series"]["BTCUSDT/oi.parquet"]["rows"] == 1  # the reused frame
 
 
 def test_backfill_returns_sorted_deduped_typed_frame(tmp_path):
@@ -378,12 +378,12 @@ def test_build_substrate_writes_per_perp_files_and_a_manifest(tmp_path):
     )
     assert (tmp_path / "BTCUSDT" / "oi.parquet").exists()
     assert (tmp_path / "ETHUSDT" / "oi.parquet").exists()
-    assert manifest["basket_sha256"]
-    assert set(manifest["series"]) == {"BTCUSDT", "ETHUSDT"}
-    assert manifest["source"].endswith("daily/metrics")
+    assert manifest["set_sha256"]
+    assert set(manifest["series"]) == {"BTCUSDT/oi.parquet", "ETHUSDT/oi.parquet"}
+    assert manifest["provenance"]["source"].endswith("daily/metrics")
     # round-trips
     got = read_oi_series(tmp_path, "BTCUSDT")
     assert got.height == 3
     # the manifest hash is byte-reproducible across two identical builds
     m2 = json.loads((tmp_path / "manifest.json").read_text())
-    assert m2["basket_sha256"] == manifest["basket_sha256"]
+    assert m2["set_sha256"] == manifest["set_sha256"]

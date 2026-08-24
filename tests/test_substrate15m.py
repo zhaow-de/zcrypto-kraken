@@ -43,12 +43,16 @@ def test_build_15m_substrate_writes_15m_parquet_and_manifest(tmp_path):
 
     assert (out_root / "BTC" / "EUR" / "15.parquet").exists()
     assert (out_root / "manifest.json").exists()
-    assert manifest["fetched_at"] == FETCHED_AT
-    entry = manifest["series"]["BTC/EUR"]["15"]
+    # Contract shape (spec 00099): `build_15m_substrate` delegates to `backfill_basket`, so it
+    # inherits the shape -- series keyed by the path relative to the dataset root, the wall clock
+    # quarantined in provenance, one digest name.
+    assert manifest["written_at"] == FETCHED_AT
+    assert manifest["provenance"]["fetched_at"] == FETCHED_AT
+    entry = manifest["series"]["BTC/EUR/15.parquet"]
     assert entry["rows"] == 8
     assert entry["first_ts"] == _dt(BASE_TS).isoformat()
     assert len(entry["sha256"]) == 64
-    assert len(manifest["basket_sha256"]) == 64
+    assert len(manifest["set_sha256"]) == 64
 
 
 def _write_15m_parquet(out_root: Path, symbol: str, rows_15m: list[list]) -> None:

@@ -81,7 +81,15 @@ def test_the_universe_doc_cites_a_hash_that_reproduces_from_the_set_it_names():
     if not manifest.exists():
         pytest.skip(f"{manifest} absent -- the set is gitignored and not present on this machine")
 
-    basket = json.loads(manifest.read_text())["basket_sha256"]
+    # The set now DECLARES which digest identifies it (spec 00099): reach's identity is its
+    # continuous subset, not the whole set, so reading one named key would be wrong for one of the
+    # two sets `resolve_ohlc_source` can name here.
+    from cli.data.manifest import ManifestError, read_manifest
+
+    try:
+        basket = read_manifest(manifest).identity_digest
+    except ManifestError:  # a tree fetched from the hub is still legacy until converted
+        basket = json.loads(manifest.read_text())["basket_sha256"]
     assert basket == stated.group(1), (
         f"the universe doc cites a basket sha256 the set it names does not carry: "
         f"doc says {stated.group(1)[:12]}, {named.group(1)}/manifest.json says {basket[:12]}"

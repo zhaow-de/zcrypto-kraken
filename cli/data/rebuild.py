@@ -17,6 +17,7 @@ from cli.backfill.backfill import backfill_basket
 from cli.backfill.substrate15m import build_15m_substrate
 from cli.costs.spread import SPREAD_CALIBRATION, effective_spread_bps
 from cli.data.errors import DataSyncError
+from cli.data.manifest import ManifestError, read_manifest
 from cli.derivatives.funding import build_funding_substrate
 from cli.derivatives.oi import build_oi_substrate
 from cli.logging import get_logger
@@ -257,7 +258,21 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     # it gets the same typed failure rather than an untyped KeyError/JSONDecodeError from deep in
     # the call stack (review finding): both mean "this set cannot identify itself".
     try:
-        ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"]
+        # ONE accessor, and no dataset name in this code path. `resolve_ohlc_source` hands back
+        # either a reach sibling or `ohlc-full`, and their identities differ -- reach's is its
+        # continuous subset, ohlc-full's is set-wide. The manifest declares which, so choosing here
+        # would be exactly the per-set knowledge the contract removed, one layer up.
+        ohlc_dataset_hash = read_manifest(manifest_path).identity_digest
+    except ManifestError:
+        # A legacy manifest still identifies itself the old way. Degrading rather than refusing
+        # keeps a hub-fetched tree usable before it has been converted.
+        try:
+            ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise DataSyncError(
+                f"data rebuild: {manifest_path} is unreadable as a basket manifest ({exc!r}) -- "
+                "refusing to write an artifact that cannot cite the set it was built from"
+            ) from exc
     except (json.JSONDecodeError, KeyError) as exc:
         raise DataSyncError(
             f"data rebuild: {manifest_path} is unreadable as a basket manifest ({exc!r}) -- "

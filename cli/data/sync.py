@@ -137,11 +137,35 @@ def _manifest_sha256s(node: object) -> set[str]:
     return found
 
 
-def _vouched_for_set(manifest_dir: Path, set_name: str) -> set[str]:
-    """Everything that attests `set_name`: its own manifest, plus any committed sidecar line."""
+def _attestations_for_set(manifest_dir: Path, set_name: str) -> tuple[set[str], dict[str, str]]:
+    """What attests `set_name`: (every vouched hash, the path-bound subset of them).
+
+    A CONFORMANT manifest carries the path as its series key, so it contributes path bindings just
+    as the sidecar does -- which is what closes the residual T0133 parked. A legacy manifest can
+    only contribute membership, because deriving a path from its keys is the per-set knowledge the
+    contract exists to remove; such a set degrades to today's behaviour rather than being refused.
+    """
+    from cli.data.manifest import ManifestError, read_manifest
+
     manifest_path = manifest_dir / "manifest.json"
-    from_manifest = _manifest_sha256s(json.loads(manifest_path.read_text())) if manifest_path.is_file() else set()
-    return from_manifest | sidecar_hashes(set_name)
+    vouched: set[str] = set()
+    by_path: dict[str, str] = {}
+    if manifest_path.is_file():
+        try:
+            manifest = read_manifest(manifest_path)
+        except ManifestError:
+            # Legacy shape: membership only. `_manifest_sha256s` walks any JSON for the exact key
+            # `sha256`, which is shape-agnostic and is why the zoo was verifiable at all.
+            vouched |= _manifest_sha256s(json.loads(manifest_path.read_text()))
+        else:
+            vouched |= manifest.vouched
+            by_path.update(manifest.hash_by_path())
+    by_path.update(sidecar_hash_by_path(set_name))
+    return vouched | sidecar_hashes(set_name), by_path
+
+
+def _vouched_for_set(manifest_dir: Path, set_name: str) -> set[str]:
+    return _attestations_for_set(manifest_dir, set_name)[0]
 
 
 def _attestation_failure(set_dir: Path, rel: str, vouched: set[str], by_path: dict[str, str]) -> str | None:
@@ -171,7 +195,7 @@ def _verify_outgoing(set_dir: Path, set_name: str, planned: tuple[str, ...]) -> 
     parquets = tuple(rel for rel in planned if rel.endswith(".parquet"))
     if not parquets:
         return
-    vouched = _vouched_for_set(set_dir, set_name)
+    vouched, by_path = _attestations_for_set(set_dir, set_name)
     if not vouched:
         # Fail closed, and MORE readily than the fetch side: this is the permanent direction. A
         # fetch writes into our own tree, which can be inspected and re-fetched; a push writes into
@@ -183,7 +207,6 @@ def _verify_outgoing(set_dir: Path, set_name: str, planned: tuple[str, ...]) -> 
             f"{_VOUCHED_SIDECAR.name} -- refusing to transmit content nothing vouches for onto a "
             f"channel that never overwrites"
         )
-    by_path = sidecar_hash_by_path(set_name)
     for rel in parquets:
         if (why := _attestation_failure(set_dir, rel, vouched, by_path)) is not None:
             raise DataSyncError(
@@ -200,7 +223,7 @@ def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]
             new_by_set.setdefault(set_name, set()).add(sub_path)
 
     for set_name, sub_paths in new_by_set.items():
-        vouched = _vouched_for_set(hot_dir / set_name, set_name)
+        vouched, by_path = _attestations_for_set(hot_dir / set_name, set_name)
         if not vouched:
             # Fail closed. This used to warn and continue, which meant a set that silently stopped
             # emitting hashes degraded to no verification at all with only a log line -- and a log
@@ -210,7 +233,6 @@ def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]
                 f"data fetch: {set_name} ships parquet but is attested by neither its manifest nor "
                 f"{_VOUCHED_SIDECAR.name} -- refusing content nothing vouches for (--no-verify to accept it)"
             )
-        by_path = sidecar_hash_by_path(set_name)
         for sub_path in sub_paths:
             if (why := _attestation_failure(data_root / set_name, sub_path, vouched, by_path)) is not None:
                 raise DataSyncError(f"data fetch: {set_name}/{sub_path} {why}")

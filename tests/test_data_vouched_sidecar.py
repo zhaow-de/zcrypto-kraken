@@ -262,3 +262,54 @@ def test_push_still_carries_an_attested_set(tmp_path, monkeypatch):
     report = sync.push_hot(root, ["frozen-set"], str(dest) + "/")
     assert "frozen-set/BTC/EUR/1440.parquet" in report.new_files
     assert (dest / "frozen-set" / "BTC/EUR/1440.parquet").is_file()
+
+
+# --- the waiting consumer T0133 parked: manifest-attested sets become path-bound -------------------
+
+
+def _conformant_set(tmp_path, name="ohlc-thing"):
+    """A set attested by its OWN manifest (no sidecar), in the contract shape."""
+    from cli.data.manifest import build_manifest, series_entry
+
+    root = tmp_path / "data"
+    a, b = to_frame(_rows(10)), to_frame(_rows(7))
+    write_parquet(a, root / name / "A/EUR/1440.parquet")
+    write_parquet(b, root / name / "B/EUR/1440.parquet")
+    series = {
+        "A/EUR/1440.parquet": series_entry(a, "A/EUR/1440.parquet"),
+        "B/EUR/1440.parquet": series_entry(b, "B/EUR/1440.parquet"),
+    }
+    (root / name / "manifest.json").write_text(json.dumps(build_manifest(series, written_at="2026-08-24T00:00:00+00:00")))
+    return root, a, b
+
+
+def test_a_swap_inside_a_manifest_attested_set_is_refused_at_read(tmp_path, monkeypatch):
+    """T0133 shipped path binding for SIDECAR-attested sets and consciously left manifest-attested
+    sets on membership, because deriving a path per hash needed the per-set knowledge the contract
+    now removes. The manifest carries the path itself, so the residual closes here."""
+    _point_sidecar_at(tmp_path, monkeypatch, [])  # no sidecar: the manifest is the only attestor
+    root, a, b = _conformant_set(tmp_path)
+    ObservedReader(root).read_series("ohlc-thing", "A/EUR/1440.parquet")  # healthy
+
+    write_parquet(b, root / "ohlc-thing" / "A/EUR/1440.parquet")
+    write_parquet(a, root / "ohlc-thing" / "B/EUR/1440.parquet")
+    with pytest.raises(RegistryError):
+        ObservedReader(root).read_series("ohlc-thing", "A/EUR/1440.parquet")
+
+
+def test_a_swap_inside_a_manifest_attested_set_is_refused_at_fetch(tmp_path, monkeypatch):
+    _point_sidecar_at(tmp_path, monkeypatch, [])
+    hot, a, b = _conformant_set(tmp_path, name="ohlc-thing")
+    hot = hot / "ohlc-thing"
+    swapped = tmp_path / "hot"
+    (swapped / "ohlc-thing").mkdir(parents=True)
+    for f in hot.rglob("*"):
+        if f.is_file():
+            target = swapped / "ohlc-thing" / f.relative_to(hot)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(f.read_bytes())
+    write_parquet(b, swapped / "ohlc-thing" / "A/EUR/1440.parquet")
+    write_parquet(a, swapped / "ohlc-thing" / "B/EUR/1440.parquet")
+
+    with pytest.raises(DataSyncError, match="attests for THAT path|is not what"):
+        sync.fetch_hot(swapped, tmp_path / "dest")

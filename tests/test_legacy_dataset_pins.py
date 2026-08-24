@@ -52,5 +52,13 @@ def test_the_reproduced_15m_operand_is_the_manifest_basket_on_disk():
     if not _MANIFEST_15M.exists():
         pytest.skip("data/ohlc-15m/manifest.json absent — off-workstation; the 15m byte anchor is data-gated")
     row = next(r for r in _rows() if r["confidence"] == "reproduced")
-    basket = json.loads(_MANIFEST_15M.read_text())["basket_sha256"]
+    # `basket_sha256` became `set_sha256` under the manifest contract (spec 00099). The VALUE is
+    # unchanged for this set: ohlc-15m is single-interval, so ordering by path and by the legacy
+    # string-sorted interval key coincide -- the byte anchor this row pins still holds.
+    from cli.data.manifest import ManifestError, read_manifest
+
+    try:
+        basket = read_manifest(_MANIFEST_15M).identity_digest
+    except ManifestError:
+        basket = json.loads(_MANIFEST_15M.read_text())["basket_sha256"]
     assert row["evidence"]["operand_15m"] == basket

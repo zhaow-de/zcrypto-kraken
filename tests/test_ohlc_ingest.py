@@ -18,17 +18,20 @@ def test_ingest_basket_writes_tree_and_returns_manifest(tmp_path):
 
     manifest = ingest_basket(pair_keys, intervals, tmp_path, FETCHED_AT, fetch_fn=_fetch_fn)
 
-    assert manifest["fetched_at"] == FETCHED_AT
+    assert manifest["written_at"] == FETCHED_AT
+    assert manifest["provenance"]["fetched_at"] == FETCHED_AT
     assert len(manifest["series"]) == 4
     for symbol in pair_keys:
         for interval in intervals:
             assert (tmp_path / symbol / f"{interval}.parquet").exists()
 
-    entry = next(s for s in manifest["series"] if s["symbol"] == "BTC/EUR" and s["interval"] == 1440)
+    # Keyed by path, and the content hash is `sha256` like every other writer. v0 spelled it
+    # `dataset_hash`, which is why `_manifest_sha256s` never saw a v0 set at all.
+    entry = manifest["series"]["BTC/EUR/1440.parquet"]
     assert entry["rows"] == len(ROWS)
     assert entry["first_ts"] == "2024-07-17T00:00:00+00:00"
     assert entry["last_ts"] == "2024-07-22T00:00:00+00:00"
-    assert len(entry["dataset_hash"]) == 64
+    assert len(entry["sha256"]) == 64
 
 
 def test_ingest_basket_deterministic_given_fixed_fetched_at(tmp_path_factory):

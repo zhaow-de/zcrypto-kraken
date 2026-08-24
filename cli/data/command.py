@@ -112,3 +112,38 @@ def rebuild(
         raise _abort(str(exc)) from exc
 
     logger.info("data rebuild push: new=%d skipped=%d", len(report.new_files), report.skipped_existing)
+
+
+@data_app.command("migrate-manifests")
+def migrate_manifests(
+    apply: bool = typer.Option(False, "--apply", help="Write the converted manifests. Without this, only report."),
+) -> None:
+    """Rewrite legacy dataset manifests into the current contract, from the parquets on disk.
+
+    No parquet is touched -- this recomputes what a manifest says, never what the data is. A set is
+    refused whole if any series no longer hashes to what its legacy manifest attested.
+    """
+    from cli.data.manifest import ManifestError, convert_dataset
+
+    cfg = load_config()
+    data_root = resolve_data_dir(None, cfg)
+    if not data_root.is_dir():
+        raise _abort(f"data root {data_root} does not exist")
+
+    results = []
+    for manifest_path in sorted(data_root.glob("*/manifest.json")):
+        root = manifest_path.parent
+        # The external freeze is out of contract by design: it is not ours to rewrite, and its
+        # attestation content lives in the committed sidecar instead.
+        if root.name.startswith("ohlc-holdout-"):
+            results.append({"dataset": root.name, "status": "external freeze, skipped", "series": 0})
+            continue
+        try:
+            results.append(convert_dataset(root, apply=apply))
+        except ManifestError as exc:
+            raise _abort(str(exc)) from exc
+
+    for r in results:
+        typer.echo(f"{r['dataset']:32} {r['status']:24} series={r['series']}")
+    if not apply:
+        typer.echo("\nDry run. Re-run with --apply to write.")

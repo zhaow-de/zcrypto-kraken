@@ -37,6 +37,7 @@ from pathlib import Path
 
 import polars as pl
 
+from cli.data.manifest import build_manifest, series_entry
 from cli.logging import get_logger
 from cli.ohlc.dataset import dataset_hash, read_parquet, to_frame, write_parquet
 from cli.ohlc.errors import OHLCError
@@ -215,32 +216,33 @@ def _write_manifest(out_root: Path, report: ReachReport, now: datetime) -> None:
     `cli/backfill/backfill.py::backfill_basket`, so a reach manifest is comparable with the canonical
     set's and is independent of any cross-series row ordering.
     """
-    series: list[dict] = []
+    series: dict[str, dict] = {}
+    by_status: dict[str, list[str]] = {"continuous": [], "detached": []}
+    # The seam evidence is per-run and per-series: `rest_first`/`rest_last` name a REST window that
+    # expires, and `overlap_bars`/`gap_bars`/`appended` describe one build. None of it is content,
+    # so it is quarantined per path rather than folded into the leaf a digest covers.
+    seam: dict[str, dict] = {}
     for entry in report.entries:
         name = f"{entry.interval}.parquet" if entry.status == "continuous" else f"{entry.interval}.detached.parquet"
         base, quote = entry.symbol.split("/")
-        frame = read_parquet(out_root / base / quote / name)
-        series.append(
-            {
-                **asdict(entry),
-                "rest_first": entry.rest_first.isoformat(),
-                "rest_last": entry.rest_last.isoformat(),
-                "rows": frame.height,
-                "first_ts": frame["ts"].min().isoformat(),
-                "last_ts": frame["ts"].max().isoformat(),
-                "sha256": dataset_hash(frame),
-            }
-        )
+        relpath = f"{base}/{quote}/{name}"
+        frame = read_parquet(out_root / relpath)
+        series[relpath] = series_entry(frame, relpath)
+        by_status["continuous" if entry.status == "continuous" else "detached"].append(relpath)
+        seam[relpath] = {**asdict(entry), "rest_first": entry.rest_first.isoformat(), "rest_last": entry.rest_last.isoformat()}
 
-    def _basket(status: str) -> str:
-        digests = [r["sha256"] for r in sorted(series, key=lambda r: (r["symbol"], r["interval"])) if r["status"] == status]
-        return hashlib.sha256("".join(digests).encode()).hexdigest() if digests else ""
-
-    manifest = {
-        "built_at": now.isoformat(),
-        "basket_sha256": _basket("continuous"),
-        "detached_sha256": _basket("detached"),
-        "min_seam_overlap": MIN_SEAM_OVERLAP,
-        "series": series,
-    }
+    # Declared only when populated: a digest over an empty subset is sha256("") -- a sentinel two
+    # unrelated empty sets would share -- so the contract refuses it rather than emitting it.
+    subsets = {name: members for name, members in by_status.items() if members}
+    # A reach set's identity is its CONTINUOUS legs: that hash names the joinable basket, and
+    # folding in a segment the module just refused to join would contradict the split the filenames
+    # exist to enforce. Declaring it here is what keeps every consumer from having to know that.
+    identity = "subset:continuous" if by_status["continuous"] else "set"
+    manifest = build_manifest(
+        series,
+        written_at=now.isoformat(),
+        identity=identity,
+        subsets=subsets,
+        provenance={"built_at": now.isoformat(), "min_seam_overlap": MIN_SEAM_OVERLAP, "series": seam},
+    )
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
