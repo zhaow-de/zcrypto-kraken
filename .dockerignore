@@ -2,11 +2,6 @@
 data/
 runs/
 docs/
-# ...except this one file, because the Dockerfile COPYs it and the build fails outright without it
-# in the context. It is NOT read by anything the image runs: `zcrypto data push`/`fetch` and the
-# research loader are the only readers, and both run from a repo checkout where docs/ is present.
-# A later pattern re-includes it; docs/ stays excluded otherwise.
-!docs/reference/vouched-dataset-hashes.jsonl
 tests/
 .venv/
 __pycache__/
