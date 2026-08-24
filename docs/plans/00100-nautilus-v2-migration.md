@@ -221,7 +221,7 @@ Expected: PASS (v1 `Strategy` has `on_quote_tick`).
 
 - [ ] **Step 1: Read the CURRENT live tag before pinning anything**
 
-Do not derive it. Read an actual `client_order_id` from the exec ledger (or from a built node's strategy) and record the tag it carries. Pinning a wrong value changes every future order id.
+Do not take it from this plan. The exec ledger is empty locally — the engine has journaled no fills — so read it off a strategy REGISTERED through the real `Trader.add_strategy`, which is what assigns the tag. Expected `"000"`: the tag is positional (`f"{len(order_id_tags):03d}"`) and `ShadowStrategy` is currently the only strategy. Confirm that by registration rather than trusting it — pinning a wrong value changes every future order id, and the value is visible at the venue.
 
 - [ ] **Step 2: Write the failing pin test**
 
