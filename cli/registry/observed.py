@@ -18,7 +18,7 @@ from pathlib import Path
 import polars as pl
 
 from cli.data.errors import DataSyncError
-from cli.data.sync import _manifest_sha256s, sidecar_hash_by_path, sidecar_hashes
+from cli.data.sync import _attestations_for_set
 from cli.ohlc.dataset import dataset_hash, read_parquet
 from cli.registry.errors import RegistryError
 
@@ -46,24 +46,29 @@ class ObservedReader:
         self._rows: dict[str, int] = {}
         self._span: dict[str, tuple[datetime, datetime]] = {}  # dataset -> (first_ts, last_ts)
         self._vouched: dict[str, set[str]] = {}
+        self._by_path: dict[str, dict[str, str]] = {}
+
+    def _attestations(self, dataset: str) -> tuple[set[str], dict[str, str]]:
+        """Vouched hashes and their path bindings, from the same source the sync path uses.
+
+        Shared deliberately: a read and a fetch that disagreed about what attests a dataset would
+        be a hole shaped exactly like the one this closes. A conformant manifest keys `series` by
+        path, so it contributes bindings; a legacy one can only contribute membership.
+        """
+        if dataset not in self._vouched:
+            try:
+                vouched, by_path = _attestations_for_set(self._root / dataset, dataset)
+            except DataSyncError as exc:  # refuse in THIS surface's dialect, not the sync path's
+                raise RegistryError(f"{dataset}: committed attestations are unreadable — {exc}") from exc
+            except ValueError as exc:  # unparseable manifest: typed, not a raw JSONDecodeError
+                raise RegistryError(
+                    f"{dataset}: manifest.json is unparseable — refusing to read a dataset whose freeze record is corrupt"
+                ) from exc
+            self._vouched[dataset], self._by_path[dataset] = vouched, by_path
+        return self._vouched[dataset], self._by_path[dataset]
 
     def _vouched_for(self, dataset: str) -> set[str]:
-        if dataset not in self._vouched:
-            manifest = self._root / dataset / "manifest.json"
-            try:
-                from_sidecar = sidecar_hashes(dataset)
-            except DataSyncError as exc:  # a corrupt sidecar must refuse in THIS surface's dialect
-                raise RegistryError(f"{dataset}: committed attestations are unreadable — {exc}") from exc
-            if not manifest.exists():
-                self._vouched[dataset] = from_sidecar
-            else:
-                try:
-                    self._vouched[dataset] = _manifest_sha256s(json.loads(manifest.read_text())) | from_sidecar
-                except ValueError as exc:  # unparseable manifest: refuse typed, not with a raw JSONDecodeError
-                    raise RegistryError(
-                        f"{dataset}: manifest.json is unparseable — refusing to read a dataset whose freeze record is corrupt: {exc}"
-                    ) from exc
-        return self._vouched[dataset]
+        return self._attestations(dataset)[0]
 
     def vouched_status(self) -> dict[str, str]:
         return {
@@ -91,7 +96,7 @@ class ObservedReader:
             # halves of the swap and this does not. Sets attested only by their own manifest stay on
             # membership, because deriving a path per hash needs per-set layout knowledge the
             # manifests do not share a shape for (T0132 owns that).
-            if (expected := sidecar_hash_by_path(dataset).get(relpath)) is not None:
+            if (expected := self._attestations(dataset)[1].get(relpath)) is not None:
                 if dataset_hash(full) != expected:
                     raise RegistryError(
                         f"{dataset}/{relpath}: frame-content hash is not what the committed attestation "
