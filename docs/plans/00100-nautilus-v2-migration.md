@@ -33,7 +33,7 @@ Per `.claude/rules/spec-plan-locations.md`, the pair gets a cold review before T
 
 ______________________________________________________________________
 
-**D6 has no task: it is already landed** on this branch (`fix(engine): scope the post-terminal reconciliation to this engine's own position`), because the defect it fixes exists on v1 today and the fix had to be provable against v1. Phase C must not regress it — the three `test_reconcile_terminal_*` tests carry that.
+**D6 is landed but NOT yet v2-safe.** The fix shipped on this branch because the defect exists on v1 today, but it reads `self._client.id` at `cli/engine/executor.py:1092` and `:1788`, and v2 renames that attribute to `strategy_id` (measured: `hasattr(Strategy, "id")` is `False` on the pinned wheel). Task 7a re-points it. **Its own tests cannot catch this**: `StubClient` sets `self.id`, so the three `test_reconcile_terminal_*` tests stay green while production raises — at `:1788` inside `_reconcile_terminal`'s own `except`, which calls `_trip_kill`, latching the kill switch after every completed intent.
 
 ## Phase A — guards that must be proved on v1
 
@@ -88,6 +88,10 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.model.identifiers", "Venue"),
     ("nautilus_trader.trading.strategy", "Strategy"),
 ]
+
+# Attributes, not just symbols. `Strategy.id` is read on the live trade path
+# (`positions_open(strategy_id=self._client.id)`); v2 renames it `strategy_id`.
+PINNED_ATTRIBUTES = [("nautilus_trader.trading.strategy", "Strategy", "id")]
 
 
 @pytest.mark.parametrize("module_path,symbol", PINNED_SYMBOLS, ids=lambda v: v.rsplit(".", 1)[-1])
@@ -223,7 +227,11 @@ def test_the_strategys_order_id_tag_is_explicit_not_positional(tmp_path):
 
 `_publish_fill`'s docstring already says its read is instrument-scoped and that `_reconcile_terminal` doubts the strategy-scoped quantity instead. `_realized_eur` carries no such note. Add one: it stays instrument-scoped on purpose, because a hand settle of an engine leg realizes an outcome that is genuinely the engine's, and strategy-scoping would systematically undercount exactly the sanctioned case. Without the note, a later reader aligns it with D6 and reintroduces the phantom-long class of error.
 
-- [ ] **Step 6: Run the engine suites and commit**
+- [ ] **Step 6: Note that this pin does not survive the crossing unaided**
+
+v2 exposes no `order_id_tag` attribute on the class or an instance — only `strategy.config.order_id_tag` and the derived `strategy_id`. Task 7a re-expresses the pin against the registered strategy's *effective* identity, which is what the venue sees.
+
+- [ ] **Step 7: Run the engine suites and commit**
 
 ______________________________________________________________________
 
@@ -278,7 +286,7 @@ Flat `nautilus_trader.model` replaces `model.enums` / `model.identifiers`; `naut
 
 **Files:** `cli/engine/{node,executor,venuestate}.py`, `tests/test_engine_{executor,node,metrics}.py`, `tests/test_nautilus_adapter.py`, and Task 1's `PINNED_SYMBOLS` table.
 
-- [ ] **Step 1:** Move every import; update `PINNED_SYMBOLS` to the new paths **and the new names** (`KrakenExecutionClientConfig`, `KrakenDataClientFactory`, `KrakenExecutionClientFactory`).
+- [ ] **Step 1:** Move every import; update `PINNED_SYMBOLS` to the new paths **and the new names**: `KrakenExecutionClientConfig`, `KrakenDataClientFactory`, `KrakenExecutionClientFactory`, and **`LiveExecEngineConfig` → `LiveExecutionEngineConfig`** — measured, and easy to miss because it is the config carrying `reconciliation` and `filter_unclaimed_external_orders`, the two defaults the whole external-order path rests on. Update `PINNED_ATTRIBUTES` to `strategy_id`.
 - [ ] **Step 2:** `uv run pytest tests/test_nautilus_interface_pin.py -q` → green again. The pin is now describing v2.
 - [ ] **Step 3:** Commit.
 
@@ -290,6 +298,12 @@ Flat `nautilus_trader.model` replaces `model.enums` / `model.identifiers`; `naut
 
 - [ ] **Step 1:** Rewrite `_node_config` / `build_shadow_node` to the builder chain.
 - [ ] **Step 2:** Drop `instrument_provider=` from both client configs.
+- [ ] **Step 2b (D13): Supply the exec credentials, which v2 now requires**
+
+Measured: `KrakenExecutionClientConfig(...)` without `account_id`, `api_key` and `api_secret` raises `TypeError: missing 3 required positional arguments`. v1 needed none — the adapter read the environment itself. Read the same `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` already rendered onto the host and pass them explicitly; `account_id` is an explicit `AccountId`.
+
+Two properties are load-bearing and each gets a test. **Keyless local construction must still work** — the exec key is IP-bound to the engine host, so a local run has to build the node without one, as v1 allowed. And **the key must never reach a message**: never interpolate it into an error string, never log the config object. A test asserts that a construction failure's text does not contain the key's value.
+
 - [ ] **Step 3 (D5): Measure how the twelve instruments reach the Cache**, against a running v2 node — do not infer it from config. `venue_state_from_cache` raises if any of `INSTRUMENT_IDS` is absent, so establish what now guarantees their presence before the first cycle, and write the guard that proves it.
 - [ ] **Step 4:** Re-point the config-shape pins in `tests/test_engine_node.py`; v2 exposes no node-side config readback, so assert on the config objects handed to the builder instead.
 - [ ] **Step 5:** Commit.
@@ -305,6 +319,17 @@ All measured: `cancel_order(order)` → `cancel_order(order.client_order_id)` at
 - [ ] **Step 3: Assert the subscription's effect, not the absence of an exception.** A missing `subscribe_*` raises `AttributeError` inside `on_timer`'s blanket `except`, which drops the plan with no gate reason and no kill file. A test that only checks "no exception escaped" cannot see it.
 - [ ] **Step 4:** Commit.
 
+### Task 7a: Re-point the strategy identity, and stop the stub hiding the next one
+
+The cold review found this: D6's landed fix reads `self._client.id`, v2 renames it `strategy_id`, and the stub-driven suite is structurally blind because `StubClient` sets `self.id`. No test anywhere drives `ProbeExecutor` with a real `Strategy`, so **any** drift between our client contract and the real one is invisible.
+
+**Files:** `cli/engine/executor.py`, `tests/test_engine_executor.py`
+
+- [ ] **Step 1:** Re-point `cli/engine/executor.py:1092` and `:1788` to `self._client.strategy_id`, and rename `StubClient.id` → `strategy_id` to match production.
+- [ ] **Step 2: Re-express Task 3's tag pin against the effective identity** — assert the *registered* strategy's `strategy_id` and its client-order-id prefix, parametrised over both registration orders (observer first, observer second). v2 exposes no `order_id_tag` attribute, and the config input is not what the venue sees.
+- [ ] **Step 3: Add the guard that generalises this.** Assert every attribute and method `ProbeExecutor` calls on `self._client` exists on the real nautilus `Strategy`. A stub is a contract restatement, and an unverified restatement drifts silently — which is exactly how this defect stayed green.
+- [ ] **Step 4: Prove it bites** — with production on `strategy_id` and the stub reverted to `id`, Step 3's guard must fail. Restore, then commit.
+
 ### Task 8: Delete the `_liquidity` survival guard
 
 Forced: `liquidity_side_to_str` no longer exists and v2 enums are not iterable (`TypeError: 'type' object is not iterable`). `LiquiditySide` is a plain enum with `.name`, so the 27-line guard and `_LIQUIDITY_VALUES` go.
@@ -319,9 +344,13 @@ Forced: `liquidity_side_to_str` no longer exists and v2 enums are not iterable (
 
 **Files:** `cli/engine/node.py`, `tests/test_engine_node.py`
 
-- [ ] **Step 1:** Add a `Strategy` subclass registered under `StrategyId("EXTERNAL")` with an explicit `order_id_tag`, routing `on_order_event` to the existing external handler.
-- [ ] **Step 2: Seal the order surface** — override `submit_order`, `submit_order_list`, `cancel_order`, `cancel_all_orders`, `modify_order`, `close_position`, `close_all_positions` and `market_exit` to raise.
-- [ ] **Step 3: Test that each one raises.** This is the barrier; on an EXTERNAL-registered strategy every scoping default points its authority at the operator's book, so the seal is the only thing standing between us and it.
+- [ ] **Step 1:** Add a `Strategy` subclass registered as `StrategyConfig(strategy_id=StrategyId("EXTERNAL"))` with **`order_id_tag` LEFT UNSET**, routing `on_order_event` to the existing external handler.
+
+Measured, and the reason this is spelled out: supplying a tag yields `strategy_id == EXTERNAL-001`, while unclaimed external orders are stamped exactly `EXTERNAL`. The observer would receive nothing — no exception, no log, no failing test — and D2 would evaporate silently. Unset, it survives `add_strategy` as `EXTERNAL`. Assert that **after registration**, not at construction.
+- [ ] **Step 2: Seal the order surface** — override all twelve to raise: `submit_order`, `submit_order_list`, `cancel_order`, `cancel_orders`, `cancel_all_orders`, `cancel_gtd_expiry`, `modify_order`, `modify_orders`, `close_position`, `close_all_positions`, `market_exit`, `post_market_exit`.
+
+The first draft listed eight and left `cancel_orders`, `modify_orders` and `post_market_exit` live — which is why Step 3 derives the set rather than trusting this list.
+- [ ] **Step 3: Test that each one raises, and that the list is COMPLETE.** Derive the mutating surface — everything on `Strategy` that is absent from `DataActor`, minus `on_*` handlers and the read-only queries — and assert every member of it is sealed. A hand-enumerated seal regains a hole the next time upstream adds a method, silently; a derived one fails loudly and names it. This is the barrier: on an EXTERNAL-registered strategy every scoping default points its authority at the operator's book.
 - [ ] **Step 4:** Extend `test_the_strategy_claims_no_external_orders` and `_ORDER_STREAM_WIDENERS` to cover the observer; retire the `msgbus` allowance, which is now zero.
 - [ ] **Step 5:** Commit.
 
@@ -346,10 +375,15 @@ Forced: `liquidity_side_to_str` no longer exists and v2 enums are not iterable (
 
 ### Task 12: Rounding fixtures
 
-`make_price` diverges on 6 of 12 decimal-midpoint probes (v1 rounds the binary float, v2 the exact decimal half-to-even). `make_qty` raises `value rounded to zero` where v1 returned a quantity — and the call site sits outside the only `try` that wraps sizing.
+The spec's framing of this was corrected by the cold review: a quantity rounding to zero raises on **both** wheels, so a fixture built on that premise proves nothing. The real divergences are narrower and quieter, and there are three classes:
 
-- [ ] **Step 1:** Add fixtures on the **divergent** values, not round numbers — a fixture the change cannot move proves nothing.
-- [ ] **Step 2:** Decide and record whether the `make_qty` raise needs containment at its call site.
+1. **Price half-even at decimal midpoints** — v1 rounds the binary float, v2 the exact decimal.
+2. **`make_qty` raising at the exact half-increment** (`5e-9` at `size_precision=8`) where v1 returned a value.
+3. **`make_qty` value divergence at half-increments** (`1.5e-8` → v1 `0.00000001`, v2 `0.00000002`) — a silent one-increment difference in submitted quantity, which the spec named nowhere.
+
+- [ ] **Step 1: Re-measure all three against a REAL nautilus `Instrument`**, not a `Quantity` constructed by hand — the rounding lives in the instrument's precision, so a hand-built value tests a different code path than production takes.
+- [ ] **Step 2:** Add fixtures on the **divergent** values from that measurement. Class 3 is the one to get right: it is silent, it changes an order's quantity, and no existing test would see it.
+- [ ] **Step 3:** Decide and record whether class 2's raise needs containment — `instrument.make_qty(sized.qty)` sits outside the only `try` wrapping sizing.
 - [ ] **Step 3:** Commit.
 
 ### Task 13: Repair the guards that lost their anchors
@@ -376,12 +410,12 @@ Nothing here arms anything; this task makes the arming pass *possible* and corre
 - [ ] **Step 4: Do not touch `order-semantics-verified.json`.** It gains a version only after the attended pass has run and its research doc records the PASS.
 - [ ] **Step 5:** Commit.
 
-### Task 16: Verify D2's delivery leg on the disarmed engine
+### Task 16: Hand D2's delivery leg to the arming checklist — it cannot execute here
 
-The publish leg is established from source and the delivery leg by experiment, but the two have never been joined on a genuine venue-sourced external order — that needs live reconciliation, unreachable in a backtest.
+The publish leg is established from source and the delivery leg in a backtest, but the join needs a genuine venue-sourced external order, which needs live Kraken reconciliation. This plan converges nothing, D1 forbids deploying a development wheel, and the exec key is IP-bound to the engine host — so no step in this plan can reach it. Pretending otherwise would produce a step that is silently skipped or improvised into a non-equivalent local check.
 
-- [ ] **Step 1:** With the engine disarmed, confirm a real external order's events reach the observer's `on_order_event`.
-- [ ] **Step 2:** Record the result. If they do not arrive, D2 is refuted and the fallback is cache polling on the existing tick — say so rather than working around it.
+- [ ] **Step 1:** Confirm the obligation is registered as `T0152` with a `ripe_when` naming the first v2 converge, and that its index bullet reflects it. Registration and this plan's closeout travel together — prose in a plan is never a deferral's only home.
+- [ ] **Step 2:** State the residual plainly in the PR body: D2 merges with its publish leg proven from source and its delivery leg proven only in a backtest. The fallback if the join fails is known and cheap — Cache polling on the executor's existing 5-second tick.
 
 ### Task 17: Closeout
 

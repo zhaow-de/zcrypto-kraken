@@ -112,6 +112,14 @@ The rule is pushed only after the metric's first record. The counter has never m
 
 `cli/engine/order-semantics-verified.json` records `verified_nautilus_versions`, and both arming guards do exact string membership. On a pin that bumps daily, any bump after the attended probe pass silently disarms the engine. The guards are correct; the sequencing is what must change — the arming pass comes after the pin stops moving, and the record's granularity is decided before that pass, not discovered at it.
 
+### D13 — the exec credentials become ours to hold, and must never leave a variable
+
+v1's `KrakenExecClientConfig()` took no arguments: the adapter sourced `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` from the environment itself, so our code never touched the trade key and a keyless local construction worked by default. v2 requires `account_id`, `api_key` and `api_secret` as explicit arguments — measured: constructing without them raises `TypeError: missing 3 required positional arguments`.
+
+We read the same environment variables, already rendered onto the host, and pass them explicitly. No new plumbing and no second home for the secret.
+
+What changes is blast radius, and that is what this decision exists to bound. The trade key now lives in a Python variable on the live trade path, so it can reach a traceback, a repr, a log line or an exception message in ways it never could while the adapter held it. It is therefore never interpolated into any message, and the config object carrying it is never logged or included in error text. Keyless local construction must survive: the exec key is IP-bound to the engine host, so any local run has to be able to build the node without one, exactly as v1 allowed.
+
 ### D12 — the surfaces that move together
 
 The image is shared: one `Dockerfile`, one `uv.lock`, one image repo. A nautilus pin change rebuilds capture, engine, ops and NAS. The NAS runs `-compat` builds only. A `uv.lock` change reaches every test, so the full suite is owed rather than the diff's reachable subset.
