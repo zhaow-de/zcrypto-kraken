@@ -153,6 +153,35 @@ def test_the_sidecar_arms_the_read_guard_and_a_tampered_frame_is_refused(tmp_pat
         ObservedReader(root).read_series("frozen-set", "BTC/EUR/1440.parquet")
 
 
+def test_two_swapped_series_are_caught_although_the_hash_SET_is_unchanged(tmp_path, monkeypatch):
+    """The case membership provably cannot catch, which is why the attestation is path-keyed.
+
+    Swap two series' contents inside one set and the multiset of hashes is identical, so every
+    membership test passes on BOTH halves of the swap. Only a path-bound check sees it.
+    """
+    root = tmp_path / "data"
+    a, b = to_frame(_rows(10)), to_frame(_rows(7))
+    write_parquet(a, root / "frozen-set" / "A/EUR/1440.parquet")
+    write_parquet(b, root / "frozen-set" / "B/EUR/1440.parquet")
+    _point_sidecar_at(
+        tmp_path,
+        monkeypatch,
+        [
+            {"dataset": "frozen-set", "relpath": "A/EUR/1440.parquet", "dataset_sha256": dataset_hash(a), "rows": 10},
+            {"dataset": "frozen-set", "relpath": "B/EUR/1440.parquet", "dataset_sha256": dataset_hash(b), "rows": 7},
+        ],
+    )
+    ObservedReader(root).read_series("frozen-set", "A/EUR/1440.parquet")  # healthy, before the swap
+
+    # The premise: the set of vouched hashes is IDENTICAL after the swap, so membership is blind.
+    assert sync.sidecar_hashes("frozen-set") == {dataset_hash(a), dataset_hash(b)}
+    write_parquet(b, root / "frozen-set" / "A/EUR/1440.parquet")
+    write_parquet(a, root / "frozen-set" / "B/EUR/1440.parquet")
+
+    with pytest.raises(RegistryError, match="two series were swapped"):
+        ObservedReader(root).read_series("frozen-set", "A/EUR/1440.parquet")
+
+
 # --- the push side: a node that accepts bad bytes is never corrected ------------------------------
 
 

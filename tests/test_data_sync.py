@@ -151,9 +151,10 @@ def test_fetch_verifies_flat_funding_shape_manifest(tmp_path):
     assert "derivatives-funding/BTCUSDT/funding.parquet" in r.new_files
 
 
-def test_fetch_skips_verify_when_manifest_has_no_per_parquet_sha256(tmp_path):
-    # Holdout-style manifest: series carries metadata + a manifest-level manifest_sha256, but no
-    # per-parquet sha256 -> the fetch must NOT crash and must NOT falsely reject; it skips the check.
+def test_fetch_refuses_a_parquet_set_whose_manifest_vouches_nothing(tmp_path):
+    # Holdout-style manifest: metadata + a manifest-level manifest_sha256, but no per-parquet
+    # sha256. This used to warn and continue -- which is how the real holdout went unverified.
+    # It now fails closed: an unattested set is refused, never accepted quietly.
     import json
 
     import polars as pl
@@ -163,17 +164,32 @@ def test_fetch_skips_verify_when_manifest_has_no_per_parquet_sha256(tmp_path):
     f.parent.mkdir(parents=True)
     pl.DataFrame({"ts": [1]}).write_parquet(f)
     (hot / "ohlc-holdout/manifest.json").write_text(json.dumps({"series": {"ADA": {"rows": 1}}, "manifest_sha256": "a" * 64}))
-    r = fetch_hot(hot, data)  # verify=True default -- must not raise
+    with pytest.raises(DataSyncError, match="attested by neither"):
+        fetch_hot(hot, data)  # verify=True default
+    # The escape is explicit rather than silent. Against a FRESH destination, because a fetch
+    # verifies after rsync, so the refused bytes are already on disk in `data`.
+    r = fetch_hot(hot, tmp_path / "data2", verify=False)
     assert "ohlc-holdout/ADA/1440.parquet" in r.new_files
 
 
-def test_fetch_verify_skips_set_without_manifest(tmp_path):
-    # A set that ships no manifest.json (universe/snapshots) -> verify simply skips it, no crash.
+def test_fetch_refuses_a_parquet_set_with_no_manifest_at_all(tmp_path):
+    # A set shipping parquet with nothing attesting it is the same hole by another route.
     import polars as pl
 
     hot, data = tmp_path / "hot", tmp_path / "data"
     f = hot / "universe/u.parquet"
     f.parent.mkdir(parents=True)
     pl.DataFrame({"x": [1]}).write_parquet(f)
-    r = fetch_hot(hot, data)  # verify=True default
-    assert "universe/u.parquet" in r.new_files
+    with pytest.raises(DataSyncError, match="attested by neither"):
+        fetch_hot(hot, data)  # verify=True default
+
+
+def test_fetch_ignores_a_set_that_ships_no_parquet(tmp_path):
+    # The TRUE POSITIVE for the refusal above: universe/snapshots ship JSON, never enter the
+    # parquet loop, and must stay unaffected -- otherwise fail-closed would break every fetch.
+    hot, data = tmp_path / "hot", tmp_path / "data"
+    f = hot / "universe/selection.json"
+    f.parent.mkdir(parents=True)
+    f.write_text("{}")
+    r = fetch_hot(hot, data)  # verify=True default -- must not raise
+    assert "universe/selection.json" in r.new_files

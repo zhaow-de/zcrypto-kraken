@@ -22,7 +22,7 @@ _VOUCHED_SIDECAR = _REPO_ROOT / "docs" / "reference" / "vouched-dataset-hashes.j
 
 
 @lru_cache(maxsize=1)
-def _sidecar_by_dataset() -> dict[str, frozenset[str]]:
+def _sidecar_by_dataset() -> dict[str, dict[str, str]]:
     """The committed per-series attestations, keyed by dataset.
 
     Some canonical sets are produced by a freeze process this repo does not write, whose manifest
@@ -35,7 +35,7 @@ def _sidecar_by_dataset() -> dict[str, frozenset[str]]:
     writer vouches and both consumers compare. A byte-grade digest here would be a second,
     incompatible grade and would refuse every healthy read.
     """
-    by_dataset: dict[str, set[str]] = {}
+    by_dataset: dict[str, dict[str, str]] = {}
     if not _VOUCHED_SIDECAR.is_file():
         logger.warning(
             "vouched attestations absent at %s -- frozen sets whose manifest vouches nothing are unverified in this environment",
@@ -52,15 +52,31 @@ def _sidecar_by_dataset() -> dict[str, frozenset[str]]:
         if not isinstance(row, dict):
             raise DataSyncError(f"{_VOUCHED_SIDECAR.name}:{line_no}: attestation is not an object")
         try:
-            by_dataset.setdefault(row["dataset"], set()).add(row["dataset_sha256"])
+            series = by_dataset.setdefault(row["dataset"], {})
+            relpath, digest = row["relpath"], row["dataset_sha256"]
         except KeyError as exc:
             raise DataSyncError(f"{_VOUCHED_SIDECAR.name}:{line_no}: attestation is missing {exc}") from exc
-    return {name: frozenset(hashes) for name, hashes in by_dataset.items()}
+        # A second line for the same path would shadow the first silently, which is how a set
+        # quietly ends up attested by the wrong hash.
+        if relpath in series and series[relpath] != digest:
+            raise DataSyncError(f"{_VOUCHED_SIDECAR.name}:{line_no}: {row['dataset']}/{relpath} attested twice, differently")
+        series[relpath] = digest
+    return by_dataset
+
+
+def sidecar_hash_by_path(dataset: str) -> dict[str, str]:
+    """Committed attestations for `dataset` BOUND TO PATHS, or empty when it has none.
+
+    The path binding is what a manifest cannot give without per-set knowledge of that set's layout,
+    and it is strictly stronger than a membership test: swapping two series inside one set leaves
+    the set of hashes unchanged, so membership passes and a path-bound check does not.
+    """
+    return dict(_sidecar_by_dataset().get(dataset, {}))
 
 
 def sidecar_hashes(dataset: str) -> set[str]:
     """Committed attestations for `dataset`, or an empty set when it has none."""
-    return set(_sidecar_by_dataset().get(dataset, frozenset()))
+    return set(_sidecar_by_dataset().get(dataset, {}).values())
 
 
 @dataclass(frozen=True)
@@ -161,15 +177,30 @@ def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]
     for set_name, sub_paths in new_by_set.items():
         vouched = _vouched_for_set(hot_dir / set_name, set_name)
         if not vouched:
-            logger.warning(
-                "data fetch verify: %s manifest exposes no per-parquet sha256 -- transfer integrity for "
-                "this set rests on rsync + the append-only contract, not a content re-check",
-                set_name,
+            # Fail closed. This used to warn and continue, which meant a set that silently stopped
+            # emitting hashes degraded to no verification at all with only a log line -- and a log
+            # line on a healthy-looking fetch is not read. Every set shipping parquet is attested
+            # today, so this refuses nothing that works; `--no-verify` accepts it knowingly.
+            raise DataSyncError(
+                f"data fetch: {set_name} ships parquet but is attested by neither its manifest nor "
+                f"{_VOUCHED_SIDECAR.name} -- refusing content nothing vouches for (--no-verify to accept it)"
             )
-            continue
+        by_path = sidecar_hash_by_path(set_name)
         for sub_path in sub_paths:
             actual = dataset_hash(read_parquet(data_root / set_name / sub_path))
-            if actual not in vouched:
+            if (expected := by_path.get(sub_path)) is not None:
+                # Path-BOUND, which membership cannot be: two series swapped inside one set leave the
+                # hash SET unchanged, so membership passes on both.
+                if actual != expected:
+                    raise DataSyncError(
+                        f"data fetch: {set_name}/{sub_path} content hash {actual} is not what "
+                        f"{_VOUCHED_SIDECAR.name} attests for THAT path ({expected})"
+                    )
+            elif actual not in vouched:
+                # Membership, deliberately, for sets attested by their own manifest: deriving a path
+                # per hash needs per-set knowledge of that set's layout, and the manifests speak four
+                # incompatible dialects (measured; see T0132, which owns normalising them). Until a
+                # contract exists, a path-bound check here would be a fifth hard-coded reader.
                 raise DataSyncError(f"data fetch: {set_name}/{sub_path} content hash {actual} is not attested by the manifest")
 
 
@@ -182,6 +213,9 @@ def fetch_hot(hot_dir: Path, data_root: Path, *, verify: bool = True, runner=sub
     new_files = _parse_new_files(output)
 
     if verify:
+        # After the transfer, not before, unlike the push side: a fetch writes into OUR tree, which
+        # we can inspect and re-fetch, whereas a push writes into a never-overwriting hub where the
+        # first bytes to arrive are final. So the refusal here reports; there it prevents.
         _verify_new_files(hot_dir, data_root, new_files)
 
     return SyncReport(new_files=new_files, skipped_existing=total_files - len(new_files))

@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: "the fail-closed step is unblocked NOW — no set under the hot dir vouches nothing any more, so it would refuse nothing (re-check by running `_vouched_for_set` over every set there); the path-binding step waits on [[T0132]]'s manifest contract"
+status: resolved
 ---
 
 # The holdout set is the one canonical dataset with no byte verification
@@ -43,7 +42,19 @@ Three further bounds on `_verify_new_files`, worth stating so its coverage is no
 
 **The old trigger could never have discharged this topic**, which is why it was taken now rather than waited on. A re-freeze of `data/ohlc-holdout-2026-07-10` cannot happen — the look budget is 1, remaining 0, and a fresh cut is a NEW directory. Both of the first two clauses were the same event, and it delivers hashes for a different set while this one keeps its gap forever.
 
-## Suggested next steps
+**The sync check fails closed.** It used to warn and `continue` when a set vouched nothing, which is how the holdout went unverified: a log line on an otherwise healthy fetch is not read. A set that ships parquet and is attested by neither its manifest nor the sidecar is now refused, with `--no-verify` as the explicit escape. Measured before landing it, across the live hub: all six parquet-bearing sets vouch a hash per parquet (`derivatives-funding` 10/10, `derivatives-oi` 10/10, `ohlc-15m` 12/12, `ohlc-full` 36/36, `ohlc-reach` 30/30, holdout 10/10), so it refuses nothing that works today — the value is that a writer which silently stops emitting hashes now stops the fetch instead of degrading it.
 
-- **(autonomous, unblocked now)** Make the empty-`vouched` branch of `_verify_new_files` fail closed for datasets that are *supposed* to expose hashes, instead of warning and continuing — today an allowlisted set that silently stops emitting `sha256` degrades to no verification with only a log line.
-- **(autonomous, independent)** Bind the check to paths: `_verify_new_files` currently asserts hash **membership**, so two swapped series inside one set pass. Per-set knowledge of the parquet layout is what the docstring says it avoids, so this is a deliberate trade to re-examine, not an oversight to patch blindly.
+**The check is path-BOUND wherever a committed attestation names the path**, which the sidecar does by carrying `relpath` per line. That is strictly stronger than membership and catches the one case membership provably cannot: swap two series inside a set and the multiset of hashes is unchanged, so every membership test passes on both halves. A test constructs exactly that swap, asserts the hash set is identical, and then sees the read refused.
+
+**Sets attested only by their own manifest deliberately stay on membership**, and that is a recorded trade rather than an oversight. Deriving a path per hash needs per-set knowledge of each set's layout, and the manifests speak four incompatible dialects — measured on the live hub, `ohlc-reach`'s `series` is a *list*, and `derivatives-funding`/`derivatives-oi` share one shape while laying files out under different names, so shape alone does not even determine the path. Building a fifth hard-coded reader here is precisely what [[T0132]] exists to stop. The residual — a swap inside a manifest-attested set is invisible at both consumers — is registered there as a named waiting consumer, so the contract landing has something concrete to discharge.
+
+## Resolution
+
+All three sub-items are disposed of: the holdout's hashes exist and are committed, the empty-vouched branch fails closed, and path binding is delivered where it can be had without a manifest contract and consciously declined where it cannot. The only thing this topic leaves behind is registered on [[T0132]], which owns the manifest contract that would let the last case be done properly.
+
+## Superseded next steps
+
+Both are discharged above; kept only so the record shows what was asked and how it was answered.
+
+- **Fail closed on an empty `vouched`** — DONE. It refuses now, with `--no-verify` as the explicit escape, and it was measured to refuse nothing that works.
+- **Bind the check to paths instead of hash membership** — DONE where a committed attestation names the path (the sidecar carries `relpath`), and CONSCIOUSLY DECLINED for sets attested only by their own manifest, because that needs the per-set layout knowledge [[T0132]] exists to remove. The residual is registered there.
