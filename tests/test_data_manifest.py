@@ -201,7 +201,22 @@ _LOCAL_REACH = _Path("data/ohlc-reach-20260813/manifest.json")
 
 
 def _reach_series(manifest_path, *, continuous):
+    """Legacy-shaped rows and the value the legacy writer digested them to.
+
+    Reads `provenance.legacy` once a set has been converted, so the pin keeps comparing against the
+    ORIGINAL recipe's output rather than quietly re-pinning itself to the new one -- which is the
+    only way it can still detect a change in ordering.
+    """
     raw = json.loads(manifest_path.read_text())
+    if raw.get("schema_version") is not None:
+        legacy = raw["provenance"]["legacy"]
+        suffix = ".detached.parquet" if not continuous else ".parquet"
+        out = {
+            key: {"sha256": leaf["sha256"]}
+            for key, leaf in raw["series"].items()
+            if key.endswith(".detached.parquet") is (not continuous) and key.endswith(suffix)
+        }
+        return legacy, out
     out = {}
     for row in raw["series"]:
         if (row["status"] == "continuous") is not continuous:
