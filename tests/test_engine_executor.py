@@ -161,6 +161,9 @@ def _all_instruments(**overrides):
 _FakeCurrency = namedtuple("_FakeCurrency", ["code"])
 
 
+_STUB_STRATEGY_ID = StrategyId("ShadowStrategy-000")
+
+
 class StubCache:
     """Duck-types the Cache accessors `venue_state_from_cache` and the executor call, matching
     their real signatures. `raises=True` is the no-venue-truth construction."""
@@ -199,12 +202,20 @@ class StubCache:
         strategy-scoped read is what excludes the operator's book. A stub that swallowed the filter
         would return the operator's holding to a scoped read, and the test could not tell a fixed
         `_reconcile_terminal` from a broken one."""
+        if strategy_id is not None and not isinstance(strategy_id, StrategyId):
+            raise TypeError(f"Argument 'strategy_id' has incorrect type (expected StrategyId, got {type(strategy_id).__name__})")
         key = self._position_key(instrument_id)
         own = self._positions.get(key, [])
         external = self._external.get(key, [])
         if strategy_id is None:
             return own + external
-        return external if str(strategy_id) == "EXTERNAL" else own
+        if str(strategy_id) == "EXTERNAL":
+            return external
+        # An id that is neither ours nor EXTERNAL owns NOTHING -- the real Cache indexes positions by
+        # the exact strategy id, so a wrong id returns []. Returning `own` here would let a caller
+        # reading under the wrong identity look correct in tests and latch the kill switch in
+        # production, which is the whole defect class this stub exists to keep visible.
+        return own if str(strategy_id) == str(_STUB_STRATEGY_ID) else []
 
     def positions_closed(self, *, instrument_id=None, **kwargs):
         return self._closed.get(self._position_key(instrument_id), [])
@@ -264,7 +275,7 @@ class StubClient:
         self.cache = cache if cache is not None else StubCache()
         # A real StrategyId, not a str: `Cache.positions_open(strategy_id=...)` is Cython-typed and
         # refuses a str, so a stubbed str would accept what production cannot.
-        self.id = StrategyId("ShadowStrategy-000")
+        self.id = _STUB_STRATEGY_ID
         self.order_factory = StubOrderFactory()
         self.submitted = []
         self.canceled = []

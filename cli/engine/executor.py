@@ -1073,6 +1073,18 @@ class ProbeExecutor:
                 return
 
         instrument_id = InstrumentId.from_str(INSTRUMENT_IDS[intent.symbol])
+        try:
+            # Before the subscribe, and guarded like the venue-truth read above: this is the second
+            # Cache read of the same instant, and a raise after subscribing would leak the quote
+            # subscription until restart.
+            own_position_before = sum(
+                float(p.signed_qty)
+                for p in self._client.cache.positions_open(instrument_id=instrument_id, strategy_id=self._client.id)
+            )
+        except Exception:
+            logger.warning("own position unreadable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
+            self._refuse_intent(index, ("no venue truth",))
+            return
         self._client.subscribe_quote_ticks(instrument_id)
         self._active = _ActiveIntent(
             index=index,
@@ -1087,10 +1099,7 @@ class ProbeExecutor:
             close_qty=decision.qty if intent.action == "close" else None,
             reduce_only=decision.reduce_only,
             position_before=state.positions.get(intent.symbol, 0.0),
-            own_position_before=sum(
-                float(p.signed_qty)
-                for p in self._client.cache.positions_open(instrument_id=instrument_id, strategy_id=self._client.id)
-            ),
+            own_position_before=own_position_before,
         )
 
     def _classify_close(self, intent: ProbeIntent, state, level: str) -> _CloseDecision:
