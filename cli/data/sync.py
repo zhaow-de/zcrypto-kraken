@@ -144,6 +144,23 @@ def _vouched_for_set(manifest_dir: Path, set_name: str) -> set[str]:
     return from_manifest | sidecar_hashes(set_name)
 
 
+def _attestation_failure(set_dir: Path, rel: str, vouched: set[str], by_path: dict[str, str]) -> str | None:
+    """Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
+
+    Path-BOUND whenever a committed attestation names this exact path, which membership cannot be:
+    two series swapped inside one set leave the hash SET unchanged, so membership passes on both
+    halves of the swap. Sets attested only by their own manifest fall back to membership, because
+    deriving a path per hash needs the per-set layout knowledge the manifests share no shape for.
+    """
+    actual = dataset_hash(read_parquet(set_dir / rel))
+    if (expected := by_path.get(rel)) is not None:
+        if actual != expected:
+            return f"content hash {actual} is not what {_VOUCHED_SIDECAR.name} attests for THAT path ({expected})"
+    elif actual not in vouched:
+        return f"content hash {actual} is attested by neither its manifest nor {_VOUCHED_SIDECAR.name}"
+    return None
+
+
 def _verify_outgoing(set_dir: Path, set_name: str, planned: tuple[str, ...]) -> None:
     """Re-hash what a push is about to transmit, and refuse content nothing attests.
 
@@ -156,14 +173,22 @@ def _verify_outgoing(set_dir: Path, set_name: str, planned: tuple[str, ...]) -> 
         return
     vouched = _vouched_for_set(set_dir, set_name)
     if not vouched:
-        return  # attested nowhere -- the same silence a fetch keeps for such a set
+        # Fail closed, and MORE readily than the fetch side: this is the permanent direction. A
+        # fetch writes into our own tree, which can be inspected and re-fetched; a push writes into
+        # a hub that never overwrites, so unattested bytes that leave are final everywhere. There is
+        # deliberately no `--no-verify` counterpart here -- an escape on this side would be a
+        # switch for transmitting content nothing vouches for, onto a channel with no undo.
+        raise DataSyncError(
+            f"data push: {set_name} ships parquet but is attested by neither its manifest nor "
+            f"{_VOUCHED_SIDECAR.name} -- refusing to transmit content nothing vouches for onto a "
+            f"channel that never overwrites"
+        )
+    by_path = sidecar_hash_by_path(set_name)
     for rel in parquets:
-        actual = dataset_hash(read_parquet(set_dir / rel))
-        if actual not in vouched:
+        if (why := _attestation_failure(set_dir, rel, vouched, by_path)) is not None:
             raise DataSyncError(
-                f"data push: {set_name}/{rel} content hash {actual} is attested by neither its manifest nor "
-                f"{_VOUCHED_SIDECAR.name} -- refusing to transmit, because a node that accepts these bytes "
-                f"can never be corrected by a later push"
+                f"data push: {set_name}/{rel} {why} -- refusing to transmit, because a node that "
+                f"accepts these bytes can never be corrected by a later push"
             )
 
 
@@ -187,21 +212,8 @@ def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]
             )
         by_path = sidecar_hash_by_path(set_name)
         for sub_path in sub_paths:
-            actual = dataset_hash(read_parquet(data_root / set_name / sub_path))
-            if (expected := by_path.get(sub_path)) is not None:
-                # Path-BOUND, which membership cannot be: two series swapped inside one set leave the
-                # hash SET unchanged, so membership passes on both.
-                if actual != expected:
-                    raise DataSyncError(
-                        f"data fetch: {set_name}/{sub_path} content hash {actual} is not what "
-                        f"{_VOUCHED_SIDECAR.name} attests for THAT path ({expected})"
-                    )
-            elif actual not in vouched:
-                # Membership, deliberately, for sets attested by their own manifest: deriving a path
-                # per hash needs per-set knowledge of that set's layout, and the manifests speak four
-                # incompatible dialects (measured; see T0132, which owns normalising them). Until a
-                # contract exists, a path-bound check here would be a fifth hard-coded reader.
-                raise DataSyncError(f"data fetch: {set_name}/{sub_path} content hash {actual} is not attested by the manifest")
+            if (why := _attestation_failure(data_root / set_name, sub_path, vouched, by_path)) is not None:
+                raise DataSyncError(f"data fetch: {set_name}/{sub_path} {why}")
 
 
 def fetch_hot(hot_dir: Path, data_root: Path, *, verify: bool = True, runner=subprocess.run) -> SyncReport:

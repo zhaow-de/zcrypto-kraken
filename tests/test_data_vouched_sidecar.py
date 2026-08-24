@@ -185,6 +185,51 @@ def test_two_swapped_series_are_caught_although_the_hash_SET_is_unchanged(tmp_pa
 # --- the push side: a node that accepts bad bytes is never corrected ------------------------------
 
 
+def test_a_path_named_twice_with_different_hashes_is_refused(tmp_path, monkeypatch):
+    # A second line for a path silently shadowing the first is how a set ends up attested by the
+    # wrong hash. Same path with the SAME hash is idempotent and allowed.
+    rec = {"dataset": "d", "relpath": "A.parquet", "dataset_sha256": "a" * 64, "rows": 1}
+    _point_sidecar_at(tmp_path, monkeypatch, [rec, dict(rec)])
+    assert sync.sidecar_hashes("d") == {"a" * 64}  # exact duplicate: fine
+
+    with pytest.raises(DataSyncError, match="attested twice, differently"):
+        _point_sidecar_at(tmp_path, monkeypatch, [rec, {**rec, "dataset_sha256": "b" * 64}])
+        sync.sidecar_hashes("d")
+
+
+# --- the FETCH side, which is where a first ingest lands ------------------------------------------
+
+
+def _hot_set_attested(tmp_path, monkeypatch, *, hash_the_sidecar_names):
+    """A hot set whose sidecar line names its path, with a caller-chosen hash for that path."""
+    hot = tmp_path / "hot"
+    frame = to_frame(_rows(10))
+    write_parquet(frame, hot / "frozen-set" / "BTC/EUR/1440.parquet")
+    (hot / "frozen-set" / "manifest.json").write_text(json.dumps({"series": {"BTC/EUR": {"rows": 10}}}))
+    _point_sidecar_at(
+        tmp_path,
+        monkeypatch,
+        [{"dataset": "frozen-set", "relpath": "BTC/EUR/1440.parquet", "dataset_sha256": hash_the_sidecar_names, "rows": 10}],
+    )
+    return hot, dataset_hash(frame)
+
+
+def test_a_fetch_accepts_content_matching_the_path_the_sidecar_names(tmp_path, monkeypatch):
+    # The true positive: without it, a path-bound check that refuses everything would look correct.
+    frame_hash = dataset_hash(to_frame(_rows(10)))
+    hot, _ = _hot_set_attested(tmp_path, monkeypatch, hash_the_sidecar_names=frame_hash)
+    report = sync.fetch_hot(hot, tmp_path / "data")
+    assert "frozen-set/BTC/EUR/1440.parquet" in report.new_files
+
+
+def test_a_fetch_refuses_content_that_is_not_what_the_sidecar_names_for_that_path(tmp_path, monkeypatch):
+    # The fetch-side half of path binding. Its manifest vouches nothing, so only the sidecar can
+    # speak -- and it names a hash this file does not have.
+    hot, _ = _hot_set_attested(tmp_path, monkeypatch, hash_the_sidecar_names="c" * 64)
+    with pytest.raises(DataSyncError, match="attests for THAT path"):
+        sync.fetch_hot(hot, tmp_path / "data")
+
+
 def test_push_refuses_unattested_content_before_it_leaves(tmp_path, monkeypatch):
     root, good = _frozen_set(tmp_path)
     _point_sidecar_at(

@@ -53,9 +53,11 @@ def test_fetch_missing_hot_source_exits_nonzero(tmp_path, monkeypatch):
 
 
 def test_push_respects_the_allowlist(tmp_path, monkeypatch):
+    # Non-parquet payload on purpose: this pins WHICH SETS the CLI pushes. A parquet would also
+    # engage the attestation check (push fails closed on an unattested set), conflating the two.
     data_dir = tmp_path / "data"
     (data_dir / "ohlc-full").mkdir(parents=True)
-    (data_dir / "ohlc-full" / "a.parquet").write_bytes(b"A")
+    (data_dir / "ohlc-full" / "a.json").write_bytes(b"A")
     (data_dir / "engine-store").mkdir(parents=True)
     (data_dir / "engine-store" / "secret.parquet").write_bytes(b"NO")
     dest = tmp_path / "dest"
@@ -65,7 +67,7 @@ def test_push_respects_the_allowlist(tmp_path, monkeypatch):
 
     result = runner.invoke(app, ["data", "push"])
     assert result.exit_code == 0
-    assert (dest / "ohlc-full" / "a.parquet").read_bytes() == b"A"
+    assert (dest / "ohlc-full" / "a.json").read_bytes() == b"A"
     assert not (dest / "engine-store").exists()
 
 

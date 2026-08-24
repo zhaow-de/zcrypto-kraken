@@ -38,12 +38,14 @@ def test_fetch_missing_hot_dir_raises(tmp_path):
 
 
 def test_push_only_allowlisted_sets_and_additive(tmp_path):
+    # Payloads are non-parquet on purpose: this pins WHICH SETS travel, and a parquet would also
+    # engage the attestation check, conflating two things. That refusal has its own test below.
     data, dest = tmp_path / "data", tmp_path / "dest"
-    _mk(data, "ohlc-full/a.parquet", b"A")
+    _mk(data, "ohlc-full/a.json", b"A")
     _mk(data, "engine-store/secret.parquet", b"NO")
     dest.mkdir()
     push_hot(data, ["ohlc-full"], str(dest) + "/")
-    assert (dest / "ohlc-full/a.parquet").read_bytes() == b"A"
+    assert (dest / "ohlc-full/a.json").read_bytes() == b"A"
     assert not (dest / "engine-store").exists()
 
 
@@ -63,11 +65,23 @@ def test_push_never_overwrites_dest(tmp_path):
 
 
 def test_push_extra_sets_pushes_minted_siblings(tmp_path):
+    # Non-parquet payload for the same reason as the allowlist test above.
     data, dest = tmp_path / "data", tmp_path / "dest"
-    _mk(data, "ohlc-full-20260718/a.parquet", b"A")
+    _mk(data, "ohlc-full-20260718/a.json", b"A")
     dest.mkdir()
     push_hot(data, [], str(dest) + "/", extra_sets=["ohlc-full-20260718"])
-    assert (dest / "ohlc-full-20260718/a.parquet").read_bytes() == b"A"
+    assert (dest / "ohlc-full-20260718/a.json").read_bytes() == b"A"
+
+
+def test_push_refuses_a_parquet_set_attested_by_nothing(tmp_path):
+    # Push fails closed MORE readily than fetch, and deliberately has no --no-verify counterpart:
+    # the hub never overwrites, so unattested bytes that leave are final on every node.
+    data, dest = tmp_path / "data", tmp_path / "dest"
+    _mk(data, "ohlc-full/a.parquet", b"A")
+    dest.mkdir()
+    with pytest.raises(DataSyncError, match="never overwrites"):
+        push_hot(data, ["ohlc-full"], str(dest) + "/")
+    assert not list(dest.rglob("*.parquet")), "refused after the bytes had already left"
 
 
 def test_a_stamped_set_is_published_via_extra_sets_beside_the_legacy_one(tmp_path):
@@ -127,7 +141,7 @@ def test_fetch_verifies_manifest_and_fails_on_corruption(tmp_path):
     bad.parent.mkdir(parents=True)
     pl.DataFrame({"ts": [9]}).write_parquet(bad)
     (hot / "ohlc-bad/manifest.json").write_text(json.dumps({"series": {"BTC/EUR": {"1440": {"sha256": "0" * 64}}}}))
-    with pytest.raises(DataSyncError, match="not attested"):
+    with pytest.raises(DataSyncError, match="content hash"):
         fetch_hot(hot, data)
 
 
@@ -164,7 +178,7 @@ def test_fetch_refuses_a_parquet_set_whose_manifest_vouches_nothing(tmp_path):
     f.parent.mkdir(parents=True)
     pl.DataFrame({"ts": [1]}).write_parquet(f)
     (hot / "ohlc-holdout/manifest.json").write_text(json.dumps({"series": {"ADA": {"rows": 1}}, "manifest_sha256": "a" * 64}))
-    with pytest.raises(DataSyncError, match="attested by neither"):
+    with pytest.raises(DataSyncError, match="ships parquet but is attested by neither"):
         fetch_hot(hot, data)  # verify=True default
     # The escape is explicit rather than silent. Against a FRESH destination, because a fetch
     # verifies after rsync, so the refused bytes are already on disk in `data`.
@@ -180,7 +194,7 @@ def test_fetch_refuses_a_parquet_set_with_no_manifest_at_all(tmp_path):
     f = hot / "universe/u.parquet"
     f.parent.mkdir(parents=True)
     pl.DataFrame({"x": [1]}).write_parquet(f)
-    with pytest.raises(DataSyncError, match="attested by neither"):
+    with pytest.raises(DataSyncError, match="ships parquet but is attested by neither"):
         fetch_hot(hot, data)  # verify=True default
 
 
