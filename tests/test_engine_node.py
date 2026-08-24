@@ -747,6 +747,28 @@ def test_a_really_registered_strategy_subscribes_the_external_topic_the_library_
     assert node._EXTERNAL_ORDER_TOPIC in {t.replace(str(strategy.id), "EXTERNAL") for t in own}
 
 
+# --- the handler-existence guard (a renamed library handler is invisible to every test above) ----
+
+
+def test_every_handler_our_strategy_overrides_exists_on_the_library_base_class():
+    """The silent-rename guard. A handler the framework no longer dispatches to is not an error in
+    Python -- it is a method nobody calls, and a stub-driven suite cannot see the difference. This
+    turns the whole class of handler renames into one red test.
+
+    It is deliberately general rather than named after `on_quote_tick`: the next rename will be a
+    different handler.
+    """
+    from nautilus_trader.trading.strategy import Strategy
+
+    overridden = {name for name in vars(ShadowStrategy) if name.startswith("on_") and callable(getattr(ShadowStrategy, name, None))}
+    assert overridden, "found no handlers to check -- the walk is broken, not the strategy"
+    missing = sorted(name for name in overridden if not hasattr(Strategy, name))
+    assert not missing, (
+        f"{missing} are overridden here but do not exist on the library's Strategy -- the framework "
+        f"will never call them, and nothing else in this suite would notice"
+    )
+
+
 # --- build_shadow_node (assembled, never run; node.build() is offline) --------------------------
 
 
