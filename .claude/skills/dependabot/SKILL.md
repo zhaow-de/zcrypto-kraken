@@ -83,7 +83,8 @@ After the cap: **stop and ask** the user. Don't silently keep retrying.
 Commit any fixes with our project's commit convention (per `.claude/rules/commit-messages.md`):
 
 ```bash
-git add -A
+# Stage by EXPLICIT PATH — never -A/-u (commit-messages.md): name exactly the files 2c edited.
+git add <paths the auto-fix touched>
 git commit -m "$(cat <<'EOF'
 fix(config): resolve <symptom> after <package> upgrade
 
@@ -105,15 +106,14 @@ git push --force-with-lease origin "$(git branch --show-current)"
 # Identify the PR number for this branch (or use the number already in the sorted list)
 PR_NUMBER=<the number for this PR>
 
-# Poll CI: every 30s, max 10 minutes.
 # coverage.yml now runs on pull_request into develop/main (dependabot targets develop), so a
 # Dependabot PR DOES report a "Full test suite" check — wait for it, and merge only when green.
 # coverage.yml sets fail-on-error: false on the Coveralls upload step, so a red "Full
 # test suite" check is always a real pytest failure — never an upload/secrets artifact.
-deadline=$(( $(date +%s) + 600 ))
-state="pending"
-while [ "$(date +%s)" -lt "$deadline" ]; do
-    state=$(gh pr view "$PR_NUMBER" --json statusCheckRollup | python3 -c '
+# Poll with SHORT, per-call-timeout commands re-issued until resolution or ~10 min of
+# budget is spent — never one long foreground while-loop (agent-ops.md): run the block
+# below as its OWN command, read the state, and repeat after ~30 s if still pending.
+state=$(timeout 30 gh pr view "$PR_NUMBER" --json statusCheckRollup | python3 -c '
 import sys, json
 rollup = (json.load(sys.stdin) or {}).get("statusCheckRollup") or []
 if not rollup:
@@ -128,12 +128,6 @@ def cls(item):
 states = {cls(i) for i in rollup}
 print("failed" if "failed" in states else "pending" if "pending" in states else "success")
 ')
-    if [ "$state" = "success" ] || [ "$state" = "none" ] || [ "$state" = "failed" ]; then
-        break
-    fi
-    echo "Waiting for CI... (state: $state)"
-    sleep 30
-done
 
 # Merge only when CI passed or reported no checks. On a failure — or when the
 # 10-minute deadline expires with CI still pending — STOP and ask the user
@@ -151,7 +145,10 @@ fi
 
 ```bash
 git checkout "$ORIGINAL_BRANCH"
-git stash pop 2>/dev/null || true
+# Pop ONLY this skill's entry: on a clean-tree run Phase 1 saved NOTHING, so a bare
+# `git stash pop` would pop the user's own pre-existing stash onto the branch.
+ref=$(git stash list | grep -F "dependabot-skill-temp" | head -1 | cut -d: -f1)
+[ -n "$ref" ] && git stash pop "$ref"
 ```
 
 Report a summary:
@@ -185,7 +182,9 @@ gh pr checkout <number>
 gh pr merge <number> --squash --delete-branch
 
 # CI status snapshot (one-off)
-gh pr view <number> --json statusCheckRollup -q '[.statusCheckRollup[].conclusion // .statusCheckRollup[].state]'
+# Per-item alternation — `[.statusCheckRollup[].conclusion // ...state]` collects ALL non-null
+# conclusions first and only falls back when there are NONE, hiding every pending item.
+gh pr view <number> --json statusCheckRollup -q '[.statusCheckRollup[] | .conclusion // .state]'
 ```
 
 ## Notes

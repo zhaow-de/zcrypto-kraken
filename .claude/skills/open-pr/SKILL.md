@@ -73,7 +73,7 @@ Omit the line entirely when there are no reviewer trailers. The PR body is free 
 
 ## The deferral sweep — before every create or body edit
 
-Sweep the draft body for deferral language — *follow-up, later, once/when X, deferred, out of scope, known imprecision, registered* — and resolve **every hit in the same edit**: an existing `T<NNNN>` reference, a new topic via `topic-ops`, or an explicit drop. Writing the caveat is not registering it; a claim that something "is registered" is checked by grep, not trusted — this failed twice in one branch with the rule already written, which is why it is a step here and not only prose in `open-topics.md`.
+Sweep the draft body for deferral language — *follow-up, later, once/when X, deferred, out of scope, known imprecision, registered* — and resolve **every hit in the same edit**: an existing `T<NNNN>` reference, a new topic via `topic-ops`, or an explicit drop. Writing the caveat is not registering it; a claim that something "is registered" is checked by grep, not trusted.
 
 ## Editing a PR body
 

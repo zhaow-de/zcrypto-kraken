@@ -81,4 +81,4 @@ Set `last-grooming-section-at:` to now (UTC, ISO-8601) — full runs only; seman
 | Purging DONE ITEMS as items arrive there | Purge happens once — after the numbered display and the batch confirmation. |
 | Copying a memo paragraph into a T-topic | Paraphrase. The memo is private; topics are git-tracked. |
 | Changing a T-topic's *status* without moving its `docs/open-topics/README.md` bullet | `open-topics.md` violation — the bullet moves on status transitions; a content-only edit may merely refresh its description. |
-| Moving a *summary* to DONE ITEMS while the item's text stays in the queue | Move the WHOLE item — a groomed milestone carries no done work. (Caught in the first dry-run: a `DONE, merged` narrative survived grooming.) |
+| Moving a *summary* to DONE ITEMS while the item's text stays in the queue | Move the WHOLE item — a groomed milestone carries no done work. |
