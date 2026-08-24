@@ -48,6 +48,24 @@ def _conditional_trigger_reason(pr: object, branch: str) -> str | None:
     return None
 
 
+def _job_disqualifier(job: dict) -> str | None:
+    """Why a job's reported check-run name may not be exactly its `name:`, or None if it is.
+
+    A matrix job is reported per leg with the matrix values appended (`build (a, b)`), and a job
+    delegating with `uses:` is reported as `caller / callee` -- in both cases the bare name is a
+    string GitHub never emits, so requiring it blocks every PR while this file looks fine.
+    A job-level `if:` is a different defeat of the same gate: the job still reports, as `skipped`,
+    which SATISFIES a required check -- so the merge button goes green with the suite never run.
+    """
+    if job.get("strategy") is not None:
+        return "it has a `strategy:`, so GitHub appends the matrix values to the reported name"
+    if job.get("uses") is not None:
+        return "it delegates with `uses:`, so GitHub reports it as `caller / callee`"
+    if job.get("if") is not None:
+        return "it has a job-level `if:`, so it can report `skipped` -- which satisfies a required check without running"
+    return None
+
+
 def _check_names_reported_on_prs_into(branch: str) -> tuple[dict[str, Path], list[str]]:
     """Check-run names that ALWAYS report for a PR into `branch`, plus why any workflow was excluded.
 
@@ -59,14 +77,24 @@ def _check_names_reported_on_prs_into(branch: str) -> tuple[dict[str, Path], lis
         wf = yaml.safe_load(path.read_text(encoding="utf-8"))
         # PyYAML parses the bare key `on:` as the boolean True (YAML 1.1), not the string.
         triggers = wf.get("on", wf.get(True)) or {}
+        # `on: [push, pull_request]` and `on: pull_request` are equally valid; both carry no
+        # filters, so they always fire. Normalising here keeps them out of the silent middle
+        # ground of appearing in neither the reported names nor the skipped-with-a-reason list.
+        if isinstance(triggers, str):
+            triggers = {triggers: None}
+        elif isinstance(triggers, list):
+            triggers = dict.fromkeys(triggers)
         if not isinstance(triggers, dict) or "pull_request" not in triggers:
             continue
-        jobs = list((wf.get("jobs") or {}).items())
         if (reason := _conditional_trigger_reason(triggers["pull_request"], branch)) is not None:
             skipped.append(f"{path.name}: {reason}")
             continue
-        for job_id, job in jobs:
-            names[(job or {}).get("name") or job_id] = path
+        for job_id, job in (wf.get("jobs") or {}).items():
+            job = job or {}
+            if (reason := _job_disqualifier(job)) is not None:
+                skipped.append(f"{path.name} job {job_id!r}: {reason}")
+                continue
+            names[job.get("name") or job_id] = path
     return names, skipped
 
 

@@ -1,4 +1,4 @@
-name: Test coverage
+name: Full test suite
 
 on:
   # PRs into develop/main only. Every change reaches those branches via a PR, so the PR run gates
