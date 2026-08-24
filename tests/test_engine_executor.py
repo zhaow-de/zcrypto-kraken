@@ -3761,6 +3761,30 @@ def _terminal_intent(*, filled, symbol="BTC/EUR", side="buy", position_before=0.
     )
 
 
+def test_an_operator_holding_present_at_intent_start_never_reaches_the_terminal_comparison(tmp_path):
+    """The CAPTURE end of the scoping, driven through production instead of handed in.
+
+    The three `_reconcile_terminal` tests below build `_ActiveIntent` directly, so they pin the
+    comparison's arithmetic and never execute `_start_intent`'s own read. Deleting the scoping from
+    that read passes all of them. Here the operator is already holding when the intent starts and
+    the intent fills exactly what it asked for: an instrument-scoped capture would carry the
+    operator's 0.5 into `own_position_before`, the strategy-scoped terminal read would exclude it,
+    and the kill switch would latch on a sanctioned hand settle.
+    """
+    cache = StubCache()
+    cache.set_external_position("BTC/EUR", 0.5)
+    ex, client, clock = _resting_executor(tmp_path, client=StubClient(cache))
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    _deliver_fill(ex, client, client.last_order_id, 0.001)  # moves OUR position, as the venue does
+
+    assert not _kill_file(tmp_path).exists(), (
+        "an operator holding that predates the intent entered this engine's own baseline -- the "
+        "capture read must be scoped to this strategy, not to the instrument"
+    )
+    assert _intent_outcome(tmp_path, 0) == "filled"
+
+
 def test_reconcile_terminal_ignores_a_holding_this_engine_never_ordered(tmp_path):
     """The operator hand-settles on a symbol this engine also trades, while an intent is running.
 
