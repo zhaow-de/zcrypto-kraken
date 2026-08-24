@@ -9,6 +9,11 @@ on:
 
 jobs:
   coverage:
+    # This string IS the required status-check context on develop (.github/settings.yml).
+    # GitHub reports a job's `name:` as the check-run name, so renaming it here without
+    # updating that contexts list blocks every PR on a check that never reports.
+    # Named for what it gates -- the whole suite; the coverage upload is a by-product.
+    name: Full test suite
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
