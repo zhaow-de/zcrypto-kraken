@@ -159,6 +159,8 @@ Expected: PASS. It is describing the installed v1.
 Run `infra/scripts/mutate-probe.sh` against the test file itself, **twice** — once mutating a pinned integer (`"MAKER": 1` → `"MAKER": 7`) and once mutating a `PINNED_ATTRIBUTES` entry (`"id"` → `"id_"`).
 Expected: KILLED both times. One probe covers one table: an enum mutation leaves the attribute pin unexercised, and a table no test consumes passes every probe aimed elsewhere.
 
+- [ ] **Step 3b: Pin the constructors, not only the names.** Every drift this guard exists to catch has been a signature change; construct each config exactly as `cli/engine/node.py` does, so the pin fails on the call we actually make rather than on a name that survives.
+
 - [ ] **Step 4: Commit**
 
 ```bash
