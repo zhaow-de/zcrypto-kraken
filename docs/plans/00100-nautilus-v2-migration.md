@@ -37,7 +37,7 @@ Per `.claude/rules/spec-plan-locations.md`, the pair gets a cold review before T
 
 ______________________________________________________________________
 
-**D6 is landed but NOT yet v2-safe.** The fix shipped on this branch because the defect exists on v1 today, but it reads `self._client.id` at its two call sites in `cli/engine/executor.py` (grep it — the read in `_start_intent` and the one in `_reconcile_terminal`), and v2 renames that attribute to `strategy_id` (measured: `hasattr(Strategy, "id")` is `False` on the pinned wheel). Task 7a re-points it. **Its own tests cannot catch this**: `StubClient` sets `self.id`, so the three `test_reconcile_terminal_*` tests stay green while production raises — at `:1788` inside `_reconcile_terminal`'s own `except`, which calls `_trip_kill`, latching the kill switch after every completed intent.
+**D6 is landed but NOT yet v2-safe.** The fix shipped on this branch because the defect exists on v1 today, but it reads `self._client.id` at its two call sites in `cli/engine/executor.py` (grep it — the read in `_start_intent` and the one in `_reconcile_terminal`), and v2 renames that attribute to `strategy_id` (measured: `hasattr(Strategy, "id")` is `False` on the pinned wheel). Task 7a re-points it. **Its own tests cannot catch this**: `StubClient` sets `self.id`, so the three `test_reconcile_terminal_*` tests stay green while production raises — inside `_reconcile_terminal`'s own `except`, which calls `_trip_kill`, latching the kill switch after every completed intent.
 
 ## Phase A — guards that must be proved on v1
 
@@ -378,7 +378,7 @@ This matters most during Phase C specifically: the red suite hands an implemente
 
 ### Task 10: Supervision and the watchdog
 
-`node._config` and `node.trader` do not exist on `LiveNode`. `is_running` changes from property to **method**, so `if strategy.is_running:` on a bound method is permanently true.
+`node._config` and `node.trader` do not exist on `LiveNode`. `Strategy.is_running` changes from property to **method**, so `if strategy.is_running:` on a bound method is permanently true — but `LiveNode.is_running`, which Step 1 re-points to, is still a property. Do not assume the trap follows the read; Step 2 proves the watchdog fires either way.
 
 **Files:** `cli/engine/command.py`
 
