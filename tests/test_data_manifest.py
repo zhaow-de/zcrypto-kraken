@@ -1,0 +1,231 @@
+"""The manifest contract (spec 00099) — one shape, so no consumer needs per-set knowledge."""
+
+import json
+
+import pytest
+
+from cli.data.manifest import (
+    SCHEMA_VERSION,
+    ManifestError,
+    build_manifest,
+    read_manifest,
+    series_entry,
+    set_digest,
+)
+from cli.ohlc.dataset import to_frame
+
+WRITTEN_AT = "2026-08-24T09:00:00+00:00"
+
+
+def _rows(n, start=1577836800):
+    return [[start + i * 86400, "1", "2", "0.5", "1.5", "1.2", "10", 3] for i in range(n)]
+
+
+def _series(paths_and_rows):
+    return {p: series_entry(to_frame(_rows(n)), p) for p, n in paths_and_rows}
+
+
+def _two():
+    return _series([("ADA/EUR/1440.parquet", 5), ("BTC/EUR/1440.parquet", 7)])
+
+
+# --- the leaf ------------------------------------------------------------------------------------
+
+
+def test_a_series_entry_carries_exactly_the_contract_fields():
+    entry = series_entry(to_frame(_rows(5)), "ADA/EUR/1440.parquet")
+    assert set(entry) == {"sha256", "rows", "first_ts", "last_ts"}
+    assert entry["rows"] == 5
+    assert len(entry["sha256"]) == 64
+    assert "T" in entry["first_ts"], "timestamps are ISO-8601 T-form, matching every writer today"
+
+
+# --- the digest ----------------------------------------------------------------------------------
+
+
+def test_the_digest_orders_by_series_key_not_by_insertion():
+    s = _two()
+    reordered = {k: s[k] for k in reversed(list(s))}
+    assert set_digest(s) == set_digest(reordered)
+
+
+def test_the_digest_moves_when_content_moves():
+    a = _two()
+    b = dict(a)
+    b["ADA/EUR/1440.parquet"] = series_entry(to_frame(_rows(6)), "ADA/EUR/1440.parquet")
+    assert set_digest(a) != set_digest(b)
+
+
+def test_a_digest_over_an_empty_series_set_is_refused():
+    # sha256("") is a fixed sentinel: two unrelated empty sets would compare EQUAL, which is the
+    # opposite of what a set digest is for.
+    with pytest.raises(ManifestError, match="empty"):
+        set_digest({})
+
+
+def test_a_subset_digest_covers_only_its_keys():
+    s = _two()
+    only_ada = set_digest(s, keys=["ADA/EUR/1440.parquet"])
+    assert only_ada != set_digest(s)
+    assert only_ada == set_digest({"ADA/EUR/1440.parquet": s["ADA/EUR/1440.parquet"]})
+
+
+def test_a_subset_naming_an_unknown_key_is_refused():
+    with pytest.raises(ManifestError, match="not in series"):
+        set_digest(_two(), keys=["NOPE/EUR/1440.parquet"])
+
+
+# --- identity ------------------------------------------------------------------------------------
+
+
+def test_identity_defaults_to_the_set_wide_digest():
+    m = read_manifest_from(build_manifest(_two(), written_at=WRITTEN_AT))
+    assert m.identity_digest == m.set_sha256
+
+
+def test_identity_can_name_a_subset_so_no_caller_branches_on_a_dataset_name():
+    # Why this exists: reach's identity is its CONTINUOUS subset while ohlc-full's is set-wide.
+    # Without a declared identity the caller must know which is which -- the per-set knowledge
+    # this contract exists to remove, merely moved one layer up.
+    s = _two()
+    raw = build_manifest(s, written_at=WRITTEN_AT, subsets={"continuous": ["ADA/EUR/1440.parquet"]}, identity="subset:continuous")
+    m = read_manifest_from(raw)
+    assert m.identity_digest == m.subset_sha256["continuous"]
+    assert m.identity_digest != m.set_sha256
+
+
+def test_identity_naming_an_absent_subset_is_refused():
+    with pytest.raises(ManifestError, match="identity"):
+        build_manifest(_two(), written_at=WRITTEN_AT, identity="subset:nope")
+
+
+def test_a_subset_with_no_members_is_refused():
+    with pytest.raises(ManifestError, match="empty"):
+        build_manifest(_two(), written_at=WRITTEN_AT, subsets={"continuous": []})
+
+
+# --- provenance is quarantined, in code ------------------------------------------------------------
+
+
+def test_provenance_does_not_move_any_digest():
+    s = _two()
+    bare = build_manifest(s, written_at=WRITTEN_AT)
+    loud = build_manifest(s, written_at=WRITTEN_AT, provenance={"source": "/somewhere/local", "built_at": "whenever"})
+    assert bare["set_sha256"] == loud["set_sha256"]
+
+
+def test_a_hash_planted_in_provenance_never_reaches_the_vouched_set():
+    # `_manifest_sha256s` walks ANY json for the key `sha256`, so prose alone would not have held:
+    # a hash under provenance would attest content nothing checked. The reader reads series
+    # explicitly instead.
+    planted = "f" * 64
+    raw = build_manifest(_two(), written_at=WRITTEN_AT, provenance={"nested": {"sha256": planted}})
+    m = read_manifest_from(raw)
+    assert planted not in m.vouched
+    assert len(m.vouched) == 2
+
+
+# --- reading -------------------------------------------------------------------------------------
+
+
+def read_manifest_from(raw, tmp=None):
+    import tempfile
+    from pathlib import Path
+
+    d = Path(tmp or tempfile.mkdtemp())
+    (d / "manifest.json").write_text(json.dumps(raw))
+    return read_manifest(d / "manifest.json")
+
+
+def test_round_trip_preserves_every_field():
+    raw = build_manifest(_two(), written_at=WRITTEN_AT, provenance={"source": "x"})
+    m = read_manifest_from(raw)
+    assert m.schema_version == SCHEMA_VERSION
+    assert m.written_at == WRITTEN_AT
+    assert m.provenance == {"source": "x"}
+    assert m.hash_by_path()["ADA/EUR/1440.parquet"] == raw["series"]["ADA/EUR/1440.parquet"]["sha256"]
+
+
+def test_a_legacy_manifest_is_refused_typed_rather_than_guessed_at():
+    # The zoo's four shapes are readable only by guessing. Refusing is what makes the contract a
+    # contract; the caller decides whether to convert.
+    with pytest.raises(ManifestError, match="schema_version"):
+        read_manifest_from({"fetched_at": "x", "series": {"ADA": {"1440": {"sha256": "a" * 64}}}})
+
+
+def test_an_unknown_schema_version_is_refused():
+    raw = build_manifest(_two(), written_at=WRITTEN_AT)
+    raw["schema_version"] = SCHEMA_VERSION + 1
+    with pytest.raises(ManifestError, match="schema_version"):
+        read_manifest_from(raw)
+
+
+@pytest.mark.parametrize("missing", ["sha256", "rows", "first_ts", "last_ts"])
+def test_a_leaf_missing_any_contract_field_is_refused(missing):
+    raw = build_manifest(_two(), written_at=WRITTEN_AT)
+    del raw["series"]["ADA/EUR/1440.parquet"][missing]
+    with pytest.raises(ManifestError, match=missing):
+        read_manifest_from(raw)
+
+
+@pytest.mark.parametrize("bad", ["/abs/path.parquet", "../escape.parquet", "no-suffix"])
+def test_a_series_key_that_is_not_a_relative_parquet_path_is_refused(bad):
+    # The key IS the path, so a key that cannot be one silently breaks every path-bound consumer.
+    s = _two()
+    s[bad] = s.pop("ADA/EUR/1440.parquet")
+    with pytest.raises(ManifestError):
+        read_manifest_from(build_manifest(s, written_at=WRITTEN_AT))
+
+
+def test_an_empty_series_map_is_refused_at_build():
+    with pytest.raises(ManifestError, match="empty"):
+        build_manifest({}, written_at=WRITTEN_AT)
+
+
+# --- the ordering pin, on fixtures that can actually bite -------------------------------------------
+#
+# The two legacy writers disagreed on ordering: `backfill.py` sorted interval keys as STRINGS
+# ('1440' < '240' < '60'), `reach.py` as INTEGERS. Path-lexicographic agrees with the first and
+# inverts the second, so reach's committed digests re-anchor -- deliberately, and only after the
+# converter has proved the per-series content identical.
+#
+# A pin only detects a wrong recipe on a MULTI-INTERVAL subset. Measured 2026-08-24, these are
+# degenerate and must never be substituted in: the local set's CONTINUOUS subset (12 series, all
+# interval 1440) and the hub set's DETACHED subset both produce the same digest under either
+# ordering, so a pin there passes under the very defect it names.
+
+from pathlib import Path as _Path
+
+_HUB_REACH = _Path("/mnt/zhao-crypto/hot/ohlc-reach/manifest.json")
+_LOCAL_REACH = _Path("data/ohlc-reach-20260813/manifest.json")
+
+
+def _reach_series(manifest_path, *, continuous):
+    raw = json.loads(manifest_path.read_text())
+    out = {}
+    for row in raw["series"]:
+        if (row["status"] == "continuous") is not continuous:
+            continue
+        stem = f"{row['interval']}.parquet" if continuous else f"{row['interval']}.detached.parquet"
+        out[f"{row['symbol']}/EUR/{stem}"] = {"sha256": row["sha256"]}
+    return raw, out
+
+
+@pytest.mark.skipif(not _HUB_REACH.is_file(), reason="needs the hot hub mounted")
+def test_path_order_re_anchors_the_hub_reach_continuous_digest_and_the_move_is_deliberate():
+    raw, series = _reach_series(_HUB_REACH, continuous=True)
+    assert len({k.rsplit("/", 1)[1] for k in series}) > 1, "degenerate fixture: needs >1 interval to bite"
+    assert set_digest(series) == "356826a172dd33cab5caa3e527592e827c619fb6d1975baf0c7d95020141c6f1"
+    assert set_digest(series) != raw["basket_sha256"], (
+        "the re-anchor is expected; silently matching would mean the recipe did not change"
+    )
+    assert raw["basket_sha256"] == "8a826898241a5f1e5501db6ffeb398b81780ffd7cbbfedc1b230231432e13ab2"
+
+
+@pytest.mark.skipif(not _LOCAL_REACH.is_file(), reason="needs the local reach sibling")
+def test_path_order_re_anchors_the_local_reach_detached_digest():
+    raw, series = _reach_series(_LOCAL_REACH, continuous=False)
+    assert len({k.rsplit("/", 1)[1] for k in series}) > 1, "degenerate fixture: needs >1 interval to bite"
+    assert set_digest(series) == "5907b1e31f45237831449c72e00185299bfa8a604ee7c4f10ed4133c931032d9"
+    assert set_digest(series) != raw["detached_sha256"]
+    assert raw["detached_sha256"] == "0c07900fb9cf68419630dd8d14d62894e144f2d8f66a07c8bd130964007d53e0"
