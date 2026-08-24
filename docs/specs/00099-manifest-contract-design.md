@@ -44,7 +44,11 @@ A conformant manifest is exactly:
 
 **`sha256` is `dataset_hash`** — sha256 of the frame's canonical CSV — the grade every writer already vouches and both consumers already compare. Not file bytes (measured unstable across polars versions).
 
-**`set_sha256`** is sha256 over the concatenated per-series `sha256` values in sorted key order — the existing `basket_sha256` recipe, renamed to one name, and reproducible by construction.
+**`set_sha256`** is sha256 over the concatenated per-series `sha256` values in sorted key order — the existing `basket_sha256` recipe, applied to **every** series in the set, and reproducible by construction.
+
+**`subset_sha256` is optional, and it exists because one set's digest is deliberately not set-wide.** `cli/ohlc/reach.py` excludes detached series from `basket_sha256` on purpose — "that hash names the joinable basket, and mixing in a segment the module just refused to join would contradict the split the filenames exist to enforce" — and that continuous-only value is **cited in committed state**: `docs/universe/point-in-time-universe.md` records `d77fff97c819f5af…` for `data/ohlc-reach-20260813`, and `data/universe-20260813/point-in-time-universe.json` carries the same. A single all-series digest would break that citation chain permanently, and no re-pointing could repair it, because the all-series value is a different number.
+
+So the contract carries an optional `subset_sha256: {name: hex}`, each computed by the same recipe over a named subset of the series keys. `ohlc-reach` declares `continuous`, which reproduces `d77fff97…` exactly. This is a uniform mechanism any set may use — not a per-set branch in the reader — and `rebuild.py` and the universe provenance read the *named subset*, never the set-wide digest.
 
 **`written_at`** is when the manifest was written. That is well-defined for every writer, unlike the three spellings it replaces, whose *meanings* genuinely differ (retrieved / assembled / pulled-from-elsewhere). Collapsing three spellings is a rename; collapsing three meanings is a semantic decision, so it is taken explicitly here: the source-specific meaning moves into `provenance`.
 
@@ -54,11 +58,22 @@ A conformant manifest is exactly:
 
 The contract binds manifests **this repo writes**, identified by `schema_version`. A manifest without that key is legacy and is not read by the contract reader at all.
 
-**The external freeze is excluded, and the sidecar is its normalised form.** `docs/reference/vouched-dataset-hashes.jsonl` already carries `dataset` / `relpath` / `dataset_sha256` / `rows` / `first_ts` / `last_ts` per series in one uniform shape — that *is* the contract's content for a set we cannot rewrite. The freeze is not accommodated and the contract is not loosened to fit it, which is what killed round 1.
+**The external freeze is excluded, and the sidecar is the normalised form of its attestation content** (`pulled_at`, `freeze_last_complete_day` and `overlap_bars_verified` are not in the sidecar; no consumer reads them — checked). `docs/reference/vouched-dataset-hashes.jsonl` already carries `dataset` / `relpath` / `dataset_sha256` / `rows` / `first_ts` / `last_ts` per series in one uniform shape — that *is* the contract's content for a set we cannot rewrite. The freeze is not accommodated and the contract is not loosened to fit it, which is what killed round 1.
+
+## The hub keeps legacy manifests, and that is stated rather than assumed away
+
+The sync channel is rsync `--archive --ignore-existing`, so a rewritten manifest **never propagates** in either direction: converting locally leaves the hub's copies legacy indefinitely. Two consequences follow, and both are load-bearing:
+
+- `_verify_new_files` takes its vouched set from the **hub's** manifest, so fetch-side path binding stays inert in production until the hub itself is converted. A guard whose production true positive does not exist is not a guard, so this is named, not implied.
+- `derivatives-oi` has no local copy, so the next fetch imports the hub's legacy manifest into `data/` — which a conformance test demanding universal conformance would turn red on a *healthy* fetch.
+
+Therefore: **legacy manifests are tolerated at named boundaries.** `_manifest_sha256s` already walks any JSON shape for the key `sha256` and works unchanged on both, so membership verification is unaffected; path binding simply engages only where a conformant manifest exists, degrading to today's behaviour otherwise. Conformance is asserted over the sets this repo has converted, with legacy sets named explicitly rather than silently skipped.
+
+Converting the hub is an **attended, out-of-band step**: the additive-only channel cannot overwrite a manifest, so it requires deliberately replacing the hub's copies. That is a shared-resource write and takes the owner's explicit word at the moment it runs; it is a task in the plan, not an assumption in the design.
 
 ## Migration: manifest-only, no parquet is touched
 
-A one-shot converter reads each dataset's existing parquets, recomputes `rows` / `first_ts` / `last_ts` / `dataset_hash`, and writes the conformant manifest. **No parquet byte changes**, so nothing invalidates the committed sidecar hashes or the registry records citing byte hashes of `ohlc-full`. This also sidesteps `ohlc-15m`'s row-group instability entirely, which a full rebuild would have walked into for no gain.
+A one-shot converter reads each dataset's existing parquets, recomputes `rows` / `first_ts` / `last_ts` / `dataset_hash`, and writes the conformant manifest. **It carries every unrecognised legacy field into `provenance` verbatim**, because some of them are not recoverable from parquets at all: `ohlc-reach`'s seam evidence (`overlap_bars`, `gap_bars`, `appended`, `rest_first`, `rest_last`, `min_seam_overlap`) was computed against a REST window that has since expired, and every set's original `fetched_at` records a freeze moment nothing else preserves. A converter that recomputed only the recoverable fields would erase the seam record of the very set the committed universe was built from. **No parquet byte changes**, so nothing invalidates the committed sidecar hashes or the registry records citing byte hashes of `ohlc-full`. This also sidesteps `ohlc-15m`'s row-group instability entirely, which a full rebuild would have walked into for no gain.
 
 `rebuild.py:260` reads `basket_sha256` and raises on `KeyError`; it moves to `set_sha256` in the same change, since a converted manifest no longer carries the old key.
 
