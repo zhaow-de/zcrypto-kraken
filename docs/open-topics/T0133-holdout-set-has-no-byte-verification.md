@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: "`data/ohlc-holdout-*` is re-frozen, a second holdout is cut, or [[T0064]]'s out-of-sample work moves to repeated evaluation"
+status: partial
+ripe_when: "step (2) is unblocked NOW — no set under the hot dir vouches nothing any more, so fail-closed would refuse nothing (re-check by running `_vouched_for_set` over every set there); step (3) waits on [[T0132]]'s manifest contract"
 ---
 
 # The holdout set is the one canonical dataset with no byte verification
@@ -27,8 +27,23 @@ Three further bounds on `_verify_new_files`, worth stating so its coverage is no
 
 - **Why the re-freeze is the cheap moment.** That is when the freeze process can emit per-series `sha256` for free, rather than paying a separate pass later. It is also ripe if [[T0064]]'s out-of-sample work moves from accepted-once to repeated evaluation, since a re-run against silently altered holdout bytes is exactly the failure this guards against.
 
+## Done so far
+
+**The gap the title names is closed, and the fix is bigger than this topic expected — because `_verify_new_files` was never the important consumer.** `_manifest_sha256s` has a second caller: `ObservedReader.read_series` cross-checks `dataset_hash(full)` against the vouched set on EVERY read, but guards with `if vouched and ...`, so an empty set made it a no-op. `vouched_status()` reported the holdout verbatim as `inert (0 vouched hashes)`; it now reports `checked (10 vouched hashes)`. That is a data-at-rest guard on the local copy, which is what this topic actually needed — and it fires on reads, not only on transfers.
+
+**That distinction matters, because the sync-side fix alone would have bought almost nothing.** Measured: `fetch_hot` runs rsync `--ignore-existing`, so on a node that already holds the holdout, a tampered local parquet is never itemized as new and never reaches `_verify_new_files` at all — measured across same-length, different-length, truncated-to-zero and dangling-symlink tamper, every one silent. The sync check can only ever cover a first ingest.
+
+**The hashes are committed here, not emitted by the freeze.** This topic preferred option (a), the freeze process emitting `sha256`. That was never actionable from this repo: `git log --all` finds no `holdout_pull.py` — the producer has never lived here. `docs/reference/vouched-dataset-hashes.jsonl` carries one line per series in its own uniform shape, so reading it needs none of the per-set manifest knowledge the varied manifest shapes would demand — it does not walk into [[T0132]]'s zoo.
+
+**The title is a misnomer, and it is left standing only because the file name is its slug.** Nothing in this repo does byte verification of any dataset. All five manifest writers vouch `dataset_hash` — sha256 of the frame's canonical CSV — and `observed.py` records that a byte-grade test "refuses every healthy read of ohlc-full/ohlc-15m". The sidecar matches that grade deliberately; a byte digest would be a second, incompatible one.
+
+**What the attestation can and cannot claim.** Minting asserted each frame's rows and span against the freeze manifest first and refused to pin anything uncorroborated; all ten matched, 30,032 rows. The freeze-day ledger entry still matches the manifest's own `manifest_sha256`. None of that excludes a value-only edit made before minting that preserved row count and span — that is the residue, and it is the same edit the new hashes now catch going forward.
+
+**`push_hot` ran no verifier at all, and now verifies before transmitting.** The channel never overwrites, so a node that accepts tampered bytes is never corrected by a later push — detection afterwards detects a permanent fact. A dry-run pass lists what would leave and refuses unattested parquet content.
+
+**The old trigger could never have discharged this topic**, which is why it was taken now rather than waited on. A re-freeze of `data/ohlc-holdout-2026-07-10` cannot happen — the look budget is 1, remaining 0, and a fresh cut is a NEW directory. Both of the first two clauses were the same event, and it delivers hashes for a different set while this one keeps its gap forever.
+
 ## Suggested next steps
 
-- **(design, when triggered)** Decide where the holdout's per-series hashes come from: (a) the freeze process emits `sha256` per asset, matching the backfill writers' spelling, or (b) this repo mints a committed sidecar (`docs/reference/` or a manifest-adjacent file) at first ingest and `_verify_new_files` reads it. (a) is correct; (b) is available now and does not need the external producer.
-- **(autonomous, after that)** Make the empty-`vouched` branch of `_verify_new_files` fail closed for datasets that are *supposed* to expose hashes, instead of warning and continuing — today an allowlisted set that silently stops emitting `sha256` degrades to no verification with only a log line.
+- **(autonomous, unblocked now)** Make the empty-`vouched` branch of `_verify_new_files` fail closed for datasets that are *supposed* to expose hashes, instead of warning and continuing — today an allowlisted set that silently stops emitting `sha256` degrades to no verification with only a log line.
 - **(autonomous, independent)** Bind the check to paths: `_verify_new_files` currently asserts hash **membership**, so two swapped series inside one set pass. Per-set knowledge of the parquet layout is what the docstring says it avoids, so this is a deliberate trade to re-examine, not an oversight to patch blindly.

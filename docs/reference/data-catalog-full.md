@@ -90,7 +90,7 @@ Dataset root `data/ohlc-reach/` — the canonical, **unstamped** name, like ever
 
 ### `ohlc-holdout-2026-07-10`
 
-The pre-registered out-of-time holdout pull: 100 bars/pair, 2026-04-01 → 2026-07-09 (621 overlap bars/pair verified exact against the canonical `ohlc-full`). Dataset root `data/ohlc-holdout-2026-07-10/`; manifest sha256 `4e251df2…`. The holdout look budget is spent (1 → 0, executed 2026-07-10); see `docs/research/13.phase5-holdout-ledger.md` for the full ledger and the (degenerate) result.
+The pre-registered out-of-time holdout pull: 100 bars/pair, 2026-04-01 → 2026-07-09 (621 overlap bars/pair verified exact against the canonical `ohlc-full`). Dataset root `data/ohlc-holdout-2026-07-10/`; manifest sha256 `4e251df2…`. The holdout look budget is spent (1 → 0, executed 2026-07-10); see `docs/research/13.phase5-holdout-ledger.md` for the full ledger and the (degenerate) result. **Its freeze manifest exposes no per-series hash**, so the per-series `dataset_hash` values live in `docs/reference/vouched-dataset-hashes.jsonl` instead — that file is what arms the read-time cross-check in `cli/registry/observed.py`, which is otherwise a no-op for this set ([[T0133]]).
 
 ### `snapshots` + `universe`
 
