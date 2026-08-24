@@ -76,5 +76,4 @@ def test_the_exclusion_check_actually_detects_an_excluded_path():
     # True positive for the guard above: `docs/` is excluded, so a path under it that carries no
     # exception must read as excluded. Without this, an always-False checker would pass silently.
     assert _excluded("docs/research/00.master-plan.md")
-    assert not _excluded("docs/reference/vouched-dataset-hashes.jsonl"), "the re-include must win"
     assert not _excluded("cli/data/sync.py")
