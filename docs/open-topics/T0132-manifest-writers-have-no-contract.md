@@ -14,15 +14,15 @@ Five committed writers emit `manifest.json` for canonical datasets, plus one ext
 | `cli/backfill/backfill.py` | `ohlc-full`, `ohlc-15m` | `[pair][interval]` nested | `basket_sha256` | `fetched_at` |
 | `cli/derivatives/funding.py` | `derivatives-funding` | `[symbol]` flat | `basket_sha256` | `fetched_at` |
 | `cli/derivatives/oi.py` | `derivatives-oi` | `[symbol]` flat | `basket_sha256` | `fetched_at` |
-| `cli/ohlc/reach.py` | `ohlc-reach` | **`list[dict]` rows** | `basket_sha256` + `detached_sha256` | `fetched_at` |
-| `cli/ohlc/ingest.py` (v0, retired) | `ohlc` | `list[dict]` rows | **none** | — |
+| `cli/ohlc/reach.py` | `ohlc-reach` | **`list[dict]` rows** | `basket_sha256` + `detached_sha256` | **`built_at`** |
+| `cli/ohlc/ingest.py` (v0, retired) | `ohlc` | `list[dict]` rows, hashing under **`dataset_hash`** | **none** | `fetched_at` |
 | external freeze | `ohlc-holdout-*` | `[asset]` flat | **`manifest_sha256`** | **`pulled_at`** |
 
-Four `series` shapes, two set-digest spellings, two timestamp keys, and one dataset with no set digest under either name.
+Four `series` shapes, two set-digest spellings, **three** timestamp keys, and one dataset with no set digest under either name. (The table said two until 2026-08-24; `reach.py` has emitted `built_at` since 4735b600 and `fetched_at` appears nowhere in its history, so the row was wrong the day this topic was written. `ingest.py`'s timestamp was recorded as absent and is `fetched_at`; it also spells its content hash `dataset_hash`, which is why `_manifest_sha256s` — matching the exact key `sha256` — never saw a v0 set at all.)
 
 Two further hazards measured 2026-08-08:
 
-- **`ohlc-reach` carries a per-run nonce.** Its `series_digest` moves on every rebuild with zero content change — so any consumer hashing it reads a false drift alarm.
+- **`ohlc-reach` carries per-run values, but not the one this topic named.** `series_digest` does not exist — the token appears in no writer and no manifest on either root, only in this topic's own prose, so a contract quarantining it would have quarantined nothing. `basket_sha256` is sha256 over the concatenated per-series `dataset_hash` values and is therefore content-only and stable across a no-change rebuild. The genuine per-run values are `built_at` at top level and `rest_first`/`rest_last` inside each series row.
 - **Shape does not determine PATH, measured 2026-08-24 across the live hub.** `derivatives-funding` and `derivatives-oi` share the identical `series[SYMBOL].sha256` shape yet lay their files out as `SYMBOL/funding.parquet` and `SYMBOL/oi.parquet`. So a contract that normalises only the `series` SHAPE still leaves a consumer unable to map a hash to a file — the path convention has to be part of it, or be declared in the manifest.
 - **`ohlc-15m`'s `source` is an absolute machine-local path.** A manifest rebuilt on another host changes it, so any consumer including `source` in a digest gets a false difference between nodes holding identical bytes.
 
