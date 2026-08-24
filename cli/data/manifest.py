@@ -22,8 +22,6 @@ from typing import Any
 
 import polars as pl
 
-from cli.ohlc.dataset import dataset_hash
-
 SCHEMA_VERSION = 1
 
 _LEAF_FIELDS = ("sha256", "rows", "first_ts", "last_ts")
@@ -36,6 +34,11 @@ class ManifestError(Exception):
 def series_entry(frame: pl.DataFrame, relpath: str) -> dict[str, Any]:
     """One series leaf. `relpath` is accepted so a caller cannot build an entry for a key it has
     not validated -- the key and the file must be the same thing."""
+    # Imported here rather than at module scope: `cli.ohlc.dataset` pulls in `cli.ohlc.__init__`,
+    # which imports `ingest`, which imports THIS module. The cycle only bites when the package is
+    # entered from the CLI, so a module-scope import passes every test and fails the first real run.
+    from cli.ohlc.dataset import dataset_hash
+
     _check_key(relpath)
     # An EMPTY series is a healthy producer output, not a fault: `derivatives-funding` and
     # `derivatives-oi` already emit `first_ts: None` for a perp with no rows yet. The span is
@@ -214,3 +217,77 @@ def _check_leaf(key: str, leaf: Any, where: str = "") -> None:
 def conformant_paths(root: Path) -> Iterable[Path]:
     """Every `manifest.json` under `root`'s immediate dataset directories."""
     return sorted(root.glob("*/manifest.json"))
+
+
+def convert_dataset(root: Path, *, apply: bool = False) -> dict[str, Any]:
+    """Rewrite one dataset's legacy manifest into the contract, from the parquets on disk.
+
+    No parquet byte is touched: this recomputes what the manifest SAYS, never what the data IS.
+    That is what keeps the committed sidecar hashes and the registry's byte citations intact.
+
+    Relative paths come from WALKING THE TREE, never from the legacy series keys -- the hub's reach
+    set keys `ADA` against `ADA/EUR/1440.parquet`, so a key-derived path is not available in
+    general and a converter that trusted keys could not convert the very sets that need it.
+
+    It refuses the whole conversion if any recomputed hash is absent from what the legacy manifest
+    attested. Without that, converting would silently re-vouch whatever happens to be on disk, and
+    a re-ordered digest could no longer be claimed to describe identical content.
+    """
+    from cli.data.sync import _manifest_sha256s  # local: sync imports this module's siblings
+
+    manifest_path = root / "manifest.json"
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if raw.get("schema_version") is not None:
+        return {"dataset": root.name, "status": "already conformant", "series": len(raw.get("series") or {})}
+
+    from cli.ohlc.dataset import read_parquet
+
+    series: dict[str, Any] = {}
+    for parquet in sorted(root.rglob("*.parquet")):
+        relpath = parquet.relative_to(root).as_posix()
+        series[relpath] = series_entry(read_parquet(parquet), relpath)
+    if not series:
+        return {"dataset": root.name, "status": "no parquet, skipped", "series": 0}
+
+    attested = _manifest_sha256s(raw)
+    recomputed = {leaf["sha256"] for leaf in series.values()}
+    if attested:
+        drifted = sorted(p for p, leaf in series.items() if leaf["sha256"] not in attested)
+        if drifted:
+            raise ManifestError(
+                f"{root.name}: refusing to convert -- {len(drifted)} series no longer hash to what the legacy "
+                f"manifest attested, first {drifted[0]!r}. Converting would re-vouch whatever is on disk."
+            )
+        if len(recomputed) != len(attested):
+            raise ManifestError(
+                f"{root.name}: refusing to convert -- the legacy manifest attests {len(attested)} distinct hashes "
+                f"but the tree yields {len(recomputed)}; the sets must correspond exactly"
+            )
+
+    # Detached legs are named by the FILENAME, which is the series key, so the subsets need no
+    # per-set knowledge beyond the convention the filenames already enforce.
+    detached = [p for p in series if p.endswith(".detached.parquet")]
+    continuous = [p for p in series if p not in detached]
+    subsets = {name: members for name, members in (("continuous", continuous), ("detached", detached)) if members}
+    identity = "subset:continuous" if detached and continuous else "set"
+
+    # Everything the legacy document carried that the contract does not name is preserved verbatim:
+    # reach's seam evidence was computed against a REST window that has expired, and each set's
+    # original `fetched_at` is a freeze moment nothing else records.
+    legacy = {k: v for k, v in raw.items() if k != "series"}
+    built = build_manifest(
+        series,
+        written_at=str(legacy.get("fetched_at") or legacy.get("built_at") or legacy.get("pulled_at") or ""),
+        identity=identity,
+        subsets=subsets if len(subsets) > 1 else None,
+        provenance={"legacy": legacy},
+    )
+    if apply:
+        manifest_path.write_text(json.dumps(built, indent=2, sort_keys=True), encoding="utf-8")
+    return {
+        "dataset": root.name,
+        "status": "converted" if apply else "would convert",
+        "series": len(series),
+        "identity": identity,
+        "digest": built["set_sha256"],
+    }

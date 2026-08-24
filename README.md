@@ -286,6 +286,12 @@ zcrypto data fetch
 zcrypto data push
 ```
 
+`migrate-manifests` rewrites a legacy dataset manifest into the current contract, reading the parquets already on disk. It touches **no parquet byte** — it recomputes what a manifest says, never what the data is — and refuses a set whole if any series no longer hashes to what its legacy manifest attested. The external holdout freeze is skipped: it is not ours to rewrite, and its attestation content lives in `docs/reference/vouched-dataset-hashes.jsonl` instead. Defaults to a dry run.
+
+```bash
+zcrypto data migrate-manifests [--apply]
+```
+
 `rebuild` re-freezes or refreshes one or more sets from their sources (the OHLCVT dumps; the funding/snapshot/universe fetchers) and mints a new sibling directory — it never writes into the live set. By convention this runs on the workstation — the authoring node; the ops node is pull-only and only consumes frozen baskets via `fetch`. Its dump source (`nfs_mount_dir/kraken-ohlcvt-updates`) derives from the NAS mount root.
 
 ```bash
