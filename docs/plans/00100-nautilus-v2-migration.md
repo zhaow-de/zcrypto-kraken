@@ -94,6 +94,16 @@ PINNED_SYMBOLS = [
 PINNED_ATTRIBUTES = [("nautilus_trader.trading.strategy", "Strategy", "id")]
 
 
+@pytest.mark.parametrize("module_path,cls_name,attr", PINNED_ATTRIBUTES, ids=lambda v: str(v))
+def test_every_attribute_we_read_still_exists_on_its_class(module_path, cls_name, attr):
+    cls = getattr(importlib.import_module(module_path), cls_name)
+    assert hasattr(cls, attr), f"{cls_name}.{attr} is gone -- the live trade path reads it"
+
+
+# Also pin OrderStatus: its values are compared against the library's own at executor.py and
+# consumed by the adopted-terminal map, so a silent renumbering mis-books a terminal order.
+
+
 @pytest.mark.parametrize("module_path,symbol", PINNED_SYMBOLS, ids=lambda v: v.rsplit(".", 1)[-1])
 def test_every_symbol_we_import_still_exists_where_we_import_it(module_path, symbol):
     module = importlib.import_module(module_path)
@@ -143,8 +153,8 @@ Expected: PASS. It is describing the installed v1.
 
 - [ ] **Step 3: Prove it is not vacuous**
 
-Run `infra/scripts/mutate-probe.sh` against the test file itself, mutating one pinned integer (e.g. `"MAKER": 1` → `"MAKER": 7`).
-Expected: KILLED. A pin that cannot fail proves nothing.
+Run `infra/scripts/mutate-probe.sh` against the test file itself, **twice** — once mutating a pinned integer (`"MAKER": 1` → `"MAKER": 7`) and once mutating a `PINNED_ATTRIBUTES` entry (`"id"` → `"id_"`).
+Expected: KILLED both times. One probe covers one table: an enum mutation leaves the attribute pin unexercised, and a table no test consumes passes every probe aimed elsewhere.
 
 - [ ] **Step 4: Commit**
 
@@ -302,7 +312,11 @@ Flat `nautilus_trader.model` replaces `model.enums` / `model.identifiers`; `naut
 
 Measured: `KrakenExecutionClientConfig(...)` without `account_id`, `api_key` and `api_secret` raises `TypeError: missing 3 required positional arguments`. v1 needed none — the adapter read the environment itself. Read the same `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` already rendered onto the host and pass them explicitly; `account_id` is an explicit `AccountId`.
 
-Two properties are load-bearing and each gets a test. **Keyless local construction must still work** — the exec key is IP-bound to the engine host, so a local run has to build the node without one, as v1 allowed. And **the key must never reach a message**: never interpolate it into an error string, never log the config object. A test asserts that a construction failure's text does not contain the key's value.
+Two properties are load-bearing and each gets a test.
+
+**Keyless local construction builds a DATA-ONLY node** — with no credentials in the environment the exec client is not wired at all, which is what keyless already meant given the key is IP-bound to the host. If execution is explicitly enabled and the environment is empty, construction **refuses loudly**. Never substitute placeholder credentials: a node that looks armed and is not defers the failure from construction to first submission. Two tests: no credentials → a node with no exec client; exec enabled + empty environment → raises.
+
+**The key must never reach a message** — never interpolated into an error string, never logged with its config. Assert on OUR own message-forming paths, not on nautilus's `TypeError` text, which cannot contain a value that was never passed.
 
 - [ ] **Step 3 (D5): Measure how the twelve instruments reach the Cache**, against a running v2 node — do not infer it from config. `venue_state_from_cache` raises if any of `INSTRUMENT_IDS` is absent, so establish what now guarantees their presence before the first cycle, and write the guard that proves it.
 - [ ] **Step 4:** Re-point the config-shape pins in `tests/test_engine_node.py`; v2 exposes no node-side config readback, so assert on the config objects handed to the builder instead.
@@ -328,7 +342,8 @@ The cold review found this: D6's landed fix reads `self._client.id`, v2 renames 
 - [ ] **Step 1:** Re-point `cli/engine/executor.py:1092` and `:1788` to `self._client.strategy_id`, and rename `StubClient.id` → `strategy_id` to match production.
 - [ ] **Step 2: Re-express Task 3's tag pin against the effective identity** — assert the *registered* strategy's `strategy_id` and its client-order-id prefix, parametrised over both registration orders (observer first, observer second). v2 exposes no `order_id_tag` attribute, and the config input is not what the venue sees.
 - [ ] **Step 3: Add the guard that generalises this.** Assert every attribute and method `ProbeExecutor` calls on `self._client` exists on the real nautilus `Strategy`. A stub is a contract restatement, and an unverified restatement drifts silently — which is exactly how this defect stayed green.
-- [ ] **Step 4: Prove it bites** — with production on `strategy_id` and the stub reverted to `id`, Step 3's guard must fail. Restore, then commit.
+- [ ] **Step 4: Prove BOTH halves bite, separately.** Step 3's guard derives the checked set from production's calls and asserts them against the real `Strategy`, so a defect planted in the stub cannot trip it. Run two probes: (a) revert the stub attribute to `id` — the contract test must fail; (b) point production at a name the real `Strategy` lacks — the real-class assertion must fail. **Record which failure fired each time**; a red exit can be the guard misfiring on a healthy path rather than catching the planted defect.
+- [ ] **Step 5:** Restore, then commit.
 
 ### Task 8: Delete the `_liquidity` survival guard
 
@@ -352,6 +367,9 @@ Measured, and the reason this is spelled out: supplying a tag yields `strategy_i
 The first draft listed eight and left `cancel_orders`, `modify_orders` and `post_market_exit` live — which is why Step 3 derives the set rather than trusting this list.
 - [ ] **Step 3: Test that each one raises, and that the list is COMPLETE.** Derive the mutating surface — everything on `Strategy` that is absent from `DataActor`, minus `on_*` handlers and the read-only queries — and assert every member of it is sealed. A hand-enumerated seal regains a hole the next time upstream adds a method, silently; a derived one fails loudly and names it. This is the barrier: on an EXTERNAL-registered strategy every scoping default points its authority at the operator's book.
 - [ ] **Step 4:** Extend `test_the_strategy_claims_no_external_orders` and `_ORDER_STREAM_WIDENERS` to cover the observer; retire the `msgbus` allowance, which is now zero.
+- [ ] **Step 5 (D3): Give the prohibition a guard, because the existing one cannot see it.** `_ORDER_STREAM_WIDENERS` is a `text.count(name)` walk over lowercase `msgbus`, and `"MessageBus".count("msgbus")` is **0** — so a `MessageBus(...)` constructed in `cli/` passes every check in the repo today. Add `"MessageBus": {}` to that map (allowed nowhere) and prove it bites by temporarily constructing one under `cli/`. Text-count, matching the guard's own stated reasoning.
+
+This matters most during Phase C specifically: the red suite hands an implementer failing external-topic tests whose most obvious repair is the forbidden one, and its failure mode is an engine that accepts orders and never sends them.
 - [ ] **Step 5:** Commit.
 
 ### Task 10: Supervision and the watchdog
@@ -360,7 +378,8 @@ The first draft listed eight and left `cancel_orders`, `modify_orders` and `post
 
 **Files:** `cli/engine/command.py`
 
-- [ ] **Step 1:** Re-point to `node.is_running` / `node.handle().state`.
+- [ ] **Step 1:** Re-point the health read to `node.is_running` / `node.handle().state`.
+- [ ] **Step 1b: Re-source the DELAY, which is the watchdog's whole point.** Production computes it from `node._config.timeout_connection + timeout_reconciliation`; v2's `LiveNode` exposes no `_config`, and `LiveNodeConfig` renames both fields to `*_secs`. Take the values from the config the builder was handed in Task 6 and pin them there — a watchdog that fires before a legitimate connect-and-reconcile completes restarts a healthy engine.
 - [ ] **Step 2: Prove the watchdog fires**, with a fixture where the condition it watches is false. A watchdog that compiles is not a watchdog that fires — and the permanently-truthy form is the exact defect to construct.
 - [ ] **Step 3:** Re-derive the faulthandler re-arm's justification against v2's Rust/tokio runtime, or remove it with the reason recorded.
 - [ ] **Step 4:** Commit.
@@ -369,8 +388,9 @@ The first draft listed eight and left `cancel_orders`, `modify_orders` and `post
 
 `use_ws_trade` defaults **True**, so submission moves REST → WS while `_KRAKEN_ERROR_MARKERS` is REST-shaped. An unmatched rejection classifies as ambiguous, which stops the plan and leaves an open row.
 
-- [ ] **Step 1:** Set the transport explicitly rather than inheriting the default.
-- [ ] **Step 2:** Re-derive the three-way verdict from observed v2 rejections. `OrderRejected`/`OrderDenied` still carry only a string `reason` (and lost `venue_order_id`), so this stays string-shaped; the reason text is now a canonical code rather than free prose.
+- [ ] **Step 1: Pin `use_ws_trade=False`** (D10). The default is True, which would move submission to WebSocket; the REST classification is the one this project derived against a real venue, and re-deriving for WS needs live submissions this plan cannot reach — the same constraint that moved Task 16 out.
+- [ ] **Step 2: Verify the classification still applies over REST on v2**, rather than re-deriving it. `OrderRejected`/`OrderDenied` still carry only a string `reason` (and lost `venue_order_id`), so `_KRAKEN_ERROR_MARKERS` stays string-shaped and applicable. Pin `use_ws_trade`'s value in Task 1's defaults section so a later default flip is a red test rather than a silent transport change.
+- [ ] **Step 3:** Record that adopting WS is deliberately deferred and is its own change with its own evidence — not a follow-up hiding in this one.
 - [ ] **Step 3:** Commit.
 
 ### Task 12: Rounding fixtures
@@ -385,6 +405,17 @@ The spec's framing of this was corrected by the cold review: a quantity rounding
 - [ ] **Step 2:** Add fixtures on the **divergent** values from that measurement. Class 3 is the one to get right: it is silent, it changes an order's quantity, and no existing test would see it.
 - [ ] **Step 3:** Decide and record whether class 2's raise needs containment — `instrument.make_qty(sized.qty)` sits outside the only `try` wrapping sizing.
 - [ ] **Step 3:** Commit.
+
+### Task 12a: Verify every stub that stands in for a nautilus type
+
+Both review rounds produced blocking findings with one root: the engine suite is stub-driven, and each stub is a hand-written restatement of a nautilus contract with nothing verifying the restatement. Point-patching them one at a time is why the second round found two more.
+
+**Files:** `tests/test_engine_executor.py`, `tests/test_engine_node.py`
+
+- [ ] **Step 1: Enumerate every stub standing in for a nautilus type** — `StubClient`, `StubCache`, `_fake_instrument`, `_fake_node`, the order/event doubles — and state, per stub, how it is verified against the real type. Task 7a Step 3 does this for `StubClient`; generalise it.
+- [ ] **Step 2: Fix the two already known to be wrong.** `_fake_instrument` sets `make_qty=lambda value: value` and `make_price=lambda value: value` — identity — so no fixture through it can reach the production rounding path, which is what Task 12 measures. `_fake_node` fabricates `_config` with `timeout_connection`, a field v2 renames and `LiveNode` no longer exposes at all.
+- [ ] **Step 3: Task 12's fixtures must drive `_place` itself** through a real `CurrencyPair` (or a parametrised `_fake_instrument` delegating to one), asserting the SUBMITTED order's quantity and price. A rounding fixture that never reaches the rounding code proves nothing.
+- [ ] **Step 4:** Commit.
 
 ### Task 13: Repair the guards that lost their anchors
 

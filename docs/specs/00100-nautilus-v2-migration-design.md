@@ -104,9 +104,11 @@ Passing a `StrategyConfig` does not breach the standing ban on `external_order_c
 
 The rule is pushed only after the metric's first record. The counter has never moved (no journaled fills), and a rule pushed before its metric exists pages a spurious no-data alert. The obligation lands on the arming checklist, where the first sample appears.
 
-### D10 — the rejection classification is re-derived against the WebSocket path
+### D10 — the submission transport is pinned to REST, so the classification stays derived
 
-`use_ws_trade` defaults True, so submission moves from REST to WS. `_KRAKEN_ERROR_MARKERS` and the three-way verdict in `_on_rejected` are REST-shaped, and a rejection that no longer matches is classified as ambiguous, which stops the plan and leaves an open row. The classification is re-derived from observed v2 rejections rather than assumed to carry over; the transport choice itself is set explicitly rather than inherited from a default.
+`use_ws_trade` defaults True, so submission would move from REST to WS. `_KRAKEN_ERROR_MARKERS` and the three-way verdict in `_on_rejected` are REST-shaped, and a rejection that no longer matches classifies as ambiguous, which stops the plan and leaves an open row.
+
+**We pin `use_ws_trade=False`.** The REST classification is the one this project derived against a real venue; re-deriving it for WS needs live submissions, which this migration cannot reach any more than it can reach D2's delivery leg. Migrating the transport and the library together would also conflate two failure sources on the live trade path. The transport is set explicitly rather than inherited, and adopting WS becomes its own change with its own evidence.
 
 ### D11 — the arming record is reconciled with a moving pin before the arming pass
 
@@ -118,7 +120,7 @@ v1's `KrakenExecClientConfig()` took no arguments: the adapter sourced `KRAKEN_S
 
 We read the same environment variables, already rendered onto the host, and pass them explicitly. No new plumbing and no second home for the secret.
 
-What changes is blast radius, and that is what this decision exists to bound. The trade key now lives in a Python variable on the live trade path, so it can reach a traceback, a repr, a log line or an exception message in ways it never could while the adapter held it. It is therefore never interpolated into any message, and the config object carrying it is never logged or included in error text. Keyless local construction must survive: the exec key is IP-bound to the engine host, so any local run has to be able to build the node without one, exactly as v1 allowed.
+What changes is blast radius, and that is what this decision exists to bound. The trade key now lives in a Python variable on the live trade path, so it can reach a traceback, a repr, a log line or an exception message in ways it never could while the adapter held it. It is therefore never interpolated into any message, and the config object carrying it is never logged or included in error text. Keyless local construction survives as a **data-only node**: with no credentials in the environment the exec client is not wired at all. That is what keyless already meant — the key is IP-bound to the engine host, so a local run observes and never trades. If execution is explicitly enabled and the environment is empty, construction **refuses loudly**. Placeholder credentials are never substituted: a node that looks armed and is not is worse than a refusal, because the failure surfaces at first submission instead of at construction.
 
 ### D12 — the surfaces that move together
 
