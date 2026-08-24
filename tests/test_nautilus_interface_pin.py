@@ -88,3 +88,27 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
         "unclaimed external orders would stop materialising -- the external-order stream, the "
         "adopted-row sweep and the unmatched counter all go dark at once"
     )
+
+
+# Existence is not enough: every drift this file exists to catch has been a SIGNATURE change --
+# an argument removed, an argument newly required, a keyword rejected outright. These construct
+# each config exactly the way `cli/engine/node.py` constructs it, so the pin fails on the call we
+# actually make rather than on a name that happens to survive.
+def test_the_kraken_client_configs_accept_the_arguments_we_pass():
+    from nautilus_trader.adapters.kraken.config import KrakenDataClientConfig, KrakenExecClientConfig
+    from nautilus_trader.config import InstrumentProviderConfig
+    from nautilus_trader.model.enums import AccountType
+
+    KrakenDataClientConfig(instrument_provider=InstrumentProviderConfig(load_all=True))
+    KrakenExecClientConfig(
+        instrument_provider=InstrumentProviderConfig(load_all=True),
+        spot_account_type=AccountType.MARGIN,
+        margin_balance_asset="ZEUR",
+        spot_positions_quote_currency="ZEUR",
+    )
+
+
+def test_the_exec_engine_config_accepts_the_arguments_we_pass():
+    from nautilus_trader.config import LiveExecEngineConfig
+
+    LiveExecEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False)
