@@ -356,7 +356,10 @@ class StubCache:
 
     def order(self, client_order_id):
         """One order by id, across the whole index -- the installed `Cache.order` serves closed
-        orders as readily as open ones, and returns None for an id it does not hold.
+        orders as readily as open ones, and returns None for an id it does not hold. Serving the
+        closed half is what every closed-while-down test rests on: such an order is by definition
+        absent from `orders_open`, and a stub answering only the open half would hand those tests
+        the empty population that made the case invisible before the sweep existed.
 
         Typed like the real one, which REFUSES a str (`'str' object is not an instance of
         'ClientOrderId'`): a stub that accepted one would let production hand it the plain string it
@@ -371,13 +374,6 @@ class StubCache:
 
     def orders_open(self, *, venue=None, **kwargs):
         return list(self._open_orders)
-
-    def orders(self, *, venue=None, **kwargs):
-        """The WIDE read the startup reconciliation takes -- the installed `Cache.orders` filters
-        the full order index, so it serves closed orders alongside open ones, and a closed one is
-        by definition absent from `orders_open`. A stub answering only the open half would hand
-        every closed-while-down test the empty population the pre-D7 pass saw."""
-        return list(self._open_orders) + list(self._closed_orders)
 
     def account_for_venue(self, *, venue=None, **kwargs):
         # `balances_free()` in the real account's own terms: dict[Currency, Money]. Both halves are
@@ -2700,21 +2696,21 @@ def test_a_late_fill_on_a_superseded_order_shrinks_the_next_resubmission(tmp_pat
 
 
 class _FlakyOrdersCache(StubCache):
-    """`orders` raises the first time and answers the second -- the transient a startup pass must
-    survive rather than latch through. It is `orders`, not `orders_open`, because that is the read
-    the pass now takes FIRST and the only one it takes at all: aimed at the other accessor this
-    class would raise nowhere the pass can see, and its test would prove the retry against a read
-    that never happens."""
+    """`orders_open` raises the first time and answers the second -- the transient a startup pass
+    must survive rather than latch through. It is `orders_open`, not `orders`, because that is the
+    read the pass takes for its population and the only one it takes at all: aimed at the other
+    accessor this class would raise nowhere the pass can see, and its test would prove the retry
+    against a read that never happens."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.calls = 0
 
-    def orders(self, *, venue=None, **kwargs):
+    def orders_open(self, *, venue=None, **kwargs):
         self.calls += 1
         if self.calls == 1:
             raise RuntimeError("the cache is not populated yet")
-        return super().orders(venue=venue, **kwargs)
+        return super().orders_open(venue=venue, **kwargs)
 
 
 def test_a_startup_canceled_orders_fill_and_cancel_ack_still_land_in_its_row(tmp_path):

@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.model import InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue
+from nautilus_trader.model import ClientOrderId, InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
@@ -695,12 +695,11 @@ class ProbeExecutor:
         from inside the handler. Which is also why the
         cache read below is the WIDE one: an order that filled, was canceled or expired while this
         process was down is reconciled as CLOSED and never appears in `orders_open` at all, so the
-        pass can no longer return early when nothing is resting -- an idle startup can still owe row
-        repairs. The classification population is unchanged: it is the open orders, taken from that
-        same list by the order's own predicate.
+        pass cannot return early when nothing is resting -- an idle startup can still owe row
+        repairs. It reaches those orders one at a time, by the id each ROW already names.
         """
         try:
-            orders = list(self._client.cache.orders(venue=_VENUE))
+            resting = list(self._client.cache.orders_open(venue=_VENUE))
         except Exception:
             # Nothing can be adopted OR canceled without the list, and nothing has been touched --
             # so the pass does NOT latch: leaving a previous process's orders unclassified for the
@@ -708,10 +707,6 @@ class ProbeExecutor:
             # duplicate.
             logger.critical("venue orders could not be read at startup -- retrying on the next tick", exc_info=True)
             return
-        # Derived from the list already read rather than from a second cache call: two reads can
-        # disagree, and one of them failing would leave the sweep and the classification reasoning
-        # from different populations of the same account.
-        resting = [order for order in orders if order.is_open]
         self._adopted = True  # the read succeeded: this pass classified what there was to classify
 
         try:
@@ -725,7 +720,7 @@ class ProbeExecutor:
                 exc_info=True,
             )
             rows = {}
-        self._reconcile_adopted_rows(orders, rows)
+        self._reconcile_adopted_rows(rows)
         if not resting:
             return  # nothing adopted -- and no gate read, so an idle startup stays the cheap path
 
@@ -755,22 +750,26 @@ class ProbeExecutor:
                     "cancel of adopted order %s raised -- it may still rest at the venue", client_order_id, exc_info=True
                 )
 
-    def _reconcile_adopted_rows(self, orders: list, rows: dict) -> None:
-        """The startup reconciliation sweep (spec 00098 D7): every ledgered row this pass can match
-        to a cache order, compared against that order's own quantity, before anything is classified.
+    def _reconcile_adopted_rows(self, rows: dict) -> None:
+        """The startup reconciliation sweep (spec 00098 D7): every ledgered row whose order the cache
+        holds, compared against that order's own quantity, before anything is classified.
 
-        The ROWS are iterated and the orders indexed, never the other way round: the cache holds no
-        previous session's state, but the venue's mass-status read is unbounded, so `orders` can be
-        the account's entire closed-order history while the rows are the two-day re-attach window.
+        The ROWS drive it, and each asks the cache for exactly the order it names. The alternative --
+        reading the account's whole order index and matching it against the rows -- reads a
+        population with no bound on it: a mass-status read carries every closed order the account
+        has, while the rows are the two-day re-attach window. Nothing about that read gets smaller
+        as the account gets older, and every one of those orders would be materialised to answer a
+        question about at most a handful of ids.
+
         A row whose order the cache holds no record of at all is left exactly as it is -- there is
         no venue-truth source for it at this point in startup, and inventing one would be worse than
         an open row a human can read.
 
-        Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- or its
-        trip -- costs only that row and the rest still get their repairs. And around the whole
-        sweep, because `_adopted` is already set when this runs: an escape would leave a previous
-        process's resting opener working at the venue, uncanceled and unattached, for the life of
-        this process, and the sweep introduces raising calls the pass never had.
+        Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
+        lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
+        And around the whole sweep, because `_adopted` is already set when this runs: an escape would
+        leave a previous process's resting opener working at the venue, uncanceled and unattached,
+        for the life of this process.
 
         Neither of those is what protects the kill trips, and the difference is load-bearing: each
         ledger write inside `_reconcile_adopted_row` carries its OWN `try` (`_record_trip_fill`'s
@@ -779,12 +778,14 @@ class ProbeExecutor:
         logged, no kill file, and the gate reading normal.
         """
         try:
-            by_client_order_id = {str(getattr(order, "client_order_id", "")): order for order in orders}
             for client_order_id, (boundary, row) in rows.items():
-                order = by_client_order_id.get(client_order_id)
-                if order is None:
-                    continue
                 try:
+                    # `cache.order` is typed and refuses a plain str, and it serves closed orders as
+                    # readily as open ones -- which is the whole reason a row can be repaired at all
+                    # after the order it names filled or was canceled while this process was down.
+                    order = self._client.cache.order(ClientOrderId(client_order_id))
+                    if order is None:
+                        continue
                     self._reconcile_adopted_row(boundary, client_order_id, row, order)
                 except Exception:
                     logger.critical("adopted row %s could not be reconciled against the venue", client_order_id, exc_info=True)
