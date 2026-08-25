@@ -321,8 +321,9 @@ class ExternalOrderObserver(Strategy):
     itself and asserts every member of it is sealed here, so a method a future release adds is a
     red test and not a quiet hole.
 
-    Observation is all this class does: it queries nothing, submits nothing, and holds no state
-    beyond the handler.
+    The read-only surface is deliberately left live rather than sealed -- `query_account` and
+    `query_order` reach the venue only to ask, and `order_factory` mints an id without sending
+    anything. Nothing here calls them; the seal covers exactly what could act.
     """
 
     def __new__(cls, *args, **kwargs):
