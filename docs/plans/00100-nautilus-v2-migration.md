@@ -12,7 +12,7 @@ Spec: `docs/specs/00100-nautilus-v2-migration-design.md`. Every `D<N>` below ref
 
 ## Global Constraints
 
-- **Pinned wheel:** `nautilus-trader==2.0.0rc4.dev20260825`. Exact, never floating. Bumping it is a deliberate act that re-runs Task 1's pin.
+- **Pinned wheel:** `nautilus-trader===2.0.0rc4.dev20260825`. Exact, never floating. Bumping it is a deliberate act that re-runs Task 1's pin.
 - **The suite is the proof.** It resolves against `pyproject.toml`, so it can only prove the version it runs against. This is why the flip is Phase B, not the end.
 - **The branch is red from Task 4 until Phase C completes.** Expected, not a failure. `coverage.yml` triggers on `pull_request` only, and the PR opens at component completion — so no CI noise and no PR until green.
 - **Live-trade-path changes take the Fable review floor** (`.claude/rules/spec-plan-locations.md`). `cli/engine/{node,executor,execgate,command}.py` are all live trade path.
@@ -267,7 +267,7 @@ url = "https://packages.nautechsystems.io/simple"
 explicit = true
 ```
 
-with `nautilus-trader = { index = "nautechsystems" }` under `[tool.uv.sources]`, and the dependency pinned to `nautilus-trader==2.0.0rc4.dev20260825`. `explicit = true` so this index serves only this package and never shadows PyPI.
+with `nautilus-trader = { index = "nautechsystems" }` under `[tool.uv.sources]`, and the dependency pinned to `nautilus-trader===2.0.0rc4.dev20260825`. `explicit = true` so this index serves only this package and never shadows PyPI.
 
 - [ ] **Step 2: Relock and sync**
 
