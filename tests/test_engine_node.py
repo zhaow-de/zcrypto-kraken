@@ -1057,6 +1057,10 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     # as would the adapter's own "USDT" default. Pinned so neither an upstream default change nor
     # a plausible-looking "EUR" correction can silently empty spot position reporting.
     assert exec_config.spot_positions_quote_currency == "ZEUR"
+    # D10: submission stays on REST. The library default is True; `_KRAKEN_ERROR_MARKERS` and
+    # `_on_rejected`'s three-way verdict in cli/engine/executor.py are derived against REST
+    # rejections, so this must be set explicitly rather than inherited.
+    assert exec_config.use_ws_trade is False
 
 
 def test_the_builder_is_given_no_exec_client_by_default(tmp_path, monkeypatch):

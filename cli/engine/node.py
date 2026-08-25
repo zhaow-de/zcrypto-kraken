@@ -470,6 +470,11 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
         # Currently unread: the adapter consults it only when spot_account_type is NOT MARGIN
         # AND use_spot_position_reports is True; under MARGIN it takes the OpenPositions branch.
         spot_positions_quote_currency="ZEUR",
+        # Explicit, not inherited: the library default is True, which would move order submission
+        # from REST to WebSocket. `_KRAKEN_ERROR_MARKERS` and `_on_rejected`'s three-way verdict in
+        # cli/engine/executor.py are derived against REST rejections; adopting WS is its own change
+        # with its own evidence, not a side effect of this one (spec 00100 D10).
+        use_ws_trade=False,
     )
 
 

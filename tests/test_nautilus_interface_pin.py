@@ -106,6 +106,18 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
     )
 
 
+def test_the_exec_client_transport_default_we_now_override_is_unchanged():
+    """`cli/engine/node.py` now sets `use_ws_trade=False` explicitly (spec 00100 D10), so this
+    default no longer reaches production -- but the pin stays: it is what tells us the world moved.
+    If the library default ever flips to False, our explicit `False` stops being a decision and
+    starts being a restatement, and D10's re-derivation-for-WS reasoning is worth revisiting."""
+    from nautilus_trader.adapters.kraken import KrakenExecutionClientConfig
+    from nautilus_trader.model import AccountId
+
+    config = KrakenExecutionClientConfig(account_id=AccountId("KRAKEN-001"), api_key="a-key", api_secret="a-secret")
+    assert config.use_ws_trade is True
+
+
 # Existence is not enough: every drift this file exists to catch has been a SIGNATURE change --
 # an argument removed, an argument newly required, a keyword rejected outright. These construct
 # each config exactly the way `cli/engine/node.py` constructs it, so the pin fails on the call we
@@ -122,6 +134,7 @@ def test_the_kraken_client_configs_accept_the_arguments_we_pass():
         spot_account_type=AccountType.MARGIN,
         margin_balance_asset="ZEUR",
         spot_positions_quote_currency="ZEUR",
+        use_ws_trade=False,
     )
 
 
