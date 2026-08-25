@@ -311,9 +311,9 @@ Flat `nautilus_trader.model` replaces `model.enums` / `model.identifiers`; `naut
 
 **Files:** `cli/engine/node.py`, `tests/test_engine_node.py`
 
-- [ ] **Step 1:** Rewrite `_node_config` / `build_shadow_node` to the builder chain.
-- [ ] **Step 2:** Drop `instrument_provider=` from both client configs.
-- [ ] **Step 2b (D13): Supply the exec credentials, which v2 now requires**
+- [x] **Step 1:** Rewrite `_node_config` / `build_shadow_node` to the builder chain.
+- [x] **Step 2:** Drop `instrument_provider=` from both client configs.
+- [x] **Step 2b (D13): Supply the exec credentials, which v2 now requires**
 
 Measured: `KrakenExecutionClientConfig(...)` without `account_id`, `api_key` and `api_secret` raises `TypeError: missing 3 required positional arguments`. v1 needed none — the adapter read the environment itself. Read the same `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` already rendered onto the host and pass them explicitly; `account_id` is an explicit `AccountId`.
 
@@ -323,9 +323,9 @@ Two properties are load-bearing and each gets a test.
 
 **The key must never reach a message** — never interpolated into an error string, never logged with its config. Assert on OUR own message-forming paths, not on nautilus's `TypeError` text, which cannot contain a value that was never passed.
 
-- [ ] **Step 3 (D5): Measure how the twelve instruments reach the Cache**, against a running v2 node — do not infer it from config. `venue_state_from_cache` raises if any of `INSTRUMENT_IDS` is absent, so establish what now guarantees their presence before the first cycle, and write the guard that proves it.
-- [ ] **Step 4:** Re-point the config-shape pins in `tests/test_engine_node.py`; v2 exposes no node-side config readback, so assert on the config objects handed to the builder instead.
-- [ ] **Step 5:** Commit.
+- [x] **Step 3 (D5): Measure how the twelve instruments reach the Cache**, against a running v2 node — do not infer it from config. `venue_state_from_cache` raises if any of `INSTRUMENT_IDS` is absent, so establish what now guarantees their presence before the first cycle, and write the guard that proves it.
+- [x] **Step 4:** Re-point the config-shape pins in `tests/test_engine_node.py`; v2 exposes no node-side config readback, so assert on the config objects handed to the builder instead.
+- [x] **Step 5:** Commit.
 
 ### Task 7: Renamed call sites on the live trade path
 
@@ -459,6 +459,8 @@ The publish leg is established from source and the delivery leg in a backtest, b
 
 - [ ] **Step 1:** Confirm the obligation is registered as `T0152` with a `ripe_when` naming the first v2 converge, and that its index bullet reflects it. Registration and this plan's closeout travel together — prose in a plan is never a deferral's only home.
 - [ ] **Step 2:** State the residual plainly in the PR body: D2 merges with its publish leg proven from source and its delivery leg proven only in a backtest. The fallback if the join fails is known and cheap — Cache polling on the executor's existing 5-second tick.
+
+**Run the live-venue tests deliberately at closeout**: `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest -k live_venue` covers the instrument-arrival guard, which is opt-in so CI neither flakes on a live endpoint nor skips it silently forever.
 
 ### Task 17: Closeout
 

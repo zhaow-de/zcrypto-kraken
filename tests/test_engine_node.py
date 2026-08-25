@@ -1174,8 +1174,14 @@ def _kraken_public_reachable() -> bool:
 def test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts(tmp_path):
     from cli.engine.instruments import INSTRUMENT_IDS
 
+    # Opt-in, not reachability-gated: CI has network, so a reachability gate would run this against a
+    # live venue on every PR (a flake source), and would skip silently and permanently if Kraken ever
+    # blocked the runner -- an outage indistinguishable from coverage. Set ZCRYPTO_LIVE_VENUE_TESTS=1
+    # to run it; the closeout runs it deliberately.
+    if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
+        pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
     if not _kraken_public_reachable():
-        pytest.skip("Kraken's public endpoint is unreachable -- this test needs it and proves nothing without it")
+        pytest.fail("ZCRYPTO_LIVE_VENUE_TESTS=1 was set but Kraken's public endpoint is unreachable")
     env = os.environ.copy()
     env.pop("KRAKEN_SPOT_API_KEY", None)
     env.pop("KRAKEN_SPOT_API_SECRET", None)
