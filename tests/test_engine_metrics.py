@@ -1446,16 +1446,25 @@ def test_the_order_outcome_labels_cover_every_outcome_the_executor_can_emit():
 
 
 def test_the_liquidity_labels_are_the_venue_enums_own_names():
-    """DERIVED from the real `LiquiditySide`, because the bug this pins was invisible to every
-    string-based fake: the enum is an `IntFlag` over `ReprEnum`, so `str(LiquiditySide.MAKER)` is
-    `'1'`. The label set must be exactly what the venue can report, lower-cased -- a member this
-    tuple omits would spring into existence as an unadmitted series on the first live fill that
-    carried it, while the pre-registered children read zero for the whole probe window."""
-    from nautilus_trader.model.enums import LiquiditySide, liquidity_side_to_str
+    """DERIVED from the real `LiquiditySide` and routed through the executor's own emit-site helper,
+    because a string-based fake agrees with any rendering that helper produces. The label set must
+    be exactly what the venue can report, lower-cased -- a member this tuple omits would spring into
+    existence as an unadmitted series on the first live fill that carried it, while the
+    pre-registered children read zero for the whole probe window."""
+    from nautilus_trader.model import LiquiditySide
 
-    assert {liquidity_side_to_str(member).lower() for member in LiquiditySide} == set(command._EXEC_LIQUIDITY_SIDES)
-    # The trap itself, stated: were `str()` used at the emit site these would be the labels instead.
-    assert {str(member) for member in LiquiditySide} == {"0", "1", "2"}
+    members = tuple(LiquiditySide.variants())  # the class itself is not iterable
+    assert len(members) >= 3, f"the enum yielded {[m.name for m in members]} -- this guard would pass vacuously"
+    assert {executor_module._liquidity(member).lower() for member in members} == set(command._EXEC_LIQUIDITY_SIDES)
+
+    # And the consequence, measured: a real member mints no child the registry had not already
+    # seeded. A numeric label would add `0`/`1`/`2` here and leave the admitted series at zero.
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+    seeded = {s.labels["liquidity"] for s in _families(registry)["zcrypto_exec_fills_total"].samples}
+    for member in members:
+        metrics.inc_fill(executor_module._liquidity(member).lower(), None)
+    assert {s.labels["liquidity"] for s in _families(registry)["zcrypto_exec_fills_total"].samples} == seeded
 
 
 def test_every_outcome_and_liquidity_series_exists_before_anything_happens():

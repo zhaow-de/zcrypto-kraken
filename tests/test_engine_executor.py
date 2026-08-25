@@ -11,8 +11,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from nautilus_trader.model import InstrumentId, LiquiditySide, OrderSide, OrderStatus, Quantity, StrategyId, TimeInForce
-from nautilus_trader.model.orders.base import Order
+from nautilus_trader.model import (
+    InstrumentId,
+    LimitOrder,
+    LiquiditySide,
+    OrderSide,
+    OrderStatus,
+    Quantity,
+    StrategyId,
+    TimeInForce,
+)
 
 import cli.engine.execledger as execledger_module
 import cli.engine.executor as executor_module
@@ -38,6 +46,16 @@ from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+
+# One case per liquidity side the venue can report: (member, row value, metric label). The expected
+# renderings are written out rather than read back off the member -- an expectation derived from the
+# enum would agree with whatever the emit site produced, including a number. Completeness against
+# the enum is asserted in the test that consumes this.
+_LIQUIDITY_CASES = (
+    (LiquiditySide.MAKER, "MAKER", "maker"),
+    (LiquiditySide.TAKER, "TAKER", "taker"),
+    (LiquiditySide.NO_LIQUIDITY_SIDE, "NO_LIQUIDITY_SIDE", "no_liquidity_side"),
+)
 
 
 # --- the sizing seam (Task 4) -------------------------------------------------------------------
@@ -1259,23 +1277,20 @@ def test_a_fill_publishes_its_liquidity_side_fee_and_the_position_the_cache_now_
     assert metrics.realized == [0.0]  # no realized leg on this position yet -- a None contributes zero
 
 
-@pytest.mark.parametrize(
-    ("side", "row_value", "label"),
-    [
-        (LiquiditySide.MAKER, "MAKER", "maker"),
-        (LiquiditySide.TAKER, "TAKER", "taker"),
-        (LiquiditySide.NO_LIQUIDITY_SIDE, "NO_LIQUIDITY_SIDE", "no_liquidity_side"),
-    ],
-    ids=["maker", "taker", "unattributed"],
-)
+@pytest.mark.parametrize(("side", "row_value", "label"), _LIQUIDITY_CASES, ids=["maker", "taker", "unattributed"])
 def test_a_fills_liquidity_side_is_named_not_numbered_in_both_the_row_and_the_metric(tmp_path, side, row_value, label):
-    """`LiquiditySide` is an `IntFlag` over `ReprEnum` in the installed nautilus-trader, so
-    `str(LiquiditySide.MAKER)` is '1', not 'MAKER'. A `str()` here puts '1'/'2' in the forensic row
-    that outlives the probe AND mints a `liquidity="1"` metric child while the pre-registered
-    maker/taker series read zero for the whole window -- the board reporting nothing traded while
-    money moves, and the maker-vs-taker blend is the measurement this ladder exists to produce.
+    """The whole write-ahead path, driven with a REAL `LiquiditySide` member: a plain-string fake
+    would make any rendering the emit site produced look correct.
 
-    Driven with the REAL enum member: a plain-string fake makes the broken idiom look correct."""
+    A number in the forensic row outlives the probe, and a numeric metric child mints an unadmitted
+    series while the pre-registered maker/taker ones read zero for the whole window -- the board
+    reporting nothing traded while money moves, and the maker-vs-taker blend is the measurement this
+    ladder exists to produce.
+
+    The case list is checked against the enum first: a side the venue can report but this file never
+    names would otherwise go uncovered silently. `variants()` is the enumeration -- the class itself
+    is not iterable."""
+    assert {case[1] for case in _LIQUIDITY_CASES} == {member.name for member in LiquiditySide.variants()}
     client = StubClient()
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -1291,25 +1306,12 @@ def test_a_fills_liquidity_side_is_named_not_numbered_in_both_the_row_and_the_me
     assert metrics.fills == [(label, pytest.approx(0.012))]
 
 
-def test_a_composite_liquidity_side_never_reaches_the_helper_that_would_abort_the_process(tmp_path):
-    """`liquidity_side_to_str` does not merely raise on an out-of-range value -- on 3 it hard-aborts
-    the process with a Rust capacity-overflow panic (SIGABRT), which no `except BaseException` can
-    catch. And 3 is CONSTRUCTIBLE as `LiquiditySide.MAKER | LiquiditySide.TAKER`, because IntFlag
-    keeps out-of-range composites under its KEEP boundary. So the membership guard, not the
-    try/except, is what keeps a live engine alive here: reaching the helper at all would kill the
-    process on the write-ahead path with real money in flight.
-
-    Unreachable in practice -- the fill's value arrives from the Rust core as 0, 1 or 2 -- but the
-    failure mode is an uncatchable abort, so it is guarded rather than argued about. That this test
-    RETURNS is itself half the assertion: before the guard, it takes the whole pytest process down
-    with exit 134."""
-    composite = LiquiditySide.MAKER | LiquiditySide.TAKER
-    assert int(composite) == 3 and composite not in tuple(LiquiditySide)
-
-    # The guard function directly, first: the one call that would abort.
-    assert executor_module._liquidity(composite) == "3"
-
-    # Then the whole write-ahead path: the fill still earns its forensic row.
+def test_an_unrecognisable_liquidity_side_still_gets_its_forensic_row_and_its_fill_count(tmp_path):
+    """The payload builder sits on the write-ahead path, where a raise costs the fill its row, and
+    `_liquidity` reads an attribute off a value that arrives from outside this process. A value the
+    enum cannot name is recorded verbatim and logged, never dropped -- and the fill still counts,
+    because it happened. `tracking.py` is where a liquidity outside the venue's own names is
+    refused; refusing it here would cost the row that proves it."""
     client = StubClient()
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -1318,26 +1320,9 @@ def test_a_composite_liquidity_side_never_reaches_the_helper_that_would_abort_th
 
     ex.on_timer(NOW)
     ex.on_quote(_quote())
-    _deliver_fill(ex, client, "O-1", 0.001, liquidity=composite)
-
-    row = _record(tmp_path)["submitted"][0]
-    assert row["filled_qty"] == 0.001
-    assert [e["liquidity"] for e in row["events"] if e.get("event") == "fill"] == ["3"]
-    assert metrics.fills == [("3", pytest.approx(0.012))]
-
-
-def test_an_unrecognisable_liquidity_side_still_gets_its_forensic_row(tmp_path):
-    """The payload builder sits on the write-ahead path, where a raise costs the fill its row --
-    and `liquidity_side_to_str` raises on a non-int and reads garbage memory on an out-of-range
-    one. A value the enum cannot name is recorded verbatim and logged, never dropped."""
-    client = StubClient()
-    ex = _executor(tmp_path, client=client)
-    _drop_plan(tmp_path, _plan_dict())
-
-    ex.on_timer(NOW)
-    ex.on_quote(_quote())
     _deliver_fill(ex, client, "O-1", 0.001, liquidity="WHO KNOWS")
 
+    assert metrics.fills == [("who knows", pytest.approx(0.012))]
     row = _record(tmp_path)["submitted"][0]
     assert row["filled_qty"] == 0.001
     fill_events = [e for e in row["events"] if e.get("event") == "fill"]
@@ -1533,7 +1518,7 @@ def test_the_time_box_cancels_then_fires_an_ioc_at_the_opposite_touch(tmp_path):
     resting_order = client.submitted[0][0]
 
     _advance_with_quotes(ex, client, clock, minutes=16)
-    assert client.canceled == [resting_order]
+    assert client.canceled == [resting_order.client_order_id]
     assert len(client.submitted) == 1  # the cancel is not a submission -- the ack is what fires the IOC
 
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
@@ -1643,7 +1628,7 @@ def test_a_kill_file_mid_rest_cancels_with_no_fallback_and_halts_the_plan(tmp_pa
     clock.now = NOW + timedelta(seconds=5)
     ex.on_quote(_quote())  # a live quote: what revokes here is the gate, not silence
     ex.on_timer(clock.now)
-    assert client.canceled == [resting_order]
+    assert client.canceled == [resting_order.client_order_id]
 
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
     assert len(client.submitted) == 1  # a revoked intent NEVER falls back
@@ -1665,7 +1650,7 @@ def test_quote_silence_past_the_window_cancels_and_halts_the_plan(tmp_path):
 
     clock.now = NOW + timedelta(seconds=31)
     ex.on_timer(clock.now)
-    assert client.canceled == [client.submitted[0][0]]
+    assert client.canceled == [client.submitted[0][0].client_order_id]
 
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
     assert len(client.submitted) == 1
@@ -1688,7 +1673,7 @@ def test_rest_cancel_mode_rests_five_percent_passive_and_never_executes(tmp_path
     assert order.post_only is True and order.time_in_force == TimeInForce.GTC
 
     ex.on_order_event(OrderAccepted(client.last_order_id))
-    assert client.canceled == [order]  # cancelled on the acknowledgment, not on a timer
+    assert client.canceled == [order.client_order_id]  # cancelled on the acknowledgment, not on a timer
 
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
     assert len(client.submitted) == 1  # exactly one submission, ever
@@ -1704,7 +1689,7 @@ def test_a_rest_cancel_drill_that_reaches_the_time_box_still_never_falls_back(tm
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-cancel")])
 
     _advance_with_quotes(ex, client, clock, minutes=16)
-    assert client.canceled == [client.submitted[0][0]]
+    assert client.canceled == [client.submitted[0][0].client_order_id]
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
 
     assert len(client.submitted) == 1
@@ -2150,7 +2135,7 @@ def test_the_startup_pass_keeps_only_the_ledger_attached_reduce_only_order(tmp_p
 
     ex.on_timer(NOW)
 
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener", "O-flagged", "O-orphan"]
+    assert [str(cid) for cid in client.canceled] == ["O-opener", "O-flagged", "O-orphan"]
     ex.on_timer(NOW + timedelta(seconds=5))
     assert len(client.canceled) == 3  # the pass is a STARTUP pass, not a per-tick sweep
 
@@ -2167,7 +2152,7 @@ def test_a_terminal_ledger_row_does_not_save_its_order_from_the_startup_pass(tmp
 
     ex.on_timer(NOW)
 
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-done"]
+    assert [str(cid) for cid in client.canceled] == ["O-done"]
 
 
 def test_an_unreadable_ledger_cancels_every_resting_order(tmp_path, monkeypatch):
@@ -2185,7 +2170,7 @@ def test_an_unreadable_ledger_cancels_every_resting_order(tmp_path, monkeypatch)
 
     ex.on_timer(NOW)
 
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-attached"]
+    assert [str(cid) for cid in client.canceled] == ["O-attached"]
 
 
 def test_a_post_restart_fill_on_a_re_attached_order_lands_in_its_own_boundarys_row(tmp_path):
@@ -2269,7 +2254,7 @@ def test_a_startup_canceled_orders_fill_and_cancel_ack_still_land_in_its_row(tmp
     ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
 
     ex.on_timer(NOW)
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener"]
+    assert [str(cid) for cid in client.canceled] == ["O-opener"]
 
     ex.on_order_event(_fill("O-opener", 0.0002, px=30000.0))
     ex.on_order_event(_named("OrderCanceled", client_order_id="O-opener"))
@@ -2291,7 +2276,7 @@ def test_a_raising_orders_read_leaves_the_startup_pass_able_to_run_again(tmp_pat
     assert client.canceled == []  # the read raised: nothing classified, nothing touched
 
     ex.on_timer(NOW + timedelta(seconds=5))
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-orphan"]
+    assert [str(cid) for cid in client.canceled] == ["O-orphan"]
 
 
 @pytest.mark.parametrize(
@@ -2313,7 +2298,7 @@ def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, 
 
     ex.on_timer(NOW)
 
-    assert [str(o.client_order_id) for o in client.canceled] == expected
+    assert [str(cid) for cid in client.canceled] == expected
     # Attached either way (cancel is a request, not an outcome), so the ack lands in the row.
     ex.on_order_event(_named("OrderCanceled", client_order_id="O-attached"))
     assert [e["type"] for e in _record(tmp_path, earlier)["submitted"][0]["events"]] == ["OrderCanceled"]
@@ -2489,7 +2474,7 @@ def test_an_external_overfill_on_an_adopted_row_trips_the_kill_and_still_journal
     ex.on_external_order_event(_fill("O-attached", overfill))
 
     assert _kill_file(tmp_path).exists()
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-attached"]  # the trip pulls it
+    assert [str(cid) for cid in client.canceled] == ["O-attached"]  # the trip pulls it
     row = _record(tmp_path, earlier)["submitted"][0]
     assert [e["event"] for e in row["events"]] == ["fill"]
     assert row["filled_qty"] == overfill
@@ -2513,7 +2498,7 @@ def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_r
     is the no-fill-without-a-record invariant broken on the very path built to restore it. Retained,
     it journals as a detached append exactly as an own order's late fill does."""
     ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener"]  # the pass's own cancel
+    assert [str(cid) for cid in client.canceled] == ["O-opener"]  # the pass's own cancel
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
 
@@ -2727,7 +2712,7 @@ def test_a_venue_quantity_past_the_ledgered_order_trips_after_the_repair_is_jour
     row = _record(tmp_path, earlier)["submitted"][0]
     assert [e["event"] for e in row["events"]] == ["reconciled"]  # journaled before the trip
     assert row["filled_qty"] == overfilled
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-attached", "O-attached"]
+    assert [str(cid) for cid in client.canceled] == ["O-attached", "O-attached"]
 
 
 def test_a_ledger_ahead_of_the_venue_trips_and_names_both_figures(tmp_path, kill_trip_expected):
@@ -2789,11 +2774,13 @@ def test_a_cancel_that_landed_while_the_process_was_down_closes_its_row_without_
 def test_the_startup_terminal_map_is_total_over_the_librarys_own_closed_statuses():
     """Totality against the installed library rather than against a hand-written list: an order
     status the map does not carry leaves a closed order's row open forever, and the failure is
-    silent. The closed set lives in `Order.is_closed_c`, compiled and unreachable from Python, so
+    silent. The closed set is decided inside `is_closed`, compiled and unreachable from Python, so
     its own property docstring -- the list the library maintains and a version bump would move -- is
-    the domain. The parse is asserted non-empty first: a docstring reformat must fail loudly here
-    rather than hand this test an empty set to trivially satisfy."""
-    documented = re.findall(r"``([A-Z_]+)``", Order.is_closed.__doc__ or "")
+    the domain. `LimitOrder` is the concrete class this engine's own orders are (`order_factory
+    .limit`) and the one reconciliation adopts. The parse is asserted non-empty first: a docstring
+    the library no longer carries must fail loudly here rather than hand this test an empty set to
+    trivially satisfy."""
+    documented = re.findall(r"``([A-Z_]+)``", LimitOrder.is_closed.__doc__ or "")
     assert len(documented) >= 5
     closed = {getattr(OrderStatus, name) for name in documented}
 
@@ -2853,7 +2840,7 @@ def test_a_repair_that_cannot_be_journaled_still_leaves_the_resting_opener_cance
     with _executor_errors(logging.CRITICAL) as records:
         ex.on_timer(NOW)
 
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener"]
+    assert [str(cid) for cid in client.canceled] == ["O-opener"]
     assert [r.getMessage() for r in records] == ["the repair for adopted order O-opener could not be journaled"]
     assert records[0].exc_info is not None
 
@@ -2869,7 +2856,7 @@ def test_a_row_the_sweep_cannot_read_at_all_is_logged_and_the_pass_classifies_an
     with _executor_errors(logging.CRITICAL) as records:
         ex.on_timer(NOW)
 
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener"]
+    assert [str(cid) for cid in client.canceled] == ["O-opener"]
     assert [r.getMessage() for r in records] == ["adopted row O-opener could not be reconciled against the venue"]
     assert _record(tmp_path, earlier)["submitted"][0]["events"] == []  # nothing was written from an unreadable figure
 
@@ -2971,7 +2958,7 @@ def test_a_fill_for_an_order_this_engine_never_submitted_trips_the_kill_switch(t
 
     text = _kill_file(tmp_path).read_text()
     assert "no open order record" in text and "O-unknown" in text  # WHICH condition fired
-    assert client.canceled == [resting]
+    assert client.canceled == [resting.client_order_id]
     assert _intent_outcome(tmp_path, 0) == "revoked"
     assert _intent_outcome(tmp_path, 1) == "refused"
     assert _record(tmp_path)["submitted"][0]["filled_qty"] == 0.0  # nothing was credited to OUR order
@@ -2991,7 +2978,7 @@ def test_an_order_filling_past_the_quantity_it_was_submitted_for_trips(tmp_path,
     _deliver_fill(ex, client, client.last_order_id, 0.0006)
 
     assert "of the 0.001 it was submitted for" in _kill_file(tmp_path).read_text()
-    assert client.canceled == [resting]
+    assert client.canceled == [resting.client_order_id]
     # The overfilling fill is journaled anyway: it happened at the venue, and the row is where the
     # operator reads what the kill reason is talking about.
     assert _record(tmp_path)["submitted"][0]["filled_qty"] == 0.0012
@@ -3016,7 +3003,7 @@ def test_an_intents_orders_filling_past_its_target_between_them_trips(tmp_path, 
     _deliver_fill(ex, client, "O-2", 0.6, px=30.0)
 
     assert "across its orders" in _kill_file(tmp_path).read_text()
-    assert client.canceled == [resting]
+    assert client.canceled == [resting.client_order_id]
     assert _intent_outcome(tmp_path) == "revoked"
 
 
@@ -3038,7 +3025,7 @@ def test_a_position_that_contradicts_the_intents_fills_trips_at_the_terminal(tmp
     ex.on_order_event(_fill(client.last_order_id, 0.001))
 
     assert "not the 0.001" in _kill_file(tmp_path).read_text()
-    assert [str(o.client_order_id) for o in client.canceled] == ["O-attached"]
+    assert [str(cid) for cid in client.canceled] == ["O-attached"]
     assert _intent_outcome(tmp_path, 0) == "filled"  # it DID fill -- the divergence is what follows
     assert _intent_outcome(tmp_path, 1) == "refused"
 

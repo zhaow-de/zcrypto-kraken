@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.model import InstrumentId, LiquiditySide, OrderSide, OrderStatus, TimeInForce, Venue
+from nautilus_trader.model import InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
@@ -140,12 +140,6 @@ _TRACKING_WITHIN_BAND = 3
 _TRACKING_BREACHED = 4
 
 _VENUE = Venue("KRAKEN")
-# The integer value of every REAL `LiquiditySide` member, derived from the enum rather than written
-# out, so a member the library adds is admitted automatically. Plain ints, and the test is
-# `isinstance(side, int) and int(side) in ...`: a set membership on the enum member itself would
-# lean on Enum's own hashing, and a string that happens to spell a number must not slip through.
-# See `_liquidity` for why this gate exists at all -- it is a process-survival guard, not a filter.
-_LIQUIDITY_VALUES = frozenset(int(member) for member in LiquiditySide)
 # The instrument-id -> symbol direction, for labelling a fill's metric. Inverted from the ratified
 # map rather than string-split off the id, so an id this engine never ratified raises instead of
 # inventing a label.
@@ -209,30 +203,16 @@ def _set_tracking_state(state: int) -> None:
 
 
 def _liquidity(side) -> str:
-    """The venue's own NAME for a fill's liquidity side ("MAKER"/"TAKER"/"NO_LIQUIDITY_SIDE").
+    """The venue's own NAME for a fill's liquidity side -- `LiquiditySide.name`, so the forensic row
+    and the metric label both read `MAKER`/`TAKER`/`NO_LIQUIDITY_SIDE` rather than a number.
 
-    Never `str(side)`: in the installed nautilus-trader `LiquiditySide` is an `IntFlag` over
-    `ReprEnum`, so `str(LiquiditySide.MAKER)` is `'1'` and TAKER's is `'2'`. That number would go
-    into the forensic row that outlives the probe, and would mint a `liquidity="1"` metric child
-    while the pre-registered maker/taker series read zero for a whole window -- a board reporting
-    that nothing traded while money moves, and the maker-vs-taker blend is the measurement the
-    maker-first ladder exists to produce.
-
-    Falls back to `str(side)`, logged, for anything the enum cannot name. This sits on the
-    write-ahead path where a raise costs the fill its row, and `liquidity_side_to_str` is not
-    total: it raises `TypeError` on a non-int, `OverflowError` on -1, and on an out-of-range
-    positive int decodes garbage memory into a `UnicodeDecodeError`. An unnameable side is recorded
-    verbatim, never dropped.
-
-    The membership test in front of that call is NOT redundant with the `except`, and must not be
-    "simplified" away: on 3 the helper does not raise at all, it ABORTS THE PROCESS with a Rust
-    capacity-overflow panic (SIGABRT) that no `except BaseException` can catch -- and 3 is
-    constructible as `LiquiditySide.MAKER | LiquiditySide.TAKER`, because IntFlag keeps
-    out-of-range composites under its KEEP boundary. Only never making the call survives it, and
-    dying here would kill a live engine mid-probe with money in flight. `_LIQUIDITY_VALUES` is
-    derived from the enum, so a member the library adds widens the guard with it."""
-    if isinstance(side, int) and int(side) in _LIQUIDITY_VALUES:
-        return liquidity_side_to_str(side)
+    Anything the enum cannot name is recorded verbatim and logged: this sits on the write-ahead path
+    where a raise costs the fill its row, so an unnameable side is never allowed to become an
+    exception. `tracking.py` refuses a liquidity outside the venue's own names downstream, where a
+    refusal is affordable."""
+    name = getattr(side, "name", None)
+    if isinstance(name, str):
+        return name
     logger.warning("fill carries an unrecognisable liquidity side %r -- recording it verbatim", side)
     return str(side)
 
