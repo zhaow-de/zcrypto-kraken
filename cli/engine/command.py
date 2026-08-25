@@ -404,21 +404,41 @@ def seed() -> None:
 
 
 def _start_watchdog(node) -> threading.Timer:
-    """The supervision watchdog (spec 00042): a one-shot daemon timer firing timeout_connection +
-    timeout_reconciliation + 30 s slack after the node starts (the real nautilus TradingNodeConfig
-    attribute names; defaults 60 s + 30 s). A trader still not RUNNING then means the exec client
-    never connected/reconciled (bad key, IP/family mismatch, venue outage): log CRITICAL and
-    os._exit(1) -- the supervisor's restart (compose `restart: unless-stopped`) is the recovery, a
-    visible crash loop instead of a silent zombie burning gate days. A RUNNING trader means a
-    healthy start and the fired check does nothing; run() cancels the timer once node.run() returns."""
-    node_config = node._config  # TradingNode keeps its config private; there is no public accessor
-    delay = node_config.timeout_connection + node_config.timeout_reconciliation + _WATCHDOG_SLACK_SECS
+    """The supervision watchdog (spec 00042): a one-shot daemon timer firing the node's own connect
+    + reconcile budget plus 30 s slack after the node starts. A node still not RUNNING then means
+    the exec client never connected/reconciled (bad key, IP/family mismatch, venue outage): log
+    CRITICAL and os._exit(1) -- the supervisor's restart (compose `restart: unless-stopped`) is the
+    recovery, a visible crash loop instead of a silent zombie burning gate days. A RUNNING node
+    means a healthy start and the fired check does nothing; run() cancels the timer once node.run()
+    returns.
+
+    `NodeState.RUNNING` is entered only after every client has connected AND startup reconciliation
+    has completed -- both phases read STARTING -- so this health read cannot come true early, which
+    is the one way a watchdog defeats itself entirely. It is compared against the member rather than
+    taken for its truthiness: a read re-pointed at a method would be permanently true under `if`,
+    and permanently unequal to the member here, so the failure mode is a watchdog that fires rather
+    than one silently disarmed.
+
+    The handle is taken HERE, on the thread that built the node, and is the only object the timer's
+    callback touches. The node itself is unsendable: reading ANY of its attributes -- `handle()`
+    included -- from another thread aborts the process with SIGABRT, which no `except` can
+    intercept, so a watchdog holding the node would kill a healthy engine at the exact moment it
+    fired. The handle is the thread-safe view and stays valid for the node's whole lifetime.
+    tests/test_engine_node.py measures both halves."""
+    from nautilus_trader.live import NodeState
+
+    from cli.engine.node import node_start_timeouts
+
+    handle = node.handle()
+    connect_secs, reconcile_secs = node_start_timeouts()
+    delay = connect_secs + reconcile_secs + _WATCHDOG_SLACK_SECS
 
     def check() -> None:
         try:
-            if node.trader.is_running:
+            state = handle.state
+            if state is NodeState.RUNNING:
                 return
-            reason = "trader not running -- exec connect/reconcile presumed failed"
+            reason = f"node state is {state}, not RUNNING -- exec connect/reconcile presumed failed"
         except Exception as exc:  # cannot confirm health => assume wedged; never a silently disarmed watchdog
             reason = f"health check itself raised ({exc!r})"
         logger.critical(
@@ -998,21 +1018,22 @@ def run() -> None:
     from cli.engine.node import build_shadow_node
 
     node = build_shadow_node(config)
-    # The build registered nautilus's asyncio SIGABRT handler, which installs CPython's own no-op C
-    # handler over faulthandler's -- so a native abort (a Rust panic in the adapter, say) would kill
-    # the engine with exit 134 and NOTHING on stderr. Re-arm so the next one arrives with a stack.
-    # `disable()` first is load-bearing: `enable()` returns early when faulthandler already considers
-    # itself enabled, and would then leave the clobbered handler in place.
+    # This is the ONLY thing that arms faulthandler in the engine: nothing in the image or the
+    # compose entrypoint sets PYTHONFAULTHANDLER, so without it a native abort -- a Rust panic in
+    # the adapter, or the pyo3 assertion that fires when an unsendable object is touched off its own
+    # thread -- kills the engine with exit 134 and NOTHING on stderr. Armed, it arrives with a stack.
+    # tests/test_engine_node.py measures both, and it is why this runs before node.run().
+    # `disable()` first: `enable()` installs the fatal-signal handlers only while faulthandler
+    # considers itself disabled, so this pair is what makes THIS call install its own regardless of
+    # what state the process was already in.
     # `file=2` rather than the default `sys.stderr` for two reasons. A fatal-signal dump is written
     # from a signal handler and must reach the process's real stderr -- fd 2, which here is docker's
     # log stream -- not whatever object happens to occupy `sys.stderr`. And the default form RAISES
     # when that object has no `fileno()`: since `disable()` has already run by then, the engine would
-    # start with faulthandler switched OFF, strictly worse than never having re-armed. An fd needs no
-    # `fileno()`, so this form cannot fail that way and needs no exception handling.
-    # Accepted trade: faulthandler's handler replaces asyncio's for the fatal five (SIGSEGV/SIGFPE/
-    # SIGABRT/SIGBUS/SIGILL), so an EXTERNALLY delivered SIGABRT now dumps and dies instead of taking
-    # nautilus's graceful `node.stop()` path. SIGTERM and SIGINT are untouched, so `docker stop` and
-    # Ctrl-C still shut down cleanly; nothing in this fleet sends SIGABRT to the engine.
+    # start with faulthandler switched OFF, strictly worse than never having armed it at all. An fd
+    # needs no `fileno()`, so this form cannot fail that way and needs no exception handling.
+    # Only the fatal five (SIGSEGV/SIGFPE/SIGABRT/SIGBUS/SIGILL) are handled; SIGTERM and SIGINT are
+    # untouched, so `docker stop` and Ctrl-C still shut down cleanly.
     faulthandler.disable()
     faulthandler.enable(file=2)
     watchdog = _start_watchdog(node)

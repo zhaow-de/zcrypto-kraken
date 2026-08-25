@@ -1043,11 +1043,16 @@ def _free_port() -> int:
     return port
 
 
-def _fake_node(is_running: bool = True):
+def _fake_node(run=lambda: None):
+    """The assembled node as `run()` reaches for it: `handle()` for the supervision watchdog's
+    health read, plus run/dispose. The handle reports RUNNING because these tests do NOT stub the
+    timer or os._exit -- a node reporting anything else would arm a real watchdog able to force-exit
+    the pytest process itself."""
+    from nautilus_trader.live import NodeState
+
     return types.SimpleNamespace(
-        _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
-        trader=types.SimpleNamespace(is_running=is_running),
-        run=lambda: None,
+        handle=lambda: types.SimpleNamespace(state=NodeState.RUNNING),
+        run=run,
         dispose=lambda: None,
     )
 
@@ -1307,12 +1312,7 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
 
     monkeypatch.setattr(
         "cli.engine.node.build_shadow_node",
-        lambda config: types.SimpleNamespace(
-            _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
-            trader=types.SimpleNamespace(is_running=True),
-            run=_run_and_complete_a_cycle,
-            dispose=lambda: None,
-        ),
+        lambda config: _fake_node(run=_run_and_complete_a_cycle),
     )
 
     cli_result = runner.invoke(app, ["engine", "run"])
@@ -1413,12 +1413,7 @@ def test_the_exec_ledger_writes_even_when_the_metrics_port_is_unset(tmp_path, mo
 
     monkeypatch.setattr(
         "cli.engine.node.build_shadow_node",
-        lambda config: types.SimpleNamespace(
-            _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
-            trader=types.SimpleNamespace(is_running=True),
-            run=_run_and_complete_a_cycle,
-            dispose=lambda: None,
-        ),
+        lambda config: _fake_node(run=_run_and_complete_a_cycle),
     )
 
     cli_result = runner.invoke(app, ["engine", "run"])

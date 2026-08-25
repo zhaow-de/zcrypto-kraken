@@ -1423,6 +1423,147 @@ def test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts(tmp_pa
     )
 
 
+# --- what the supervision watchdog reads (spec 00042) -------------------------------------------
+
+
+def test_the_node_start_timeouts_are_the_budget_the_assembled_node_applies():
+    """The supervision watchdog waits these two out before it calls a start failed, and nothing else
+    bounds how long a legitimate connect-and-reconcile may take. Fired short, it force-exits an
+    engine that is still starting normally -- a crash loop against a healthy node -- so a change in
+    either value has to surface here rather than silently shortening the wait."""
+    assert node.node_start_timeouts() == (60.0, 30.0)
+
+
+# Why `_start_watchdog` takes `node.handle()` on the thread that built the node and its timer
+# callback touches nothing else. pyo3 marks `LiveNode` unsendable, and the assertion that catches a
+# cross-thread read is a panic that ABORTS the process: SIGABRT, no Python exception, nothing an
+# `except` can intercept and nothing logged. Both halves are measured -- the node's abort and the
+# handle's normal answer -- because guessing either way costs the engine.
+_UNSENDABLE_PROBE = """
+import os, sys, threading
+
+from nautilus_trader.common import Environment, LogLevel
+from nautilus_trader.config import LoggerConfig
+from nautilus_trader.live import LiveNode, NodeState
+from nautilus_trader.model import TraderId
+
+reach = sys.argv[1]
+built = (
+    LiveNode.builder(name="probe", trader_id=TraderId("PROBE-001"), environment=Environment.LIVE)
+    .with_logging(LoggerConfig(stdout_level=LogLevel.ERROR))
+    .build()
+)
+handle = built.handle()
+
+
+def off_thread():
+    if reach == "node":
+        print("read", built.is_running, flush=True)
+    else:
+        print("read", handle.state is NodeState.RUNNING, flush=True)
+
+
+thread = threading.Thread(target=off_thread)
+thread.start()
+thread.join()
+os._exit(0)
+"""
+
+
+@pytest.mark.parametrize(
+    ("reach", "survives"),
+    [
+        pytest.param("node", False, id="reading-the-node-off-thread-aborts-the-process"),
+        pytest.param("handle", True, id="reading-its-handle-off-thread-answers-normally"),
+    ],
+)
+def test_the_live_node_is_unsendable_and_only_its_handle_may_be_read_off_thread(reach, survives):
+    result = subprocess.run([sys.executable, "-c", _UNSENDABLE_PROBE, reach], capture_output=True, text=True, timeout=120)
+    detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout[-2000:]}\n--- stderr ---\n{result.stderr[-2000:]}"
+
+    if survives:
+        # os._exit(0) ends the child, so a nonzero code here can only be the abort this arm denies.
+        assert result.returncode == 0, detail
+        assert "read False" in result.stdout, detail  # an unstarted node: answered, and not RUNNING
+    else:
+        assert result.returncode == -signal.SIGABRT, detail
+        assert "unsendable" in result.stderr, detail
+        assert "read" not in result.stdout, detail  # the read never came back with a value at all
+
+
+# The property that makes `NodeState.RUNNING` a health read rather than a liveness one: a node is
+# RUNNING only once every client has connected AND startup reconciliation has completed. Both of
+# those phases read STARTING, so the read cannot come true while the node is still starting -- and a
+# start watchdog whose read comes true early is defeated entirely. Measured against Kraken's public
+# endpoint: a clientless node crosses the connect phase too fast to prove anything about it. Opt-in
+# on the same flag as the instrument-arrival probe, and for the same reasons.
+_START_SEQUENCE_PROBE = """
+import json, os, sys, threading, time
+from pathlib import Path
+
+from cli.config import EngineConfig
+from cli.engine.node import _node_builder
+
+root = Path(sys.argv[1])
+built = _node_builder(
+    EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=False)
+).build()
+handle = built.handle()
+transitions = []
+
+
+def watcher():
+    started = time.monotonic()
+    seen = None
+    while time.monotonic() - started < 90:
+        state = str(handle.state).rsplit(".", 1)[-1]
+        if state != seen:
+            transitions.append([round(time.monotonic() - started, 4), state])
+            seen = state
+        if state == "RUNNING":
+            break
+        time.sleep(0.002)
+    (root / "start-sequence.json").write_text(json.dumps(transitions))
+    os._exit(0)
+
+
+threading.Thread(target=watcher, daemon=True).start()
+built.run()
+"""
+
+
+def test_a_node_reaches_running_only_after_its_clients_connect_and_it_reconciles(tmp_path):
+    # Opt-in for the same reasons as the instrument-arrival probe above: CI has network, so a
+    # reachability gate would run this against a live venue on every PR and would skip silently and
+    # permanently if Kraken ever blocked the runner.
+    if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
+        pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
+    if not _kraken_public_reachable():
+        pytest.fail("ZCRYPTO_LIVE_VENUE_TESTS=1 was set but Kraken's public endpoint is unreachable")
+    env = os.environ.copy()
+    env.pop("KRAKEN_SPOT_API_KEY", None)
+    env.pop("KRAKEN_SPOT_API_SECRET", None)
+    result = subprocess.run(
+        [sys.executable, "-c", _START_SEQUENCE_PROBE, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=env,
+    )
+    recorded = tmp_path / "start-sequence.json"
+    detail = f"exit={result.returncode}\n--- stderr ---\n{result.stderr[-4000:]}"
+    assert recorded.exists(), f"the start-sequence probe produced no result: {detail}"
+    transitions = json.loads(recorded.read_text())
+
+    assert [state for _, state in transitions] == ["IDLE", "STARTING", "RUNNING"], f"{transitions} {detail}"
+    # STARTING has to SPAN the connect, not flicker past it: the watchdog's whole health read rests
+    # on the connect-and-reconcile window being reportable as something other than RUNNING.
+    (_, _), (entered_starting, _), (entered_running, _) = transitions
+    assert entered_running - entered_starting >= 0.2, f"{transitions} {detail}"
+    assert "All engine clients connected" in result.stdout, detail
+    assert "Startup reconciliation completed" in result.stdout, detail
+
+
 # --- abort diagnosability (T0115) ---------------------------------------------------------------
 
 # Building the node registers nautilus's asyncio signal handling, which includes SIGABRT

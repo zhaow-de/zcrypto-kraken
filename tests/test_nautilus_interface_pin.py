@@ -24,6 +24,8 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.config", "LoggerConfig"),
     ("nautilus_trader.live", "LiveNode"),
     ("nautilus_trader.live", "LiveNodeBuilder"),
+    ("nautilus_trader.live", "LiveNodeConfig"),
+    ("nautilus_trader.live", "NodeState"),
     ("nautilus_trader.model", "AccountId"),
     ("nautilus_trader.model", "AccountType"),
     ("nautilus_trader.model", "InstrumentId"),
@@ -151,7 +153,7 @@ def test_the_exec_client_config_never_exposes_the_credentials():
 # `tests/test_engine_node.py` instead, derived from the calls node assembly actually makes -- a
 # second hand-written list here would be free to drift from them.
 @pytest.mark.parametrize(
-    "name", ["builder", "add_strategy", "run", "stop", "dispose", "cache", "trader_id", "environment", "is_running"]
+    "name", ["builder", "add_strategy", "run", "stop", "dispose", "cache", "trader_id", "environment", "handle"]
 )
 def test_the_node_still_exposes_every_member_the_engine_reads(name):
     from nautilus_trader.live import LiveNode

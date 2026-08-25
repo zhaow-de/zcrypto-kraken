@@ -673,13 +673,65 @@ class FakeTimer:
         self.cancelled = True
 
 
-def _fake_node(is_running: bool):
-    return types.SimpleNamespace(
-        _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
-        trader=types.SimpleNamespace(is_running=is_running),
-        run=lambda: None,
-        dispose=lambda: None,
-    )
+def _node_state(name: str):
+    """The library's own `NodeState` member, resolved at call time so this module never pays the
+    nautilus import at collection -- the same rule `test_help_does_not_import_nautilus` holds the
+    CLI to. Taken from the library rather than spelled as a sentinel: the watchdog compares against
+    the member itself, so a stand-in would pass a check the real state could fail."""
+    from nautilus_trader.live import NodeState
+
+    return getattr(NodeState, name)
+
+
+class _FakeHandle:
+    """`LiveNodeHandle`: the thread-safe view of a node's lifecycle, and the only object the
+    watchdog's timer callback is allowed to touch. `state` is a property on the real one, so it is
+    one here; an exception passed in is raised from it, standing in for a handle read that fails."""
+
+    def __init__(self, state):
+        self._state = state
+
+    @property
+    def state(self):
+        if isinstance(self._state, BaseException):
+            raise self._state
+        return self._state
+
+
+class _NodeTouchedOffThread(BaseException):
+    """What pyo3 really does when an unsendable `LiveNode` is touched off the thread that built it:
+    the process aborts (SIGABRT, exit 134). That is not an exception -- no `except` in production
+    sees it, and the engine simply dies. A BaseException is as close as a test can get, and it must
+    stay outside `Exception` so `check`'s own catch cannot swallow it into a plausible-looking
+    force-exit."""
+
+
+class _FakeNode:
+    """`LiveNode` as `engine run` may use it: `run`, `dispose`, and `handle()`, all on the thread
+    that built it. Every other attribute is unreachable, because on the real node reaching for one
+    from the watchdog's timer thread aborts the engine -- see `_NodeTouchedOffThread`. Touched names
+    are recorded so a test can assert the callback stayed on the handle."""
+
+    def __init__(self, state):
+        self.touched: list[str] = []
+        self._handle = _FakeHandle(state)
+
+    def handle(self):
+        return self._handle
+
+    def run(self):
+        pass
+
+    def dispose(self):
+        pass
+
+    def __getattr__(self, name):
+        self.touched.append(name)
+        raise _NodeTouchedOffThread(f"{name} was read off the node itself, which aborts the engine")
+
+
+def _fake_node(state):
+    return _FakeNode(_node_state(state) if isinstance(state, str) else state)
 
 
 def _write_basket_store(store_dir: Path, symbols=BASKET) -> None:
@@ -692,13 +744,14 @@ def _write_basket_store(store_dir: Path, symbols=BASKET) -> None:
             path.write_bytes(b"")
 
 
-def _run_env(monkeypatch, tmp_path, *, is_running: bool, symbols=BASKET) -> list[int]:
+def _run_env(monkeypatch, tmp_path, *, state="RUNNING", symbols=BASKET) -> list[int]:
     """A passable `engine run` environment: valid store, stub node builder, synchronous timer, and
-    a recording os._exit. Returns the list force-exit codes are recorded into."""
+    a recording os._exit. Returns the list force-exit codes are recorded into. `state` is a
+    `NodeState` member name, or any object to hand the watchdog's health read directly."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     _write_basket_store(engine_cfg.store_dir, symbols)
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
-    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(is_running))
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(state))
     # Stubbed for EVERY `run` test, not just the two that assert on it: the real re-arm would
     # re-point this pytest process's own faulthandler at fd 2 (pytest's plugin aims it at its
     # capture), and an earlier default-`sys.stderr` form left it switched OFF for the rest of the
@@ -741,7 +794,7 @@ def test_run_aborts_when_the_store_holds_every_eur_leg_but_neither_btc_leg(tmp_p
     passes on exactly this store, so the node starts and looks healthy; the first boundary's
     `refresh_store` then dies on a missing `ETH/BTC/240.parquet`, and the failed-cycle sidecar makes
     that boundary unretryable at any time (capture-deploys.md), costing the ratified gate streak."""
-    _run_env(monkeypatch, tmp_path, is_running=True, symbols=[s for s in BASKET if s.endswith("/EUR")])
+    _run_env(monkeypatch, tmp_path, symbols=[s for s in BASKET if s.endswith("/EUR")])
 
     result = runner.invoke(app, ["engine", "run"])
 
@@ -756,7 +809,7 @@ def test_run_aborts_when_the_store_holds_every_eur_leg_but_neither_btc_leg(tmp_p
 def test_run_starts_on_a_complete_twelve_leg_store(tmp_path, monkeypatch):
     """The guard's healthy path: every basket leg present on both grids and `run()` proceeds -- a
     guard that also trips here would abort every correct deploy."""
-    exits = _run_env(monkeypatch, tmp_path, is_running=True)
+    exits = _run_env(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["engine", "run"])
 
@@ -767,7 +820,7 @@ def test_run_starts_on_a_complete_twelve_leg_store(tmp_path, monkeypatch):
 
 
 def test_run_logs_the_effective_config_line(tmp_path, monkeypatch):
-    exits = _run_env(monkeypatch, tmp_path, is_running=True)
+    exits = _run_env(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["engine", "run"])
 
@@ -778,18 +831,18 @@ def test_run_logs_the_effective_config_line(tmp_path, monkeypatch):
 
 
 def test_run_re_arms_faulthandler_immediately_after_the_node_is_built(tmp_path, monkeypatch):
-    """Building the node registers nautilus's asyncio SIGABRT handler, which installs CPython's own
-    no-op C handler over faulthandler's -- after which a native abort prints nothing at all. Both
-    calls and their order are pinned: the re-arm must follow the build (before it, there is nothing
-    to undo), and `disable()` must precede `enable()` (`enable()` returns early when faulthandler
-    already considers itself enabled, so on its own it cannot reinstall the clobbered handler).
-    The `file=2` is pinned too -- see the sibling test for the defect the default form causes.
-    `tests/test_engine_node.py` measures the underlying library behaviour this rests on."""
-    _run_env(monkeypatch, tmp_path, is_running=True)
+    """Nothing else in the engine arms faulthandler, so without this call a native abort kills the
+    process with exit 134 and an empty stderr. Both calls and their order are pinned: it lands
+    before `node.run()`, and `disable()` precedes `enable()` (`enable()` installs the fatal-signal
+    handlers only while faulthandler considers itself disabled, so the pair is what makes this call
+    install its own whatever the process's prior state). The `file=2` is pinned too -- see the
+    sibling test for the defect the default form causes. `tests/test_engine_node.py` measures the
+    underlying library behaviour this rests on."""
+    _run_env(monkeypatch, tmp_path)
     calls: list[object] = []
     monkeypatch.setattr(
         "cli.engine.node.build_shadow_node",
-        lambda config: (calls.append("build"), _fake_node(True))[1],
+        lambda config: (calls.append("build"), _fake_node("RUNNING"))[1],
     )
     monkeypatch.setattr(
         command,
@@ -840,24 +893,33 @@ sys.__stdout__.write(f"default: {default}\nfd2: armed={faulthandler.is_enabled()
     assert "fd2: armed=True" in result.stdout, result.stdout
 
 
-def test_run_watchdog_force_exits_when_the_trader_never_runs(tmp_path, monkeypatch):
-    exits = _run_env(monkeypatch, tmp_path, is_running=False)
+@pytest.mark.parametrize("state", ["IDLE", "STARTING", "SHUTTING_DOWN", "STOPPED"])
+def test_run_watchdog_force_exits_when_the_node_never_reaches_running(tmp_path, monkeypatch, state):
+    """Every state that is not RUNNING is a failed start once the node's own connect + reconcile
+    budget has elapsed, and each is a real shape: STARTING is a connect or reconciliation that never
+    returned (a bad key, an IP/family mismatch, a venue outage), IDLE a start that never began,
+    STOPPED and SHUTTING_DOWN a node that gave up on its own. All four must force-exit into the
+    supervisor's restart -- a watchdog that fires on only one of them leaves the others as the
+    silent zombie it exists to prevent."""
+    exits = _run_env(monkeypatch, tmp_path, state=state)
 
     result = runner.invoke(app, ["engine", "run"])
 
     out = _output(result)
     assert result.exit_code == 0, out  # os._exit is stubbed to record; run() then completes normally
     assert exits == [1]
-    assert "trader not running" in out
+    assert "not RUNNING" in out and state in out  # the state itself is named, so a crash loop is triageable
     (timer,) = FakeTimer.instances
-    assert timer.interval == pytest.approx(1.5 + 2.0 + 30.0)  # the node config's timeouts + the 30 s slack
     assert timer.daemon is True
     assert timer.started is True
     assert timer.cancelled is True  # cancelled in the finally once node.run() returned
 
 
-def test_run_watchdog_does_nothing_when_the_trader_is_running(tmp_path, monkeypatch):
-    exits = _run_env(monkeypatch, tmp_path, is_running=True)
+def test_run_watchdog_does_nothing_when_the_node_is_running(tmp_path, monkeypatch):
+    """The true positive, and the one that matters most: a healthy engine reaches RUNNING and must
+    be left alone. A watchdog that force-exits here restarts a working engine every time its timer
+    fires -- a worse failure than the wedged start it was built to catch."""
+    exits = _run_env(monkeypatch, tmp_path, state="RUNNING")
 
     result = runner.invoke(app, ["engine", "run"])
 
@@ -865,11 +927,81 @@ def test_run_watchdog_does_nothing_when_the_trader_is_running(tmp_path, monkeypa
     assert exits == []
 
 
+def test_the_watchdogs_health_read_is_not_satisfied_by_a_permanently_truthy_value(tmp_path, monkeypatch):
+    """The defect this check is shaped to be immune to.
+
+    Written `if <health read>:`, a read that resolves to a bound method -- which nautilus does have
+    on `Strategy.is_running` -- is true forever, and the watchdog passes every wedged start in
+    silence while every test in this file still goes green. Comparing against `NodeState.RUNNING`
+    itself makes that same value simply not-RUNNING, so the failure mode of a mis-pointed read is a
+    watchdog that fires rather than one silently disarmed. The fixture is exactly the defect: a
+    bound method handed to the health read in place of a state."""
+    truthy_method = _FakeHandle("not a state").__init__  # a bound method: `bool(...)` is True
+    assert truthy_method, "the fixture must be truthy or it proves nothing about the `if` form"
+    exits = _run_env(monkeypatch, tmp_path, state=truthy_method)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert exits == [1], "a permanently-truthy health read must not satisfy the watchdog"
+    assert "health check itself raised" not in out  # it fired on the read's VALUE, not on an error
+
+
+def test_run_watchdog_force_exits_when_the_health_read_itself_raises(tmp_path, monkeypatch):
+    """A health read that cannot answer is a wedged node, never a healthy one: the watchdog must
+    treat the raise as a failed start rather than skip its exit, which would disarm it silently."""
+    exits = _run_env(monkeypatch, tmp_path, state=RuntimeError("the handle is gone"))
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert exits == [1]
+    assert "health check itself raised" in out and "the handle is gone" in out
+
+
+def test_the_watchdog_reads_the_handle_and_never_the_node_itself(tmp_path, monkeypatch):
+    """`LiveNode` is unsendable: touching any of its attributes from a thread other than the one
+    that built it aborts the engine with SIGABRT, which no `except` intercepts. The watchdog's
+    callback runs on a timer thread, so it must hold the handle taken at arming time and reach for
+    nothing else -- otherwise every fire kills the engine, healthy or wedged, and the CRITICAL line
+    explaining why is never written. tests/test_engine_node.py measures the abort itself."""
+    exits = _run_env(monkeypatch, tmp_path)
+    node = _fake_node("STARTING")
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: node)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert node.touched == [], f"the watchdog reached through the node itself: {node.touched}"
+    assert exits == [1] and "not RUNNING" in out  # a real health decision, off the handle alone
+
+
+def test_the_watchdog_delay_covers_the_nodes_own_connect_and_reconcile_budget(tmp_path, monkeypatch):
+    """The delay is the node's own startup budget plus slack, taken from node assembly rather than
+    restated here. Fired short, the watchdog restarts an engine that is still legitimately
+    connecting or reconciling -- a crash loop against a healthy start. The concrete total is pinned
+    too, so a change in what the node waits shows up as a failure here instead of silently."""
+    from cli.engine.node import node_start_timeouts
+
+    connect_secs, reconcile_secs = node_start_timeouts()
+    _run_env(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    assert result.exit_code == 0, _output(result)
+    (timer,) = FakeTimer.instances
+    assert timer.interval == pytest.approx(connect_secs + reconcile_secs + command._WATCHDOG_SLACK_SECS)
+    assert timer.interval == pytest.approx(60.0 + 30.0 + 30.0)
+
+
 def test_engine_startup_latches_the_restart_hold(tmp_path, monkeypatch):
     # The hold must land beside the journal (journal_dir.parent), not inside it -- a hold at
     # journal_dir/exec/restart-hold is where the gate never looks (see execgate.exec_dir), so
     # the latch would be silently invisible and every other test would still pass.
-    _run_env(monkeypatch, tmp_path, is_running=True)
+    _run_env(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["engine", "run"])
 
