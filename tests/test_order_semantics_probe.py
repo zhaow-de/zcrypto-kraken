@@ -248,6 +248,83 @@ def test_two_pending_waits_are_refused():
 
 
 # ---------------------------------------------------------------------------------------------
+# Nothing new reaches the venue once the run is going down
+# ---------------------------------------------------------------------------------------------
+
+
+def _strategy(*argv: str):
+    """A probe strategy with no node behind it. Enough for the two paths below, which are pure
+    Python either side of the one library call each is about."""
+    args = probe.build_parser().parse_args([*argv, "--no-exec"])
+    args.selected_probes = {4}
+    state = probe.RunState()
+    return probe.ProbeStrategy(args, state), state
+
+
+class _FactoryOrder:
+    client_order_id = "O-20260823-120000-901-P6V-1"
+
+
+def test_submit_hands_the_order_over_and_keeps_only_its_id():
+    """The true positive, and the record the leftover sweep runs on: `state.submitted` is what says
+    an id may have reached the venue, so it must be written on the healthy path."""
+    strategy, state = _strategy()
+    calls: list = []
+    strategy.submit_order = lambda *a, **k: calls.append((a, k))
+
+    coid = strategy.submit(_FactoryOrder())
+
+    assert coid == _FactoryOrder.client_order_id
+    assert state.submitted == [coid]
+    assert len(calls) == 1
+
+
+def test_submit_refuses_once_the_node_is_stopping():
+    """Commands issued from a stopped strategy still reach the execution engine, so a continuation
+    resumed during the shutdown could open a position after the operator asked the run to end.
+    `submit` is the single choke point every probe order passes through."""
+    strategy, state = _strategy()
+    calls: list = []
+    strategy.submit_order = lambda *a, **k: calls.append((a, k))
+    strategy._stopping = True
+
+    with pytest.raises(probe.Refusal, match="stopping"):
+        strategy.submit(_FactoryOrder())
+
+    assert calls == []
+    assert state.submitted == []
+
+
+def test_a_stopping_run_abandons_the_probes_it_has_not_reached():
+    """Stopping the node FLUSHES its pending clock alerts, so an interrupted run's settle alert
+    fires during the shutdown. Without this the whole remaining sequence ran there -- measured:
+    an interrupted `--probes all` recorded nine rows it had never actually run."""
+    strategy, state = _strategy()
+    ran: list[str] = []
+    strategy._steps = [("4a", "n", lambda: ran.append("4a")), ("4b", "n", lambda: ran.append("4b"))]
+    strategy._stopping = True
+
+    strategy._advance()
+
+    assert ran == []
+    assert strategy._steps == []
+    assert any("abandoned" in n for n in state.notes)
+
+
+def test_a_running_sequence_still_advances():
+    """The true positive for the same guard: an always-abandoning `_advance` would ship a harness
+    that runs no probes at all and reports a clean, empty table."""
+    strategy, state = _strategy()
+    ran: list[str] = []
+    strategy._steps = [("4a", "n", lambda: ran.append("4a"))]
+
+    strategy._advance()
+
+    assert ran == ["4a"]
+    assert state.notes == []
+
+
+# ---------------------------------------------------------------------------------------------
 # The version the run binds to
 # ---------------------------------------------------------------------------------------------
 

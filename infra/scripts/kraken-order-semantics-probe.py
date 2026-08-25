@@ -633,6 +633,11 @@ class ProbeStrategy(Strategy):
         self.first_quote_ns: dict[str, int] = {}
         self.subscribe_ns: int = 0
         self.teardown_done = False
+        # Set the moment anything starts taking the node down. Stopping the node FLUSHES its
+        # pending clock alerts -- measured: an interrupted run's settle alert fires during the
+        # shutdown and would otherwise run the entire remaining sequence, submitting orders after
+        # the operator pressed Ctrl-C.
+        self._stopping = False
         self._seq = Sequencer(self._arm_alert, self._cancel_alert)
         self._coid_seq = 0
         self._steps: list[tuple[str, str, Callable[[], None]]] = []
@@ -671,6 +676,7 @@ class ProbeStrategy(Strategy):
 
     def _on_signal(self, signum, _frame) -> None:
         name = signal.Signals(signum).name
+        self._stopping = True
         if self.state.aborted_by is not None:
             return  # a later interrupt: recorded once, and deliberately not acted on again
         self.state.aborted_by = name
@@ -691,6 +697,7 @@ class ProbeStrategy(Strategy):
         the sequence's own, a signal, or a node failure -- so it is where an interrupted run's
         orders are cancelled. It only ISSUES cancels: the post-stop window drains them, and the
         read that decides the exit code happens on the main thread once the node has stopped."""
+        self._stopping = True
         if self.teardown_done:
             return
         try:
@@ -739,7 +746,18 @@ class ProbeStrategy(Strategy):
 
     def _advance(self) -> None:
         """Run the next step, or tear down. Every step ends here, and a step that raises is
-        recorded against its own row rather than stopping the sequence."""
+        recorded against its own row rather than stopping the sequence.
+
+        Once the node is going down the sequence stops dead. The remaining probes are abandoned
+        deliberately and their rows never appear: a probe that ran during the shutdown would price
+        against a quote feed that is closing, and -- with `--apply` -- would submit orders after the
+        operator asked for the run to end."""
+        if self._stopping:
+            if self._steps:
+                print(f"\n!! the node is stopping -- abandoning the {len(self._steps)} probe step(s) not yet run")
+                self.state.notes.append(f"{len(self._steps)} probe step(s) were abandoned when the run stopped")
+                self._steps = []
+            return
         if not self._steps:
             self._begin_teardown()
             return
@@ -1006,7 +1024,14 @@ class ProbeStrategy(Strategy):
 
     def submit(self, order, leverage: int | None = None) -> str:
         """Hand the order to the library and keep only its id. The object is not retained: after
-        this call it is a snapshot that will never change again."""
+        this call it is a snapshot that will never change again.
+
+        The single choke point through which every probe order reaches the venue, and therefore
+        where the stopping check belongs: commands issued from a stopped strategy still reach the
+        execution engine, so nothing else would prevent a continuation resumed during the shutdown
+        from opening a new position on the way out."""
+        if self._stopping:
+            raise Refusal("the node is stopping -- refusing to submit; an aborted run opens nothing further")
         coid = str(order.client_order_id)
         params = {"leverage": int(leverage)} if leverage is not None else None
         self.state.submitted.append(coid)
@@ -2103,6 +2128,20 @@ def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
         print(f"\n!! {len(split.unknown)} submitted client order id(s) have NO cache record at all:")
         for coid in split.unknown:
             print(f"!!   {coid} -- submitted, never confirmed; treat it as possibly resting at the venue")
+    if state.aborted_by:
+        filled = [
+            (coid, float(o.filled_qty))
+            for coid in state.submitted
+            if (o := node.cache.order(ClientOrderId(coid))) and float(o.filled_qty) > 0
+        ]
+        if filled:
+            # Orders are only half the exposure. A buy that filled before the abort is a POSITION,
+            # and an interrupted run never got to close it -- nothing in the order read can see that.
+            print("\n!! this run was interrupted AFTER one or more of its orders filled:")
+            for coid, qty in filled:
+                print(f"!!   {coid} filled {qty}")
+            print("!! a fill with no closing leg is an OPEN POSITION. Check Kraken -> Trade and flatten by hand.")
+            state.notes.append("the run was interrupted after a fill -- check Kraken for an open position and flatten by hand")
     stray = [
         o
         for o in node.cache.orders_open(venue=KRAKEN_VENUE)

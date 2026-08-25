@@ -441,6 +441,16 @@ always completes. An interrupted run still prints its table and its leftover ban
 — or **3** if anything survived the sweep. If you must abandon it, `kill -9` the process from
 another terminal and go straight to §8 by hand.
 
+**What an interrupt does NOT do is finish the run.** Every probe the sequence had not yet reached is
+abandoned, the terminal says how many, and their rows never appear — so an interrupted run is never
+a partial pass to read verdicts out of. Re-run the probes you still owe, as their own invocation.
+
+**If the interrupt landed after a fill, you may be holding a position.** The closing leg of probe 5
+is a submission, and an interrupted run refuses to submit anything further — deliberately, so an
+abort cannot open new exposure on the way out, but it means a filled buy has no closing sell. The
+harness prints every submitted order with a non-zero fill under a flatten-by-hand banner: go to
+Kraken → Trade and flatten before doing anything else, then §8's step 3.
+
 ______________________________________________________________________
 
 ## 9. Useful invocations
