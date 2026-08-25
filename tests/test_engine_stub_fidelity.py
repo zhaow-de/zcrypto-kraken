@@ -4,7 +4,7 @@ is kept honest.
 A stub that stands in for a type this repo does not own is a hand-written restatement of somebody
 else's contract, and a restatement nothing checks drifts silently. The failure is not that a test
 goes red -- it is that every test stays GREEN while production, driving the real class, raises inside
-an `except` that refuses an intent, trips the kill switch, or force-exits a healthy engine.
+an `except` that refuses an intent, trips the kill switch, or dies on the live trade path.
 
 The two directions are NOT symmetric, and only one of them is self-policing:
 
@@ -13,9 +13,8 @@ The two directions are NOT symmetric, and only one of them is self-policing:
   * A stub OFFERING something the real type LACKS fails nothing at all. Every test simply believes
     the fabricated attribute, forever, and production is the only place the read comes back wrong.
     That direction has to be checked explicitly, and this suite has already paid for not checking
-    it: a stub node carrying a `_config` the library never had kept the whole `engine run` suite
-    green while the watchdog reading it raised inside its own health check and force-exited every
-    start, healthy or not.
+    it: a stub node carrying an attribute the library never had kept the whole `engine run` suite
+    green while production raised on that same read, at start, on the live trade path.
 
 So each library stand-in owes both directions -- most cover them in two tests, a few in one -- and
 the classification below is what makes "each" checkable.
@@ -76,8 +75,8 @@ class Standin(NamedTuple):
 
 _OFFERS_EXECUTOR = "test_no_stub_in_this_file_offers_a_name_its_real_nautilus_type_lacks"
 _OFFERS_NODE = "test_no_stub_in_this_file_offers_a_name_its_real_library_type_lacks"
-_NODE_SURFACE = "test_every_node_and_handle_surface_engine_run_reaches_exists_on_the_real_types"
-_NODE_OFFERS = "test_the_node_and_handle_stubs_offer_nothing_the_real_types_lack"
+_NODE_SURFACE = "test_every_node_surface_engine_run_reaches_exists_on_the_real_type"
+_NODE_OFFERS = "test_the_node_stub_offers_nothing_the_real_type_lacks"
 _CACHE_SURFACE = "test_every_cache_accessor_the_engine_reaches_exists_on_the_real_cache"
 
 TABLE: dict[str, dict[str, Standin]] = {
@@ -125,16 +124,6 @@ TABLE: dict[str, dict[str, Standin]] = {
     "test_engine_command.py": {
         "_FakeNode": Standin(LIBRARY, "nautilus_trader.live.LiveNode", (_NODE_SURFACE, _NODE_OFFERS)),
         "_fake_node": Standin(LIBRARY, "nautilus_trader.live.LiveNode", (_NODE_SURFACE, _NODE_OFFERS)),
-        "_FakeHandle": Standin(LIBRARY, "nautilus_trader.live.LiveNodeHandle", (_NODE_SURFACE, _NODE_OFFERS)),
-        # The watchdog really arms a threading.Timer, so the stdlib is the contract here.
-        "FakeTimer": Standin(
-            LIBRARY, "threading.Timer", ("test_the_timer_stub_matches_the_threading_timer_the_watchdog_really_arms",)
-        ),
-        "_NodeTouchedOffThread": Standin(
-            NOT_A_STANDIN,
-            "models the pyo3 abort a node touched off its own thread produces -- an event, not a type",
-            (),
-        ),
         "_fake_builder": Standin(OURS, "cli.engine.concordance.build_crossfreq_system_fast", ()),
         "_run_env": Standin(
             NOT_A_STANDIN, "assembles a passable `engine run` environment; the doubles it installs are registered separately", ()
@@ -164,7 +153,7 @@ TABLE: dict[str, dict[str, Standin]] = {
         "_fake_node": Standin(
             LIBRARY,
             "nautilus_trader.live.LiveNode",
-            (_NODE_SURFACE, "test_the_stub_node_and_its_handle_offer_nothing_the_real_types_lack"),
+            (_NODE_SURFACE, "test_the_stub_node_offers_nothing_the_real_type_lacks"),
         ),
         "_StubGate": Standin(OURS, "cli.engine.execgate.ExecutionGate", ()),
         "_RaisingGate": Standin(OURS, "cli.engine.execgate.ExecutionGate", ()),
@@ -207,7 +196,7 @@ def test_every_test_double_in_the_engine_suite_is_classified(module):
     suite's stub inventory is invisible -- which is how seven separate restatements each reached
     production behaviour before a human happened to read them."""
     discovered = _discovered_doubles(module)
-    assert len(discovered) >= 4, f"the walk found only {sorted(discovered)} in {module} -- it is checking nothing"
+    assert len(discovered) >= 3, f"the walk found only {sorted(discovered)} in {module} -- it is checking nothing"
     unclassified = sorted(discovered - set(TABLE[module]))
     assert unclassified == [], f"{module} defines {unclassified}, which the table does not classify"
 

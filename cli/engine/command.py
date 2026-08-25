@@ -14,7 +14,6 @@ import json
 import math
 import os
 import shutil
-import threading
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -65,7 +64,6 @@ logger = get_logger("engine.command")
 CANONICAL_DIR = Path("data/ohlc-full")
 DEFAULT_NAVS = (500.0, 1000.0, 2500.0, 5000.0, 10000.0)
 _REFDATA_GLOB = "kraken-refdata-*.json"
-_WATCHDOG_SLACK_SECS = 30.0
 _urlopen = urllib.request.urlopen  # module-level so tests can stub the gate-export healthcheck ping
 
 engine_app = typer.Typer(
@@ -401,57 +399,6 @@ def seed() -> None:
     typer.echo(
         f"{len(report.entries)} series passed seam QA; appended {appended} bar(s), replaced {replaced} divergent tail row(s)"
     )
-
-
-def _start_watchdog(node) -> threading.Timer:
-    """The supervision watchdog (spec 00042): a one-shot daemon timer firing the node's own connect
-    + reconcile budget plus 30 s slack after the node starts. A node still not RUNNING then means
-    the exec client never connected/reconciled (bad key, IP/family mismatch, venue outage): log
-    CRITICAL and os._exit(1) -- the supervisor's restart (compose `restart: unless-stopped`) is the
-    recovery, a visible crash loop instead of a silent zombie burning gate days. A RUNNING node
-    means a healthy start and the fired check does nothing; run() cancels the timer once node.run()
-    returns.
-
-    `NodeState.RUNNING` is entered only after every client has connected AND startup reconciliation
-    has completed -- both phases read STARTING -- so this health read cannot come true early, which
-    is the one way a watchdog defeats itself entirely. It is compared against the member rather than
-    taken for its truthiness: a read re-pointed at a method would be permanently true under `if`,
-    and permanently unequal to the member here, so the failure mode is a watchdog that fires rather
-    than one silently disarmed.
-
-    The handle is taken HERE, on the thread that built the node, and is the only object the timer's
-    callback touches. The node itself is unsendable: reading ANY of its attributes -- `handle()`
-    included -- from another thread aborts the process with SIGABRT, which no `except` can
-    intercept, so a watchdog holding the node would kill a healthy engine at the exact moment it
-    fired. The handle is the thread-safe view and stays valid for the node's whole lifetime.
-    tests/test_engine_node.py measures both halves."""
-    from nautilus_trader.live import NodeState
-
-    from cli.engine.node import node_start_timeouts
-
-    handle = node.handle()
-    connect_secs, reconcile_secs = node_start_timeouts()
-    delay = connect_secs + reconcile_secs + _WATCHDOG_SLACK_SECS
-
-    def check() -> None:
-        try:
-            state = handle.state
-            if state is NodeState.RUNNING:
-                return
-            reason = f"node state is {state}, not RUNNING -- exec connect/reconcile presumed failed"
-        except Exception as exc:  # cannot confirm health => assume wedged; never a silently disarmed watchdog
-            reason = f"health check itself raised ({exc!r})"
-        logger.critical(
-            "engine run: %s %.0f s after node start; force-exiting for the supervisor restart",
-            reason,
-            delay,
-        )
-        os._exit(1)
-
-    watchdog = threading.Timer(delay, check)
-    watchdog.daemon = True
-    watchdog.start()
-    return watchdog
 
 
 class _CycleGauges:
@@ -1036,12 +983,16 @@ def run() -> None:
     # untouched, so `docker stop` and Ctrl-C still shut down cleanly.
     faulthandler.disable()
     faulthandler.enable(file=2)
-    watchdog = _start_watchdog(node)
     logger.info("shadow node starting (exec_enabled=%s, journal_dir=%s)", config.exec_enabled, config.journal_dir)
+    # `node.run()` returns on a clean shutdown and RAISES on a start it cannot complete -- a client
+    # that never connects, a startup reconciliation that never finishes. That raise is the loud
+    # failure: the node has already disconnected its clients and stopped by the time it escapes,
+    # `cli/__main__.py` logs it at ERROR before the process dies, and compose's `restart:
+    # unless-stopped` is the recovery. Nothing here may catch it -- a swallowed start failure is a
+    # live-looking node that will never trade, burning ratified gate days in silence.
     try:
         node.run()
     finally:
-        watchdog.cancel()
         node.dispose()
 
 

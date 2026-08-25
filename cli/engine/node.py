@@ -24,7 +24,7 @@ from nautilus_trader.adapters.kraken import (
 )
 from nautilus_trader.common import Environment, LogLevel
 from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
-from nautilus_trader.live import LiveNode, LiveNodeBuilder, LiveNodeConfig
+from nautilus_trader.live import LiveNode, LiveNodeBuilder
 from nautilus_trader.model import AccountId, AccountType, StrategyId, TraderId
 from nautilus_trader.trading import Strategy, StrategyConfig
 
@@ -490,23 +490,6 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
         # with its own evidence, not a side effect of this one (spec 00100 D10).
         use_ws_trade=False,
     )
-
-
-def node_start_timeouts() -> tuple[float, float]:
-    """The `(connection, reconciliation)` seconds an assembled node allows its own startup.
-
-    A node reaches `NodeState.RUNNING` only once both phases have finished -- every client
-    connected, then startup reconciliation completed -- so these two are the entire budget anything
-    supervising the start has to wait out before a still-unstarted node means a real failure.
-
-    `_node_builder` sets neither timeout, so the values in force are `LiveNodeConfig`'s, and they
-    are read off it rather than restated: a built `LiveNode` exposes no config to read them back
-    from, and a restated number that drifts SHORT turns a supervisor into a restart loop against a
-    healthy engine. Should assembly ever set a timeout on the builder, it sets it from here.
-    tests/test_engine_node.py pins both values, so a change in them is a red test rather than a
-    silently shortened wait."""
-    config = LiveNodeConfig()
-    return config.timeout_connection_secs, config.timeout_reconciliation_secs
 
 
 def _node_builder(config: EngineConfig) -> LiveNodeBuilder:

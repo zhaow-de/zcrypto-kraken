@@ -1481,22 +1481,84 @@ def test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts(tmp_pa
     )
 
 
-# --- what the supervision watchdog reads (spec 00042) -------------------------------------------
+# --- a start the node cannot complete ------------------------------------------------------------
+
+# `engine run` starts the node and supervises nothing: it lets a failed start escape as the raise it
+# is, which the entry point logs at ERROR before the process dies and the supervisor restarts. That
+# rests entirely on the node ABORTING a start it cannot finish rather than sitting live-looking and
+# idle forever, so the property is measured rather than assumed -- a node that quietly stayed up
+# would trade nothing while every supervisor above it reported health.
+#
+# Offline and bounded: the client is pointed at a closed loopback port, so nothing outside this
+# machine is reached, and the connection budget is cut to 5 s. A child interpreter for the same
+# reason as every other node probe in this file -- a node installs process-wide signal handlers and
+# runs its own Rust runtime, neither of which belongs in the pytest process.
+_FAILED_START_PROBE = """
+import os, sys
+
+from nautilus_trader.adapters.kraken import (
+    KRAKEN,
+    KrakenDataClientConfig,
+    KrakenDataClientFactory,
+    KrakenEnvironment,
+    KrakenProductType,
+)
+from nautilus_trader.common import Environment, LogLevel
+from nautilus_trader.config import LoggerConfig
+from nautilus_trader.live import LiveNode
+from nautilus_trader.model import TraderId
+
+DEAD = "127.0.0.1:1"  # nothing listens here, and nothing off this machine is reached
+built = (
+    LiveNode.builder(name="probe", trader_id=TraderId("PROBE-001"), environment=Environment.LIVE)
+    .with_logging(LoggerConfig(stdout_level=LogLevel.INFO))
+    .with_timeout_connection(5)
+    .add_data_client(
+        name=KRAKEN,
+        factory=KrakenDataClientFactory(),
+        config=KrakenDataClientConfig(
+            product_type=KrakenProductType.SPOT,
+            environment=KrakenEnvironment.LIVE,
+            base_url="http://" + DEAD,
+            ws_public_url="ws://" + DEAD,
+            ws_private_url="ws://" + DEAD,
+            ws_l3_url="ws://" + DEAD,
+            timeout_secs=2,
+        ),
+    )
+    .build()
+)
+try:
+    built.run()
+except BaseException as exc:
+    sys.__stdout__.write("RAISED %s: %s\\n" % (type(exc).__name__, exc))
+else:
+    sys.__stdout__.write("RETURNED\\n")
+sys.__stdout__.flush()
+os._exit(0)
+"""
 
 
-def test_the_node_start_timeouts_are_the_budget_the_assembled_node_applies():
-    """The supervision watchdog waits these two out before it calls a start failed, and nothing else
-    bounds how long a legitimate connect-and-reconcile may take. Fired short, it force-exits an
-    engine that is still starting normally -- a crash loop against a healthy node -- so a change in
-    either value has to surface here rather than silently shortening the wait."""
-    assert node.node_start_timeouts() == (60.0, 30.0)
+def test_a_node_that_cannot_finish_starting_raises_out_of_run():
+    """The load-bearing library property under `engine run`'s bare `node.run()`: a start that cannot
+    complete ends in a raise, not in a node that rests. Were it ever to return quietly instead, or
+    to hang past its own budget, the engine would come up looking alive and trade nothing -- and the
+    subprocess timeout below is what catches the hanging half."""
+    result = subprocess.run([sys.executable, "-c", _FAILED_START_PROBE], capture_output=True, text=True, timeout=120)
+    detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout[-3000:]}\n--- stderr ---\n{result.stderr[-2000:]}"
+
+    assert result.returncode == 0, detail  # os._exit(0) ends the child; anything else is a native death
+    assert "RETURNED" not in result.stdout, detail  # a quiet return IS the zombie this rests on not happening
+    assert "RAISED" in result.stdout, detail
+    assert "aborting startup" in result.stdout, detail  # the node stopped itself; it is not left running
 
 
-# Why `_start_watchdog` takes `node.handle()` on the thread that built the node and its timer
-# callback touches nothing else. pyo3 marks `LiveNode` unsendable, and the assertion that catches a
-# cross-thread read is a panic that ABORTS the process: SIGABRT, no Python exception, nothing an
-# `except` can intercept and nothing logged. Both halves are measured -- the node's abort and the
-# handle's normal answer -- because guessing either way costs the engine.
+# What a `LiveNode` costs anything that reaches for it off the thread that built it. pyo3 marks the
+# node unsendable, and the assertion that catches a cross-thread read is a panic that ABORTS the
+# process: SIGABRT, no Python exception, nothing an `except` can intercept, and nothing logged
+# unless faulthandler is armed -- which is why `engine run` arms it (see the abort-diagnosability
+# probe below). `node.handle()`, captured on the building thread, is the one view that answers
+# normally off-thread. Both halves are measured, because guessing either way costs the engine.
 _UNSENDABLE_PROBE = """
 import os, sys, threading
 
@@ -1547,79 +1609,6 @@ def test_the_live_node_is_unsendable_and_only_its_handle_may_be_read_off_thread(
         assert result.returncode == -signal.SIGABRT, detail
         assert "unsendable" in result.stderr, detail
         assert "read" not in result.stdout, detail  # the read never came back with a value at all
-
-
-# The property that makes `NodeState.RUNNING` a health read rather than a liveness one: a node is
-# RUNNING only once every client has connected AND startup reconciliation has completed. Both of
-# those phases read STARTING, so the read cannot come true while the node is still starting -- and a
-# start watchdog whose read comes true early is defeated entirely. Measured against Kraken's public
-# endpoint: a clientless node crosses the connect phase too fast to prove anything about it. Opt-in
-# on the same flag as the instrument-arrival probe, and for the same reasons.
-_START_SEQUENCE_PROBE = """
-import json, os, sys, threading, time
-from pathlib import Path
-
-from cli.config import EngineConfig
-from cli.engine.node import _node_builder
-
-root = Path(sys.argv[1])
-built = _node_builder(
-    EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=False)
-).build()
-handle = built.handle()
-transitions = []
-
-
-def watcher():
-    started = time.monotonic()
-    seen = None
-    while time.monotonic() - started < 90:
-        state = str(handle.state).rsplit(".", 1)[-1]
-        if state != seen:
-            transitions.append([round(time.monotonic() - started, 4), state])
-            seen = state
-        if state == "RUNNING":
-            break
-        time.sleep(0.002)
-    (root / "start-sequence.json").write_text(json.dumps(transitions))
-    os._exit(0)
-
-
-threading.Thread(target=watcher, daemon=True).start()
-built.run()
-"""
-
-
-def test_a_node_reaches_running_only_after_its_clients_connect_and_it_reconciles(tmp_path):
-    # Opt-in for the same reasons as the instrument-arrival probe above: CI has network, so a
-    # reachability gate would run this against a live venue on every PR and would skip silently and
-    # permanently if Kraken ever blocked the runner.
-    if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
-        pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
-    if not _kraken_public_reachable():
-        pytest.fail("ZCRYPTO_LIVE_VENUE_TESTS=1 was set but Kraken's public endpoint is unreachable")
-    env = os.environ.copy()
-    env.pop("KRAKEN_SPOT_API_KEY", None)
-    env.pop("KRAKEN_SPOT_API_SECRET", None)
-    result = subprocess.run(
-        [sys.executable, "-c", _START_SEQUENCE_PROBE, str(tmp_path)],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=env,
-    )
-    recorded = tmp_path / "start-sequence.json"
-    detail = f"exit={result.returncode}\n--- stderr ---\n{result.stderr[-4000:]}"
-    assert recorded.exists(), f"the start-sequence probe produced no result: {detail}"
-    transitions = json.loads(recorded.read_text())
-
-    assert [state for _, state in transitions] == ["IDLE", "STARTING", "RUNNING"], f"{transitions} {detail}"
-    # STARTING has to SPAN the connect, not flicker past it: the watchdog's whole health read rests
-    # on the connect-and-reconcile window being reportable as something other than RUNNING.
-    (_, _), (entered_starting, _), (entered_running, _) = transitions
-    assert entered_running - entered_starting >= 0.2, f"{transitions} {detail}"
-    assert "All engine clients connected" in result.stdout, detail
-    assert "Startup reconciliation completed" in result.stdout, detail
 
 
 # --- abort diagnosability (T0115) ---------------------------------------------------------------

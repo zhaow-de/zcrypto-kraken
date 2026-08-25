@@ -4391,8 +4391,8 @@ def test_no_stub_in_this_file_offers_a_name_its_real_nautilus_type_lacks():
     """The direction nothing else covers. A stub MISSING something production calls fails loudly
     the first time a test runs it -- the call raises. A stub OFFERING something the real type lacks
     fails NOTHING: every test believes the fabricated attribute, forever, and production is the only
-    place the read comes back wrong. That asymmetry is how a node stub carrying a `_config` the
-    library never had survived a whole suite while the watchdog it fed force-exited every start.
+    place the read comes back wrong. That asymmetry is how a node stub carrying an attribute the
+    library never had survived a whole suite while production raised on that same read at start.
 
     Every violation is collected rather than raised at the first: one red run should name all of
     them, not send the reader round the loop once per stub."""

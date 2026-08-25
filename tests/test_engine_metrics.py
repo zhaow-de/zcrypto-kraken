@@ -1044,17 +1044,8 @@ def _free_port() -> int:
 
 
 def _fake_node(run=lambda: None):
-    """The assembled node as `run()` reaches for it: `handle()` for the supervision watchdog's
-    health read, plus run/dispose. The handle reports RUNNING because these tests do NOT stub the
-    timer or os._exit -- a node reporting anything else would arm a real watchdog able to force-exit
-    the pytest process itself."""
-    from nautilus_trader.live import NodeState
-
-    return types.SimpleNamespace(
-        handle=lambda: types.SimpleNamespace(state=NodeState.RUNNING),
-        run=run,
-        dispose=lambda: None,
-    )
+    """The assembled node as `run()` reaches for it: run and dispose, nothing else."""
+    return types.SimpleNamespace(run=run, dispose=lambda: None)
 
 
 def _patch_engine_config(monkeypatch, tmp_path: Path) -> EngineConfig:
@@ -1755,20 +1746,19 @@ def test_the_tracking_state_alphabet_never_publishes_zero_and_the_help_names_eve
 #
 # tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
 # guard below; the reasoning that makes it worth having lives there. The names `run()` READS off a
-# node are checked against the real classes in tests/test_engine_command.py -- one walk over the one
+# node are checked against the real class in tests/test_engine_command.py -- one walk over the one
 # production module covers both files' stubs, so only the offered direction is owed here.
 
 
-def test_the_stub_node_and_its_handle_offer_nothing_the_real_types_lack():
+def test_the_stub_node_offers_nothing_the_real_type_lacks():
     """A stub MISSING something `run()` reads fails loudly the first time a test runs it. A stub
     OFFERING something the real type lacks fails NOTHING -- every test believes the fabricated
     attribute, and production is the only place the read comes back wrong. This stub's sibling in
     tests/test_engine_command.py has already paid for that asymmetry once."""
-    from nautilus_trader.live import LiveNode, LiveNodeHandle
+    from nautilus_trader.live import LiveNode
 
     stub = _fake_node()
-    for label, obj, real in (("the stub node", stub, LiveNode), ("its handle", stub.handle(), LiveNodeHandle)):
-        offered = {name for name in dir(obj) if not name.startswith("__")}
-        assert offered, f"{label} offers nothing at all -- the check is vacuous"
-        extra = sorted(name for name in offered if not hasattr(real, name))
-        assert extra == [], f"{label} offers {extra}, which the real {real.__name__} does not carry"
+    offered = {name for name in dir(stub) if not name.startswith("__")}
+    assert offered, "the stub node offers nothing at all -- the check is vacuous"
+    extra = sorted(name for name in offered if not hasattr(LiveNode, name))
+    assert extra == [], f"the stub node offers {extra}, which the real LiveNode does not carry"

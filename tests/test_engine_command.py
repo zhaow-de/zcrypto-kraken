@@ -1,8 +1,8 @@
 """CLI tests for the `zcrypto engine` sub-app (spec 00041 SS The CLI): CliRunner over every
 subcommand with tmp dirs and monkeypatched seeder/cycle/builder stubs -- no network, no dataset,
-no live node. `run`'s fail-fast checks and watchdog are exercised against a stub node + a
-synchronous timer; nautilus lazy-import stays a subprocess check at the bottom; the attended soak
-is the live smoke."""
+no live node. `run`'s fail-fast checks and its handling of a start the node could not complete are
+exercised against a stub node; nautilus lazy-import stays a subprocess check at the bottom; the
+attended soak is the live smoke."""
 
 import ast
 import json
@@ -649,90 +649,26 @@ def test_cycle_rejects_a_future_boundary(tmp_path, monkeypatch):
     assert called == []
 
 
-# --- run: fail-fast + the supervision watchdog (spec 00042) ----------------------------------------
-
-
-class FakeTimer:
-    """A synchronous stand-in for threading.Timer: start() fires the callback immediately, so the
-    watchdog check runs deterministically inside `engine run` without waiting out the real delay."""
-
-    instances: list["FakeTimer"] = []
-
-    def __init__(self, interval, function):
-        self.interval = interval
-        self.function = function
-        self.daemon = False
-        self.started = False
-        self.cancelled = False
-        FakeTimer.instances.append(self)
-
-    def start(self):
-        self.started = True
-        self.function()
-
-    def cancel(self):
-        self.cancelled = True
-
-
-def _node_state(name: str):
-    """The library's own `NodeState` member, resolved at call time so this module never pays the
-    nautilus import at collection -- the same rule `test_help_does_not_import_nautilus` holds the
-    CLI to. Taken from the library rather than spelled as a sentinel: the watchdog compares against
-    the member itself, so a stand-in would pass a check the real state could fail."""
-    from nautilus_trader.live import NodeState
-
-    return getattr(NodeState, name)
-
-
-class _FakeHandle:
-    """`LiveNodeHandle`: the thread-safe view of a node's lifecycle, and the only object the
-    watchdog's timer callback is allowed to touch. `state` is a property on the real one, so it is
-    one here; an exception passed in is raised from it, standing in for a handle read that fails."""
-
-    def __init__(self, state):
-        self._state = state
-
-    @property
-    def state(self):
-        if isinstance(self._state, BaseException):
-            raise self._state
-        return self._state
-
-
-class _NodeTouchedOffThread(BaseException):
-    """What pyo3 really does when an unsendable `LiveNode` is touched off the thread that built it:
-    the process aborts (SIGABRT, exit 134). That is not an exception -- no `except` in production
-    sees it, and the engine simply dies. A BaseException is as close as a test can get, and it must
-    stay outside `Exception` so `check`'s own catch cannot swallow it into a plausible-looking
-    force-exit."""
+# --- run: fail-fast, and what a start it cannot complete does -------------------------------------
 
 
 class _FakeNode:
-    """`LiveNode` as `engine run` may use it: `run`, `dispose`, and `handle()`, all on the thread
-    that built it. Every other attribute is unreachable, because on the real node reaching for one
-    from the watchdog's timer thread aborts the engine -- see `_NodeTouchedOffThread`. Touched names
-    are recorded so a test can assert the callback stayed on the handle."""
+    """`LiveNode` as `engine run` uses it: `run` and `dispose`, both on the thread that built it.
+    `run` raises whatever it is handed, standing in for a start the node aborted on its own."""
 
-    def __init__(self, state):
-        self.touched: list[str] = []
-        self._handle = _FakeHandle(state)
-
-    def handle(self):
-        return self._handle
+    def __init__(self, raises=None):
+        self._raises = raises
 
     def run(self):
-        pass
+        if self._raises is not None:
+            raise self._raises
 
     def dispose(self):
         pass
 
-    def __getattr__(self, name):
-        self.touched.append(name)
-        raise _NodeTouchedOffThread(f"{name} was read off the node itself, which aborts the engine")
 
-
-def _fake_node(state):
-    return _FakeNode(_node_state(state) if isinstance(state, str) else state)
+def _fake_node(raises=None):
+    return _FakeNode(raises)
 
 
 def _write_basket_store(store_dir: Path, symbols=BASKET) -> None:
@@ -745,24 +681,18 @@ def _write_basket_store(store_dir: Path, symbols=BASKET) -> None:
             path.write_bytes(b"")
 
 
-def _run_env(monkeypatch, tmp_path, *, state="RUNNING", symbols=BASKET) -> list[int]:
-    """A passable `engine run` environment: valid store, stub node builder, synchronous timer, and
-    a recording os._exit. Returns the list force-exit codes are recorded into. `state` is a
-    `NodeState` member name, or any object to hand the watchdog's health read directly."""
+def _run_env(monkeypatch, tmp_path, *, raises=None, symbols=BASKET) -> None:
+    """A passable `engine run` environment: valid store and a stub node builder. `raises` is what
+    the stub node's `run()` raises, standing in for a start the node aborted on its own."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     _write_basket_store(engine_cfg.store_dir, symbols)
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
-    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(state))
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(raises))
     # Stubbed for EVERY `run` test, not just the two that assert on it: the real re-arm would
     # re-point this pytest process's own faulthandler at fd 2 (pytest's plugin aims it at its
     # capture), and an earlier default-`sys.stderr` form left it switched OFF for the rest of the
     # session -- silently removing native-crash dumps from every later test in the process.
     monkeypatch.setattr(command, "faulthandler", types.SimpleNamespace(disable=lambda: None, enable=lambda **_: None))
-    monkeypatch.setattr(command.threading, "Timer", FakeTimer)
-    FakeTimer.instances.clear()
-    exits: list[int] = []
-    monkeypatch.setattr(command.os, "_exit", lambda code: exits.append(code))
-    return exits
 
 
 def test_run_require_config_aborts_without_zcrypto_toml(tmp_path, monkeypatch):
@@ -810,25 +740,23 @@ def test_run_aborts_when_the_store_holds_every_eur_leg_but_neither_btc_leg(tmp_p
 def test_run_starts_on_a_complete_twelve_leg_store(tmp_path, monkeypatch):
     """The guard's healthy path: every basket leg present on both grids and `run()` proceeds -- a
     guard that also trips here would abort every correct deploy."""
-    exits = _run_env(monkeypatch, tmp_path)
+    _run_env(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["engine", "run"])
 
     out = _output(result)
     assert result.exit_code == 0, out
     assert "basket series" not in out
-    assert exits == []
 
 
 def test_run_logs_the_effective_config_line(tmp_path, monkeypatch):
-    exits = _run_env(monkeypatch, tmp_path)
+    _run_env(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["engine", "run"])
 
     out = _output(result)
     assert result.exit_code == 0, out
     assert f"engine run: exec_enabled=False, store_dir={tmp_path / 'store'}, journal_dir={tmp_path / 'journal'}" in out
-    assert exits == []
 
 
 def test_run_re_arms_faulthandler_immediately_after_the_node_is_built(tmp_path, monkeypatch):
@@ -843,7 +771,7 @@ def test_run_re_arms_faulthandler_immediately_after_the_node_is_built(tmp_path, 
     calls: list[object] = []
     monkeypatch.setattr(
         "cli.engine.node.build_shadow_node",
-        lambda config: (calls.append("build"), _fake_node("RUNNING"))[1],
+        lambda config: (calls.append("build"), _fake_node())[1],
     )
     monkeypatch.setattr(
         command,
@@ -894,108 +822,26 @@ sys.__stdout__.write(f"default: {default}\nfd2: armed={faulthandler.is_enabled()
     assert "fd2: armed=True" in result.stdout, result.stdout
 
 
-@pytest.mark.parametrize("state", ["IDLE", "STARTING", "SHUTTING_DOWN", "STOPPED"])
-def test_run_watchdog_force_exits_when_the_node_never_reaches_running(tmp_path, monkeypatch, state):
-    """Every state that is not RUNNING is a failed start once the node's own connect + reconcile
-    budget has elapsed, and each is a real shape: STARTING is a connect or reconciliation that never
-    returned (a bad key, an IP/family mismatch, a venue outage), IDLE a start that never began,
-    STOPPED and SHUTTING_DOWN a node that gave up on its own. All four must force-exit into the
-    supervisor's restart -- a watchdog that fires on only one of them leaves the others as the
-    silent zombie it exists to prevent."""
-    exits = _run_env(monkeypatch, tmp_path, state=state)
-
-    result = runner.invoke(app, ["engine", "run"])
-
-    out = _output(result)
-    assert result.exit_code == 0, out  # os._exit is stubbed to record; run() then completes normally
-    assert exits == [1]
-    assert "not RUNNING" in out and state in out  # the state itself is named, so a crash loop is triageable
-    (timer,) = FakeTimer.instances
-    assert timer.daemon is True
-    assert timer.started is True
-    assert timer.cancelled is True  # cancelled in the finally once node.run() returned
-
-
-def test_run_watchdog_does_nothing_when_the_node_is_running(tmp_path, monkeypatch):
-    """The true positive, and the one that matters most: a healthy engine reaches RUNNING and must
-    be left alone. A watchdog that force-exits here restarts a working engine every time its timer
-    fires -- a worse failure than the wedged start it was built to catch."""
-    exits = _run_env(monkeypatch, tmp_path, state="RUNNING")
-
-    result = runner.invoke(app, ["engine", "run"])
-
-    assert result.exit_code == 0, _output(result)
-    assert exits == []
-
-
-def test_the_watchdogs_health_read_is_not_satisfied_by_a_permanently_truthy_value(tmp_path, monkeypatch):
-    """The defect this check is shaped to be immune to.
-
-    Written `if <health read>:`, a read that resolves to a bound method -- which nautilus does have
-    on `Strategy.is_running` -- is true forever, and the watchdog passes every wedged start in
-    silence while every test in this file still goes green. Comparing against `NodeState.RUNNING`
-    itself makes that same value simply not-RUNNING, so the failure mode of a mis-pointed read is a
-    watchdog that fires rather than one silently disarmed. The fixture is exactly the defect: a
-    bound method handed to the health read in place of a state."""
-    truthy_method = _FakeHandle("not a state").__init__  # a bound method: `bool(...)` is True
-    assert truthy_method, "the fixture must be truthy or it proves nothing about the `if` form"
-    exits = _run_env(monkeypatch, tmp_path, state=truthy_method)
-
-    result = runner.invoke(app, ["engine", "run"])
-
-    out = _output(result)
-    assert result.exit_code == 0, out
-    assert exits == [1], "a permanently-truthy health read must not satisfy the watchdog"
-    assert "health check itself raised" not in out  # it fired on the read's VALUE, not on an error
-
-
-def test_run_watchdog_force_exits_when_the_health_read_itself_raises(tmp_path, monkeypatch):
-    """A health read that cannot answer is a wedged node, never a healthy one: the watchdog must
-    treat the raise as a failed start rather than skip its exit, which would disarm it silently."""
-    exits = _run_env(monkeypatch, tmp_path, state=RuntimeError("the handle is gone"))
-
-    result = runner.invoke(app, ["engine", "run"])
-
-    out = _output(result)
-    assert result.exit_code == 0, out
-    assert exits == [1]
-    assert "health check itself raised" in out and "the handle is gone" in out
-
-
-def test_the_watchdog_reads_the_handle_and_never_the_node_itself(tmp_path, monkeypatch):
-    """`LiveNode` is unsendable: touching any of its attributes from a thread other than the one
-    that built it aborts the engine with SIGABRT, which no `except` intercepts. The watchdog's
-    callback runs on a timer thread, so it must hold the handle taken at arming time and reach for
-    nothing else -- otherwise every fire kills the engine, healthy or wedged, and the CRITICAL line
-    explaining why is never written. tests/test_engine_node.py measures the abort itself."""
-    exits = _run_env(monkeypatch, tmp_path)
-    node = _fake_node("STARTING")
+def test_run_lets_a_start_the_node_could_not_complete_escape(tmp_path, monkeypatch):
+    """A node that cannot finish starting -- a client that never connects, a startup reconciliation
+    that never completes -- disconnects, stops, and raises out of `node.run()`. That raise must
+    escape `engine run` intact: `cli/__main__.py` logs it at ERROR and exits 1, compose restarts the
+    container, and the failure is visible. Caught or converted here it becomes the silent zombie
+    instead -- a container reported healthy by every supervisor, trading nothing, burning ratified
+    gate days. The `finally` still runs, so the node is disposed on the way out."""
+    disposed: list[str] = []
+    _run_env(monkeypatch, tmp_path, raises=RuntimeError("Startup reconciliation timeout reached"))
+    node = _fake_node(RuntimeError("Startup reconciliation timeout reached"))
+    node.dispose = lambda: disposed.append("disposed")
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: node)
 
     result = runner.invoke(app, ["engine", "run"])
 
     out = _output(result)
-    assert result.exit_code == 0, out
-    assert node.touched == [], f"the watchdog reached through the node itself: {node.touched}"
-    assert exits == [1] and "not RUNNING" in out  # a real health decision, off the handle alone
-
-
-def test_the_watchdog_delay_covers_the_nodes_own_connect_and_reconcile_budget(tmp_path, monkeypatch):
-    """The delay is the node's own startup budget plus slack, taken from node assembly rather than
-    restated here. Fired short, the watchdog restarts an engine that is still legitimately
-    connecting or reconciling -- a crash loop against a healthy start. The concrete total is pinned
-    too, so a change in what the node waits shows up as a failure here instead of silently."""
-    from cli.engine.node import node_start_timeouts
-
-    connect_secs, reconcile_secs = node_start_timeouts()
-    _run_env(monkeypatch, tmp_path)
-
-    result = runner.invoke(app, ["engine", "run"])
-
-    assert result.exit_code == 0, _output(result)
-    (timer,) = FakeTimer.instances
-    assert timer.interval == pytest.approx(connect_secs + reconcile_secs + command._WATCHDOG_SLACK_SECS)
-    assert timer.interval == pytest.approx(60.0 + 30.0 + 30.0)
+    assert result.exit_code != 0, out
+    assert isinstance(result.exception, RuntimeError), f"{result.exception!r}\n{out}"
+    assert "Startup reconciliation timeout reached" in str(result.exception)
+    assert disposed == ["disposed"], "the node was left undisposed on the way out"
 
 
 def test_engine_startup_latches_the_restart_hold(tmp_path, monkeypatch):
@@ -1323,86 +1169,55 @@ def test_report_journal_dir_overrides_the_configured_journal(tmp_path, monkeypat
     assert "streak: 1" in out
 
 
-# --- the stub node and handle are restatements of LiveNode / LiveNodeHandle ----------------------
+# --- the stub node is a restatement of LiveNode --------------------------------------------------
 #
 # tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
 # guards below; the reasoning that makes them worth having lives there.
 
 
 def _surface_run_reaches(local: str) -> set[str]:
-    """Every name `cli/engine/command.py` reaches through its `node` / `handle` local, read off
-    production's own source. Derived rather than listed: a hand-written list is a second
-    restatement of the same contract and goes stale the moment a new read appears."""
+    """Every name `cli/engine/command.py` reaches through its `node` local, read off production's
+    own source. Derived rather than listed: a hand-written list is a second restatement of the same
+    contract and goes stale the moment a new read appears."""
     tree = ast.parse(Path(command.__file__).read_text())
     return {
         n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == local
     }
 
 
-def test_every_node_and_handle_surface_engine_run_reaches_exists_on_the_real_types():
-    """`run()` drives a real `LiveNode` and its `LiveNodeHandle`; every test above drives
-    `_FakeNode`. A name the library has dropped raises where it is read -- on the node, at start,
-    and on the handle, inside the watchdog's `except`, which then force-exits a healthy engine --
-    while the stub keeps the whole file green. So production's read set is checked against the REAL
-    classes and never against the stub: a name planted in the stub cannot trip this, and a name
-    planted in production cannot be rescued by the stub carrying it."""
-    from nautilus_trader.live import LiveNode, LiveNodeHandle
+def test_every_node_surface_engine_run_reaches_exists_on_the_real_type():
+    """`run()` drives a real `LiveNode`; every test above drives `_FakeNode`. A name the library has
+    dropped raises where it is read -- inside `engine run`, at start, on the live trade path -- while
+    the stub keeps the whole file green. So production's read set is checked against the REAL class
+    and never against the stub: a name planted in the stub cannot trip this, and a name planted in
+    production cannot be rescued by the stub carrying it."""
+    from nautilus_trader.live import LiveNode
 
-    for local, real in (("node", LiveNode), ("handle", LiveNodeHandle)):
-        surface = _surface_run_reaches(local)
-        assert surface, f"the walk found no `{local}.` reads -- it is checking nothing"
-        missing = sorted(name for name in surface if not hasattr(real, name))
-        assert missing == [], f"run() reaches {missing} on its {local}, which the real {real.__name__} does not carry"
+    surface = _surface_run_reaches("node")
+    assert surface, "the walk found no `node.` reads -- it is checking nothing"
+    missing = sorted(name for name in surface if not hasattr(LiveNode, name))
+    assert missing == [], f"run() reaches {missing} on its node, which the real LiveNode does not carry"
 
 
-# What each stub carries for the harness's own sake, modelling nothing on the real type: the state
-# it answers from, and the record of which names a callback touched. Listed one by one on purpose --
-# a blanket "underscore-prefixed names are plumbing" rule would exempt exactly the shape that has
-# already slipped through this file once.
-_NODE_PLUMBING = frozenset({"touched", "_handle"})
-_HANDLE_PLUMBING = frozenset({"_state"})
+# What the stub carries for the harness's own sake, modelling nothing on the real type: the failure
+# it raises from `run()`. Listed one by one on purpose -- a blanket "underscore-prefixed names are
+# plumbing" rule would exempt exactly the shape that has already slipped through this file once.
+_NODE_PLUMBING = frozenset({"_raises"})
 
 
-def test_the_node_and_handle_stubs_offer_nothing_the_real_types_lack():
+def test_the_node_stub_offers_nothing_the_real_type_lacks():
     """The direction the test above cannot cover. A stub MISSING something production reads fails
     loudly the first time a test runs it. A stub OFFERING something the real type lacks fails
     NOTHING -- every test simply believes the fabricated attribute, and production is the only place
-    the read comes back wrong. This file has already paid for that asymmetry once: a stub node
-    carrying a `_config` the library never had kept the whole `run` suite green while the watchdog
-    it fed raised inside its own health check and force-exited every start, healthy or not."""
-    from nautilus_trader.live import LiveNode, LiveNodeHandle
+    the read comes back wrong. This file has already paid for that asymmetry once, with a stub node
+    carrying an attribute the library never had: production raised on the read, every test here
+    stayed green, and the raise landed on the live trade path."""
+    from nautilus_trader.live import LiveNode
 
-    stub = _fake_node("RUNNING")
-    for label, obj, real, plumbing in (
-        ("the stub node", stub, LiveNode, _NODE_PLUMBING),
-        ("the stub handle", stub.handle(), LiveNodeHandle, _HANDLE_PLUMBING),
-    ):
-        offered = {name for name in dir(obj) if not name.startswith("__")} - plumbing
-        assert offered, f"{label} offers nothing outside its plumbing list -- the check is vacuous"
-        stale = sorted(name for name in plumbing if hasattr(real, name))
-        assert stale == [], f"{label}'s plumbing list exempts {stale}, which {real.__name__} DOES carry -- check them instead"
-        extra = sorted(name for name in offered if not hasattr(real, name))
-        assert extra == [], f"{label} offers {extra}, which the real {real.__name__} does not carry"
-
-
-def test_the_timer_stub_matches_the_threading_timer_the_watchdog_really_arms():
-    """`FakeTimer` stands in for `threading.Timer`, which `run()` really constructs. Both directions
-    at once, against a real unstarted instance rather than the class -- `interval`, `function` and
-    `daemon` are set in `__init__`, so the class alone carries none of them and a class-level check
-    would call every one of them a fabrication."""
-    import threading
-
-    real = threading.Timer(0, lambda: None)
-    reached = _surface_run_reaches("watchdog")
-    assert reached, "the walk found no `watchdog.` reads -- it is checking nothing"
-    missing = sorted(name for name in reached if not hasattr(real, name))
-    assert missing == [], f"run() reaches {missing} on its watchdog, which a real threading.Timer does not carry"
-
-    plumbing = {"started", "cancelled", "instances"}  # the record tests read; nothing on a real Timer
-    stub = FakeTimer(0, lambda: None)
-    FakeTimer.instances.clear()
-    offered = {name for name in dir(stub) if not name.startswith("__")} - plumbing
-    stale = sorted(name for name in plumbing if hasattr(real, name))
-    assert stale == [], f"the plumbing list exempts {stale}, which a real threading.Timer DOES carry -- check them instead"
-    extra = sorted(name for name in offered if not hasattr(real, name))
-    assert extra == [], f"FakeTimer offers {extra}, which a real threading.Timer does not carry"
+    stub = _fake_node()
+    offered = {name for name in dir(stub) if not name.startswith("__")} - _NODE_PLUMBING
+    assert offered, "the stub node offers nothing outside its plumbing list -- the check is vacuous"
+    stale = sorted(name for name in _NODE_PLUMBING if hasattr(LiveNode, name))
+    assert stale == [], f"the plumbing list exempts {stale}, which LiveNode DOES carry -- check them instead"
+    extra = sorted(name for name in offered if not hasattr(LiveNode, name))
+    assert extra == [], f"the stub node offers {extra}, which the real LiveNode does not carry"
