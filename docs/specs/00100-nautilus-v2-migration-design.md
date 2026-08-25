@@ -142,6 +142,7 @@ The migration is not proved by a green suite. These are the ways it can be green
 - **Rounding** — `make_price` diverges on decimal midpoints and `make_qty` gains a raise outside the only `try` that wraps sizing. Both need fixtures on the divergent values, not on round numbers.
 - **The arming record** — proved by a refusal: a version not in the record must refuse to arm.
 - **D2's delivery leg** — the publish leg is established from source and the delivery leg by experiment, but not yet joined on a genuine venue-sourced external order, which needs live reconciliation. Verified on the disarmed engine before it is relied on.
+- **Events the engine manufactures rather than receives** — the in-flight machinery and `generate_missing_orders` are default-ON and synthesize terminal events (and whole orders) marked only by a `reconciliation` bool nothing here reads, so an unanswered cancel can drive a fallback on an ack no venue gave. Measured but undecided; this design rules on it nowhere, and the decision is owed before arming ([[T0154]]).
 
 ## Out of scope
 
