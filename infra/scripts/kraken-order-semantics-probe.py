@@ -834,8 +834,12 @@ class Harness:
         observed = f"{account.account_type.name}-type account {account.id}; balances {balances}"
         print(f"      account_type={account.account_type.name} id={account.id}")
         print(f"      balances={balances}")
-        print("      note: under spot_account_type=MARGIN this is TradeBalance-derived equity in")
-        print("            margin_balance_asset, NOT per-asset wallet balances (memo Observation 3).")
+        # Whether these are wallet balances or TradeBalance-derived equity is the adapter's choice
+        # and it is not readable from here, so this asks rather than tells: an earlier reading
+        # restated as a fact would be validated by agreement and never re-checked.
+        print("      note: under spot_account_type=MARGIN these may be TradeBalance-derived equity")
+        print("            in margin_balance_asset rather than per-asset wallet balances. RECORD")
+        print("            which; the Kraken UI or the raw Balance endpoint is the tie-breaker.")
         self.record("1", "Auth + account read", expected, observed, VERDICT_PASS)
 
     async def probe2(self) -> None:
@@ -968,7 +972,12 @@ class Harness:
 
     async def _probe4b(self) -> None:
         label, name = "4b", "Crossing post-only"
-        expected = "Venue post-only protection, no fill (1.230.0 surfaced it as OrderCanceled, not OrderRejected)"
+        # The requirement is post-only protection with no fill. WHICH terminal event the adapter
+        # surfaces that as -- OrderCanceled or a post-only OrderRejected -- is an adapter mapping
+        # this run OBSERVES; the verdict logic below accepts either. It is stated as owed rather
+        # than carried over from an earlier reading, because a reading taken on one adapter build
+        # and matched against another turns agreement into evidence of nothing.
+        expected = "Venue post-only protection, no fill; RECORD which terminal event it arrives as (OrderCanceled or a post-only OrderRejected -- either passes)"
         bid, ask, mid = self.live_quote()
         raw = crossing_price(ask, self.args.cross)
         planned, order = self.plan_limit(
