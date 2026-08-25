@@ -305,6 +305,12 @@
 # An unparseable pin yields '' from the join, and '' is in no list, so it REFUSES — the same
 # fail-closed direction as the disarmed test above.
 #
+# `=+` with `=` excluded from the capture, not `==`: pyproject pins with PEP 440 arbitrary equality
+# (`===`), and `==(...)` swallows only two of the three, capturing "=<version>" — a string in no
+# record, so the guard would refuse an armed converge on a version whose pass really did run, while
+# its own fail_msg named that version as recorded. The only exit from that contradiction is
+# arming_override, i.e. the money guard talked around exactly where it is meant to hold.
+#
 # The record is SHAPE-CHECKED before `in` is allowed to see it, and that is not defensive padding:
 # Jinja's `in` is SUBSTRING containment on a string and KEY containment on a mapping, so a record
 # whose list degraded to "1.230.0, 1.232.0" would VOUCH for the unverified 1.232.0, and a bare
@@ -318,7 +324,7 @@
   ansible.builtin.assert:
     that: >-
       (engine_config_template_text | regex_search('(?m)^exec_armed\s*=\s*false\s*$') is not none)
-      or ((engine_pyproject_text | regex_search('nautilus-trader==([^"\s]+)', '\1') | default([], true) | join('')) in
+      or ((engine_pyproject_text | regex_search('nautilus-trader=+([^"\s=]+)', '\1') | default([], true) | join('')) in
           (engine_verified_nautilus if (engine_verified_nautilus is sequence
           and engine_verified_nautilus is not string
           and engine_verified_nautilus is not mapping
@@ -327,7 +333,7 @@
           and (arming_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
     fail_msg: >-
       This converge renders the engine ARMED on nautilus-trader
-      {{ engine_pyproject_text | regex_search('nautilus-trader==([^"\s]+)', '\1') | default([], true) | join('') | default('(unparseable pin)', true) }},
+      {{ engine_pyproject_text | regex_search('nautilus-trader=+([^"\s=]+)', '\1') | default([], true) | join('') | default('(unparseable pin)', true) }},
       whose attended ~EUR 0.20 order-semantics pass has not been recorded in
       cli/engine/order-semantics-verified.json (recorded:
       {{ (engine_verified_nautilus if (engine_verified_nautilus is sequence
@@ -344,7 +350,7 @@
     msg: "arming_override accepted: {{ arming_override }}"
   when: >-
     not (engine_config_template_text | regex_search('(?m)^exec_armed\s*=\s*false\s*$') is not none)
-    and not ((engine_pyproject_text | regex_search('nautilus-trader==([^"\s]+)', '\1') | default([], true) | join('')) in
+    and not ((engine_pyproject_text | regex_search('nautilus-trader=+([^"\s=]+)', '\1') | default([], true) | join('')) in
         (engine_verified_nautilus if (engine_verified_nautilus is sequence
           and engine_verified_nautilus is not string
           and engine_verified_nautilus is not mapping

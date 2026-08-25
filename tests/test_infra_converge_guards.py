@@ -7,6 +7,7 @@ expression is edited drifts here immediately.
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -726,8 +727,25 @@ NO_PIN = 'dependencies = [\n    "polars==1.0.0",\n]\n'
 # A pin that is a PREFIX of the recorded version. This is the only shape that exercises Jinja's
 # substring containment in the direction that used to vouch: "1.230" IS in "1.230.0".
 PREFIX_PIN = 'dependencies = [\n    "nautilus-trader==1.230",\n]\n'
+# PEP 440 arbitrary equality, which is what the committed pyproject uses. The guard must read the
+# VERSION out of it and not the third `=`: a pin the guard mis-reads is in no record, so an armed
+# converge on a version whose pass really did run is refused with a message naming that very
+# version as recorded -- a contradiction whose only exit is arming_override, i.e. the money guard
+# routed around at exactly the moment it is supposed to hold.
+TRIPLE_EQUALS_VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.230.0",\n]\n'
+TRIPLE_EQUALS_UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.231.0",\n]\n'
 RECORD = ["1.230.0"]
 _UNSET = object()  # so a test can pass record=None and mean it
+
+
+def _pinned_nautilus_version() -> str:
+    """The nautilus version the committed pyproject pins, parsed independently of the guard."""
+    deps = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["dependencies"]
+    entries = [d.strip() for d in deps if re.match(r"^nautilus-trader\b", d.strip())]
+    assert len(entries) == 1, f"expected exactly one nautilus-trader dependency, found {entries}"
+    version = re.sub(r"^nautilus-trader\s*={2,3}\s*", "", entries[0])
+    assert version != entries[0], f"the nautilus-trader dependency must pin by equality: {entries[0]!r}"
+    return version
 
 
 @pytest.mark.parametrize(
@@ -817,6 +835,11 @@ def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSE
         (TEMPLATED_ARMED, UNVERIFIED_PIN, False, "arming value templated away from the literal"),
         (TEMPLATED_ARMED, VERIFIED_PIN, True, "templated arming is still fine on a verified version"),
         (ARMED_TEMPLATE, NO_PIN, False, "armed with an unparseable pin"),
+        # Arbitrary equality, both directions. The true positive is the one that discriminates: a
+        # guard that swallowed the operator into the capture reads the version as "=1.230.0",
+        # which is in no record, so it would refuse this row.
+        (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, True, "armed on a verified version pinned with ==="),
+        (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, False, "armed on an unverified version pinned with ==="),
     ],
 )
 def test_arming_backstop_semantics(template, pyproject, expected, why):
@@ -860,10 +883,16 @@ def test_arming_backstop_reads_the_real_committed_files():
     whoever met it into either editing the record early or routing around a red test. Whether the
     pass has run is the RECORD's business, not this test's; this test only proves the guard reads
     the real files and still bites.
+
+    The pinned version is read with tomllib, NOT with a copy of the guard's own regex. Re-deriving
+    it the way the guard does made this test blind to the guard's parsing: whatever the regex
+    extracted was fed straight back in as the recorded version, so it matched itself and both
+    halves passed on a mangled read. The version the guard must find is a property of the pin, so
+    it is taken from the pin -- by a parser that cannot share the guard's mistakes.
     """
     record = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())
     versions = record["verified_nautilus_versions"]
-    pin = re.search(r'nautilus-trader==([^"\s]+)', (REPO / "pyproject.toml").read_text()).group(1)
+    pin = _pinned_nautilus_version()
     template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
 
     assert re.search(r"(?m)^exec_armed\s*=\s*false\s*$", template), "the committed template must render disarmed"
