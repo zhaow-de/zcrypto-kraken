@@ -273,7 +273,7 @@ class StubClient:
         self.cache = cache if cache is not None else StubCache()
         # A real StrategyId, not a str: `Cache.positions_open(strategy_id=...)` is Cython-typed and
         # refuses a str, so a stubbed str would accept what production cannot.
-        self.id = _STUB_STRATEGY_ID
+        self.strategy_id = _STUB_STRATEGY_ID
         self.order_factory = StubOrderFactory()
         self.submitted = []
         self.canceled = []

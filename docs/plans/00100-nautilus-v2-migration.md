@@ -344,7 +344,7 @@ The cold review found this: D6's landed fix reads `self._client.id`, v2 renames 
 
 **Files:** `cli/engine/executor.py`, `tests/test_engine_executor.py`
 
-- [ ] **Step 1:** Re-point both `self._client.id` call sites in `cli/engine/executor.py` to `self._client.strategy_id`, and rename `StubClient.id` → `strategy_id` to match production.
+- [x] **Step 1: DONE during Task 5.** Both `self._client.id` call sites in `cli/engine/executor.py` read `strategy_id`, and `StubClient` was renamed to match. Steps 2b-5 below are still owed.
 - [ ] **Step 2: Re-express Task 3's tag pin against the effective identity** — assert the *registered* strategy's `strategy_id` and its client-order-id prefix, parametrised over both registration orders (observer first, observer second). v2 exposes no `order_id_tag` attribute, and the config input is not what the venue sees.
 - [ ] **Step 2b: Prove the own-position read's guard.** The try/except around it is unreachable by any current fixture — `StubCache(raises=True)` raises in `instrument()`, which the earlier venue-truth guard catches first. Build a cache that raises only when `strategy_id is not None`, and confirm the intent is refused rather than the exception escaping. Without it, deleting that try passes the whole suite.
 - [ ] **Step 3: Add the guard that generalises this.** Assert every attribute and method `ProbeExecutor` calls on `self._client` exists on the real nautilus `Strategy`. A stub is a contract restatement, and an unverified restatement drifts silently — which is exactly how this defect stayed green.
@@ -436,6 +436,8 @@ Each of these is a real guard whose *mechanism* v2 removed. The hazard is repair
 - [ ] **Step 1:** Port `infra/scripts/kraken-order-semantics-probe.py` — same import and node-assembly port as Task 6. It places real orders and is the only instrument that can validate the arming pass, so it must be ported before that pass can be scheduled.
 - [ ] **Step 2:** `infra/scripts/nautilus-logger-guard-probe.py` cannot run on v2 — `is_logging_initialized` does not exist. Re-express it against v2's logging surface or retire it with the reason recorded, and update T0085, which records the probe as discharged for the 1.231.0 bump.
 - [ ] **Step 3:** Commit.
+
+**`test_pinned_version` fails from Task 4 until the arming pass, and that is the guard working.** It asserts the installed nautilus version is one whose six-probe pass actually ran; no probe has run on v2, so it must stay red. Do NOT repair it by editing the version string — that silently vouches for an unverified adapter. It goes green only when Step 4's record legitimately gains the version.
 
 ### Task 15: Sequencing the arming pass (D9, D11)
 
