@@ -29,15 +29,15 @@ ______________________________________________________________________
 
 ### Task 0: Cold spec+plan review — before any code
 
-- [ ] **Step 1: Dispatch a fresh-context reviewer at the Fable floor**
+- [x] **Step 1: Dispatch a fresh-context reviewer at the Fable floor**
 
 Per `.claude/rules/spec-plan-locations.md`, the pair gets a cold review before Task 1: coverage (every spec decision has a task), internal consistency, whether the planned verification pins the spec's load-bearing properties, and that every deferral names a registered topic or an explicit drop. Fable floor because this touches the live trade path.
 
-- [ ] **Step 2: Fold material findings into the plan, not into a notes file**
+- [x] **Step 2: Fold material findings into the plan, not into a notes file**
 
 ______________________________________________________________________
 
-**D6 is landed but NOT yet v2-safe.** The fix shipped on this branch because the defect exists on v1 today, but it reads `self._client.id` at its two call sites in `cli/engine/executor.py` (grep it — the read in `_start_intent` and the one in `_reconcile_terminal`), and v2 renames that attribute to `strategy_id` (measured: `hasattr(Strategy, "id")` is `False` on the pinned wheel). Task 7a re-points it. **Its own tests cannot catch this**: `StubClient` sets `self.id`, so the three `test_reconcile_terminal_*` tests stay green while production raises — inside `_reconcile_terminal`'s own `except`, which calls `_trip_kill`, latching the kill switch after every completed intent.
+**D6 landed on v1, and the crossing it could not survive unaided was made here.** The fix shipped on this branch because the defect exists on v1 today, and it read `self._client.id` at its two call sites in `cli/engine/executor.py` (the read in `_start_intent` and the one in `_reconcile_terminal`); v2 renames that attribute to `strategy_id` (measured: `hasattr(Strategy, "id")` is `False` on the pinned wheel). Both sites read `strategy_id`. **Its own tests could not have caught it**: `StubClient` set `self.id`, so the `test_reconcile_terminal_*` tests would have stayed green while production raised — inside `_reconcile_terminal`'s own `except`, which calls `_trip_kill`, latching the kill switch after every completed intent. That whole class — a stub restating a library contract with nothing verifying the restatement — is what Task 12a's fidelity guard now covers.
 
 ## Phase A — guards that must be proved on v1
 
@@ -53,7 +53,7 @@ Our whole dependency is twenty symbols. Pin them exhaustively so a bump reports 
 
 - Produces: nothing importable; it is a guard. Later tasks read its failures as the migration work-list.
 
-- [ ] **Step 1: Write the pin, against v1**
+- [x] **Step 1: Write the pin, against v1**
 
 ```python
 """Every nautilus symbol this project depends on, pinned by path, shape and value.
@@ -149,19 +149,19 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
     )
 ```
 
-- [ ] **Step 2: Run it — expect green on v1**
+- [x] **Step 2: Run it — expect green on v1**
 
 Run: `uv run pytest tests/test_nautilus_interface_pin.py -q`
 Expected: PASS. It is describing the installed v1.
 
-- [ ] **Step 3: Prove it is not vacuous**
+- [x] **Step 3: Prove it is not vacuous**
 
 Run `infra/scripts/mutate-probe.sh` against the test file itself, **twice** — once mutating a pinned integer (`"MAKER": 1` → `"MAKER": 7`) and once mutating a `PINNED_ATTRIBUTES` entry (`"id"` → `"id_"`).
 Expected: KILLED both times. One probe covers one table: an enum mutation leaves the attribute pin unexercised, and a table no test consumes passes every probe aimed elsewhere.
 
-- [ ] **Step 3b: Pin the constructors, not only the names.** Every drift this guard exists to catch has been a signature change; construct each config exactly as `cli/engine/node.py` does, so the pin fails on the call we actually make rather than on a name that survives.
+- [x] **Step 3b: Pin the constructors, not only the names.** Every drift this guard exists to catch has been a signature change; construct each config exactly as `cli/engine/node.py` does, so the pin fails on the call we actually make rather than on a name that survives.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/test_nautilus_interface_pin.py
@@ -176,7 +176,7 @@ git commit -m "test(engine): pin the whole nautilus interface we depend on"
 
 - Modify: `tests/test_engine_node.py`
 
-- [ ] **Step 1: Write the guard**
+- [x] **Step 1: Write the guard**
 
 ```python
 def test_every_handler_our_strategy_overrides_exists_on_the_library_base_class():
@@ -202,14 +202,14 @@ def test_every_handler_our_strategy_overrides_exists_on_the_library_base_class()
     )
 ```
 
-- [ ] **Step 2: Run — expect green on v1**
+- [x] **Step 2: Run — expect green on v1**
 
 Run: `uv run pytest tests/test_engine_node.py -k handler_our_strategy -q`
 Expected: PASS (v1 `Strategy` has `on_quote_tick`).
 
-- [ ] **Step 3: Prove it bites** — temporarily rename `ShadowStrategy.on_quote_tick` to `on_quote_tickk`, re-run, expect FAIL naming it, restore.
+- [x] **Step 3: Prove it bites** — temporarily rename `ShadowStrategy.on_quote_tick` to `on_quote_tickk`, re-run, expect FAIL naming it, restore.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ### Task 3: Pin the strategy identity explicitly (D8)
 
@@ -219,11 +219,11 @@ Expected: PASS (v1 `Strategy` has `on_quote_tick`).
 
 - Modify: `cli/engine/node.py`, `tests/test_engine_node.py`
 
-- [ ] **Step 1: Read the CURRENT live tag before pinning anything**
+- [x] **Step 1: Read the CURRENT live tag before pinning anything**
 
 Do not take it from this plan. The exec ledger is empty locally — the engine has journaled no fills — so read it off a strategy REGISTERED through the real `Trader.add_strategy`, which is what assigns the tag. Expected `"000"`: the tag is positional (`f"{len(order_id_tags):03d}"`) and `ShadowStrategy` is currently the only strategy. Confirm that by registration rather than trusting it — pinning a wrong value changes every future order id, and the value is visible at the venue.
 
-- [ ] **Step 2: Write the failing pin test**
+- [x] **Step 2: Write the failing pin test**
 
 ```python
 def test_the_strategys_order_id_tag_is_explicit_not_positional(tmp_path):
@@ -234,19 +234,19 @@ def test_the_strategys_order_id_tag_is_explicit_not_positional(tmp_path):
     assert strategy.order_id_tag == "000"  # the value read off the live ledger in Step 1
 ```
 
-- [ ] **Step 3: Make it pass** — pass `StrategyConfig(order_id_tag="000")`. Leave `external_order_claims` unset; the standing ban is on the token and on a non-`None` value, and both still hold.
+- [x] **Step 3: Make it pass** — pass `StrategyConfig(order_id_tag="000")`. Leave `external_order_claims` unset; the standing ban is on the token and on a non-`None` value, and both still hold.
 
-- [ ] **Step 4: Confirm the claims assertion still passes** — `test_the_strategy_claims_no_external_orders` must stay green.
+- [x] **Step 4: Confirm the claims assertion still passes** — `test_the_strategy_claims_no_external_orders` must stay green.
 
-- [ ] **Step 5: Record D7's deliberate asymmetry where it is still unwritten**
+- [x] **Step 5: Record D7's deliberate asymmetry where it is still unwritten**
 
 `_publish_fill`'s docstring already says its read is instrument-scoped and that `_reconcile_terminal` doubts the strategy-scoped quantity instead. `_realized_eur` carries no such note. Add one: it stays instrument-scoped on purpose, because a hand settle of an engine leg realizes an outcome that is genuinely the engine's, and strategy-scoping would systematically undercount exactly the sanctioned case. Without the note, a later reader aligns it with D6 and reintroduces the phantom-long class of error.
 
-- [ ] **Step 6: Note that this pin does not survive the crossing unaided**
+- [x] **Step 6: Note that this pin does not survive the crossing unaided**
 
 v2 exposes no `order_id_tag` attribute on the class or an instance — only `strategy.config.order_id_tag` and the derived `strategy_id`. Task 7a re-expresses the pin against the registered strategy's *effective* identity, which is what the venue sees.
 
-- [ ] **Step 7: Run the engine suites and commit**
+- [x] **Step 7: Run the engine suites and commit**
 
 ______________________________________________________________________
 
@@ -258,7 +258,7 @@ ______________________________________________________________________
 
 - Modify: `pyproject.toml`, `uv.lock`
 
-- [ ] **Step 1: Add the index and flip the pin**
+- [x] **Step 1: Add the index and flip the pin**
 
 ```toml
 [[tool.uv.index]]
@@ -269,20 +269,20 @@ explicit = true
 
 with `nautilus-trader = { index = "nautechsystems" }` under `[tool.uv.sources]`, and the dependency pinned to `nautilus-trader===2.0.0rc4.dev20260825`. `explicit = true` so this index serves only this package and never shadows PyPI.
 
-- [ ] **Step 2: Relock and sync**
+- [x] **Step 2: Relock and sync**
 
 Run: `uv lock && uv sync`
 Expected: the pinned wheel resolves. Note the v2 wheel declares no required runtime dependencies where 1.231.0 pulled several — expect the lock to shrink.
 
-- [ ] **Step 3: Capture the red baseline — this IS the work-list**
+- [x] **Step 3: Capture the red baseline — this IS the work-list**
 
 Run: `uv run pytest -q 2>&1 | tail -80` and save the failure list to the plan's workspace. Every later task in Phase C closes a named part of it. Record the count.
 
-- [ ] **Step 4: Confirm Task 1 and Task 2's guards are among the failures**
+- [x] **Step 4: Confirm Task 1 and Task 2's guards are among the failures**
 
 If the interface pin and the handler guard are green on v2, they are not doing their job — investigate before proceeding. They should name the renamed symbols and handlers precisely.
 
-- [ ] **Step 5: Commit the flip alone**
+- [x] **Step 5: Commit the flip alone**
 
 ```bash
 git add pyproject.toml uv.lock
@@ -293,7 +293,7 @@ ______________________________________________________________________
 
 ## Phase C — work it green
 
-Each task below closes part of Task 4's baseline. The 58-edit inventory behind these is in the spec's measured basis; where a step says "measured", the value was read off the running wheel and can be trusted without re-deriving.
+Each task below closes part of Task 4's baseline. The inventory behind these is the spec's measured basis. Where a step says "measured", the value was read off the running wheel — which is not the same as infallible: Task 1's `OrderStatus` integers were recorded as measured and were in fact transposed, so re-derive any value a guard's verdict rests on.
 
 ### Task 5: Mechanical import moves
 
@@ -301,9 +301,9 @@ Flat `nautilus_trader.model` replaces `model.enums` / `model.identifiers`; `naut
 
 **Files:** `cli/engine/{node,executor,venuestate}.py`, `tests/test_engine_{executor,node,metrics}.py`, `tests/test_nautilus_adapter.py`, and Task 1's `PINNED_SYMBOLS` table.
 
-- [ ] **Step 1:** Move every import; update `PINNED_SYMBOLS` to the new paths **and the new names**: `KrakenExecutionClientConfig`, `KrakenDataClientFactory`, `KrakenExecutionClientFactory`, and **`LiveExecEngineConfig` → `LiveExecutionEngineConfig`** — measured, and easy to miss because it is the config carrying `reconciliation` and `filter_unclaimed_external_orders`, the two defaults the whole external-order path rests on. Update `PINNED_ATTRIBUTES` to `strategy_id`.
-- [ ] **Step 2:** `uv run pytest tests/test_nautilus_interface_pin.py -q` → green again. The pin is now describing v2.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** Move every import; update `PINNED_SYMBOLS` to the new paths **and the new names**: `KrakenExecutionClientConfig`, `KrakenDataClientFactory`, `KrakenExecutionClientFactory`, and **`LiveExecEngineConfig` → `LiveExecutionEngineConfig`** — measured, and easy to miss because it is the config carrying `reconciliation` and `filter_unclaimed_external_orders`, the two defaults the whole external-order path rests on. Update `PINNED_ATTRIBUTES` to `strategy_id`.
+- [x] **Step 2:** `uv run pytest tests/test_nautilus_interface_pin.py -q` → green again. The pin is now describing v2.
+- [x] **Step 3:** Commit.
 
 ### Task 6: Node assembly (D1, D5)
 
@@ -333,10 +333,10 @@ All measured: `cancel_order(order)` → `cancel_order(order.client_order_id)` at
 
 **Files:** `cli/engine/{node,executor}.py`
 
-- [ ] **Step 1:** Apply the renames; update the `ProbeExecutor` client-contract docstring, which enumerates the old surface.
-- [ ] **Step 2:** Task 2's handler guard goes green — that is the acceptance signal for the handler rename.
-- [ ] **Step 3: Assert the subscription's effect, not the absence of an exception.** A missing `subscribe_*` raises `AttributeError` inside `on_timer`'s blanket `except`, which drops the plan with no gate reason and no kill file. A test that only checks "no exception escaped" cannot see it.
-- [ ] **Step 4:** Commit.
+- [x] **Step 1:** Apply the renames; update the `ProbeExecutor` client-contract docstring, which enumerates the old surface.
+- [x] **Step 2:** Task 2's handler guard goes green — that is the acceptance signal for the handler rename.
+- [x] **Step 3: Assert the subscription's effect, not the absence of an exception.** A missing `subscribe_*` raises `AttributeError` inside `on_timer`'s blanket `except`, which drops the plan with no gate reason and no kill file. A test that only checks "no exception escaped" cannot see it.
+- [x] **Step 4:** Commit.
 
 ### Task 7a: Re-point the strategy identity, and stop the stub hiding the next one
 
@@ -344,14 +344,14 @@ The cold review found this: D6's landed fix reads `self._client.id`, v2 renames 
 
 **Files:** `cli/engine/executor.py`, `tests/test_engine_executor.py`
 
-- [x] **Step 1: DONE during Task 5.** Both `self._client.id` call sites in `cli/engine/executor.py` read `strategy_id`, and `StubClient` was renamed to match. Steps 2b-5 below are still owed.
-- [ ] **Step 2: Re-express Task 3's tag pin against the effective identity** — assert the *registered* strategy's `strategy_id` and its client-order-id prefix, parametrised over both registration orders (observer first, observer second). v2 exposes no `order_id_tag` attribute, and the config input is not what the venue sees.
+- [x] **Step 1: DONE during Task 5.** Both `self._client.id` call sites in `cli/engine/executor.py` read `strategy_id`, and `StubClient` was renamed to match.
+- [x] **Step 2: Re-express Task 3's tag pin against the effective identity** — assert the *registered* strategy's `strategy_id` and its client-order-id prefix, parametrised over both registration orders (observer first, observer second). v2 exposes no `order_id_tag` attribute, and the config input is not what the venue sees.
 
 **Step 2 has a construction blocker in front of it, measured during Task 6 and owed here because the fix IS the identity decision.** `Strategy` is a pyo3 class, so Python's construction protocol hands `__new__` the subclass's own keyword arguments: `ShadowStrategy(config, executor_factory=...)` raises `TypeError: Strategy.__new__() got an unexpected keyword argument 'executor_factory'`, and `build_shadow_node` therefore cannot construct its own strategy. A `__new__` that swallows them unblocks it — and its argument is what fixes the identity, measured three ways on the installed wheel: `super().__new__(cls, StrategyConfig(order_id_tag="000"))` yields `strategy_id == "ShadowStrategy-000"`; `super().__new__(cls)` yields `"ShadowStrategy-None"` **even though `__init__` still calls `super().__init__(config=StrategyConfig(order_id_tag="000"))` and `strategy.config.order_id_tag` reads `"000"`**. That split is exactly this step's trap: `.config` agrees with the intent while the venue-visible prefix does not. Land `__new__` and this step's registration-order tests together.
-- [ ] **Step 2b: Prove the own-position read's guard.** The try/except around it is unreachable by any current fixture — `StubCache(raises=True)` raises in `instrument()`, which the earlier venue-truth guard catches first. Build a cache that raises only when `strategy_id is not None`, and confirm the intent is refused rather than the exception escaping. Without it, deleting that try passes the whole suite.
-- [ ] **Step 3: Add the guard that generalises this.** Assert every attribute and method `ProbeExecutor` calls on `self._client` exists on the real nautilus `Strategy`. A stub is a contract restatement, and an unverified restatement drifts silently — which is exactly how this defect stayed green.
-- [ ] **Step 4: Prove BOTH halves bite, separately.** Step 3's guard derives the checked set from production's calls and asserts them against the real `Strategy`, so a defect planted in the stub cannot trip it. Run two probes: (a) revert the stub attribute to `id` — the contract test must fail; (b) point production at a name the real `Strategy` lacks — the real-class assertion must fail. **Record which failure fired each time**; a red exit can be the guard misfiring on a healthy path rather than catching the planted defect.
-- [ ] **Step 5:** Restore, then commit.
+- [x] **Step 2b: Prove the own-position read's guard.** The try/except around it is unreachable by any current fixture — `StubCache(raises=True)` raises in `instrument()`, which the earlier venue-truth guard catches first. Build a cache that raises only when `strategy_id is not None`, and confirm the intent is refused rather than the exception escaping. Without it, deleting that try passes the whole suite.
+- [x] **Step 3: Add the guard that generalises this.** Assert every attribute and method `ProbeExecutor` calls on `self._client` exists on the real nautilus `Strategy`. A stub is a contract restatement, and an unverified restatement drifts silently — which is exactly how this defect stayed green.
+- [x] **Step 4: Prove BOTH halves bite, separately.** Step 3's guard derives the checked set from production's calls and asserts them against the real `Strategy`, so a defect planted in the stub cannot trip it. Run two probes: (a) revert the stub attribute to `id` — the contract test must fail; (b) point production at a name the real `Strategy` lacks — the real-class assertion must fail. **Record which failure fired each time**; a red exit can be the guard misfiring on a healthy path rather than catching the planted defect.
+- [x] **Step 5:** Restore, then commit.
 
 ### Task 8: Delete the `_liquidity` survival guard
 
@@ -359,9 +359,9 @@ Forced: `liquidity_side_to_str` no longer exists and v2 enums are not iterable (
 
 **Files:** `cli/engine/executor.py`, `tests/test_engine_{executor,metrics}.py`
 
-- [ ] **Step 1:** Replace the body with `side.name`; delete `_LIQUIDITY_VALUES` and the `isinstance(side, int)` branch.
-- [ ] **Step 2: Rewrite the tests that pinned v1 behaviour**, which is the hazardous half. The composite-`IntFlag` test is unconstructible on v2 (`MAKER | TAKER` raises `TypeError`), and `{str(member) for member in LiquiditySide}` asserted `'1'` where v2 gives `'MAKER'`. A three-case test that still passes verbatim after the migration is proving nothing — replace it, do not keep it.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** Replace the body with `side.name`; delete `_LIQUIDITY_VALUES` and the `isinstance(side, int)` branch.
+- [x] **Step 2: Rewrite the tests that pinned v1 behaviour**, which is the hazardous half. The composite-`IntFlag` test is unconstructible on v2 (`MAKER | TAKER` raises `TypeError`), and `{str(member) for member in LiquiditySide}` asserted `'1'` where v2 gives `'MAKER'`. A three-case test that still passes verbatim after the migration is proving nothing — replace it, do not keep it.
+- [x] **Step 3:** Commit.
 
 ### Task 9: The sealed EXTERNAL observer (D2)
 
@@ -380,15 +380,15 @@ The first draft listed eight and left `cancel_orders`, `modify_orders` and `post
 This matters most during Phase C specifically: the red suite hands an implementer failing external-topic tests whose most obvious repair is the forbidden one, and its failure mode is an engine that accepts orders and never sends them.
 - [x] **Step 6:** Commit.
 
-### Task 10: Supervision and the watchdog
+### Task 10: Supervision
 
-`node._config` and `node.trader` do not exist on `LiveNode`. `Strategy.is_running` changes from property to **method**, so `if strategy.is_running:` on a bound method is permanently true — but `LiveNode.is_running`, which Step 1 re-points to, is still a property. Do not assume the trap follows the read; Step 2 proves the watchdog fires either way.
+`node._config` and `node.trader` do not exist on `LiveNode`, so `engine run`'s startup watchdog lost both of the reads it was built on. It was repaired here first and then **deleted**, which is the governing principle's answer and is recorded as D14: the node aborts its own failed start, in every condition the watchdog named, and a hand-rolled timer beside it is a net loss on the live trade path. The steps below are kept because their measurements are what condemned it.
 
 **Files:** `cli/engine/command.py`
 
-- [x] **Step 1: DONE — and NOT via `node.is_running`.** `LiveNode` is pyo3-*unsendable*: reading any attribute of it off the thread that built it panics and aborts the process (SIGABRT, exit 134), which `except Exception` cannot intercept. The watchdog runs on a `threading.Timer` thread, so that re-point would have killed a HEALTHY engine the moment the timer fired. Capture `node.handle()` on the building thread and read `handle.state is NodeState.RUNNING`, which answers normally off-thread.
-- [x] **Step 1b: Re-source the DELAY, which is the watchdog's whole point.** Production computes it from `node._config.timeout_connection + timeout_reconciliation`; v2's `LiveNode` exposes no `_config`, and `LiveNodeConfig` renames both fields to `*_secs`. Task 6 sets neither timeout, so the values in force are `LiveNodeConfig`'s defaults — measured on the installed wheel: `timeout_connection_secs = 60.0`, `timeout_reconciliation_secs = 30.0`, unchanged from what production computes today. Pin them where node assembly sets them and read them from there — a watchdog that fires before a legitimate connect-and-reconcile completes restarts a healthy engine.
-- [x] **Step 2: Prove the watchdog fires**, with a fixture where the condition it watches is false. A watchdog that compiles is not a watchdog that fires — and the permanently-truthy form is the exact defect to construct.
+- [x] **Step 1: Repaired, then superseded — and the repair was NOT `node.is_running`.** `LiveNode` is pyo3-*unsendable*: reading any attribute of it off the thread that built it panics and aborts the process (SIGABRT, exit 134), which `except Exception` cannot intercept. The watchdog ran on a `threading.Timer` thread, so that re-point would have killed a HEALTHY engine the moment the timer fired. It read `handle.state is NodeState.RUNNING` off a `node.handle()` captured on the building thread, which answers normally off-thread. The unsendability measurement outlives the deletion; the code does not.
+- [x] **Step 1b: Re-sourced, and the re-sourcing is what decided D14.** The delay came from `node._config.timeout_connection + timeout_reconciliation`; v2's `LiveNode` exposes no `_config`, and `LiveNodeConfig` renames both fields to `*_secs`. Re-deriving it against the installed wheel showed the budget had always been wrong: `LiveNodeConfig` carries FIVE timeout phases — connection 60.0, portfolio 10.0, reconciliation 30.0, disconnection 10.0, shutdown 5.0 — and the hand-rolled sum modelled two of them while calling them the entire budget, so the 120 s timer held 20 s of margin rather than the 30 s its design assumed.
+- [x] **Step 2: The fixture is what condemned it.** Every not-RUNNING state its own parametrised test listed is one the node self-aborts in before the 120 s timer could fire; the single state left in which it *could* fire is a node that reached RUNNING and began a graceful shutdown inside the window, where `os._exit(1)` truncates the residual-event drain and the disconnect on the live trade path and skips `logging.shutdown()`. Two guards replace it, each seen to bite: the raise escaping `engine run` with the node still disposed, and the library's own abort measured in a child interpreter against a closed loopback port.
 - [x] **Step 3:** Re-derive the faulthandler re-arm's justification against v2's Rust/tokio runtime, or remove it with the reason recorded.
 - [x] **Step 4:** Commit.
 
@@ -420,10 +420,10 @@ Both review rounds produced blocking findings with one root: the engine suite is
 
 **Files:** `tests/test_engine_executor.py`, `tests/test_engine_node.py`
 
-- [ ] **Step 1: Enumerate every stub standing in for a nautilus type** — `StubClient`, `StubCache`, `_fake_instrument`, `_fake_node`, the order/event doubles — and state, per stub, how it is verified against the real type. Task 7a Step 3 does this for `StubClient`; generalise it.
-- [ ] **Step 2: Fix the two already known to be wrong.** (`StubCache`'s strategy-id partition and its `str` refusal were closed on this branch; start the enumeration from what remains.) `_fake_instrument` sets `make_qty=lambda value: value` and `make_price=lambda value: value` — identity — so no fixture through it can reach the production rounding path, which is what Task 12 measures. `_fake_node` fabricates `_config` with `timeout_connection`, a field v2 renames and `LiveNode` no longer exposes at all.
-- [ ] **Step 3: Task 12's fixtures must drive `_place` itself** through a real `CurrencyPair` (or a parametrised `_fake_instrument` delegating to one), asserting the SUBMITTED order's quantity and price. A rounding fixture that never reaches the rounding code proves nothing.
-- [ ] **Step 4:** Commit.
+- [x] **Step 1: Enumerate every stub standing in for a nautilus type** — `StubClient`, `StubCache`, `_fake_instrument`, `_fake_node`, the order/event doubles — and state, per stub, how it is verified against the real type. Task 7a Step 3 does this for `StubClient`; generalise it.
+- [x] **Step 2: Fix the two already known to be wrong.** (`StubCache`'s strategy-id partition and its `str` refusal were closed on this branch; start the enumeration from what remains.) `_fake_instrument` sets `make_qty=lambda value: value` and `make_price=lambda value: value` — identity — so no fixture through it can reach the production rounding path, which is what Task 12 measures. `_fake_node` fabricates `_config` with `timeout_connection`, a field v2 renames and `LiveNode` no longer exposes at all.
+- [x] **Step 3: Task 12's fixtures must drive `_place` itself** through a real `CurrencyPair` (or a parametrised `_fake_instrument` delegating to one), asserting the SUBMITTED order's quantity and price. A rounding fixture that never reaches the rounding code proves nothing.
+- [x] **Step 4:** Commit.
 
 ### Task 13: Repair the guards that lost their anchors
 
@@ -465,14 +465,14 @@ So the harness runs on `node.run()` with the sequence driven from inside callbac
 
 The publish leg is established from source and the delivery leg in a backtest, but the join needs a genuine venue-sourced external order, which needs live Kraken reconciliation. This plan converges nothing, D1 forbids deploying a development wheel, and the exec key is IP-bound to the engine host — so no step in this plan can reach it. Pretending otherwise would produce a step that is silently skipped or improvised into a non-equivalent local check.
 
-- [ ] **Step 1:** Confirm the obligation is registered as `T0152` with a `ripe_when` naming the first v2 converge, and that its index bullet reflects it. Registration and this plan's closeout travel together — prose in a plan is never a deferral's only home.
+- [x] **Step 1:** Confirm the obligation is registered as `T0152` with a `ripe_when` naming the first v2 converge, and that its index bullet reflects it. Registration and this plan's closeout travel together — prose in a plan is never a deferral's only home.
 - [ ] **Step 2:** State the residual plainly in the PR body: D2 merges with its publish leg proven from source and its delivery leg proven only in a backtest. The fallback if the join fails is known and cheap — Cache polling on the executor's existing 5-second tick.
 
 **Run the live-venue tests deliberately at closeout**: `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest tests/test_engine_node.py -k twelve_instruments` covers the instrument-arrival guard, which is opt-in so CI neither flakes on a live endpoint nor skips it silently forever.
 
 ### Task 17: Closeout
 
-- [ ] **Step 1:** `docs/reference/data-catalog*.md` — no dataset change; confirm and move on.
-- [ ] **Step 2:** Update T0085's nautilus sub-item and its `ripe_when`, which still names the cancelled 1.231.0 converge.
-- [ ] **Step 3:** Append the iterations-history entry via the `iteration-closeout` skill, routed to the Phase-6 changelog. Re-verify every status claim against the full branch log immediately before PR-open.
-- [ ] **Step 4:** Commit.
+- [x] **Step 1:** `docs/reference/data-catalog*.md` — no dataset change; confirm and move on.
+- [x] **Step 2:** Update T0085's nautilus sub-item and its `ripe_when`, which still names the cancelled 1.231.0 converge.
+- [x] **Step 3:** Append the iterations-history entry via the `iteration-closeout` skill, routed to the Phase-6 changelog. Re-verify every status claim against the full branch log immediately before PR-open.
+- [x] **Step 4:** Commit.
