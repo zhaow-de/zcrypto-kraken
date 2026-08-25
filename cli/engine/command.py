@@ -851,7 +851,7 @@ def _make_exec_sink(gate, journal_dir: Path, cycle_gauges, exec_gauges, venue_ga
 
 @engine_app.command()
 def run() -> None:
-    """Run the shadow TradingNode in the foreground (the soak's systemd user service runs this).
+    """Run the shadow node in the foreground (the soak's systemd user service runs this).
     Fails fast on a missing zcrypto.toml (when ZCRYPTO_REQUIRE_CONFIG is set) or a missing/empty
     store -- a node without them is always misconfigured, never a healthy default."""
     if os.environ.get("ZCRYPTO_REQUIRE_CONFIG") and not Path("zcrypto.toml").exists():
