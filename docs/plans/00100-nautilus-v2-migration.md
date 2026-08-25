@@ -367,18 +367,18 @@ Forced: `liquidity_side_to_str` no longer exists and v2 enums are not iterable (
 
 **Files:** `cli/engine/node.py`, `tests/test_engine_node.py`
 
-- [ ] **Step 1:** Add a `Strategy` subclass registered as `StrategyConfig(strategy_id=StrategyId("EXTERNAL"))` with **`order_id_tag` LEFT UNSET**, routing `on_order_event` to the existing external handler.
+- [x] **Step 1:** Add a `Strategy` subclass registered as `StrategyConfig(strategy_id=StrategyId("EXTERNAL"))` with **`order_id_tag` LEFT UNSET**, routing `on_order_event` to the existing external handler.
 
 Measured, and the reason this is spelled out: supplying a tag yields `strategy_id == EXTERNAL-001`, while unclaimed external orders are stamped exactly `EXTERNAL`. The observer would receive nothing — no exception, no log, no failing test — and D2 would evaporate silently. Unset, it survives `add_strategy` as `EXTERNAL`. Assert that **after registration**, not at construction.
-- [ ] **Step 2: Seal the order surface** — override all twelve to raise: `submit_order`, `submit_order_list`, `cancel_order`, `cancel_orders`, `cancel_all_orders`, `cancel_gtd_expiry`, `modify_order`, `modify_orders`, `close_position`, `close_all_positions`, `market_exit`, `post_market_exit`.
+- [x] **Step 2: Seal the order surface** — override all twelve to raise: `submit_order`, `submit_order_list`, `cancel_order`, `cancel_orders`, `cancel_all_orders`, `cancel_gtd_expiry`, `modify_order`, `modify_orders`, `close_position`, `close_all_positions`, `market_exit`, `post_market_exit`.
 
 The first draft listed eight and left `cancel_orders`, `modify_orders` and `post_market_exit` live — which is why Step 3 derives the set rather than trusting this list.
-- [ ] **Step 3: Test that each one raises, and that the list is COMPLETE.** Derive the mutating surface — everything on `Strategy` that is absent from `DataActor`, minus `on_*` handlers and the read-only queries — and assert every member of it is sealed. A hand-enumerated seal regains a hole the next time upstream adds a method, silently; a derived one fails loudly and names it. This is the barrier: on an EXTERNAL-registered strategy every scoping default points its authority at the operator's book.
-- [ ] **Step 4:** Extend `test_the_strategy_claims_no_external_orders` and `_ORDER_STREAM_WIDENERS` to cover the observer; retire the `msgbus` allowance, which is now zero.
-- [ ] **Step 5 (D3): Give the prohibition a guard, because the existing one cannot see it.** `_ORDER_STREAM_WIDENERS` is a `text.count(name)` walk over lowercase `msgbus`, and `"MessageBus".count("msgbus")` is **0** — so a `MessageBus(...)` constructed in `cli/` passes every check in the repo today. Add `"MessageBus": {}` to that map (allowed nowhere) and prove it bites by temporarily constructing one under `cli/`. Text-count, matching the guard's own stated reasoning.
+- [x] **Step 3: Test that each one raises, and that the list is COMPLETE.** Derive the mutating surface — everything on `Strategy` that is absent from `DataActor`, minus `on_*` handlers and the read-only queries — and assert every member of it is sealed. A hand-enumerated seal regains a hole the next time upstream adds a method, silently; a derived one fails loudly and names it. This is the barrier: on an EXTERNAL-registered strategy every scoping default points its authority at the operator's book.
+- [x] **Step 4:** Extend `test_the_strategy_claims_no_external_orders` and `_ORDER_STREAM_WIDENERS` to cover the observer; retire the `msgbus` allowance, which is now zero.
+- [x] **Step 5 (D3): Give the prohibition a guard, because the existing one cannot see it.** `_ORDER_STREAM_WIDENERS` is a `text.count(name)` walk over lowercase `msgbus`, and `"MessageBus".count("msgbus")` is **0** — so a `MessageBus(...)` constructed in `cli/` passes every check in the repo today. Add `"MessageBus": {}` to that map (allowed nowhere) and prove it bites by temporarily constructing one under `cli/`. Text-count, matching the guard's own stated reasoning.
 
 This matters most during Phase C specifically: the red suite hands an implementer failing external-topic tests whose most obvious repair is the forbidden one, and its failure mode is an engine that accepts orders and never sends them.
-- [ ] **Step 6:** Commit.
+- [x] **Step 6:** Commit.
 
 ### Task 10: Supervision and the watchdog
 
