@@ -716,6 +716,11 @@ class ProbeStrategy(Strategy):
     def _build_steps(self) -> list[tuple[str, str, Callable[[], None]]]:
         """(label, name, step) for every selected probe, in protocol order. Probe 4's four
         sub-probes are separate steps so a refusal on one costs only its own row."""
+        # Named once each: the row's name and the name the step reports its own failure under are
+        # the same string by construction, so they cannot drift apart into two spellings of one
+        # probe in the same table.
+        long_name = f"Margin long (leverage {self.args.leverage}), resting"
+        short_name = f"Margin short (leverage {self.args.leverage}), resting"
         catalogue: dict[int, list[tuple[str, str, Callable[[], None]]]] = {
             1: [("1", "Auth + account read", self._probe1)],
             2: [("2", "Reconciliation at node start", self._probe2)],
@@ -723,18 +728,8 @@ class ProbeStrategy(Strategy):
             4: [
                 ("4a", _P4A, lambda: self._resting("4a", _P4A, "BUY", None)),
                 ("4b", _P4B, self._probe4b),
-                (
-                    "4c",
-                    f"Margin long (leverage {self.args.leverage}), resting",
-                    lambda: self._resting("4c", f"Margin long (leverage {self.args.leverage}), resting", "BUY", self.args.leverage),
-                ),
-                (
-                    "4d",
-                    f"Margin short (leverage {self.args.leverage}), resting",
-                    lambda: self._resting(
-                        "4d", f"Margin short (leverage {self.args.leverage}), resting", "SELL", self.args.leverage
-                    ),
-                ),
+                ("4c", long_name, lambda: self._resting("4c", long_name, "BUY", self.args.leverage)),
+                ("4d", short_name, lambda: self._resting("4d", short_name, "SELL", self.args.leverage)),
             ],
             5: [("5", "Real ~EUR 10 fill round-trip", self._probe5)],
             6: [("6", "Post-run reconciliation", self._probe6)],
