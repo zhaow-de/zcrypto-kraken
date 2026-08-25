@@ -1093,6 +1093,11 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     exec_engine = recorder.named("with_exec_engine_config")[0]["config"]
     assert exec_engine.reconciliation is True
     assert exec_engine.filter_unclaimed_external_orders is False
+    # The wait before the engine mints an unanswered order's terminal event itself. Stated at the
+    # library's own values, so this asserts they reach the builder rather than that they are right.
+    assert exec_engine.inflight_check_interval_ms == 2000
+    assert exec_engine.inflight_check_threshold_ms == 5000
+    assert exec_engine.inflight_check_retries == 5
 
     data_client = recorder.named("add_data_client")[0]
     assert data_client["name"] == "KRAKEN"

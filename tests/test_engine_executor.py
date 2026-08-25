@@ -1511,6 +1511,7 @@ def _fill(
     symbol="BTC/EUR",
     side="buy",
     liquidity=LiquiditySide.MAKER,
+    **overrides,
 ):
     """A REAL `OrderFilled`, carrying every field the executor's fill row reads in the venue's own
     types.
@@ -1548,6 +1549,7 @@ def _fill(
         currency=Currency.from_str(symbol.split("/")[1]),
         liquidity_side=liquidity,
         commission=None if fee is None else Money(fee, Currency.from_str(fee_code)),
+        **overrides,
     )
 
 
@@ -2295,6 +2297,98 @@ def test_an_ioc_the_venue_never_answers_ends_ambiguous_rather_than_parking_the_p
 
     assert len(client.submitted) == 2
     assert _intent_outcome(tmp_path) == "ambiguous"
+
+
+def _time_boxed_cancel_answered_by(tmp_path, event) -> dict:
+    """A funded two-intent plan driven to its time-box cancel, then answered by `event(coid)`.
+
+    Everything up to the answer is identical between the two arms below, which is the point: the
+    ONLY difference the readings can be attributed to is the flag the answering event carries."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(_accepted(client.last_order_id))
+    _advance_with_quotes(ex, client, clock, minutes=16)
+    assert client.canceled  # the time-box cancel is out and the fallback is armed
+    assert len(client.submitted) == 1
+
+    ex.on_order_event(event(client.last_order_id))
+    return {
+        "submissions": len(client.submitted),
+        "row_state": _record(tmp_path)["submitted"][0]["state"],
+        "intent": _intent_outcome(tmp_path),
+        "next_intent": _intent_outcome(tmp_path, 1),
+    }
+
+
+def test_a_cancel_ack_the_engine_minted_halts_where_the_venues_own_ack_falls_back(tmp_path):
+    """The pair that can tell reading the flag from ignoring it: the same event class, the same
+    time-boxed intent waiting on the same cancel, `reconciliation` false and true, opposite
+    outcomes. A one-sided fixture proves nothing here -- an implementation that halted on EVERY
+    cancel ack would pass the true arm and break maker-first outright.
+
+    False is the venue's ack: the maker attempt is over, so the bounded IOC fires at the opposite
+    touch, which is the whole reason maker-first is acceptable. True is the execution engine giving
+    up on an unanswered cancel and minting the ack itself -- nobody at the venue confirmed it, the
+    original may still be resting, and crossing there would put a second order on the book against
+    the first.
+    """
+    venue = _time_boxed_cancel_answered_by(tmp_path / "venue", _canceled)
+    minted = _time_boxed_cancel_answered_by(
+        tmp_path / "minted",
+        lambda coid: _event(OrderCanceled, client_order_id=coid, reconciliation=True),
+    )
+
+    assert venue == {"submissions": 2, "row_state": "canceled", "intent": "pending", "next_intent": "pending"}
+    # No IOC, the row stays OPEN for re-attach because the order may still rest, and the ETH intent
+    # never runs: the venue state that authorized it is no longer known.
+    assert minted == {"submissions": 1, "row_state": "ambiguous", "intent": "ambiguous", "next_intent": "refused"}
+
+
+def test_a_kraken_coded_rejection_the_engine_minted_is_ambiguous_rather_than_terminal(tmp_path):
+    """`_on_rejected` reads the venue's error text to decide a rejection is a positive verdict. A
+    rejection the engine minted for itself carries no verdict at all, whatever its text says, so it
+    must not reach that classification -- and the guard is placed above the dispatch precisely so a
+    marker added to `_KRAKEN_ERROR_MARKERS` later cannot silently promote one.
+
+    The reason string here would classify as terminal on the venue-sourced side, which is what makes
+    the two arms differ on the same words."""
+    reason = "EOrder:Insufficient funds"
+    venue = _time_boxed_cancel_answered_by(tmp_path / "venue", lambda coid: _rejected(coid, reason))
+    minted = _time_boxed_cancel_answered_by(
+        tmp_path / "minted",
+        lambda coid: _event(OrderRejected, client_order_id=coid, reason=reason, reconciliation=True),
+    )
+
+    # The venue's coded rejection is a positive verdict: the intent ends `rejected` and the ETH
+    # intent stays runnable -- it is `pending` rather than submitted only because starting it is the
+    # next tick's business. The minted one halts the plan instead, and ETH never runs at all.
+    assert venue == {"submissions": 1, "row_state": "rejected", "intent": "rejected", "next_intent": "pending"}
+    assert minted == {"submissions": 1, "row_state": "ambiguous", "intent": "ambiguous", "next_intent": "refused"}
+
+
+def test_a_fill_the_engine_reconciled_still_gets_its_row_its_credit_and_its_counter(tmp_path):
+    """The deliberate exception to the rule above. A reconciled fill is the venue's own report
+    transcribed late rather than an outcome invented, so it is money that MOVED -- routing it to the
+    ambiguous exit would drop the row, the quantity credit and the published fill, which is a worse
+    failure than the one that exit exists to prevent. `reconciliation` true and false must therefore
+    produce the SAME reading here, and the sizing assertion is why it matters: a dropped credit
+    makes the next resubmission over-ask by exactly the fill."""
+    readings = []
+    for reconciled in (False, True):
+        path = tmp_path / f"reconciled-{reconciled}"
+        ex, client, clock = _resting_executor(path, bid=30.0, ask=30.05)
+        ex.on_order_event(_accepted(client.last_order_id))
+        _deliver_fill(ex, client, client.last_order_id, 0.4, px=30.0, reconciliation=reconciled)
+
+        _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
+        ex.on_order_event(_canceled(client.last_order_id))
+        row = _record(path)["submitted"][0]
+        # `submitted[-1]`, never `[1]`: an implementation that halted here would leave one
+        # submission and raise IndexError, which is a crash rather than a reading -- and a reading
+        # is what names WHICH property the defect moved.
+        readings.append((row["filled_qty"], len(row["events"]), len(client.submitted), client.submitted[-1][0].quantity))
+
+    assert readings[0] == (0.4, 3, 2, 0.6)  # accepted, fill, cancel -- and the IOC asks for the remainder
+    assert readings[1] == readings[0]
 
 
 def test_a_refused_resubmission_journals_the_fills_that_already_happened(tmp_path):

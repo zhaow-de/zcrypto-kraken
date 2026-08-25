@@ -93,6 +93,11 @@ _TRIPPED_REFUSAL = "the kill switch tripped in this process"
 FIRST_FILL_FILE = "first-fill"
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
+# The terminal order events the execution engine can MINT rather than receive. Past
+# `inflight_check_retries` it stops waiting on an unanswered in-flight order and publishes one of
+# these itself, carrying `reconciliation=True`. `OrderFilled` carries the same flag and is
+# deliberately absent -- `_on_order_event` says why.
+_RECONCILED_TERMINALS = frozenset({"OrderRejected", "OrderCanceled", "OrderExpired"})
 # What an ADOPTED order's row writes as its state, on BOTH paths that write one -- the startup
 # reconciliation and the live external stream -- taken from `execledger._ROW_STATES`' existing names
 # rather than minting one.
@@ -1771,8 +1776,9 @@ class ProbeExecutor:
         never saw or one it saw and mis-accounted, and both are reasons to stop rather than to place
         the next order against a position it cannot describe.
 
-        DELIBERATELY NOT reached from the four ambiguous exits (a raising submit, an unclassifiable
-        rejection, a cancel the venue rejected, a cancel or IOC it never answered): each of those
+        DELIBERATELY NOT reached from the five ambiguous exits (a raising submit, an unclassifiable
+        rejection, a cancel the venue rejected, a cancel or IOC it never answered, and a terminal
+        this engine minted for itself rather than received): each of those
         means an order may still be live and may still legitimately fill, so `filled` is not an
         expectation to hold the Cache to, and checking there would fire on a delayed venue answer
         rather than on a divergence. The cost is real and accepted: a divergence born during an
@@ -1829,6 +1835,28 @@ class ProbeExecutor:
         reason = getattr(event, "reason", None)
         if reason is not None:
             payload["reason"] = str(reason)
+
+        if name in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
+            # This terminal was MINTED by the execution engine, not sent by the venue: past its
+            # in-flight retry budget it stops waiting on an unanswered order and publishes the
+            # `OrderCanceled`, or the `INFLIGHT_TIMEOUT` `OrderRejected`, on its own authority. It
+            # says nothing about what happened at the venue, so the order may still be resting --
+            # which is the ambiguous exit's whole definition, and exactly what `_ACK_WAIT` expiring
+            # already means. Taken ABOVE the dispatch so no arm below can reach `_fallback`,
+            # `_reprice` or `_finish_revoked` on it, and so an entry added to
+            # `_KRAKEN_ERROR_MARKERS` cannot turn the rejection into a resubmission.
+            #
+            # `OrderFilled` is excluded deliberately. A reconciled fill is the venue's OWN report
+            # transcribed late -- its quantity and price are the venue's, and only the trade id is
+            # minted, because the report carries none -- so it is a fill that HAPPENED, and its row,
+            # its quantity credit and its published fill are all owed for money that moved: no fill
+            # without a record. Dropping the credit would also make the next resubmission over-ask
+            # by exactly that quantity, which is this same double exposure in the other direction. A
+            # fill that did not happen is caught where it already was: the fill-time trips above,
+            # and the post-terminal position reconciliation.
+            self._update_row(active, state="ambiguous", event=payload)
+            self._strand_ambiguous(active, f"{name} was reconciled, not received -- the venue never answered")
+            return
 
         if name == "OrderAccepted":
             # Deliberately does NOT set `phase = "resting"`. The submission paths already did, and
@@ -1890,6 +1918,11 @@ class ProbeExecutor:
         adapter maps any submit failure onto a rejection, so the order may be live at the venue --
         no resubmission, no fallback, and the plan halts until an open-orders re-read says what
         actually reached it.
+
+        A rejection this engine minted for itself never arrives here: `_on_order_event` routes it
+        straight to the ambiguous exit above the dispatch. So a marker added to
+        `_KRAKEN_ERROR_MARKERS` is a statement about the VENUE's error text only, and cannot
+        promote an in-flight timeout into a terminal verdict.
         """
         if due_post_only or _POST_ONLY_MARKER in reason:
             self._update_row(active, state="rejected", event=payload)
@@ -2332,10 +2365,11 @@ class ProbeExecutor:
         forbids. Rung-1 plans carry one or two intents and the operator is attended, so the cost of
         stopping is a re-drop after reading the venue.
 
-        Four callers, one meaning -- "this process cannot say what reached the venue": a raising
-        submit, an unclassifiable rejection, a cancel the venue rejected, and a cancel or IOC it
-        never answered. Each has already journaled its own intent by the time it gets here, and each
-        leaves the row in one of `execledger._OPEN_ORDER_STATES` so re-attach still sees the order.
+        Five callers, one meaning -- "this process cannot say what reached the venue": a raising
+        submit, an unclassifiable rejection, a cancel the venue rejected, a cancel or IOC it never
+        answered, and a terminal this engine minted for itself rather than received. Each has
+        already journaled its own intent by the time it gets here, and each leaves the row in one of
+        `execledger._OPEN_ORDER_STATES` so re-attach still sees the order.
         """
         try:
             self._client.unsubscribe_quotes(active.instrument_id)

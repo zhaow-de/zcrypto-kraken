@@ -153,6 +153,31 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
     )
 
 
+def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
+    """`cli/engine/node.py` states these three rather than inheriting them (spec 00100 D15), so the
+    defaults no longer reach production -- but the pin stays: it is what tells us the world moved.
+    They set how long the engine waits on an unanswered order before minting that order's terminal
+    event itself, and a bump that moved any of them would mean our stated values had stopped being
+    restatements and started being a deliberate divergence worth re-deriving."""
+    from nautilus_trader.config import LiveExecutionEngineConfig
+
+    config = LiveExecutionEngineConfig()
+    assert config.inflight_check_interval_ms == 2000
+    assert config.inflight_check_threshold_ms == 5000
+    assert config.inflight_check_retries == 5
+
+
+def test_every_order_event_the_executor_routes_on_carries_the_reconciliation_flag():
+    """The flag is the executor's only way to tell a terminal the engine minted from one the venue
+    sent, and it reads it off the event with a `getattr` default. If a class ever stopped carrying
+    it the read would silently answer False and the manufactured terminal would drive a fallback
+    again -- the exact defect D15 removes -- with nothing else red."""
+    from nautilus_trader.model import OrderCanceled, OrderExpired, OrderFilled, OrderRejected
+
+    for cls in (OrderRejected, OrderCanceled, OrderExpired, OrderFilled):
+        assert hasattr(cls, "reconciliation"), f"{cls.__name__} no longer carries `reconciliation`"
+
+
 def test_the_exec_client_transport_default_we_now_override_is_unchanged():
     """`cli/engine/node.py` now sets `use_ws_trade=False` explicitly (spec 00100 D10), so this
     default no longer reaches production -- but the pin stays: it is what tells us the world moved.
@@ -232,4 +257,10 @@ def test_the_node_still_exposes_every_member_the_engine_reads(name):
 def test_the_exec_engine_config_accepts_the_arguments_we_pass():
     from nautilus_trader.config import LiveExecutionEngineConfig
 
-    LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False)
+    LiveExecutionEngineConfig(
+        reconciliation=True,
+        filter_unclaimed_external_orders=False,
+        inflight_check_interval_ms=2000,
+        inflight_check_threshold_ms=5000,
+        inflight_check_retries=5,
+    )

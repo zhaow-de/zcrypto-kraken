@@ -407,14 +407,28 @@ def _logging_config() -> LoggerConfig:
 
 
 def _exec_engine_config() -> LiveExecutionEngineConfig:
-    """Both knobs explicit (both are library defaults) because both are load-bearing here.
+    """Every knob explicit (all five are library defaults) because all five are load-bearing here.
     Reconciliation is live exactly when exec_enabled flips on at deployment.
     filter_unclaimed_external_orders: filtering would drop VENUE-tagged unclaimed orders out of the
     cache entirely, so the startup pass would neither attach nor CANCEL a previous process's
     resting order, the kill switch's cancel sweep could not reach it either, and the whole
     external-events path would go dark without one ERROR anywhere. Pinned by the config-shape
-    test."""
-    return LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False)
+    test.
+
+    The three in-flight knobs together set how long the engine waits on an unanswered order before
+    it mints that order's terminal event itself -- roughly the threshold plus the retries times the
+    interval. That terminal reaches the executor's ambiguous exit, which halts the plan, so the
+    three of them decide how often an attended probe window stops on a slow venue rather than on a
+    real one. They are stated at the values they already hold: no Kraken REST ack latency has been
+    measured, so there is nothing to derive a different number from, and what an explicit statement
+    buys is that an upstream default flip cannot move the live trade path silently."""
+    return LiveExecutionEngineConfig(
+        reconciliation=True,
+        filter_unclaimed_external_orders=False,
+        inflight_check_interval_ms=2000,
+        inflight_check_threshold_ms=5000,
+        inflight_check_retries=5,
+    )
 
 
 def _data_client_config() -> KrakenDataClientConfig:
