@@ -81,6 +81,18 @@ def test_enum_member_names_and_integer_values_are_unchanged(enum_name):
 
 
 # Defaults we rely on WITHOUT setting them. A default that flips is the quietest possible change.
+def test_the_strategy_management_defaults_we_rely_on_are_unchanged():
+    """These arm order management inside the library, which reaches the venue without passing
+    through any method a subclass can override. The external observer sets them explicitly, but a
+    flip would also change every strategy that does not -- so the default itself is pinned."""
+    from nautilus_trader.config import StrategyConfig
+
+    config = StrategyConfig()
+    assert config.manage_contingent_orders is False
+    assert config.manage_gtd_expiry is False
+    assert config.manage_stop is False
+
+
 def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
     from nautilus_trader.config import LiveExecutionEngineConfig
 

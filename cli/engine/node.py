@@ -299,8 +299,18 @@ def _external_observer_config() -> StrategyConfig:
 
     The claim list stays at its `None` default here as it does on the main strategy: a claim is what
     would route the account owner's own hand-placed settling fills onto a claiming strategy's own
-    order topic and into the unknown-order kill trip."""
-    return StrategyConfig(strategy_id=_EXTERNAL_STRATEGY_ID)
+    order topic and into the unknown-order kill trip.
+
+    The three management flags are set rather than inherited. They arm order management INSIDE the
+    library, which reaches the venue without calling any of the sealed methods -- and on this
+    identity every order it could manage belongs to the account owner. Inherited, a default flip
+    would arm them silently; stated, a flip is visible in this call."""
+    return StrategyConfig(
+        strategy_id=_EXTERNAL_STRATEGY_ID,
+        manage_contingent_orders=False,
+        manage_gtd_expiry=False,
+        manage_stop=False,
+    )
 
 
 class ExternalOrderObserver(Strategy):
