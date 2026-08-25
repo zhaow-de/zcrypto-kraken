@@ -1220,20 +1220,11 @@ def test_the_exec_client_config_does_not_carry_the_credentials_back_out(tmp_path
     assert secret not in caplog.text
 
 
-# The node is assembled in a CHILD interpreter, and the child never disposes it. Upstream prescribes
-# one TradingNode per process, and the measured reason is the Rust logger rather than any teardown
-# race (the earlier io_uring/non-Python-thread account was wrong on every point; see T0115):
-#   - The kernel calls init_logging() only `if not is_logging_initialized()` and holds the returned
-#     LogGuard. Under a stdlib event loop, dispose() -> loop.close() drops the signal handlers that
-#     were the last reference to the kernel, so the guard is collected: is_logging_initialized()
-#     goes False on 1.230.0 while the Rust `log` crate's global logger stays set, and the NEXT
-#     node's init_logging() panics at crates/common/src/ffi/logging.rs and SIGABRTs the process.
-#     So dispose() is the enabler and the abort lands in the following TradingNode.__init__.
-#   - Under uvloop -- which nautilus selects whenever "pytest" not in sys.modules, i.e. always in
-#     production -- the guard measurably does NOT drop, and `zcrypto engine run` builds one node per
-#     process regardless. The trap is reachable only from a multi-node pytest process: here.
-#   - Process exit releases strictly more than dispose() would, and os._exit skips interpreter
-#     finalization, so no Rust drop runs while anything else is live.
+# The node is assembled in a CHILD interpreter, one node per child. `zcrypto engine run` builds one
+# node per process, so a suite that built several in its own would be testing a shape production
+# never runs -- and a node holds Rust-side state whose teardown order is not ours to reason about.
+# A child gives each build a fresh interpreter and lets process exit release everything at once,
+# which releases strictly more than a dispose() would.
 # A native abort in the child can therefore only fail these two tests, never the suite. It also
 # arrives mute unless faulthandler is re-armed after the build -- see the abort-diagnosability test
 # below, which is what makes such an abort readable rather than a bare exit 134.

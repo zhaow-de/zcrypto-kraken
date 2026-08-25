@@ -429,24 +429,26 @@ Both review rounds produced blocking findings with one root: the engine suite is
 
 Each of these is a real guard whose *mechanism* v2 removed. The hazard is repairing them into something weaker.
 
-- [ ] **Step 1:** The terminal-map totality proof parses closed statuses out of `Order.is_closed.__doc__`, which is `None` on v2. Find another way to derive the library's own closed set — **do not hardcode the list**, which converts a proof into an assertion.
-- [ ] **Step 2:** The external-topic tests need `MessageBus`, `Strategy.register` and `model.events`; re-express them against the observer from Task 9.
-- [ ] **Step 2b: The faulthandler re-arm's premise is gone.** Both arms of `test_a_native_abort_after_a_node_build_is_readable_only_once_faulthandler_is_re_armed` assert the dump is SUPPRESSED after a node build; it now appears, because the build no longer clobbers an armed faulthandler. Same class as Step 1 — a guard whose mechanism the library removed. Decide whether `cli/engine/command.py`'s `faulthandler.disable(); faulthandler.enable(file=2)` still earns its place, and rewrite or retire both arms with the reason recorded. Do not delete the arms to make the suite green.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** The terminal-map totality proof parses closed statuses out of `Order.is_closed.__doc__`, which is `None` on v2. Find another way to derive the library's own closed set — **do not hardcode the list**, which converts a proof into an assertion.
+- [x] **Step 2:** The external-topic tests need `MessageBus`, `Strategy.register` and `model.events`; re-express them against the observer from Task 9.
+- [x] **Step 2b: The faulthandler re-arm's premise is gone.** Both arms of `test_a_native_abort_after_a_node_build_is_readable_only_once_faulthandler_is_re_armed` assert the dump is SUPPRESSED after a node build; it now appears, because the build no longer clobbers an armed faulthandler. Same class as Step 1 — a guard whose mechanism the library removed. Decide whether `cli/engine/command.py`'s `faulthandler.disable(); faulthandler.enable(file=2)` still earns its place, and rewrite or retire both arms with the reason recorded. Do not delete the arms to make the suite green.
+- [x] **Step 3:** Commit.
 
 ### Task 14: The probe harness and the logger guard
 
-- [ ] **Step 1:** Port `infra/scripts/kraken-order-semantics-probe.py` — same import and node-assembly port as Task 6. It places real orders and is the only instrument that can validate the arming pass, so it must be ported before that pass can be scheduled.
+- [x] **Step 1:** Port `infra/scripts/kraken-order-semantics-probe.py` — same import and node-assembly port as Task 6. It places real orders and is the only instrument that can validate the arming pass, so it must be ported before that pass can be scheduled.
 
 **`run_async` deadlocks once a Python `Strategy` is registered** — measured during Task 6 against a data-only node on live Kraken: with no strategy the hosted run connects in ~0.5 s, and with one it hangs at `Connecting data clients...` indefinitely. `node.run()` on the main thread (what `cli/engine/command.py` uses) is unaffected. The probe harness drives `node.run_async()` today, so port it to `run()` plus `node.handle().stop()` from a watcher thread, or establish the hosted-run shape that does work. Also measured: `node.cache` and `node.portfolio` RAISE while `run_async` owns the node — capture both before the run.
-- [ ] **Step 2:** `infra/scripts/nautilus-logger-guard-probe.py` cannot run on v2 — and note `uvloop` left the lock with nautilus's other transitive dependencies, so its arm 3 (`import uvloop` inside the probe's `_TWO_NODES` source string) now fails on that too; the rewrite must re-derive the loop-selection premise, not just the logging one — `is_logging_initialized` does not exist. Re-express it against v2's logging surface or retire it with the reason recorded, and update T0085, which records the probe as discharged for the 1.231.0 bump.
-- [ ] **Step 3:** Commit.
+- [x] **Step 2:** `infra/scripts/nautilus-logger-guard-probe.py` cannot run on v2 — and note `uvloop` left the lock with nautilus's other transitive dependencies, so its arm 3 (`import uvloop` inside the probe's `_TWO_NODES` source string) now fails on that too; the rewrite must re-derive the loop-selection premise, not just the logging one — `is_logging_initialized` does not exist. Re-express it against v2's logging surface or retire it with the reason recorded, and update T0085, which records the probe as discharged for the 1.231.0 bump.
+- [x] **Step 3:** Commit.
 
 **`test_pinned_version` fails from Task 4 until the arming pass, and that is the guard working.** It asserts the installed nautilus version is one whose six-probe pass actually ran; no probe has run on v2, so it must stay red. Do NOT repair it by editing the version string — that silently vouches for an unverified adapter. It goes green only when Step 4's record legitimately gains the version.
 
 ### Task 15: Sequencing the arming pass (D9, D11)
 
 Nothing here arms anything; this task makes the arming pass *possible* and correctly ordered.
+
+**BLOCKER, measured: the arming pass cannot be scheduled yet.** The probe harness must submit orders from the thread that built the strategy, because `Strategy` is pyo3-unsendable (a read off-thread aborts, exit 134) — so `run()` plus a watcher thread is not an available shape. That leaves `run_async`, which hangs at "Connecting data clients" once a Python strategy is registered, or rewriting the probe sequence into clock-timer callbacks. Until one of those works no six-probe pass can run, and nothing may be added to `order-semantics-verified.json`. This gates Step 4 and everything downstream.
 
 - [ ] **Step 1: Stop bumping the pin** — declare it, in the runbook. The arming record does exact string membership, so any bump after the attended pass silently disarms the engine.
 - [ ] **Step 2:** Decide the record's granularity before the pass, not at it. Update `infra/runbooks/order-semantics-verification.md`'s version-specific instructions and re-derive the six-probe expectations for v2.
