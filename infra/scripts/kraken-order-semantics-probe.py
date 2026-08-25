@@ -14,11 +14,10 @@ Safety model (read this before running):
     probes 1-3 and 6 run for real (all read-only) and probes 4-5 PRINT the exact submission.
   * Probe 5 -- the only probe that spends money -- needs `--probe5` ON TOP of `--apply`.
   * Every order is bounded by an explicit pre-submit notional assertion that REFUSES, never
-    clamps.  This harness's own assertion is the ONLY notional rail: nautilus's
-    `RiskEngineConfig.max_notional_per_order` is INERT here, because `risk/engine.pyx`'s
-    `_check_orders_risk_for_account` early-returns `True` on `account.is_margin_account`
-    BEFORE the max-notional comparison -- and this node runs `spot_account_type=MARGIN`
-    (verified by reading the installed 1.231.0 source).
+    clamps. This harness's own assertion is the ONLY notional rail it relies on: the node is
+    assembled without a risk-engine config, so nothing inside the library is set up to bound
+    an order's size, and a library-side bound would in any case have to be re-measured against
+    a MARGIN account before it could be trusted here.
   * Probe 4's resting prices come from a LIVE quote whose age is checked; a missing or stale
     quote is a refusal, never a guessed price.
   * Nothing is left resting: every order this harness mints is tracked, cancelled in the
@@ -27,9 +26,26 @@ Safety model (read this before running):
   * Cancels are always BY CLIENT ORDER ID. `cancel_all_orders` is never called: the live
     production engine trades this same account, and a venue-wide cancel would reach its orders.
 
-Credentials: read from the environment by the adapter itself (`KRAKEN_SPOT_API_KEY` /
-`KRAKEN_SPOT_API_SECRET`). This file only asserts they are PRESENT; it never reads, copies,
-logs, or writes their values.
+KNOWN BLOCKER -- read before scheduling an attended pass. This harness drives the node's hosted
+run (`run_async`) because its probe sequence is asynchronous and must share a thread with the
+strategy: `Strategy` is pyo3-unsendable, so touching it from any other thread aborts the process
+with an uncatchable SIGABRT, and the blocking `run()` owns the thread that built it. A hosted run
+with a Python strategy registered has been measured to hang at "Connecting data clients"
+indefinitely. `--ready-timeout` bounds that -- the run aborts having submitted nothing -- but until
+a hosted-run shape that works is established, expect this harness to reach `await_ready`'s refusal
+rather than a probe table.
+
+Probe 6's venue re-read needs a SECOND invocation. Nothing in the library makes the venue answer
+again mid-run -- the node hands out no execution engine, so there is no whole-venue mass status to
+request. What DOES read the venue is a node START, whose startup reconciliation asks for open
+orders and positions; so after the main run, run `--probes 6` on its own and read THAT row. Probe 6
+refuses to report PASS in an invocation that submitted anything, because there its cache's venue
+anchor predates the orders.
+
+Credentials: read from `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` and handed straight to the
+exec client's config, which requires them. Their values are never stored on a harness object,
+logged, printed, interpolated into a message, or written to the evidence file -- the refusals below
+name the VARIABLES and never their contents.
 
 Collision safety: the production engine runs `TraderId("SHADOW-001")` with a default-tagged
 strategy, so its client order ids carry the infix `-001-000-`. This harness mints
@@ -54,28 +70,34 @@ from decimal import Decimal
 from pathlib import Path
 
 import nautilus_trader
-from nautilus_trader.adapters.kraken.config import KrakenDataClientConfig, KrakenExecClientConfig
-from nautilus_trader.adapters.kraken.constants import KRAKEN, KRAKEN_VENUE
-from nautilus_trader.adapters.kraken.factories import (
-    KrakenLiveDataClientFactory,
-    KrakenLiveExecClientFactory,
+from nautilus_trader.adapters.kraken import (
+    KRAKEN,
+    KRAKEN_VENUE,
+    KrakenDataClientConfig,
+    KrakenDataClientFactory,
+    KrakenExecutionClientConfig,
+    KrakenExecutionClientFactory,
 )
-from nautilus_trader.config import (
-    InstrumentProviderConfig,
-    LiveExecEngineConfig,
-    LoggingConfig,
-    TradingNodeConfig,
+from nautilus_trader.common import Environment, LogLevel
+from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
+from nautilus_trader.live import LiveNode, LiveNodeBuilder
+from nautilus_trader.model import (
+    AccountId,
+    AccountType,
+    ClientOrderId,
+    InstrumentId,
+    OrderSide,
+    OrderStatus,
+    TimeInForce,
+    TraderId,
 )
-from nautilus_trader.live.node import TradingNode
-from nautilus_trader.model.enums import AccountType, OrderSide, OrderStatus, TimeInForce
-from nautilus_trader.model.identifiers import ClientOrderId, InstrumentId
-from nautilus_trader.trading.strategy import Strategy
+from nautilus_trader.trading import Strategy, StrategyConfig
 
 # --------------------------------------------------------------------------------------------
 # Constants
 # --------------------------------------------------------------------------------------------
 
-EXPECTED_NAUTILUS = "1.231.0"
+EXPECTED_NAUTILUS = "2.0.0rc4.dev20260824"
 
 # Spec 00039 probe 3: "the 10-asset EUR universe". The engine's basket has since grown two
 # BTC-quoted legs (ETH/BTC, SOL/BTC); they are OFF by default so the probe-3 row stays directly
@@ -102,6 +124,17 @@ PROBE_TRADER_ID = "P6PROBE-901"
 PROBE_TRADER_TAG = "901"
 PROBE_ORDER_TAG = "P6V"
 PROBE_ORDER_ID_INFIX = f"-{PROBE_TRADER_TAG}-{PROBE_ORDER_TAG}-"
+# The node's own name, which nautilus prefixes its log components with (`P6PROBE-901.<name>`).
+PROBE_NODE_NAME = "p6probe"
+# The account the exec client reports under. The issuer half must be the venue -- the Cache indexes
+# accounts by it, and every account read here goes through `portfolio.account(KRAKEN_VENUE)`. The
+# numeric half is the probe's own 901, never the engine's 001, so nothing this harness records can
+# be mistaken for the engine's view of the same Kraken account.
+PROBE_ACCOUNT_ID = "KRAKEN-901"
+# The two variables carrying the trade credentials. Named here so the refusals can say WHICH is
+# missing without ever touching a value.
+API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
+API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 
 # Hard ceilings. `--max-notional` may lower these; nothing raises them past ABSOLUTE_MAX.
 DEFAULT_NOTIONAL_EUR = 10.0
@@ -128,6 +161,7 @@ TERMINAL_STATUSES = frozenset(
         OrderStatus.REJECTED,
         OrderStatus.CANCELED,
         OrderStatus.EXPIRED,
+        OrderStatus.VOIDED,
         OrderStatus.FILLED,
     },
 )
@@ -355,19 +389,38 @@ class RunState:
 # --------------------------------------------------------------------------------------------
 
 
+def _probe_strategy_config() -> StrategyConfig:
+    """The strategy's whole configuration: the probe's order-id tag, and nothing else.
+
+    `external_order_claims` stays at its `None` default, so this strategy structurally never claims
+    an order it did not submit -- the same scoping the production node relies on.
+
+    The tag is set rather than left unset so that even an id this harness did NOT mint carries the
+    probe infix: `assert_collision_free` requires that infix, and with the tag in place the
+    library's own generator produces one too."""
+    return StrategyConfig(order_id_tag=PROBE_ORDER_TAG)
+
+
 class ProbeStrategy(Strategy):
-    """The data/order handle. No StrategyConfig is passed, so `external_order_claims` stays
-    empty and this strategy structurally never claims an order it did not submit -- the same
-    scoping the production node relies on.
+    """The data/order handle.
 
     It owns no probe logic: the sequence is driven from `_run_probes`, which lives on the same
     event loop and therefore may call these methods directly. That is deliberate -- the probe
     sequence's `finally` block must be able to cancel orders while the exec client is STILL
-    connected, which a strategy-internal state machine cannot guarantee.
+    connected, which a strategy-internal state machine cannot guarantee. It is also mandatory:
+    `Strategy` is pyo3-unsendable, so a sequence driven from any other thread would abort the
+    process on its first attribute read.
     """
 
+    def __new__(cls, *args, **kwargs):
+        """`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
+        arguments and the base rejects every one it does not know -- `state` among them. Swallowing
+        them is what makes this class constructible at all, and passing the config here is what
+        keeps `strategy_id` and `config` saying the same thing from construction onward."""
+        return super().__new__(cls, _probe_strategy_config())
+
     def __init__(self, state: RunState) -> None:
-        super().__init__()
+        super().__init__(config=_probe_strategy_config())
         self._state = state
         self.subscribed: list[InstrumentId] = []
         self.first_quote_ns: dict[str, int] = {}
@@ -377,11 +430,11 @@ class ProbeStrategy(Strategy):
         self.subscribe_ns = self.clock.timestamp_ns()
         for iid in self.subscribed:
             try:
-                self.subscribe_quote_ticks(iid)
+                self.subscribe_quotes(iid)
             except Exception as exc:  # noqa: BLE001 - a failed subscribe is probe-3 evidence
-                self.log.error(f"subscribe_quote_ticks({iid}) raised: {exc}")
+                self.log.error(f"subscribe_quotes({iid}) raised: {exc}")
 
-    def on_quote_tick(self, tick) -> None:
+    def on_quote(self, tick) -> None:
         key = str(tick.instrument_id)
         if key not in self.first_quote_ns:
             self.first_quote_ns[key] = self.clock.timestamp_ns()
@@ -432,7 +485,9 @@ class Harness:
     def __init__(self, args, state: RunState) -> None:
         self.args = args
         self.state = state
-        self.node: TradingNode | None = None
+        self.node: LiveNode | None = None
+        self.handle = None
+        self.trader_id: str = PROBE_TRADER_ID
         self.strategy: ProbeStrategy | None = None
         self.abort = asyncio.Event()
         self.run_task: asyncio.Task | None = None
@@ -443,44 +498,70 @@ class Harness:
 
     # -- infrastructure ------------------------------------------------------------------
 
-    def _node_config(self) -> TradingNodeConfig:
-        """The iter-079 verified harness shape: `KrakenDataClientConfig` +
-        `KrakenExecClientConfig(spot_account_type=MARGIN, margin_balance_asset="ZEUR")`,
-        `LiveExecEngineConfig(reconciliation=True)`, instrument provider `load_all`."""
-        exec_clients = {}
-        if not self.args.no_exec:
-            exec_clients[KRAKEN] = KrakenExecClientConfig(
-                instrument_provider=InstrumentProviderConfig(load_all=True),
-                spot_account_type=AccountType.MARGIN,
-                margin_balance_asset="ZEUR",
-                spot_positions_quote_currency="ZEUR",
-                # api_key/api_secret deliberately left None: the factory sources them from
-                # KRAKEN_SPOT_API_KEY / KRAKEN_SPOT_API_SECRET itself, so no credential value
-                # ever passes through this process's own variables.
-            )
-        return TradingNodeConfig(
-            trader_id=PROBE_TRADER_ID,
-            logging=LoggingConfig(log_level=self.args.log_level),
-            exec_engine=LiveExecEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False),
-            data_clients={KRAKEN: KrakenDataClientConfig(instrument_provider=InstrumentProviderConfig(load_all=True))},
-            exec_clients=exec_clients,
+    def _credentials(self) -> tuple[str, str]:
+        """The trade key and secret, or a refusal naming whichever variable is missing. The values
+        go straight into `_exec_client_config` and are never stored on this object."""
+        api_key = os.environ.get(API_KEY_VAR, "")
+        api_secret = os.environ.get(API_SECRET_VAR, "")
+        missing = [name for name, value in ((API_KEY_VAR, api_key), (API_SECRET_VAR, api_secret)) if not value]
+        if missing:
+            raise Refusal(f"{' and '.join(missing)} not set in the environment; refusing to build an exec client")
+        return api_key, api_secret
+
+    def _exec_client_config(self) -> KrakenExecutionClientConfig:
+        """The exec client, in the production engine's own shape: MARGIN spot account reporting in
+        ZEUR, under this harness's own account id. Both currency fields read ZEUR because that is
+        the `quote_currency.code` every EUR pair carries -- "EUR" would match nothing."""
+        api_key, api_secret = self._credentials()
+        return KrakenExecutionClientConfig(
+            account_id=AccountId(PROBE_ACCOUNT_ID),
+            api_key=api_key,
+            api_secret=api_secret,
+            spot_account_type=AccountType.MARGIN,
+            margin_balance_asset="ZEUR",
+            spot_positions_quote_currency="ZEUR",
+            # Explicit, not inherited: the library default is True, which would move order
+            # submission from REST to WebSocket. The engine submits over REST, and a probe run
+            # that verified a different transport from the one production uses verifies nothing.
+            use_ws_trade=False,
         )
 
-    def build(self) -> TradingNode:
+    def _builder(self) -> LiveNodeBuilder:
+        """The assembled builder: trader identity, logging, the two exec-engine knobs, the Kraken
+        data client, and -- unless `--no-exec` -- the Kraken exec client. Every call takes the
+        builder the previous one returned; the chain's value is the whole state.
+
+        The adapter loads the venue's instrument universe itself on connect, so nothing here
+        selects it. `filter_unclaimed_external_orders=False` keeps venue-tagged unclaimed orders in
+        the cache, which is what lets probe 6 see state this harness did not place."""
+        builder = (
+            LiveNode.builder(name=PROBE_NODE_NAME, trader_id=TraderId(PROBE_TRADER_ID), environment=Environment.LIVE)
+            .with_logging(LoggerConfig(stdout_level=LogLevel(self.args.log_level)))
+            .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False))
+            .add_data_client(name=KRAKEN, factory=KrakenDataClientFactory(), config=KrakenDataClientConfig())
+        )
+        if not self.args.no_exec:
+            builder = builder.add_exec_client(
+                name=KRAKEN, factory=KrakenExecutionClientFactory(), config=self._exec_client_config()
+            )
+        return builder
+
+    def build(self) -> LiveNode:
         loop = asyncio.get_running_loop()
-        node = TradingNode(config=self._node_config(), loop=loop)
-        node.add_data_client_factory(KRAKEN, KrakenLiveDataClientFactory)
-        node.add_exec_client_factory(KRAKEN, KrakenLiveExecClientFactory)
+        node = self._builder().build()
         strategy = ProbeStrategy(self.state)
         symbols = list(EUR_UNIVERSE) + (list(BTC_QUOTED_LEGS) if self.args.probe3_basket else [])
         strategy.subscribed = [InstrumentId.from_str(f"{s}.KRAKEN") for s in symbols]
         if self.pair_id not in strategy.subscribed:
             strategy.subscribed.append(self.pair_id)
-        node.trader.add_strategy(strategy)
-        node.build()
-        # OVERWRITE nautilus's own loop signal handlers (installed in NautilusKernel.__init__).
-        # Theirs stop the node immediately; ours unwinds the probe sequence into its teardown
-        # block first, so an interrupted run still cancels what it placed.
+        node.add_strategy(strategy)
+        # Both captured HERE, before the hosted run takes the node: `trader_id` is read only to be
+        # printed, and reading a node attribute while its run owns it raises.
+        self.handle = node.handle()
+        self.trader_id = str(node.trader_id)
+        # The harness's OWN signal handlers, installed last so they win. They unwind the probe
+        # sequence into its teardown block, so an interrupted run still cancels what it placed;
+        # a handler that stopped the node outright would not.
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
                 loop.add_signal_handler(sig, self._on_signal, sig)
@@ -526,17 +607,20 @@ class Harness:
             return False
 
     async def await_ready(self, timeout: float) -> None:
-        """The trader starts LAST in `NautilusKernel.start_async` -- after engines connect, after
-        startup reconciliation, after portfolio initialisation. So `strategy.is_running` is the
-        precise readiness gate, not `node.is_running` (set at the top of start_async)."""
+        """The strategy starts LAST -- after every client connects, after startup reconciliation.
+        So `strategy.is_running()` plus the traded instrument being in the cache is the precise
+        readiness gate; the node reports itself running before either is true."""
         ok = await self.wait_for(
-            lambda: self.strategy.is_running and self.strategy.cache.instrument(self.pair_id) is not None,
+            lambda: self.strategy.is_running() and self.strategy.cache.instrument(self.pair_id) is not None,
             timeout,
         )
         if not ok:
             raise Aborted(
-                f"the node did not reach a ready state within {timeout:.0f}s -- check credentials, "
-                f"the key's IP allowlist, and connectivity. NOTHING was submitted.",
+                f"the node did not reach a ready state within {timeout:.0f}s. NOTHING was submitted.\n"
+                f"    First check the hosted-run blocker in this file's header: a hosted run with a "
+                f"Python strategy registered has been measured to hang at 'Connecting data clients'. "
+                f"If the log stops there, this is that, not your setup.\n"
+                f"    Otherwise: credentials, the key's IP allowlist, and connectivity.",
             )
 
     # -- reporting -----------------------------------------------------------------------
@@ -559,7 +643,7 @@ class Harness:
     def live_quote(self) -> tuple[float, float, float]:
         """(bid, ask, mid) from the latest cached quote, freshness-checked. Refuses rather than
         guesses -- spec requirement, and a stale mid is how a 25 %-away order becomes a fill."""
-        tick = self.strategy.cache.quote_tick(self.pair_id)
+        tick = self.strategy.cache.quote(self.pair_id)
         if tick is None:
             raise Refusal(
                 f"no quote for {self.pair_id} has arrived -- refusing to price probe orders "
@@ -723,12 +807,12 @@ class Harness:
         return await self.wait_for(lambda: order.status in wanted, timeout)
 
     async def cancel_and_confirm(self, order, timeout: float) -> bool:
-        """Cancel BY ORDER -- never `cancel_all_orders`, which would reach the production
+        """Cancel BY CLIENT ORDER ID -- never `cancel_all_orders`, which would reach the production
         engine's own resting orders on this same account."""
         if order.is_closed:
             return True
         try:
-            self.strategy.cancel_order(order)
+            self.strategy.cancel_order(order.client_order_id)
         except Exception as exc:  # noqa: BLE001
             print(f"  !! cancel of {order.client_order_id} raised: {exc!r}")
             return False
@@ -747,8 +831,8 @@ class Harness:
             self.record("1", "Auth + account read", expected, "no AccountState arrived", VERDICT_FAIL)
             return
         balances = {str(c): str(b.total) for c, b in account.balances().items()}
-        observed = f"{account.type.name}-type account {account.id}; balances {balances}"
-        print(f"      account.type={account.type.name} id={account.id}")
+        observed = f"{account.account_type.name}-type account {account.id}; balances {balances}"
+        print(f"      account_type={account.account_type.name} id={account.id}")
         print(f"      balances={balances}")
         print("      note: under spot_account_type=MARGIN this is TradeBalance-derived equity in")
         print("            margin_balance_asset, NOT per-asset wallet balances (memo Observation 3).")
@@ -790,7 +874,7 @@ class Harness:
             if iid == self.pair_id:
                 continue  # probes 4/5 price against this one; it stays subscribed
             try:
-                self.strategy.unsubscribe_quote_ticks(iid)
+                self.strategy.unsubscribe_quotes(iid)
             except Exception as exc:  # noqa: BLE001
                 clean = False
                 print(f"      !! unsubscribe {iid} raised: {exc!r}")
@@ -1068,7 +1152,7 @@ class Harness:
         if self.args.no_exec:
             self.record(label, name, expected, "skipped: --no-exec", VERDICT_SKIP)
             return
-        forced = await self._force_venue_reconcile()
+        venue_anchored = self._venue_anchored()
         orders = self.strategy.cache.orders_open(venue=KRAKEN_VENUE)
         positions = self.strategy.cache.positions_open(venue=KRAKEN_VENUE)
         # Match the probe INFIX, not this process's minted set. A fresh `--probes 6` invocation --
@@ -1084,16 +1168,20 @@ class Harness:
         for p in positions:
             print(f"      open position: {p.instrument_id} {p.side} {p.quantity}")
         observed = (
-            f"venue re-read ({'forced mass-status' if forced else 'cache only -- forced reconcile unavailable'}): "
+            f"venue re-read ({'startup reconciliation, nothing submitted since' if venue_anchored else 'NOT re-read -- this run submitted after its only venue read'}): "
             f"open orders {len(orders)} (ours {len(ours)}, other {len(foreign)}), "
             f"open positions {len(positions)}; balances {balances}"
         )
         verdict = VERDICT_PASS
-        if not forced:
-            # The venue re-read did not happen, so "nothing is open" is this process's cache
-            # talking. Never a PASS -- that is "we failed to ask" wearing a clean answer.
+        if not venue_anchored:
+            # The venue was last asked before this run placed anything, so "nothing is open" is
+            # this process's cache talking. Never a PASS -- that is "we failed to ask" wearing a
+            # clean answer.
             verdict = VERDICT_REVIEW
-            self.state.notes.append("probe 6: the forced venue re-read FAILED -- this reads the cache, not the venue")
+            self.state.notes.append(
+                "probe 6: this row reads the cache, whose venue read predates this run's orders -- "
+                "run `--probes 6` as a SEPARATE invocation and read THAT row for the verdict"
+            )
         if ours:
             verdict = VERDICT_FAIL
             self.state.notes.append(f"probe 6: {len(ours)} of OUR orders are still open -- cancel them by hand")
@@ -1102,21 +1190,24 @@ class Harness:
             self.state.notes.append("probe 6: venue state that is not ours is open -- adjudicate before signing off")
         self.record(label, name, expected, observed, verdict)
 
-    async def _force_venue_reconcile(self) -> bool:
-        """Ask the exec engine for a fresh mass status, so probe 6 reads VENUE truth rather than
-        this process's cache. Same call `NautilusKernel.start_async` makes at startup."""
-        try:
-            engine = self.node.kernel.exec_engine
-            # Returns False on a client error, a None mass-status, or a timeout. Discarding it let
-            # "we failed to ask the venue" report as "the venue re-read shows nothing open".
-            ok = bool(await engine.reconcile_execution_state(timeout_secs=self.args.reconcile_timeout))
-            if not ok:
-                print("      !! forced reconciliation returned FALSE -- the venue was NOT successfully re-read.")
-            return ok
-        except Exception as exc:  # noqa: BLE001
-            print(f"      !! forced reconciliation unavailable ({exc!r}); falling back to the cache read.")
-            print("      !! run `probe.py --probes 6` as a SEPARATE invocation for a true venue read.")
+    def _venue_anchored(self) -> bool:
+        """Whether probe 6's cache read still stands for VENUE truth.
+
+        The node's start is the only thing that asks the venue what is open: startup reconciliation
+        requests open orders and positions and populates the cache from the answer. The library
+        exposes no way to ask again -- the node hands out no execution engine -- so an invocation
+        that submitted orders AFTER its start is reading a cache whose venue answer predates them.
+        Such a run cannot report a clean venue; a separate `--probes 6` invocation, which submits
+        nothing, can.
+
+        `self.state.submitted` is the test rather than `self.tracked`: it holds exactly the ids
+        handed to `submit_order`, which is the conservative set -- an order whose submission raised
+        is still counted as possibly having reached the venue."""
+        if self.state.submitted:
+            print("      !! this invocation submitted orders after its only venue read, so what follows is")
+            print("      !! the CACHE. Run `--probes 6` as a SEPARATE invocation for a true venue read.")
             return False
+        return True
 
     # -- teardown ------------------------------------------------------------------------
 
@@ -1136,7 +1227,7 @@ class Harness:
         for order in leftovers:
             print(f"   cancelling {order.client_order_id} (status={order.status.name})")
             try:
-                self.strategy.cancel_order(order)
+                self.strategy.cancel_order(order.client_order_id)
             except Exception as exc:  # noqa: BLE001
                 print(f"   !! cancel raised for {order.client_order_id}: {exc!r}")
         deadline = time.monotonic() + self.args.order_timeout
@@ -1345,7 +1436,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="also subscribe the two BTC-quoted basket legs (protocol says the 10 EUR pairs)",
     )
     p.add_argument("--ready-timeout", type=float, default=180.0, help="seconds to wait for the node to start (default: 180)")
-    p.add_argument("--reconcile-timeout", type=float, default=20.0, help="probe-6 forced mass-status timeout (default: 20)")
     p.add_argument(
         "--no-exec",
         action="store_true",
@@ -1386,14 +1476,14 @@ def preflight(args) -> None:
         print(f"!! {msg} -- continuing because --allow-version-mismatch was given")
 
     if not args.no_exec:
-        missing = [v for v in ("KRAKEN_SPOT_API_KEY", "KRAKEN_SPOT_API_SECRET") if not os.environ.get(v)]
+        missing = [v for v in (API_KEY_VAR, API_SECRET_VAR) if not os.environ.get(v)]
         if missing:
             raise SystemExit(
                 f"REFUSING: {' and '.join(missing)} not set in the environment.\n"
                 f"Export the trade key into THIS shell only (never into a file), or use --no-exec "
                 f"for a credential-free smoke test.",
             )
-        print("credentials: KRAKEN_SPOT_API_KEY and KRAKEN_SPOT_API_SECRET are present (values never read here)")
+        print(f"credentials: {API_KEY_VAR} and {API_SECRET_VAR} are present (their values are never printed)")
 
     if args.probe5 and not args.apply:
         raise SystemExit("REFUSING: --probe5 without --apply is meaningless. Both, or neither.")
@@ -1435,7 +1525,7 @@ async def _amain(args, state: RunState, holder: dict) -> int:
     exit_code = 0
     try:
         await harness.await_ready(args.ready_timeout)
-        print(f"node ready: trader_id={node.trader_id}, run stamp {harness.stamp}")
+        print(f"node ready: trader_id={harness.trader_id}, run stamp {harness.stamp}")
         await harness.run_probes(probes)
     except Aborted as exc:
         print(f"\n!! ABORTED: {exc}")
@@ -1452,14 +1542,21 @@ async def _amain(args, state: RunState, holder: dict) -> int:
             print(f"!! teardown itself raised: {exc!r}")
             leftovers = [o for o in harness.tracked if not o.is_closed]
         try:
-            await node.stop_async()
+            # Through the HANDLE, which is the supported way to stop a hosted run and stays valid
+            # for the node's whole lifetime. The node itself is off-limits while its run owns it.
+            harness.handle.stop()
         except Exception as exc:  # noqa: BLE001
-            print(f"!! node.stop_async raised: {exc!r}")
+            print(f"!! stopping the node raised: {exc!r}")
         if harness.run_task is not None and not harness.run_task.done():
-            # `run_async` gathers the engine queue tasks forever; stopping the node ends them, and
-            # this cancel + short grace keeps `asyncio.run` from complaining about a pending task.
-            harness.run_task.cancel()
-            await asyncio.sleep(0.5)
+            # The hosted run does not return the instant the stop is requested; give it a grace
+            # window, then cancel so `asyncio.run` does not complain about a pending task.
+            try:
+                await asyncio.wait_for(asyncio.shield(harness.run_task), timeout=15.0)
+            except Exception:  # noqa: BLE001 - a timeout or the run's own error; the cancel follows
+                pass
+            if not harness.run_task.done():
+                harness.run_task.cancel()
+                await asyncio.sleep(0.5)
 
     if leftovers:
         exit_code = 3
@@ -1494,6 +1591,12 @@ def main(argv: list[str] | None = None) -> int:
     holder: dict = {}
     try:
         exit_code = asyncio.run(_amain(args, state, holder))
+    except Refusal as exc:
+        # A rail said no while the node was being assembled, so the probe sequence never began and
+        # nothing was submitted. Reported as a refusal rather than as a traceback.
+        print(f"\n!! REFUSED before the node was built: {exc}")
+        state.notes.append(f"run refused during assembly: {exc}")
+        exit_code = 2
     except KeyboardInterrupt:
         print("\n!! hard KeyboardInterrupt -- the teardown may not have completed.")
         print("!! CHECK KRAKEN OPEN ORDERS BY HAND before doing anything else.")
