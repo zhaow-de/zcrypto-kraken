@@ -1586,7 +1586,7 @@
       "id": 54,
       "type": "stat",
       "title": "Restart hold (reduce-only latch)",
-      "description": "Whether this process is still latched to reduce-only after its most recent restart. Written unconditionally on every engine start and cleared only by a human -- nothing in the gate clears it on its own. HELD is the expected reading immediately after any restart (a converge, the watchdog, a reboot). No alert reads this tile directly; it is one of the four inputs behind the gate-level reading beside it. Published only by the trading engine on the capture primary.",
+      "description": "Whether this process is still latched to reduce-only after its most recent restart. Written unconditionally on every engine start and cleared only by a human -- nothing in the gate clears it on its own. HELD is the expected reading immediately after any restart (a converge, a supervisor healing a start the node aborted, a reboot). No alert reads this tile directly; it is one of the four inputs behind the gate-level reading beside it. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

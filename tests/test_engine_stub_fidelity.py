@@ -62,6 +62,21 @@ MODULES = (
     "test_engine_metrics.py",
 )
 
+# What the walk must still find per module, so a walker that stops seeing a whole SHAPE of double
+# reads as red rather than as a short table. Per module rather than one number for all four: a
+# single floor is only ever as strong as the smallest inventory, and lowering it for that module
+# silently un-guards every other one. Each sits below its module's real count where the inventory
+# is big enough for slack to mean anything -- a floor tracking the count exactly goes red on every
+# legitimate stub removal, which is how a guard gets loosened to nothing in one edit. `command` is
+# the exception and sits AT its count of three: below it the floor would tolerate losing a third of
+# the inventory, which is not a vacuity check at all, so a removal there is meant to be read.
+_WALK_FLOOR = {
+    "test_engine_executor.py": 12,
+    "test_engine_command.py": 3,
+    "test_engine_node.py": 4,
+    "test_engine_metrics.py": 4,
+}
+
 LIBRARY = "library"
 OURS = "ours"
 NOT_A_STANDIN = "not-a-standin"
@@ -196,7 +211,7 @@ def test_every_test_double_in_the_engine_suite_is_classified(module):
     suite's stub inventory is invisible -- which is how seven separate restatements each reached
     production behaviour before a human happened to read them."""
     discovered = _discovered_doubles(module)
-    assert len(discovered) >= 3, f"the walk found only {sorted(discovered)} in {module} -- it is checking nothing"
+    assert len(discovered) >= _WALK_FLOOR[module], f"the walk found only {sorted(discovered)} in {module} -- it is checking nothing"
     unclassified = sorted(discovered - set(TABLE[module]))
     assert unclassified == [], f"{module} defines {unclassified}, which the table does not classify"
 
