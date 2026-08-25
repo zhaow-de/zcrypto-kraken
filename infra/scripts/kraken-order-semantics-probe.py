@@ -1624,11 +1624,14 @@ def selftest() -> int:
     ran: list[str] = []
 
     def check(name: str, fn) -> None:
+        """Every outcome is a line and a verdict. `Exception` and not `AssertionError`, because a
+        check that raises something else is still a failed check -- and a traceback out of the
+        selftest is the one report the operator cannot act on."""
         ran.append(name)
         try:
             fn()
             print(f"  ok   {name}")
-        except AssertionError as exc:
+        except Exception as exc:  # noqa: BLE001
             failures.append(f"{name}: {exc}")
             print(f"  FAIL {name}: {exc}")
 
@@ -1658,7 +1661,7 @@ def selftest() -> int:
         "table renders and escapes pipes",
         lambda: _true("\\|" in render_table([ProbeResult("1", "n", "e", "a|b", "PASS")])),
     )
-    check("the repo's own pin parses", lambda: _true(bool(pinned_nautilus_version(PYPROJECT))))
+    check("the pin is readable from this tree", lambda: _true(bool(pinned_nautilus_version(PYPROJECT))))
     check(
         "an arbitrary-equality pin is read exactly",
         lambda: _eq(_pin_from(_pyproject_text('"nautilus-trader===2.0.0rc4.dev20260825"')), "2.0.0rc4.dev20260825"),
