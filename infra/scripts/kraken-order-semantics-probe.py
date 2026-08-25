@@ -671,12 +671,20 @@ class ProbeStrategy(Strategy):
 
     def _on_signal(self, signum, _frame) -> None:
         name = signal.Signals(signum).name
-        if self.state.aborted_by is None:
-            self.state.aborted_by = name
-            self.state.notes.append(f"run aborted by {name}")
+        if self.state.aborted_by is not None:
+            return  # a later interrupt: recorded once, and deliberately not acted on again
+        self.state.aborted_by = name
+        self.state.notes.append(f"run aborted by {name}")
+        # A handler runs between bytecodes of whatever the interpreter was doing, so this print can
+        # land inside another one -- which CPython answers with a reentrant-call RuntimeError. The
+        # banner is worth having and an exception escaping into an interrupted callback is not, so
+        # the write is the only thing that may fail here, and it fails silently.
+        try:
             print(f"\n!! {name} received -- the node is stopping and the cancel-everything sweep runs on the way out.")
             print("!! Further interrupts are IGNORED so that sweep always completes; kill -9 from another")
             print("!! terminal only if you are prepared to cancel leftovers by hand at Kraken.")
+        except RuntimeError:  # pragma: no cover - a print interrupted mid-write
+            pass
 
     def on_stop(self) -> None:
         """The last point at which a cancel can still reach the venue. Reached on every stop --
@@ -685,12 +693,16 @@ class ProbeStrategy(Strategy):
         read that decides the exit code happens on the main thread once the node has stopped."""
         if self.teardown_done:
             return
-        outstanding = self._outstanding()
-        if not outstanding:
-            return
-        print(f"\n!! stopping with {len(outstanding)} submitted order(s) not confirmed closed -- cancelling each now")
-        for coid in outstanding:
-            self._cancel(coid)
+        try:
+            outstanding = self._outstanding()
+            if not outstanding:
+                return
+            print(f"\n!! stopping with {len(outstanding)} submitted order(s) not confirmed closed -- cancelling each now")
+            for coid in outstanding:
+                self._cancel(coid)
+        except Exception as exc:  # noqa: BLE001 - nothing here may derail the node's shutdown
+            print(f"!! the stop-time cancel sweep raised: {exc!r} -- CHECK KRAKEN OPEN ORDERS BY HAND")
+            self.state.notes.append(f"the stop-time cancel sweep raised: {exc!r}")
 
     # -- the sequence --------------------------------------------------------------------
 
