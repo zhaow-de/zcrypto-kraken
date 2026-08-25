@@ -958,13 +958,20 @@ def test_a_raising_own_position_read_refuses_the_intent_with_no_subscribe_and_no
     ex = _executor(tmp_path, client=client)
     path = _drop_plan(tmp_path, _plan_dict())
 
-    ex.on_timer(NOW)
+    with _executor_errors(logging.WARNING) as records:
+        ex.on_timer(NOW)
 
     assert client.subscribed == [] and client.submitted == []
     intent = _intent_entry(tmp_path, 0)
     assert intent["outcome"] == "refused"
     assert intent["reasons"] == ["no venue truth"]
     assert not path.exists()
+    # Both guards journal the same reason, so without this the fixture could silently regress to
+    # exercising the FIRST one -- if `venue_state_from_cache` ever passed a strategy_id, this test
+    # would go on passing while the guard under test went unreached again.
+    assert any("own position unreadable" in r.getMessage() for r in records), (
+        "the venue-truth guard refused this, not the own-position guard the test exists for"
+    )
 
 
 def test_an_intent_symbol_absent_from_venue_truth_is_refused(tmp_path, monkeypatch):
