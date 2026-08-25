@@ -1,14 +1,14 @@
 """The node wrapper (spec 00041 SS the node wrapper): pure 4h-boundary arithmetic, the
 restart-inside-a-passable-window startup rule, the ShadowStrategy that owns only timer arithmetic
 (schedule the next alert FIRST, then invoke the cycle core -- a hung or raising cycle can never
-stall the alert chain), and the production-shape LiveNode assembly mirroring the iter-079
-verified adapter configuration (docs/research/14.phase6-adapter-verification-1.230.0.md SS Harness). No
-catch-up: a boundary whose window has lapsed is a missed cycle, recorded by the journal's absence
-and honestly scored by the gate. Pure UTC throughout -- DST is structurally irrelevant.
+stall the alert chain), and the production-shape LiveNode assembly. No catch-up: a boundary whose
+window has lapsed is a missed cycle, recorded by the journal's absence and honestly scored by the
+gate. Pure UTC throughout -- DST is structurally irrelevant.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,14 +20,10 @@ from nautilus_trader.adapters.kraken import (
     KrakenExecutionClientConfig,
     KrakenExecutionClientFactory,
 )
-from nautilus_trader.config import (
-    InstrumentProviderConfig,
-    LiveExecutionEngineConfig,
-    LiveNodeConfig,
-    LoggerConfig,
-)
-from nautilus_trader.live import LiveNode
-from nautilus_trader.model import AccountType, StrategyId
+from nautilus_trader.common import Environment, LogLevel
+from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
+from nautilus_trader.live import LiveNode, LiveNodeBuilder
+from nautilus_trader.model import AccountId, AccountType, StrategyId, TraderId
 from nautilus_trader.trading import Strategy, StrategyConfig
 
 from cli.config import EngineConfig
@@ -43,6 +39,15 @@ logger = get_logger("engine.node")
 
 _H4 = timedelta(hours=4)
 _TRADER_ID = "SHADOW-001"
+# The node's own name, which nautilus prefixes its log components with (`SHADOW-001.<name>`).
+_NODE_NAME = "zcrypto-shadow"
+# The account the exec client reports under. The issuer half must be the venue -- the Cache indexes
+# accounts by it, and `venue_state_from_cache` looks the account up by Venue("KRAKEN").
+_ACCOUNT_ID = "KRAKEN-001"
+# The two variables carrying the trade credentials, rendered onto the engine host. Named here so
+# the refusal below can say WHICH is missing without ever touching a value.
+_API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
+_API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 # Tag-less, `Trader.add_strategy` would assign this positionally (`f"{len(order_id_tags):03d}"`,
 # counted off the strategies already registered) -- so a second strategy registered ahead of this
 # one would silently change its client-order-id prefix, a venue-visible identifier. Pinned to the
@@ -267,58 +272,113 @@ class ShadowStrategy(Strategy):
             self._executor.on_external_order_event(event)
 
 
-def _node_config(config: EngineConfig) -> LiveNodeConfig:
-    """The iter-079-verified adapter configuration: instrument provider load_all, and -- only when
-    exec_enabled -- the exec client with MARGIN spot account reporting in ZEUR (the trade key is
-    IP-bound to the VPS, so local runs are keyless). Both currency fields read ZEUR: margin summary
-    figures are denominated in it, and spot position reports cover the ZEUR-quoted instruments."""
-    exec_clients = {}
-    if config.exec_enabled:
-        exec_clients[KRAKEN] = KrakenExecutionClientConfig(
-            instrument_provider=InstrumentProviderConfig(load_all=True),
-            spot_account_type=AccountType.MARGIN,
-            margin_balance_asset="ZEUR",
-            # Matched literally against the loaded instrument's `quote_currency.code`, which for
-            # every EUR pair is "ZEUR" -- Kraken's AssetPairs returns quote "ZEUR" for modern
-            # (ADAEUR) and legacy (XETHZEUR) alike, and the code survives into the Currency object
-            # unchanged. Measured against the live public instrument set: 546 instruments carry
-            # code ZEUR and ZERO carry EUR. Only the instrument ID is normalized (ADA/EUR.KRAKEN),
-            # and that ID-vs-Currency split is the trap -- "EUR" here would match nothing, as would
-            # the adapter's own "USDT" default.
-            # NOT a tradeability constraint -- measured 2026-08-14 against the installed adapter
-            # (T0137's survey). `margin_balance_asset` has exactly ONE call site,
-            # `_update_account_state` -> `request_account_state_with_metrics`: it selects the
-            # currency the ACCOUNT SUMMARY is denominated in, and appears nowhere in order
-            # submission, instrument handling, or position reporting. The OpenPositions branch this
-            # config takes is quote-agnostic -- it reports side and net base quantity only -- so this
-            # single client already SEES the XXBT-quoted ETH/BTC and SOL/BTC. Both legs are now IN
-            # the basket (spec 00094), and what holds them at zero is engine-side and structural:
-            # `CrossfreqSystemConfig.assets` stays the ten EUR bases so no sleeve ever computes a
-            # /BTC weight, and `cli/engine/cycle.py::_expand_to_basket` emits exactly 0.0 for every
-            # basket member the model produced no output for. Order emission is delta-driven, so a
-            # 0.0 target against a 0.0 predecessor writes no row at all. The mechanisms earlier
-            # revisions of this comment named -- first "this field can never cover them alongside
-            # the EUR book", then base-keyed PAIR_KEYS / the root/<base>/EUR store path / a
-            # EUR-only cost floor -- are each gone. Rewritten in place rather than annotated, twice
-            # now: an inherited wrong mechanism is exactly what keeps going wrong here.
-            # Currently unread: the adapter consults it only when spot_account_type is NOT MARGIN
-            # AND use_spot_position_reports is True; under MARGIN it takes the OpenPositions branch.
-            spot_positions_quote_currency="ZEUR",
-        )
-    return LiveNodeConfig(
-        trader_id=_TRADER_ID,
-        logging=LoggerConfig(log_level="INFO"),
-        # Both explicit (both are library defaults) because both are load-bearing here.
-        # Reconciliation: the iter-079 memo names it part of the verified harness shape — live
-        # exactly when exec_enabled flips on at deployment. filter_unclaimed_external_orders:
-        # filtering would drop VENUE-tagged unclaimed orders out of the cache entirely, so the
-        # startup pass would neither attach nor CANCEL a previous process's resting order, the
-        # kill switch's cancel sweep could not reach it either, and the whole external-events
-        # path would go dark without one ERROR anywhere. Pinned by the config-shape test.
-        exec_engine=LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False),
-        data_clients={KRAKEN: KrakenDataClientConfig(instrument_provider=InstrumentProviderConfig(load_all=True))},
-        exec_clients=exec_clients,
+def _logging_config() -> LoggerConfig:
+    """Stdout at INFO, stated explicitly: it is the engine's only log sink and docker collects it."""
+    return LoggerConfig(stdout_level=LogLevel.INFO)
+
+
+def _exec_engine_config() -> LiveExecutionEngineConfig:
+    """Both knobs explicit (both are library defaults) because both are load-bearing here.
+    Reconciliation is live exactly when exec_enabled flips on at deployment.
+    filter_unclaimed_external_orders: filtering would drop VENUE-tagged unclaimed orders out of the
+    cache entirely, so the startup pass would neither attach nor CANCEL a previous process's
+    resting order, the kill switch's cancel sweep could not reach it either, and the whole
+    external-events path would go dark without one ERROR anywhere. Pinned by the config-shape
+    test."""
+    return LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False)
+
+
+def _data_client_config() -> KrakenDataClientConfig:
+    """The Kraken data client. The adapter loads the venue's instrument universe itself on connect;
+    nothing here selects it, and `test_engine_node.py`'s live instrument-arrival test is what proves
+    the twelve `INSTRUMENT_IDS` still land in the Cache."""
+    return KrakenDataClientConfig()
+
+
+def _credentials() -> tuple[str, str] | None:
+    """The trade key and secret read from the environment, or None when either is absent or empty.
+
+    The values are handed straight to `_exec_client_config` and are never stored on a module-level
+    object, logged, or interpolated into a message -- including the refusal below, which names the
+    variables and never their contents."""
+    api_key = os.environ.get(_API_KEY_VAR, "")
+    api_secret = os.environ.get(_API_SECRET_VAR, "")
+    if not api_key or not api_secret:
+        return None
+    return api_key, api_secret
+
+
+def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
+    """The exec client: MARGIN spot account reporting in ZEUR, under this engine's own account id.
+    Both currency fields read ZEUR: margin summary figures are denominated in it, and spot position
+    reports cover the ZEUR-quoted instruments."""
+    api_key, api_secret = credentials
+    return KrakenExecutionClientConfig(
+        account_id=AccountId(_ACCOUNT_ID),
+        api_key=api_key,
+        api_secret=api_secret,
+        spot_account_type=AccountType.MARGIN,
+        margin_balance_asset="ZEUR",
+        # Matched literally against the loaded instrument's `quote_currency.code`, which for
+        # every EUR pair is "ZEUR" -- Kraken's AssetPairs returns quote "ZEUR" for modern
+        # (ADAEUR) and legacy (XETHZEUR) alike, and the code survives into the Currency object
+        # unchanged. Measured against the live public instrument set: 546 instruments carry
+        # code ZEUR and ZERO carry EUR. Only the instrument ID is normalized (ADA/EUR.KRAKEN),
+        # and that ID-vs-Currency split is the trap -- "EUR" here would match nothing, as would
+        # the adapter's own "USDT" default.
+        # NOT a tradeability constraint -- measured 2026-08-14 against the installed adapter
+        # (T0137's survey). `margin_balance_asset` has exactly ONE call site,
+        # `_update_account_state` -> `request_account_state_with_metrics`: it selects the
+        # currency the ACCOUNT SUMMARY is denominated in, and appears nowhere in order
+        # submission, instrument handling, or position reporting. The OpenPositions branch this
+        # config takes is quote-agnostic -- it reports side and net base quantity only -- so this
+        # single client already SEES the XXBT-quoted ETH/BTC and SOL/BTC. Both legs are now IN
+        # the basket (spec 00094), and what holds them at zero is engine-side and structural:
+        # `CrossfreqSystemConfig.assets` stays the ten EUR bases so no sleeve ever computes a
+        # /BTC weight, and `cli/engine/cycle.py::_expand_to_basket` emits exactly 0.0 for every
+        # basket member the model produced no output for. Order emission is delta-driven, so a
+        # 0.0 target against a 0.0 predecessor writes no row at all. The mechanisms earlier
+        # revisions of this comment named -- first "this field can never cover them alongside
+        # the EUR book", then base-keyed PAIR_KEYS / the root/<base>/EUR store path / a
+        # EUR-only cost floor -- are each gone. Rewritten in place rather than annotated, twice
+        # now: an inherited wrong mechanism is exactly what keeps going wrong here.
+        # Currently unread: the adapter consults it only when spot_account_type is NOT MARGIN
+        # AND use_spot_position_reports is True; under MARGIN it takes the OpenPositions branch.
+        spot_positions_quote_currency="ZEUR",
     )
+
+
+def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
+    """The assembled builder: trader identity, logging, the two exec-engine knobs, the Kraken data
+    client, and -- only when `exec_enabled` -- the Kraken exec client.
+
+    Every call takes the builder the previous one returned; the chain's value is the whole state.
+
+    `exec_enabled` alone decides whether this engine may reach the venue's private side. With it
+    off the credentials are never even read and the node is data-only, which is what a keyless run
+    has always been: the trade key is IP-bound to the engine host, so a run anywhere else observes
+    and cannot trade. With it ON and either variable absent, this REFUSES rather than building a
+    node that looks armed and is not -- a substituted placeholder would defer the failure from here
+    to the first submission."""
+    builder = (
+        LiveNode.builder(name=_NODE_NAME, trader_id=TraderId(_TRADER_ID), environment=Environment.LIVE)
+        .with_logging(_logging_config())
+        .with_exec_engine_config(_exec_engine_config())
+        .add_data_client(name=KRAKEN, factory=KrakenDataClientFactory(), config=_data_client_config())
+    )
+    if config.exec_enabled:
+        credentials = _credentials()
+        if credentials is None:
+            # Variable NAMES only. Whichever of the two is present is a live trade credential, and
+            # this message reaches a log, a traceback and the container's stderr.
+            raise EngineError(
+                f"execution is enabled but the trade credentials are missing: {_API_KEY_VAR} and "
+                f"{_API_SECRET_VAR} must both be set and non-empty; refusing to build the node"
+            )
+        builder = builder.add_exec_client(
+            name=KRAKEN, factory=KrakenExecutionClientFactory(), config=_exec_client_config(credentials)
+        )
+    return builder
 
 
 def _probe_executor_factory(config: EngineConfig) -> Callable:
@@ -345,13 +405,9 @@ def _probe_executor_factory(config: EngineConfig) -> Callable:
 
 
 def build_shadow_node(config: EngineConfig) -> LiveNode:
-    """Assemble (never run here) the production-shape shadow LiveNode: both Kraken factories
-    registered, the ShadowStrategy attached (with the probe executor wired), clients built.
-    node.build() only constructs clients -- no credentials required and no network until
-    node.run()."""
-    node = LiveNode(config=_node_config(config))
-    node.add_data_client_factory(KRAKEN, KrakenDataClientFactory)
-    node.add_exec_client_factory(KRAKEN, KrakenExecutionClientFactory)
-    node.trader.add_strategy(ShadowStrategy(config, executor_factory=_probe_executor_factory(config)))
-    node.build()
+    """Assemble (never run here) the production-shape shadow LiveNode: the builder's clients
+    constructed, then the ShadowStrategy attached with the probe executor wired. Building
+    constructs clients only -- no network until node.run()."""
+    node = _node_builder(config).build()
+    node.add_strategy(ShadowStrategy(config, executor_factory=_probe_executor_factory(config)))
     return node

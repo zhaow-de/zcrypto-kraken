@@ -1,8 +1,9 @@
 """The node wrapper (spec 00041 SS the node wrapper): pure boundary arithmetic, the
 restart-inside-a-passable-window startup rule, the alert chain (schedule-next-first, run_cycle
-exceptions contained), and the iter-079-shaped LiveNode assembly. No live node is ever run --
-the attended soak is the live smoke; node.build() itself is offline (verified by the build tests,
-which construct both exec_enabled shapes without credentials or network).
+exceptions contained), and the production-shape LiveNode assembly. Building a node is offline
+(verified by the build tests, which construct both exec_enabled shapes without network); the one
+test that RUNS a node is the instrument-arrival test, which needs Kraken's public endpoint and
+skips loudly without it.
 """
 
 import functools
@@ -17,13 +18,19 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from nautilus_trader.adapters.kraken import (
+    KrakenDataClientConfig,
+    KrakenDataClientFactory,
+    KrakenExecutionClientFactory,
+)
+from nautilus_trader.common import LogLevel
 from nautilus_trader.model import AccountType
 
 from cli.config import EngineConfig
 from cli.engine import ShadowStrategy, most_recent_boundary, next_boundary, node, startup_action
 from cli.engine.cycle import run_cycle
 from cli.engine.errors import EngineError
-from cli.engine.node import _node_config, on_alert_logic, on_start_logic
+from cli.engine.node import _node_builder, on_alert_logic, on_start_logic
 
 UTC = timezone.utc
 B08 = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
@@ -785,12 +792,92 @@ def test_every_handler_our_strategy_overrides_exists_on_the_library_base_class()
 # --- build_shadow_node (assembled, never run; node.build() is offline) --------------------------
 
 
-def test_node_config_mirrors_iter_079_probe_shape(tmp_path):
-    config = _node_config(_config(tmp_path, exec_enabled=True))
-    assert config.logging.log_level == "INFO"
-    assert config.data_clients["KRAKEN"].instrument_provider.load_all is True
-    exec_config = config.exec_clients["KRAKEN"]
-    assert exec_config.instrument_provider.load_all is True
+# The built node exposes no client registry and no config readback, so the assembly is pinned where
+# it is decided: on the calls `_node_builder` makes and the config objects it hands over. The
+# recorder below stands in for `LiveNodeBuilder`, so `test_every_builder_call_exists_on_the_library`
+# checks each recorded name against the real class -- a stub is a contract restatement, and an
+# unverified restatement drifts silently.
+class RecordingBuilder:
+    def __init__(self):
+        self.calls = []
+
+    def _record(self, _call, **kwargs):
+        self.calls.append((_call, kwargs))
+        return self
+
+    def with_logging(self, logging):
+        return self._record("with_logging", logging=logging)
+
+    def with_exec_engine_config(self, config):
+        return self._record("with_exec_engine_config", config=config)
+
+    def add_data_client(self, name, factory, config):
+        return self._record("add_data_client", name=name, factory=factory, config=config)
+
+    def add_exec_client(self, name, factory, config):
+        return self._record("add_exec_client", name=name, factory=factory, config=config)
+
+    def named(self, call_name):
+        return [kwargs for name, kwargs in self.calls if name == call_name]
+
+
+class RecordingLiveNode:
+    """`LiveNode.builder(...)` only, recorded with the identity arguments it was given."""
+
+    def __init__(self):
+        self.builder_kwargs = None
+        self.recorder = RecordingBuilder()
+
+    def builder(self, **kwargs):
+        self.builder_kwargs = kwargs
+        return self.recorder
+
+
+def _record_assembly(tmp_path, monkeypatch, **overrides) -> RecordingLiveNode:
+    live_node = RecordingLiveNode()
+    monkeypatch.setattr(node, "LiveNode", live_node)
+    _node_builder(_config(tmp_path, **overrides))
+    return live_node
+
+
+def test_the_builder_is_given_the_pinned_trader_identity(tmp_path, monkeypatch):
+    from nautilus_trader.common import Environment
+
+    live_node = _record_assembly(tmp_path, monkeypatch)
+    assert str(live_node.builder_kwargs["trader_id"]) == node._TRADER_ID
+    assert live_node.builder_kwargs["environment"] == Environment.LIVE
+    assert live_node.builder_kwargs["name"] == node._NODE_NAME
+
+
+def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path, monkeypatch):
+    monkeypatch.setenv(node._API_KEY_VAR, "a-key")
+    monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
+    recorder = _record_assembly(tmp_path, monkeypatch, exec_enabled=True).recorder
+
+    assert recorder.named("with_logging")[0]["logging"].stdout_level == LogLevel.INFO
+
+    # The two exec-engine knobs the adopted-order path rests on. `filter_unclaimed_external_orders`
+    # is the quiet one: flipped, reconciliation returns None for VENUE-tagged unclaimed orders, so
+    # the adopted order never enters the cache -- the startup pass neither attaches nor cancels a
+    # previous process's resting order, the kill sweep cannot reach it, and nothing logs above
+    # WARNING. The stub-cache tests cannot see it (they never run reconciliation), so the pin is
+    # the only guard, and it is aimed at a future upstream default flip.
+    exec_engine = recorder.named("with_exec_engine_config")[0]["config"]
+    assert exec_engine.reconciliation is True
+    assert exec_engine.filter_unclaimed_external_orders is False
+
+    data_client = recorder.named("add_data_client")[0]
+    assert data_client["name"] == "KRAKEN"
+    assert isinstance(data_client["factory"], KrakenDataClientFactory)
+    assert isinstance(data_client["config"], KrakenDataClientConfig)
+
+    exec_client = recorder.named("add_exec_client")[0]
+    assert exec_client["name"] == "KRAKEN"
+    assert isinstance(exec_client["factory"], KrakenExecutionClientFactory)
+    exec_config = exec_client["config"]
+    # The issuer half must be the venue: the Cache indexes accounts by it, and the venue-state
+    # reader looks the account up by Venue("KRAKEN").
+    assert str(exec_config.account_id) == "KRAKEN-001"
     assert exec_config.spot_account_type == AccountType.MARGIN
     assert exec_config.margin_balance_asset == "ZEUR"
     # Matched literally against the loaded instrument's `quote_currency.code`. Measured against the
@@ -800,20 +887,100 @@ def test_node_config_mirrors_iter_079_probe_shape(tmp_path):
     # as would the adapter's own "USDT" default. Pinned so neither an upstream default change nor
     # a plausible-looking "EUR" correction can silently empty spot position reporting.
     assert exec_config.spot_positions_quote_currency == "ZEUR"
-    # The two exec-engine knobs the adopted-order path rests on. `filter_unclaimed_external_orders`
-    # is the quiet one: flipped, reconciliation returns None for VENUE-tagged unclaimed orders, so
-    # the adopted order never enters the cache -- the startup pass neither attaches nor cancels a
-    # previous process's resting order, the kill sweep cannot reach it, and nothing logs above
-    # WARNING. The stub-cache tests cannot see it (they never run reconciliation), so the pin is
-    # the only guard, and it is aimed at a future upstream default flip.
-    assert config.exec_engine.reconciliation is True
-    assert config.exec_engine.filter_unclaimed_external_orders is False
 
 
-def test_node_config_has_no_exec_client_by_default(tmp_path):
-    config = _node_config(_config(tmp_path))
-    assert config.exec_clients == {}
-    assert list(config.data_clients) == ["KRAKEN"]
+def test_the_builder_is_given_no_exec_client_by_default(tmp_path, monkeypatch):
+    recorder = _record_assembly(tmp_path, monkeypatch).recorder
+    assert recorder.named("add_exec_client") == []
+    assert [call["name"] for call in recorder.named("add_data_client")] == ["KRAKEN"]
+
+
+def test_every_builder_call_exists_on_the_library(tmp_path, monkeypatch):
+    # The recorder above is a restatement of `LiveNodeBuilder`; this is what keeps it honest. A
+    # renamed or removed builder method fails here instead of passing every recorder-backed test
+    # and then raising at the first real assembly, in production.
+    from nautilus_trader.live import LiveNodeBuilder
+
+    monkeypatch.setenv(node._API_KEY_VAR, "a-key")
+    monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
+    recorder = _record_assembly(tmp_path, monkeypatch, exec_enabled=True).recorder
+    called = {name for name, _ in recorder.calls}
+    assert called, "the recorder saw no builder calls -- it is no longer standing in for anything"
+    for name in sorted(called):
+        assert hasattr(LiveNodeBuilder, name), f"LiveNodeBuilder.{name} is gone -- node assembly breaks"
+
+
+# --- the exec credentials (spec 00100 D13) ------------------------------------------------------
+
+
+def test_the_default_config_builds_a_data_only_node_and_never_reads_the_credentials(tmp_path, monkeypatch):
+    # Keyless is what a local run has always been -- the trade key is IP-bound to the engine host.
+    # With execution off the environment is not consulted at all, so a host that happens to carry
+    # the key still cannot build an executing node by accident.
+    monkeypatch.setenv(node._API_KEY_VAR, "a-key")
+    monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
+    read = []
+
+    def _tracking_credentials():
+        read.append(True)
+        return "a-key", "a-secret"
+
+    monkeypatch.setattr(node, "_credentials", _tracking_credentials)
+    recorder = _record_assembly(tmp_path, monkeypatch).recorder
+    assert recorder.named("add_exec_client") == []
+    assert read == []
+
+
+def test_execution_enabled_with_an_empty_environment_refuses(tmp_path, monkeypatch):
+    # Never a placeholder credential: a node that looks armed and is not defers the failure from
+    # construction to the first submission, at a live venue.
+    monkeypatch.delenv(node._API_KEY_VAR, raising=False)
+    monkeypatch.delenv(node._API_SECRET_VAR, raising=False)
+    with pytest.raises(EngineError) as excinfo:
+        _node_builder(_config(tmp_path, exec_enabled=True))
+    message = str(excinfo.value)
+    assert node._API_KEY_VAR in message and node._API_SECRET_VAR in message
+
+
+@pytest.mark.parametrize("present_var", ["_API_KEY_VAR", "_API_SECRET_VAR"])
+def test_the_refusal_never_carries_a_credential_VALUE(tmp_path, monkeypatch, present_var):
+    # The half-set environment is the case that tempts an implementation into saying which value it
+    # DID find. Whichever half is present is a live trade credential, and this message reaches a
+    # log, a traceback and the container's stderr.
+    secret = "kraken-live-credential-sentinel"
+    monkeypatch.delenv(node._API_KEY_VAR, raising=False)
+    monkeypatch.delenv(node._API_SECRET_VAR, raising=False)
+    monkeypatch.setenv(getattr(node, present_var), secret)
+    with pytest.raises(EngineError) as excinfo:
+        _node_builder(_config(tmp_path, exec_enabled=True))
+    assert secret not in str(excinfo.value)
+    assert secret not in repr(excinfo.value)
+
+
+def test_an_empty_credential_is_treated_as_absent(tmp_path, monkeypatch):
+    # An env_file rendered with a blank value is indistinguishable from an unset one at the venue;
+    # it must refuse here rather than authenticate as nobody.
+    monkeypatch.setenv(node._API_KEY_VAR, "a-key")
+    monkeypatch.setenv(node._API_SECRET_VAR, "")
+    with pytest.raises(EngineError):
+        _node_builder(_config(tmp_path, exec_enabled=True))
+
+
+def test_the_exec_client_config_does_not_carry_the_credentials_back_out(tmp_path, monkeypatch, caplog):
+    # The credentials go in and are never readable again -- no attribute, no repr, no str. That is
+    # what keeps the config object safe to hand to a logger or an exception, and it is a property
+    # of the library, so it is measured rather than assumed.
+    secret = "kraken-live-credential-sentinel"
+    monkeypatch.setenv(node._API_KEY_VAR, secret + "-key")
+    monkeypatch.setenv(node._API_SECRET_VAR, secret + "-secret")
+    with caplog.at_level(logging.DEBUG):
+        recorder = _record_assembly(tmp_path, monkeypatch, exec_enabled=True).recorder
+    exec_config = recorder.named("add_exec_client")[0]["config"]
+    assert secret not in repr(exec_config)
+    assert secret not in str(exec_config)
+    assert not [name for name in dir(exec_config) if secret in str(getattr(exec_config, name, ""))]
+    # And nothing on the assembly path logged them.
+    assert secret not in caplog.text
 
 
 # The node is assembled in a CHILD interpreter, and the child never disposes it. Upstream prescribes
@@ -838,22 +1005,36 @@ import asyncio, json, os, sys
 from pathlib import Path
 
 from cli.config import EngineConfig
-from cli.engine import build_shadow_node
+import cli.engine.node as node_module
 
 root = Path(sys.argv[1])
-# TradingNode wants a current event loop and nautilus refuses to create one itself.
+# Nautilus wants a current event loop and refuses to create one itself.
 asyncio.set_event_loop(asyncio.new_event_loop())
-node = build_shadow_node(
+
+# The built node exposes no strategy registry, so the strategy is captured on its way in -- these
+# are the real objects `build_shadow_node` assembled, not restatements of them.
+built = []
+original_strategy = node_module.ShadowStrategy
+
+
+def capturing(*args, **kwargs):
+    strategy = original_strategy(*args, **kwargs)
+    built.append(strategy)
+    return strategy
+
+
+node_module.ShadowStrategy = capturing
+node = node_module.build_shadow_node(
     EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=sys.argv[2] == "1")
 )
 (root / "facts.json").write_text(
     json.dumps(
         {
-            "data_clients": [str(c) for c in node.kernel.data_engine.registered_clients],
-            "exec_clients": [str(c) for c in node.kernel.exec_engine.registered_clients],
-            "strategies": [type(s).__name__ for s in node.trader.strategies()],
-            "executor_wired": [s._executor_factory is not None for s in node.trader.strategies()],
-            "external_order_claims": [list(s.external_order_claims) for s in node.trader.strategies()],
+            "trader_id": str(node.trader_id),
+            "environment": str(node.environment),
+            "is_running": node.is_running,
+            "strategies": [type(s).__name__ for s in built],
+            "executor_wired": [s._executor_factory is not None for s in built],
         }
     )
 )
@@ -861,19 +1042,26 @@ os._exit(0)
 """
 
 
-def _node_build_facts(tmp_path: Path, *, exec_enabled: bool) -> dict:
-    """Assemble the node in a child interpreter and return what it registered. The child gets the
-    credentials stripped from its environment, so the build is proven keyless and offline."""
+def _run_build_probe(tmp_path: Path, *, exec_enabled: bool, credentials: tuple[str, str] | None = None):
+    """Assemble the node in a child interpreter. The child's environment carries exactly the
+    credentials this call names and nothing inherited, so what the build does with them is the
+    only thing under test."""
     env = os.environ.copy()
     env.pop("KRAKEN_SPOT_API_KEY", None)
     env.pop("KRAKEN_SPOT_API_SECRET", None)
-    result = subprocess.run(
+    if credentials is not None:
+        env["KRAKEN_SPOT_API_KEY"], env["KRAKEN_SPOT_API_SECRET"] = credentials
+    return subprocess.run(
         [sys.executable, "-c", _BUILD_PROBE, str(tmp_path), "1" if exec_enabled else "0"],
         capture_output=True,
         text=True,
         timeout=120,
         env=env,
     )
+
+
+def _node_build_facts(tmp_path: Path, **kwargs) -> dict:
+    result = _run_build_probe(tmp_path, **kwargs)
     facts = tmp_path / "facts.json"
     detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     assert facts.exists(), f"the node build probe produced no result: {detail}"
@@ -882,20 +1070,132 @@ def _node_build_facts(tmp_path: Path, *, exec_enabled: bool) -> dict:
 
 
 def test_build_shadow_node_without_exec_client(tmp_path):
-    # node.build() constructs clients without credentials or network (no connect until run()).
+    # Building constructs clients without credentials or network (no connect until run()).
     facts = _node_build_facts(tmp_path, exec_enabled=False)
-    assert facts["data_clients"] == ["KRAKEN"]
-    assert facts["exec_clients"] == []
+    assert facts["trader_id"] == node._TRADER_ID
+    assert facts["is_running"] is False
     assert facts["strategies"] == ["ShadowStrategy"]
     # The assembled node's strategy really carries the executor factory -- the only place the whole
     # tick/quote/order-event chain is proven to be armed in production rather than only in a stub.
     assert facts["executor_wired"] == [True]
-    # And it claims no external orders once the trader has registered it with the execution engine.
-    assert facts["external_order_claims"] == [[]]
 
 
 def test_build_shadow_node_with_exec_client_when_enabled(tmp_path):
-    assert _node_build_facts(tmp_path, exec_enabled=True)["exec_clients"] == ["KRAKEN"]
+    # The real builder accepts the exec-client leg of the chain; the recorder-backed tests above
+    # pin what that leg is handed.
+    facts = _node_build_facts(tmp_path, exec_enabled=True, credentials=("a-key", "a-secret"))
+    assert facts["strategies"] == ["ShadowStrategy"]
+
+
+def test_build_shadow_node_refuses_execution_with_an_empty_environment(tmp_path):
+    # D13's refusal against the real assembly, not only against the recorder.
+    result = _run_build_probe(tmp_path, exec_enabled=True)
+    assert result.returncode != 0, f"the build should have refused; stdout={result.stdout!r}"
+    assert "KRAKEN_SPOT_API_KEY" in result.stderr and "KRAKEN_SPOT_API_SECRET" in result.stderr
+    assert not (tmp_path / "facts.json").exists()
+
+
+def test_a_real_build_never_prints_the_credentials(tmp_path):
+    # The whole assembly, library included: nothing the build writes to stdout or stderr carries a
+    # credential value. The library's own logger opens at INFO here, which is what the engine runs.
+    secret = "kraken-live-credential-sentinel"
+    result = _run_build_probe(tmp_path, exec_enabled=True, credentials=(secret + "-key", secret + "-secret"))
+    assert result.returncode == 0, f"exit={result.returncode} stderr={result.stderr[-2000:]}"
+    assert secret not in result.stdout
+    assert secret not in result.stderr
+
+
+# --- the twelve instruments reach the Cache before the trader starts (spec 00100 D5) ------------
+
+# Nothing in the node configuration selects instruments: the Kraken data client loads the venue's
+# whole spot universe itself, during the connect the kernel awaits before it starts the trader. So
+# by the time a strategy's on_start runs -- which is where a restart inside a passable window runs
+# a boundary's cycle, the earliest venue-state read there is -- the Cache already holds them.
+# Measured, and this is the test that keeps it true: `venue_state_from_cache` raises when any of
+# INSTRUMENT_IDS is absent, and that raise degrades the snapshot to None rather than failing loudly,
+# so a universe that quietly stopped covering a leg would cost venue truth on every cycle with
+# nothing red anywhere.
+#
+# It RUNS a node against Kraken's public endpoint, so it is the one test here that needs the
+# network. Absent network it SKIPS, and a skip is not coverage -- run it locally before PR.
+_INSTRUMENT_ARRIVAL_PROBE = """
+import json, os, sys, threading, time
+from pathlib import Path
+
+from cli.config import EngineConfig
+from cli.engine.instruments import INSTRUMENT_IDS
+from cli.engine.node import _node_builder
+from nautilus_trader.model import InstrumentId
+from nautilus_trader.trading import Strategy, StrategyConfig
+
+root = Path(sys.argv[1])
+seen = {}
+
+
+class ArrivalProbe(Strategy):
+    def on_start(self):
+        seen["total"] = len(self.cache.instruments())
+        seen["present"] = sorted(
+            symbol
+            for symbol, instrument_id in INSTRUMENT_IDS.items()
+            if self.cache.instrument(InstrumentId.from_str(instrument_id)) is not None
+        )
+
+
+node = _node_builder(
+    EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=False)
+).build()
+node.add_strategy(ArrivalProbe(config=StrategyConfig()))
+
+
+def watcher():
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not seen:
+        time.sleep(0.2)
+    (root / "arrival.json").write_text(json.dumps(seen))
+    os._exit(0)
+
+
+threading.Thread(target=watcher, daemon=True).start()
+node.run()
+"""
+
+
+def _kraken_public_reachable() -> bool:
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("https://api.kraken.com/0/public/Time", timeout=10) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts(tmp_path):
+    from cli.engine.instruments import INSTRUMENT_IDS
+
+    if not _kraken_public_reachable():
+        pytest.skip("Kraken's public endpoint is unreachable -- this test needs it and proves nothing without it")
+    env = os.environ.copy()
+    env.pop("KRAKEN_SPOT_API_KEY", None)
+    env.pop("KRAKEN_SPOT_API_SECRET", None)
+    result = subprocess.run(
+        [sys.executable, "-c", _INSTRUMENT_ARRIVAL_PROBE, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=env,
+    )
+    arrival = tmp_path / "arrival.json"
+    detail = f"exit={result.returncode}\n--- stderr ---\n{result.stderr[-4000:]}"
+    assert arrival.exists(), f"the instrument-arrival probe produced no result: {detail}"
+    facts = json.loads(arrival.read_text())
+    assert facts, f"on_start never ran -- the node did not reach a started trader: {detail}"
+    missing = sorted(set(INSTRUMENT_IDS) - set(facts["present"]))
+    assert not missing, (
+        f"{missing} were absent from the Cache when the strategy started, out of {facts['total']} "
+        f"instruments loaded -- every cycle's venue-state read would degrade to None"
+    )
 
 
 # --- abort diagnosability (T0115) ---------------------------------------------------------------

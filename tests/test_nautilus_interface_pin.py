@@ -18,11 +18,13 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.adapters.kraken", "KrakenDataClientFactory"),
     ("nautilus_trader.adapters.kraken", "KrakenExecutionClientConfig"),
     ("nautilus_trader.adapters.kraken", "KrakenExecutionClientFactory"),
-    ("nautilus_trader.config", "InstrumentProviderConfig"),
+    ("nautilus_trader.common", "Environment"),
+    ("nautilus_trader.common", "LogLevel"),
     ("nautilus_trader.config", "LiveExecutionEngineConfig"),
-    ("nautilus_trader.config", "LiveNodeConfig"),
     ("nautilus_trader.config", "LoggerConfig"),
     ("nautilus_trader.live", "LiveNode"),
+    ("nautilus_trader.live", "LiveNodeBuilder"),
+    ("nautilus_trader.model", "AccountId"),
     ("nautilus_trader.model", "AccountType"),
     ("nautilus_trader.model", "InstrumentId"),
     ("nautilus_trader.model", "LiquiditySide"),
@@ -30,6 +32,7 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.model", "OrderStatus"),
     ("nautilus_trader.model", "StrategyId"),
     ("nautilus_trader.model", "TimeInForce"),
+    ("nautilus_trader.model", "TraderId"),
     ("nautilus_trader.model", "Venue"),
     ("nautilus_trader.trading", "Strategy"),
 ]
@@ -95,16 +98,53 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
 # actually make rather than on a name that happens to survive.
 def test_the_kraken_client_configs_accept_the_arguments_we_pass():
     from nautilus_trader.adapters.kraken import KrakenDataClientConfig, KrakenExecutionClientConfig
-    from nautilus_trader.config import InstrumentProviderConfig
-    from nautilus_trader.model import AccountType
+    from nautilus_trader.model import AccountId, AccountType
 
-    KrakenDataClientConfig(instrument_provider=InstrumentProviderConfig(load_all=True))
+    KrakenDataClientConfig()
     KrakenExecutionClientConfig(
-        instrument_provider=InstrumentProviderConfig(load_all=True),
+        account_id=AccountId("KRAKEN-001"),
+        api_key="a-key",
+        api_secret="a-secret",
         spot_account_type=AccountType.MARGIN,
         margin_balance_asset="ZEUR",
         spot_positions_quote_currency="ZEUR",
     )
+
+
+# The credentials are required arguments, and the refusal that guards a keyless armed node reads
+# this as its own precondition: were they to become optional again, an engine with an empty
+# environment could construct an exec client that authenticates as nobody.
+def test_the_exec_client_config_still_requires_the_credentials():
+    from nautilus_trader.adapters.kraken import KrakenExecutionClientConfig
+
+    with pytest.raises(TypeError):
+        KrakenExecutionClientConfig()
+
+
+# The credentials go in and never come back out -- no attribute, no repr, no str. That is what makes
+# the config object safe to hand to a logger or an exception, and it is the library's property, so
+# it is pinned rather than assumed.
+def test_the_exec_client_config_never_exposes_the_credentials():
+    from nautilus_trader.adapters.kraken import KrakenExecutionClientConfig
+    from nautilus_trader.model import AccountId
+
+    secret = "kraken-live-credential-sentinel"
+    config = KrakenExecutionClientConfig(account_id=AccountId("KRAKEN-001"), api_key=secret + "-key", api_secret=secret + "-secret")
+    assert secret not in repr(config)
+    assert secret not in str(config)
+    assert not [name for name in dir(config) if secret in str(getattr(config, name, ""))]
+
+
+# The node members the engine reaches for after assembly. The BUILDER's method set is pinned in
+# `tests/test_engine_node.py` instead, derived from the calls node assembly actually makes -- a
+# second hand-written list here would be free to drift from them.
+@pytest.mark.parametrize(
+    "name", ["builder", "add_strategy", "run", "stop", "dispose", "cache", "trader_id", "environment", "is_running"]
+)
+def test_the_node_still_exposes_every_member_the_engine_reads(name):
+    from nautilus_trader.live import LiveNode
+
+    assert hasattr(LiveNode, name), f"LiveNode.{name} is gone -- the engine reads it"
 
 
 def test_the_exec_engine_config_accepts_the_arguments_we_pass():
