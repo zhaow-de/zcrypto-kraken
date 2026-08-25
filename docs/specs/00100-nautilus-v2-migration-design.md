@@ -4,6 +4,16 @@ The engine is pinned at `nautilus-trader==1.231.0`. v1 enters maintenance after 
 
 The lift-and-shift is the deliverable. Adopting v2 capabilities is secondary and admitted only where the swap is trivial and removes real complexity.
 
+## The governing principle
+
+**We do not create legacy at version 0.0.0.** Where v2 offers a better way to meet a requirement, take it — regardless of how much was invested in the v1 form. Effort already spent is not an argument, and a v1 shape preserved inside v2 becomes a maintenance rabbit hole the moment v2 evolves again.
+
+The test for every decision here is therefore not "does it work" and not "is it a faithful port". It is: **if we had only the functional requirement and no v1 code, what would we build on v2?** Build that.
+
+This governs everything nautilus, the external-order observer included. Two things it does NOT license: weakening a guard on the live trade path, and adopting a v2 feature because its name resembles something we hand-rolled — the reason to adopt is that it expresses the requirement better, established by measurement.
+
+The lift-and-shift framing below is the deliverable's SHAPE, not a licence to port v1 idiom. Where the two conflict, this principle wins.
+
 ## The measured basis
 
 Every fact below was read off a running v2 wheel or the v2 source at a named ref, not from release notes. The development target is the pinned **nightly** wheel `2.0.0rc4.dev20260824`, cp314 manylinux, from `https://packages.nautechsystems.io/simple`. Nightly rather than the per-run `develop` builds: it is the channel that also publishes ARM64, and its naming is stable enough to bump against daily. Verified identical to the same day's develop build across every symbol, default and method surface this project touches — the version string is the only difference.
@@ -135,7 +145,7 @@ The migration is not proved by a green suite. These are the ways it can be green
 
 ## Out of scope
 
-- **Adopting v2 capabilities beyond the forced changes**, rejected on measurement rather than caution. `_liquidity`'s survival guard is deleted because `liquidity_side_to_str` no longer exists and `LiquiditySide` is a plain enum with `.name` — forced, and it happens to remove complexity. The rest would import defects: the v2 Kraken parser never reads Kraken's `costmin` field at all, so the risk engine does not subsume `COSTMIN` and deleting it would remove a live-trade-path guard with nothing behind it; `TradingState` reachability *regresses* (`set_trading_state` is exposed in v1 and not in v2); and native execution algorithms exist only on `BacktestEngine`, not on the live node. D4's interface pin — not a wider adoption surface — is how upstream drift gets caught.
+- **Adopting v2 capabilities beyond the forced changes**, rejected on measurement rather than caution. `_liquidity`'s survival guard is deleted because `liquidity_side_to_str` no longer exists and `LiquiditySide` is a plain enum with `.name` — forced, and it happens to remove complexity. The rest would import defects: the v2 Kraken parser never reads Kraken's `costmin` field at all, so the risk engine does not subsume `COSTMIN` and deleting it would remove a live-trade-path guard with nothing behind it; `TradingState` reachability *regresses* (`set_trading_state` is exposed in v1 and not in v2); and native execution algorithms are refused on a structural ground, not a reachability one -- `LiveNode.add_exec_algorithm` and `add_exec_algorithm_from_config` both exist (only `add_native_exec_algorithm` is absent), so the machinery IS reachable and is still wrong here: an algorithm's spawned children submit through the algorithm's own surface, which runs neither the arm/kill/venue-status gate that `_submit` TAKES immediately before every venue call nor the ledger write that PRECEDES it. A spawned child could reach Kraken with the kill file set and no row behind it. That reason does not expire with a version. D4's interface pin — not a wider adoption surface — is how upstream drift gets caught.
 - **`CommandFailure`** — not reachable. It is a Rust-internal type with no Python binding, so there is nothing to adopt. The reachable rejection events give D10 less than v1 did, not more: `OrderRejected` and `OrderDenied` still carry only a string `reason`, and both lost `venue_order_id`. The one genuine improvement — canonical reason codes in place of free-form prose — arrives with no code from us.
 - **The engine converge onto 1.231.0**, cancelled: it would prove properties of a component entering maintenance.
 
