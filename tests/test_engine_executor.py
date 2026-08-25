@@ -31,6 +31,8 @@ from nautilus_trader.model import (
     OrderSide,
     OrderStatus,
     OrderType,
+    Position,
+    PositionId,
     Price,
     Quantity,
     QuoteTick,
@@ -217,6 +219,13 @@ def _rounding_delegate(symbol: str, lot_step: float, tick_size: float) -> Curren
     )
 
 
+def _real_instrument(symbol: str) -> CurrencyPair:
+    """The library instrument for one leg, at the same precisions `_fake_instrument` gives it -- what
+    `Position` needs to do a fill's arithmetic in the venue's own terms."""
+    attrs = _BTC_LEG_ATTRS.get(symbol, {})
+    return _rounding_delegate(symbol, attrs.get("lot_step", 0.00000001), attrs.get("tick_size", 0.1))
+
+
 def _fake_instrument(instrument_id: str, *, ordermin=0.0001, lot_step=0.00000001, tick_size=0.1):
     # min_notional mirrors observed live reality (cli/engine/venuestate.py, D5a): the installed
     # Kraken adapter never populates it. make_qty/make_price are BOUND FROM A REAL INSTRUMENT at
@@ -321,6 +330,17 @@ class StubCache:
         held = self._positions.get(INSTRUMENT_IDS[symbol], [])
         realized = held[0].realized_pnl if held else None
         self.set_position(symbol, sum(float(p.signed_qty) for p in held) + delta, realized_pnl=realized)
+
+    def apply_fill(self, symbol, fill):
+        """Move the held position the way a fill does -- with the library's own `Position` doing the
+        arithmetic, and this fixture supplying neither the sign nor the size.
+
+        Both come off the event: `Position(instrument, fill).signed_qty` reads the fill's own
+        `order_side` and `last_qty`. A fixture that named the delta itself could agree with a
+        mis-signed or mis-sized fill, because the number it moved the Cache by would be the number
+        the test author meant rather than the one the event carries."""
+        delta = float(Position(_real_instrument(symbol), fill).signed_qty)
+        self.move_position(symbol, delta)
 
     def orders_open(self, *, venue=None, **kwargs):
         return list(self._open_orders)
@@ -1458,7 +1478,17 @@ def test_no_quote_inside_the_wait_refuses_the_intent(tmp_path):
 # --- order events -------------------------------------------------------------------------------
 
 
-def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="ZEUR", symbol="BTC/EUR", liquidity=LiquiditySide.MAKER):
+def _fill(
+    client_order_id,
+    last_qty,
+    *,
+    px=30000.0,
+    fee=0.012,
+    fee_code="ZEUR",
+    symbol="BTC/EUR",
+    side="buy",
+    liquidity=LiquiditySide.MAKER,
+):
     """A REAL `OrderFilled`, carrying every field the executor's fill row reads in the venue's own
     types.
 
@@ -1475,29 +1505,171 @@ def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="ZEUR", 
     `liquidity_side` is a `LiquiditySide` member and `instrument_id` a real `InstrumentId` -- the
     library accepts nothing else for either. Only a member has the `.name` the ledger row and the
     metric label are written from, and the Cache accessors `_publish_fill` hands the id to refuse
-    anything that is not one."""
+    anything that is not one.
+
+    `order_side` follows `side` rather than sitting at a constant, and `position_id` carries the
+    NETTING id the venue stamps: together they are what let the library's own `Position` compute
+    what this fill does to a holding, instead of the fixture asserting it."""
     return _event(
         OrderFilled,
         client_order_id=client_order_id,
         instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]),
         trade_id=TradeId("T-1"),
+        order_side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
         last_qty=_quantity(last_qty),
         last_px=_price(px),
         currency=Currency.from_str(symbol.split("/")[1]),
         liquidity_side=liquidity,
+        position_id=PositionId(f"{INSTRUMENT_IDS[symbol]}-{_STUB_STRATEGY_ID}"),
         commission=None if fee is None else Money(fee, Currency.from_str(fee_code)),
     )
 
 
 def _deliver_fill(ex, client, client_order_id, qty, *, symbol="BTC/EUR", side="buy", px=30000.0, **kwargs):
     """Deliver a fill the way the venue does: the Cache position moves FIRST, then the strategy sees
-    the event. Read out of the installed nautilus-trader (`execution/engine.pyx`): `_handle_event`
-    calls `_handle_order_fill` -- which adds or updates the Position in the Cache -- and only then
-    publishes the event to the strategy's own topic. A harness that left the Cache untouched would
-    model a divergence that never happens, and D11's post-terminal reconciliation would trip on every
-    healthy fill."""
-    client.cache.move_position(symbol, qty if side == "buy" else -qty)
-    ex.on_order_event(_fill(client_order_id, qty, px=px, symbol=symbol, **kwargs))
+    the event.
+
+    That ordering is MEASURED, not assumed --
+    `test_the_cache_already_carries_the_fill_when_the_strategy_handler_sees_it` drives a real order
+    through a real engine and reads the Cache from inside the handler. It matters because
+    `_reconcile_terminal` runs synchronously inside this dispatch and latches the kill switch on a
+    disagreement: a harness that left the Cache untouched would model a divergence that never
+    happens and trip on every healthy fill.
+
+    The MOVE is derived too. The fill goes to `apply_fill`, where the library's own `Position` reads
+    the event's side and quantity -- so this helper's `side` reaches the Cache only through the
+    event it stamps, and cannot move the position one way while the event says the other."""
+    fill = _fill(client_order_id, qty, px=px, symbol=symbol, side=side, **kwargs)
+    client.cache.apply_fill(symbol, fill)
+    ex.on_order_event(fill)
+
+
+def _cache_reads_at_dispatch() -> dict:
+    """Run a real order through a real engine and read the Cache from inside the strategy's own
+    event handler, at the instant each event is dispatched.
+
+    A REAL `BacktestEngine` is the only construction that can answer this: it carries the real
+    ExecutionEngine, Portfolio and Cache, and every one of them is compiled, so there is no source
+    to read the ordering off. Two orders: one crosses and fills, one rests and is canceled.
+
+    The readings are RECORDED and asserted by the caller, never asserted here -- a raising handler
+    is swallowed by the library (measured), so an assertion inside one is invisible and its test
+    passes green."""
+    from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.model import AccountType, OmsType, Venue
+    from nautilus_trader.trading import Strategy
+
+    venue = Venue("KRAKEN")
+    instrument_id = InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"])
+    instrument = _real_instrument("BTC/EUR")
+    readings: dict = {}
+
+    class _Probe(Strategy):
+        def __init__(self):
+            super().__init__()
+            self._ticks = 0
+            self._resting = None
+
+        def on_start(self):
+            self.subscribe_quotes(instrument_id)
+
+        def on_quote(self, tick):
+            self._ticks += 1
+            if self._ticks == 1:
+                self.submit_order(self._limit(30000.0))  # the market comes to it and it fills
+                self._resting = self._limit(1000.0)  # far below: it rests untouched
+                self.submit_order(self._resting)
+            elif self._ticks == 3:
+                self.cancel_order(self._resting.client_order_id)
+
+        def _limit(self, price):
+            return self.order_factory.limit(
+                instrument_id=instrument_id,
+                order_side=OrderSide.BUY,
+                quantity=instrument.make_qty(0.001),
+                price=instrument.make_price(price),
+            )
+
+        def on_order_event(self, event):
+            name = type(event).__name__
+            if name not in ("OrderFilled", "OrderCanceled"):
+                # An event this process's own command generates is dispatched while the Cache is
+                # still mutably borrowed for the write that produced it, and a read there raises
+                # `Already mutably borrowed`. Only the venue's own answers are read here.
+                return
+            order = self.cache.order(event.client_order_id)
+            readings[name] = {
+                "filled_qty": float(order.filled_qty),
+                "status": order.status,
+                "in_orders_open": [o.client_order_id for o in self.cache.orders_open(venue=venue)],
+                "position": sum(
+                    float(p.signed_qty)
+                    for p in self.cache.positions_open(instrument_id=instrument_id, strategy_id=self.strategy_id)
+                ),
+            }
+
+    engine = BacktestEngine(config=BacktestEngineConfig(trader_id=TraderId("PROBE-000")))
+    engine.add_venue(
+        venue=venue,
+        oms_type=OmsType.NETTING,
+        account_type=AccountType.CASH,
+        base_currency=None,
+        starting_balances=[Money(100_000, Currency.from_str("EUR")), Money(10, Currency.from_str("BTC"))],
+    )
+    engine.add_instrument(instrument)
+    engine.add_strategy(_Probe())
+    engine.add_data(
+        [
+            # The sizes are minted through the instrument: a quote whose size precision differs from
+            # the instrument's is accepted by the tick type and then matches nothing, so the order
+            # rests forever and the run measures an ordering it never reached.
+            QuoteTick(
+                instrument_id,
+                instrument.make_price(bid),
+                instrument.make_price(bid + 1.0),
+                instrument.make_qty(1.0),
+                instrument.make_qty(1.0),
+                ts,
+                ts,
+            )
+            for ts, bid in ((1, 30001.0), (2_000_000_000, 29998.0), (3_000_000_000, 29998.0))
+        ]
+    )
+    try:
+        engine.run()
+    finally:
+        engine.dispose()
+    return readings
+
+
+def test_the_cache_already_carries_the_fill_when_the_strategy_handler_sees_it():
+    """The premise `_deliver_fill` is built on, and the one `_reconcile_terminal` bets the kill
+    switch on: by the time a handler is dispatched an order event, the Cache has already applied it.
+
+    `_reconcile_terminal` runs synchronously inside this dispatch and compares what the intent's
+    fills say this engine holds against what `cache.positions_open` returns. If the Cache moved
+    AFTER the handler instead of before it, that comparison would see a position short by the fill
+    it is standing in and latch the kill switch on every healthy round trip -- and nothing in the
+    stubbed harness could tell the two orderings apart, because the stub moves the Cache itself.
+
+    The fixture is not degenerate: the position is 0.0 before the fill and 0.001 after, and the
+    order is ACCEPTED before and FILLED after, so each reading below has a different value under the
+    other ordering.
+
+    The cancel half is the same premise for terminal events, which is what lets the row's terminal
+    state be read off the venue's own order status."""
+    readings = _cache_reads_at_dispatch()
+
+    assert set(readings) == {"OrderFilled", "OrderCanceled"}, readings  # the run really produced both
+
+    filled = readings["OrderFilled"]
+    assert filled["filled_qty"] == 0.001  # the fill is applied, not pending
+    assert filled["status"] == OrderStatus.FILLED
+    assert filled["position"] == 0.001  # what `_reconcile_terminal` reads, already moved
+    canceled = readings["OrderCanceled"]
+    assert canceled["status"] == OrderStatus.CANCELED
+    assert canceled["filled_qty"] == 0.0
+    assert canceled["in_orders_open"] == []  # a settled order has already left the open index
 
 
 def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_starts(tmp_path):
@@ -2803,9 +2975,9 @@ def test_a_terminal_ack_after_the_completing_fill_never_demotes_the_row(tmp_path
     it never re-attaches and the misstatement is permanent. That is exactly the counter-vs-record
     disagreement `_publish_fill`'s docstring forbids, on the losing side it names.
 
-    Replayed acks reach here too, so this is not only a race: `engine.pyx` applies a non-fill event,
-    ignores the `InvalidStateTrigger` return, and publishes unconditionally -- the duplicate-fill and
-    overfill guards that protect fills do not cover terminal events."""
+    Replayed acks reach here too, so this is not only a race: a non-fill event the order's own state
+    machine REFUSES is still published -- the duplicate-fill and overfill guards that protect fills
+    do not cover terminal events, and the refusal leaves the order's status where it was."""
     ex, _client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -4393,6 +4565,7 @@ _STUB_CACHE_PLUMBING = frozenset(
         "set_external_position",
         "close_position",
         "move_position",
+        "apply_fill",
     }
 )
 

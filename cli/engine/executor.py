@@ -683,9 +683,12 @@ class ProbeExecutor:
         figure (spec 00098 D7), because the stream above cannot reach backwards: a fill applied
         during nautilus's own reconciliation is published before this pass has attached a single
         row, so it matches nothing and is dropped as a genuinely external act.
-        The quantity is not lost with it -- the engine applies the fill to the order and publishes
-        it in one synchronous body, so it is resident in the reconciled order's own `filled_qty` by
-        the time this runs, and that is what `_reconcile_adopted_rows` reads. Which is also why the
+        The quantity is not lost with it -- an order event is applied to the order and to the Cache
+        BEFORE it is dispatched, so the fill is resident in the reconciled order's own `filled_qty`
+        by the time this runs, and that is what `_reconcile_adopted_rows` reads. That ordering is a
+        measurement, not a reading: the execution engine is compiled and offers no source, so
+        tests/test_engine_executor.py drives a real order through a real engine and reads the Cache
+        from inside the handler. Which is also why the
         cache read below is the WIDE one: an order that filled, was canceled or expired while this
         process was down is reconciled as CLOSED and never appears in `orders_open` at all, so the
         pass can no longer return early when nothing is resting -- an idle startup can still owe row
