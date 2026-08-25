@@ -431,6 +431,7 @@ Each of these is a real guard whose *mechanism* v2 removed. The hazard is repair
 
 - [ ] **Step 1:** The terminal-map totality proof parses closed statuses out of `Order.is_closed.__doc__`, which is `None` on v2. Find another way to derive the library's own closed set — **do not hardcode the list**, which converts a proof into an assertion.
 - [ ] **Step 2:** The external-topic tests need `MessageBus`, `Strategy.register` and `model.events`; re-express them against the observer from Task 9.
+- [ ] **Step 2b: The faulthandler re-arm's premise is gone.** Both arms of `test_a_native_abort_after_a_node_build_is_readable_only_once_faulthandler_is_re_armed` assert the dump is SUPPRESSED after a node build; it now appears, because the build no longer clobbers an armed faulthandler. Same class as Step 1 — a guard whose mechanism the library removed. Decide whether `cli/engine/command.py`'s `faulthandler.disable(); faulthandler.enable(file=2)` still earns its place, and rewrite or retire both arms with the reason recorded. Do not delete the arms to make the suite green.
 - [ ] **Step 3:** Commit.
 
 ### Task 14: The probe harness and the logger guard

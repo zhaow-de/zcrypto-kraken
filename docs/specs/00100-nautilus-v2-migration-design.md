@@ -96,6 +96,8 @@ Scoping the position gauge to our strategy would be actively worse: when the ope
 
 The current live value is read from a real client order id before being pinned, never derived: pinning a wrong value changes every future order id.
 
+Measured stronger than assumed: registration REFUSES a colliding explicit tag (`RuntimeError: Strategy order_id_tag conflict for '000'`) rather than silently shifting it, and re-derives `strategy_id` from the config at registration. So the prefix is either the pinned value or startup fails loudly — the silent-shift case the pin was written against cannot occur once the tag is explicit. The pin stays: it is what makes the tag explicit.
+
 Passing a `StrategyConfig` does not breach the standing ban on `external_order_claims`, which is a ban on the token and on a non-`None` value; leaving it unset satisfies both. The ban and the claims assertion are extended to cover the observer.
 
 ### D9 — the unmatched-external alert is owed at arming, not before
