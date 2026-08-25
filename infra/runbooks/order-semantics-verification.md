@@ -334,7 +334,7 @@ marking its own row REVIEW. The separate invocation is the stronger check and th
 
 **Expect:** `open orders 0 (ours 0, other 0), open positions 0`, `PASS`, exit 0.
 
-- `ours` non-zero ⇒ **verdict FAIL**, and the open ids are printed in probe 6's own rows ⇒ go to §8 now. Expect exit **3**, with the cancel-by-hand banner: the final read sweeps every probe-shaped order the venue still holds, including ones this invocation never submitted, so a leftover an earlier run left behind is adopted by startup reconciliation and counted as outstanding. FAIL and the banner name the same ids from the same cache read -- they cannot disagree.
+- `ours` non-zero ⇒ **verdict FAIL**, and the open ids are printed in probe 6's own rows ⇒ go to §8 now. Expect exit **3**, with the cancel-by-hand banner: the final read sweeps every probe-shaped order the venue still holds, including ones this invocation never submitted, so a leftover an earlier run left behind is adopted by startup reconciliation and counted as outstanding. FAIL and the banner read the same cache, so expect the same ids -- but they are read at different moments, and the node holds its clients open for `--order-timeout` seconds after the stop (default 30), so a cancel or fill the venue confirms in that window can legitimately move an id between the two.
 - `other` non-zero ⇒ `REVIEW` ⇒ something at the venue is not ours. Adjudicate before signing off.
 
 ______________________________________________________________________
@@ -345,7 +345,7 @@ ______________________________________________________________________
 | -- | -- | -- |
 | 0 | every executed probe passed | proceed to §7 |
 | 1 | a probe FAILED or errored, **or** a preflight rail refused the invocation before anything started (its message begins `REFUSING:` and no node was built) | read the row; an order-semantics/reconciliation failure (probes 2, 4–6) triggers the pre-approved fallback, anything else is documented and escalated (spec 00039 decision 1) |
-| 2 | refused or aborted before/while probing | nothing was submitted for the refused probe; fix the input and re-run that probe |
+| 2 | a probe was refused, **or** the run stopped before its sequence finished | **Read the harness's own output before deciding which of the two this is — they need opposite actions.** A *refusal* (`!! REFUSED before the node was built:`, or a probe row whose verdict is `REFUSED`) submitted nothing for that probe: fix the input and re-run it. A run that *stopped* — an interrupt, an exec client that died, any abnormal exit from the node — may have left a real **open position** that no order read can see, because probe 5's buy filled, its closing sell never ran, and the buy is CLOSED. The harness says so: the `!!` banner `a fill with no closing leg is an OPEN POSITION` and the matching line under *notes requiring a human decision*. Flatten by hand per §8 before re-running anything |
 | 3 | **something was left resting** | §8, immediately |
 
 ______________________________________________________________________
