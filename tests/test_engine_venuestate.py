@@ -1,10 +1,11 @@
 import dataclasses
 import json
-from collections import namedtuple
 from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from nautilus_trader.model import Currency, CurrencyPair, InstrumentId, Money, Price, Quantity, Symbol
 
 from cli.engine.errors import EngineError
 from cli.engine.instruments import COSTMIN, INSTRUMENT_IDS
@@ -18,7 +19,7 @@ from cli.engine.venuestate import (
 
 FIXED_NOW = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
 
-# spec 00094: the two /BTC legs' fake instruments carry XBT-denominated attributes, deliberately
+# spec 00094: the two /BTC legs' instruments carry XBT-denominated attributes, deliberately
 # distinct from the EUR legs' generic defaults below -- a bug that reused the EUR fixture values
 # for these two symbols would go undetected otherwise.
 _XBT_LEG_ATTRS = {
@@ -27,12 +28,39 @@ _XBT_LEG_ATTRS = {
 }
 
 
-def _fake_instrument(instrument_id: str, *, ordermin=0.01, lot_step=0.0001, tick_size=0.01):
-    # min_notional mirrors observed live reality (module docstring, D5a): the installed Kraken
-    # adapter never populates it. venue_state_from_cache must never read it -- costmin comes from
-    # the committed COSTMIN constant instead.
-    return SimpleNamespace(
-        id=instrument_id, min_quantity=ordermin, min_notional=None, size_increment=lot_step, price_increment=tick_size
+def _decimals(step: float) -> int:
+    """The decimal precision one venue step implies -- 0.01 -> 2, 0.0000001 -> 7. Kraken publishes
+    `pair_decimals`/`lot_decimals` alongside `tick_size`, and across the whole basket the step is
+    exactly `10 ** -decimals`, so deriving one from the other keeps the instrument self-consistent
+    the way a Cache instrument is."""
+    return max(0, -Decimal(str(step)).as_tuple().exponent)
+
+
+def _instrument(instrument_id: str, *, ordermin=0.01, lot_step=0.0001, tick_size=0.01) -> CurrencyPair:
+    """A REAL `CurrencyPair` at one leg's precisions -- what `Cache.instrument()` hands back.
+
+    Its `id` is an `InstrumentId` and its three constraints are `Quantity`/`Price`, so the reader's
+    coercions are exercised instead of assumed: hand it plain floats and a `str` and every value
+    the reader freezes is already JSON-ready, which leaves `to_payload()`'s `json.dumps` green on a
+    shape the venue never sends -- while the live boundary raises on the first real instrument.
+
+    `min_notional` is left unset, mirroring observed live reality (module docstring, D5a): the
+    Kraken adapter never populates it, so costmin comes from the committed COSTMIN constant."""
+    iid = InstrumentId.from_str(instrument_id)
+    base, quote = str(iid.symbol).split("/")
+    price_precision, size_precision = _decimals(tick_size), _decimals(lot_step)
+    return CurrencyPair(
+        instrument_id=iid,
+        raw_symbol=Symbol(base + quote),
+        base_currency=Currency.from_str(base),
+        quote_currency=Currency.from_str(quote),
+        price_precision=price_precision,
+        size_precision=size_precision,
+        price_increment=Price(tick_size, price_precision),
+        size_increment=Quantity(lot_step, size_precision),
+        min_quantity=Quantity(ordermin, size_precision),
+        ts_event=0,
+        ts_init=0,
     )
 
 
@@ -43,8 +71,8 @@ def _fake_position(signed_qty: float):
 class FakeCache:
     """Duck-types the three Cache accessors venue_state_from_cache calls, matching their real
     signatures (`instrument(instrument_id)`, `positions_open(instrument_id=...)`,
-    `account_for_venue(venue=...)`). Real Nautilus InstrumentId/Venue objects are passed in by the
-    reader under test -- this fake matches them by str() so it never needs to import Nautilus."""
+    `account_for_venue(venue=...)`). Real `InstrumentId`/`Venue` objects are passed in by the
+    reader under test, and this cache matches them by str()."""
 
     def __init__(self, instruments: dict[str, object], positions: dict[str, list], account):
         self._instruments = instruments
@@ -61,18 +89,16 @@ class FakeCache:
         return self._account
 
 
-_FakeCurrency = namedtuple("_FakeCurrency", ["code"])  # SimpleNamespace is unhashable, dict keys must not be
-
-
 def _fake_account(balances_free: dict[str, float]):
-    balances = {_FakeCurrency(code=code): value for code, value in balances_free.items()}
+    """`balances_free()` in the real account's own terms: `dict[Currency, Money]`. Both halves are
+    library types the reader has to coerce -- a plain str key and a float value would let a reader
+    that never called `.code` or `float()` pass."""
+    balances = {Currency.from_str(code): Money(value, Currency.from_str(code)) for code, value in balances_free.items()}
     return SimpleNamespace(balances_free=lambda: balances)
 
 
 def _all_instruments(**overrides):
-    instruments = {
-        iid_str: _fake_instrument(iid_str, **_XBT_LEG_ATTRS.get(symbol, {})) for symbol, iid_str in INSTRUMENT_IDS.items()
-    }
+    instruments = {iid_str: _instrument(iid_str, **_XBT_LEG_ATTRS.get(symbol, {})) for symbol, iid_str in INSTRUMENT_IDS.items()}
     instruments.update(overrides)
     return instruments
 
@@ -120,7 +146,7 @@ def test_a_cache_instrument_id_mismatch_raises():
     # A silent instrument_id mismatch is exactly the venue-truth divergence this spec exists to
     # surface, so it must never narrow into "whatever the Cache happened to hand back."
     instruments = _all_instruments()
-    instruments[INSTRUMENT_IDS["BTC/EUR"]] = _fake_instrument("WRONG/EUR.KRAKEN")
+    instruments[INSTRUMENT_IDS["BTC/EUR"]] = _instrument("WRONG/EUR.KRAKEN")
     cache = FakeCache(instruments, {}, _fake_account({}))
     with pytest.raises(EngineError, match="BTC/EUR"):
         venue_state_from_cache(cache, clock=lambda: FIXED_NOW)
@@ -252,3 +278,44 @@ def test_runtime_concordance_flags_a_base_missing_from_the_snapshot():
     verdict = runtime_concordance(state)
     assert verdict.ok is False
     assert verdict.failures == ("DOT/EUR: instrument not present in snapshot",)
+
+
+# --- this file's library stand-ins, checked against the library ----------------------------------
+#
+# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
+# guard below; the reasoning that makes it worth having lives there.
+
+
+def _library_standins():
+    """(label, stub instance, real class, plumbing) for every test double in this file that stands
+    in for a library type. Built inside a function so the extra imports are paid only by the test
+    that needs them."""
+    from nautilus_trader.common import Cache
+    from nautilus_trader.model import MarginAccount, Position
+
+    return [
+        ("FakeCache", FakeCache({}, {}, None), Cache, frozenset({"_instruments", "_positions", "_account"})),
+        ("_fake_position", _fake_position(1.0), Position, frozenset()),
+        ("_fake_account", _fake_account({"EUR": 1.0}), MarginAccount, frozenset()),
+    ]
+
+
+def test_no_stub_in_the_venue_reader_suite_offers_a_name_its_real_library_type_lacks():
+    """The direction nothing else covers. A stub MISSING something the reader calls fails loudly the
+    first time a test runs it -- the call raises. A stub OFFERING something the real type lacks
+    fails NOTHING: every test believes the fabricated attribute forever, and the live boundary is
+    the only place the read comes back wrong -- inside the swallow that journals nothing.
+
+    Every violation is collected rather than raised at the first: one red run should name all of
+    them, not send the reader round the loop once per stub."""
+    violations = []
+    for label, stub, real, plumbing in _library_standins():
+        offered = {name for name in dir(stub) if not name.startswith("__")} - plumbing
+        assert offered, f"{label} offers nothing outside its plumbing list -- the check is vacuous"
+        stale = sorted(name for name in plumbing if hasattr(real, name))
+        extra = sorted(name for name in offered if not hasattr(real, name))
+        if extra:
+            violations.append(f"{label} offers {extra}, which {real.__name__} does not carry")
+        if stale:
+            violations.append(f"{label}'s plumbing list exempts {stale}, which {real.__name__} DOES carry -- check them instead")
+    assert violations == [], "; ".join(violations)
