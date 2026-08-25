@@ -7,12 +7,23 @@ actually use, in one run. It is deliberately preferred over adopting more of the
 coverage: adopting does not deepen coverage of what we depend on, it enlarges what we depend on.
 """
 
+import ast
 import importlib
+from pathlib import Path
 
 import pytest
 
-# (module, symbol) for every nautilus name imported anywhere under cli/.
+# (module, symbol) for every nautilus name imported anywhere under cli/, at the module path cli/
+# imports it FROM -- a re-export upstream drops is a live-path import error, and pinning the same
+# object through a different path would pass while production crashes. Coverage of this list against
+# the tree is DERIVED below rather than claimed here, so a new import cannot land unpinned.
+#
+# Two entries are not import sites. `nautilus_trader.__version__` is what the arming gate reads
+# through `cli/engine/execgate.py`'s bare module import, which has no symbol to name; `LiquiditySide`
+# cli/ never imports at all, and it is pinned because the venue's own member NAMES are persisted into
+# forensic rows off live fill events (`cli/engine/command.py` pins the lower-cased set against it).
 PINNED_SYMBOLS = [
+    ("nautilus_trader", "__version__"),
     ("nautilus_trader.adapters.kraken", "KRAKEN"),
     ("nautilus_trader.adapters.kraken", "KrakenDataClientConfig"),
     ("nautilus_trader.adapters.kraken", "KrakenDataClientFactory"),
@@ -28,6 +39,7 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.live", "LiveNodeBuilder"),
     ("nautilus_trader.model", "AccountId"),
     ("nautilus_trader.model", "AccountType"),
+    ("nautilus_trader.model", "ClientOrderId"),
     ("nautilus_trader.model", "InstrumentId"),
     ("nautilus_trader.model", "LiquiditySide"),
     ("nautilus_trader.model", "OrderSide"),
@@ -37,6 +49,7 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.model", "TraderId"),
     ("nautilus_trader.model", "Venue"),
     ("nautilus_trader.trading", "Strategy"),
+    ("nautilus_trader.trading", "StrategyConfig"),
 ]
 
 # Attributes, not just symbols. `Strategy.strategy_id` is read on the live trade path
@@ -62,6 +75,34 @@ def test_every_symbol_we_import_still_exists_where_we_import_it(module_path, sym
     assert hasattr(module, symbol), f"{module_path}.{symbol} is gone -- our import site breaks"
 
 
+def test_the_pin_covers_every_nautilus_name_cli_imports():
+    """The list above is only worth what its completeness is worth, and a hand-kept list drifts the
+    moment an import lands beside it -- silently, because every other test here passes on a list
+    that is merely SHORTER than the truth. So the truth is read off the tree instead of restated:
+    every `from nautilus_trader... import X` under cli/ must appear in `PINNED_SYMBOLS` under the
+    module it is imported FROM, and a bare `import nautilus_trader...` must have its module pinned
+    through some entry.
+
+    One-directional on purpose: the pin may hold names cli/ does not import (a persisted enum has no
+    import site), so only the tree-minus-pin direction is an offence."""
+    imported: set[tuple[str, str]] = set()
+    modules_imported: set[str] = set()
+    files = sorted(Path("cli").rglob("*.py"))
+    assert len(files) > 100, f"the walk found only {len(files)} files -- vacuous"
+    for path in files:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom):
+                if (node.module or "").split(".")[0] == "nautilus_trader":
+                    imported |= {(node.module, alias.name) for alias in node.names}
+            elif isinstance(node, ast.Import):
+                modules_imported |= {a.name for a in node.names if a.name.split(".")[0] == "nautilus_trader"}
+    assert imported, "the walk found no nautilus import at all -- it would pass on an empty pin"
+
+    pinned_modules = {module for module, _ in PINNED_SYMBOLS}
+    assert sorted(imported - set(PINNED_SYMBOLS)) == [], "imported under cli/ and not pinned"
+    assert sorted(modules_imported - pinned_modules) == [], "module imported under cli/ and not pinned"
+
+
 # Name -> integer, for every enum whose VALUE we persist into a durable record or compare across a
 # restart. A rename is loud; a silent value change corrupts stored rows, so both halves are pinned.
 PINNED_ENUM_VALUES = {
@@ -70,7 +111,7 @@ PINNED_ENUM_VALUES = {
     "TimeInForce": {"GTC": 1, "IOC": 2, "FOK": 3, "GTD": 4},
     "AccountType": {"CASH": 1, "MARGIN": 2, "BETTING": 3},
     # Exactly the members cli/engine references. Generated from the installed wheel, never typed.
-    "OrderStatus": {"CANCELED": 8, "DENIED": 2, "EXPIRED": 9, "FILLED": 14, "REJECTED": 7},
+    "OrderStatus": {"CANCELED": 8, "DENIED": 2, "EXPIRED": 9, "FILLED": 14, "REJECTED": 7, "VOIDED": 15},
 }
 
 
