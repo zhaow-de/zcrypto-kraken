@@ -1528,12 +1528,16 @@ built = (
     )
     .build()
 )
+handle = built.handle()
 try:
     built.run()
 except BaseException as exc:
     sys.__stdout__.write("RAISED %s: %s\\n" % (type(exc).__name__, exc))
 else:
     sys.__stdout__.write("RETURNED\\n")
+# The node's own verdict comes from the handle, never from its logs: the logger flushes on a thread
+# this process is about to `os._exit` past, so a log-text assertion would be a race under load.
+sys.__stdout__.write("FINAL %s\\n" % handle.state)
 sys.__stdout__.flush()
 os._exit(0)
 """
@@ -1550,7 +1554,7 @@ def test_a_node_that_cannot_finish_starting_raises_out_of_run():
     assert result.returncode == 0, detail  # os._exit(0) ends the child; anything else is a native death
     assert "RETURNED" not in result.stdout, detail  # a quiet return IS the zombie this rests on not happening
     assert "RAISED" in result.stdout, detail
-    assert "aborting startup" in result.stdout, detail  # the node stopped itself; it is not left running
+    assert "FINAL NodeState.STOPPED" in result.stdout, detail  # it stopped itself; nothing is left running
 
 
 # What a `LiveNode` costs anything that reaches for it off the thread that built it. pyo3 marks the
