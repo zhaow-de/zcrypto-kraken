@@ -18,10 +18,16 @@ The two directions are NOT symmetric, and only one of them is self-policing:
 
 So each library stand-in owes both directions -- most cover them in two tests, a few in one -- and
 the classification below is what makes "each" checkable.
-`test_every_test_double_in_the_engine_suite_is_classified` walks the
-four modules and refuses a double that is not in the table; `test_every_guard_the_table_names_exists`
+`test_every_test_double_in_the_engine_suite_is_classified` walks EVERY `test_engine_*.py` in this
+directory and refuses a double that is not in the table; `test_every_guard_the_table_names_exists`
 refuses a table entry whose guard has been renamed or deleted. A new stub is therefore a red test
 until somebody says, in writing, what it models.
+
+The module list is derived from the directory rather than written down, so the file's opening claim
+is true rather than aspirational: a hand-written list silently exempts every module nobody
+remembered to add, which is how five library stand-ins in the venue-reader suite went unguarded.
+The cost is the point -- a NEW `test_engine_*.py` carrying a double is a red run until its doubles
+are classified here.
 
 Three verdicts, and the reason the distinction matters:
 
@@ -50,26 +56,32 @@ from typing import NamedTuple
 
 import pytest
 
-MODULES = (
-    "test_engine_executor.py",
-    "test_engine_command.py",
-    "test_engine_node.py",
-    "test_engine_metrics.py",
-)
+MODULES = tuple(sorted(p.name for p in Path(__file__).parent.glob("test_engine_*.py") if p.name != Path(__file__).name))
 
 # What the walk must still find per module, so a walker that stops seeing a whole SHAPE of double
-# reads as red rather than as a short table. Per module rather than one number for all four: a
+# reads as red rather than as a short table. Per module rather than one number for all of them: a
 # single floor is only ever as strong as the smallest inventory, and lowering it for that module
 # silently un-guards every other one. Each sits below its module's real count where the inventory
 # is big enough for slack to mean anything -- a floor tracking the count exactly goes red on every
-# legitimate stub removal, which is how a guard gets loosened to nothing in one edit. `command` is
-# the exception and sits AT its count of three: below it the floor would tolerate losing a third of
-# the inventory, which is not a vacuity check at all, so a removal there is meant to be read.
+# legitimate stub removal, which is how a guard gets loosened to nothing in one edit. The small
+# inventories sit AT their count: one below, the floor would tolerate losing a third or more of
+# them, which is not a vacuity check at all, so a removal there is meant to be read.
+#
+# Keyed only by the modules that HAVE doubles, in lock-step with the table below (its own test
+# holds them there). A module absent from both is one the walk found nothing in, where any floor
+# above zero would be a claim rather than a check.
 _WALK_FLOOR = {
-    "test_engine_executor.py": 9,
+    "test_engine_concordance.py": 1,
     "test_engine_command.py": 3,
-    "test_engine_node.py": 4,
+    "test_engine_cycle.py": 4,
+    "test_engine_executor.py": 9,
+    "test_engine_gate_export.py": 1,
+    "test_engine_gate_export_cache.py": 1,
     "test_engine_metrics.py": 4,
+    "test_engine_node.py": 4,
+    "test_engine_soak.py": 1,
+    "test_engine_tracking.py": 2,
+    "test_engine_venuestate.py": 3,
 }
 
 LIBRARY = "library"
@@ -88,8 +100,41 @@ _OFFERS_NODE = "test_no_stub_in_this_file_offers_a_name_its_real_library_type_la
 _NODE_SURFACE = "test_every_node_surface_engine_run_reaches_exists_on_the_real_type"
 _NODE_OFFERS = "test_the_node_stub_offers_nothing_the_real_type_lacks"
 _CACHE_SURFACE = "test_every_cache_accessor_the_engine_reaches_exists_on_the_real_cache"
+_OFFERS_VENUESTATE = "test_no_stub_in_the_venue_reader_suite_offers_a_name_its_real_library_type_lacks"
+
+_BUILDER = "cli.engine.concordance.build_crossfreq_system_fast"
+_BUILDER_RESULT = "the result cli.engine.concordance.build_crossfreq_system_fast returns"
 
 TABLE: dict[str, dict[str, Standin]] = {
+    "test_engine_concordance.py": {
+        "_fake_builder": Standin(OURS, _BUILDER, ()),
+    },
+    "test_engine_cycle.py": {
+        "FlakyFetch": Standin(OURS, "cli.ohlc.fetch.fetch_ohlc, the fetch_fn run_cycle is called with", ()),
+        "SettleFetch": Standin(OURS, "cli.ohlc.fetch.fetch_ohlc, the fetch_fn run_cycle is called with", ()),
+        "SteppingClock": Standin(OURS, "the now-callable cli.engine.cycle.run_cycle is built with", ()),
+        "_fake_builder": Standin(OURS, _BUILDER, ()),
+        "_sleeve_result": Standin(OURS, _BUILDER_RESULT, ()),
+    },
+    "test_engine_gate_export.py": {
+        "_fake_builder": Standin(OURS, _BUILDER, ()),
+    },
+    "test_engine_gate_export_cache.py": {
+        "_fake_builder": Standin(OURS, _BUILDER, ()),
+    },
+    "test_engine_soak.py": {
+        "_fake_result": Standin(OURS, _BUILDER_RESULT, ()),
+    },
+    "test_engine_tracking.py": {
+        "_Run": Standin(NOT_A_STANDIN, "a value record for one CLI invocation's exit code, output and file mtimes", ()),
+        "_Slice": Standin(NOT_A_STANDIN, "a value record naming a copied journal slice and its per-file minimums", ()),
+    },
+    "test_engine_venuestate.py": {
+        "FakeCache": Standin(LIBRARY, "nautilus_trader.common.Cache", (_CACHE_SURFACE, _OFFERS_VENUESTATE)),
+        "_fake_position": Standin(LIBRARY, "nautilus_trader.model.Position", (_OFFERS_VENUESTATE,)),
+        # What `Cache.account_for_venue` hands back on a margin account, which is what the engine runs.
+        "_fake_account": Standin(LIBRARY, "nautilus_trader.model.MarginAccount", (_OFFERS_VENUESTATE,)),
+    },
     "test_engine_executor.py": {
         # The instrument the executor rounds through. Only the five scalar fields are restated; the
         # two rounding calls are bound off a real CurrencyPair, so the library rounds for real.
@@ -163,12 +208,23 @@ def _tree(module: str) -> ast.Module:
 
 
 def _defined_at_top_level(module: str) -> set[str]:
-    return {n.name for n in _tree(module).body if isinstance(n, (ast.ClassDef, ast.FunctionDef))}
+    """Every top-level name a table entry or a guard reference can point at -- classes and
+    functions, plus the names a class factory binds, so the two walks agree on what exists."""
+    defined = {n.name for n in _tree(module).body if isinstance(n, (ast.ClassDef, ast.FunctionDef))}
+    return defined | _discovered_doubles(module)
+
+
+# A class is a class however it is spelled. `X = namedtuple(...)` / `X = type(...)` /
+# `X = NamedTuple(...)` bind one to a name through an assignment, which no `ClassDef` walk sees --
+# and this suite has already used that spelling for a library stand-in that sat unclassified inside
+# a module the walk was reading.
+_CLASS_FACTORIES = frozenset({"namedtuple", "type", "NamedTuple"})
 
 
 def _discovered_doubles(module: str) -> set[str]:
-    """The test doubles a walk can find without being told: every top-level class, plus every
-    top-level non-test function that builds a `SimpleNamespace` -- the suite's two stub shapes.
+    """The test doubles a walk can find without being told: every top-level class -- defined with
+    `class` or bound by a class factory -- plus every top-level non-test function that builds a
+    `SimpleNamespace`. Those are the suite's stub shapes.
 
     Deliberately over-broad on the class half: it sweeps in helpers that turn out not to be doubles
     at all, and the table has to say so for each. That is the trade -- a rule tight enough to admit
@@ -182,6 +238,11 @@ def _discovered_doubles(module: str) -> set[str]:
             referenced |= {s.id for s in ast.walk(n) if isinstance(s, ast.Name)}
             if "SimpleNamespace" in referenced:
                 found.add(n.name)
+        elif isinstance(n, ast.Assign) and isinstance(n.value, ast.Call):
+            called = n.value.func
+            name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", None)
+            if name in _CLASS_FACTORIES:
+                found |= {t.id for t in n.targets if isinstance(t, ast.Name)}
     return found
 
 
@@ -191,8 +252,9 @@ def test_every_test_double_in_the_engine_suite_is_classified(module):
     suite's stub inventory is invisible -- which is how seven separate restatements each reached
     production behaviour before a human happened to read them."""
     discovered = _discovered_doubles(module)
-    assert len(discovered) >= _WALK_FLOOR[module], f"the walk found only {sorted(discovered)} in {module} -- it is checking nothing"
-    unclassified = sorted(discovered - set(TABLE[module]))
+    floor = _WALK_FLOOR.get(module, 0)
+    assert len(discovered) >= floor, f"the walk found only {sorted(discovered)} in {module} -- it is checking nothing"
+    unclassified = sorted(discovered - set(TABLE.get(module, {})))
     assert unclassified == [], f"{module} defines {unclassified}, which the table does not classify"
 
 
@@ -200,7 +262,7 @@ def test_every_test_double_in_the_engine_suite_is_classified(module):
 def test_every_name_the_table_classifies_still_exists(module):
     """The mirror failure: an entry whose subject has been renamed or deleted. It reads as coverage
     and is none -- the same shape as a pinned constant no test consumes."""
-    gone = sorted(set(TABLE[module]) - _defined_at_top_level(module))
+    gone = sorted(set(TABLE.get(module, {})) - _defined_at_top_level(module))
     assert gone == [], f"the table classifies {gone}, which {module} no longer defines"
 
 
@@ -213,6 +275,17 @@ def test_every_guard_the_table_names_exists():
     assert len(named) >= 8, f"the table names only {sorted(named)} -- it is checking nothing"
     missing = sorted(named - defined)
     assert missing == [], f"the table names {missing}, which no module in the engine suite defines"
+
+
+def test_the_table_and_the_floor_cover_the_same_modules():
+    """Both are keyed only by the modules the walk finds doubles in, so they have to agree. A table
+    entry with no floor is an inventory nothing measures; a floor with no table entry is a number
+    guarding a module whose doubles are unclassified. Every key must also name a module that still
+    exists -- a renamed file leaves both behind, silently."""
+    assert set(TABLE) == set(_WALK_FLOOR), f"table {sorted(set(TABLE) ^ set(_WALK_FLOOR))} is not floored in lock-step"
+    assert set(TABLE) <= set(MODULES), f"the table names {sorted(set(TABLE) - set(MODULES))}, which this directory does not hold"
+    empty = sorted(module for module in TABLE if not _discovered_doubles(module))
+    assert empty == [], f"the table classifies {empty}, where the walk now finds no double at all"
 
 
 def test_every_library_standin_names_a_guard_and_nothing_else_does():
