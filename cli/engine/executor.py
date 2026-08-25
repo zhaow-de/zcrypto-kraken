@@ -93,21 +93,25 @@ _TRIPPED_REFUSAL = "the kill switch tripped in this process"
 FIRST_FILL_FILE = "first-fill"
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
-# What a terminal event on an ADOPTED order's row writes as its state, taken from
-# `execledger._ROW_STATES`' existing names rather than minting one. `OrderCancelRejected` is
-# deliberately absent: the venue positively says the cancel did NOT take, so the order may still
-# rest and the row has to keep pointing at a possibly-live order.
-_EXTERNAL_TERMINAL_STATES = {"OrderCanceled": "canceled", "OrderExpired": "venue_canceled", "OrderRejected": "rejected"}
-# What the STARTUP reconciliation writes for an order the cache holds as closed -- keyed on the
-# order's own status, not on an event class name, because the commonest closed-while-down shape is a
-# cancel with zero fills: it publishes no event this process is alive to hear and leaves no quantity
-# delta to notice it by, so `_EXTERNAL_TERMINAL_STATES` has no entry that could reach it. Every
-# closed `OrderStatus` the library defines is here; a status outside the map leaves the row's state
-# untouched rather than minting one, since `_store` refuses a state outside `_ROW_STATES` and a
-# raise here would cost the classification pass. `canceled` makes no we-requested claim either --
-# nothing at startup can tell a venue cancel from one the previous process sent -- and `VOIDED`, the
-# venue undoing an order's fills, reads `venue_canceled` for the reason `EXPIRED` does: the venue
-# ended it and this engine did not ask.
+# What an ADOPTED order's row writes as its state, on BOTH paths that write one -- the startup
+# reconciliation and the live external stream -- taken from `execledger._ROW_STATES`' existing names
+# rather than minting one.
+#
+# Keyed on the order's own status, never on an event class name, and that is the whole point: the
+# library's closed statuses are a finite declared set, so this map can be PROVEN total over them and
+# is; a class name is an open string space where no such proof is even expressible. It also reaches
+# what no event could -- the commonest closed-while-down shape is a cancel with zero fills, which
+# publishes no event this process is alive to hear and leaves no quantity delta to notice it by.
+#
+# A status outside the map leaves the row's state untouched rather than minting one, since `_store`
+# refuses a state outside `_ROW_STATES` and a raise here would cost the caller its pass. The open
+# statuses fall through that way on purpose: an order the venue REFUSED to move -- a rejected
+# cancel, a stale ack the state machine declined -- is still resting, and its row has to keep
+# pointing at a possibly-live order.
+#
+# `canceled` makes no we-requested claim -- nothing here can tell a venue cancel from one this
+# engine sent -- and `VOIDED`, the venue undoing an order's fills, reads `venue_canceled` for the
+# reason `EXPIRED` does: the venue ended it and this engine did not ask.
 _ADOPTED_TERMINAL_STATES = {
     OrderStatus.FILLED: "filled",
     OrderStatus.CANCELED: "canceled",
@@ -1935,6 +1939,41 @@ class ProbeExecutor:
             # on_order_event idiom).
             logger.exception("executor external-order-event handling raised -- continuing")
 
+    def _venue_terminal_state(self, event) -> str | None:
+        """The row state a non-fill event writes, read off the VENUE's own order.
+
+        The order already carries the event by the time this runs -- an order event is applied to the
+        order and to the Cache before it is dispatched, which tests/test_engine_executor.py measures
+        against a real engine -- so its status is the settled answer to what the event did, and
+        `_ADOPTED_TERMINAL_STATES` is proven total over every closed status the library defines.
+
+        It is also the more truthful answer wherever the order's status and the event's name
+        disagree, and they do exactly when the state machine REFUSED the event and it was published
+        anyway. `ownTrades` and `openOrders` are separate Kraken WS channels with no cross-stream
+        ordering guarantee, so a stale `OrderExpired` can land after a cancel this engine asked for
+        and got: the name claims the venue ended the order, the order says CANCELED, and the order
+        is right.
+
+        Three things mean the same thing here -- no terminal state, row untouched: a status outside
+        the map (every OPEN one, so a refused cancel leaves the row pointing at a live order), an
+        order the Cache does not hold, and a Cache that cannot be read at all. The last is not
+        hypothetical: a read inside a handler for an event this process's own command generated
+        raises `Already mutably borrowed`, because the Cache is still mutably borrowed for the write
+        that produced it. Letting that escape would abandon the whole handler and cost the row its
+        event payload -- the forensic record this path exists to keep -- to decide a state those
+        events never carried anyway.
+        """
+        try:
+            order = self._client.cache.order(event.client_order_id)
+        except Exception:
+            logger.warning(
+                "the venue order behind %s could not be read -- its row keeps the state it has",
+                getattr(event, "client_order_id", "?"),
+                exc_info=True,
+            )
+            return None
+        return None if order is None else _ADOPTED_TERMINAL_STATES.get(order.status)
+
     def _on_external_event(self, event) -> None:
         """Events from `events.order.EXTERNAL` (spec 00098 D1): the delivery path for orders this
         process adopted at startup, filtered by disposition BEFORE anything else runs.
@@ -1945,10 +1984,11 @@ class ProbeExecutor:
         appends the row by the order's own boundary, mirrors the quantity, and publishes counters.
         A fill completing the ledgered quantity additionally writes the row's state `filled` --
         nautilus publishes no terminal event after a resting order's final fill, so without that the
-        row would read open forever -- and terminal events write theirs from
-        `_EXTERNAL_TERMINAL_STATES`. `canceled` there makes no we-requested claim: the dominant real
-        source on this path is a cancel THIS process sent -- from the adopt pass, or from a trip --
-        whose ack now arrives matched, and `venue_canceled` would be false for exactly those.
+        row would read open forever -- and every other event asks `_venue_terminal_state`, which
+        reads the VENUE's own order rather than the event's class name. `canceled` there makes no
+        we-requested claim: the dominant real source on this path is a cancel THIS process sent --
+        from the adopt pass, or from a trip -- whose ack now arrives matched, and `venue_canceled`
+        would be false for exactly those.
 
         What NEITHER of those does is end tracking: no path here pops `_attached`, exactly as the own
         path does not. `ownTrades` and `openOrders` are separate Kraken WS channels with no
@@ -1999,7 +2039,7 @@ class ProbeExecutor:
         if reason is not None:
             payload["reason"] = str(reason)
         boundary, row = attached
-        terminal_state = _EXTERNAL_TERMINAL_STATES.get(name)
+        terminal_state = self._venue_terminal_state(event)
         if row.get("state") == "filled":
             # A completed row is never demoted by a later or replayed terminal ack: the fills that
             # completed it happened and `_inc_order("filled")` already counted them, and the venue

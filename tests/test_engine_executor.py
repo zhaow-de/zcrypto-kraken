@@ -30,6 +30,7 @@ from nautilus_trader.model import (
     OrderRejected,
     OrderSide,
     OrderStatus,
+    OrderSubmitted,
     OrderType,
     Position,
     PositionId,
@@ -338,9 +339,35 @@ class StubCache:
         Both come off the event: `Position(instrument, fill).signed_qty` reads the fill's own
         `order_side` and `last_qty`. A fixture that named the delta itself could agree with a
         mis-signed or mis-sized fill, because the number it moved the Cache by would be the number
-        the test author meant rather than the one the event carries."""
-        delta = float(Position(_real_instrument(symbol), fill).signed_qty)
+        the test author meant rather than the one the event carries.
+
+        The NETTING position id is stamped onto a copy for this arithmetic and only here -- opening
+        a `Position` needs one, and a dispatched fill that carries one cannot be voided afterwards.
+        Rebuilt field by field rather than round-tripped through `to_dict`/`from_dict`, which cannot
+        carry this file's fills at all: `from_dict` rejects the `ZEUR` commission Kraken sends."""
+        identified = OrderFilled(
+            fill.trader_id, fill.strategy_id, fill.instrument_id, fill.client_order_id, fill.venue_order_id,
+            fill.account_id, fill.trade_id, fill.order_side, fill.order_type, fill.last_qty, fill.last_px,
+            fill.currency, fill.liquidity_side, fill.event_id, fill.ts_event, fill.ts_init, fill.reconciliation,
+            PositionId(f"{INSTRUMENT_IDS[symbol]}-{_STUB_STRATEGY_ID}"), fill.commission,
+        )  # fmt: skip
+        delta = float(Position(_real_instrument(symbol), identified).signed_qty)
         self.move_position(symbol, delta)
+
+    def order(self, client_order_id):
+        """One order by id, across the whole index -- the installed `Cache.order` serves closed
+        orders as readily as open ones, and returns None for an id it does not hold.
+
+        Typed like the real one, which REFUSES a str (`'str' object is not an instance of
+        'ClientOrderId'`): a stub that accepted one would let production hand it the plain string it
+        carries everywhere else, and every live read would raise into a swallowing `except` with the
+        whole suite green."""
+        if not isinstance(client_order_id, ClientOrderId):
+            raise TypeError(
+                f"Argument 'client_order_id' has incorrect type (expected ClientOrderId, got {type(client_order_id).__name__})"
+            )
+        wanted = str(client_order_id)
+        return next((o for o in [*self._open_orders, *self._closed_orders] if str(o.client_order_id) == wanted), None)
 
     def orders_open(self, *, venue=None, **kwargs):
         return list(self._open_orders)
@@ -1507,9 +1534,13 @@ def _fill(
     metric label are written from, and the Cache accessors `_publish_fill` hands the id to refuse
     anything that is not one.
 
-    `order_side` follows `side` rather than sitting at a constant, and `position_id` carries the
-    NETTING id the venue stamps: together they are what let the library's own `Position` compute
-    what this fill does to a holding, instead of the fixture asserting it."""
+    `order_side` follows `side` rather than sitting at a constant: it is what lets the library's own
+    `Position` compute what this fill does to a holding, instead of the fixture asserting it.
+
+    No `position_id`. `Position` needs one and `apply_fill` mints it there, deliberately not here: a
+    fill carrying one makes a subsequent `OrderFillVoided` raise `Invalid event for order type`, so
+    stamping it on every fixture fill would quietly put the venue's fill-reversal event out of this
+    harness's reach."""
     return _event(
         OrderFilled,
         client_order_id=client_order_id,
@@ -1520,7 +1551,6 @@ def _fill(
         last_px=_price(px),
         currency=Currency.from_str(symbol.split("/")[1]),
         liquidity_side=liquidity,
-        position_id=PositionId(f"{INSTRUMENT_IDS[symbol]}-{_STUB_STRATEGY_ID}"),
         commission=None if fee is None else Money(fee, Currency.from_str(fee_code)),
     )
 
@@ -2776,6 +2806,25 @@ def _executor_errors(level=logging.ERROR):
         log.setLevel(previous_level)
 
 
+def _resting_limit_order(client_order_id, *, quantity="1.0"):
+    """A REAL `LimitOrder` resting at the venue, driven to ACCEPTED by the library's own events.
+
+    Real because the terminal-state write reads `cache.order(...).status`, and only the library's
+    own state machine can say what a given event does to that status. A namespace carrying a
+    hand-set status would answer whatever the test author expected -- including for the stale and
+    replayed acks the state machine REFUSES, which is exactly where reading the order rather than
+    the event's name earns its place."""
+    head = (_TRADER_ID, _STUB_STRATEGY_ID, InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]), ClientOrderId(client_order_id))
+    order = LimitOrder(
+        *head, OrderSide.BUY, Quantity.from_str(quantity), Price.from_str("30000.0"), TimeInForce.GTC,
+        False, False, False, UUID4(), 0,
+    )  # fmt: skip
+    order.apply(OrderSubmitted(*head, _ACCOUNT_ID, UUID4(), 0, 0))
+    order.apply(OrderAccepted(*head, _VENUE_ORDER_ID, _ACCOUNT_ID, UUID4(), 0, 0, False))
+    assert order.status == OrderStatus.ACCEPTED  # a fixture that started closed would adopt nothing
+    return order
+
+
 def _adopted_executor(tmp_path, *, client_order_id="O-attached", reduce_only=True):
     """A previous process's resting order, adopted by the startup pass and attached to its OWN
     boundary's row four hours back -- the only state the external topic's matched path is reachable
@@ -2783,11 +2832,28 @@ def _adopted_executor(tmp_path, *, client_order_id="O-attached", reduce_only=Tru
     test below the unmatched path's green instead."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, client_order_id, reduce_only=reduce_only, when=earlier)
-    client = StubClient(StubCache(open_orders=[_open_order(client_order_id)]))
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(client_order_id)]))
     ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
     ex.on_timer(NOW)
     assert client_order_id in ex._attached
     return ex, client, earlier
+
+
+def _deliver_external_event(ex, client, event):
+    """Deliver an event on the external topic the way the venue does: the order the Cache holds
+    takes it FIRST, then the strategy sees it -- the same measured ordering `_deliver_fill` rests on.
+
+    The resulting status is DERIVED, never stated: the fixture hands the library's own order the
+    library's own event and lets the state machine decide. That is what makes a stale ack behave
+    here as it does in production -- the transition is refused, the order keeps the status it had,
+    and the event is dispatched anyway."""
+    order = client.cache.order(event.client_order_id)
+    assert order is not None, f"{event.client_order_id} is not in the cache -- the delivery would prove nothing"
+    try:
+        order.apply(event)
+    except RuntimeError as exc:  # the state machine declining a stale or replayed ack: still published
+        assert "Invalid order state transition" in str(exc), exc
+    ex.on_external_order_event(event)
 
 
 def test_an_external_fill_completing_an_adopted_order_appends_counts_and_closes_the_row(tmp_path):
@@ -2936,6 +3002,10 @@ def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_r
     their rows (they used to stay open and re-read as possibly-live on every future scan) is the side
     effect worth its own assertion.
 
+    The state is reached through the venue's order, not through the event's class name: the event is
+    applied to the real `LimitOrder` the Cache holds, its status moves by the library's own state
+    machine, and the row's state is what that status maps to.
+
     The row's STATE closes; the ATTACHMENT does not. `ownTrades` and `openOrders` are separate Kraken
     WS channels with no cross-stream ordering guarantee, so a fill can land after the terminal ack --
     and popping here would send it to the unmatched branch to be counted and never journaled, which
@@ -2946,7 +3016,7 @@ def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_r
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
 
-    ex.on_external_order_event(_event(event_cls, client_order_id="O-opener"))
+    _deliver_external_event(ex, client, _event(event_cls, client_order_id="O-opener"))
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == expected_state
@@ -2978,13 +3048,13 @@ def test_a_terminal_ack_after_the_completing_fill_never_demotes_the_row(tmp_path
     Replayed acks reach here too, so this is not only a race: a non-fill event the order's own state
     machine REFUSES is still published -- the duplicate-fill and overfill guards that protect fills
     do not cover terminal events, and the refusal leaves the order's status where it was."""
-    ex, _client, earlier = _adopted_executor(tmp_path)
+    ex, client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex.on_external_order_event(_fill("O-attached", 0.001))  # completes the ledgered quantity
     assert metrics.orders == ["filled"]
 
-    ex.on_external_order_event(_canceled("O-attached"))
+    _deliver_external_event(ex, client, _canceled("O-attached"))
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == "filled"  # the completion stands; `canceled` here would be a lie
@@ -2995,15 +3065,51 @@ def test_a_terminal_ack_after_the_completing_fill_never_demotes_the_row(tmp_path
     assert not _kill_file(tmp_path).exists()
 
 
+def test_a_stale_terminal_ack_never_overwrites_the_state_the_venues_order_actually_reached(tmp_path):
+    """Where reading the ORDER and reading the event's NAME part company, on the live trade path.
+
+    `ownTrades` and `openOrders` are separate Kraken WS channels with no cross-stream ordering
+    guarantee, so a stale `OrderExpired` can land after a cancel this engine asked for and the venue
+    took. The order's own state machine REFUSES that transition -- measured: it stays CANCELED --
+    and the event is published anyway, so this handler is dispatched an event whose name says
+    `venue_canceled` about an order that is `canceled`.
+
+    Keyed on the name, the second ack silently rewrites the row to `venue_canceled`, and the ledger
+    then says the venue ended an order this engine cancelled. Nothing catches it afterwards: the
+    ledger permits any terminal state to overwrite any other, and a terminal row never re-attaches,
+    so the misstatement is permanent. Keyed on the order's status, the row keeps what actually
+    happened.
+
+    The fixture is not degenerate: the two readings of the SAME event differ -- `venue_canceled`
+    from the name, `canceled` from the order."""
+    ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
+    assert [str(cid) for cid in client.canceled] == ["O-opener"]  # the pass's own cancel went out
+
+    _deliver_external_event(ex, client, _canceled("O-opener"))
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "canceled"
+
+    _deliver_external_event(ex, client, _event(OrderExpired, client_order_id="O-opener"))
+
+    assert client.cache.order(ClientOrderId("O-opener")).status == OrderStatus.CANCELED  # the refusal
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "canceled"  # NOT venue_canceled: this engine asked, and the venue took it
+    assert [e["type"] for e in row["events"]] == ["OrderCanceled", "OrderExpired"]  # both are evidence
+    assert ex._attached["O-opener"][1]["state"] == "canceled"  # the mirror the completion guard reads
+
+
 def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_row(tmp_path):
     """The venue positively says the cancel did NOT take, so the order may still rest: the event is
     evidence, the row keeps its open state, and the entry stays attached for the fill that can still
-    arrive. Deliberately out of the terminal map for exactly that reason."""
-    ex, _client, earlier = _adopted_executor(tmp_path)
+    arrive.
+
+    Nothing special-cases it. The venue's order is still ACCEPTED after a refused cancel -- measured
+    -- and no OPEN status is in the terminal map, so the omission the old class-name map had to
+    spell out falls out of reading the order instead."""
+    ex, client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
 
-    ex.on_external_order_event(_event(OrderCancelRejected, client_order_id="O-attached", reason="EOrder:Unknown order"))
+    _deliver_external_event(ex, client, _event(OrderCancelRejected, client_order_id="O-attached", reason="EOrder:Unknown order"))
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == "accepted"
@@ -3319,11 +3425,16 @@ def _limit_orders_by_status():
     return reached, refused
 
 
-def test_the_startup_terminal_map_is_total_over_the_librarys_own_closed_statuses():
-    """Totality against the installed library rather than against a hand-written list: an order
+def test_the_terminal_state_map_is_total_over_the_librarys_own_closed_statuses():
+    """The ONE map both row-state paths write through -- the startup reconciliation and the live
+    external stream -- and the proof that it covers everything either can be handed.
+
+    Totality against the installed library rather than against a hand-written list: an order
     status the map does not carry leaves a closed order's row open forever, and the failure is
     silent. So the closed set is the library's own answer -- an order is driven into each status it
     defines and asked `is_closed`, which is the same predicate reconciliation's caller consults.
+    This proof is the reason the live path reads the order's status rather than the event's class
+    name: a name is an open string space and no totality statement over it is even expressible.
 
     Three things keep the domain from quietly shrinking, which is how this proof would decay into an
     assertion. The statuses come from `OrderStatus.variants()`, so a member the library adds is one
