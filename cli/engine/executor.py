@@ -1179,8 +1179,10 @@ class ProbeExecutor:
         # reduce-only is a margin-order concept, so a spot order never carries it at all.
         flag = {"reduce_only": True} if active.reduce_only else {}
         # `make_qty` REFUSES a quantity that rounds to zero, and it is called outside the try above.
-        # What keeps that unreachable is `size_order`: it floors to `lot_step` and then refuses
-        # anything under `ordermin`, so `sized.qty` is a whole number of increments and at least one.
+        # What keeps that unreachable is `size_order`: it floors to `lot_step`, so `sized.qty` is a
+        # whole number of increments, and the notional floors refuse zero of them. `ordermin` is the
+        # usual one, but it reads 0.0 when the venue reports no minimum, and 0.0 < 0.0 refuses
+        # nothing -- the floor that always holds is the committed `costmin`, positive on every leg.
         order = self._client.order_factory.limit(
             instrument_id=active.instrument_id,
             order_side=OrderSide.BUY if intent.side == "buy" else OrderSide.SELL,
