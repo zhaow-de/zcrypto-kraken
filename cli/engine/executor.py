@@ -105,11 +105,14 @@ _EXTERNAL_TERMINAL_STATES = {"OrderCanceled": "canceled", "OrderExpired": "venue
 # closed `OrderStatus` the library defines is here; a status outside the map leaves the row's state
 # untouched rather than minting one, since `_store` refuses a state outside `_ROW_STATES` and a
 # raise here would cost the classification pass. `canceled` makes no we-requested claim either --
-# nothing at startup can tell a venue cancel from one the previous process sent.
+# nothing at startup can tell a venue cancel from one the previous process sent -- and `VOIDED`, the
+# venue undoing an order's fills, reads `venue_canceled` for the reason `EXPIRED` does: the venue
+# ended it and this engine did not ask.
 _ADOPTED_TERMINAL_STATES = {
     OrderStatus.FILLED: "filled",
     OrderStatus.CANCELED: "canceled",
     OrderStatus.EXPIRED: "venue_canceled",
+    OrderStatus.VOIDED: "venue_canceled",
     OrderStatus.REJECTED: "rejected",
     OrderStatus.DENIED: "rejected",
 }

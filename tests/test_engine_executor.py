@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import json
 import logging
-import re
 import shutil
 from collections import namedtuple
 from contextlib import contextmanager
@@ -2962,18 +2961,141 @@ def test_a_cancel_that_landed_while_the_process_was_down_closes_its_row_without_
     assert client.canceled == []
 
 
+def _limit_orders_by_status():
+    """One REAL `LimitOrder` per `OrderStatus` the library defines, driven there by applying the
+    library's own events, plus the refusals for the statuses this order type cannot wear.
+
+    `LimitOrder` is the concrete class this engine's orders are (`order_factory.limit`) and the only
+    class the startup pass adopts -- it matches the cache against rows this engine's own ledger
+    wrote. Returns `(reached, refused)`: requested status -> the order wearing it, and requested
+    status -> the exception the library raised refusing to put it there. Built inside a function so
+    the extra library imports are paid only by the test that needs them."""
+    from nautilus_trader.core import UUID4
+    from nautilus_trader.model import AccountId, ClientOrderId, OrderType, TradeId, TraderId, Venue, VenueOrderId
+    from nautilus_trader.model import OrderAccepted as _Accepted
+    from nautilus_trader.model import OrderCanceled as _Canceled
+    from nautilus_trader.model import OrderDenied as _Denied
+    from nautilus_trader.model import OrderEmulated as _Emulated
+    from nautilus_trader.model import OrderExpired as _Expired
+    from nautilus_trader.model import OrderFilled as _Filled
+    from nautilus_trader.model import OrderFillVoided as _FillVoided
+    from nautilus_trader.model import OrderPendingCancel as _PendingCancel
+    from nautilus_trader.model import OrderPendingUpdate as _PendingUpdate
+    from nautilus_trader.model import OrderRejected as _Rejected
+    from nautilus_trader.model import OrderReleased as _Released
+    from nautilus_trader.model import OrderSubmitted as _Submitted
+    from nautilus_trader.model import OrderTriggered as _Triggered
+
+    head = (TraderId("TESTER-001"), StrategyId("S-1"), InstrumentId(Symbol("BTC/EUR"), Venue("KRAKEN")), ClientOrderId("O-1"))
+    account, venue_order_id = AccountId("KRAKEN-001"), VenueOrderId("V-1")
+    price, eur = Price.from_str("100.0"), Currency.from_str("EUR")
+
+    def order():
+        return LimitOrder(*head, OrderSide.BUY, Quantity.from_str("1.0"), price, TimeInForce.GTC, False, False, False, UUID4(), 0)
+
+    def event(cls, *middle, reconciliation=None):
+        # The three-field tail every order event carries, and the `reconciliation` flag the ones
+        # published by the venue leg carry after it.
+        tail = (UUID4(), 0, 0) if reconciliation is None else (UUID4(), 0, 0, reconciliation)
+        return cls(*head, *middle, *tail)
+
+    def fill(qty):
+        return _Filled(
+            *head,
+            venue_order_id,
+            account,
+            TradeId(f"T-{qty}"),
+            OrderSide.BUY,
+            OrderType.LIMIT,
+            Quantity.from_str(qty),
+            price,
+            eur,
+            LiquiditySide.MAKER,
+            UUID4(),
+            0,
+            0,
+            False,
+        )
+
+    resting = [lambda: event(_Submitted, account), lambda: event(_Accepted, venue_order_id, account, reconciliation=False)]
+    paths = {
+        OrderStatus.INITIALIZED: [],
+        OrderStatus.DENIED: [lambda: event(_Denied, "the risk engine said no")],
+        OrderStatus.EMULATED: [lambda: event(_Emulated)],
+        OrderStatus.RELEASED: [lambda: event(_Emulated), lambda: event(_Released, price)],
+        OrderStatus.SUBMITTED: resting[:1],
+        OrderStatus.ACCEPTED: resting,
+        OrderStatus.REJECTED: [*resting[:1], lambda: event(_Rejected, account, "insufficient funds", reconciliation=False)],
+        OrderStatus.CANCELED: [*resting, lambda: event(_Canceled, reconciliation=False)],
+        OrderStatus.EXPIRED: [*resting, lambda: event(_Expired, reconciliation=False)],
+        OrderStatus.TRIGGERED: [*resting, lambda: event(_Triggered, reconciliation=False)],
+        OrderStatus.PENDING_UPDATE: [*resting, lambda: event(_PendingUpdate, account, reconciliation=False)],
+        OrderStatus.PENDING_CANCEL: [*resting, lambda: event(_PendingCancel, account, reconciliation=False)],
+        OrderStatus.PARTIALLY_FILLED: [*resting, lambda: fill("0.4")],
+        OrderStatus.FILLED: [*resting, lambda: fill("1.0")],
+        OrderStatus.VOIDED: [
+            *resting,
+            lambda: fill("1.0"),
+            lambda: _FillVoided(
+                *head,
+                venue_order_id,
+                account,
+                "C-1",
+                TradeId("T-1.0"),
+                Quantity.from_str("1.0"),
+                OrderSide.BUY,
+                OrderType.LIMIT,
+                price,
+                eur,
+                LiquiditySide.MAKER,
+                UUID4(),
+                0,
+                0,
+                False,
+            ),
+        ],
+    }
+
+    reached, refused = {}, {}
+    for status, steps in paths.items():
+        subject = order()
+        try:
+            for step in steps:
+                subject.apply(step())
+        except Exception as exc:
+            refused[status] = exc
+            continue
+        reached[status] = subject
+    return reached, refused
+
+
 def test_the_startup_terminal_map_is_total_over_the_librarys_own_closed_statuses():
     """Totality against the installed library rather than against a hand-written list: an order
     status the map does not carry leaves a closed order's row open forever, and the failure is
-    silent. The closed set is decided inside `is_closed`, compiled and unreachable from Python, so
-    its own property docstring -- the list the library maintains and a version bump would move -- is
-    the domain. `LimitOrder` is the concrete class this engine's own orders are (`order_factory
-    .limit`) and the one reconciliation adopts. The parse is asserted non-empty first: a docstring
-    the library no longer carries must fail loudly here rather than hand this test an empty set to
-    trivially satisfy."""
-    documented = re.findall(r"``([A-Z_]+)``", LimitOrder.is_closed.__doc__ or "")
-    assert len(documented) >= 5
-    closed = {getattr(OrderStatus, name) for name in documented}
+    silent. So the closed set is the library's own answer -- an order is driven into each status it
+    defines and asked `is_closed`, which is the same predicate reconciliation's caller consults.
+
+    Three things keep the domain from quietly shrinking, which is how this proof would decay into an
+    assertion. The statuses come from `OrderStatus.variants()`, so a member the library adds is one
+    no path here reaches and the first assert names it. Every member must be either reached or
+    refused, so a path that stops working cannot just drop out. And a refusal counts only when it is
+    the library declining the EVENT for this order type -- a constructor whose signature moved would
+    otherwise land in `refused` and silently take its status out of the domain.
+
+    `TRIGGERED` is the one status outside the domain, and it costs the proof nothing: a limit order
+    has no trigger, the library refuses the event, and the rows this pass adopts are this engine's
+    own limit orders."""
+    reached, refused = _limit_orders_by_status()
+
+    assert set(reached) | set(refused) == set(OrderStatus.variants())
+    assert set(refused) == {OrderStatus.TRIGGERED}
+    for status, exc in refused.items():
+        assert isinstance(exc, RuntimeError) and "Invalid event for order type" in str(exc), f"{status}: {exc!r}"
+    for status, subject in reached.items():
+        assert subject.status == status, f"the path for {status} landed on {subject.status}"
+
+    closed = {status for status, subject in reached.items() if subject.is_closed}
+    assert len(closed) >= 5
 
     assert set(executor_module._ADOPTED_TERMINAL_STATES) == closed
     assert set(executor_module._ADOPTED_TERMINAL_STATES.values()) <= execledger_module._ROW_STATES

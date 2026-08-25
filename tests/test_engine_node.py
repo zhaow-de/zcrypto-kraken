@@ -832,110 +832,172 @@ def test_no_module_widens_the_engines_order_event_stream():
     assert offenders == []
 
 
-def test_the_external_topic_string_matches_the_installed_engines_format():
-    """The library boundary, proven with a REAL message bus rather than a mock of our own
-    assumption: nautilus reconciles a venue-resting order this process did not submit under
-    `StrategyId("EXTERNAL")` and publishes its events on `f"events.order.{strategy_id}"`
-    (execution/engine.pyx `_get_order_events_topic`). `_EXTERNAL_ORDER_TOPIC` is that string, and
-    the whole feature is silent -- no exception, no log, just an unsubscribed topic -- if it ever
-    stops being. This is therefore the tripwire for the pending nautilus bump: a renamed topic or a
-    renamed external strategy id fails HERE, not in production."""
-    from nautilus_trader.common.component import MessageBus, TestClock
-    from nautilus_trader.core.uuid import UUID4
-    from nautilus_trader.model import (
-        AccountId,
-        ClientOrderId,
-        Currency,
-        InstrumentId,
-        LiquiditySide,
-        Money,
-        OrderSide,
-        OrderType,
-        Price,
-        Quantity,
-        StrategyId,
-        TradeId,
-        TraderId,
-        VenueOrderId,
+def test_the_observers_identity_is_the_one_the_library_reserves_for_orders_we_did_not_submit():
+    """The library boundary the whole second order stream rests on, read off the library rather
+    than restated. Nautilus stamps every order this process did not submit with one reserved
+    `StrategyId` and routes those orders' events to whatever strategy is registered under it -- so
+    the observer's identity has to BE the reserved one, and the feature is silent if it ever stops
+    being: no exception, no log, an observer that receives nothing.
+
+    `StrategyId` requires `<name>-<tag>` and refuses every tagless string except the reserved one,
+    so the reservation is something the library still states about that exact literal. The value
+    tested is the observer's OWN id, not a copy of it: what the production assembly registers is the
+    thing under test, and a rename of the reserved identity makes the observer's own construction
+    raise here.
+
+    What this cannot reach is the join -- a genuine venue-sourced external order arriving on this
+    observer -- which needs live reconciliation and belongs to the arming pass (T0152)."""
+    from nautilus_trader.model import StrategyId
+
+    reserved = str(node.ExternalOrderObserver(lambda event: None).strategy_id)
+    # No tag, so the only way the library accepts it below is by reserving it.
+    assert "-" not in reserved
+    assert str(StrategyId(reserved)) == reserved
+    with pytest.raises(ValueError, match="did not contain '-'"):
+        StrategyId(reserved + "X")
+
+
+# The observer handed to a REAL running engine. `BacktestEngine` is the only engine a test can run,
+# and it produces no venue-sourced external order -- nothing here can originate one, since the seal
+# is exactly what stops the observer submitting. So this probe measures the three things a running
+# engine can settle, and the child interpreter keeps its engine-wide registrations out of the suite.
+_EXTERNAL_DISPATCH_PROBE = """
+import json
+import os
+import sys
+from decimal import Decimal
+from pathlib import Path
+
+from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+from nautilus_trader.common import LoggerConfig
+from nautilus_trader.model import (
+    AccountType,
+    Currency,
+    CurrencyPair,
+    InstrumentId,
+    Money,
+    OmsType,
+    OrderSide,
+    Price,
+    Quantity,
+    QuoteTick,
+    Symbol,
+    TraderId,
+    Venue,
+)
+from nautilus_trader.trading import Strategy, StrategyConfig
+
+import cli.engine.node as node
+
+root = Path(sys.argv[1])
+instrument_id = InstrumentId.from_str("BTC/EUR.SIM")
+eur, btc = Currency.from_str("EUR"), Currency.from_str("BTC")
+instrument = CurrencyPair(
+    instrument_id=instrument_id,
+    raw_symbol=Symbol("BTC/EUR"),
+    base_currency=btc,
+    quote_currency=eur,
+    price_precision=1,
+    size_precision=6,
+    price_increment=Price(0.1, 1),
+    size_increment=Quantity(0.000001, 6),
+    ts_event=0,
+    ts_init=0,
+    maker_fee=Decimal("0"),
+    taker_fee=Decimal("0"),
+)
+
+
+class Submitter(Strategy):
+    # An ordinary identity, and the orders whose events the library must route to IT.
+    events = []
+
+    def __init__(self):
+        super().__init__(StrategyConfig(order_id_tag="777"))
+        self._quotes = 0
+
+    def on_start(self):
+        self.subscribe_quotes(instrument_id)
+
+    def on_quote(self, quote):
+        self._quotes += 1
+        if self._quotes == 3:
+            # Priced far below the book so it rests: an accepted order is a fuller event chain than
+            # a rejected one, and resting needs no fill model.
+            self.submit_order(
+                self.order_factory.limit(instrument_id, OrderSide.BUY, Quantity.from_str("0.010000"), Price(25000.0, 1))
+            )
+
+    def on_order_event(self, event):
+        type(self).events.append(type(event).__name__)
+
+
+observed = []
+engine = BacktestEngine(BacktestEngineConfig(trader_id=TraderId("TESTER-001"), logging=LoggerConfig(bypass_logging=True)))
+engine.add_venue(
+    venue=Venue("SIM"),
+    oms_type=OmsType.NETTING,
+    account_type=AccountType.CASH,
+    starting_balances=[Money(1_000_000, eur), Money(10, btc)],
+)
+engine.add_instrument(instrument)
+t0 = 1_577_836_800_000_000_000
+engine.add_data(
+    [
+        QuoteTick(
+            instrument_id=instrument_id,
+            bid_price=Price(30000.0 + i, 1),
+            ask_price=Price(30001.0 + i, 1),
+            bid_size=Quantity.from_str("10.0"),
+            ask_size=Quantity.from_str("10.0"),
+            ts_event=t0 + i * 1_000_000_000,
+            ts_init=t0 + i * 1_000_000_000,
+        )
+        for i in range(10)
+    ]
+)
+
+observer = node.ExternalOrderObserver(observed.append)
+engine.add_strategy(observer)
+engine.add_strategy(Submitter())
+engine.run()
+(root / "facts.json").write_text(
+    json.dumps(
+        {
+            # Read after add_strategy: registration is what re-derives the id.
+            "observer_id_registered": str(observer.strategy_id),
+            "submitter_events": Submitter.events,
+            "observer_events": [type(event).__name__ for event in observed],
+        }
     )
-    from nautilus_trader.model.events import OrderFilled
+)
+engine.dispose()
+os._exit(0)
+"""
 
-    external = StrategyId("EXTERNAL")
-    # The library still calls this exact id external -- the predicate reconciliation routes on.
-    assert external.is_external()
-    assert node._EXTERNAL_ORDER_TOPIC == "events.order.EXTERNAL"
 
-    trader_id = TraderId("SHADOW-001")
-    bus = MessageBus(trader_id=trader_id, clock=TestClock())
-    received: list[object] = []
-    bus.subscribe(topic=node._EXTERNAL_ORDER_TOPIC, handler=received.append)
+def test_a_really_registered_observer_takes_no_event_the_library_routes_to_another_strategy(tmp_path):
+    """The real-registration half of the boundary above, and the only place in this suite where the
+    sealed observer meets a running nautilus engine instead of a direct call.
 
-    eur = Currency.from_str("EUR")
-    fill = OrderFilled(
-        trader_id=trader_id,
-        strategy_id=external,
-        instrument_id=InstrumentId.from_str("BTC/EUR.KRAKEN"),
-        client_order_id=ClientOrderId("SHADOW-001-0-1"),
-        venue_order_id=VenueOrderId("OABCDE-12345-67890"),
-        account_id=AccountId("KRAKEN-001"),
-        trade_id=TradeId("TFGHIJ-12345-67890"),
-        position_id=None,
-        order_side=OrderSide.SELL,
-        order_type=OrderType.LIMIT,
-        last_qty=Quantity.from_str("0.00100000"),
-        last_px=Price.from_str("30000.0"),
-        currency=eur,
-        commission=Money(0.012, eur),
-        liquidity_side=LiquiditySide.MAKER,
-        event_id=UUID4(),
-        ts_event=0,
-        ts_init=0,
-        reconciliation=True,
+    Three things it settles that no stub can. `add_strategy` accepts this class -- every
+    order-mutating method overridden to raise -- and the run completes, so the seal does not cost
+    the registration. The library's own dispatch really calls `on_order_event` on a registered
+    strategy. And the observer, holding the reserved external identity, receives NONE of the events
+    the library routes to the other strategy: that is D2's scope property, measured rather than
+    argued, and read as a differential so the empty list is an absence and not a run that never
+    happened."""
+    result = subprocess.run(
+        [sys.executable, "-c", _EXTERNAL_DISPATCH_PROBE, str(tmp_path)], capture_output=True, text=True, timeout=120
     )
-    # Published through the engine's OWN f-string shape, off the event's own strategy_id -- the
-    # derivation under test, not a second copy of our literal.
-    bus.publish(topic=f"events.order.{fill.strategy_id}", msg=fill)
-    assert received == [fill]
+    recorded = tmp_path / "facts.json"
+    detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    assert recorded.exists(), f"the external-dispatch probe produced no result: {detail}"
+    facts = json.loads(recorded.read_text())
 
-
-def test_a_really_registered_strategy_subscribes_the_external_topic_the_library_itself_derives(tmp_path):
-    """The other half of that boundary. Every other `on_start` test here drives a stub, so
-    `self.msgbus` existing at `on_start` is read off the library's source rather than observed: this
-    one performs the nautilus registration the suite otherwise never performs and reads the REAL bus
-    back. Two properties, both of which a stub cannot carry: our (topic, handler) pair is actually
-    installed on the bus, and the topic we build is the one the LIBRARY's own register-time
-    subscription derives -- the strategy's own order topic with its id swapped for `EXTERNAL`. A
-    changed `events.order.` prefix therefore fails here, where comparing our f-string to a literal
-    would pass."""
-    from nautilus_trader.cache.cache import Cache
-    from nautilus_trader.common.component import MessageBus, TestClock
-    from nautilus_trader.model import TraderId
-    from nautilus_trader.portfolio import Portfolio
-
-    executor = RecordingExecutor()
-    strategy = ShadowStrategy(
-        _config(tmp_path),
-        run_cycle_fn=lambda cycle_ts, *, config, venue_state=None: None,
-        clock=lambda: B08 + timedelta(minutes=5),
-        executor_factory=lambda s: executor,
-    )
-    trader_id = TraderId("SHADOW-001")
-    clock = TestClock()
-    bus = MessageBus(trader_id=trader_id, clock=clock)
-    cache = Cache()
-    strategy.register(trader_id, Portfolio(bus, cache, clock), bus, cache, clock)
-    # The registration is what puts `self.msgbus` there: without it on_start raises AttributeError
-    # on the subscribe line. (The startup cycle's snapshot logs one contained EngineError -- the
-    # Cache holds no instruments -- which is by design and not what this test reads.)
-    strategy.on_start()
-
-    subs = bus.subscriptions()
-    assert (node._EXTERNAL_ORDER_TOPIC, strategy._on_external_order_event) in [(s.topic, s.handler) for s in subs]
-    # The topic taken from the library's OWN subscription rather than restated: `Strategy.register`
-    # subscribes `handle_event` to this strategy's order topic, and ours is that topic with the id
-    # replaced by the external one.
-    own = {s.topic for s in subs if s.handler == strategy.handle_event}
-    assert node._EXTERNAL_ORDER_TOPIC in {t.replace(str(strategy.id), "EXTERNAL") for t in own}
+    assert facts["observer_id_registered"] == "EXTERNAL", detail
+    assert facts["submitter_events"] == ["OrderInitialized", "OrderSubmitted", "OrderAccepted"], detail
+    assert facts["observer_events"] == [], detail
 
 
 # --- the handler-existence guard (a renamed library handler is invisible to every test above) ----
@@ -1571,14 +1633,14 @@ def test_a_node_reaches_running_only_after_its_clients_connect_and_it_reconciles
 
 # --- abort diagnosability (T0115) ---------------------------------------------------------------
 
-# Building the node registers nautilus's asyncio signal handling, which includes SIGABRT
-# (`loop.add_signal_handler(SIGABRT, ...)`). asyncio installs CPython's own no-op C handler for it,
-# which REPLACES faulthandler's -- so from that moment a native abort kills the process with no
-# output whatsoever, which is why T0115's SIGABRT was investigated for a month with no stack to read.
-# Re-arming faulthandler after the build restores the dump; `cli/engine/command.py` does exactly
-# that on the live engine, and the parameters below are the measurement that justifies its shape.
-# Asserting on `signal.getsignal(SIGABRT)` instead would prove NOTHING -- it reads identical on both
-# sides, because faulthandler installs its handler below CPython's cache of Python-level handlers.
+# A native abort prints a stack only while faulthandler is armed, and nothing sets
+# `PYTHONFAULTHANDLER` anywhere in the deployed engine -- so the arming is `cli/engine/command.py`'s
+# own `faulthandler.disable(); faulthandler.enable(file=2)` after the node is built, and the
+# parameters below are the measurement that justifies it. This is the class of death T0115 spent a
+# month on with no stack to read, and the one an unsendable-node attribute read off the building
+# thread takes. Asserting on `signal.getsignal(SIGABRT)` instead would prove NOTHING -- it reads
+# identical on both sides, because faulthandler installs its handler below CPython's cache of
+# Python-level handlers.
 _ABORT_PROBE = """
 import faulthandler, os, sys
 
@@ -1601,8 +1663,6 @@ if build:
 if mode == "rearm":
     faulthandler.disable()
     faulthandler.enable()
-elif mode == "enable-only":
-    faulthandler.enable()
 os.abort()
 """
 
@@ -1610,21 +1670,21 @@ os.abort()
 @pytest.mark.parametrize(
     ("args", "dumps"),
     [
-        # The true positive: no node build, so nothing has clobbered anything and the dump must
-        # appear. Without this arm, every silent result below could be a probe that never armed.
-        pytest.param(("1", "0", "none"), True, id="unclobbered-faulthandler-really-dumps"),
-        # The clobber itself: the same armed faulthandler goes mute once the node is built.
-        pytest.param(("1", "1", "none"), False, id="the-node-build-clobbers-an-armed-faulthandler"),
-        # Why `disable()` is load-bearing: `enable()` returns early when faulthandler already
-        # considers itself enabled, so on its own it cannot reinstall the handler asyncio replaced.
-        pytest.param(("1", "1", "enable-only"), False, id="enable-alone-cannot-undo-the-clobber"),
-        # Production before the re-arm landed: exit 134 and nothing else.
+        # The true positive: faulthandler armed, no node in the picture, and the dump must appear.
+        # Without this arm, the silent result below could be a probe that never armed at all.
+        pytest.param(("1", "0", "none"), True, id="an-armed-faulthandler-dumps"),
+        # The same arming carried THROUGH a node build, which is where the arming can be taken away:
+        # a build that registers SIGABRT with asyncio would install CPython's own no-op C handler
+        # over faulthandler's, and every abort after it would die with empty stderr. This arm is that
+        # tripwire, and its differential against the one above is the build itself.
+        pytest.param(("1", "1", "none"), True, id="a-node-build-leaves-an-armed-faulthandler-armed"),
+        # The engine's own starting point -- nothing arms faulthandler for it: exit 134 and silence.
         pytest.param(("0", "1", "none"), False, id="engine-run-without-the-re-arm-is-mute"),
-        # Production after it: the shape `cli/engine/command.py` runs.
+        # And the shape `cli/engine/command.py` runs, which is what buys the stack back.
         pytest.param(("0", "1", "rearm"), True, id="engine-run-with-the-re-arm-dumps"),
     ],
 )
-def test_a_native_abort_after_a_node_build_is_readable_only_once_faulthandler_is_re_armed(args, dumps):
+def test_a_native_abort_after_a_node_build_is_readable_only_where_faulthandler_is_armed(args, dumps):
     env = os.environ.copy()
     env.pop("KRAKEN_SPOT_API_KEY", None)
     env.pop("KRAKEN_SPOT_API_SECRET", None)
