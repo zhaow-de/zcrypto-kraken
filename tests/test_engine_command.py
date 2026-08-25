@@ -681,13 +681,13 @@ def _write_basket_store(store_dir: Path, symbols=BASKET) -> None:
             path.write_bytes(b"")
 
 
-def _run_env(monkeypatch, tmp_path, *, raises=None, symbols=BASKET) -> None:
-    """A passable `engine run` environment: valid store and a stub node builder. `raises` is what
-    the stub node's `run()` raises, standing in for a start the node aborted on its own."""
+def _run_env(monkeypatch, tmp_path, *, symbols=BASKET) -> None:
+    """A passable `engine run` environment: valid store and a stub node builder whose node starts
+    and stops cleanly. A test wanting a different node re-points the builder itself."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     _write_basket_store(engine_cfg.store_dir, symbols)
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
-    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(raises))
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node())
     # Stubbed for EVERY `run` test, not just the two that assert on it: the real re-arm would
     # re-point this pytest process's own faulthandler at fd 2 (pytest's plugin aims it at its
     # capture), and an earlier default-`sys.stderr` form left it switched OFF for the rest of the
@@ -830,7 +830,7 @@ def test_run_lets_a_start_the_node_could_not_complete_escape(tmp_path, monkeypat
     instead -- a container reported healthy by every supervisor, trading nothing, burning ratified
     gate days. The `finally` still runs, so the node is disposed on the way out."""
     disposed: list[str] = []
-    _run_env(monkeypatch, tmp_path, raises=RuntimeError("Startup reconciliation timeout reached"))
+    _run_env(monkeypatch, tmp_path)
     node = _fake_node(RuntimeError("Startup reconciliation timeout reached"))
     node.dispose = lambda: disposed.append("disposed")
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: node)
