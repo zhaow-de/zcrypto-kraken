@@ -4,7 +4,6 @@ import ast
 import json
 import logging
 import shutil
-from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -13,19 +12,34 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from nautilus_trader.core import UUID4
 from nautilus_trader.model import (
+    AccountId,
+    ClientOrderId,
     Currency,
     CurrencyPair,
     InstrumentId,
     LimitOrder,
     LiquiditySide,
+    Money,
+    OrderAccepted,
+    OrderCanceled,
+    OrderCancelRejected,
+    OrderExpired,
+    OrderFilled,
+    OrderRejected,
     OrderSide,
     OrderStatus,
+    OrderType,
     Price,
     Quantity,
+    QuoteTick,
     StrategyId,
     Symbol,
     TimeInForce,
+    TradeId,
+    TraderId,
+    VenueOrderId,
 )
 
 import cli.engine.execledger as execledger_module
@@ -171,6 +185,17 @@ def _step_precision(step: float) -> int:
     return -Decimal(str(step)).as_tuple().exponent
 
 
+def _quantity(value) -> Quantity:
+    """A `Quantity` carrying `value` exactly, minted at the precision the value is written in -- so
+    a fixture quantity is never silently rounded by the fixture itself."""
+    return Quantity(float(value), _step_precision(float(value)))
+
+
+def _price(value) -> Price:
+    """A `Price` carrying `value` exactly, on the same terms as `_quantity`."""
+    return Price(float(value), _step_precision(float(value)))
+
+
 @lru_cache(maxsize=None)
 def _rounding_delegate(symbol: str, lot_step: float, tick_size: float) -> CurrencyPair:
     """A REAL nautilus instrument at one leg's precisions. Only `make_qty`/`make_price` are read off
@@ -213,11 +238,6 @@ def _all_instruments(**overrides):
     instruments = {iid: _fake_instrument(iid, **_BTC_LEG_ATTRS.get(symbol, {})) for symbol, iid in INSTRUMENT_IDS.items()}
     instruments.update(overrides)
     return instruments
-
-
-# SimpleNamespace defines __eq__, so it is unhashable and cannot key balances_free()'s dict --
-# the same reason tests/test_engine_venuestate.py uses a namedtuple for the fake Currency.
-_FakeCurrency = namedtuple("_FakeCurrency", ["code"])
 
 
 _STUB_STRATEGY_ID = StrategyId("ShadowStrategy-000")
@@ -313,7 +333,10 @@ class StubCache:
         return list(self._open_orders) + list(self._closed_orders)
 
     def account_for_venue(self, *, venue=None, **kwargs):
-        balances = {_FakeCurrency(code=code): value for code, value in self._balances.items()}
+        # `balances_free()` in the real account's own terms: dict[Currency, Money]. Both halves are
+        # library types the reader has to coerce, and a real Currency keys the dict directly --
+        # it is hashable and value-equal, which is what a plain namespace is not.
+        balances = {Currency.from_str(code): Money(value, Currency.from_str(code)) for code, value in self._balances.items()}
         return SimpleNamespace(balances_free=lambda: balances)
 
 
@@ -544,14 +567,81 @@ def _submitted_row(tmp_path: Path, client_order_id: str, *, reduce_only: bool, w
     return row
 
 
+# Sizes nothing on the executor's quote path reads -- `on_quote` takes the two prices and the
+# instrument id. A QuoteTick cannot be built without them.
+_QUOTE_SIZE = Quantity.from_str("1.0")
+
+
 def _quote(instrument_id="BTC/EUR.KRAKEN", bid=30000.0, ask=30001.0):
-    return SimpleNamespace(instrument_id=instrument_id, bid_price=bid, ask_price=ask)
+    """A REAL `QuoteTick`, as the strategy's quote topic delivers it: `bid_price`/`ask_price` are
+    `Price` objects, which is what `_as_price` has to coerce. The library REFUSES a tick whose two
+    sides carry different precisions, so both are minted at the finer of the pair."""
+    precision = max(_step_precision(bid), _step_precision(ask))
+    return QuoteTick(
+        InstrumentId.from_str(instrument_id), Price(bid, precision), Price(ask, precision), _QUOTE_SIZE, _QUOTE_SIZE, 0, 0
+    )
 
 
-def _named(name, **attrs):
-    """An instance of a dynamically created class called `name`, so the executor's
-    `type(event).__name__` dispatch sees the real event names on plain stub objects."""
-    return type(name, (SimpleNamespace,), {})(**attrs)
+_TRADER_ID = TraderId("TESTER-001")
+_ACCOUNT_ID = AccountId("KRAKEN-001")
+_VENUE_ORDER_ID = VenueOrderId("V-1")
+
+# What each event kind carries beyond the identity fields every one of them has. These are what the
+# LIBRARY requires, not what a test happens to read: a real event refuses a missing field, so a
+# constructor that grows one fails here loudly instead of leaving a fabricated shape behind.
+_EVENT_DEFAULTS = {
+    OrderAccepted: {"venue_order_id": _VENUE_ORDER_ID, "account_id": _ACCOUNT_ID, "reconciliation": False},
+    OrderCanceled: {"reconciliation": False},
+    OrderExpired: {"reconciliation": False},
+    OrderRejected: {"account_id": _ACCOUNT_ID, "reason": "the venue said no", "reconciliation": False},
+    OrderCancelRejected: {"reason": "the venue said no", "reconciliation": False},
+    OrderFilled: {
+        "venue_order_id": _VENUE_ORDER_ID,
+        "account_id": _ACCOUNT_ID,
+        "order_side": OrderSide.BUY,
+        "order_type": OrderType.LIMIT,
+        "reconciliation": False,
+    },
+}
+
+
+def _event(cls, **overrides):
+    """One of the library's own order events, with the identity fields every kind carries baked in
+    -- a real `OrderFilled` needs sixteen keywords, so a per-test literal is not viable.
+
+    The class IS the fixture: the executor dispatches on `type(event).__name__`, and building the
+    library's own class means nothing here can wear a name the library does not define, nor answer
+    an attribute it does not carry."""
+    kwargs = {
+        "trader_id": _TRADER_ID,
+        "strategy_id": _STUB_STRATEGY_ID,
+        "instrument_id": InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]),
+        "event_id": UUID4(),
+        "ts_event": 0,
+        "ts_init": 0,
+        **_EVENT_DEFAULTS[cls],
+        **overrides,
+    }
+    kwargs["client_order_id"] = ClientOrderId(str(overrides.get("client_order_id", "O-1")))
+    return cls(**kwargs)
+
+
+def _accepted(client_order_id):
+    return _event(OrderAccepted, client_order_id=client_order_id)
+
+
+def _canceled(client_order_id):
+    return _event(OrderCanceled, client_order_id=client_order_id)
+
+
+def _rejected(client_order_id, reason, *, due_post_only=False):
+    """The venue's rejection. `due_post_only` is READ-ONLY on the constructor -- the only way to
+    mint the adapter's synchronous post-only mapping is the event's own dict round trip, which is
+    also the proof that the flag production reads is a field the library really carries."""
+    event = _event(OrderRejected, client_order_id=client_order_id, reason=reason)
+    if not due_post_only:
+        return event
+    return OrderRejected.from_dict({**event.to_dict(), "due_post_only": True})
 
 
 class _Clock:
@@ -1368,53 +1458,34 @@ def test_no_quote_inside_the_wait_refuses_the_intent(tmp_path):
 # --- order events -------------------------------------------------------------------------------
 
 
-class OrderAccepted:
-    def __init__(self, client_order_id):
-        self.client_order_id = client_order_id
+def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="ZEUR", symbol="BTC/EUR", liquidity=LiquiditySide.MAKER):
+    """A REAL `OrderFilled`, carrying every field the executor's fill row reads in the venue's own
+    types.
 
+    `fee_code` is `ZEUR`, which is what Kraken sends -- 546 live instruments carry that code and
+    none carry `EUR`, and `cli/engine/node.py` reads the margin balance under it. It also has to be,
+    for the fee numbers here to mean what they say: a `Money` quantizes to its currency's precision,
+    `ZEUR` mints at 8 decimals and `EUR` at 2, so this file's 0.012 fee is 0.012 exactly as the
+    venue sends it and would be 0.01 under a `EUR` fixture.
 
-class OrderRejected:
-    def __init__(self, client_order_id, reason):
-        self.client_order_id = client_order_id
-        self.reason = reason
+    `fee=None` builds the commission-less fill the event type permits: `commission` is `Money |
+    None`, so a fixture that can only produce a Money cannot reach the row builder's absent-fee
+    branch at all.
 
-
-class _FakeMoney:
-    """`float(commission)` + `commission.currency.code` -- the two accessors the fill row reads off
-    nautilus's Money, which is not importable as a plain value here."""
-
-    def __init__(self, amount, code="EUR"):
-        self._amount = amount
-        self.currency = _FakeCurrency(code=code)
-
-    def __float__(self):
-        return float(self._amount)
-
-
-def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR", symbol="BTC/EUR", liquidity=LiquiditySide.MAKER):
-    """An `OrderFilled` carrying every field the executor's fill row reads -- the real event always
-    has them, so the stub must too, or the row would be pinned against a shape the venue never
-    sends.
-
-    `liquidity_side` is the REAL `LiquiditySide` member, never the string it looks like: the venue's
-    `OrderFilled` carries a member, and only a member has the `.name` the ledger row and the metric
-    label are written from.
-
-    `instrument_id` is the REAL `InstrumentId` for the same reason -- the Cache accessors
-    `_publish_fill` hands it to refuse anything else.
-
-    `fee=None` builds the commission-less fill the event type permits: `commission` is declared
-    `Money | None`, so a fixture that can only produce a Money cannot reach the row builder's
-    absent-fee branch at all."""
-    return _named(
-        "OrderFilled",
+    `liquidity_side` is a `LiquiditySide` member and `instrument_id` a real `InstrumentId` -- the
+    library accepts nothing else for either. Only a member has the `.name` the ledger row and the
+    metric label are written from, and the Cache accessors `_publish_fill` hands the id to refuse
+    anything that is not one."""
+    return _event(
+        OrderFilled,
         client_order_id=client_order_id,
         instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]),
-        last_qty=last_qty,
-        last_px=px,
-        commission=None if fee is None else _FakeMoney(fee, fee_code),
+        trade_id=TradeId("T-1"),
+        last_qty=_quantity(last_qty),
+        last_px=_price(px),
+        currency=Currency.from_str(symbol.split("/")[1]),
         liquidity_side=liquidity,
-        trade_id="T-1",
+        commission=None if fee is None else Money(fee, Currency.from_str(fee_code)),
     )
 
 
@@ -1436,7 +1507,7 @@ def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_start
 
     ex.on_timer(NOW)
     ex.on_quote(_quote())
-    ex.on_order_event(OrderAccepted("O-1"))
+    ex.on_order_event(_accepted("O-1"))
     assert _record(tmp_path)["submitted"][0]["state"] == "accepted"
 
     _deliver_fill(ex, client, "O-1", 0.001)
@@ -1500,27 +1571,24 @@ def test_a_fills_liquidity_side_is_named_not_numbered_in_both_the_row_and_the_me
     assert metrics.fills == [(label, pytest.approx(0.012))]
 
 
-def test_an_unrecognisable_liquidity_side_still_gets_its_forensic_row_and_its_fill_count(tmp_path):
-    """The payload builder sits on the write-ahead path, where a raise costs the fill its row, and
-    `_liquidity` reads an attribute off a value that arrives from outside this process. A value the
-    enum cannot name is recorded verbatim and logged, never dropped -- and the fill still counts,
-    because it happened. `tracking.py` is where a liquidity outside the venue's own names is
-    refused; refusing it here would cost the row that proves it."""
-    client = StubClient()
-    metrics = RecordingMetrics()
-    set_executor_hooks(metrics=metrics)
-    ex = _executor(tmp_path, client=client)
-    _drop_plan(tmp_path, _plan_dict())
+def test_an_unrecognisable_liquidity_side_is_recorded_verbatim_rather_than_raised():
+    """`_liquidity` sits on the write-ahead path, where a raise costs the fill its row, and it reads
+    an attribute off a value that arrives from outside this process. A value the enum cannot name is
+    recorded verbatim and logged, never dropped. `tracking.py` is where a liquidity outside the
+    venue's own names is refused; refusing it here would cost the row that proves it.
 
-    ex.on_timer(NOW)
-    ex.on_quote(_quote())
-    _deliver_fill(ex, client, "O-1", 0.001, liquidity="WHO KNOWS")
+    Driven at the function rather than through a fill, because the library will not build the input.
+    An `OrderFilled` takes a `LiquiditySide` member and nothing else -- a string is `TypeError:
+    'str' object is not an instance of 'LiquiditySide'`, and the dict round trip answers `Matching
+    variant not found`. The branch is reachable only from a value no real event can carry, so the
+    honest place to prove it is the function itself. Guard-proving: WHICH log line fired is read,
+    not merely that one did."""
+    with _executor_errors(logging.WARNING) as records:
+        assert executor_module._liquidity("WHO KNOWS") == "WHO KNOWS"
 
-    assert metrics.fills == [("who knows", pytest.approx(0.012))]
-    row = _record(tmp_path)["submitted"][0]
-    assert row["filled_qty"] == 0.001
-    fill_events = [e for e in row["events"] if e.get("event") == "fill"]
-    assert [e["liquidity"] for e in fill_events] == ["WHO KNOWS"]
+    assert [r.getMessage() for r in records] == [
+        "fill carries an unrecognisable liquidity side 'WHO KNOWS' -- recording it verbatim"
+    ]
 
 
 def test_a_non_eur_commission_reaches_the_metric_as_no_fee_at_all(tmp_path):
@@ -1570,9 +1638,9 @@ def test_realized_pnl_sums_open_and_closed_positions_and_skips_a_non_eur_one(tmp
     CLOSED positions are summed too (a round trip's PnL lives nowhere else), and a non-EUR position
     is left out rather than added to a EUR total."""
     client = StubClient()
-    client.cache.close_position("BTC/EUR", _FakeMoney(-4.5, "ZEUR"))
-    client.cache.close_position("BTC/EUR", _FakeMoney(1.25, "EUR"))
-    client.cache.close_position("BTC/EUR", _FakeMoney(9999.0, "XXBT"))  # never summed into a EUR total
+    client.cache.close_position("BTC/EUR", Money(-4.5, Currency.from_str("ZEUR")))
+    client.cache.close_position("BTC/EUR", Money(1.25, Currency.from_str("EUR")))
+    client.cache.close_position("BTC/EUR", Money(9999.0, Currency.from_str("XXBT")))  # never summed into a EUR total
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex = _executor(tmp_path, client=client)
@@ -1625,8 +1693,8 @@ def test_a_late_fill_on_a_superseded_order_is_published_too(tmp_path):
     one, and its fee is just as real -- counting only in-flight fills would under-report the money
     actually paid while every test stayed green."""
     ex, client, _ = _resting_executor(tmp_path, bid=30.0, ask=30.05)
-    ex.on_order_event(OrderAccepted("O-1"))
-    ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))  # the venue's own cancel -> reprice
+    ex.on_order_event(_accepted("O-1"))
+    ex.on_order_event(_canceled("O-1"))  # the venue's own cancel -> reprice
     assert len(client.submitted) == 2
 
     metrics = RecordingMetrics()
@@ -1644,7 +1712,7 @@ def test_a_rejection_closes_the_intent_as_rejected(tmp_path):
 
     ex.on_timer(NOW)
     ex.on_quote(_quote())
-    ex.on_order_event(OrderRejected("O-1", "EOrder:Post only order"))
+    ex.on_order_event(_rejected("O-1", "EOrder:Post only order"))
 
     assert _record(tmp_path)["submitted"][0]["state"] == "rejected"
     intent = _intent_entry(tmp_path, 0)
@@ -1685,25 +1753,14 @@ def test_both_crossing_surfaces_count_one_reprice_and_the_sixth_refuses(tmp_path
     5 reprices happen (6 submissions total), the 6th reprice is refused and the intent halts
     unfilled with NO 7th order."""
     ex, client, now = _resting_executor(tmp_path)  # helper: plan accepted, first order submitted
-    # _named(name, **attrs) builds an instance of a dynamically created class called `name`, so the
-    # executor's type(event).__name__ dispatch sees the real event names on plain stub objects.
     for i in range(5):
         if i % 2 == 0:
-            ex.on_order_event(
-                _named(
-                    "OrderRejected",
-                    client_order_id=client.last_order_id,
-                    reason="POST_ONLY_REJECTED: would cross",
-                    due_post_only=True,
-                )
-            )
+            ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
         else:
-            ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+            ex.on_order_event(_canceled(client.last_order_id))
         ex.on_quote(_quote(bid=30000.0, ask=30001.0))
     assert len(client.submitted) == 6  # initial + 5 reprices
-    ex.on_order_event(
-        _named("OrderRejected", client_order_id=client.last_order_id, reason="POST_ONLY_REJECTED: would cross", due_post_only=True)
-    )
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
     assert len(client.submitted) == 6  # the sixth reprice refused, nothing new
     assert _intent_outcome(tmp_path) == "unfilled"
 
@@ -1712,9 +1769,7 @@ def test_an_ambiguous_rejection_halts_with_no_second_order(tmp_path):
     """The double-submit construction, seen refused: a timeout surfaced as a rejection carrying no
     Kraken error code and no post-only marker. The intent halts ambiguous; no reprice, no IOC."""
     ex, client, now = _resting_executor(tmp_path)
-    ex.on_order_event(
-        _named("OrderRejected", client_order_id=client.last_order_id, reason="request timed out", due_post_only=False)
-    )
+    ex.on_order_event(_rejected(client.last_order_id, "request timed out", due_post_only=False))
     _advance_ticks(ex, minutes=20)  # deep past the time-box: still nothing may be emitted
     assert len(client.submitted) == 1
     assert _intent_outcome(tmp_path) == "ambiguous"
@@ -1724,7 +1779,7 @@ def test_an_ambiguous_rejection_drops_the_later_intents_too(tmp_path):
     """The other half of the halt: a plan's remaining intents were authorized against a venue state
     that an order which may be live has just made unknown."""
     ex, client, _ = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
-    ex.on_order_event(_named("OrderRejected", client_order_id=client.last_order_id, reason="request timed out"))
+    ex.on_order_event(_rejected(client.last_order_id, "request timed out"))
     ex.on_timer(NOW + timedelta(seconds=5))
 
     assert client.subscribed == ["BTC/EUR.KRAKEN"]  # intent 1 never even subscribed
@@ -1735,14 +1790,14 @@ def test_an_ambiguous_rejection_drops_the_later_intents_too(tmp_path):
 def test_the_time_box_cancels_then_fires_an_ioc_at_the_opposite_touch(tmp_path):
     """The fallback is price-bounded, never a market order: a LIMIT IOC at the opposite touch."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     resting_order = client.submitted[0][0]
 
     _advance_with_quotes(ex, client, clock, minutes=16)
     assert client.canceled == [resting_order.client_order_id]
     assert len(client.submitted) == 1  # the cancel is not a submission -- the ack is what fires the IOC
 
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
     assert len(client.submitted) == 2
     ioc, _ = client.submitted[1]
     assert ioc.price == 30001.0  # the ASK -- a buy's opposite touch, bounded by a limit
@@ -1759,12 +1814,12 @@ def test_a_partial_fill_then_the_time_box_sizes_the_ioc_to_the_remainder(tmp_pat
     one."""
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     assert client.submitted[0][0].quantity == 1.0
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _deliver_fill(ex, client, client.last_order_id, 0.4, px=30.0)
     assert _record(tmp_path)["submitted"][0]["filled_qty"] == 0.4
 
     _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
 
     assert len(client.submitted) == 2
     assert client.submitted[1][0].quantity == 0.6
@@ -1772,14 +1827,14 @@ def test_a_partial_fill_then_the_time_box_sizes_the_ioc_to_the_remainder(tmp_pat
 
 def test_three_unfilled_iocs_end_the_intent_unfilled_after_exactly_four_submissions(tmp_path):
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _advance_with_quotes(ex, client, clock, minutes=16)
 
     for _ in range(3):  # the time-box cancel ack, then each IOC's unfilled remainder coming back
-        ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+        ex.on_order_event(_canceled(client.last_order_id))
     assert len(client.submitted) == 4  # the maker order + three IOC attempts
 
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
     assert len(client.submitted) == 4  # the budget is three, not four
     assert _intent_outcome(tmp_path) == "unfilled"
 
@@ -1794,11 +1849,11 @@ def test_every_returned_ioc_remainder_counts_its_outcome_so_the_board_still_bala
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _advance_with_quotes(ex, client, clock, minutes=16)
 
     for _ in range(4):  # the time-box cancel ack, then all three IOC remainders returning
-        ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+        ex.on_order_event(_canceled(client.last_order_id))
 
     assert _intent_outcome(tmp_path) == "unfilled"
     assert [row["state"] for row in _record(tmp_path)["submitted"]] == [
@@ -1827,11 +1882,11 @@ def test_every_returned_ioc_remainder_counts_its_outcome_so_the_board_still_bala
 def test_a_remainder_below_ordermin_ends_the_intent_partial_with_no_further_order(tmp_path):
     """A terminal partial is a legitimate end state -- never an unfillable order the venue rejects."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _deliver_fill(ex, client, client.last_order_id, 0.00095)  # of a 0.001 target: 5e-05 left, ordermin is 1e-04
 
     _advance_with_quotes(ex, client, clock, minutes=16)
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
 
     assert len(client.submitted) == 1
     intent = _intent_entry(tmp_path, 0)
@@ -1842,7 +1897,7 @@ def test_a_remainder_below_ordermin_ends_the_intent_partial_with_no_further_orde
 
 def test_a_kill_file_mid_rest_cancels_with_no_fallback_and_halts_the_plan(tmp_path):
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     resting_order = client.submitted[0][0]
 
     (exec_dir(tmp_path) / KILL_FILE).touch()
@@ -1851,7 +1906,7 @@ def test_a_kill_file_mid_rest_cancels_with_no_fallback_and_halts_the_plan(tmp_pa
     ex.on_timer(clock.now)
     assert client.canceled == [resting_order.client_order_id]
 
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
     assert len(client.submitted) == 1  # a revoked intent NEVER falls back
     intent = _intent_entry(tmp_path, 0)
     assert intent["outcome"] == "revoked"
@@ -1867,13 +1922,13 @@ def test_quote_silence_past_the_window_cancels_and_halts_the_plan(tmp_path):
     """The second intent is what makes the halt half of this name testable: on a single-intent plan
     there is no later intent for a missing halt to wrongly run."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     clock.now = NOW + timedelta(seconds=31)
     ex.on_timer(clock.now)
     assert client.canceled == [client.submitted[0][0].client_order_id]
 
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
     assert len(client.submitted) == 1
     intent = _intent_entry(tmp_path, 0)
     assert intent["outcome"] == "revoked"
@@ -1893,10 +1948,10 @@ def test_rest_cancel_mode_rests_five_percent_passive_and_never_executes(tmp_path
     assert order.price == 28500.0  # 5% BELOW the 30000 bid
     assert order.post_only is True and order.time_in_force == TimeInForce.GTC
 
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     assert client.canceled == [order.client_order_id]  # cancelled on the acknowledgment, not on a timer
 
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
     assert len(client.submitted) == 1  # exactly one submission, ever
     row = _record(tmp_path)["submitted"][0]
     assert row["state"] == "canceled" and row["filled_qty"] == 0.0
@@ -1911,7 +1966,7 @@ def test_a_rest_cancel_drill_that_reaches_the_time_box_still_never_falls_back(tm
 
     _advance_with_quotes(ex, client, clock, minutes=16)
     assert client.canceled == [client.submitted[0][0].client_order_id]
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
 
     assert len(client.submitted) == 1
     assert _intent_outcome(tmp_path) == "rest_cancel_ok"
@@ -1938,7 +1993,7 @@ def test_a_disposal_intent_over_the_plan_cap_is_refused_naming_the_cap(tmp_path)
 def test_a_kraken_coded_rejection_is_terminal_with_no_retry(tmp_path):
     """A positive venue verdict -- the order does not exist and never will. No reprice, no IOC."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(_named("OrderRejected", client_order_id=client.last_order_id, reason="EOrder:Insufficient funds"))
+    ex.on_order_event(_rejected(client.last_order_id, "EOrder:Insufficient funds"))
     _advance_with_quotes(ex, client, clock, minutes=16)
 
     assert len(client.submitted) == 1
@@ -1957,13 +2012,13 @@ def test_an_accepted_ioc_coming_back_fires_the_next_ioc_never_a_new_gtc(tmp_path
     surface: a reprice burned and a post-only GTC submitted after the time-box already expired --
     up to 7 orders where the design allows 4."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _advance_with_quotes(ex, client, clock, minutes=16)
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
     assert client.submitted[1][0].time_in_force == TimeInForce.IOC
 
-    ex.on_order_event(OrderAccepted(client.last_order_id))  # the venue acknowledges the IOC
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))  # the venue acknowledges the IOC
+    ex.on_order_event(_canceled(client.last_order_id))
 
     assert len(client.submitted) == 3
     third, _ = client.submitted[2]
@@ -1978,7 +2033,7 @@ def test_a_fill_pair_that_sums_an_ulp_short_still_terminates_the_intent(tmp_path
     assert 0.1 + 0.7 < 0.8  # the defect this pins, spelled out
     ex, client, clock = _resting_executor(tmp_path, bid=37.5, ask=37.6)
     assert client.submitted[0][0].quantity == 0.8  # 30 EUR / 37.50
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     _deliver_fill(ex, client, client.last_order_id, 0.1, px=37.5)
     _deliver_fill(ex, client, client.last_order_id, 0.7, px=37.5)
@@ -1991,14 +2046,14 @@ def test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan(tmp_pa
     """The venue positively says the cancel failed, so the order may still rest. Nothing may be
     submitted against a position this process can no longer describe."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     (exec_dir(tmp_path) / KILL_FILE).touch()
     clock.now = NOW + timedelta(seconds=5)
     ex.on_quote(_quote())
     ex.on_timer(clock.now)
     assert client.canceled
 
-    ex.on_order_event(_named("OrderCancelRejected", client_order_id=client.last_order_id, reason="EOrder:Unknown order"))
+    ex.on_order_event(_event(OrderCancelRejected, client_order_id=client.last_order_id, reason="EOrder:Unknown order"))
 
     assert len(client.submitted) == 1
     assert _intent_outcome(tmp_path) == "ambiguous"
@@ -2012,7 +2067,7 @@ def test_a_cancel_the_venue_never_answers_ends_ambiguous_and_frees_the_engine(tm
     non-None, so the executor silently ignores EVERY later plan file until a process restart: a dead
     engine that looks alive. The second half of this test is that claim, constructed."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     clock.now = NOW + timedelta(seconds=31)
     ex.on_timer(clock.now)  # quote silence revokes -- and the venue never answers the cancel
@@ -2032,9 +2087,9 @@ def test_a_cancel_the_venue_never_answers_ends_ambiguous_and_frees_the_engine(tm
 
 def test_an_ioc_the_venue_never_answers_ends_ambiguous_rather_than_parking_the_plan(tmp_path):
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _advance_with_quotes(ex, client, clock, minutes=16)
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
     assert len(client.submitted) == 2  # the IOC is out at the venue
 
     clock.now += timedelta(seconds=31)
@@ -2049,11 +2104,11 @@ def test_a_refused_resubmission_journals_the_fills_that_already_happened(tmp_pat
     the gate would otherwise overwrite the intent's summary with 0.0 -- the operator's summary
     surface saying nothing was bought when 0.4 was."""
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _deliver_fill(ex, client, client.last_order_id, 0.4, px=30.0)
 
     (exec_dir(tmp_path) / KILL_FILE).touch()
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))  # the venue's own cancel
+    ex.on_order_event(_canceled(client.last_order_id))  # the venue's own cancel
 
     assert len(client.submitted) == 1  # the gate refused the reprice
     intent = _intent_entry(tmp_path, 0)
@@ -2068,13 +2123,11 @@ def test_a_rejection_during_a_time_box_cancel_still_proceeds_to_the_fallback(tmp
     an unfilled leg strands the probe. The safety envelope does not depend on this branch: the IOC
     still goes through `_submit`, which evaluates the gate as its first act."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _advance_with_quotes(ex, client, clock, minutes=16)
     assert client.canceled  # the time-box cancel is out, and the venue answers with a rejection
 
-    ex.on_order_event(
-        _named("OrderRejected", client_order_id=client.last_order_id, reason="POST_ONLY_REJECTED: would cross", due_post_only=True)
-    )
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
 
     assert len(client.submitted) == 2
     ioc, _ = client.submitted[1]
@@ -2088,16 +2141,14 @@ def test_a_rejection_arriving_during_a_revoke_terminates_rather_than_repricing(t
     repricing here would put a brand-new order on exactly that book. Paired with the time-box test
     above: the branch is only proven with both directions constructed."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     (exec_dir(tmp_path) / KILL_FILE).touch()
     clock.now = NOW + timedelta(seconds=5)
     ex.on_quote(_quote())
     ex.on_timer(clock.now)
     assert client.canceled
 
-    ex.on_order_event(
-        _named("OrderRejected", client_order_id=client.last_order_id, reason="POST_ONLY_REJECTED: would cross", due_post_only=True)
-    )
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
 
     assert len(client.submitted) == 1
     intent = _intent_entry(tmp_path, 0)
@@ -2123,7 +2174,7 @@ def test_a_disposal_under_the_cap_alone_is_refused_once_the_plans_declared_notio
 
     ex.on_timer(NOW)
     ex.on_quote(_quote())
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _deliver_fill(ex, client, client.last_order_id, client.submitted[0][0].quantity)
     assert _intent_outcome(tmp_path, 0) == "filled"
 
@@ -2147,7 +2198,7 @@ def test_a_second_disposal_cumulates_against_the_first_ones_resolved_notional(tm
     ex.on_timer(NOW)
     ex.on_quote(_quote())
     assert len(client.submitted) == 1  # 60.00 EUR alone clears the cap
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     _deliver_fill(ex, client, client.last_order_id, 0.002, side="sell")
 
     ex.on_timer(NOW + timedelta(seconds=5))
@@ -2430,15 +2481,15 @@ def test_a_late_fill_on_a_superseded_order_shrinks_the_next_resubmission(tmp_pat
     arithmetic, so the next resubmission would over-ask by exactly the dropped 0.1."""
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     assert client.submitted[0][0].quantity == 1.0
-    ex.on_order_event(OrderAccepted("O-1"))
+    ex.on_order_event(_accepted("O-1"))
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
 
     _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
-    ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))
+    ex.on_order_event(_canceled("O-1"))
     assert client.submitted[1][0].quantity == 0.6  # the IOC, sized against the 0.4 already in
 
     _deliver_fill(ex, client, "O-1", 0.1, px=30.0)  # the late fill, for the order already superseded
-    ex.on_order_event(_named("OrderCanceled", client_order_id="O-2"))  # the IOC comes back unfilled
+    ex.on_order_event(_canceled("O-2"))  # the IOC comes back unfilled
 
     assert len(client.submitted) == 3
     assert client.submitted[2][0].quantity == 0.5  # not 0.6 -- the late fill was counted
@@ -2478,7 +2529,7 @@ def test_a_startup_canceled_orders_fill_and_cancel_ack_still_land_in_its_row(tmp
     assert [str(cid) for cid in client.canceled] == ["O-opener"]
 
     ex.on_order_event(_fill("O-opener", 0.0002, px=30000.0))
-    ex.on_order_event(_named("OrderCanceled", client_order_id="O-opener"))
+    ex.on_order_event(_canceled("O-opener"))
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["filled_qty"] == 0.0002
@@ -2521,7 +2572,7 @@ def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, 
 
     assert [str(cid) for cid in client.canceled] == expected
     # Attached either way (cancel is a request, not an outcome), so the ack lands in the row.
-    ex.on_order_event(_named("OrderCanceled", client_order_id="O-attached"))
+    ex.on_order_event(_canceled("O-attached"))
     assert [e["type"] for e in _record(tmp_path, earlier)["submitted"][0]["events"]] == ["OrderCanceled"]
 
 
@@ -2703,10 +2754,10 @@ def test_an_external_overfill_on_an_adopted_row_trips_the_kill_and_still_journal
 
 
 @pytest.mark.parametrize(
-    "event_name, expected_state",
-    [("OrderCanceled", "canceled"), ("OrderExpired", "venue_canceled"), ("OrderRejected", "rejected")],
+    "event_cls, expected_state",
+    [(OrderCanceled, "canceled"), (OrderExpired, "venue_canceled"), (OrderRejected, "rejected")],
 )
-def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_racing_fill(tmp_path, event_name, expected_state):
+def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_racing_fill(tmp_path, event_cls, expected_state):
     """The ruled map, written from `validate_exec_record`'s own state names -- no new state string is
     minted here, and `_store` would refuse one anyway. `canceled` makes no we-requested claim on this
     path, which is why the adopt pass's OWN cancel acks may wear it, and that those acks now CLOSE
@@ -2723,18 +2774,18 @@ def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_r
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
 
-    ex.on_external_order_event(_named(event_name, client_order_id="O-opener"))
+    ex.on_external_order_event(_event(event_cls, client_order_id="O-opener"))
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == expected_state
-    assert [e["type"] for e in row["events"]] == [event_name]
+    assert [e["type"] for e in row["events"]] == [event_cls.__name__]
     assert row["filled_qty"] == 0.0
     assert "O-opener" in ex._attached
 
     ex.on_external_order_event(_fill("O-opener", 0.0004))  # the fill that raced the ack
 
     row = _record(tmp_path, earlier)["submitted"][0]
-    assert [e.get("event") or e.get("type") for e in row["events"]] == [event_name, "fill"]
+    assert [e.get("event") or e.get("type") for e in row["events"]] == [event_cls.__name__, "fill"]
     assert row["filled_qty"] == 0.0004  # journaled, not counted-and-dropped
     assert row["state"] == expected_state  # the detached append makes no state claim of its own
     assert metrics.external == ["matched", "matched"]  # never `unmatched`: the row is still vouched
@@ -2761,7 +2812,7 @@ def test_a_terminal_ack_after_the_completing_fill_never_demotes_the_row(tmp_path
     ex.on_external_order_event(_fill("O-attached", 0.001))  # completes the ledgered quantity
     assert metrics.orders == ["filled"]
 
-    ex.on_external_order_event(_named("OrderCanceled", client_order_id="O-attached"))
+    ex.on_external_order_event(_canceled("O-attached"))
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == "filled"  # the completion stands; `canceled` here would be a lie
@@ -2780,7 +2831,7 @@ def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_ro
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
 
-    ex.on_external_order_event(_named("OrderCancelRejected", client_order_id="O-attached", reason="EOrder:Unknown order"))
+    ex.on_external_order_event(_event(OrderCancelRejected, client_order_id="O-attached", reason="EOrder:Unknown order"))
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == "accepted"
@@ -3001,21 +3052,17 @@ def _limit_orders_by_status():
     wrote. Returns `(reached, refused)`: requested status -> the order wearing it, and requested
     status -> the exception the library raised refusing to put it there. Built inside a function so
     the extra library imports are paid only by the test that needs them."""
-    from nautilus_trader.core import UUID4
-    from nautilus_trader.model import AccountId, ClientOrderId, OrderType, TradeId, TraderId, Venue, VenueOrderId
-    from nautilus_trader.model import OrderAccepted as _Accepted
-    from nautilus_trader.model import OrderCanceled as _Canceled
-    from nautilus_trader.model import OrderDenied as _Denied
-    from nautilus_trader.model import OrderEmulated as _Emulated
-    from nautilus_trader.model import OrderExpired as _Expired
-    from nautilus_trader.model import OrderFilled as _Filled
-    from nautilus_trader.model import OrderFillVoided as _FillVoided
-    from nautilus_trader.model import OrderPendingCancel as _PendingCancel
-    from nautilus_trader.model import OrderPendingUpdate as _PendingUpdate
-    from nautilus_trader.model import OrderRejected as _Rejected
-    from nautilus_trader.model import OrderReleased as _Released
-    from nautilus_trader.model import OrderSubmitted as _Submitted
-    from nautilus_trader.model import OrderTriggered as _Triggered
+    from nautilus_trader.model import (
+        OrderDenied,
+        OrderEmulated,
+        OrderFillVoided,
+        OrderPendingCancel,
+        OrderPendingUpdate,
+        OrderReleased,
+        OrderSubmitted,
+        OrderTriggered,
+        Venue,
+    )
 
     head = (TraderId("TESTER-001"), StrategyId("S-1"), InstrumentId(Symbol("BTC/EUR"), Venue("KRAKEN")), ClientOrderId("O-1"))
     account, venue_order_id = AccountId("KRAKEN-001"), VenueOrderId("V-1")
@@ -3031,7 +3078,7 @@ def _limit_orders_by_status():
         return cls(*head, *middle, *tail)
 
     def fill(qty):
-        return _Filled(
+        return OrderFilled(
             *head,
             venue_order_id,
             account,
@@ -3048,26 +3095,26 @@ def _limit_orders_by_status():
             False,
         )
 
-    resting = [lambda: event(_Submitted, account), lambda: event(_Accepted, venue_order_id, account, reconciliation=False)]
+    resting = [lambda: event(OrderSubmitted, account), lambda: event(OrderAccepted, venue_order_id, account, reconciliation=False)]
     paths = {
         OrderStatus.INITIALIZED: [],
-        OrderStatus.DENIED: [lambda: event(_Denied, "the risk engine said no")],
-        OrderStatus.EMULATED: [lambda: event(_Emulated)],
-        OrderStatus.RELEASED: [lambda: event(_Emulated), lambda: event(_Released, price)],
+        OrderStatus.DENIED: [lambda: event(OrderDenied, "the risk engine said no")],
+        OrderStatus.EMULATED: [lambda: event(OrderEmulated)],
+        OrderStatus.RELEASED: [lambda: event(OrderEmulated), lambda: event(OrderReleased, price)],
         OrderStatus.SUBMITTED: resting[:1],
         OrderStatus.ACCEPTED: resting,
-        OrderStatus.REJECTED: [*resting[:1], lambda: event(_Rejected, account, "insufficient funds", reconciliation=False)],
-        OrderStatus.CANCELED: [*resting, lambda: event(_Canceled, reconciliation=False)],
-        OrderStatus.EXPIRED: [*resting, lambda: event(_Expired, reconciliation=False)],
-        OrderStatus.TRIGGERED: [*resting, lambda: event(_Triggered, reconciliation=False)],
-        OrderStatus.PENDING_UPDATE: [*resting, lambda: event(_PendingUpdate, account, reconciliation=False)],
-        OrderStatus.PENDING_CANCEL: [*resting, lambda: event(_PendingCancel, account, reconciliation=False)],
+        OrderStatus.REJECTED: [*resting[:1], lambda: event(OrderRejected, account, "insufficient funds", reconciliation=False)],
+        OrderStatus.CANCELED: [*resting, lambda: event(OrderCanceled, reconciliation=False)],
+        OrderStatus.EXPIRED: [*resting, lambda: event(OrderExpired, reconciliation=False)],
+        OrderStatus.TRIGGERED: [*resting, lambda: event(OrderTriggered, reconciliation=False)],
+        OrderStatus.PENDING_UPDATE: [*resting, lambda: event(OrderPendingUpdate, account, reconciliation=False)],
+        OrderStatus.PENDING_CANCEL: [*resting, lambda: event(OrderPendingCancel, account, reconciliation=False)],
         OrderStatus.PARTIALLY_FILLED: [*resting, lambda: fill("0.4")],
         OrderStatus.FILLED: [*resting, lambda: fill("1.0")],
         OrderStatus.VOIDED: [
             *resting,
             lambda: fill("1.0"),
-            lambda: _FillVoided(
+            lambda: OrderFillVoided(
                 *head,
                 venue_order_id,
                 account,
@@ -3295,7 +3342,7 @@ def test_a_fill_for_an_order_this_engine_never_submitted_trips_the_kill_switch(t
     verdict: what separates them is that this one names an order id, on this engine's own strategy,
     that the ledger has no row for -- so a fill exists that nothing here can account for."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     resting = client.submitted[0][0]
 
     ex.on_order_event(_fill("O-unknown", 0.001))
@@ -3315,7 +3362,7 @@ def test_an_order_filling_past_the_quantity_it_was_submitted_for_trips(tmp_path,
     ex, client, clock = _resting_executor(tmp_path)
     resting = client.submitted[0][0]
     assert resting.quantity == 0.001
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     _deliver_fill(ex, client, client.last_order_id, 0.0006)
     assert not _kill_file(tmp_path).exists()  # 0.0006 of 0.001 is a partial, not a divergence
@@ -3335,10 +3382,10 @@ def test_an_intents_orders_filling_past_its_target_between_them_trips(tmp_path, 
     its own. Only the cross-order sum can see it, which is why it is checked separately."""
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     assert client.submitted[0][0].quantity == 1.0
-    ex.on_order_event(OrderAccepted("O-1"))
+    ex.on_order_event(_accepted("O-1"))
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
 
-    ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))  # the venue's own cancel -> reprice
+    ex.on_order_event(_canceled("O-1"))  # the venue's own cancel -> reprice
     resting = client.submitted[1][0]
     assert resting.quantity == 0.6
 
@@ -3363,7 +3410,7 @@ def test_a_position_that_contradicts_the_intents_fills_trips_at_the_terminal(tmp
         tmp_path, client=StubClient(cache), intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]
     )
     assert client.canceled == []  # the startup pass kept the ledgered reducer
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     cache.set_position("BTC/EUR", 0.0005)  # the venue moved by half of what the fill claims
     ex.on_order_event(_fill(client.last_order_id, 0.001))
@@ -3379,7 +3426,7 @@ def test_a_terminal_whose_position_matches_its_fills_does_not_trip(tmp_path):
     Cache agrees with the fills, so the intent ends and the NEXT one starts. Without this a check
     that tripped on every terminal would pass the test above."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     _deliver_fill(ex, client, client.last_order_id, 0.001)
 
@@ -3395,7 +3442,7 @@ def test_a_tripped_kill_switch_refuses_every_later_plan(tmp_path, kill_trip_expe
     same-process refusal is a different mechanism, proven separately below; run here it would hide
     this one. Nothing in either process cleared the file; nothing in either process can."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     ex.on_order_event(_fill("O-unknown", 0.001))
     assert _kill_file(tmp_path).exists()
 
@@ -3419,9 +3466,9 @@ def test_a_superseded_orders_late_fills_are_summed_against_that_orders_own_quant
     conditions are true by then, and the reason still names the ORDER -- which it can only do if the
     detached path kept that order's own running total."""
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
-    ex.on_order_event(OrderAccepted("O-1"))
+    ex.on_order_event(_accepted("O-1"))
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
-    ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))  # superseded by the reprice
+    ex.on_order_event(_canceled("O-1"))  # superseded by the reprice
 
     _deliver_fill(ex, client, "O-1", 0.3, px=30.0)
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
@@ -3439,7 +3486,7 @@ def test_a_closer_that_flattens_its_position_reconciles_against_what_it_started_
         tmp_path, client=client, intents=[_intent(side="sell", action="close", notional_eur=90.0, leverage=2)]
     )
     assert client.submitted[0][0].quantity == 0.001
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     _deliver_fill(ex, client, client.last_order_id, 0.001, side="sell", px=30001.0)
 
@@ -3458,7 +3505,7 @@ def test_a_kill_file_that_could_not_be_written_still_refuses_the_next_plan(tmp_p
     that it tripped. Without that memory the next plan is picked up, submitted, and the published
     gauge still reads zero, while the log claims the engine stopped."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     obstruction = exec_dir(tmp_path) / KILL_FILE
     obstruction.mkdir()
 
@@ -3485,10 +3532,10 @@ def test_the_chokepoint_refuses_once_this_process_has_tripped(tmp_path):
     flag is set directly because after a real trip nothing can reach the chokepoint any more -- the
     plan is gone -- which is exactly what makes this a belt behind a belt rather than the belt."""
     ex, client, clock = _resting_executor(tmp_path)
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
     ex._kill_tripped = True
 
-    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))  # would reprice
+    ex.on_order_event(_canceled(client.last_order_id))  # would reprice
 
     assert len(client.submitted) == 1
     intent = _intent_entry(tmp_path, 0)
@@ -3517,7 +3564,7 @@ def test_a_position_that_cannot_be_read_at_the_terminal_trips(tmp_path, kill_tri
     an event catch-all, which is where an untested one is only ever found in the field."""
     cache = _PositionReadFails()
     ex, client, clock = _resting_executor(tmp_path, client=StubClient(cache))
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     cache.broken = True
     ex.on_order_event(_fill(client.last_order_id, 0.001))
@@ -4103,7 +4150,7 @@ def test_an_operator_holding_present_at_intent_start_never_reaches_the_terminal_
     cache = StubCache()
     cache.set_external_position("BTC/EUR", 0.5)
     ex, client, clock = _resting_executor(tmp_path, client=StubClient(cache))
-    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_accepted(client.last_order_id))
 
     _deliver_fill(ex, client, client.last_order_id, 0.001)  # moves OUR position, as the venue does
 
@@ -4305,21 +4352,17 @@ def test_the_limit_call_the_executor_makes_binds_against_the_real_order_factory(
 
 
 def test_a_real_money_answers_both_accessors_the_fill_row_reads():
-    """`_FakeMoney` restates the two accessors the fill path takes off a commission -- `float(...)`
-    for the amount and `.currency.code` for its denomination. Pinned by VALUE against a real
-    `Money` rather than by an AST walk: both reads are wrapped in `getattr(..., default)`, so a
-    dropped accessor does not raise in production -- it silently reports a fee of None, and the
-    EUR fee total quietly stops accumulating. A name-existence check cannot see that; a value can.
+    """The two accessors the fill path takes off a commission -- `float(...)` for the amount and
+    `.currency.code` for its denomination -- pinned by VALUE rather than by a name-existence walk:
+    both reads are wrapped in `getattr(..., default)`, so a dropped accessor does not raise in
+    production. It silently reports a fee of None, and the EUR fee total quietly stops
+    accumulating. A name check cannot see that; a value can.
 
-    The second half pins where stub and library part company. `_FakeMoney` keeps whatever amount it
-    is handed; a real `Money` quantizes to its currency's precision. The codes a Kraken fill
-    actually carries mint at 8 decimals, so on those the two agree exactly -- but `EUR` itself
-    carries 2, and this file's fills default to it, so their 0.012 is an amount a real EUR `Money`
-    renders as 0.01. Measured here rather than assumed either way: it moves no production path
-    (`_fee_eur` reads whatever amount the venue's own Money already holds), and if a precision ever
-    changes, the sentence above stops being true out loud instead of quietly."""
-    from nautilus_trader.model import Money
-
+    The second half is the arithmetic every fee number in this file rests on. A `Money` quantizes
+    to its currency's precision: the codes a Kraken fill actually carries mint at 8 decimals and
+    hold 0.012 exactly, while `EUR` carries 2 and renders the same amount 0.01. That is why the
+    fills here are denominated `ZEUR` -- the code the venue actually sends -- and it is measured
+    here rather than assumed, so a changed precision stops the sentence being true out loud."""
     real = Money(1.25, Currency.from_str("EUR"))
     assert float(real) == pytest.approx(1.25)
     assert real.currency.code == "EUR"
@@ -4359,9 +4402,7 @@ def _nautilus_standins():
     in for a nautilus type. Built inside a function so the extra library imports are paid only by
     the test that needs them."""
     from nautilus_trader.common import Cache, OrderFactory
-    from nautilus_trader.model import Money, OrderFilled, Position, QuoteTick
-    from nautilus_trader.model import OrderAccepted as RealOrderAccepted
-    from nautilus_trader.model import OrderRejected as RealOrderRejected
+    from nautilus_trader.model import Position
     from nautilus_trader.trading import Strategy
 
     return [
@@ -4376,14 +4417,9 @@ def _nautilus_standins():
             Strategy,
             frozenset({"submitted", "canceled", "subscribed", "unsubscribed", "_submit_raises", "last_order_id"}),
         ),
-        ("_FakeMoney", _FakeMoney(1.0), Money, frozenset({"_amount"})),
         ("_held", _held(**{"BTC/EUR": 0.1})[INSTRUMENT_IDS["BTC/EUR"]][0], Position, frozenset()),
         ("_open_order", _open_order("O-1"), LimitOrder, frozenset()),
         ("_closed_order", _closed_order("O-1", OrderStatus.FILLED), LimitOrder, frozenset()),
-        ("_quote", _quote(), QuoteTick, frozenset()),
-        ("_fill", _fill("O-1", 0.001), OrderFilled, frozenset()),
-        ("OrderAccepted", OrderAccepted("O-1"), RealOrderAccepted, frozenset()),
-        ("OrderRejected", OrderRejected("O-1", "insufficient funds"), RealOrderRejected, frozenset()),
     ]
 
 

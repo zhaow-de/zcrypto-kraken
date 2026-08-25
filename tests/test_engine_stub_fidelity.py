@@ -32,18 +32,13 @@ Three verdicts, and the reason the distinction matters:
   NOT_A_STANDIN not a test double -- a fixture-environment helper, or a class that models an event
                 rather than a type. The doubles such a helper installs are registered on their own.
 
-Two facts the table records rather than fixes, because measuring them is the honest answer:
-
-  * `_fake_instrument`'s `make_qty`/`make_price` are not restatements at all: they are BOUND off a
-    real `CurrencyPair` at the leg's precisions, so the library itself does the rounding. Delegation
-    beats verification wherever the real type is constructible offline.
-  * `_FakeMoney` keeps whatever amount it is handed, where a real `Money` quantizes to its currency's
-    precision. The codes a Kraken fill actually carries (`ZEUR`, `XXBT`) mint at 8 decimals and agree
-    exactly; `EUR` carries 2, and the executor suite's fills default to it, so their `0.012` is an
-    amount a real EUR `Money` renders as `0.01`. It moves no production path -- `_fee_eur` reads whatever
-    amount the venue's own `Money` already holds -- and both halves are pinned by value in
-    `test_a_real_money_answers_both_accessors_the_fill_row_reads`, so the sentence stops being true
-    out loud if a precision ever changes.
+One fact the table records rather than fixes, because measuring it is the honest answer:
+`_fake_instrument`'s `make_qty`/`make_price` are not restatements at all -- they are BOUND off a
+real `CurrencyPair` at the leg's precisions, so the library itself does the rounding. Delegation
+beats verification wherever the real type is constructible offline, and where it is constructible
+the double should not exist at all: the order events, the quote, the commission and the currency
+this suite once restated are built from the library's own classes now, and are absent from the
+table for that reason.
 
 Nothing here imports the modules it classifies: the walk reads them as source, so this file cannot
 be satisfied by a stub and costs no collection-time nautilus import.
@@ -71,7 +66,7 @@ MODULES = (
 # the exception and sits AT its count of three: below it the floor would tolerate losing a third of
 # the inventory, which is not a vacuity check at all, so a removal there is meant to be read.
 _WALK_FLOOR = {
-    "test_engine_executor.py": 12,
+    "test_engine_executor.py": 9,
     "test_engine_command.py": 3,
     "test_engine_node.py": 4,
     "test_engine_metrics.py": 4,
@@ -114,24 +109,9 @@ TABLE: dict[str, dict[str, Standin]] = {
             "nautilus_trader.trading.Strategy",
             ("test_every_client_surface_the_executor_reaches_exists_on_the_real_strategy", _OFFERS_EXECUTOR),
         ),
-        "_FakeMoney": Standin(
-            LIBRARY,
-            "nautilus_trader.model.Money",
-            ("test_a_real_money_answers_both_accessors_the_fill_row_reads", _OFFERS_EXECUTOR),
-        ),
         "_held": Standin(LIBRARY, "nautilus_trader.model.Position", (_OFFERS_EXECUTOR,)),
         "_open_order": Standin(LIBRARY, "nautilus_trader.model.LimitOrder", (_OFFERS_EXECUTOR,)),
         "_closed_order": Standin(LIBRARY, "nautilus_trader.model.LimitOrder", (_OFFERS_EXECUTOR,)),
-        "_quote": Standin(LIBRARY, "nautilus_trader.model.QuoteTick", (_OFFERS_EXECUTOR,)),
-        "_fill": Standin(LIBRARY, "nautilus_trader.model.OrderFilled", (_OFFERS_EXECUTOR,)),
-        "OrderAccepted": Standin(LIBRARY, "nautilus_trader.model.OrderAccepted", (_OFFERS_EXECUTOR,)),
-        "OrderRejected": Standin(LIBRARY, "nautilus_trader.model.OrderRejected", (_OFFERS_EXECUTOR,)),
-        "_named": Standin(
-            NOT_A_STANDIN,
-            "mints a class with a chosen __name__ so the executor's type(event).__name__ dispatch "
-            "sees real event names; the doubles it mints are registered in their own right",
-            (),
-        ),
         "CountingGate": Standin(OURS, "cli.engine.execgate.ExecutionGate", ()),
         "_Clock": Standin(OURS, "the now-callable cli.engine.executor.ProbeExecutor is built with", ()),
         "RecordingMetrics": Standin(OURS, "cli.engine.command._ExecutionMetrics", ()),
