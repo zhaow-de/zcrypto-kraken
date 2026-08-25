@@ -3114,9 +3114,83 @@ def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_ro
     assert metrics.external == ["matched"]
 
 
+class _UnreadableOrderCache(StubCache):
+    """A Cache whose `order()` refuses the way the real one does from INSIDE an order-event handler:
+    `RuntimeError("Already mutably borrowed")`, because the Cache is still mutably borrowed for the
+    write that produced the very event being dispatched -- which this process's own cancel command
+    is what generates, from the adopt pass and from a trip.
+
+    Switchable, because the startup pass reads the same accessor: the row has to attach against a
+    readable Cache first, so the refusal lands exactly where production puts it and nowhere else."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.fail_order_reads = False
+        self.refused = 0
+
+    def order(self, client_order_id):
+        if self.fail_order_reads:
+            self.refused += 1
+            raise RuntimeError("Already mutably borrowed")
+        return super().order(client_order_id)
+
+
+@pytest.mark.parametrize(
+    "unreadable, expected_state, expected_warnings",
+    [
+        # The healthy read, and it is what makes the fixture non-degenerate: the same event, the
+        # same row, and the two arms end on DIFFERENT states.
+        (False, "canceled", []),
+        (True, "accepted", ["the venue order behind O-attached could not be read -- its row keeps the state it has"]),
+    ],
+)
+def test_an_unreadable_cache_costs_the_terminal_state_and_never_the_event(tmp_path, unreadable, expected_state, expected_warnings):
+    """A Cache read that RAISES must cost the row its terminal state and nothing else.
+
+    The raise is not hypothetical and it is not rare: the dominant source of a terminal ack on this
+    path is a cancel this very process sent, and a read taken inside the handler for an event this
+    process's own command generated finds the Cache still mutably borrowed for the write that
+    produced it. Letting it escape would abandon the whole handler -- and with it the event payload,
+    which is the forensic record this path exists to keep -- to decide a state the event never
+    carried anyway. So the event still appends, the entry stays attached for a fill that can still
+    arrive, and the row keeps the state it has rather than acquiring a wrong one.
+
+    Read as a pair. Without the readable arm, an implementation that returned `None` unconditionally
+    -- or one whose `try` never ran -- would pass the raising arm and prove nothing; without the
+    raising arm, narrowing the `except` to a type nothing throws is invisible."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
+    cache = _UnreadableOrderCache(open_orders=[_resting_limit_order("O-attached")])
+    client = StubClient(cache)
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    ex.on_timer(NOW)
+    assert "O-attached" in ex._attached  # a construction that attached nothing proves nothing below
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    # The venue's own order takes the event first, exactly as `_deliver_external_event` does -- then
+    # the read the handler takes afterwards is the one under test.
+    event = _canceled("O-attached")
+    cache.order(ClientOrderId("O-attached")).apply(event)
+    cache.fail_order_reads = unreadable
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_external_order_event(event)
+
+    assert cache.refused == (1 if unreadable else 0)  # the branch under test was the one that ran
+    assert [r.getMessage() for r in records] == expected_warnings
+    assert all(r.exc_info is not None for r in records)  # logged with the traceback, not bare
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == expected_state
+    assert row["events"] == [{"type": "OrderCanceled", "at": NOW.isoformat()}]  # evidence, either way
+    assert row["filled_qty"] == 0.0
+    assert ex._attached["O-attached"][1]["state"] == expected_state  # the mirror stays with the row
+    assert metrics.external == ["matched"]
+    assert not _kill_file(tmp_path).exists()
+
+
 def test_the_external_handler_logs_and_continues_when_the_ledger_write_raises(tmp_path, monkeypatch):
-    """A msgbus handler's raise is the event loop's problem, not this process's to take -- so the one
-    thing on this path that touches disk is made to fail and the handler must swallow it, loudly.
+    """A raise out of this handler is the event loop's problem, not this process's to take -- so the
+    one thing on this path that touches disk is made to fail and the handler must swallow it, loudly.
     Guard-proving: the failure is constructed, and WHICH log line fired is read, not just that one
     did."""
     ex, _client, _earlier = _adopted_executor(tmp_path)
