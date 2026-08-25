@@ -499,27 +499,12 @@ class RecordingExecutor:
         self.external_events.append(event)
 
 
-class RecordingMsgBus:
-    """The strategy's `self.msgbus` at the wiring seam: records every (topic, handler) pair the
-    strategy subscribed. Deliberately a stub and not the real bus, so these wiring tests carry no
-    assumption about the bus's own behaviour, only about what we ask of it -- the two
-    library-boundary tests below use a REAL MessageBus (one constructed directly, one reached
-    through an actual nautilus registration) to pin the parts a stub cannot speak for."""
-
-    def __init__(self):
-        self.subscriptions: list[tuple[str, object]] = []
-
-    def subscribe(self, topic, handler):
-        self.subscriptions.append((topic, handler))
-
-
 def _exec_stub(config, clock, *, executor_factory=None, executor=None):
     """A ShadowStrategy stand-in driven through the unbound methods (the house pattern of
     test_schedule_alert_sets_state_and_timer): a real instance's `clock` is readonly until the
     nautilus registration this suite never performs."""
     stub = types.SimpleNamespace(
         clock=clock,
-        msgbus=RecordingMsgBus(),
         _engine_config=config,
         _now=lambda: B08 + timedelta(minutes=5),
         _run_cycle_fn=lambda cycle_ts, *, config, venue_state=None: None,
@@ -571,39 +556,12 @@ def test_on_start_builds_the_executor_and_registers_the_exec_tick(tmp_path):
     assert node._TICK_SECONDS == _TICK_SECONDS
 
 
-def test_on_start_subscribes_the_external_order_topic_and_the_handler_reaches_the_filter(tmp_path):
-    # The second, filtered order stream (spec 00098 D1): exactly ONE subscription, to exactly the
-    # external strategy's order topic, whose handler lands on the executor's disposition filter --
-    # never on on_order_event, whose unknown-order trip must keep seeing only the strategy's own
-    # orders.
-    executor = RecordingExecutor()
-    stub = _exec_stub(_config(tmp_path), FakeClock(), executor_factory=lambda strategy: executor)
-    ShadowStrategy.on_start(stub)
-
-    assert stub.msgbus.subscriptions == [(node._EXTERNAL_ORDER_TOPIC, stub._on_external_order_event)]
-    ((_topic, handler),) = stub.msgbus.subscriptions
-    sentinel = object()
-    handler(sentinel)
-    assert executor.external_events == [sentinel]
-    # and nothing leaked onto the own-order path the trip reads.
-    assert executor.events == []
-
-
 def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
     clock = FakeClock()
     stub = _exec_stub(_config(tmp_path), clock)
     ShadowStrategy.on_start(stub)
     assert clock.timers == []
     assert stub._executor is None
-
-
-def test_on_start_subscribes_nothing_without_a_factory(tmp_path):
-    # The subscription is wired with the executor, not with the strategy: a construction that wires
-    # no executor reaches the message bus not at all, so every non-production ShadowStrategy stays
-    # the pure timer-arithmetic object it was.
-    stub = _exec_stub(_config(tmp_path), FakeClock())
-    ShadowStrategy.on_start(stub)
-    assert stub.msgbus.subscriptions == []
 
 
 def test_exec_tick_forwards_the_strategys_own_clock_reading(tmp_path):
@@ -627,8 +585,8 @@ def test_quote_and_order_event_forwarders_pass_the_object_through(tmp_path):
 
 def test_the_external_order_forwarder_passes_the_object_through_and_is_inert_unwired(tmp_path):
     # The fourth forwarder, in the shape of the other three: object through, and a no-op rather than
-    # an AttributeError when no executor was wired (the bus can deliver before/without one only in
-    # constructions that never subscribe, but the forwarder must not be the thing that finds out).
+    # an AttributeError when no executor was wired -- the observer delivers to it regardless of what
+    # this strategy was constructed with, and the forwarder must not be the thing that finds out.
     strategy = ShadowStrategy(_config(tmp_path))
     strategy._on_external_order_event(object())
 
@@ -639,6 +597,102 @@ def test_the_external_order_forwarder_passes_the_object_through_and_is_inert_unw
     assert executor.external_events == [event]
     # The filter is a SEPARATE entry point: nothing arrived on the own-order path the trip reads.
     assert executor.events == []
+
+
+# --- the external order observer (spec 00100 D2) ------------------------------------------------
+
+
+def test_the_observer_carries_the_venues_external_order_identity_and_claims_nothing():
+    # `strategy_id` at construction; the registered one is measured against the real assembly by
+    # test_the_registered_observers_identity_is_exactly_the_venues_external_order_id below, which is
+    # where it counts. `order_id_tag` unset is the load-bearing half: a tag lands in the id and the
+    # observer would receive nothing at all.
+    observer = node.ExternalOrderObserver(lambda event: None)
+    assert str(observer.strategy_id) == "EXTERNAL"
+    assert observer.config.order_id_tag is None
+    assert str(observer.config.strategy_id) == "EXTERNAL"
+
+
+def test_the_observer_forwards_every_order_event_to_the_strategys_external_forwarder(tmp_path):
+    # The delivery leg inside this process: whatever the observer is handed lands on the executor's
+    # disposition filter and NOWHERE else -- never on on_order_event, whose unknown-order trip must
+    # keep seeing only the orders this engine submitted.
+    executor = RecordingExecutor()
+    strategy = ShadowStrategy(_config(tmp_path))
+    strategy._executor = executor
+    observer = node.ExternalOrderObserver(strategy._on_external_order_event)
+
+    event = object()
+    observer.on_order_event(event)
+    assert executor.external_events == [event]
+    assert executor.events == []
+
+
+def test_the_observer_drops_its_events_when_the_strategy_wired_no_executor(tmp_path):
+    # The property the observer inherits from the forwarder it is given: the filter that scopes
+    # these events is the executor's, so a strategy that wired none drops them rather than acting on
+    # them unfiltered -- and drops them quietly, since raising here would land in the event loop.
+    #
+    # Differential, so the drop is the executor guard and not a dead wire: the SAME observer
+    # delivers once an executor exists.
+    strategy = ShadowStrategy(_config(tmp_path))
+    assert strategy._executor is None
+    observer = node.ExternalOrderObserver(strategy._on_external_order_event)
+    observer.on_order_event(object())
+
+    executor = RecordingExecutor()
+    strategy._executor = executor
+    delivered = object()
+    observer.on_order_event(delivered)
+    assert executor.external_events == [delivered]
+
+
+# Read-only on `Strategy` and therefore deliberately NOT sealed: they submit, cancel and modify
+# nothing. `query_account` and `query_order` reach the venue, but only to ask.
+_OBSERVER_READ_ONLY_SURFACE = {
+    "is_exiting",
+    "order_factory",
+    "portfolio",
+    "query_account",
+    "query_order",
+    "strategy_id",
+}
+
+
+def _order_mutating_surface() -> set[str]:
+    """The library's own order-mutating surface, DERIVED rather than restated: everything a
+    `Strategy` has that a `DataActor` -- the order-less actor base -- does not, minus the `on_*`
+    handlers (inputs, not powers) and the read-only queries above."""
+    from nautilus_trader.common import DataActor
+    from nautilus_trader.trading import Strategy
+
+    surface = set(dir(Strategy)) - set(dir(DataActor))
+    return {name for name in surface if not name.startswith("on_")} - _OBSERVER_READ_ONLY_SURFACE
+
+
+def test_every_order_mutating_method_the_library_offers_is_sealed_on_the_observer():
+    """The barrier D2 buys the observer's existence with. Registered under the venue's external
+    order identity, this strategy's every order-scoping default points AT the account owner's book:
+    `cancel_all_orders(strategy_only=True)` scopes to this strategy, whose orders are the
+    operator's. So the whole surface raises.
+
+    The set is derived from the installed library, not hand-listed: a hand-listed seal silently
+    regains a hole the next time upstream adds a method -- the first draft of this seal listed eight
+    and left `cancel_orders`, `modify_orders` and `post_market_exit` live. Derived, that addition is
+    a red test naming the method."""
+    surface = _order_mutating_surface()
+    assert len(surface) >= 12, f"the derivation found only {sorted(surface)} -- the walk is broken"
+
+    unsealed = sorted(name for name in surface if name not in vars(node.ExternalOrderObserver))
+    assert not unsealed, (
+        f"{unsealed} are order-mutating methods on the library's Strategy that this observer does "
+        f"not override -- registered as EXTERNAL, they reach the account owner's own orders"
+    )
+
+    observer = node.ExternalOrderObserver(lambda event: None)
+    for name in sorted(surface):
+        with pytest.raises(EngineError, match=name):
+            getattr(observer, name)()
 
 
 def test_a_quote_for_another_instrument_does_not_disturb_the_running_intent(tmp_path):
@@ -708,33 +762,53 @@ def test_probe_executor_factory_shape(tmp_path):
 # --- the own-strategy order stream (the unknown-order kill trip's scoping) -----------------------
 
 
-def test_the_strategy_claims_no_external_orders(tmp_path):
+def test_no_strategy_claims_external_orders(tmp_path):
     """The precondition the executor's unknown-order kill trip rests on: this strategy is
     subscribed to `events.order.<its own id>` and claims NOTHING beyond it. An `external_order_claims`
     entry would make the venue's reconciliation route the account owner's own hand-placed settling
     fills into on_order_event -- and the trip would latch the kill switch on the probe's sanctioned
     final act.
 
-    The strategy's config is the whole claim surface -- there is no second, derived list to read --
-    so `None` there IS the empty claim, on both constructions."""
-    for strategy in (ShadowStrategy(_config(tmp_path)), ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None)):
+    The observer is held to it too: it is registered under the external identity precisely so that
+    nothing has to be claimed to observe those orders, and a claim there would drag the account
+    owner's orders onto the claiming strategy's own topic just the same.
+
+    A strategy's config is the whole claim surface -- there is no second, derived list to read -- so
+    `None` there IS the empty claim, on every construction."""
+    strategies = (
+        ShadowStrategy(_config(tmp_path)),
+        ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None),
+        node.ExternalOrderObserver(lambda event: None),
+    )
+    for strategy in strategies:
         assert strategy.config.external_order_claims is None
 
 
 # Each banned text mapped to the cli/ paths deliberately allowed to carry it, and HOW MANY times.
-# `external_order_claims`: allowed NOWHERE. A claim is what would route the account owner's own
-# hand-placed settling fills onto the strategy's OWN order topic and straight into the trip.
-# `msgbus`: allowed exactly ONCE, in node.py, for the `events.order.EXTERNAL` subscription (spec
-# 00098 D1) -- a SECOND, filtered stream whose handler acts only on rows the engine's ledger vouches
-# for. A count rather than a path, because a file-level allowlist admits any further reach inside
-# the same file: one more `self.msgbus.subscribe` there, on a wildcard topic, would route EVERY
-# strategy's order events into the filter and nothing would say so. What it counts is TEXT, not bus
-# reaches -- an alias (`bus = self.msgbus`) fans out from one occurrence -- so the wiring assertions
-# EARLIER in this file, which pin the subscribed set by exact equality, are the other half of this
-# guard rather than a duplicate of it.
+# Every entry is allowed NOWHERE, so the values are empty -- the shape stays a map because an
+# allowance is exactly the thing that has to be spelled with a count rather than a path.
+#
+# `external_order_claims`: a claim is what would route the account owner's own hand-placed settling
+# fills onto a strategy's OWN order topic and straight into the unknown-order trip.
+#
+# `msgbus`: nothing under cli/ reaches the raw message bus. The second order stream is a registered
+# strategy whose events the library routes by identity, so there is no topic string to subscribe and
+# no reason for any module here to hold a bus.
+#
+# `MessageBus`: constructing one registers it globally and REPLACES the engine's own (spec 00100
+# D3). Submitted orders then freeze at INITIALIZED, no event ever fires, and nothing raises -- on
+# the live trade path that is an order that never leaves and a kill trip that never runs. It is the
+# CONSTRUCTOR alone that does this, so this ban is what the `msgbus` line above cannot express:
+# `"MessageBus".count("msgbus")` is 0, and a `MessageBus(...)` in cli/ would pass every other check
+# in this repo.
+#
+# What this walk counts is TEXT, not reaches -- an alias fans out from one occurrence -- so the
+# wiring assertions EARLIER in this file, which pin the observer's handler and its identity by exact
+# equality, are the other half of this guard rather than a duplicate of it.
 _ORDER_STREAM_WIDENERS = {
     "external_order_claims": {},
-    "msgbus": {"cli/engine/node.py": 1},
+    "msgbus": {},
+    "MessageBus": {},
 }
 
 
@@ -1110,7 +1184,10 @@ asyncio.set_event_loop(asyncio.new_event_loop())
 # The built node exposes no strategy registry, so the strategy is captured on its way in -- these
 # are the real objects `build_shadow_node` assembled, not restatements of them.
 built = []
+observers = []
+observer_ids_at_construction = []
 original_strategy = node_module.ShadowStrategy
+original_observer = node_module.ExternalOrderObserver
 
 
 def capturing(*args, **kwargs):
@@ -1119,7 +1196,15 @@ def capturing(*args, **kwargs):
     return strategy
 
 
+def capturing_observer(*args, **kwargs):
+    observer = original_observer(*args, **kwargs)
+    observers.append(observer)
+    observer_ids_at_construction.append(str(observer.strategy_id))
+    return observer
+
+
 node_module.ShadowStrategy = capturing
+node_module.ExternalOrderObserver = capturing_observer
 node = node_module.build_shadow_node(
     EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=sys.argv[2] == "1")
 )
@@ -1131,6 +1216,18 @@ node = node_module.build_shadow_node(
             "is_running": node.is_running,
             "strategies": [type(s).__name__ for s in built],
             "executor_wired": [s._executor_factory is not None for s in built],
+            "observers": [type(o).__name__ for o in observers],
+            # Read AFTER build_shadow_node returned, so after add_strategy: registration is what
+            # re-derives the id, and an id read at construction proves nothing about the one the
+            # library will route events to.
+            "observer_ids_registered": [str(o.strategy_id) for o in observers],
+            "observer_ids_at_construction": observer_ids_at_construction,
+            "strategy_ids_registered": [str(s.strategy_id) for s in built],
+            # The handler each observer holds, identified: bound-method equality is same function
+            # AND same instance, so this is the executor-wired strategy's own forwarder or nothing.
+            "observer_handler_is_the_strategys_forwarder": [
+                o._handler == s._on_external_order_event for o, s in zip(observers, built)
+            ],
         }
     )
 )
@@ -1174,6 +1271,31 @@ def test_build_shadow_node_without_exec_client(tmp_path):
     # The assembled node's strategy really carries the executor factory -- the only place the whole
     # tick/quote/order-event chain is proven to be armed in production rather than only in a stub.
     assert facts["executor_wired"] == [True]
+
+
+def test_the_registered_observers_identity_is_exactly_the_venues_external_order_id(tmp_path):
+    """The single fact the whole second order stream rests on, measured through the real
+    registration rather than at construction (spec 00100 D2).
+
+    Nautilus adopts an order this process did not submit under `StrategyId("EXTERNAL")` and routes
+    its events to the strategy registered under that exact id. An `order_id_tag` on the observer's
+    config would make the registered id `EXTERNAL-<tag>` -- measured -- and the observer would then
+    receive NOTHING, with no exception, no log and no other failing test in this suite. So the id is
+    read back off the object the production assembly actually registered.
+
+    The handler is pinned in the same breath: it is the forwarder of the strategy carrying the
+    executor factory, which is what keeps this stream wired WITH the executor whose disposition
+    filter scopes it."""
+    facts = _node_build_facts(tmp_path, exec_enabled=False)
+    assert facts["observers"] == ["ExternalOrderObserver"]
+    assert facts["observer_ids_registered"] == ["EXTERNAL"]
+    # Registration re-derives the id from the config, so a construction reading something else would
+    # still register correctly -- but then `strategy_id` and the config would disagree for the whole
+    # pre-registration window. Both ends pinned, as they are for the main strategy.
+    assert facts["observer_ids_at_construction"] == ["EXTERNAL"]
+    # The main strategy's own venue-visible identity is untouched by the second registration.
+    assert facts["strategy_ids_registered"] == ["ShadowStrategy-000"]
+    assert facts["observer_handler_is_the_strategys_forwarder"] == [True]
 
 
 def test_build_shadow_node_with_exec_client_when_enabled(tmp_path):

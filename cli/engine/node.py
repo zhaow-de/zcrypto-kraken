@@ -59,11 +59,12 @@ _ORDER_ID_TAG = "000"
 # at on_start time; tests/test_engine_node.py pins the two equal.
 _TICK_SECONDS = 5.0
 _EXEC_TIMER_NAME = "exec-probe-tick"
-# The topic nautilus publishes a reconciled order's events on. Built the way the execution engine
-# builds it -- a StrategyId through the same f-string -- rather than spelled as a literal, so a
-# library rename surfaces in tests/test_engine_node.py's library-boundary test instead of as an
-# unsubscribed topic and total silence in production.
-_EXTERNAL_ORDER_TOPIC = f"events.order.{StrategyId('EXTERNAL')}"
+# The identity nautilus stamps on an order this process did not submit: reconciliation adopts a
+# venue-resting unclaimed order under this strategy id and routes its events to whichever strategy
+# is registered under it. `ExternalOrderObserver` is that strategy. Taken from the library's own
+# `StrategyId` rather than spelled as a literal, so a rename surfaces in tests/test_engine_node.py
+# instead of as an observer nothing ever reaches and total silence in production.
+_EXTERNAL_STRATEGY_ID = StrategyId("EXTERNAL")
 
 
 def _utc_now() -> datetime:
@@ -173,15 +174,16 @@ class ShadowStrategy(Strategy):
     topic. That scoping is the precondition the executor's unknown-order kill trip rests on;
     widening it would latch the kill switch on a sanctioned act.
 
-    `events.order.EXTERNAL` is ADDITIONALLY subscribed (spec 00098 D1), and neither half of that
-    scoping moves. The claim list stays empty, so the own topic still carries only orders this
-    engine submitted and the unknown-order trip still runs only there. The new topic reaches
-    `_on_external_order_event` -> the executor's disposition filter, which acts only on the orders
-    this engine's own ledger vouches for -- the rows the adopt pass re-attached and this session's
-    own submissions -- and everything else it counts, logs, and drops before any row write, cancel,
-    or trip arithmetic. So the hand settle remains
-    structurally unable to reach the trip: it matches no ledgered row, and no widening of the claim
-    list is what admits it. tests/test_engine_node.py pins each of these.
+    A SECOND order stream reaches this strategy from the side (spec 00098 D1, 00100 D2), and
+    neither half of that scoping moves. The claim list stays empty, so the own topic still carries
+    only orders this engine submitted and the unknown-order trip still runs only there. The second
+    stream is `ExternalOrderObserver`, a separate strategy registered under the venue's external
+    order identity, and it forwards into `_on_external_order_event` -> the executor's disposition
+    filter, which acts only on the orders this engine's own ledger vouches for -- the rows the adopt
+    pass re-attached and this session's own submissions -- and everything else it counts, logs, and
+    drops before any row write, cancel, or trip arithmetic. So the hand settle remains structurally
+    unable to reach the trip: it matches no ledgered row, and no widening of the claim list is what
+    admits it. tests/test_engine_node.py pins each of these.
     """
 
     def __new__(cls, *args, **kwargs):
@@ -242,10 +244,6 @@ class ShadowStrategy(Strategy):
             # obligation and must be seeded even if the executor's construction were to raise.
             self._executor = self._executor_factory(self)
             self.clock.set_timer(_EXEC_TIMER_NAME, timedelta(seconds=_TICK_SECONDS), callback=self._on_exec_tick)
-            # The second order stream (spec 00098 D1). Wired WITH the executor, never with the
-            # strategy: the filter that scopes this topic is the executor's, so a construction that
-            # has no executor must not be subscribed to it either.
-            self.msgbus.subscribe(topic=_EXTERNAL_ORDER_TOPIC, handler=self._on_external_order_event)
 
     def _on_cycle_alert(self, event) -> None:
         # Read BEFORE on_alert_logic, whose FIRST act is schedule_alert -- which overwrites this
@@ -282,8 +280,110 @@ class ShadowStrategy(Strategy):
             self._executor.on_order_event(event)
 
     def _on_external_order_event(self, event) -> None:
+        """The second order stream's landing point, handed to `ExternalOrderObserver` by
+        `build_shadow_node`. The guard keeps that stream wired WITH the executor and never with the
+        strategy alone: the filter that scopes these events is the executor's, so a construction
+        that wired none drops them here rather than acting on them unfiltered."""
         if self._executor is not None:
             self._executor.on_external_order_event(event)
+
+
+def _external_observer_config() -> StrategyConfig:
+    """The observer's whole configuration: the external order identity, and nothing else.
+
+    `order_id_tag` is left unset DELIBERATELY. A tag is appended to the id -- measured, a tag "EXT"
+    yields `EXTERNAL-EXT` -- and events for orders the venue reports under the plain external
+    identity would then reach no strategy at all: no exception, no log, no failing test, the whole
+    stream simply dark. Unset, the id reads exactly `EXTERNAL` both at construction and after
+    registration, which is where tests/test_engine_node.py measures it.
+
+    The claim list stays at its `None` default here as it does on the main strategy: a claim is what
+    would route the account owner's own hand-placed settling fills onto a claiming strategy's own
+    order topic and into the unknown-order kill trip."""
+    return StrategyConfig(strategy_id=_EXTERNAL_STRATEGY_ID)
+
+
+class ExternalOrderObserver(Strategy):
+    """The second order stream (spec 00098 D1, 00100 D2): registered under the venue's external
+    order identity, it receives the order events of everything this process did not submit --
+    a previous process's resting order the startup pass adopted, and the account owner's own
+    hand-placed settling orders alike -- and forwards each to `handler`, which is the shadow
+    strategy's `_on_external_order_event` and through it the executor's disposition filter. That
+    filter acts only on rows this engine's own ledger vouches for; the hand settle matches none,
+    so it is counted and dropped before any row write, cancel, or trip arithmetic.
+
+    **Every order-mutating method is sealed to raise.** This class holds a strategy's full
+    submit/cancel/modify/close powers, and registered under this id every one of their scoping
+    defaults points AT the account owner's book: `cancel_all_orders(strategy_only=True)` scopes to
+    this strategy, whose orders are the operator's. The barrier is explicit rather than structural
+    because the structural alternative -- `DataActor`, which has no order surface at all -- cannot
+    receive order events. tests/test_engine_node.py derives the mutating surface from the library
+    itself and asserts every member of it is sealed here, so a method a future release adds is a
+    red test and not a quiet hole.
+
+    Observation is all this class does: it queries nothing, submits nothing, and holds no state
+    beyond the handler.
+    """
+
+    def __new__(cls, *args, **kwargs):
+        """`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
+        arguments and the base rejects every one it does not know -- `handler` among them.
+        Swallowing them is what makes this class constructible at all, and passing the config here
+        is what makes `strategy_id` read `EXTERNAL` from construction rather than
+        `ExternalOrderObserver-None` until registration re-derives it."""
+        return super().__new__(cls, _external_observer_config())
+
+    def __init__(self, handler: Callable) -> None:
+        super().__init__(config=_external_observer_config())
+        self._handler = handler
+
+    def on_order_event(self, event) -> None:
+        self._handler(event)
+
+    # --- the seal: the order surface, refused ---------------------------------------------------
+
+    def _refuse(self, method: str) -> None:
+        raise EngineError(
+            f"{method} is sealed on the external-order observer: this strategy carries the venue's "
+            f"own external order identity, so the orders every scoping default here reaches are the "
+            f"account owner's. It observes and never acts."
+        )
+
+    def submit_order(self, *args, **kwargs) -> None:
+        self._refuse("submit_order")
+
+    def submit_order_list(self, *args, **kwargs) -> None:
+        self._refuse("submit_order_list")
+
+    def cancel_order(self, *args, **kwargs) -> None:
+        self._refuse("cancel_order")
+
+    def cancel_orders(self, *args, **kwargs) -> None:
+        self._refuse("cancel_orders")
+
+    def cancel_all_orders(self, *args, **kwargs) -> None:
+        self._refuse("cancel_all_orders")
+
+    def cancel_gtd_expiry(self, *args, **kwargs) -> None:
+        self._refuse("cancel_gtd_expiry")
+
+    def modify_order(self, *args, **kwargs) -> None:
+        self._refuse("modify_order")
+
+    def modify_orders(self, *args, **kwargs) -> None:
+        self._refuse("modify_orders")
+
+    def close_position(self, *args, **kwargs) -> None:
+        self._refuse("close_position")
+
+    def close_all_positions(self, *args, **kwargs) -> None:
+        self._refuse("close_all_positions")
+
+    def market_exit(self, *args, **kwargs) -> None:
+        self._refuse("market_exit")
+
+    def post_market_exit(self, *args, **kwargs) -> None:
+        self._refuse("post_market_exit")
 
 
 def _logging_config() -> LoggerConfig:
@@ -420,8 +520,15 @@ def _probe_executor_factory(config: EngineConfig) -> Callable:
 
 def build_shadow_node(config: EngineConfig) -> LiveNode:
     """Assemble (never run here) the production-shape shadow LiveNode: the builder's clients
-    constructed, then the ShadowStrategy attached with the probe executor wired. Building
-    constructs clients only -- no network until node.run()."""
+    constructed, then the ShadowStrategy attached with the probe executor wired, then the external
+    order observer attached onto that strategy's own external forwarder. Building constructs clients
+    only -- no network until node.run().
+
+    The observer takes the forwarder of THIS strategy, the one carrying the executor factory: the
+    filter that scopes external events is the executor's, so the second stream is wired with an
+    executor or its events are dropped unacted-on."""
     node = _node_builder(config).build()
-    node.add_strategy(ShadowStrategy(config, executor_factory=_probe_executor_factory(config)))
+    strategy = ShadowStrategy(config, executor_factory=_probe_executor_factory(config))
+    node.add_strategy(strategy)
+    node.add_strategy(ExternalOrderObserver(strategy._on_external_order_event))
     return node

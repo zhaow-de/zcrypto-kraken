@@ -651,11 +651,12 @@ class ProbeExecutor:
         write-ahead row is the only trusted witness. An order matching a non-terminal row whose
         LEDGERED order was reduce-only is left resting, and its row is preserved. Its later fills
         are preserved with it: the live engine reconciles a venue-resting order under the EXTERNAL
-        strategy id (the instrument is never claimed) and publishes its events on
-        `events.order.EXTERNAL`, which `node.py` subscribes and routes into `_on_external_event`
-        (spec 00098 D1) -- so the `_attached` entry this pass writes below is precisely what that
-        filter matches a post-restart fill against, and a matched fill appends to the row, moves the
-        counters, and latches the overfill trip exactly as an own order's does. The claim list stays
+        strategy id (the instrument is never claimed) and routes its events to the strategy
+        registered under that id -- `node.py`'s external order observer, which forwards them into
+        `_on_external_event` (spec 00098 D1, 00100 D2) -- so the `_attached` entry this pass writes
+        below is precisely what that filter matches a post-restart fill against, and a matched fill
+        appends to the row, moves the counters, and latches the overfill trip exactly as an own
+        order's does. The claim list stays
         empty, so a genuinely external act -- the owner's sanctioned hand settle -- still matches no
         ledgered row and is counted and dropped rather than acted on. Everything else is canceled: a
         resting opener is a pending widening the hold exists to forbid, and an order with no row
@@ -676,9 +677,9 @@ class ProbeExecutor:
         ack itself, in a forensic row.
 
         BEFORE any of that, the pass reconciles every row it can match against the venue's own
-        figure (spec 00098 D7), because the subscription above cannot reach backwards: nautilus
-        awaits execution reconciliation and only then starts the trader, which is what installs the
-        subscription, so a fill that happened while this process was down is published to nobody.
+        figure (spec 00098 D7), because the stream above cannot reach backwards: a fill applied
+        during nautilus's own reconciliation is published before this pass has attached a single
+        row, so it matches nothing and is dropped as a genuinely external act.
         The quantity is not lost with it -- the engine applies the fill to the order and publishes
         it in one synchronous body, so it is resident in the reconciled order's own `filled_qty` by
         the time this runs, and that is what `_reconcile_adopted_rows` reads. Which is also why the
@@ -1949,7 +1950,7 @@ class ProbeExecutor:
 
         Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and
         NOTHING else -- it must never reach `_trip_on_fill`, a row write, or a cancel. That filter
-        is what keeps the unknown-order trip scoped while this subscription exists at all.
+        is what keeps the unknown-order trip scoped while this second stream exists at all.
         """
         client_order_id = str(getattr(event, "client_order_id", ""))
         attached = self._attached.get(client_order_id)

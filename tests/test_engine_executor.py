@@ -122,7 +122,13 @@ def test_a_below_costmin_result_names_the_floor():
 # --- the structural pin -------------------------------------------------------------------------
 
 
-_VENUE_MUTATING_NAMES = ("submit_order", "cancel_order", "order_factory")
+# The ATTRIBUTE REACH, dot included, not the bare word: what escapes is a second module reaching a
+# venue-mutating attribute on a strategy, client or factory, and every such reach is dotted --
+# `self._client.submit_order(...)`, `strategy.order_factory.limit(...)`, a commented-out line of
+# either. `cli/engine/node.py` seals that surface by DEFINING those names to raise, and a definition
+# is the opposite of a reach; matching the bare word would make the seal itself the offender and the
+# only way back would be an allowance, which is how a guard stops being one.
+_VENUE_MUTATING_NAMES = (".submit_order", ".cancel_order", ".order_factory")
 
 
 def test_the_venue_mutating_names_have_exactly_one_module():
