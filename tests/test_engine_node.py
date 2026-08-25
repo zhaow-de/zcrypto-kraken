@@ -550,11 +550,6 @@ def test_on_start_builds_the_executor_and_registers_the_exec_tick(tmp_path):
     # The alert chain is untouched by the wiring; the executor tick is a SECOND, repeating timer.
     assert [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
     assert clock.timers == [("exec-probe-tick", timedelta(seconds=5), stub._on_exec_tick)]
-    # The tick cadence the executor's own deadlines are written against -- pinned equal rather than
-    # restated on faith, since node.py cannot import the constant at module scope.
-    from cli.engine.executor import _TICK_SECONDS
-
-    assert node._TICK_SECONDS == _TICK_SECONDS
 
 
 def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):

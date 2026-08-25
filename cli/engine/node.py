@@ -34,6 +34,12 @@ from cli.config import EngineConfig
 # exactly while a restarted cycle can still complete inside the ratified 30-min gate window.
 from cli.engine.cycle import _REFRESH_RESERVE, run_cycle
 from cli.engine.errors import EngineError
+from cli.engine.execgate import ExecutionGate
+
+# `_TICK_SECONDS` is the executor's own tick cadence, imported rather than restated so the timer
+# this module arms and the interval the executor expects cannot drift apart.
+from cli.engine.executor import _TICK_SECONDS, ProbeExecutor
+from cli.engine.venue import read_system_status
 from cli.engine.venuestate import VenueState, venue_state_from_cache
 from cli.logging import get_logger
 
@@ -56,10 +62,6 @@ _API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 # one would silently take this prefix. Stated explicitly instead, at the value this strategy holds
 # today; tests/test_engine_node.py pins the registered identity and the minted prefix.
 _ORDER_ID_TAG = "000"
-# The probe executor's tick cadence. Restated here rather than imported because
-# `cli.engine.executor` is imported lazily (inside `_probe_executor_factory`) while this is needed
-# at on_start time; tests/test_engine_node.py pins the two equal.
-_TICK_SECONDS = 5.0
 _EXEC_TIMER_NAME = "exec-probe-tick"
 # The identity nautilus stamps on an order this process did not submit: reconciliation adopts a
 # venue-resting unclaimed order under this strategy id and routes its events to whichever strategy
@@ -529,14 +531,7 @@ def _probe_executor_factory(config: EngineConfig) -> Callable:
     """The production executor factory: `factory(strategy) -> ProbeExecutor`, with the strategy
     itself as the client handle and a gate reading the deployed control-file tree beside the
     journal. `venue_reader` is passed explicitly (rather than relying on the class default) so a
-    test can substitute it, mirroring `command.run`'s own gate construction.
-
-    Local import: `cli.engine.executor` reaches `cli.engine.venuestate`, and keeping it here means
-    nothing pays it until a node is actually assembled."""
-    from cli.engine.execgate import ExecutionGate
-    from cli.engine.executor import ProbeExecutor
-    from cli.engine.venue import read_system_status
-
+    test can substitute it, mirroring `command.run`'s own gate construction."""
     return lambda strategy: ProbeExecutor(
         client=strategy,
         gate=ExecutionGate(
