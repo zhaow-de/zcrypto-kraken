@@ -10,6 +10,7 @@ import functools
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -287,12 +288,107 @@ def test_shadow_strategy_bare_construction_defaults(tmp_path):
     assert strategy._next_cycle_ts is None
 
 
-def test_the_strategys_order_id_tag_is_explicit_not_positional(tmp_path):
-    """`order_id_tag` is assigned as `f"{len(order_id_tags):03d}"` for a strategy that passes no
-    config -- so registering a SECOND strategy silently changes this one's client-order-id prefix,
-    which is visible at the venue. Pinned so a registration-order change is a red test."""
-    strategy = ShadowStrategy(_config(tmp_path))
-    assert strategy.order_id_tag == "000"  # measured by registering through Trader.add_strategy
+# --- the venue-visible identity (spec 00100 D8) --------------------------------------------------
+
+# Registration is what fixes the identity the venue sees: `strategy_id` is re-derived there from
+# the strategy's config, and the order factory that stamps the `order_id_tag` segment into every
+# client order id does not exist before it. So this probe performs the real registration
+# `build_shadow_node` performs, `LiveNode.add_strategy`, and reads back the id, the prefix an actual
+# order carries, and the id the strategy already held BEFORE registration. The child process is
+# deliberate -- a node build in-process would take the pytest session's faulthandler with it.
+#
+# `others` places a SECOND, tag-less strategy: `before` or `after` this one, or `alone` for none.
+# A tag-less strategy is assigned its tag positionally at registration, so it is the construction
+# that can contend for this strategy's prefix.
+_IDENTITY_PROBE = """
+import asyncio, json, os, sys
+from pathlib import Path
+
+from cli.config import EngineConfig
+from cli.engine.node import ShadowStrategy, _node_builder
+from nautilus_trader.model import InstrumentId, OrderSide, Price, Quantity
+from nautilus_trader.trading import Strategy
+
+root, others = Path(sys.argv[1]), sys.argv[2]
+asyncio.set_event_loop(asyncio.new_event_loop())
+
+config = EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=False)
+live_node = _node_builder(config).build()
+facts = {}
+if others == "before":
+    live_node.add_strategy(Strategy())
+strategy = ShadowStrategy(config)
+facts["strategy_id_unregistered"] = str(strategy.strategy_id)
+try:
+    live_node.add_strategy(strategy)
+except Exception as exc:
+    facts["refusal"] = f"{type(exc).__name__}: {exc}"
+else:
+    if others == "after":
+        live_node.add_strategy(Strategy())
+    order = strategy.order_factory.limit(
+        instrument_id=InstrumentId.from_str("BTC/EUR.KRAKEN"),
+        order_side=OrderSide.BUY,
+        quantity=Quantity.from_str("0.001"),
+        price=Price.from_str("30000.0"),
+    )
+    facts["strategy_id"] = str(strategy.strategy_id)
+    facts["client_order_id"] = str(order.client_order_id)
+(root / "identity.json").write_text(json.dumps(facts))
+os._exit(0)
+"""
+
+
+def _identity_facts(tmp_path: Path, others: str) -> dict:
+    result = subprocess.run(
+        [sys.executable, "-c", _IDENTITY_PROBE, str(tmp_path), others],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    facts = tmp_path / "identity.json"
+    assert facts.exists(), f"exit={result.returncode}\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    return json.loads(facts.read_text())
+
+
+@pytest.mark.parametrize(
+    ("others", "registers"),
+    [
+        # Production's own shape: this is the only strategy the node carries.
+        pytest.param("alone", True, id="the-only-strategy-registered"),
+        # A second strategy behind this one cannot move a prefix already stamped.
+        pytest.param("after", True, id="a-tagless-strategy-registered-after"),
+        # The dangerous order: registered first, a tag-less strategy takes `000` positionally.
+        # Registration then REFUSES this strategy rather than handing it a different prefix.
+        pytest.param("before", False, id="a-tagless-strategy-registered-first"),
+    ],
+)
+def test_the_registered_strategys_venue_visible_identity_is_pinned(tmp_path, others, registers):
+    """The client-order-id prefix reaches Kraken on every order this engine places, so it is pinned
+    against the value the engine holds today rather than derived from `_ORDER_ID_TAG` -- a test that
+    read the constant would follow it anywhere.
+
+    Pinned against the EFFECTIVE identity, three ways: the registered `strategy_id`, the prefix an
+    order minted through the strategy's own factory actually carries, and the id the strategy holds
+    before it is registered at all. The last is a separate property with a separate mechanism --
+    `strategy_id` is derived at CONSTRUCTION from the config `__new__` receives, and registration
+    re-derives it from the config `__init__` passed. Registration alone would therefore reach `000`
+    even from a construction that reads `ShadowStrategy-None`, so without this third read nothing
+    holds the construction to the identity it will end up with.
+
+    Parametrised over the registration orders because the tag is what a tag-less strategy contends
+    for: whichever order a second strategy arrives in, this one's prefix is `000` or the
+    registration fails loudly. It is never quietly something else."""
+    facts = _identity_facts(tmp_path, others)
+    assert facts["strategy_id_unregistered"] == "ShadowStrategy-000"
+    if not registers:
+        assert "strategy_id" not in facts, f"the colliding registration was accepted: {facts}"
+        assert "order_id_tag" in facts["refusal"] and "000" in facts["refusal"], facts["refusal"]
+        return
+    assert facts["strategy_id"] == "ShadowStrategy-000"
+    # `O-<date>-<time>-<trader instance>-<order_id_tag>-<counter>`: the whole shape, so the tag's
+    # position in it is pinned too and a re-segmented id cannot pass by carrying `000` elsewhere.
+    assert re.fullmatch(r"O-\d+-\d+-\d+-000-\d+", facts["client_order_id"]), facts["client_order_id"]
 
 
 def test_schedule_alert_sets_state_and_timer(tmp_path):
@@ -617,9 +713,11 @@ def test_the_strategy_claims_no_external_orders(tmp_path):
     subscribed to `events.order.<its own id>` and claims NOTHING beyond it. An `external_order_claims`
     entry would make the venue's reconciliation route the account owner's own hand-placed settling
     fills into on_order_event -- and the trip would latch the kill switch on the probe's sanctioned
-    final act."""
+    final act.
+
+    The strategy's config is the whole claim surface -- there is no second, derived list to read --
+    so `None` there IS the empty claim, on both constructions."""
     for strategy in (ShadowStrategy(_config(tmp_path)), ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None)):
-        assert strategy.external_order_claims == []
         assert strategy.config.external_order_claims is None
 
 

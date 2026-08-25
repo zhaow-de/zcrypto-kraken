@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -931,6 +932,38 @@ def test_a_raising_venue_read_refuses_the_plan_with_no_subscribe_and_no_submit(t
     entry = _plan_entry(tmp_path)
     assert entry["disposition"] == "refused"
     assert entry["reasons"] == ["no venue truth"]
+    assert not path.exists()
+
+
+def test_a_raising_own_position_read_refuses_the_intent_with_no_subscribe_and_no_submit(tmp_path):
+    """`_start_intent` reads the Cache TWICE -- the venue-truth read above, then the strategy-scoped
+    own-position read that seeds `own_position_before` -- and guards them separately. Only the
+    second guard is under test here, and no cache that simply fails reaches it: `StubCache(raises=
+    True)` fails `instrument()`, which the FIRST guard catches, leaving the second one unreachable
+    and its deletion invisible to every other test in this file. So this cache answers everything
+    instrument-scoped and refuses exactly the strategy-scoped read.
+
+    The refusal is the assertion. Unguarded, the exception leaves `_start_intent` with `_active`
+    unarmed and `_index` unadvanced -- the plan neither refused nor progressed -- and the guard's
+    other reason for standing before the subscribe is that a raise after it would leak the quote
+    subscription until restart."""
+
+    class _OwnPositionUnreadable(StubCache):
+        def positions_open(self, *, instrument_id=None, strategy_id=None, **kwargs):
+            if strategy_id is not None:
+                raise RuntimeError("strategy-scoped position read failed")
+            return super().positions_open(instrument_id=instrument_id, strategy_id=strategy_id, **kwargs)
+
+    client = StubClient(_OwnPositionUnreadable())
+    ex = _executor(tmp_path, client=client)
+    path = _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+
+    assert client.subscribed == [] and client.submitted == []
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "refused"
+    assert intent["reasons"] == ["no venue truth"]
     assert not path.exists()
 
 
@@ -3824,3 +3857,43 @@ def test_reconcile_terminal_baselines_against_our_own_holding_not_the_instrument
         "the post-terminal comparison baselined against the whole instrument -- both ends must be "
         "scoped to this engine's own position or a pre-existing operator holding trips it"
     )
+
+
+# --- the client handle is the real Strategy, and this file's stub is only a restatement of it ----
+
+
+def _client_surface_reached_by_the_executor() -> set[str]:
+    """Every name `ProbeExecutor` reaches through `self._client`, read off the executor's own
+    source. Derived rather than listed: a hand-written list is a second restatement of the same
+    contract, and would go stale at exactly the moment a new call site appears."""
+    tree = ast.parse(Path(executor_module.__file__).read_text())
+    return {
+        n.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute)
+        and isinstance(n.value, ast.Attribute)
+        and n.value.attr == "_client"
+        and isinstance(n.value.value, ast.Name)
+        and n.value.value.id == "self"
+    }
+
+
+def test_every_client_surface_the_executor_reaches_exists_on_the_real_strategy():
+    """The client handle production hands `ProbeExecutor` is a nautilus `Strategy`; every test in
+    this file hands it `StubClient`. A stub is a restatement of that contract, and an unverified
+    restatement drifts silently -- production raises on a name the library does not have, inside an
+    `except` that refuses an intent or trips the kill switch, while the whole suite stays green
+    because the stub still carries it.
+
+    So this reads production's call set against the REAL class and never against the stub. The two
+    halves are deliberately independent: a name planted in the stub cannot trip this test, and a
+    name planted in production cannot be rescued by the stub carrying it.
+
+    The derived set is asserted non-empty first -- a walk that stopped matching `self._client` would
+    otherwise satisfy this by checking nothing at all."""
+    from nautilus_trader.trading import Strategy
+
+    surface = _client_surface_reached_by_the_executor()
+    assert len(surface) >= 5, f"the walk found only {sorted(surface)} -- vacuous"
+    missing = sorted(name for name in surface if not hasattr(Strategy, name))
+    assert missing == [], f"the executor reaches {missing} on its client, which the real Strategy does not carry"

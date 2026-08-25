@@ -48,10 +48,11 @@ _ACCOUNT_ID = "KRAKEN-001"
 # the refusal below can say WHICH is missing without ever touching a value.
 _API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 _API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
-# Tag-less, `Trader.add_strategy` would assign this positionally (`f"{len(order_id_tags):03d}"`,
-# counted off the strategies already registered) -- so a second strategy registered ahead of this
-# one would silently change its client-order-id prefix, a venue-visible identifier. Pinned to the
-# value this strategy gets today as the only one registered; tests/test_engine_node.py holds it.
+# The client-order-id tag, a venue-visible identifier: registration stamps it into `strategy_id`
+# and into every client order id this strategy mints. Tag-less, registration assigns it
+# positionally off the strategies already registered, so a second strategy registered ahead of this
+# one would silently take this prefix. Stated explicitly instead, at the value this strategy holds
+# today; tests/test_engine_node.py pins the registered identity and the minted prefix.
 _ORDER_ID_TAG = "000"
 # The probe executor's tick cadence. Restated here rather than imported because
 # `cli.engine.executor` is imported lazily (inside `_probe_executor_factory`) while this is needed
@@ -182,6 +183,19 @@ class ShadowStrategy(Strategy):
     structurally unable to reach the trip: it matches no ledgered row, and no widening of the claim
     list is what admits it. tests/test_engine_node.py pins each of these.
     """
+
+    def __new__(cls, *args, **kwargs):
+        """`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
+        arguments and the base rejects every one it does not know -- `executor_factory` among them.
+        Swallowing them is what makes this class constructible at all.
+
+        The config goes with them because `strategy_id` is derived at construction from `__new__`'s
+        config alone: without one it reads `ShadowStrategy-None` until registration re-derives it
+        from `__init__`'s. Registration is what fixes the venue-visible identity, so the two forms
+        agree on every client order id -- but only this one keeps `strategy_id` and `config` saying
+        the same thing for the whole of the object's life, including the window before the strategy
+        is registered. tests/test_engine_node.py pins both ends."""
+        return super().__new__(cls, StrategyConfig(order_id_tag=_ORDER_ID_TAG))
 
     def __init__(
         self,
