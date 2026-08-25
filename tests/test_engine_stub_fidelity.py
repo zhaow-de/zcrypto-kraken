@@ -222,15 +222,24 @@ _CLASS_FACTORIES = frozenset({"namedtuple", "type", "NamedTuple"})
 
 
 def _discovered_doubles(module: str) -> set[str]:
+    """The test doubles a walk can find without being told, in one of this directory's modules."""
+    return _doubles_in(_tree(module))
+
+
+def _doubles_in(tree: ast.Module) -> set[str]:
     """The test doubles a walk can find without being told: every top-level class -- defined with
     `class` or bound by a class factory -- plus every top-level non-test function that builds a
     `SimpleNamespace`. Those are the suite's stub shapes.
 
     Deliberately over-broad on the class half: it sweeps in helpers that turn out not to be doubles
     at all, and the table has to say so for each. That is the trade -- a rule tight enough to admit
-    only real stubs is a rule that can be stepped around by naming one differently."""
+    only real stubs is a rule that can be stepped around by naming one differently.
+
+    Takes a parsed tree rather than a module name so the factory branch can be handed a synthetic
+    one: it has no live member in this directory today, so nothing else here would notice its
+    removal."""
     found = set()
-    for n in _tree(module).body:
+    for n in tree.body:
         if isinstance(n, ast.ClassDef):
             found.add(n.name)
         elif isinstance(n, ast.FunctionDef) and not n.name.startswith("test_"):
@@ -244,6 +253,42 @@ def _discovered_doubles(module: str) -> set[str]:
             if name in _CLASS_FACTORIES:
                 found |= {t.id for t in n.targets if isinstance(t, ast.Name)}
     return found
+
+
+# A double in each spelling the factory branch claims to cover, plus assignments it must NOT claim.
+# The `class` and SimpleNamespace halves of the walk are floored by real members in every module the
+# table covers; this branch has none, so this snippet is its only floor.
+_FACTORY_FORMS = """
+import collections
+from collections import namedtuple
+from typing import NamedTuple
+
+BareCall = namedtuple("BareCall", "a b")
+DottedCall = collections.namedtuple("DottedCall", "a")
+BuiltinType = type("BuiltinType", (), {})
+TypedTuple = NamedTuple("TypedTuple", [("a", int)])
+
+not_a_double = dict(a=1)
+also_not = sorted([3, 1])
+plain_value = 5
+"""
+
+
+def test_the_class_factory_branch_of_the_walk_finds_an_assignment_form_double():
+    """The branch's own floor, and the only one it has.
+
+    `X = namedtuple(...)` binds a class through an assignment, which no `ClassDef` walk sees -- and
+    this suite has already carried a library stand-in in exactly that spelling, sitting unclassified
+    inside a module the walk was reading. Nothing in this directory is spelled that way TODAY, so
+    deleting the branch re-opens that blind spot with every test still green. This is what goes red.
+
+    Both directions are asserted from one snippet. Discovering the four factory forms is the
+    true positive; the three ordinary assignments beside them are the true negative, without which a
+    branch that simply claimed every assignment target would pass."""
+    found = _doubles_in(ast.parse(_FACTORY_FORMS))
+
+    assert found == {"BareCall", "DottedCall", "BuiltinType", "TypedTuple"}, sorted(found)
+    assert {"not_a_double", "also_not", "plain_value"}.isdisjoint(found)
 
 
 @pytest.mark.parametrize("module", MODULES)
