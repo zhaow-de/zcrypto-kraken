@@ -6,6 +6,7 @@ test that RUNS a node is the instrument-arrival test, which needs Kraken's publi
 skips loudly without it.
 """
 
+import ast
 import functools
 import json
 import logging
@@ -1686,3 +1687,102 @@ def test_a_strategy_with_no_executor_still_takes_the_alert(tmp_path):
     strategy._on_cycle_alert(None)
 
     assert [e[0] for e in events] == ["schedule", "run"]
+
+
+# --- the assembly recorders and the clock stub, checked against the library ----------------------
+#
+# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
+# guards below; the reasoning that makes them worth having lives there.
+
+
+# What each recorder carries for the harness's own sake, modelling nothing on the real type: the
+# call log and the readback helpers. Listed one by one on purpose -- a blanket "underscore-prefixed
+# names are plumbing" rule would exempt exactly the shape that has slipped through this suite once.
+_BUILDER_PLUMBING = frozenset({"calls", "_record", "named"})
+_LIVE_NODE_PLUMBING = frozenset({"builder_kwargs", "recorder"})
+_CLOCK_PLUMBING = frozenset({"alerts", "timers"})
+
+
+def test_no_stub_in_this_file_offers_a_name_its_real_library_type_lacks():
+    """`test_every_builder_call_exists_on_the_library` covers the calls production MAKES; this
+    covers the direction nothing else does. A recorder missing a method production calls raises the
+    first time a test runs it. A recorder OFFERING a method the real type lacks fails NOTHING --
+    every assembly test believes it, and the first real `build()` is where it comes back wrong.
+
+    `RecordingLiveNode` is the half the builder-call test never reaches at all: it stands in for
+    `LiveNode` itself, and only `builder` is read off it."""
+    from nautilus_trader.common import Clock
+    from nautilus_trader.live import LiveNode, LiveNodeBuilder
+
+    live_node = RecordingLiveNode()
+    for label, obj, real, plumbing in (
+        ("RecordingBuilder", live_node.recorder, LiveNodeBuilder, _BUILDER_PLUMBING),
+        ("RecordingLiveNode", live_node, LiveNode, _LIVE_NODE_PLUMBING),
+        ("FakeClock", FakeClock(), Clock, _CLOCK_PLUMBING),
+    ):
+        offered = {name for name in dir(obj) if not name.startswith("__")} - plumbing
+        assert offered, f"{label} offers nothing outside its plumbing list -- the check is vacuous"
+        stale = sorted(name for name in plumbing if hasattr(real, name))
+        assert stale == [], f"{label}'s plumbing list exempts {stale}, which {real.__name__} DOES carry -- check them instead"
+        extra = sorted(name for name in offered if not hasattr(real, name))
+        assert extra == [], f"{label} offers {extra}, which the real {real.__name__} does not carry"
+
+
+def test_the_builder_arguments_the_assembly_passes_bind_against_the_real_live_node(tmp_path, monkeypatch):
+    """`RecordingLiveNode.builder(**kwargs)` agrees with every keyword, including one the real
+    `LiveNode.builder` would reject -- so the identity pin above it can pass against arguments no
+    real assembly would accept. Binding the recorded call against the REAL signature is what makes
+    the keyword names checkable at all."""
+    import inspect
+
+    from nautilus_trader.live import LiveNode
+
+    monkeypatch.setenv(node._API_KEY_VAR, "a-key")
+    monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
+    recorded = _record_assembly(tmp_path, monkeypatch, exec_enabled=True).builder_kwargs
+    assert recorded, "the recorder saw no builder call -- it is no longer standing in for anything"
+    # Placeholders, not the recorded values: `bind` checks arity and keyword names, never types.
+    inspect.signature(LiveNode.builder).bind(**dict.fromkeys(recorded))
+
+
+def _clock_calls_the_strategy_makes() -> list[tuple[str, int, set[str]]]:
+    """(method, positional count, keyword names) for every `self.clock.<method>(...)` call in the
+    node wrapper, read off production's own source. Derived rather than listed: `FakeClock` spells
+    its own parameters, so nothing else can tell an argument the real Clock takes in that position
+    from one it does not."""
+    tree = ast.parse(Path(node.__file__).read_text())
+    calls = []
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and isinstance(n.func.value, ast.Attribute)
+            and n.func.value.attr == "clock"
+        ):
+            calls.append((n.func.attr, len(n.args), {kw.arg for kw in n.keywords if kw.arg is not None}))
+    return calls
+
+
+def test_every_clock_call_the_strategy_makes_lands_on_the_same_parameters_as_the_real_clock():
+    """`FakeClock` restates two `Clock` methods with its OWN parameter order: its third positional is
+    `callback`, where the real `set_timer`'s is `start_time`. Arity alone cannot see that -- three
+    positional arguments bind cleanly against both -- so production's call is bound against BOTH
+    signatures and the parameters it LANDS ON are compared. A call that lands on `callback` here and
+    `start_time` on a live node schedules no executor tick at all, with every test above green."""
+    import inspect
+
+    from nautilus_trader.common import Clock
+
+    calls = _clock_calls_the_strategy_makes()
+    assert len(calls) >= 2, f"the walk found only {calls} -- vacuous"
+    for method, positional, names in calls:
+        assert hasattr(Clock, method), f"the strategy calls clock.{method}, which the real Clock does not carry"
+        assert hasattr(FakeClock, method), f"FakeClock does not restate clock.{method} at all"
+        # Placeholders, not the real arguments: `bind` reports which parameter each lands on, never types.
+        bound = [
+            set(inspect.signature(getattr(cls, method)).bind(None, *[None] * positional, **dict.fromkeys(names)).arguments)
+            for cls in (Clock, FakeClock)
+        ]
+        assert bound[0] == bound[1], (
+            f"clock.{method}(...) lands on {sorted(bound[0])} on the real Clock and {sorted(bound[1])} on FakeClock"
+        )

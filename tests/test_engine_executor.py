@@ -31,6 +31,7 @@ from nautilus_trader.model import (
 
 import cli.engine.execledger as execledger_module
 import cli.engine.executor as executor_module
+import cli.engine.venuestate as venuestate_module
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
@@ -4055,3 +4056,201 @@ def test_every_client_surface_the_executor_reaches_exists_on_the_real_strategy()
     assert len(surface) >= 5, f"the walk found only {sorted(surface)} -- vacuous"
     missing = sorted(name for name in surface if not hasattr(Strategy, name))
     assert missing == [], f"the executor reaches {missing} on its client, which the real Strategy does not carry"
+
+
+# --- this file's other nautilus stand-ins, checked against the library ---------------------------
+#
+# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
+# guards below; the reasoning that makes them worth having lives there.
+
+
+def _cache_accessors_the_engine_reaches() -> set[str]:
+    """Every accessor production calls through a nautilus `Cache`, read off the two modules that
+    hold one: the executor (through `self._client.cache`) and the venue-state reader (through its
+    `cache` argument). Derived rather than listed, for the same reason the client surface is."""
+    reached: set[str] = set()
+    for module in (executor_module, venuestate_module):
+        tree = ast.parse(Path(module.__file__).read_text())
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Attribute):
+                continue
+            holder = n.value
+            if (isinstance(holder, ast.Attribute) and holder.attr == "cache") or (
+                isinstance(holder, ast.Name) and holder.id == "cache"
+            ):
+                reached.add(n.attr)
+    return reached
+
+
+def test_every_cache_accessor_the_engine_reaches_exists_on_the_real_cache():
+    """`StubCache` restates the Cache, and the executor reaches it on the live trade path inside
+    `except` blocks that refuse an intent or trip the kill switch -- so an accessor the library has
+    dropped is a silent refusal in production and a green suite here."""
+    from nautilus_trader.common import Cache
+
+    reached = _cache_accessors_the_engine_reaches()
+    assert len(reached) >= 5, f"the walk found only {sorted(reached)} -- vacuous"
+    missing = sorted(name for name in reached if not hasattr(Cache, name))
+    assert missing == [], f"the engine reaches {missing} on the Cache, which the real Cache does not carry"
+
+
+def _limit_call_the_executor_makes() -> tuple[int, set[str]]:
+    """The positional count and keyword names of the executor's one `order_factory.limit(...)`
+    call, `**flag` resolved to the keys of the dict it is built from. Read off production rather
+    than restated: `StubOrderFactory.limit(**kwargs)` accepts literally anything, so nothing else
+    in this file can tell a keyword the real factory takes from one it does not."""
+    tree = ast.parse(Path(executor_module.__file__).read_text())
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "limit"
+        and isinstance(n.func.value, ast.Attribute)
+        and n.func.value.attr == "order_factory"
+    ]
+    assert len(calls) == 1, f"expected exactly one order_factory.limit call, found {len(calls)}"
+    call = calls[0]
+    names = {kw.arg for kw in call.keywords if kw.arg is not None}
+    splatted = {kw.value.id for kw in call.keywords if kw.arg is None and isinstance(kw.value, ast.Name)}
+    for name in splatted:
+        assigns = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets)
+        ]
+        assert len(assigns) == 1, (
+            f"`{name}` is splatted into the limit call and assigned {len(assigns)} times -- cannot resolve its keys"
+        )
+        keys = {
+            k.value
+            for a in assigns
+            for d in ast.walk(a.value)
+            if isinstance(d, ast.Dict)
+            for k in d.keys
+            if isinstance(k, ast.Constant)
+        }
+        assert keys, f"`**{name}` resolved to no keys -- the resolution is checking nothing"
+        names |= keys
+    return len(call.args), names
+
+
+def test_the_limit_call_the_executor_makes_binds_against_the_real_order_factory():
+    """`StubOrderFactory` stands in for the library's `OrderFactory`, and its whole surface is
+    `limit(**kwargs)` -- a signature that agrees with every keyword, including one the real factory
+    would reject. Binding production's call against the REAL signature is what makes the keywords
+    checkable at all: a renamed or dropped parameter is red here instead of raising at the first
+    live submission, inside the `except` that refuses the intent."""
+    import inspect
+
+    from nautilus_trader.common import OrderFactory
+
+    positional, names = _limit_call_the_executor_makes()
+    assert len(names) >= 5, f"the walk found only {sorted(names)} -- vacuous"
+    # A placeholder per argument: `bind` checks arity and keyword names, never the values.
+    inspect.signature(OrderFactory.limit).bind(None, *[None] * positional, **dict.fromkeys(names))
+
+
+def test_a_real_money_answers_both_accessors_the_fill_row_reads():
+    """`_FakeMoney` restates the two accessors the fill path takes off a commission -- `float(...)`
+    for the amount and `.currency.code` for its denomination. Pinned by VALUE against a real
+    `Money` rather than by an AST walk: both reads are wrapped in `getattr(..., default)`, so a
+    dropped accessor does not raise in production -- it silently reports a fee of None, and the
+    EUR fee total quietly stops accumulating. A name-existence check cannot see that; a value can.
+
+    The second half pins where stub and library part company. `_FakeMoney` keeps whatever amount it
+    is handed; a real `Money` quantizes to its currency's precision. The codes a Kraken fill
+    actually carries mint at 8 decimals, so on those the two agree exactly -- but `EUR` itself
+    carries 2, and this file's fills default to it, so their 0.012 is an amount a real EUR `Money`
+    renders as 0.01. Measured here rather than assumed either way: it moves no production path
+    (`_fee_eur` reads whatever amount the venue's own Money already holds), and if a precision ever
+    changes, the sentence above stops being true out loud instead of quietly."""
+    from nautilus_trader.model import Money
+
+    real = Money(1.25, Currency.from_str("EUR"))
+    assert float(real) == pytest.approx(1.25)
+    assert real.currency.code == "EUR"
+
+    for code in ("ZEUR", "XXBT"):
+        assert Currency.from_str(code).precision == 8
+        assert float(Money(0.012, Currency.from_str(code))) == pytest.approx(0.012)
+    assert Currency.from_str("EUR").precision == 2
+    assert float(Money(0.012, Currency.from_str("EUR"))) == pytest.approx(0.01)
+
+
+# Names each stub below carries for the harness's own sake, modelling nothing on the real type: the
+# storage it answers from, and the mutators tests drive it with. Listed one by one on purpose -- a
+# blanket "underscore-prefixed names are plumbing" rule would exempt exactly the shape that has
+# already slipped through this suite once (a fabricated `_config` on the stub node).
+_STUB_CACHE_PLUMBING = frozenset(
+    {
+        "_instruments",
+        "_balances",
+        "_positions",
+        "_external",
+        "_closed",
+        "_open_orders",
+        "_closed_orders",
+        "_raises",
+        "_position_key",
+        "set_position",
+        "set_external_position",
+        "close_position",
+        "move_position",
+    }
+)
+
+
+def _nautilus_standins():
+    """(label, stub instance, real class, plumbing) for every test double in this file that stands
+    in for a nautilus type. Built inside a function so the extra library imports are paid only by
+    the test that needs them."""
+    from nautilus_trader.common import Cache, OrderFactory
+    from nautilus_trader.model import Money, OrderFilled, Position, QuoteTick
+    from nautilus_trader.model import OrderAccepted as RealOrderAccepted
+    from nautilus_trader.model import OrderRejected as RealOrderRejected
+    from nautilus_trader.trading import Strategy
+
+    return [
+        ("_fake_instrument", _fake_instrument("BTC/EUR.KRAKEN"), CurrencyPair, frozenset()),
+        ("StubCache", StubCache(), Cache, _STUB_CACHE_PLUMBING),
+        ("_FlakyOrdersCache", _FlakyOrdersCache(), Cache, _STUB_CACHE_PLUMBING | {"calls"}),
+        ("_PositionReadFails", _PositionReadFails(), Cache, _STUB_CACHE_PLUMBING | {"broken"}),
+        ("StubOrderFactory", StubOrderFactory(), OrderFactory, frozenset({"_n"})),
+        (
+            "StubClient",
+            StubClient(),
+            Strategy,
+            frozenset({"submitted", "canceled", "subscribed", "unsubscribed", "_submit_raises", "last_order_id"}),
+        ),
+        ("_FakeMoney", _FakeMoney(1.0), Money, frozenset({"_amount"})),
+        ("_held", _held(**{"BTC/EUR": 0.1})[INSTRUMENT_IDS["BTC/EUR"]][0], Position, frozenset()),
+        ("_open_order", _open_order("O-1"), LimitOrder, frozenset()),
+        ("_closed_order", _closed_order("O-1", OrderStatus.FILLED), LimitOrder, frozenset()),
+        ("_quote", _quote(), QuoteTick, frozenset()),
+        ("_fill", _fill("O-1", 0.001), OrderFilled, frozenset()),
+        ("OrderAccepted", OrderAccepted("O-1"), RealOrderAccepted, frozenset()),
+        ("OrderRejected", OrderRejected("O-1", "insufficient funds"), RealOrderRejected, frozenset()),
+    ]
+
+
+def test_no_stub_in_this_file_offers_a_name_its_real_nautilus_type_lacks():
+    """The direction nothing else covers. A stub MISSING something production calls fails loudly
+    the first time a test runs it -- the call raises. A stub OFFERING something the real type lacks
+    fails NOTHING: every test believes the fabricated attribute, forever, and production is the only
+    place the read comes back wrong. That asymmetry is how a node stub carrying a `_config` the
+    library never had survived a whole suite while the watchdog it fed force-exited every start.
+
+    Every violation is collected rather than raised at the first: one red run should name all of
+    them, not send the reader round the loop once per stub."""
+    violations = []
+    for label, stub, real, plumbing in _nautilus_standins():
+        offered = {name for name in dir(stub) if not name.startswith("__")} - plumbing
+        assert offered, f"{label} offers nothing outside its plumbing list -- the check is vacuous"
+        stale = sorted(name for name in plumbing if hasattr(real, name))
+        extra = sorted(name for name in offered if not hasattr(real, name))
+        if extra:
+            violations.append(f"{label} offers {extra}, which {real.__name__} does not carry")
+        if stale:
+            violations.append(f"{label}'s plumbing list exempts {stale}, which {real.__name__} DOES carry -- check them instead")
+    assert violations == [], "; ".join(violations)

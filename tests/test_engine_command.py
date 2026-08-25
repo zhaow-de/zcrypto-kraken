@@ -4,6 +4,7 @@ no live node. `run`'s fail-fast checks and watchdog are exercised against a stub
 synchronous timer; nautilus lazy-import stays a subprocess check at the bottom; the attended soak
 is the live smoke."""
 
+import ast
 import json
 import re
 import subprocess
@@ -1320,3 +1321,88 @@ def test_report_journal_dir_overrides_the_configured_journal(tmp_path, monkeypat
     assert result.exit_code == 0, out
     assert "6 journaled outcome(s)" in out
     assert "streak: 1" in out
+
+
+# --- the stub node and handle are restatements of LiveNode / LiveNodeHandle ----------------------
+#
+# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
+# guards below; the reasoning that makes them worth having lives there.
+
+
+def _surface_run_reaches(local: str) -> set[str]:
+    """Every name `cli/engine/command.py` reaches through its `node` / `handle` local, read off
+    production's own source. Derived rather than listed: a hand-written list is a second
+    restatement of the same contract and goes stale the moment a new read appears."""
+    tree = ast.parse(Path(command.__file__).read_text())
+    return {
+        n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == local
+    }
+
+
+def test_every_node_and_handle_surface_engine_run_reaches_exists_on_the_real_types():
+    """`run()` drives a real `LiveNode` and its `LiveNodeHandle`; every test above drives
+    `_FakeNode`. A name the library has dropped raises where it is read -- on the node, at start,
+    and on the handle, inside the watchdog's `except`, which then force-exits a healthy engine --
+    while the stub keeps the whole file green. So production's read set is checked against the REAL
+    classes and never against the stub: a name planted in the stub cannot trip this, and a name
+    planted in production cannot be rescued by the stub carrying it."""
+    from nautilus_trader.live import LiveNode, LiveNodeHandle
+
+    for local, real in (("node", LiveNode), ("handle", LiveNodeHandle)):
+        surface = _surface_run_reaches(local)
+        assert surface, f"the walk found no `{local}.` reads -- it is checking nothing"
+        missing = sorted(name for name in surface if not hasattr(real, name))
+        assert missing == [], f"run() reaches {missing} on its {local}, which the real {real.__name__} does not carry"
+
+
+# What each stub carries for the harness's own sake, modelling nothing on the real type: the state
+# it answers from, and the record of which names a callback touched. Listed one by one on purpose --
+# a blanket "underscore-prefixed names are plumbing" rule would exempt exactly the shape that has
+# already slipped through this file once.
+_NODE_PLUMBING = frozenset({"touched", "_handle"})
+_HANDLE_PLUMBING = frozenset({"_state"})
+
+
+def test_the_node_and_handle_stubs_offer_nothing_the_real_types_lack():
+    """The direction the test above cannot cover. A stub MISSING something production reads fails
+    loudly the first time a test runs it. A stub OFFERING something the real type lacks fails
+    NOTHING -- every test simply believes the fabricated attribute, and production is the only place
+    the read comes back wrong. This file has already paid for that asymmetry once: a stub node
+    carrying a `_config` the library never had kept the whole `run` suite green while the watchdog
+    it fed raised inside its own health check and force-exited every start, healthy or not."""
+    from nautilus_trader.live import LiveNode, LiveNodeHandle
+
+    stub = _fake_node("RUNNING")
+    for label, obj, real, plumbing in (
+        ("the stub node", stub, LiveNode, _NODE_PLUMBING),
+        ("the stub handle", stub.handle(), LiveNodeHandle, _HANDLE_PLUMBING),
+    ):
+        offered = {name for name in dir(obj) if not name.startswith("__")} - plumbing
+        assert offered, f"{label} offers nothing outside its plumbing list -- the check is vacuous"
+        stale = sorted(name for name in plumbing if hasattr(real, name))
+        assert stale == [], f"{label}'s plumbing list exempts {stale}, which {real.__name__} DOES carry -- check them instead"
+        extra = sorted(name for name in offered if not hasattr(real, name))
+        assert extra == [], f"{label} offers {extra}, which the real {real.__name__} does not carry"
+
+
+def test_the_timer_stub_matches_the_threading_timer_the_watchdog_really_arms():
+    """`FakeTimer` stands in for `threading.Timer`, which `run()` really constructs. Both directions
+    at once, against a real unstarted instance rather than the class -- `interval`, `function` and
+    `daemon` are set in `__init__`, so the class alone carries none of them and a class-level check
+    would call every one of them a fabrication."""
+    import threading
+
+    real = threading.Timer(0, lambda: None)
+    reached = _surface_run_reaches("watchdog")
+    assert reached, "the walk found no `watchdog.` reads -- it is checking nothing"
+    missing = sorted(name for name in reached if not hasattr(real, name))
+    assert missing == [], f"run() reaches {missing} on its watchdog, which a real threading.Timer does not carry"
+
+    plumbing = {"started", "cancelled", "instances"}  # the record tests read; nothing on a real Timer
+    stub = FakeTimer(0, lambda: None)
+    FakeTimer.instances.clear()
+    offered = {name for name in dir(stub) if not name.startswith("__")} - plumbing
+    stale = sorted(name for name in plumbing if hasattr(real, name))
+    assert stale == [], f"the plumbing list exempts {stale}, which a real threading.Timer DOES carry -- check them instead"
+    extra = sorted(name for name in offered if not hasattr(real, name))
+    assert extra == [], f"FakeTimer offers {extra}, which a real threading.Timer does not carry"

@@ -1749,3 +1749,26 @@ def test_the_tracking_state_alphabet_never_publishes_zero_and_the_help_names_eve
     metrics.set_tracking_state(sorted(emitted)[0])
     documentation = _families(registry)["zcrypto_exec_tracking_state"].documentation
     assert {int(code) for code in re.findall(r"(\d+) = ", documentation)} == emitted
+
+
+# --- this file's own stub node is a restatement of LiveNode / LiveNodeHandle ---------------------
+#
+# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
+# guard below; the reasoning that makes it worth having lives there. The names `run()` READS off a
+# node are checked against the real classes in tests/test_engine_command.py -- one walk over the one
+# production module covers both files' stubs, so only the offered direction is owed here.
+
+
+def test_the_stub_node_and_its_handle_offer_nothing_the_real_types_lack():
+    """A stub MISSING something `run()` reads fails loudly the first time a test runs it. A stub
+    OFFERING something the real type lacks fails NOTHING -- every test believes the fabricated
+    attribute, and production is the only place the read comes back wrong. This stub's sibling in
+    tests/test_engine_command.py has already paid for that asymmetry once."""
+    from nautilus_trader.live import LiveNode, LiveNodeHandle
+
+    stub = _fake_node()
+    for label, obj, real in (("the stub node", stub, LiveNode), ("its handle", stub.handle(), LiveNodeHandle)):
+        offered = {name for name in dir(obj) if not name.startswith("__")}
+        assert offered, f"{label} offers nothing at all -- the check is vacuous"
+        extra = sorted(name for name in offered if not hasattr(real, name))
+        assert extra == [], f"{label} offers {extra}, which the real {real.__name__} does not carry"
