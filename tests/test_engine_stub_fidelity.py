@@ -142,6 +142,7 @@ TABLE: dict[str, dict[str, Standin]] = {
         "StubCache": Standin(LIBRARY, "nautilus_trader.common.Cache", (_CACHE_SURFACE, _OFFERS_EXECUTOR)),
         "_FlakyOrdersCache": Standin(LIBRARY, "nautilus_trader.common.Cache", (_CACHE_SURFACE, _OFFERS_EXECUTOR)),
         "_PositionReadFails": Standin(LIBRARY, "nautilus_trader.common.Cache", (_CACHE_SURFACE, _OFFERS_EXECUTOR)),
+        "_UnreadableOrderCache": Standin(LIBRARY, "nautilus_trader.common.Cache", (_CACHE_SURFACE, _OFFERS_EXECUTOR)),
         # `limit(**kwargs)` agrees with every keyword, including ones the real factory rejects, so
         # the calls direction has to bind production's call against the real signature.
         "StubOrderFactory": Standin(
