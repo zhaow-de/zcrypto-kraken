@@ -16,7 +16,7 @@ The lift-and-shift framing below is the deliverable's SHAPE, not a licence to po
 
 ## The measured basis
 
-Every fact below was read off a running v2 wheel or the v2 source at a named ref, not from release notes. The development target is the pinned **nightly** wheel `2.0.0rc4.dev20260824`, cp314 manylinux, from `https://packages.nautechsystems.io/simple`. Nightly rather than the per-run `develop` builds: it is the channel that also publishes ARM64, and its naming is stable enough to bump against daily. Verified identical to the same day's develop build across every symbol, default and method surface this project touches — the version string is the only difference.
+Every fact below was read off a running v2 wheel or the v2 source at a named ref, not from release notes. The development target is the pinned **nightly** wheel `2.0.0rc4.dev20260825`, cp314 manylinux, from `https://packages.nautechsystems.io/simple`. Nightly rather than the per-run `develop` builds: it is the channel that also publishes ARM64, and its naming is stable enough to bump against daily. Verified identical to the same day's develop build across every symbol, default and method surface this project touches — the version string is the only difference.
 
 **The adapter survives, and so does spot-margin.** `nautilus_trader.adapters.kraken` exists in the shipped wheel, Kraken is rated `stable`, and a `LiveNode` was built with a Kraken spot data client plus a spot exec client in `AccountType.MARGIN` — `Registered DataClient-KRAKEN`, `Registered ExecutionClient-KRAKEN`, `Built successfully`. `spot_account_type`, `margin_balance_asset` and `spot_positions_quote_currency` all survive with identical names.
 

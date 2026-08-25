@@ -5,7 +5,7 @@ description = "Quant trading at Kraken"
 readme = "README.md"
 requires-python = "==3.14.*"
 dependencies = [
-    "nautilus-trader===2.0.0rc4.dev20260824",
+    "nautilus-trader===2.0.0rc4.dev20260825",
     "numpy>=2.5.2",
     "polars>=1.44.0",
     "prometheus-client>=0.26.0",

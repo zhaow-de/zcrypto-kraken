@@ -97,7 +97,7 @@ from nautilus_trader.trading import Strategy, StrategyConfig
 # Constants
 # --------------------------------------------------------------------------------------------
 
-EXPECTED_NAUTILUS = "2.0.0rc4.dev20260824"
+EXPECTED_NAUTILUS = "2.0.0rc4.dev20260825"
 
 # Spec 00039 probe 3: "the 10-asset EUR universe". The engine's basket has since grown two
 # BTC-quoted legs (ETH/BTC, SOL/BTC); they are OFF by default so the probe-3 row stays directly
