@@ -201,7 +201,7 @@ class StubCache:
 
     @staticmethod
     def _position_key(instrument_id):
-        """The installed Cache's accessors are Cython-typed and REFUSE a str -- `TypeError:
+        """The installed Cache's accessors are typed and REFUSE a str -- `TypeError:
         Argument 'instrument_id' has incorrect type`. This stub used to coerce with `str()`, which
         accepted what production could not: every live `_publish_fill` raised into its swallowing
         `except` and the position/PnL gauges never moved, with the whole suite green. Refusing here
@@ -289,7 +289,7 @@ class StubClient:
 
     def __init__(self, cache=None, *, submit_raises=None):
         self.cache = cache if cache is not None else StubCache()
-        # A real StrategyId, not a str: `Cache.positions_open(strategy_id=...)` is Cython-typed and
+        # A real StrategyId, not a str: `Cache.positions_open(strategy_id=...)` is typed and
         # refuses a str, so a stubbed str would accept what production cannot.
         self.strategy_id = _STUB_STRATEGY_ID
         self.order_factory = StubOrderFactory()
@@ -1205,13 +1205,12 @@ def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR", s
     has them, so the stub must too, or the row would be pinned against a shape the venue never
     sends.
 
-    `liquidity_side` is the REAL `LiquiditySide` member, never the string it looks like: in the
-    installed nautilus-trader it is an int-backed enum whose `__str__` returns the NUMBER, so a
-    plain-string fake makes `str(event.liquidity_side)` look correct here while production writes
-    '1'/'2'. That gap hid a live defect in both the ledger row and the metric label.
+    `liquidity_side` is the REAL `LiquiditySide` member, never the string it looks like: the venue's
+    `OrderFilled` carries a member, and only a member has the `.name` the ledger row and the metric
+    label are written from.
 
-    `instrument_id` is the REAL `InstrumentId` for the same reason: the venue's `OrderFilled`
-    carries one, and the Cython Cache accessors `_publish_fill` hands it to refuse anything else."""
+    `instrument_id` is the REAL `InstrumentId` for the same reason -- the Cache accessors
+    `_publish_fill` hands it to refuse anything else."""
     return _named(
         "OrderFilled",
         client_order_id=client_order_id,
