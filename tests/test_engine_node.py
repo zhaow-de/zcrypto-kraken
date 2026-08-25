@@ -1115,7 +1115,8 @@ def test_a_real_build_never_prints_the_credentials(tmp_path):
 # nothing red anywhere.
 #
 # It RUNS a node against Kraken's public endpoint, so it is the one test here that needs the
-# network. Absent network it SKIPS, and a skip is not coverage -- run it locally before PR.
+# network. It is opt-in: without ZCRYPTO_LIVE_VENUE_TESTS=1 it skips regardless of network, and
+# with the flag set an unreachable endpoint FAILS rather than skips.
 _INSTRUMENT_ARRIVAL_PROBE = """
 import json, os, sys, threading, time
 from pathlib import Path

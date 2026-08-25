@@ -438,7 +438,7 @@ Each of these is a real guard whose *mechanism* v2 removed. The hazard is repair
 - [ ] **Step 1:** Port `infra/scripts/kraken-order-semantics-probe.py` — same import and node-assembly port as Task 6. It places real orders and is the only instrument that can validate the arming pass, so it must be ported before that pass can be scheduled.
 
 **`run_async` deadlocks once a Python `Strategy` is registered** — measured during Task 6 against a data-only node on live Kraken: with no strategy the hosted run connects in ~0.5 s, and with one it hangs at `Connecting data clients...` indefinitely. `node.run()` on the main thread (what `cli/engine/command.py` uses) is unaffected. The probe harness drives `node.run_async()` today, so port it to `run()` plus `node.handle().stop()` from a watcher thread, or establish the hosted-run shape that does work. Also measured: `node.cache` and `node.portfolio` RAISE while `run_async` owns the node — capture both before the run.
-- [ ] **Step 2:** `infra/scripts/nautilus-logger-guard-probe.py` cannot run on v2 — `is_logging_initialized` does not exist. Re-express it against v2's logging surface or retire it with the reason recorded, and update T0085, which records the probe as discharged for the 1.231.0 bump.
+- [ ] **Step 2:** `infra/scripts/nautilus-logger-guard-probe.py` cannot run on v2 — and note `uvloop` left the lock with nautilus's other transitive dependencies, so its arm 3 (`import uvloop` inside the probe's `_TWO_NODES` source string) now fails on that too; the rewrite must re-derive the loop-selection premise, not just the logging one — `is_logging_initialized` does not exist. Re-express it against v2's logging surface or retire it with the reason recorded, and update T0085, which records the probe as discharged for the 1.231.0 bump.
 - [ ] **Step 3:** Commit.
 
 **`test_pinned_version` fails from Task 4 until the arming pass, and that is the guard working.** It asserts the installed nautilus version is one whose six-probe pass actually ran; no probe has run on v2, so it must stay red. Do NOT repair it by editing the version string — that silently vouches for an unverified adapter. It goes green only when Step 4's record legitimately gains the version.
@@ -460,7 +460,7 @@ The publish leg is established from source and the delivery leg in a backtest, b
 - [ ] **Step 1:** Confirm the obligation is registered as `T0152` with a `ripe_when` naming the first v2 converge, and that its index bullet reflects it. Registration and this plan's closeout travel together — prose in a plan is never a deferral's only home.
 - [ ] **Step 2:** State the residual plainly in the PR body: D2 merges with its publish leg proven from source and its delivery leg proven only in a backtest. The fallback if the join fails is known and cheap — Cache polling on the executor's existing 5-second tick.
 
-**Run the live-venue tests deliberately at closeout**: `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest -k live_venue` covers the instrument-arrival guard, which is opt-in so CI neither flakes on a live endpoint nor skips it silently forever.
+**Run the live-venue tests deliberately at closeout**: `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest tests/test_engine_node.py -k twelve_instruments` covers the instrument-arrival guard, which is opt-in so CI neither flakes on a live endpoint nor skips it silently forever.
 
 ### Task 17: Closeout
 
