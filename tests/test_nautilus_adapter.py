@@ -1,6 +1,10 @@
 import nautilus_trader
-from nautilus_trader.adapters.kraken.config import KrakenDataClientConfig, KrakenExecClientConfig
-from nautilus_trader.adapters.kraken.factories import KrakenLiveDataClientFactory, KrakenLiveExecClientFactory
+from nautilus_trader.adapters.kraken import (
+    KrakenDataClientConfig,
+    KrakenDataClientFactory,
+    KrakenExecutionClientConfig,
+    KrakenExecutionClientFactory,
+)
 
 
 def test_pinned_version():
@@ -28,6 +32,6 @@ def test_the_gates_version_reader_reports_the_really_installed_version():
 
 def test_kraken_adapter_config_and_factories_import():
     assert KrakenDataClientConfig is not None
-    assert KrakenExecClientConfig is not None
-    assert KrakenLiveDataClientFactory is not None
-    assert KrakenLiveExecClientFactory is not None
+    assert KrakenExecutionClientConfig is not None
+    assert KrakenDataClientFactory is not None
+    assert KrakenExecutionClientFactory is not None

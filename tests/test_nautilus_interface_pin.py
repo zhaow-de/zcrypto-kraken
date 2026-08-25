@@ -13,31 +13,30 @@ import pytest
 
 # (module, symbol) for every nautilus name imported anywhere under cli/.
 PINNED_SYMBOLS = [
-    ("nautilus_trader.adapters.kraken.config", "KrakenDataClientConfig"),
-    ("nautilus_trader.adapters.kraken.config", "KrakenExecClientConfig"),
-    ("nautilus_trader.adapters.kraken.constants", "KRAKEN"),
-    ("nautilus_trader.adapters.kraken.factories", "KrakenLiveDataClientFactory"),
-    ("nautilus_trader.adapters.kraken.factories", "KrakenLiveExecClientFactory"),
+    ("nautilus_trader.adapters.kraken", "KRAKEN"),
+    ("nautilus_trader.adapters.kraken", "KrakenDataClientConfig"),
+    ("nautilus_trader.adapters.kraken", "KrakenDataClientFactory"),
+    ("nautilus_trader.adapters.kraken", "KrakenExecutionClientConfig"),
+    ("nautilus_trader.adapters.kraken", "KrakenExecutionClientFactory"),
     ("nautilus_trader.config", "InstrumentProviderConfig"),
-    ("nautilus_trader.config", "LiveExecEngineConfig"),
-    ("nautilus_trader.config", "LoggingConfig"),
-    ("nautilus_trader.config", "TradingNodeConfig"),
-    ("nautilus_trader.live.node", "TradingNode"),
-    ("nautilus_trader.model.enums", "AccountType"),
-    ("nautilus_trader.model.enums", "LiquiditySide"),
-    ("nautilus_trader.model.enums", "OrderSide"),
-    ("nautilus_trader.model.enums", "OrderStatus"),
-    ("nautilus_trader.model.enums", "TimeInForce"),
-    ("nautilus_trader.model.enums", "liquidity_side_to_str"),
-    ("nautilus_trader.model.identifiers", "InstrumentId"),
-    ("nautilus_trader.model.identifiers", "StrategyId"),
-    ("nautilus_trader.model.identifiers", "Venue"),
-    ("nautilus_trader.trading.strategy", "Strategy"),
+    ("nautilus_trader.config", "LiveExecutionEngineConfig"),
+    ("nautilus_trader.config", "LiveNodeConfig"),
+    ("nautilus_trader.config", "LoggerConfig"),
+    ("nautilus_trader.live", "LiveNode"),
+    ("nautilus_trader.model", "AccountType"),
+    ("nautilus_trader.model", "InstrumentId"),
+    ("nautilus_trader.model", "LiquiditySide"),
+    ("nautilus_trader.model", "OrderSide"),
+    ("nautilus_trader.model", "OrderStatus"),
+    ("nautilus_trader.model", "StrategyId"),
+    ("nautilus_trader.model", "TimeInForce"),
+    ("nautilus_trader.model", "Venue"),
+    ("nautilus_trader.trading", "Strategy"),
 ]
 
-# Attributes, not just symbols. `Strategy.id` is read on the live trade path
-# (`positions_open(strategy_id=self._client.id)`); v2 renames it `strategy_id`.
-PINNED_ATTRIBUTES = [("nautilus_trader.trading.strategy", "Strategy", "id")]
+# Attributes, not just symbols. `Strategy.strategy_id` is read on the live trade path
+# (`positions_open(strategy_id=self._client.strategy_id)`).
+PINNED_ATTRIBUTES = [("nautilus_trader.trading", "Strategy", "strategy_id")]
 
 
 @pytest.mark.parametrize("module_path,cls_name,attr", PINNED_ATTRIBUTES, ids=lambda v: str(v))
@@ -66,7 +65,7 @@ PINNED_ENUM_VALUES = {
 
 @pytest.mark.parametrize("enum_name", sorted(PINNED_ENUM_VALUES))
 def test_enum_member_names_and_integer_values_are_unchanged(enum_name):
-    from nautilus_trader.model import enums as nt_enums
+    import nautilus_trader.model as nt_enums
 
     enum_cls = getattr(nt_enums, enum_name)
     for member_name, expected in PINNED_ENUM_VALUES[enum_name].items():
@@ -80,9 +79,9 @@ def test_enum_member_names_and_integer_values_are_unchanged(enum_name):
 
 # Defaults we rely on WITHOUT setting them. A default that flips is the quietest possible change.
 def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
-    from nautilus_trader.config import LiveExecEngineConfig
+    from nautilus_trader.config import LiveExecutionEngineConfig
 
-    config = LiveExecEngineConfig()
+    config = LiveExecutionEngineConfig()
     assert config.reconciliation is True
     assert config.filter_unclaimed_external_orders is False, (
         "unclaimed external orders would stop materialising -- the external-order stream, the "
@@ -95,12 +94,12 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
 # each config exactly the way `cli/engine/node.py` constructs it, so the pin fails on the call we
 # actually make rather than on a name that happens to survive.
 def test_the_kraken_client_configs_accept_the_arguments_we_pass():
-    from nautilus_trader.adapters.kraken.config import KrakenDataClientConfig, KrakenExecClientConfig
+    from nautilus_trader.adapters.kraken import KrakenDataClientConfig, KrakenExecutionClientConfig
     from nautilus_trader.config import InstrumentProviderConfig
-    from nautilus_trader.model.enums import AccountType
+    from nautilus_trader.model import AccountType
 
     KrakenDataClientConfig(instrument_provider=InstrumentProviderConfig(load_all=True))
-    KrakenExecClientConfig(
+    KrakenExecutionClientConfig(
         instrument_provider=InstrumentProviderConfig(load_all=True),
         spot_account_type=AccountType.MARGIN,
         margin_balance_asset="ZEUR",
@@ -109,6 +108,6 @@ def test_the_kraken_client_configs_accept_the_arguments_we_pass():
 
 
 def test_the_exec_engine_config_accepts_the_arguments_we_pass():
-    from nautilus_trader.config import LiveExecEngineConfig
+    from nautilus_trader.config import LiveExecutionEngineConfig
 
-    LiveExecEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False)
+    LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False)

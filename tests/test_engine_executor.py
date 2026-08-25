@@ -11,9 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from nautilus_trader.model.enums import LiquiditySide, OrderSide, OrderStatus, TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId, StrategyId
-from nautilus_trader.model.objects import Quantity
+from nautilus_trader.model import InstrumentId, LiquiditySide, OrderSide, OrderStatus, Quantity, StrategyId, TimeInForce
 from nautilus_trader.model.orders.base import Order
 
 import cli.engine.execledger as execledger_module

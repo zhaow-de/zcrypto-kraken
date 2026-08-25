@@ -1,7 +1,7 @@
 """The node wrapper (spec 00041 SS the node wrapper): pure 4h-boundary arithmetic, the
 restart-inside-a-passable-window startup rule, the ShadowStrategy that owns only timer arithmetic
 (schedule the next alert FIRST, then invoke the cycle core -- a hung or raising cycle can never
-stall the alert chain), and the production-shape TradingNode assembly mirroring the iter-079
+stall the alert chain), and the production-shape LiveNode assembly mirroring the iter-079
 verified adapter configuration (docs/research/14.phase6-adapter-verification-1.230.0.md SS Harness). No
 catch-up: a boundary whose window has lapsed is a missed cycle, recorded by the journal's absence
 and honestly scored by the gate. Pure UTC throughout -- DST is structurally irrelevant.
@@ -13,14 +13,22 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.adapters.kraken.config import KrakenDataClientConfig, KrakenExecClientConfig
-from nautilus_trader.adapters.kraken.constants import KRAKEN
-from nautilus_trader.adapters.kraken.factories import KrakenLiveDataClientFactory, KrakenLiveExecClientFactory
-from nautilus_trader.config import InstrumentProviderConfig, LiveExecEngineConfig, LoggingConfig, TradingNodeConfig
-from nautilus_trader.live.node import TradingNode
-from nautilus_trader.model.enums import AccountType
-from nautilus_trader.model.identifiers import StrategyId
-from nautilus_trader.trading.strategy import Strategy, StrategyConfig
+from nautilus_trader.adapters.kraken import (
+    KRAKEN,
+    KrakenDataClientConfig,
+    KrakenDataClientFactory,
+    KrakenExecutionClientConfig,
+    KrakenExecutionClientFactory,
+)
+from nautilus_trader.config import (
+    InstrumentProviderConfig,
+    LiveExecutionEngineConfig,
+    LiveNodeConfig,
+    LoggerConfig,
+)
+from nautilus_trader.live import LiveNode
+from nautilus_trader.model import AccountType, StrategyId
+from nautilus_trader.trading import Strategy, StrategyConfig
 
 from cli.config import EngineConfig
 
@@ -259,14 +267,14 @@ class ShadowStrategy(Strategy):
             self._executor.on_external_order_event(event)
 
 
-def _node_config(config: EngineConfig) -> TradingNodeConfig:
+def _node_config(config: EngineConfig) -> LiveNodeConfig:
     """The iter-079-verified adapter configuration: instrument provider load_all, and -- only when
     exec_enabled -- the exec client with MARGIN spot account reporting in ZEUR (the trade key is
     IP-bound to the VPS, so local runs are keyless). Both currency fields read ZEUR: margin summary
     figures are denominated in it, and spot position reports cover the ZEUR-quoted instruments."""
     exec_clients = {}
     if config.exec_enabled:
-        exec_clients[KRAKEN] = KrakenExecClientConfig(
+        exec_clients[KRAKEN] = KrakenExecutionClientConfig(
             instrument_provider=InstrumentProviderConfig(load_all=True),
             spot_account_type=AccountType.MARGIN,
             margin_balance_asset="ZEUR",
@@ -297,9 +305,9 @@ def _node_config(config: EngineConfig) -> TradingNodeConfig:
             # AND use_spot_position_reports is True; under MARGIN it takes the OpenPositions branch.
             spot_positions_quote_currency="ZEUR",
         )
-    return TradingNodeConfig(
+    return LiveNodeConfig(
         trader_id=_TRADER_ID,
-        logging=LoggingConfig(log_level="INFO"),
+        logging=LoggerConfig(log_level="INFO"),
         # Both explicit (both are library defaults) because both are load-bearing here.
         # Reconciliation: the iter-079 memo names it part of the verified harness shape — live
         # exactly when exec_enabled flips on at deployment. filter_unclaimed_external_orders:
@@ -307,7 +315,7 @@ def _node_config(config: EngineConfig) -> TradingNodeConfig:
         # startup pass would neither attach nor CANCEL a previous process's resting order, the
         # kill switch's cancel sweep could not reach it either, and the whole external-events
         # path would go dark without one ERROR anywhere. Pinned by the config-shape test.
-        exec_engine=LiveExecEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False),
+        exec_engine=LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False),
         data_clients={KRAKEN: KrakenDataClientConfig(instrument_provider=InstrumentProviderConfig(load_all=True))},
         exec_clients=exec_clients,
     )
@@ -336,14 +344,14 @@ def _probe_executor_factory(config: EngineConfig) -> Callable:
     )
 
 
-def build_shadow_node(config: EngineConfig) -> TradingNode:
-    """Assemble (never run here) the production-shape shadow TradingNode: both Kraken factories
+def build_shadow_node(config: EngineConfig) -> LiveNode:
+    """Assemble (never run here) the production-shape shadow LiveNode: both Kraken factories
     registered, the ShadowStrategy attached (with the probe executor wired), clients built.
     node.build() only constructs clients -- no credentials required and no network until
     node.run()."""
-    node = TradingNode(config=_node_config(config))
-    node.add_data_client_factory(KRAKEN, KrakenLiveDataClientFactory)
-    node.add_exec_client_factory(KRAKEN, KrakenLiveExecClientFactory)
+    node = LiveNode(config=_node_config(config))
+    node.add_data_client_factory(KRAKEN, KrakenDataClientFactory)
+    node.add_exec_client_factory(KRAKEN, KrakenExecutionClientFactory)
     node.trader.add_strategy(ShadowStrategy(config, executor_factory=_probe_executor_factory(config)))
     node.build()
     return node

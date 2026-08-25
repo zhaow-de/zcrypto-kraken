@@ -1,6 +1,6 @@
 """The node wrapper (spec 00041 SS the node wrapper): pure boundary arithmetic, the
 restart-inside-a-passable-window startup rule, the alert chain (schedule-next-first, run_cycle
-exceptions contained), and the iter-079-shaped TradingNode assembly. No live node is ever run --
+exceptions contained), and the iter-079-shaped LiveNode assembly. No live node is ever run --
 the attended soak is the live smoke; node.build() itself is offline (verified by the build tests,
 which construct both exec_enabled shapes without credentials or network).
 """
@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from nautilus_trader.model.enums import AccountType
+from nautilus_trader.model import AccountType
 
 from cli.config import EngineConfig
 from cli.engine import ShadowStrategy, most_recent_boundary, next_boundary, node, startup_action
@@ -542,7 +542,7 @@ def test_a_quote_for_another_instrument_does_not_disturb_the_running_intent(tmp_
     # The forwarder is instrument-blind by design -- the discrimination is the executor's, and this
     # drives the WHOLE path (strategy.on_quote_tick -> the real factory's ProbeExecutor.on_quote)
     # so a wiring that handed the tick to the wrong place would show up here.
-    from nautilus_trader.model.identifiers import InstrumentId
+    from nautilus_trader.model import InstrumentId
 
     from cli.engine.executor import _ActiveIntent
     from cli.engine.probeplan import ProbeIntent
@@ -664,18 +664,23 @@ def test_the_external_topic_string_matches_the_installed_engines_format():
     renamed external strategy id fails HERE, not in production."""
     from nautilus_trader.common.component import MessageBus, TestClock
     from nautilus_trader.core.uuid import UUID4
-    from nautilus_trader.model.enums import LiquiditySide, OrderSide, OrderType
-    from nautilus_trader.model.events import OrderFilled
-    from nautilus_trader.model.identifiers import (
+    from nautilus_trader.model import (
         AccountId,
         ClientOrderId,
+        Currency,
         InstrumentId,
+        LiquiditySide,
+        Money,
+        OrderSide,
+        OrderType,
+        Price,
+        Quantity,
         StrategyId,
         TradeId,
         TraderId,
         VenueOrderId,
     )
-    from nautilus_trader.model.objects import Currency, Money, Price, Quantity
+    from nautilus_trader.model.events import OrderFilled
 
     external = StrategyId("EXTERNAL")
     # The library still calls this exact id external -- the predicate reconciliation routes on.
@@ -726,7 +731,7 @@ def test_a_really_registered_strategy_subscribes_the_external_topic_the_library_
     would pass."""
     from nautilus_trader.cache.cache import Cache
     from nautilus_trader.common.component import MessageBus, TestClock
-    from nautilus_trader.model.identifiers import TraderId
+    from nautilus_trader.model import TraderId
     from nautilus_trader.portfolio import Portfolio
 
     executor = RecordingExecutor()
@@ -766,7 +771,7 @@ def test_every_handler_our_strategy_overrides_exists_on_the_library_base_class()
     It is deliberately general rather than named after `on_quote_tick`: the next rename will be a
     different handler.
     """
-    from nautilus_trader.trading.strategy import Strategy
+    from nautilus_trader.trading import Strategy
 
     overridden = {name for name in vars(ShadowStrategy) if name.startswith("on_") and callable(getattr(ShadowStrategy, name, None))}
     assert overridden, "found no handlers to check -- the walk is broken, not the strategy"

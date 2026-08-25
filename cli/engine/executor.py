@@ -29,8 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.model.enums import LiquiditySide, OrderSide, OrderStatus, TimeInForce, liquidity_side_to_str
-from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model import InstrumentId, LiquiditySide, OrderSide, OrderStatus, TimeInForce, Venue
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
@@ -1074,7 +1073,7 @@ class ProbeExecutor:
             # subscription until restart.
             own_position_before = sum(
                 float(p.signed_qty)
-                for p in self._client.cache.positions_open(instrument_id=instrument_id, strategy_id=self._client.id)
+                for p in self._client.cache.positions_open(instrument_id=instrument_id, strategy_id=self._client.strategy_id)
             )
         except Exception:
             logger.warning("own position unreadable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
@@ -1786,7 +1785,7 @@ class ProbeExecutor:
         try:
             actual = sum(
                 float(p.signed_qty)
-                for p in self._client.cache.positions_open(instrument_id=active.instrument_id, strategy_id=self._client.id)
+                for p in self._client.cache.positions_open(instrument_id=active.instrument_id, strategy_id=self._client.strategy_id)
             )
         except Exception:
             # The venue-truth read at intent start proved this same Cache readable minutes ago, so a
