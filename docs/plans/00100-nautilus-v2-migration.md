@@ -387,19 +387,19 @@ This matters most during Phase C specifically: the red suite hands an implemente
 **Files:** `cli/engine/command.py`
 
 - [x] **Step 1: DONE — and NOT via `node.is_running`.** `LiveNode` is pyo3-*unsendable*: reading any attribute of it off the thread that built it panics and aborts the process (SIGABRT, exit 134), which `except Exception` cannot intercept. The watchdog runs on a `threading.Timer` thread, so that re-point would have killed a HEALTHY engine the moment the timer fired. Capture `node.handle()` on the building thread and read `handle.state is NodeState.RUNNING`, which answers normally off-thread.
-- [ ] **Step 1b: Re-source the DELAY, which is the watchdog's whole point.** Production computes it from `node._config.timeout_connection + timeout_reconciliation`; v2's `LiveNode` exposes no `_config`, and `LiveNodeConfig` renames both fields to `*_secs`. Task 6 sets neither timeout, so the values in force are `LiveNodeConfig`'s defaults — measured on the installed wheel: `timeout_connection_secs = 60.0`, `timeout_reconciliation_secs = 30.0`, unchanged from what production computes today. Pin them where node assembly sets them and read them from there — a watchdog that fires before a legitimate connect-and-reconcile completes restarts a healthy engine.
-- [ ] **Step 2: Prove the watchdog fires**, with a fixture where the condition it watches is false. A watchdog that compiles is not a watchdog that fires — and the permanently-truthy form is the exact defect to construct.
-- [ ] **Step 3:** Re-derive the faulthandler re-arm's justification against v2's Rust/tokio runtime, or remove it with the reason recorded.
-- [ ] **Step 4:** Commit.
+- [x] **Step 1b: Re-source the DELAY, which is the watchdog's whole point.** Production computes it from `node._config.timeout_connection + timeout_reconciliation`; v2's `LiveNode` exposes no `_config`, and `LiveNodeConfig` renames both fields to `*_secs`. Task 6 sets neither timeout, so the values in force are `LiveNodeConfig`'s defaults — measured on the installed wheel: `timeout_connection_secs = 60.0`, `timeout_reconciliation_secs = 30.0`, unchanged from what production computes today. Pin them where node assembly sets them and read them from there — a watchdog that fires before a legitimate connect-and-reconcile completes restarts a healthy engine.
+- [x] **Step 2: Prove the watchdog fires**, with a fixture where the condition it watches is false. A watchdog that compiles is not a watchdog that fires — and the permanently-truthy form is the exact defect to construct.
+- [x] **Step 3:** Re-derive the faulthandler re-arm's justification against v2's Rust/tokio runtime, or remove it with the reason recorded.
+- [x] **Step 4:** Commit.
 
 ### Task 11: Rejection classification against the WS transport (D10)
 
 `use_ws_trade` defaults **True**, so submission moves REST → WS while `_KRAKEN_ERROR_MARKERS` is REST-shaped. An unmatched rejection classifies as ambiguous, which stops the plan and leaves an open row.
 
-- [ ] **Step 1: Pin `use_ws_trade=False`** (D10). The default is True, which would move submission to WebSocket; the REST classification is the one this project derived against a real venue, and re-deriving for WS needs live submissions this plan cannot reach — the same constraint that moved Task 16 out.
-- [ ] **Step 2: Verify the classification still applies over REST on v2**, rather than re-deriving it. `OrderRejected`/`OrderDenied` still carry only a string `reason` (and lost `venue_order_id`), so `_KRAKEN_ERROR_MARKERS` stays string-shaped and applicable. Pin `use_ws_trade`'s value in Task 1's defaults section so a later default flip is a red test rather than a silent transport change.
-- [ ] **Step 3:** Record that adopting WS is deliberately deferred and is its own change with its own evidence — not a follow-up hiding in this one.
-- [ ] **Step 4:** Commit.
+- [x] **Step 1: Pin `use_ws_trade=False`** (D10). The default is True, which would move submission to WebSocket; the REST classification is the one this project derived against a real venue, and re-deriving for WS needs live submissions this plan cannot reach — the same constraint that moved Task 16 out.
+- [x] **Step 2: Verify the classification still applies over REST on v2**, rather than re-deriving it. `OrderRejected`/`OrderDenied` still carry only a string `reason` (and lost `venue_order_id`), so `_KRAKEN_ERROR_MARKERS` stays string-shaped and applicable. Pin `use_ws_trade`'s value in Task 1's defaults section so a later default flip is a red test rather than a silent transport change.
+- [x] **Step 3:** Record that adopting WS is deliberately deferred and is its own change with its own evidence — not a follow-up hiding in this one.
+- [x] **Step 4:** Commit.
 
 ### Task 12: Rounding fixtures
 
@@ -409,10 +409,10 @@ The spec's framing of this was corrected by the cold review: a quantity rounding
 2. **`make_qty` raising at the exact half-increment** (`5e-9` at `size_precision=8`) where v1 returned a value.
 3. **`make_qty` value divergence at half-increments** (`1.5e-8` → v1 `0.00000001`, v2 `0.00000002`) — a silent one-increment difference in submitted quantity, which the spec named nowhere.
 
-- [ ] **Step 1: Re-measure all three against a REAL nautilus `Instrument`**, not a `Quantity` constructed by hand — the rounding lives in the instrument's precision, so a hand-built value tests a different code path than production takes.
-- [ ] **Step 2:** Add fixtures on the **divergent** values from that measurement. Class 3 is the one to get right: it is silent, it changes an order's quantity, and no existing test would see it.
-- [ ] **Step 3:** Decide and record whether class 2's raise needs containment — `instrument.make_qty(sized.qty)` sits outside the only `try` wrapping sizing.
-- [ ] **Step 4:** Commit.
+- [x] **Step 1: Re-measure all three against a REAL nautilus `Instrument`**, not a `Quantity` constructed by hand — the rounding lives in the instrument's precision, so a hand-built value tests a different code path than production takes.
+- [x] **Step 2:** Add fixtures on the **divergent** values from that measurement. Class 3 is the one to get right: it is silent, it changes an order's quantity, and no existing test would see it.
+- [x] **Step 3:** Decide and record whether class 2's raise needs containment — `instrument.make_qty(sized.qty)` sits outside the only `try` wrapping sizing.
+- [x] **Step 4:** Commit.
 
 ### Task 12a: Verify every stub that stands in for a nautilus type
 
