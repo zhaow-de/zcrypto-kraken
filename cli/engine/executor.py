@@ -692,11 +692,13 @@ class ProbeExecutor:
         by the time this runs, and that is what `_reconcile_adopted_rows` reads. That ordering is a
         measurement, not a reading: the execution engine is compiled and offers no source, so
         tests/test_engine_executor.py drives a real order through a real engine and reads the Cache
-        from inside the handler. Which is also why the
-        cache read below is the WIDE one: an order that filled, was canceled or expired while this
-        process was down is reconciled as CLOSED and never appears in `orders_open` at all, so the
-        pass cannot return early when nothing is resting -- an idle startup can still owe row
-        repairs. It reaches those orders one at a time, by the id each ROW already names.
+        from inside the handler.
+
+        The classification population below is `orders_open`, but the row sweep is NOT: an order that
+        filled, was canceled or expired while this process was down is reconciled as CLOSED and never
+        appears in `orders_open` at all, so the pass cannot return early when nothing is resting -- an
+        idle startup can still owe row repairs. It reaches those orders one at a time, by the id each
+        ROW already names.
         """
         try:
             resting = list(self._client.cache.orders_open(venue=_VENUE))
