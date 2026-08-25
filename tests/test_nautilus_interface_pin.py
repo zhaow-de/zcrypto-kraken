@@ -16,8 +16,10 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.adapters.kraken", "KRAKEN"),
     ("nautilus_trader.adapters.kraken", "KrakenDataClientConfig"),
     ("nautilus_trader.adapters.kraken", "KrakenDataClientFactory"),
+    ("nautilus_trader.adapters.kraken", "KrakenEnvironment"),
     ("nautilus_trader.adapters.kraken", "KrakenExecutionClientConfig"),
     ("nautilus_trader.adapters.kraken", "KrakenExecutionClientFactory"),
+    ("nautilus_trader.adapters.kraken", "KrakenProductType"),
     ("nautilus_trader.common", "Environment"),
     ("nautilus_trader.common", "LogLevel"),
     ("nautilus_trader.config", "LiveExecutionEngineConfig"),
@@ -41,7 +43,13 @@ PINNED_SYMBOLS = [
 
 # Attributes, not just symbols. `Strategy.strategy_id` is read on the live trade path
 # (`positions_open(strategy_id=self._client.strategy_id)`).
-PINNED_ATTRIBUTES = [("nautilus_trader.trading", "Strategy", "strategy_id")]
+PINNED_ATTRIBUTES = [
+    ("nautilus_trader.trading", "Strategy", "strategy_id"),
+    # The two members that name which Kraken venue the engine reaches. Both configs state them
+    # explicitly, so a rename breaks the call rather than silently selecting the other member.
+    ("nautilus_trader.adapters.kraken", "KrakenProductType", "SPOT"),
+    ("nautilus_trader.adapters.kraken", "KrakenEnvironment", "LIVE"),
+]
 
 
 @pytest.mark.parametrize("module_path,cls_name,attr", PINNED_ATTRIBUTES, ids=lambda v: str(v))
@@ -123,14 +131,24 @@ def test_the_exec_client_transport_default_we_now_override_is_unchanged():
 # each config exactly the way `cli/engine/node.py` constructs it, so the pin fails on the call we
 # actually make rather than on a name that happens to survive.
 def test_the_kraken_client_configs_accept_the_arguments_we_pass():
-    from nautilus_trader.adapters.kraken import KrakenDataClientConfig, KrakenExecutionClientConfig
+    from nautilus_trader.adapters.kraken import (
+        KrakenDataClientConfig,
+        KrakenEnvironment,
+        KrakenExecutionClientConfig,
+        KrakenProductType,
+    )
     from nautilus_trader.model import AccountId, AccountType
 
-    KrakenDataClientConfig()
+    KrakenDataClientConfig(
+        product_type=KrakenProductType.SPOT,
+        environment=KrakenEnvironment.LIVE,
+    )
     KrakenExecutionClientConfig(
         account_id=AccountId("KRAKEN-001"),
         api_key="a-key",
         api_secret="a-secret",
+        product_type=KrakenProductType.SPOT,
+        environment=KrakenEnvironment.LIVE,
         spot_account_type=AccountType.MARGIN,
         margin_balance_asset="ZEUR",
         spot_positions_quote_currency="ZEUR",

@@ -2083,13 +2083,20 @@ class ProbeExecutor:
     def _fill_payload(self, event) -> dict:
         """The forensic shape of one fill. Shared by the in-flight path and the detached one so an
         adopted order's fill is recorded in exactly the same terms as an order this process placed."""
+        commission = event.commission
         return {
             "event": "fill",
             "at": self._now().isoformat(),
             "qty": float(event.last_qty),
             "px": float(event.last_px),
-            "fee": float(event.commission),
-            "fee_currency": event.commission.currency.code,
+            # `commission` is optional on the event, and a fee-less fill still gets its row: the
+            # quantity and price ARE the fill, and "no fee reported" is a truthful null. Read bare,
+            # an absent commission raises inside the handler's blanket except, dropping the row
+            # entirely -- while `_on_fill` has ALREADY credited the quantity to the ladder. That is
+            # a split brain on the one invariant this path exists to hold, so the row never gives
+            # way. `_fee_eur` guards the same field for the EUR counter.
+            "fee": None if commission is None else float(commission),
+            "fee_currency": None if commission is None else commission.currency.code,
             "liquidity": _liquidity(event.liquidity_side),
             "trade_id": str(event.trade_id),
         }

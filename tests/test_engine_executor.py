@@ -1401,14 +1401,18 @@ def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR", s
     label are written from.
 
     `instrument_id` is the REAL `InstrumentId` for the same reason -- the Cache accessors
-    `_publish_fill` hands it to refuse anything else."""
+    `_publish_fill` hands it to refuse anything else.
+
+    `fee=None` builds the commission-less fill the event type permits: `commission` is declared
+    `Money | None`, so a fixture that can only produce a Money cannot reach the row builder's
+    absent-fee branch at all."""
     return _named(
         "OrderFilled",
         client_order_id=client_order_id,
         instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]),
         last_qty=last_qty,
         last_px=px,
-        commission=_FakeMoney(fee, fee_code),
+        commission=None if fee is None else _FakeMoney(fee, fee_code),
         liquidity_side=liquidity,
         trade_id="T-1",
     )
@@ -1531,6 +1535,33 @@ def test_a_non_eur_commission_reaches_the_metric_as_no_fee_at_all(tmp_path):
     ex.on_quote(_quote())
     _deliver_fill(ex, client, "O-1", 0.001, fee=0.00002, fee_code="XXBT")
 
+    assert metrics.fills == [("maker", None)]
+
+
+def test_a_commission_less_fill_still_gets_its_forensic_row_with_a_null_fee(tmp_path):
+    """Guard-proving: `OrderFilled.commission` is `Money | None` on the pinned wheel -- constructed
+    absent, it builds fine. Reading it bare raises inside `on_order_event`'s blanket except, which
+    logs and continues, so the fill's row is DROPPED. `_on_fill` credits `active.filled` before the
+    payload is built, so the ladder would carry a quantity the ledger cannot describe: no fill
+    without a record has no exemption, and a null fee is the truthful way to say the venue reported
+    none. The fill still counts, and the EUR total is untouched by a fee that does not exist."""
+    client = StubClient()
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001, fee=None)
+
+    row = _record(tmp_path)["submitted"][0]
+    assert row["filled_qty"] == 0.001
+    fill_events = [e for e in row["events"] if e.get("event") == "fill"]
+    assert len(fill_events) == 1, "the fill's row is the thing that must never be dropped"
+    assert fill_events[0]["fee"] is None
+    assert fill_events[0]["fee_currency"] is None
+    assert fill_events[0]["qty"] == 0.001
     assert metrics.fills == [("maker", None)]
 
 

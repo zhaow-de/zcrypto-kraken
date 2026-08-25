@@ -17,8 +17,10 @@ from nautilus_trader.adapters.kraken import (
     KRAKEN,
     KrakenDataClientConfig,
     KrakenDataClientFactory,
+    KrakenEnvironment,
     KrakenExecutionClientConfig,
     KrakenExecutionClientFactory,
+    KrakenProductType,
 )
 from nautilus_trader.common import Environment, LogLevel
 from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
@@ -416,8 +418,16 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
 def _data_client_config() -> KrakenDataClientConfig:
     """The Kraken data client. The adapter loads the venue's instrument universe itself on connect;
     nothing here selects it, and `test_engine_node.py`'s live instrument-arrival test is what proves
-    the twelve `INSTRUMENT_IDS` still land in the Cache."""
-    return KrakenDataClientConfig()
+    the twelve `INSTRUMENT_IDS` still land in the Cache.
+
+    `product_type` and `environment` are stated rather than inherited. Both equal the library's
+    defaults today, so nothing moves; they are the two fields that select WHICH Kraken venue this
+    engine reaches, and an upstream default flip would otherwise land on the live trade path with
+    nothing red anywhere. `test_nautilus_interface_pin.py` pins both enums."""
+    return KrakenDataClientConfig(
+        product_type=KrakenProductType.SPOT,
+        environment=KrakenEnvironment.LIVE,
+    )
 
 
 def _credentials() -> tuple[str, str] | None:
@@ -440,6 +450,10 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
     api_key, api_secret = credentials
     return KrakenExecutionClientConfig(
         account_id=AccountId(_ACCOUNT_ID),
+        # Stated, not inherited -- the two fields that select which Kraken venue is reached; see
+        # `_data_client_config`.
+        product_type=KrakenProductType.SPOT,
+        environment=KrakenEnvironment.LIVE,
         api_key=api_key,
         api_secret=api_secret,
         spot_account_type=AccountType.MARGIN,
