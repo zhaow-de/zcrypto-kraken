@@ -9,6 +9,9 @@ order-semantics probes before the engine trades on the new version" —
 hand, so it gates **arming**, not merging: the repo may sit on a bumped version indefinitely while
 disarmed. It is owed at **every** nautilus-trader bump, before the engine may be armed on that version.
 
+**A pass binds to one exact version string and nothing else** — §1.6 says what that demands of the
+pin, and it may need deciding days before anything else here.
+
 **This places real orders on a live Kraken account.** Every step below runs in the main session, by
 hand, in order. Nothing here belongs in a subagent: host- and credential-touching steps die at the
 permission gate there.
@@ -69,16 +72,19 @@ today. So:
    current public IP** (`curl -s https://api.ipify.org`).
 2. Note the time. This exception is temporary and closing it is step 7.
 
-Do not instead run the harness on `zcrypto`: it has no 1.231.0 environment, and putting a probe
-process beside the live engine on the same host is not worth the convenience.
+Do not instead run the harness on `zcrypto`: it has no interpreter at the version under test, and
+putting a probe process beside the live engine on the same host is not worth the convenience.
 
 ### 1.4 The account is funded
 
 The probes need enough EUR to (a) let probe 5 buy ~EUR 10 and (b) let the venue accept the resting
-margin orders. Check at Kraken → Balances, or let **probe 1** tell you — but read it knowing what it
-reports: under `spot_account_type=MARGIN` the account object gives **TradeBalance-derived equity in
-`margin_balance_asset`**, not per-asset wallet balances (2026-07-10 Observation 3). Wallet truth is
-the Kraken UI or the raw `Balance` endpoint.
+margin orders. Check at Kraken → Balances, or let **probe 1** tell you — but read it knowing that
+what the account object reports under `spot_account_type=MARGIN` is the adapter's choice and is not
+readable from the wheel. It was measured once as **TradeBalance-derived equity in
+`margin_balance_asset`** rather than per-asset wallet balances (2026-07-10 Observation 3); on a
+build that has not been probed, treat that as the shape to **check for**, not the shape to expect.
+Either way, wallet truth is the Kraken UI or the raw `Balance` endpoint — record which of the two
+probe 1 gave you.
 
 If the balance is short, fund it *before* the run, not between probes.
 
@@ -87,6 +93,29 @@ If the balance is short, fund it *before* the run, not between probes.
 Before an irreversible production action, sweep `docs/open-topics/README.md` and
 `docs/memo.local.md` for anything that blocks touching the live account, and present the result with
 the go/no-go.
+
+### 1.6 Freeze the pin — decide this first; it can predate everything above
+
+**Stop bumping the pin, and keep it stopped until the engine is armed on the version you pass.**
+
+A nightly channel that moves daily and an arming record matched by exact string are in direct
+conflict, and the conflict resolves in exactly one direction — the record does not loosen (§2). So:
+
+- **Freeze before the pass.** The version you run the probes against must be the version that is
+  still pinned when the engine is armed. Land the bump you intend to arm on, then stop.
+- **Any later bump re-disarms the engine, at the next deploy.** Be precise about when: a bump in the
+  repo does not touch a container that is already running, so an engine armed on the old version
+  keeps trading on it. What the bump kills is the *path forward* — the armed converge is refused
+  from that tree, and once an image built from it is deployed the gate refuses to arm too. Nothing
+  warns you at the moment of the bump; the suite stays green by design, and the refusal arrives at
+  the arming step, which is the worst moment to discover it.
+- **A bump that lands after a pass is a decision to re-run the pass**, at the full attended cost, or
+  to revert the pin. There is no third option, and "the diff looks harmless" is not one: this
+  procedure exists precisely because a bump can move fill, cancel, post-only or reconciliation
+  behaviour without moving anything the suite can see.
+
+While the engine is disarmed, bump freely — that is the blessed state the whole design assumes.
+The freeze starts when the pass is scheduled and ends when the arming window closes.
 
 ______________________________________________________________________
 
@@ -108,6 +137,41 @@ Run from the worktree root (both paths above are relative to it) and pass `--evi
 
 The harness refuses to start against any other version unless you pass `--expect-nautilus <v>`
 explicitly — that refusal is the point of the run, never a nuisance to bypass.
+
+### 2.1 What the record records — settled before the pass, not discovered at it
+
+`cli/engine/order-semantics-verified.json` lists **exact, complete version strings, matched
+exactly**. There is no family match, no prefix match, no "rc4 covers all rc4 nightlies". That is a
+decision, not an accident of the implementation, and it is not up for revisiting at an arming
+window:
+
+- The probes measure **one build**. A prefix that vouched for builds nobody ran would make the
+  record say something no attended run ever established, which is the only thing the record is for.
+- Both guards already do exact membership and are tested against the near-misses that would
+  otherwise slip through — a prefix, a trailing `.post1`, a leading space. Loosening the match means
+  weakening both at once, from a file whose entire purpose is to be hard to loosen.
+- The cost of exactness is §1.6's freeze. That is the price, it is known, and it is cheaper than a
+  guard that vouches for a build nobody measured.
+
+**The string to record is the one the interpreter reports**, not the one you read off the pin:
+
+```
+$PY -c 'import nautilus_trader; print(nautilus_trader.__version__)'
+```
+
+Paste that verbatim. The two guards read different operands — the converge assert compares the
+**pin** in the `pyproject.toml` of the tree you converge *from*, the runtime gate compares the
+**running interpreter's** `nautilus_trader.__version__` inside the container — and one entry only
+satisfies both while those two strings coincide. They are not automatically the same string: the
+image bakes its version from the pyproject it was *built* from, so a controller tree ahead of the
+deployed image makes the converge assert refuse a version the running engine does not have. That is
+what `engine.md`'s pre-probe step 2 is for — converge from the revision the running digest was built
+from, and the two operands agree by construction. Reaching for `-e arming_override=...` because
+"the record obviously contains it" is the wrong move here; reconcile the tree instead.
+Keeping them coincident is `tests/test_nautilus_adapter.py::test_pinned_version`'s job, and it is
+why the pin uses PEP 440 arbitrary equality (`===`): the index publishes both `<version>` and
+`<version>+<build>` for the same wheel, and `==` matches the local-segment form and orders it above,
+so `==` can install a build whose `__version__` is not the string anyone wrote down.
 
 ______________________________________________________________________
 
@@ -158,9 +222,11 @@ Rules, all of them absolute:
   Kraken adapter's own factory sources them from the environment.
 - Close the shell when the run is done.
 
-**Nonce warning (2026-07-10 Observation 4):** the adapter uses finer-than-millisecond nonces. After
-any harness run, millisecond-nonce REST scripts on the same key get `EAPI:Invalid nonce`. Any sidecar
-tooling you reach for afterwards must use `time_ns()` nonces.
+**Nonce warning (2026-07-10 Observation 4):** the adapter was measured using finer-than-millisecond
+nonces. After any harness run, millisecond-nonce REST scripts on the same key then got
+`EAPI:Invalid nonce`. Assume it still holds — any sidecar tooling you reach for afterwards must use
+`time_ns()` nonces — since assuming it does costs nothing and assuming it does not costs a debugging
+session.
 
 ______________________________________________________________________
 
@@ -210,7 +276,7 @@ Between the printed probes, watch for:
 | Sub-probe | Healthy | What failure looks like |
 | -- | -- | -- |
 | 4a | `accepted (<venue id>), rested, cancel confirmed; filled_qty=0.0` | any `filled_qty` > 0 (a fill at 30 % from market is a reportable finding, not noise); `cancel NOT confirmed` (an order is still working — see §8) |
-| 4b | `filled_qty=0.0` and a terminal status. At 1.230.0 this was `OrderCanceled` (venue-initiated), **not** `OrderRejected` — either is a pass; **record which** | `filled_qty` > 0 ⇒ post-only protection did not hold. This is an order-semantics failure and per spec 00039 decision 1 it triggers the pre-approved thin-engine fallback |
+| 4b | `filled_qty=0.0` and a terminal status. Which terminal event carries it — `OrderCanceled` (venue-initiated) or an `OrderRejected` naming post-only — is the adapter's mapping and this run's **observation**: either is a pass, and **recording which one you saw is part of the deliverable**. A build not yet probed has no expected answer here; do not carry an earlier build's forward | `filled_qty` > 0 ⇒ post-only protection did not hold. This is an order-semantics failure and per spec 00039 decision 1 it triggers the pre-approved thin-engine fallback. An `OrderRejected` for any *other* reason is not a pass either — the harness scores it FAIL, because the venue never exercised post-only |
 | 4b, alternative | verdict `REVIEW` with "order RESTED instead of being protected" | the quote moved between pricing and submission so nothing crossed. **Protocol artifact, not an adapter failure** — re-run with `--probes 4 --apply`, which re-runs all of 4a–4d (there is no sub-probe selector; the extra three are bounded and zero-fill) |
 | 4c | `accepted … cancel confirmed` with leverage 2 accepted by the venue | a rejection naming leverage ⇒ margin semantics failure ⇒ fallback path |
 | 4d | same, for the leveraged **sell** (the short) | as 4c |
@@ -239,9 +305,10 @@ closing `SELL` plan → `market sell @ <px> filled` → verdict `PASS`.
 - A note about the closing quantity being "floored … dust will remain" means a sliver of BTC stays
   in the wallet. Below the leg's `ordermin` that is terminal dust, not a position — record it, do not
   chase it.
-- Expect the account object *not* to show an OpenPositions row for a spot buy under
-  `spot_account_type=MARGIN`; the adapter reports margin positions there. The harness prints this
-  reminder inline.
+- A spot buy under `spot_account_type=MARGIN` was measured *not* to show an OpenPositions row —
+  the adapter reported margin positions there. On a build that has not been probed that is a thing
+  to check and record, not a thing to expect; either way it is not by itself a failure, and probe 5
+  is judged on the fill and the flat close. The harness prints this reminder inline.
 
 Record the fee from the fill: 2026-07-10 measured **0.80 %/side** against a modelled 0.6 %, inside
 the pre-registered 2× band. A materially different number is a cost-model input (T0014), not an
@@ -321,13 +388,25 @@ Do this in the same session as the run. Then close the credential-bearing shell.
 `kraken-order-semantics-probe.py` prints the table under
 `PROBE RESULTS -- paste these rows into this version's docs/research/ verification doc`, and writes
 `evidence-<stamp>.json` into `--evidence-dir` (default: the cwd) with the full event stream, every planned order, and every
-client order id. **Then sweep the homes of "<version> is unverified" in the SAME change**, or the next reader meets a contradiction — the act that satisfies the predicate updates none of the others: (1) add the version to `cli/engine/order-semantics-verified.json`, which clears BOTH guards at once since they share it; (2) the arming step in `engine.md`; (3) the previous version's `docs/research/` record; (4) the comment in `tests/test_nautilus_adapter.py`; (5) `tests/test_engine_execgate.py`, which pins the record's exact contents. The last two FAIL deliberately at step (1) and are the tripwire that routes the rest.
+client order id. **Then sweep the homes of "<version> is unverified" in the SAME change**, or the next reader meets a contradiction — the act that satisfies the predicate updates none of the others:
+
+1. **Add the version to `cli/engine/order-semantics-verified.json`**, exactly as the interpreter spells it (§2.1). This clears BOTH guards at once, since they share the file — and it is the act that says the re-run happened, a reviewed diff rather than a memory. Never add a version without the `docs/research/` doc recording its PASS.
+2. **`tests/test_engine_execgate.py`**, which pins the record's exact contents and therefore **FAILS deliberately the moment you do (1)**. That failure is the routing for the rest of this list: its assertion message enumerates the sweep and points back here. Update it deliberately, never by pasting whatever the diff shows.
+3. **The arming step in [`engine.md`](engine.md)** — pre-probe step 3, which names the verified version and its record.
+4. **The previous version's `docs/research/` record**, cross-linked so the series reads as one and neither file claims to be current.
+
+**What is deliberately NOT on this list, and why.** `tests/test_nautilus_adapter.py` used to assert a hardcoded version and go red at every bump; that red was the routing. It no longer does: it now checks only that the installed version equals the version `pyproject.toml` pins, which stays green across bumps and carries no version string to sweep. The pin moves on a nightly cadence, and a test that goes red on every routine move stops being read and starts being repaired — so the routing moved to where it cannot be repaired away:
+
+- **At a bump, nothing goes red, and nothing is supposed to.** The repo sitting on a bumped version while disarmed is the blessed state. The debt is collected at arming, by the converge assert and the runtime gate, each of which blocks the money rather than a test run. §1.6 is what keeps that from ambushing you.
+- **At the write-up, item (2) still goes red**, because the thing you just changed is the thing it pins. One deliberate failure, at the one moment a human is already editing the record — which is what a tripwire is for.
 
 Paste the table; keep the JSON in the session scratchpad as the 2026-07-10 run did
 ("the raw evidence JSONs are preserved in the session scratchpad").
 
-The memo update must state the version the verification now binds to, and anything the harness
-reported as moved between 1.230.0 and 1.231.0.
+The memo update must state the exact version the verification now binds to, and every observation
+this run recorded rather than matched — probe 4b's terminal event, probe 1's balance shape, and
+anything else that differs from the last recorded version. Those are the deliverable, not a
+footnote: the next run has no expected answer for them except what this one writes down.
 
 ______________________________________________________________________
 
