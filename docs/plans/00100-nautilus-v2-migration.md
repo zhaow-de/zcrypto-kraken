@@ -386,7 +386,7 @@ This matters most during Phase C specifically: the red suite hands an implemente
 
 **Files:** `cli/engine/command.py`
 
-- [ ] **Step 1:** Re-point the health read to `node.is_running` / `node.handle().state`.
+- [x] **Step 1: DONE — and NOT via `node.is_running`.** `LiveNode` is pyo3-*unsendable*: reading any attribute of it off the thread that built it panics and aborts the process (SIGABRT, exit 134), which `except Exception` cannot intercept. The watchdog runs on a `threading.Timer` thread, so that re-point would have killed a HEALTHY engine the moment the timer fired. Capture `node.handle()` on the building thread and read `handle.state is NodeState.RUNNING`, which answers normally off-thread.
 - [ ] **Step 1b: Re-source the DELAY, which is the watchdog's whole point.** Production computes it from `node._config.timeout_connection + timeout_reconciliation`; v2's `LiveNode` exposes no `_config`, and `LiveNodeConfig` renames both fields to `*_secs`. Task 6 sets neither timeout, so the values in force are `LiveNodeConfig`'s defaults — measured on the installed wheel: `timeout_connection_secs = 60.0`, `timeout_reconciliation_secs = 30.0`, unchanged from what production computes today. Pin them where node assembly sets them and read them from there — a watchdog that fires before a legitimate connect-and-reconcile completes restarts a healthy engine.
 - [ ] **Step 2: Prove the watchdog fires**, with a fixture where the condition it watches is false. A watchdog that compiles is not a watchdog that fires — and the permanently-truthy form is the exact defect to construct.
 - [ ] **Step 3:** Re-derive the faulthandler re-arm's justification against v2's Rust/tokio runtime, or remove it with the reason recorded.
