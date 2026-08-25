@@ -450,9 +450,10 @@ Nothing here arms anything; this task makes the arming pass *possible* and corre
 
 - [ ] **Step 1: Stop bumping the pin** — declare it, in the runbook. The arming record does exact string membership, so any bump after the attended pass silently disarms the engine.
 - [ ] **Step 2:** Decide the record's granularity before the pass, not at it. Update `infra/runbooks/order-semantics-verification.md`'s version-specific instructions and re-derive the six-probe expectations for v2.
-- [ ] **Step 3:** Add the unmatched-external alert to the arming checklist as owed **after** the metric's first record — a rule pushed before it exists pages a spurious no-data alert.
-- [ ] **Step 4: Do not touch `order-semantics-verified.json`.** It gains a version only after the attended pass has run and its research doc records the PASS.
-- [ ] **Step 5:** Commit.
+- [ ] **Step 3: Take a startup baseline BEFORE setting the alert's threshold.** The observer registers at node build, not at `on_start`, so events published during nautilus's own reconciliation may now reach it where they previously could not. They are counted `unmatched`, logged and dropped — safe, and D7's idempotence is unaffected because `_attached` is empty until the first adopt tick — but the counter may rise at every startup. An alert thresholded as though `unmatched` means operator action would then page on a healthy boot. Measure one disarmed startup first.
+- [ ] **Step 4:** Add the unmatched-external alert to the arming checklist as owed **after** the metric's first record — a rule pushed before it exists pages a spurious no-data alert.
+- [ ] **Step 5: Do not touch `order-semantics-verified.json`.** It gains a version only after the attended pass has run and its research doc records the PASS.
+- [ ] **Step 6:** Commit.
 
 ### Task 16: Hand D2's delivery leg to the arming checklist — it cannot execute here
 
