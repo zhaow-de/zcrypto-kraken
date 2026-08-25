@@ -293,9 +293,28 @@ PY
 
    Until the first of those has a number there is nothing to threshold, and the alert is not owed. Do not invent a threshold to close the item.
 
-5. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`** (measured: `{'EUR': 99.84}`), not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
+5. **On the same first window, and only after the baseline above has a number, read how often the engine mints an order's terminal event for itself.** Past its in-flight retry budget the execution engine stops waiting on an unanswered order and publishes that order's `OrderCanceled`, or an `INFLIGHT_TIMEOUT` `OrderRejected`, on its own authority. The executor treats every one of those as an unknown venue outcome: the intent ends `ambiguous`, nothing is resubmitted, and the plan halts. That is the right answer and it is also a **plan-stopping** one, so how often the machinery fires decides how often an attended window ends on a slow venue rather than on a real result — and that rate has never been measured on this venue.
 
-6. **Only the account owner authors and places a plan.** A plan file the owner did not place does not exist to this process.
+   Three readings, none of which needs new instrumentation. From the workstation:
+
+   ```
+   uv run python infra/scripts/grafana-query.py 'zcrypto_exec_orders_total{host="zcrypto"}'
+   uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total{host="zcrypto"}'
+   ```
+
+   and on the host, the engine's own account of each timeout (scope the read to this one command; a bare `--since HH:MM` does not parse, so pass a duration, and confirm the output is non-empty before reading anything into a quiet grep):
+
+   ```
+   sudo docker logs --since 24h zcrypto-engine | grep -c INFLIGHT_TIMEOUT
+   ```
+
+   `outcome="ambiguous"` is where a minted terminal lands. `disposition="unmatched"` is where a whole order the engine synthesized to close a position discrepancy lands — it arrives under the reserved external strategy id, matches no ledgered row, and is dropped, which is why this reading is only meaningful **against** the healthy-boot baseline from step 4: without that number a clean start's own reconciliation traffic is indistinguishable from a synthesis. `(no series)` on either family is a FAIL of the telemetry path, never a zero.
+
+   **Zero is the expected reading while nothing has been submitted, and it is still worth taking.** A non-zero one before any order exists means the machinery is firing on something nobody has modelled — read the log lines and understand them before arming, rather than after. Record the three numbers in this version's `docs/research/` verification doc beside the baseline.
+
+6. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`** (measured: `{'EUR': 99.84}`), not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
+
+7. **Only the account owner authors and places a plan.** A plan file the owner did not place does not exist to this process.
 
 #### 2. Arm — two keys, in this order
 
