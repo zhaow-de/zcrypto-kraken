@@ -292,13 +292,13 @@ class StubClient:
         if self._submit_raises is not None:
             raise self._submit_raises
 
-    def cancel_order(self, order):
-        self.canceled.append(order)
+    def cancel_order(self, client_order_id):
+        self.canceled.append(client_order_id)
 
-    def subscribe_quote_ticks(self, instrument_id):
+    def subscribe_quotes(self, instrument_id):
         self.subscribed.append(str(instrument_id))
 
-    def unsubscribe_quote_ticks(self, instrument_id):
+    def unsubscribe_quotes(self, instrument_id):
         self.unsubscribed.append(str(instrument_id))
 
 

@@ -259,7 +259,7 @@ class ShadowStrategy(Strategy):
         if self._executor is not None:
             self._executor.on_timer(self._now())
 
-    def on_quote_tick(self, tick) -> None:
+    def on_quote(self, tick) -> None:
         if self._executor is not None:
             self._executor.on_quote(tick)
 

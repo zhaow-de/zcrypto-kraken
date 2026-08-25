@@ -522,8 +522,8 @@ class ProbeExecutor:
     """Owns every venue-mutating call in this repository.
 
     `client` is the strategy handle (or a stub with the same surface): `.cache`,
-    `.order_factory.limit(...)`, `.submit_order(order, params=...)`, `.cancel_order(order)`,
-    `.subscribe_quote_ticks(id)`, `.unsubscribe_quote_ticks(id)`.
+    `.order_factory.limit(...)`, `.submit_order(order, params=...)`, `.cancel_order(client_order_id)`,
+    `.subscribe_quotes(id)`, `.unsubscribe_quotes(id)`.
     """
 
     def __init__(self, *, client, gate: ExecutionGate, config: EngineConfig, clock=_utc_now) -> None:
@@ -758,7 +758,7 @@ class ProbeExecutor:
                 "the kill switch is latched" if kill_latched else "the ledger does not carry it as a resting reducer",
             )
             try:
-                self._client.cancel_order(order)
+                self._client.cancel_order(order.client_order_id)
             except Exception:
                 logger.critical(
                     "cancel of adopted order %s raised -- it may still rest at the venue", client_order_id, exc_info=True
@@ -1079,7 +1079,7 @@ class ProbeExecutor:
             logger.warning("own position unreadable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
             self._refuse_intent(index, ("no venue truth",))
             return
-        self._client.subscribe_quote_ticks(instrument_id)
+        self._client.subscribe_quotes(instrument_id)
         self._active = _ActiveIntent(
             index=index,
             intent=intent,
@@ -1350,7 +1350,7 @@ class ProbeExecutor:
 
     def _cancel(self, active: _ActiveIntent) -> None:
         try:
-            self._client.cancel_order(active.order)
+            self._client.cancel_order(active.order.client_order_id)
         except Exception:
             # No retry and no fallback: the order may still rest, and the intent stays in
             # `cancelling` -- an open ledger row for reconciliation, and no further order.
@@ -1613,7 +1613,7 @@ class ProbeExecutor:
         self._cancel_resting(active)
         if active is not None:
             try:
-                self._client.unsubscribe_quote_ticks(active.instrument_id)
+                self._client.unsubscribe_quotes(active.instrument_id)
             except Exception:
                 logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
             # The intent was mid-flight, so nothing else will ever journal it: without this its line
@@ -1673,7 +1673,7 @@ class ProbeExecutor:
             if client_order_id in requested:
                 continue
             try:
-                self._client.cancel_order(order)
+                self._client.cancel_order(order.client_order_id)
             except Exception:
                 logger.critical(
                     "cancel of %s raised while tripping -- it may still rest at the venue", client_order_id, exc_info=True
@@ -2247,7 +2247,7 @@ class ProbeExecutor:
         whether the order was refused or left ambiguous, and this does not."""
         active = self._active
         try:
-            self._client.unsubscribe_quote_ticks(active.instrument_id)
+            self._client.unsubscribe_quotes(active.instrument_id)
         except Exception:
             logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
         if outcome is not None:
@@ -2296,7 +2296,7 @@ class ProbeExecutor:
         leaves the row in one of `execledger._OPEN_ORDER_STATES` so re-attach still sees the order.
         """
         try:
-            self._client.unsubscribe_quote_ticks(active.instrument_id)
+            self._client.unsubscribe_quotes(active.instrument_id)
         except Exception:
             logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
         logger.critical(

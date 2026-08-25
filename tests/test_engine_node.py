@@ -445,7 +445,7 @@ def test_bare_construction_wires_no_executor_and_the_forwarders_no_op(tmp_path):
     strategy = ShadowStrategy(_config(tmp_path))
     assert strategy._executor_factory is None
     assert strategy._executor is None
-    strategy.on_quote_tick(object())
+    strategy.on_quote(object())
     strategy.on_order_event(object())
 
 
@@ -523,7 +523,7 @@ def test_quote_and_order_event_forwarders_pass_the_object_through(tmp_path):
     strategy = ShadowStrategy(_config(tmp_path))
     strategy._executor = executor
     tick, event = object(), object()
-    strategy.on_quote_tick(tick)
+    strategy.on_quote(tick)
     strategy.on_order_event(event)
     assert executor.quotes == [tick]
     assert executor.events == [event]
@@ -547,7 +547,7 @@ def test_the_external_order_forwarder_passes_the_object_through_and_is_inert_unw
 
 def test_a_quote_for_another_instrument_does_not_disturb_the_running_intent(tmp_path):
     # The forwarder is instrument-blind by design -- the discrimination is the executor's, and this
-    # drives the WHOLE path (strategy.on_quote_tick -> the real factory's ProbeExecutor.on_quote)
+    # drives the WHOLE path (strategy.on_quote -> the real factory's ProbeExecutor.on_quote)
     # so a wiring that handed the tick to the wrong place would show up here.
     from nautilus_trader.model import InstrumentId
 
@@ -580,12 +580,10 @@ def test_a_quote_for_another_instrument_does_not_disturb_the_running_intent(tmp_
     )
     strategy._executor._active = active
 
-    strategy.on_quote_tick(
-        types.SimpleNamespace(instrument_id=InstrumentId.from_str("ETH/EUR.KRAKEN"), bid_price=1.0, ask_price=2.0)
-    )
+    strategy.on_quote(types.SimpleNamespace(instrument_id=InstrumentId.from_str("ETH/EUR.KRAKEN"), bid_price=1.0, ask_price=2.0))
     assert (active.bid, active.ask, active.last_quote_at) == (None, None, None)
 
-    strategy.on_quote_tick(
+    strategy.on_quote(
         types.SimpleNamespace(instrument_id=InstrumentId.from_str("BTC/EUR.KRAKEN"), bid_price=100.0, ask_price=101.0)
     )
     assert (active.bid, active.ask) == (100.0, 101.0)
