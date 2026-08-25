@@ -8,18 +8,24 @@ import shutil
 from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from nautilus_trader.model import (
+    Currency,
+    CurrencyPair,
     InstrumentId,
     LimitOrder,
     LiquiditySide,
     OrderSide,
     OrderStatus,
+    Price,
     Quantity,
     StrategyId,
+    Symbol,
     TimeInForce,
 )
 
@@ -38,7 +44,7 @@ from cli.engine.execledger import (
     write_exec_record,
 )
 from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_order
-from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder
+from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
 from cli.engine.node import ShadowStrategy
 from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent
@@ -157,19 +163,49 @@ _BTC_LEG_ATTRS = {
 }
 
 
+def _step_precision(step: float) -> int:
+    """The decimal precision one venue step implies -- 0.1 -> 1, 0.00000001 -> 8. Kraken publishes
+    `pair_decimals`/`lot_decimals` alongside `tick_size`, and across the whole basket the step is
+    exactly `10 ** -decimals`, so deriving one from the other keeps the fixture's instrument
+    self-consistent the way a Cache instrument is."""
+    return -Decimal(str(step)).as_tuple().exponent
+
+
+@lru_cache(maxsize=None)
+def _rounding_delegate(symbol: str, lot_step: float, tick_size: float) -> CurrencyPair:
+    """A REAL nautilus instrument at one leg's precisions. Only `make_qty`/`make_price` are read off
+    it: their rounding is HALF-EVEN on the decimal the value is written as, and it is not the rule
+    the bare `Quantity(value, precision)` / `Price(value, precision)` constructors use -- the two
+    disagree at half-increments, so a stub restating either would be restating the wrong one."""
+    base, quote = symbol.split("/")
+    return CurrencyPair(
+        instrument_id=InstrumentId.from_str(f"{symbol}.KRAKEN"),
+        raw_symbol=Symbol(base + quote),
+        base_currency=Currency.from_str(base),
+        quote_currency=Currency.from_str(quote),
+        price_precision=_step_precision(tick_size),
+        size_precision=_step_precision(lot_step),
+        price_increment=Price(tick_size, _step_precision(tick_size)),
+        size_increment=Quantity(lot_step, _step_precision(lot_step)),
+        ts_event=0,
+        ts_init=0,
+    )
+
+
 def _fake_instrument(instrument_id: str, *, ordermin=0.0001, lot_step=0.00000001, tick_size=0.1):
     # min_notional mirrors observed live reality (cli/engine/venuestate.py, D5a): the installed
-    # Kraken adapter never populates it. make_qty/make_price are identity here -- the real Cache
-    # instrument returns Quantity/Price value objects, and the executor must route the sized
-    # numbers through them rather than handing raw floats to the order factory.
+    # Kraken adapter never populates it. make_qty/make_price are BOUND FROM A REAL INSTRUMENT at
+    # this leg's precisions: the executor hands the order factory whatever they return, so a stub
+    # returning the value unchanged would agree with a `_place` that had lost the calls entirely.
+    real = _rounding_delegate(instrument_id.rsplit(".", 1)[0], lot_step, tick_size)
     return SimpleNamespace(
         id=instrument_id,
         min_quantity=ordermin,
         min_notional=None,
         size_increment=lot_step,
         price_increment=tick_size,
-        make_qty=lambda value: value,
-        make_price=lambda value: value,
+        make_qty=real.make_qty,
+        make_price=real.make_price,
     )
 
 
@@ -726,6 +762,115 @@ def test_a_sell_intent_joins_the_ask_and_a_margin_intent_carries_the_leverage_pa
     assert order.order_side == OrderSide.SELL
     assert order.price == 30001.0  # the ASK
     assert params == {"leverage": 3}
+
+
+# --- the venue value objects: what quantity and price actually reach the order factory -----------
+
+# `instrument.make_price` / `instrument.make_qty` round HALF-EVEN on the decimal the value is
+# WRITTEN as -- 0.045 -> 0.04, 1.015 -> 1.02 (101.5 -> the even 102). The bare `Price(value,
+# precision)` / `Quantity(value, precision)` constructors round the binary float instead and
+# DISAGREE at half-increments, in both directions. Measured on the installed wheel against a real
+# CurrencyPair at the basket's own precisions, which is the only place the rule is observable: a
+# hand-built value object answers the other question. Both columns are pinned because the pair of
+# them is the finding -- reading `Quantity(x, instrument.size_precision)` as a free substitute for
+# `instrument.make_qty(x)` changes the submitted quantity by one whole increment.
+_MAKE_PRICE_CASES = (
+    # (value, instrument.make_price at price_precision=2, Price(value, 2))
+    (0.015, "0.02", "0.02"),
+    (0.025, "0.02", "0.03"),
+    (0.045, "0.04", "0.05"),
+    (0.355, "0.36", "0.36"),
+    (1.005, "1.00", "1.00"),
+    (1.015, "1.02", "1.01"),
+    (2.005, "2.00", "2.01"),
+    (2.675, "2.68", "2.68"),
+    (8.835, "8.84", "8.84"),
+)
+
+# (value, instrument.make_qty at size_precision=8 or None where it RAISES, Quantity(value, 8))
+_MAKE_QTY_CASES = (
+    (4.9e-09, None, "0.00000000"),
+    (5e-09, None, "0.00000001"),
+    (5.1e-09, "0.00000001", "0.00000001"),
+    (1.25e-08, "0.00000001", "0.00000001"),
+    (1.5e-08, "0.00000002", "0.00000001"),
+    (2.5e-08, "0.00000002", "0.00000003"),
+    (3.5e-08, "0.00000004", "0.00000004"),
+)
+
+
+@pytest.mark.parametrize("value, made, constructed", _MAKE_PRICE_CASES)
+def test_the_instruments_price_rounding_is_not_the_bare_constructors(value, made, constructed):
+    instrument = _rounding_delegate("ETH/EUR", 0.00000001, 0.01)
+    assert instrument.price_precision == 2
+    assert str(instrument.make_price(value)) == made
+    assert str(Price(value, 2)) == constructed
+
+
+@pytest.mark.parametrize("value, made, constructed", _MAKE_QTY_CASES)
+def test_the_instruments_quantity_rounding_is_not_the_bare_constructors(value, made, constructed):
+    """`make_qty` REFUSES a value that rounds to zero where the constructor returns a zero quantity,
+    so the two differ in kind and not only in value below half an increment."""
+    instrument = _rounding_delegate("ETH/EUR", 0.00000001, 0.01)
+    assert instrument.size_precision == 8
+    if made is None:
+        with pytest.raises(ValueError, match="rounded to zero"):
+            instrument.make_qty(value)
+    else:
+        assert str(instrument.make_qty(value)) == made
+    assert str(Quantity(value, 8)) == constructed
+
+
+def test_a_submitted_order_carries_the_floored_price_and_quantity_as_venue_value_objects(tmp_path):
+    """The whole chokepoint in one order: `size_order` FLOORS to the venue step, and what reaches
+    the order factory is that floored number wrapped by the instrument's own maker. Both operands
+    are chosen so the two roundings answer differently -- an ask of 30000.15 floors to 30000.1 but
+    make_price's half-even sends the raw touch UP to 30000.2, and a disposal of 0.001000015 floors
+    to 0.00100001 while the raw quantity rounds up to 0.00100002. A `_place` that lost the floor, or
+    that priced off the raw touch, submits a different order and this test says which."""
+    _venue_record(tmp_path, balances={"ZEUR": 1000.0})
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.001000015)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote(bid=30000.05, ask=30000.15))
+
+    order, _ = client.submitted[0]
+    assert isinstance(order.price, Price) and isinstance(order.quantity, Quantity)
+    assert str(order.price) == "30000.1"
+    assert str(order.quantity) == "0.00100001"
+    # The journal row carries the sized floats, not the value objects -- the same two numbers.
+    row = _record(tmp_path)["submitted"][0]["order"]
+    assert (row["price"], row["qty"]) == (30000.1, 0.00100001)
+
+
+def test_the_floor_is_what_keeps_make_qty_away_from_the_quantity_it_refuses(tmp_path):
+    """`instrument.make_qty(sized.qty)` in `_place` sits OUTSIDE the try that wraps sizing, and
+    `make_qty` raises on a value under half an increment -- so the containment argument has to be
+    that such a value cannot arrive. It cannot: `size_order` floors the quantity to `lot_step` and
+    then refuses anything under `ordermin`, and `ordermin` is at least one lot on every venue shape,
+    so the survivor is a whole number of increments and at least one of them. Asserted at the
+    tightest legal shape (`ordermin == lot_step`), where the two bounds coincide."""
+    instrument = _rounding_delegate("BTC/EUR", 0.00000001, 0.1)
+    with pytest.raises(ValueError, match="rounded to zero"):
+        instrument.make_qty(0.4 * 0.00000001)
+    assert str(instrument.make_qty(0.00000001)) == "0.00000001"  # one whole lot survives
+
+    below = size_order(0.4 * 0.00000001, 30000.1, ordermin=0.00000001, costmin=0.0, lot_step=0.00000001, tick_size=0.1)
+    assert isinstance(below, BelowMinimum) and "ordermin" in below.reason
+
+    # And end to end: the refusal is the intent's, never a ValueError out of the order factory.
+    _venue_record(tmp_path, balances={"ZEUR": 1000.0})
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=4.9e-09)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert client.submitted == []
+    assert _intent_entry(tmp_path, 0)["outcome"] == "refused"
 
 
 def test_pickup_journals_the_plan_verbatim_then_deletes_the_file(tmp_path):
