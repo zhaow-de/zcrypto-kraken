@@ -329,11 +329,12 @@ $PY $PROBE --probes 6 --evidence-dir "$EVID"
 
 Running it as its **own invocation** is deliberate: the new node's startup reconciliation reads venue
 truth rather than the previous process's cache. (Probe 6 also runs in-process at the end of a full
-run, forcing a mass-status read; the separate invocation is the stronger check and the one to quote.)
+run, but from the cache that run already holds -- it cannot force a fresh venue read, and says so by
+marking its own row REVIEW. The separate invocation is the stronger check and the one to quote.)
 
 **Expect:** `open orders 0 (ours 0, other 0), open positions 0`, `PASS`, exit 0.
 
-- `ours` non-zero ⇒ **verdict FAIL**, and the open ids are printed in probe 6's own rows ⇒ go to §8 now. The exit code is **1** here, not 3: exit 3 is reserved for leftovers this same process still tracks at teardown, and a fresh `--probes 6` invocation tracks none.
+- `ours` non-zero ⇒ **verdict FAIL**, and the open ids are printed in probe 6's own rows ⇒ go to §8 now. Expect exit **3**, with the cancel-by-hand banner: the final read sweeps every probe-shaped order the venue still holds, including ones this invocation never submitted, so a leftover an earlier run left behind is adopted by startup reconciliation and counted as outstanding. FAIL and the banner name the same ids from the same cache read -- they cannot disagree.
 - `other` non-zero ⇒ `REVIEW` ⇒ something at the venue is not ours. Adjudicate before signing off.
 
 ______________________________________________________________________

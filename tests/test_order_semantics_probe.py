@@ -329,6 +329,54 @@ def test_a_running_sequence_still_advances():
 # ---------------------------------------------------------------------------------------------
 
 
+class _FilledOrder:
+    """A cached order that filled. `final_read`'s position warning reads only these two."""
+
+    filled_qty = 0.001
+    is_closed = True
+    status = "FILLED"
+
+
+class _NodeWith:
+    """A node whose cache answers for a fixed set of ids and holds nothing else open."""
+
+    def __init__(self, orders):
+        self.cache = self
+        self._orders = orders
+
+    def order(self, coid):
+        return self._orders.get(str(coid))
+
+    def orders_open(self, venue=None):
+        return []
+
+
+def test_a_run_that_finished_its_sequence_does_not_cry_open_position_over_its_own_round_trip():
+    """The true positive, and the one that makes this guard non-vacuous: probe 5 buys and SELLS, so
+    a healthy run always ends with filled orders. A warning keyed on "was there a fill" would fire
+    on every successful pass and train the operator to ignore it."""
+    coid = "O-20260823-120000-901-P6V-1"
+    state = probe.RunState(submitted=[coid], sequence_complete=True)
+    node = _NodeWith({coid: _FilledOrder()})
+
+    probe.final_read(node, state)
+
+    assert state.notes == []
+
+
+def test_a_run_that_stopped_mid_sequence_after_a_fill_names_the_open_position():
+    """A fill whose closing leg never ran is an OPEN POSITION, and no order read can see it -- the
+    order is CLOSED and reports nothing resting. Keyed on the sequence not finishing rather than on
+    a signal: an exec client that dies takes the node down without one, leaving the same position."""
+    coid = "O-20260823-120000-901-P6V-1"
+    state = probe.RunState(submitted=[coid], sequence_complete=False)
+    node = _NodeWith({coid: _FilledOrder()})
+
+    probe.final_read(node, state)
+
+    assert any("flatten by hand" in n for n in state.notes), state.notes
+
+
 def test_the_expected_version_is_derived_from_the_pin_not_restated(tmp_path):
     """A hand-maintained copy of a nightly pin is stale by default, and this harness's whole
     deliverable is the exact version string it bound to."""

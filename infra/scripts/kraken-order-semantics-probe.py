@@ -581,6 +581,11 @@ class RunState:
     filled_notional_eur: float = 0.0
     notes: list[str] = field(default_factory=list)
     aborted_by: str | None = None
+    # True once every selected probe step has run. It is the difference between "the sequence
+    # finished and probe 5 closed its own position" and "the run ended somewhere in the middle" --
+    # which is what decides whether a fill left an OPEN POSITION behind. A signal is only one of
+    # the ways a run ends early; an exec client that dies takes the node down with no signal at all.
+    sequence_complete: bool = False
 
 
 # --------------------------------------------------------------------------------------------
@@ -754,6 +759,7 @@ class ProbeStrategy(Strategy):
                 self._steps = []
             return
         if not self._steps:
+            self.state.sequence_complete = True
             self._begin_teardown()
             return
         label, name, step = self._steps.pop(0)
@@ -2123,20 +2129,23 @@ def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
         print(f"\n!! {len(split.unknown)} submitted client order id(s) have NO cache record at all:")
         for coid in split.unknown:
             print(f"!!   {coid} -- submitted, never confirmed; treat it as possibly resting at the venue")
-    if state.aborted_by:
+    if not state.sequence_complete:
         filled = [
             (coid, float(o.filled_qty))
             for coid in state.submitted
             if (o := node.cache.order(ClientOrderId(coid))) and float(o.filled_qty) > 0
         ]
         if filled:
-            # Orders are only half the exposure. A buy that filled before the abort is a POSITION,
-            # and an interrupted run never got to close it -- nothing in the order read can see that.
-            print("\n!! this run was interrupted AFTER one or more of its orders filled:")
+            # Orders are only half the exposure. A buy that filled before the run ended is a
+            # POSITION, and a run that stopped mid-sequence never got to close it -- nothing in the
+            # order read can see that. Keyed on the sequence not finishing rather than on a signal
+            # arriving: an exec client that dies takes the node down with no signal, and that path
+            # leaves exactly the same open position.
+            print("\n!! this run ended before its sequence finished, AFTER one or more of its orders filled:")
             for coid, qty in filled:
                 print(f"!!   {coid} filled {qty}")
             print("!! a fill with no closing leg is an OPEN POSITION. Check Kraken -> Trade and flatten by hand.")
-            state.notes.append("the run was interrupted after a fill -- check Kraken for an open position and flatten by hand")
+            state.notes.append("the run ended mid-sequence after a fill -- check Kraken for an open position and flatten by hand")
     stray = [
         o
         for o in node.cache.orders_open(venue=KRAKEN_VENUE)
