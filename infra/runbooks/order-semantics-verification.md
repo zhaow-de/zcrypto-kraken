@@ -26,7 +26,7 @@ ______________________________________________________________________
 | -- | -- |
 | Money at risk, normal path | probe 5's round-trip only: ~EUR 10 notional, ~EUR 0.17 in fees + spread (2026-07-10 measured EUR 0.1618) |
 | Money at risk, worst case | one unexpected fill per probe-4 order, each bounded by the harness's per-order ceiling (default EUR 15) |
-| Left-resting risk | the harness cancels by client order id on every exit path and re-reads the venue; exit code 3 means something survived, and the terminal prints the ids to cancel by hand |
+| Left-resting risk | the harness cancels by client order id on every exit path — the sequence's own teardown, then again while the node stops — and then reads every submitted id back out of the cache once the node has stopped; exit code 3 means something survived that read, and the terminal prints the ids to cancel by hand |
 | Blast radius on the live engine | none by construction: the engine is disarmed; probe orders reach it as `events.order.EXTERNAL` with no ledgered row, so its filter counts, logs and drops them |
 
 ______________________________________________________________________
@@ -135,8 +135,13 @@ $PY -c 'import nautilus_trader; print(nautilus_trader.__version__)'   # must equ
 
 Run from the worktree root (both paths above are relative to it) and pass `--evidence-dir "$EVID"` on every invocation: the evidence default is the cwd, which inside the repo would drop JSONs into git.
 
-The harness refuses to start against any other version unless you pass `--expect-nautilus <v>`
-explicitly — that refusal is the point of the run, never a nuisance to bypass.
+The version the harness demands is the one `pyproject.toml` pins, read from the file at every
+invocation rather than restated in the script — so the check above and the harness's own refusal
+read the same operand, and neither can go stale as the pin moves. It refuses to start against an
+interpreter that does not match, and that refusal is the point of the run, never a nuisance to
+bypass: clear it with `uv sync`, not with `--expect-nautilus`. (A run from a tree where
+`pyproject.toml` is unreadable refuses too, naming `--expect-nautilus` — it will not guess the
+string this run is supposed to establish.)
 
 ### 2.1 What the record records — settled before the pass, not discovered at it
 
@@ -183,10 +188,12 @@ Two checks, both free, both without credentials.
 $PY $PROBE --selftest
 ```
 
-**Expect:** every line `ok`, then `SELFTEST PASSED`, exit 0. This exercises the pure rails — the
-notional ceiling, the 25 % distance floor, the quote-freshness and crossed-quote refusals, the client
-order id collision guard — and proves each one *bites* on the defect it names. A `FAIL` line here
-means **stop**: the rails that bound the money are broken.
+**Expect:** every line `ok`, then `SELFTEST PASSED (<n> checks)`, exit 0. This exercises the pure
+rails — the notional ceilings, the 25 % distance floor re-measured after quantization, the
+quote-freshness and crossed-quote refusals, the client order id collision guard, the leftover
+classification that decides whether a run may report "nothing is resting", and the waiting primitive
+the whole sequence advances on — and proves each one *bites* on the defect it names. A `FAIL` line
+here means **stop**: the rails that bound the money are broken.
 
 ```
 $PY $PROBE --probes 3 --no-exec --evidence-dir "$EVID"
@@ -195,8 +202,8 @@ $PY $PROBE --probes 3 --no-exec --evidence-dir "$EVID"
 **Expect:** the node starts with a data client only (a warning `No exec_clients configuration found`
 is correct here), quotes arrive for all 10 EUR pairs within seconds, probe 3 reports `PASS`, the node
 shuts down, exit 0. This is a public-market-data connection: no credentials, no orders, nothing to
-lose. It proves the node assembly, the WS path, the teardown and the exit path all work before any
-key is in the shell.
+lose. It proves the node assembly, the WS path, the callback sequence, the teardown and the exit path
+all work before any key is in the shell.
 
 **Failure here is a harness problem, not an adapter finding.** Fix it before step 4.
 
@@ -425,11 +432,14 @@ every resting order at the venue, finds no ledgered row for a probe order, and *
 silent interaction between two systems, in the logs of only one of them. Leave nothing for it to
 find.
 
-**Ctrl-C behaviour:** one Ctrl-C is safe — the harness replaces nautilus's own signal handler with
-one that unwinds into the cancel-everything teardown while the exec client is still connected.
-A *second* Ctrl-C does **not** kill that teardown — the installed handler swallows every later
-SIGINT, deliberately, so the cancel sweep always completes. If you must abandon it, `kill -9` the
-process from another terminal and go straight to §8 by hand.
+**Ctrl-C behaviour:** one Ctrl-C is safe. It reaches two handlers. Nautilus's stops the trader
+within a millisecond, which is what runs the harness's cancel-everything sweep — issued while the
+exec client is still connected, because the node holds its clients open for `--order-timeout`
+seconds after the stop (default 30) precisely so those cancels can reach the venue. The harness's
+own handler prints the banner and then swallows every later interrupt, deliberately, so the sweep
+always completes. An interrupted run still prints its table and its leftover banner, and exits **2**
+— or **3** if anything survived the sweep. If you must abandon it, `kill -9` the process from
+another terminal and go straight to §8 by hand.
 
 ______________________________________________________________________
 
@@ -449,4 +459,7 @@ $PY $PROBE --probes 4 --apply --log-level INFO --evidence-dir "$EVID"  # re-run 
 Knobs worth knowing: `--pair` (default `BTC/EUR`), `--notional` (default 10), `--max-notional`
 (default 15, hard ceiling 50 — the harness **refuses**, never clamps), `--away` (default 0.30,
 protocol floor 0.25), `--max-quote-age` (default 10 s), `--probe3-basket` (also subscribe `ETH/BTC`
-and `SOL/BTC`; off by default so the probe-3 row stays comparable with the 2026-07-10 memo).
+and `SOL/BTC`; off by default so the probe-3 row stays comparable with the 2026-07-10 memo), and
+`--order-timeout` (default 30 s), which is both how long a probe waits for an accept or a cancel
+confirmation **and** the window an interrupted run's cancels have to reach the venue — raise it and
+you widen both, so an interrupt costs that much more time before the process exits.
