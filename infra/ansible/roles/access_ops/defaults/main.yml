@@ -11,7 +11,7 @@ access_ops_wg_listen_port: 51820
 # before this role is trusted to install/start the real thing; the role installs the pinned version
 # and renders the unit on every converge, but access_ops_agentboard_live below gates whether it is
 # ever enabled or started (see access_ops/tasks/main.yml).
-access_ops_agentboard_version: "0.4.8"
+access_ops_agentboard_version: "0.4.23"
 # D13 gate -- stays false until the owner's spike proves agentboard cannot hibernate/kill/resize a
 # discovered session; the owner sets it true (host_vars or -e) to bring the unit live, and it then
 # stays enabled+started idempotently. false also means the unit is explicitly disabled+stopped on

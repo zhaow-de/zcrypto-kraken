@@ -1304,3 +1304,86 @@ def test_ops_pins_probe_inspects_the_container_the_compose_template_names():
         assert line.endswith('"liquidations-poll"]'), (
             f"every rendered entrypoint must invoke the liquidations-poll subcommand: {line}"
         )
+
+
+ACCESS_TASKS = ANSIBLE / "roles" / "access" / "tasks" / "main.yml"
+_RELAY_GATE = "the ssh relay is running the target this play renders"
+_RELAY_FLUSH = "apply pending handlers before the relay drift gate"
+
+
+def _relay_vars(running: str | None, rendered: str | None, **extra) -> dict:
+    # the guard reads .stdout off registered results; None models a task that never ran
+    v = {
+        "access_ssh_relay_running": {} if running is None else {"stdout": running},
+        "access_ssh_relay_rendered": {} if rendered is None else {"stdout": rendered},
+    }
+    v.update(extra)
+    return v
+
+
+@pytest.mark.parametrize(
+    "running,rendered,expected,why",
+    [
+        # NOT the production target on either side: a fixture set that only ever renders
+        # 10.99.0.2:22 cannot tell the committed expression from one that hardcodes it, and the
+        # rendered target IS hardcoded in the template -- so that mutation would be invisible.
+        ("10.99.0.7:22", "10.99.0.7:22", True, "healthy: the running argv is the rendered target"),
+        ("10.99.0.2:22", "10.99.0.3:22", False, "the template's target MOVED and the process kept the old one"),
+        ("__not_running__", "10.99.0.7:22", True, "healthy: socket-activated and never triggered, so it cannot be drifted"),
+        ("192.168.1.9:22", "10.99.0.2:22", False, "DRIFTED: the process kept a target the unit no longer renders"),
+        ("/usr/lib/systemd/systemd-socket-proxyd", "10.99.0.2:22", False, "argv carried no target at all"),
+        ("", "", False, "both empty -- equal, but proves nothing; must not read as healthy"),
+    ],
+)
+def test_the_ssh_relay_drift_gate_separates_drift_from_health(running, rendered, expected, why):
+    """The gate must pass BOTH healthy shapes and fail every drifted one.
+
+    `__not_running__` is the true-positive an earlier cut got wrong: the socket is `Accept=no` and
+    the service has no `[Install]`, so it is inactive from boot until the first connection and
+    `MainPID` reads 0 -- failing there would fail a healthy converge on any host that rebooted
+    without an intervening remote session.
+
+    The rendered-moved row is what stops this set from passing a gate that ignores the rendered side
+    altogether: it is the drift shape the sibling relay actually had (an IP->FQDN swap of the
+    template's own target), and it is the only row where the two sides differ because the TEMPLATE
+    changed rather than the process.
+    """
+    gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
+    assert truthy(assert_that(gate), _relay_vars(running, rendered)) is expected, why
+
+
+def test_the_ssh_relay_drift_gate_takes_no_override():
+    """spec 00082 D1 reserves overrides for canary/pins/engine-window and gives every other guard none.
+
+    An override here would also be inert: the gate is skipped under check mode and runs last, so it
+    reports after the converge has applied -- there is no refusal left to bypass.
+    """
+    gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
+    rendered = " ".join(assert_that(gate)) + " " + str(gate["ansible.builtin.assert"].get("fail_msg", ""))
+    assert "override" not in rendered.lower(), f"the relay gate must not grow an override (spec 00082 D1): {rendered}"
+    # and a drifted host must fail no matter what stray variable is set
+    drifted = _relay_vars("192.168.1.9:22", "10.99.0.2:22", access_ssh_relay_override="a stated reason, long enough")
+    assert not truthy(assert_that(gate), drifted), "no variable may buy past this gate"
+
+
+def test_the_ssh_relay_drift_gate_is_skipped_under_check_and_runs_last():
+    """`converge.sh` previews with `--check --diff` and ABORTS the run if the preview fails.
+
+    A gate that tripped in check mode would block the whole converge -- including the pinned-leaves
+    and Caddyfile tasks that are the client-cert revocation path -- which is the blast radius this
+    file's 2026-08-20 note records. It must skip under check mode, and be the role's last task so
+    nothing it can fail sits below it.
+    """
+    tasks = load_tasks(ACCESS_TASKS)
+    gate = find_task(tasks, _RELAY_GATE)
+    assert "not ansible_check_mode" in when_conditions(gate), "the gate must not evaluate under --check"
+    assert task_index(tasks, _RELAY_GATE) == len(tasks) - 1, "the gate must be the role's last task"
+
+    # Pinned by the task's ACTION, not by its name: force_handlers defaults False and is set nowhere,
+    # so a flush that stopped being a flush would strand `reload caddy` -- the handler that makes a
+    # pinned-leaf revocation take effect -- while a name-only assertion stayed green.
+    flush = task_index(tasks, _RELAY_FLUSH)
+    assert flush < task_index(tasks, _RELAY_GATE), "handlers must flush before the gate can fail the host"
+    assert tasks[flush].get("ansible.builtin.meta") == "flush_handlers", (
+        f"the pre-gate task must actually flush handlers, not merely be named so: {tasks[flush]}"
+    )

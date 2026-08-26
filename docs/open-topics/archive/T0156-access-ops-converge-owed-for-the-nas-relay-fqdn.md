@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: "the next `access_ops` converge — one run of `site.yml --limit zcrypto-ops --tags access` applies it; nothing else is waiting on it"
+status: resolved
 ---
 
 # The NAS relay's FQDN swap is committed but not converged
@@ -22,8 +21,29 @@ Two reasons the drift is worth tracking rather than assuming:
 - The FQDN resolves on the ops host today (the four archive-pull channels already address it by name), so the converge is not gated on a DNS change.
 - The monitoring path was deliberately kept off DNS: `zaccess-probe-ops.sh.j2` connects by IP and passes the FQDN as `-servername`, so SNI still selects the right certificate (the probe itself verifies nothing — Caddy's `tls_trusted_ca_certs` + `tls_server_name` are what validate this leg) while a resolution failure cannot silently drop `zaccess_tls_not_after_seconds` — that alert is `noDataState: OK`, and the certificate behind it is the one nothing renews.
 
-## Suggested next steps
+## Resolution
 
-- Run `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-ops --tags access` (attended; it previews `--check --diff` and takes a typed confirm). The `access_ops` role runs in the **ops-node** play, not the bridgehead's — `--limit zaccess` converges the wrong host and reports success. Expect whatever `roles/access_ops/` has moved since the 2026-08-05 converge — at this branch's tip that is **two** items, the relay's `service` unit (the `socket` unit is untouched) and the ops-side probe script, whose cert-probe comment this branch also rewrote. Re-derive rather than trusting the count: any further template edit before the converge changes it. Two handlers fire — `reload systemd` and `restart zaccess-nas-proxy`; the probe-script task deliberately notifies nothing, since the timer reads the script fresh on its next tick.
-- Verify by outcome on `zcrypto-ops`: `systemctl show -p ExecStart zaccess-nas-proxy.service` names `z-home-storage.zhaow.pro:5001`, and the DSM UI still loads through the relay.
-- Re-true `docs/reference/fleet.md`'s socket-proxyd row to the FQDN in the same change, and close this topic.
+**Converged 2026-08-26.** `site.yml --limit zcrypto-ops --tags access` — `ok=19 changed=4 failed=0`.
+The relay's `service` unit and the ops-side probe script changed, the `socket` unit did not, and the
+`restart zaccess-nas-proxy` handler fired.
+
+Verified by outcome on the host, against the RUNNING process rather than the unit file — the whole
+point of this topic was that the two can disagree:
+
+- `/proc/<MainPID>/cmdline` reads `systemd-socket-proxyd z-home-storage.zhaow.pro:5001`; the restart
+  genuinely applied, so the silent no-op is disproved rather than assumed fixed.
+- `ActiveEnterTimestamp` 2026-08-26 22:37:03 UTC — the restart is this converge's, not an older one.
+- The relay still forwards: a TLS handshake through `10.99.0.2:5001` returns `CN=*.zhaow.pro`,
+  `notAfter Jan 26 23:59:59 2027 GMT`.
+- The rewritten probe emits both series — `zaccess_wireguard_handshake_age_seconds` and
+  `zaccess_tls_not_after_seconds{target="nas-dsm"} 1801007999` (= 2027-01-26 23:59:59 UTC, matching
+  the handshake), so moving DNS out of the probe cost no observability.
+
+`docs/reference/fleet.md`'s socket-proxyd row now records the FQDN, because the fleet is finally in
+that state. The agentboard pin moved 0.4.8 → 0.4.23 on the same converge and is recorded in
+`fleet-pins.md`.
+
+The defect class this topic named — an `Accept=no` socket-proxyd relay whose rendered unit never
+reaches the running instance — is closed on both relays: the NAS relay by a per-half handler pair,
+the bridgehead's `zaccess-ssh-proxy` by an end-of-role assert that refuses a converge on drift rather
+than restarting a relay that carries operator sessions.

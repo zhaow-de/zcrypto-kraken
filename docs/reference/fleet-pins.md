@@ -23,7 +23,7 @@ Reading rules:
 
 | package | host | version | since (UTC) | notes |
 | --- | --- | --- | --- | --- |
-| agentboard | zcrypto-ops | `0.4.8` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-08-05 | **every re-pin is security-relevant** (the mTLS edge is its only auth) — attended, no bake. Read the running version the way the role does: `sudo -u zhaow bash -c 'source /home/zhaow/.nvm/nvm.sh && npm ls -g @gbasin/agentboard --depth=0'` — a bare `npm ls -g` over ssh finds NOTHING here (the package lives under nvm's node, off the non-interactive PATH), so its empty output is not evidence |
+| agentboard | zcrypto-ops | `0.4.23` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-08-26 | **every re-pin is security-relevant** (the mTLS edge is its only auth) — attended, no bake. Read the running version the way the role does: `sudo -u zhaow bash -c 'source /home/zhaow/.nvm/nvm.sh && npm ls -g @gbasin/agentboard --depth=0'` — a bare `npm ls -g` over ssh finds NOTHING here (the package lives under nvm's node, off the non-interactive PATH), so its empty output is not evidence |
 
 ## Standing constraints — they outlive any single converge
 
