@@ -3208,6 +3208,58 @@ def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_ro
     assert metrics.external == ["matched"]
 
 
+@pytest.mark.parametrize(
+    "reconciled, expected_state, expected_open",
+    [
+        # The venue's own ack, and it is what makes the fixture non-degenerate: the same event class,
+        # the same row, driving the same order to the same CANCELED status -- and the two arms end on
+        # DIFFERENT states, one of them terminal and one of them re-attachable.
+        (False, "canceled", []),
+        (True, "accepted", ["O-opener"]),
+    ],
+)
+def test_a_terminal_the_engine_minted_leaves_the_adopted_row_open_where_the_venues_ack_closes_it(
+    tmp_path, reconciled, expected_state, expected_open
+):
+    """The adopted surface's half of the same property the own-order surface holds: a terminal the
+    execution engine minted for itself is not a venue outcome, so it writes no venue outcome down.
+
+    The construction is the production one. The startup pass cancels an adopted non-reducer; the
+    venue never answers; past the in-flight retry budget the engine gives up waiting and publishes
+    the `OrderCanceled` itself. That event is applied to the order before it is dispatched, so the
+    Cache's order says CANCELED either way -- which is exactly why reading the ORDER cannot tell the
+    two apart, and why the flag has to be read. Closing the row on it would put a venue claim in the
+    ledger that nobody at the venue made, and `_OPEN_ORDER_STATES` holds no terminal state, so the
+    row would never re-attach again while an order that may still be resting keeps filling.
+
+    Read as a pair. The false arm is the true positive and it is not decoration: an implementation
+    that simply stopped writing terminal states here would pass the minted arm and silently strand
+    every venue-acked cancel as an open row forever. The `open_submitted_rows` reading is the
+    property itself rather than a proxy for it -- that set IS what the next startup re-attaches
+    from."""
+    ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
+    assert [str(cid) for cid in client.canceled] == ["O-opener"]  # this process asked; the venue is what did not answer
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id="O-opener", reconciliation=reconciled))
+
+    assert client.cache.order(ClientOrderId("O-opener")).status == OrderStatus.CANCELED  # both arms, so the status cannot decide
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == expected_state
+    assert row["events"] == [{"type": "OrderCanceled", "at": NOW.isoformat()}]  # evidence, either way
+    assert ex._attached["O-opener"][1]["state"] == expected_state  # the mirror stays with the row
+    assert [r["client_order_id"] for _, r in open_submitted_rows(tmp_path / "journal", NOW)] == expected_open
+    assert [r.getMessage() for r in records] == (
+        ["OrderCanceled for O-opener was reconciled, not received -- the venue never answered, so its row keeps the state it has"]
+        if reconciled
+        else []
+    )
+    assert metrics.external == ["matched"]
+    assert not _kill_file(tmp_path).exists()
+
+
 class _UnreadableOrderCache(StubCache):
     """A Cache whose `order()` refuses the way the real one does from INSIDE an order-event handler:
     `RuntimeError("Already mutably borrowed")`, because the Cache is still mutably borrowed for the

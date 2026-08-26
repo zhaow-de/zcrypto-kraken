@@ -1988,6 +1988,22 @@ class ProbeExecutor:
     def _venue_terminal_state(self, event) -> str | None:
         """The row state a non-fill event writes, read off the VENUE's own order.
 
+        An event the execution engine MINTED for itself writes none, and that is decided first,
+        before the order is even read. Past its in-flight retry budget the engine stops waiting on an
+        unanswered order and publishes that order's terminal itself, flagged `reconciliation`; the
+        Cache's order has already taken it, so its status reads CANCELED or EXPIRED or REJECTED
+        exactly as a venue answer would. It is not one. Nobody at the venue confirmed anything and
+        the adopted order may still be resting, so a terminal state here would put a venue claim in
+        the ledger on this engine's own authority -- and close a row that `_OPEN_ORDER_STATES` then
+        never re-attaches, leaving a live order untracked for the life of the process. Left open, the
+        event still appends as evidence, the entry stays in `_attached` for a fill that can still
+        arrive, and the next startup's sweep settles the row against the order's own status. Keyed on
+        the FLAG and never on the mechanism that set it, so a synthesis route nothing here enumerates
+        is covered by construction; the cost when the flag sits on a venue-derived terminal is one
+        row settled a restart later, which is the direction to be wrong in. `OrderFilled` never
+        reaches this method -- the caller's fill branch returns above it -- so a reconciled fill
+        keeps its row, its credit and its counter without anything here having to exempt it.
+
         The order already carries the event by the time this runs -- an order event is applied to the
         order and to the Cache before it is dispatched, which tests/test_engine_executor.py measures
         against a real engine -- so its status is the settled answer to what the event did, and
@@ -2000,15 +2016,22 @@ class ProbeExecutor:
         and got: the name claims the venue ended the order, the order says CANCELED, and the order
         is right.
 
-        Three things mean the same thing here -- no terminal state, row untouched: a status outside
-        the map (every OPEN one, so a refused cancel leaves the row pointing at a live order), an
-        order the Cache does not hold, and a Cache that cannot be read at all. The last is not
-        hypothetical: a read inside a handler for an event this process's own command generated
+        Three further things mean the same thing here -- no terminal state, row untouched: a status
+        outside the map (every OPEN one, so a refused cancel leaves the row pointing at a live
+        order), an order the Cache does not hold, and a Cache that cannot be read at all. The last is
+        not hypothetical: a read inside a handler for an event this process's own command generated
         raises `Already mutably borrowed`, because the Cache is still mutably borrowed for the write
         that produced it. Letting that escape would abandon the whole handler and cost the row its
         event payload -- the forensic record this path exists to keep -- to decide a state those
         events never carried anyway.
         """
+        if getattr(event, "reconciliation", False):
+            logger.warning(
+                "%s for %s was reconciled, not received -- the venue never answered, so its row keeps the state it has",
+                type(event).__name__,
+                getattr(event, "client_order_id", "?"),
+            )
+            return None
         try:
             order = self._client.cache.order(event.client_order_id)
         except Exception:
