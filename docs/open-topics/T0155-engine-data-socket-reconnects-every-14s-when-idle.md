@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "the first v2 boundary cycle has journalled an outcome (`cycle-HH.json` or `failed-cycle-HH.json`), so the loop's effect on cycle completion is measured rather than assumed"
+ripe_when: "the next attended, canary-gated engine converge window — the trigger this topic was opened on has FIRED and decided the option; what remains is shipping it"
 ---
 
 # The engine's market-data socket reconnects every ~14 s whenever it is idle
@@ -73,13 +73,13 @@ Kraken answers the keepalive with a text payload, which is why the 200 s run loo
 
 ## Suggested next steps
 
-The decision between the two options is **deliberately deferred** pending the first v2 boundary cycle (see `ripe_when`). Both are written up so the decision is a choice, not a re-derivation.
+**The deferral is discharged: Option A.** The first v2 boundary cycle after the converge journalled `cycle-20.json` with `started_at` 20:01:30.002Z and `completed_at` 20:01:41.862Z (2026-08-26) — 11.9 s, well inside `[B, B+30 min]`. The reconnect loop therefore costs cycle completion nothing: it is churn and noise, not breakage. Ship A; B stays written up as the better end-state, on its own evidence.
 
 - **Option A — set `ws_idle_timeout_ms=0` on the data client** (`cli/engine/node.py::_data_client_config`). One line, no trading-behaviour change, reverts in one line. Gives up socket-level stalled-stream detection, whose *response* is to reconnect — which mid-order delays quotes by a further 3–5 s rather than helping; the executor's 30 s per-instrument guards are what actually govern behaviour and are unaffected. `0` is the network layer's own default; the adapter's 10000 assumes a subscribed client, which this one is not.
-- **Option C — hold a permanent subscription** so data always flows and the idle timeout becomes meaningful again. Strictly better end-state on two counts: it removes the 2.3–2.8 s subscribe→first-quote latency from every intent (against `_TICK_SECONDS = 5.0`), and it restores continuous observability of a socket that is otherwise a black box between cycles. Costs a live-trade-path behavioural change that, by the same standard spec `00100` D10 applied to `use_ws_trade`, needs its own evidence rather than riding on a churn fix.
+- **Option B — hold a permanent subscription** so data always flows and the idle timeout becomes meaningful again. Strictly better end-state on two counts: it removes the 2.3–2.8 s subscribe→first-quote latency from every intent (against `_TICK_SECONDS = 5.0`), and it restores continuous observability of a socket that is otherwise a black box between cycles. Costs a live-trade-path behavioural change that, by the same standard spec `00100` D10 applied to `use_ws_trade`, needs its own evidence rather than riding on a churn fix.
 
-They compose: if C lands, `ws_idle_timeout_ms` is **restored to 10000**, because a permanently-subscribed client is the shape the adapter default assumes. A is the correct setting until C exists, not a step away from it.
+They compose: if B lands, `ws_idle_timeout_ms` is **restored to 10000**, because a permanently-subscribed client is the shape the adapter default assumes. A is the correct setting until B exists, not a step away from it.
 
-- **The deciding input** is the first v2 boundary cycle. If it completes inside `[B, B+30]`, the loop is churn and noise and A is sufficient for now. If it does not, the socket matters more than the evidence above suggests, and making it *healthy* (C) beats making it *quiet* (A).
-- **C's latency benefit cannot be measured until the engine is armed**, which is itself an argument for taking A first and measuring C's payoff rather than assuming it.
+- **The deciding input has been read** — `cycle-<HH>.json`'s `completed_at` under `<engine_state_dir>/journal/` on the engine host, against `[B, B+30 min]`. It landed inside the window, so A is sufficient for now. Re-read it after any change here.
+- **B's latency benefit cannot be measured until the engine is armed**, which is itself an argument for taking A first and measuring B's payoff rather than assuming it.
 - Whichever lands, it ships on an attended, canary-gated engine converge — never a hot edit.
