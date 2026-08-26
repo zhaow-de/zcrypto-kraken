@@ -115,10 +115,22 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # ahead is safe because every existing record is v1 and this image loads {1, 2} -- verified by
 # execution in the pulled image, not inferred from the tag.
 # Previous pin: 5f890c26237a -- verified RESIDENT on the NAS at the re-pin.
-# This re-pin carries the nautilus v2 migration. It is FINGERPRINT-INVALIDATING: seven modules inside
-# `_replay_code_paths()`'s transitive closure changed (command, execgate, execledger, executor, node,
-# tracking, venuestate), so gate-export replays the WHOLE journal cold. Size the window against the
-# measured 2490 s, never the ~627 s smaller-journal figure.
+# This re-pin carries the nautilus v2 migration. `replay_fingerprint` DID change across it --
+# bb8e54e8aad2dfc7 -> 079691430ff3c5fd, closure 72 -> 79 modules, both read by RUNNING each image on
+# the NAS -- because seven closure modules changed (command, execgate, execledger, executor, node,
+# tracking, venuestate).
+# BUT THE PREDICTED COLD REPLAY WAS NOT OBSERVED, and the discrepancy is unexplained. Measured after
+# the 2026-08-26 roll: `zcrypto_gate_cache_invalidated` never left 0, `cache_hits` never fell below
+# 258 over 24 h, and the longest export in 24 h was 222.75 s -- not the 2490 s this file predicts for
+# a fingerprint-invalidating pin. The docstring says a `replay_fingerprint` mismatch invalidates the
+# WHOLE cache, and the cache is /tmp/gate-cache.json INSIDE the container with /tmp unmounted, so a
+# recreate should have emptied it. Do not treat 2490 s as refuted -- one unexplained observation is
+# not a new reference class -- and do not treat this pin as proof the cost is small.
+# Why it matters beyond window sizing: spec 00064 states the asymmetry as "over-invalidation costs
+# one rebuild, under-invalidation silently serves a stale PASS". Serving cached verdicts computed by
+# superseded replay code is that failure. What is reassuring but NOT conclusive: the gate's own
+# acceptance test reproduced identically across the re-pin (status 1, streak_days 46,
+# mismatch_total 0), and the ~1/24 rotating forced slice replayed 13 cycles under the new code clean.
 # Schema is unaffected: SCHEMA_VERSION stays 2, journal.py and cycle.py are untouched by the merge,
 # and 00091's `nav`/`held` widening is additive within schema 2 (both Optional, defaulting None), so
 # the reader tolerates them. The NAS-converges-FIRST order below is kept anyway -- it costs nothing,
