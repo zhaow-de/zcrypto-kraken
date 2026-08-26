@@ -35,6 +35,20 @@ Host quirks — encoded as `host_vars/nas/vars.yml` (all measured live 2026-07-1
 - DSM chroots sftp to the shared folders, so sftp/scp cannot write arbitrary paths — `ansible_ssh_transfer_method: piped` (plain ssh stdin).
 - Docker is `/usr/local/bin/docker` and **not** on sudo's PATH — a bare `sudo docker` fails command-not-found, and a script that ignored that failure once read the empty output as a false all-clear (`nas_docker`).
 
+### Image pins — three identifiers for one object
+
+A pin is a **manifest digest** (`@sha256:…`). Two other values name the same image and are easy to mistake for it:
+
+| | what it is | where you meet it |
+| --- | --- | --- |
+| tag | the GIT SHA of the commit built (`<github.sha><suffix>`) — 40 hex chars, so it *looks* like a digest | what a registry UI displays |
+| manifest digest | **what you pin** — `nas_capture_image` and the rendered `.env` | `docker pull` output, `RepoDigests` |
+| image ID | the local config-blob digest | the `docker images` ID column |
+
+`docker inspect <container>` reconciles them: `.Config.Image` is what compose asked for (the digest), `.Image` is the local ID, and inspecting that ID lists `RepoTags` + `RepoDigests`.
+
+**A digest-pinned image showing `<none>` locally is NORMAL and never evidence of anything.** `docker image ls` prints `<none>` for *any* image pulled by digest, which is what a pinned deploy always does. Reading that as "untagged, therefore stale" once motivated a re-pin on a false premise.
+
 ### One-time bootstrap (hand-placed once; not Ansible-managed)
 
 1. Place `zcrypto.toml` (the app config the `gate-export` step reads for its journal/store paths) under `/volume1/docker/zcrypto-archive/`.
