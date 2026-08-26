@@ -98,9 +98,9 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # MEASURED 2026-08-15 on the twelve-leg re-pin: the cold export took 2490 s (41.5 min), 4x the
 # ~627 s quoted above. That figure was taken on a smaller journal and is the WRONG reference class
 # for a fingerprint-INVALIDATING pin: gate_cache.py digests the source bytes of the transitive
-# cli.* closure, journal.py moved, so all 214 cycles across 36 day-dirs replayed rather than the
-# incremental few -- so the ~627 s figure is the wrong reference class. For the current sizing
-# figure see the 2026-08-26 measurement below; it is the one to use.
+# cli.* closure, journal.py moved, so all 214 cycles across 36 day-dirs replayed. The ~627 s was
+# itself a COLD export, just on a much smaller journal -- the hazard is an old cold number, never a
+# warm one. For the current sizing figure see the 2026-08-26 measurement below.
 # Previous pin: dfb80f48… (built from a731e54b, PR #165), which enabled `gate-export --cache`.
 #
 # Re-pinned 2026-08-15 to the twelve-leg build (spec 00094, iter-139, PR #297; revision e0757909,
@@ -131,8 +131,8 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # the cache is /tmp/gate-cache.json inside the container with /tmp unmounted, so a recreate leaves NO
 # cache file. `load_cache` returns rejected=False for an ABSENT path (True only when a file existed
 # and was discarded -- its own docstring says so), and zcrypto_gate_cache_invalidated (spec 00060 D8)
-# publishes cache.rejected directly, so 0 is what an absent cache must read. Do not take the 0 as evidence the fingerprint
-# check failed to fire -- read cache_hits, which is what goes to 0.
+# publishes cache.rejected directly, so 0 is what an absent cache must read. Do not take the 0 as
+# evidence the fingerprint check failed to fire -- read cache_hits, which is what goes to 0.
 # ACCEPTANCE: status 1, streak_days 46, mismatch_total 0 -- identical to the pre-roll baseline, with
 # all 280 cycles re-verified by the new code rather than served warm.
 # READ THE TEXTFILE'S MTIME BEFORE TRUSTING ANY OF THESE. The export runs AFTER the journal pull and

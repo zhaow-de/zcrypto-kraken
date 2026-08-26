@@ -31,13 +31,22 @@
 - name: wireguard tunnel enabled
   ansible.builtin.systemd: {name: wg-quick@zaccess0, enabled: true, state: started}
 
-- name: nas relay socket + service (spec 00075 D6 -- systemd-socket-proxyd, no NAT/forwarding)
+# Two tasks, not one `loop: [socket, service]`: a loop assigns its whole notify list to EVERY item
+# and gates notification on the AGGREGATE changed result, so a service-only edit would also fire the
+# socket handler -- and the service's `Requires=` propagates that restart, bouncing the live relay
+# twice per converge. Split, each half notifies only what it can apply.
+- name: nas relay socket unit (spec 00075 D6 -- systemd-socket-proxyd, no NAT/forwarding)
   ansible.builtin.template:
-    src: "zaccess-nas-proxy.{{ item }}.j2"
-    dest: "/etc/systemd/system/zaccess-nas-proxy.{{ item }}"
+    src: zaccess-nas-proxy.socket.j2
+    dest: /etc/systemd/system/zaccess-nas-proxy.socket
     mode: '0644'
-  loop: [socket, service]
-  notify: [reload systemd, restart zaccess-nas-proxy.socket, restart zaccess-nas-proxy]
+  notify: [reload systemd, restart zaccess-nas-proxy.socket]
+- name: nas relay service unit
+  ansible.builtin.template:
+    src: zaccess-nas-proxy.service.j2
+    dest: /etc/systemd/system/zaccess-nas-proxy.service
+    mode: '0644'
+  notify: [reload systemd, restart zaccess-nas-proxy]
 - name: nas relay socket enabled
   ansible.builtin.systemd: {name: zaccess-nas-proxy.socket, enabled: true, state: started, daemon_reload: true}
 
