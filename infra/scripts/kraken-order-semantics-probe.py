@@ -2092,8 +2092,10 @@ def preflight(args) -> None:
         if missing:
             raise SystemExit(
                 f"REFUSING: {' and '.join(missing)} not set in the environment.\n"
-                f"Export the trade key into THIS shell only (never into a file), or use --no-exec "
-                f"for a credential-free smoke test.",
+                f"Run through infra/scripts/probe-with-vaulted-key.sh, which puts the vaulted trade "
+                f"key into this process's environment and nothing else -- it never reaches a file, a "
+                f"shell you keep, or a command line. Or use --no-exec for a credential-free smoke "
+                f"test.",
             )
         print(f"credentials: {API_KEY_VAR} and {API_SECRET_VAR} are present (their values are never printed)")
 
