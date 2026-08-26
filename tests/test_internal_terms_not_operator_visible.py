@@ -7,9 +7,8 @@ with exactly two recorded carriers (enforced by the last test in this file). On 
 confusion at worst — the triggering example was a systemd unit announcing itself to `systemctl` as
 `zcrypto shadow engine (Phase 6a soak)`.
 
-- **In scope** — systemd `Description=`, CLI `--help`, CLI runtime output, Prometheus metric HELP
-  text, Grafana alert summaries and panel titles/descriptions/legends, compose interpolation errors,
-  README.
+- **In scope** — the surface list lives in `.claude/rules/operator-facing-text.md` and is not
+  restated here: a second copy drifts, and this one had already fallen four surfaces behind.
 - **Out of scope** — source comments, docstrings, `docs/`, commit messages. Cleansing those would
   destroy traceability for zero operator benefit.
 - **Log lines are deliberately out of scope.** They are the primary debugging surface and whoever
@@ -45,6 +44,7 @@ import json
 import re
 import subprocess
 from fnmatch import fnmatch
+from itertools import chain
 from pathlib import Path
 
 import pytest
@@ -207,7 +207,7 @@ def test_ansible_task_names_carry_no_internal_vocabulary(unit, lineno, line):
 
 
 def _ansible_operator_messages() -> list[tuple[str, str, str]]:
-    """Yield `(file, key, value)` for every `msg`/`fail_msg`/`success_msg` in infra/ansible.
+    """Yield `(file, key, value)` per string-valued `msg`/`fail_msg`/`success_msg` in `infra/ansible/**/*.yml`.
 
     A task `name:` is not the only string ansible prints. A `debug: msg:` tagged `[always]` prints
     on every run including `--check`, and an `assert: fail_msg:` IS the refusal text an operator
@@ -220,14 +220,18 @@ def _ansible_operator_messages() -> list[tuple[str, str, str]]:
     def walk(node, path):
         if isinstance(node, dict):
             for key, value in node.items():
-                if key in ("msg", "fail_msg", "success_msg") and isinstance(value, str):
+                if key in ("msg", "fail_msg", "success_msg"):
+                    # A list-valued msg is legal and ansible prints it, but the walk would descend
+                    # past it and see only list ITEMS, never a value under a printing key. Assert
+                    # the shape so a new one fails loudly instead of dropping out of the scan.
+                    assert isinstance(value, str), f"{path}: non-string {key}= ({type(value).__name__}) is unscanned"
                     out.append((path, key, " ".join(value.split())))
                 walk(value, path)
         elif isinstance(node, list):
             for item in node:
                 walk(item, path)
 
-    for p in (REPO / "infra/ansible").rglob("*.yml"):
+    for p in sorted(chain((REPO / "infra/ansible").rglob("*.yml"), (REPO / "infra/ansible").rglob("*.yaml"))):
         rel = str(p.relative_to(REPO))
         try:
             documents = list(yaml.safe_load_all(p.read_text(encoding="utf-8", errors="replace")))
@@ -237,9 +241,13 @@ def _ansible_operator_messages() -> list[tuple[str, str, str]]:
         for document in documents:
             walk(document, rel)
     # The only files a plain parser cannot read are the vaulted ones (`!vault` is an ansible-only
-    # tag), and those hold variables, never tasks. Asserted rather than skipped silently: a NEW
-    # unparseable file would otherwise drop out of the scan and read as a clean tree.
-    assert all(p.endswith("vault.yml") for p in unparsed), f"unparseable non-vault YAML: {unparsed}"
+    # tag), and those hold variables, never tasks. Keyed on the MARKER, not the filename: any name is
+    # a legal vault file, so `endswith("vault.yml")` would report a newly-vaulted `creds.yml` as a
+    # bug. Asserted rather than skipped silently — a genuinely unparseable file would otherwise drop
+    # out of the scan and read as a clean tree.
+    assert all("!vault" in (REPO / p).read_text(encoding="utf-8", errors="replace") for p in unparsed), (
+        f"unparseable YAML with no !vault marker: {unparsed}"
+    )
     assert out, "found no ansible operator messages — the walk is broken, not the tree clean"
     return sorted(out)
 
