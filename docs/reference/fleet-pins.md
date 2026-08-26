@@ -36,12 +36,10 @@ Reading rules:
 
 ## Full digests — current pins and their operands only; everything older is in this file's git log
 
+- `f70997320492` = `sha256:f70997320492441fbe527ad60ac0c2f93a622728b7e49664d1cc2a95ef003476` — spec `00100` (the engine migrates to nautilus v2), revision `3671b239`, AVX build. Current for capture on BOTH hosts, for the engine, and for ops. Its capture keep-regex adds `zcrypto_exec_tracking_state`, which is LAZILY registered — it appears only at the first boundary cycle that scores a week, so `(no series)` before then is correct, not a failed admission.
+- `03d4cf1b8df7` = `sha256:03d4cf1b8df7e26b05aca7a3346d05c6c58498238d2c615ba904fd39e5fbc1f9` — spec `00098` (the adopted-order disposition filter and D7's adopt-time venue-truth reconcile), revision `f54431a6`. The capture + engine rollback operand; verified resident on both capture hosts 2026-08-26. It also carries `zcrypto_exec_external_events_total` in the keep-regex, so a rollback keeps that family admitted.
+- `ec71ecac7756` = `sha256:ec71ecac77566483acca711131459701f16e7fac8d9c60790b6bec126251ce7c` — NAS current; the `-compat` (no-AVX) build of `3671b239`. The one pin whose committed source is a repo file (`nas_capture_image`), so this row and that file must agree.
+- `5f890c26237a` = `sha256:5f890c26237af99ad37ae1b7fe884c4d33476d285774be90cc8c909b3ed049a1` — NAS rollback operand; the `-compat` build of `e0757909`.
+- `06919e5dc50c` = `sha256:06919e5dc50c1eef3525aa272b8a21e441d17fa30bf67a46575ca1d560c4b3be` — ops rollback operand; spec `00097` (the reconcile skip-cache), revision `52b12ca1`, AVX.
 - `491b0578c049` = `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308` — Alloy v1.18.0, the current pin on all four hosts.
-- `4f6ddc56ffdc` = `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b` — Alloy v1.17.1, the rollback operand; resident on both capture hosts.
-- `f70997320492` = `sha256:f70997320492441fbe527ad60ac0c2f93a622728b7e49664d1cc2a95ef003476` — spec `00100` (the engine migrates to nautilus v2), revision `3671b239`, AVX build; running as capture on BOTH hosts and as the engine. Its capture keep-regex adds `zcrypto_exec_tracking_state`, which is LAZILY registered — it appears only at the first boundary cycle that scores a week, so `(no series)` before then is correct.
-- `03d4cf1b8df7` = `sha256:03d4cf1b8df7e26b05aca7a3346d05c6c58498238d2c615ba904fd39e5fbc1f9` — spec `00098` (the adopted-order disposition filter and D7's adopt-time venue-truth reconcile), revision `f54431a6`; also carries `zcrypto_exec_external_events_total` in the capture keep-regex; deployed on both capture hosts and on the engine, so `(no series)` for that family IS a failure.
-- `636012cc00d9` = `sha256:636012cc00d9e3f21ab23dba5454eefe2e252e4152bcdee07da16b8e9335fc4f` — spec `00090` (the rung-1 order path), revision `732598ff`, AVX build; running fleet-wide (both captures and the engine).
-- `06919e5dc50c` = `sha256:06919e5dc50c1eef3525aa272b8a21e441d17fa30bf67a46575ca1d560c4b3be` — ops current; spec `00097` (the reconcile skip-cache), revision `52b12ca1`, AVX.
-- `6b4c13899653` = `sha256:6b4c13899653d4e9300cec8d111cb5c6a8cf94e43a5db64cbcd0b3fa47698bf8` — ops operand; spec `00096`, revision `2c248fe4`.
-- `5f890c26237a` = `sha256:5f890c26237af99ad37ae1b7fe884c4d33476d285774be90cc8c909b3ed049a1` — NAS current; the `-compat` build of `e0757909`.
-- `620114511f19` = `sha256:620114511f197c306d6b1c2260b0a12793bb679663517a0626841d0018049a28` — NAS operand.
+- `4f6ddc56ffdc` = `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b` — Alloy v1.17.1, the rollback operand; verified resident on both capture hosts 2026-08-26.
