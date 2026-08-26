@@ -4,7 +4,7 @@
 # under nas_stack_dir. Every quirk below was MEASURED live on 2026-07-16; the secrets sibling
 # (vault.yml) holds nas_gate_healthcheck_url.
 
-ansible_host: 192.168.100.5
+ansible_host: z-home-storage.zhaow.pro
 ansible_user: zcrypto-deploy
 
 # Fleet users/groups (spec 00057): the m2m data user (uid 1000; renamed from `zcrypto`). It owns the

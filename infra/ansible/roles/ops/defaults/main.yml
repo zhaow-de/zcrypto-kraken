@@ -79,7 +79,7 @@ ops_grafana_watchdog_probe_url: "https://zcrypto2026.grafana.net/api/health"
 # compose). Empty means the recorder simply skips liveness pings, same as the capture daemon.
 ops_liquidations_healthcheck_url: ""
 
-# T0058: where the NAS's read-only NFS export (192.168.100.5:/volume1/ZhaoCrypto) is mounted. The
+# T0058: where the NAS's read-only NFS export (z-home-storage.zhaow.pro:/volume1/ZhaoCrypto — the mount itself still uses the IP, see tasks/main.yml) is mounted. The
 # canonical trees (capture-segments, capture-segments-red, engine-journal) are READ through this
 # mount; it replaced the retired hourly NAS->ops rsync mirror (ops_nas_pull_source, now gone, and
 # with it the pull's dead-man plumbing). The write-back direction is unchanged: overlay + panel
