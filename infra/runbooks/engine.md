@@ -562,7 +562,7 @@ Four things about it are worth knowing before you touch anything:
 
 **If the tile reads `NOT SCORED` and you expected a verdict** — the reason is in the engine log, one line per boundary: `sudo docker logs --since 5h zcrypto-engine | grep 'not scored'` (a bare `--since HH:MM` does not parse; pass a duration or a full timestamp, and confirm the log lines you got are non-empty before reading anything into a quiet grep). One of those lines reads `the evaluation itself raised` and carries a Python traceback underneath it: that is the measurement failing rather than declining, it means the same NOT SCORED on the tile, and it is a defect to report rather than an operational state to work.
 
-**If the tile is absent entirely** — no boundary has been scored since this process started, or the family is not shipping. Read it by value from the workstation: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_tracking_state{host="zcrypto"}'`. `(no series)` after a boundary has passed is a keep-regex failure, not a quiet engine.
+**If the tile is absent entirely** — no boundary has been *reached* since this process started, or the family is not shipping. (An unscored boundary still publishes a state, so "not scored" is never why the tile is missing.) Read it by value from the workstation: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_tracking_state{host="zcrypto"}'`. `(no series)` after a boundary has passed is a keep-regex failure, not a quiet engine.
 
 **To arm it** — three preconditions, in this order, and none of them is optional:
 

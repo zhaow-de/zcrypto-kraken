@@ -6,6 +6,12 @@
 - name: reload systemd
   ansible.builtin.systemd: {daemon_reload: true}
 
+- name: restart zaccess-nas-proxy.socket
+  # Defined BEFORE the service handler on purpose -- handlers run in definition order, so the
+  # listener is replaced first and re-adopted by the service restart below. `state: started` on the
+  # enable task is a no-op on a running unit, so a changed ListenStream reaches nothing without this.
+  ansible.builtin.systemd: {name: zaccess-nas-proxy.socket, state: restarted}
+
 - name: restart zaccess-nas-proxy
   # Accept=no and no --exit-idle-time, so one long-lived instance holds the socket: a daemon-reload
   # leaves it running the ExecStart it started with. Only a restart applies a changed relay target.

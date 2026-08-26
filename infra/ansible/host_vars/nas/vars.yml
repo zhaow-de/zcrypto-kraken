@@ -119,9 +119,9 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # This re-pin carries the nautilus v2 migration and was FINGERPRINT-INVALIDATING as expected:
 # `replay_fingerprint` moved bb8e54e8aad2dfc7 -> 079691430ff3c5fd and the closure grew 72 -> 79
 # modules (both read by RUNNING each image on the NAS; the fingerprints are truncated for reading --
-# the function returns a full 64-hex digest). Two independent invalidating facts, not one: seven
-# modules ENTERED the closure, and separately, closure members already in it changed bytes. Either
-# alone moves the fingerprint.
+# the function returns a full 64-hex digest). Two independent invalidating facts, not one: the
+# closure grew by a NET 7 (72 -> 79 -- a span can add and drop members, so this is not a measured
+# count of arrivals), and separately, members already in it changed bytes. Either alone moves it.
 # MEASURED 2026-08-26 on the first export under the new image: cache_hits 0, cache_replayed 280 --
 # the whole journal -- and export_duration 3363 s (56 min). Size the window against ~3400 s, not the
 # 2490 s ABOVE: that figure is a 2026-08-15 measurement over 214 cycles and the journal now holds
@@ -130,8 +130,8 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # `cache_invalidated` reads 0 across such a re-pin and that is CORRECT, not a missed invalidation:
 # the cache is /tmp/gate-cache.json inside the container with /tmp unmounted, so a recreate leaves NO
 # cache file. `load_cache` returns rejected=False for an ABSENT path (True only when a file existed
-# and was discarded -- spec 00060 D8), and zcrypto_gate_cache_invalidated publishes cache.rejected
-# directly, so 0 is what an absent cache must read. Do not take the 0 as evidence the fingerprint
+# and was discarded -- its own docstring says so), and zcrypto_gate_cache_invalidated (spec 00060 D8)
+# publishes cache.rejected directly, so 0 is what an absent cache must read. Do not take the 0 as evidence the fingerprint
 # check failed to fire -- read cache_hits, which is what goes to 0.
 # ACCEPTANCE: status 1, streak_days 46, mismatch_total 0 -- identical to the pre-roll baseline, with
 # all 280 cycles re-verified by the new code rather than served warm.
