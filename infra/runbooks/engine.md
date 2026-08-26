@@ -271,7 +271,7 @@ PY
    sudo docker exec zcrypto-engine python -c "import nautilus_trader; print(nautilus_trader.__version__)"
    ```
 
-   Then confirm a `docs/research/` verification doc exists for **exactly that version** and records a PASS. If none does, **do not arm**: run the order-semantics probes on that version first and write them up in a new verification doc — the harness is `infra/scripts/kraken-order-semantics-probe.py` and the attended procedure is [`order-semantics-verification.md`](order-semantics-verification.md). Never reason that the previous version's PASS "probably still holds" — that is the whole reason this gate exists.
+   Then confirm `docs/reference/adapter-verification/<that version>.md` exists — the file is named for the version string exactly as the interpreter spells it — and records a PASS. If none does, **do not arm**: run the order-semantics probes on that version first and write them up in a new record there — the harness is `infra/scripts/kraken-order-semantics-probe.py` and the attended procedure is [`order-semantics-verification.md`](order-semantics-verification.md). Never reason that the previous version's PASS "probably still holds" — that is the whole reason this gate exists.
 
    **This step is enforced mechanically in TWO places, and they are complementary — do not delete either as duplicative of the other.** Both read the same committed record, `cli/engine/order-semantics-verified.json` (it lives under `cli/` because the engine image copies only that directory, so a record under `infra/` would be unreachable from the running engine):
 
@@ -290,7 +290,7 @@ PY
 
    Two things, and the order between them is the whole point:
 
-   1. **Measure it.** With the engine **disarmed**, read the counter immediately before and immediately after one clean engine start and record the difference — that difference is the healthy-boot baseline. From the workstation: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total{host="zcrypto"}'`. `(no series)` is a FAIL of the telemetry path, never a zero. Write the number into this version's `docs/research/` verification doc, beside the probe table, where the next reader of that version will look for it.
+   1. **Measure it.** With the engine **disarmed**, read the counter immediately before and immediately after one clean engine start and record the difference — that difference is the healthy-boot baseline. From the workstation: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total{host="zcrypto"}'`. `(no series)` is a FAIL of the telemetry path, never a zero. Write the number into this version's `docs/reference/adapter-verification/<version>.md` record, beside the probe table, where the next reader of that version will look for it.
    2. **Only then author the alert**, with a threshold clear of that baseline — and push it only **after** the metric has its first record. A rule pushed before its metric exists pages a spurious no-data alert, and `grafana-push.sh` upserts and never deletes, so an eagerly pushed rule is not cheap to take back.
 
    Until the first of those has a number there is nothing to threshold, and the alert is not owed. Do not invent a threshold to close the item.
@@ -312,7 +312,7 @@ PY
 
    `outcome="ambiguous"` is where a minted terminal lands. `disposition="unmatched"` is where a whole order the engine synthesized to close a position discrepancy lands — it arrives under the reserved external strategy id, matches no ledgered row, and is dropped, which is why this reading is only meaningful **against** the healthy-boot baseline from step 4: without that number a clean start's own reconciliation traffic is indistinguishable from a synthesis. `(no series)` on either family is a FAIL of the telemetry path, never a zero.
 
-   **Zero is the expected reading while nothing has been submitted, and it is still worth taking.** A non-zero one before any order exists means the machinery is firing on something nobody has modelled — read the log lines and understand them before arming, rather than after. Record the three numbers in this version's `docs/research/` verification doc beside the baseline.
+   **Zero is the expected reading while nothing has been submitted, and it is still worth taking.** A non-zero one before any order exists means the machinery is firing on something nobody has modelled — read the log lines and understand them before arming, rather than after. Record the three numbers in this version's `docs/reference/adapter-verification/<version>.md` record beside the baseline.
 
 6. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`** (measured: `{'EUR': 99.84}`), not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
 

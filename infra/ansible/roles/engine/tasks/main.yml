@@ -342,7 +342,7 @@
           and (engine_verified_nautilus | reject('string') | list | length == 0)) else []) | join(', ') | default('(the record is not a list -- nothing is verified)', true) }}).
       The adapter's margin/short/post-only and reconciliation behaviour is native and no test here
       places an order, so this version's order path is unmeasured. Run the probes, write the
-      docs/research/ verification doc, add the version to that record — or pass
+      docs/reference/adapter-verification/<version>.md record, add the version to that file — or pass
       -e arming_override="<why this cannot wait>" (a reason, not a flag).
 
 - name: arming override accepted — the reason, on the record

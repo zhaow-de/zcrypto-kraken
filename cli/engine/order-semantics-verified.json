@@ -2,7 +2,7 @@
   "_what": "Versions of nautilus-trader whose ATTENDED ~EUR 0.20 order-semantics pass has actually happened: zero-fill resting limits cancelled after acknowledgement, a crossing post-only expecting the venue's protection, and one tiny round-trip proving submit -> fill -> reconcile.",
   "_why_this_file_is_the_record": "Adding a version here IS the act that says the re-run happened -- a reviewed repo diff, not a memory or a sentence in a doc. Two independent guards read this one file, so there is no second list to drift: the engine Ansible role refuses a converge rendering exec_armed=true on a version absent from it, and cli.engine.execgate refuses the gate at runtime when the RUNNING interpreter's nautilus_trader is absent from it.",
   "_why_it_lives_under_cli": "The engine image copies only cli/ (infra/docker/Dockerfile), so a record under infra/ is unreachable from the running engine. It sits here so BOTH readers can use the same file; the Ansible role reaches it from the controller's repo tree.",
-  "_never": "Never add a version without the docs/research/ verification doc that records its PASS.",
+  "_never": "Never add a version without the docs/reference/adapter-verification/<version>.md record that carries its PASS.",
   "verified_nautilus_versions": [
     "1.230.0",
     "1.231.0",
