@@ -82,6 +82,8 @@
 # converge task does it.
 - name: fstab entry for the NAS custody export (read-only NFS; the automount owns mounting) (T0058)
   ansible.posix.mount:
+    # IP, not the FQDN the ops channels use: this mount is on the NFS recovery path and has to
+    # come up at boot with resolution unavailable.
     src: 192.168.100.5:/volume1/ZhaoCrypto
     path: "{{ ops_nas_mount }}"
     fstype: nfs

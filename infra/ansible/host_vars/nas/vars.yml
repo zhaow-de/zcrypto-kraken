@@ -99,7 +99,8 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # ~627 s quoted above. That figure was taken on a smaller journal and is the WRONG reference class
 # for a fingerprint-INVALIDATING pin: gate_cache.py digests the source bytes of the transitive
 # cli.* closure, journal.py moved, so all 214 cycles across 36 day-dirs replayed rather than the
-# incremental few. Size a maintenance window against 2490 s, not 627 s.
+# incremental few -- so the ~627 s figure is the wrong reference class. For the current sizing
+# figure see the 2026-08-26 measurement below; it is the one to use.
 # Previous pin: dfb80f48… (built from a731e54b, PR #165), which enabled `gate-export --cache`.
 #
 # Re-pinned 2026-08-15 to the twelve-leg build (spec 00094, iter-139, PR #297; revision e0757909,
@@ -117,15 +118,21 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # Previous pin: 5f890c26237a -- verified RESIDENT on the NAS at the re-pin.
 # This re-pin carries the nautilus v2 migration and was FINGERPRINT-INVALIDATING as expected:
 # `replay_fingerprint` moved bb8e54e8aad2dfc7 -> 079691430ff3c5fd and the closure grew 72 -> 79
-# modules (both read by RUNNING each image on the NAS), because seven closure modules changed.
+# modules (both read by RUNNING each image on the NAS; the fingerprints are truncated for reading --
+# the function returns a full 64-hex digest). Two independent invalidating facts, not one: seven
+# modules ENTERED the closure, and separately, closure members already in it changed bytes. Either
+# alone moves the fingerprint.
 # MEASURED 2026-08-26 on the first export under the new image: cache_hits 0, cache_replayed 280 --
 # the whole journal -- and export_duration 3363 s (56 min). Size the window against ~3400 s, not the
-# 2490 s below: that figure is a 2026-08-15 measurement over 214 cycles and the journal now holds
-# 280, so it is the right reference CLASS and 35% short. Expect this to keep growing with the journal.
+# 2490 s ABOVE: that figure is a 2026-08-15 measurement over 214 cycles and the journal now holds
+# 280, so it is the right reference CLASS and 35% short. Expect this to keep growing with the
+# journal -- re-measure at each fingerprint-invalidating pin rather than reusing this number.
 # `cache_invalidated` reads 0 across such a re-pin and that is CORRECT, not a missed invalidation:
 # the cache is /tmp/gate-cache.json inside the container with /tmp unmounted, so a recreate leaves NO
-# cache file, and D8 counts an absent cache as `rejected` rather than `invalidated`. Do not read the
-# 0 as evidence the fingerprint check failed to fire -- read cache_hits, which is what goes to 0.
+# cache file. `load_cache` returns rejected=False for an ABSENT path (True only when a file existed
+# and was discarded -- spec 00060 D8), and zcrypto_gate_cache_invalidated publishes cache.rejected
+# directly, so 0 is what an absent cache must read. Do not take the 0 as evidence the fingerprint
+# check failed to fire -- read cache_hits, which is what goes to 0.
 # ACCEPTANCE: status 1, streak_days 46, mismatch_total 0 -- identical to the pre-roll baseline, with
 # all 280 cycles re-verified by the new code rather than served warm.
 # READ THE TEXTFILE'S MTIME BEFORE TRUSTING ANY OF THESE. The export runs AFTER the journal pull and
@@ -145,6 +152,11 @@ nas_capture_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
 nas_journal_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_capture_red_source: "zcrypto-data@zcrypto-red.zhaow.me:"
+# The four ops channels address the host by FQDN rather than 192.168.100.6 (swapped 2026-08-26).
+# The pull loop runs StrictHostKeyChecking=yes with CheckHostIP=no against a pre-seeded
+# keys/known_hosts, so it matches on the HOSTNAME STRING alone -- an unseeded name fails the pull
+# CLOSED. Both names are pinned there, with key material copied from the trusted IP lines rather than
+# re-scanned, so either spelling works and a revert needs no host-key change.
 nas_liquidations_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_liquidations_ssh_port: 22
 nas_panel_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
@@ -153,11 +165,6 @@ nas_reconciled_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_reconciled_ssh_port: 22
 # OPS-6 (spec 00056 D2/D4): the ops node's hot-out outbox, pulled into the hot/ hub. Its own
 # least-privilege read-only key (sync_hot) + home-LAN port 22, same shape as panel/reconciled.
-# The four ops channels address the host by FQDN rather than 192.168.100.6 (swapped 2026-08-26).
-# The pull loop runs StrictHostKeyChecking=yes with CheckHostIP=no against a pre-seeded
-# keys/known_hosts, so it matches on the HOSTNAME STRING alone -- an unseeded name fails the pull
-# CLOSED. Both names are pinned there, with key material copied from the trusted IP lines rather than
-# re-scanned, so either spelling works and a revert needs no host-key change.
 nas_hot_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_hot_ssh_port: 22
 

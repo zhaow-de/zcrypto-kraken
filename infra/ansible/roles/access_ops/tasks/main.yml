@@ -37,7 +37,7 @@
     dest: "/etc/systemd/system/zaccess-nas-proxy.{{ item }}"
     mode: '0644'
   loop: [socket, service]
-  notify: reload systemd
+  notify: [reload systemd, restart zaccess-nas-proxy]
 - name: nas relay socket enabled
   ansible.builtin.systemd: {name: zaccess-nas-proxy.socket, enabled: true, state: started, daemon_reload: true}
 

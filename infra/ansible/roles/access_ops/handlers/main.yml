@@ -6,6 +6,11 @@
 - name: reload systemd
   ansible.builtin.systemd: {daemon_reload: true}
 
+- name: restart zaccess-nas-proxy
+  # Accept=no and no --exit-idle-time, so one long-lived instance holds the socket: a daemon-reload
+  # leaves it running the ExecStart it started with. Only a restart applies a changed relay target.
+  ansible.builtin.systemd: {name: zaccess-nas-proxy.service, state: restarted}
+
 - name: source tmux conf
   ansible.builtin.command: tmux source-file /home/zhaow/.tmux.conf
   become: true

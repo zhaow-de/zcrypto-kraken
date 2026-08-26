@@ -11,7 +11,10 @@ TMP="$(mktemp "${OUT}.XXXX")"; trap 'rm -f "$TMP"' EXIT
     echo "# TYPE zaccess_wireguard_handshake_age_seconds gauge"
     echo "zaccess_wireguard_handshake_age_seconds $(( $(date +%s) - hs ))"
   fi
-  na=$(echo | timeout 10 openssl s_client -connect z-home-storage.zhaow.pro:5001 -servername z-home-storage.zhaow.pro 2>/dev/null \
+  # -connect by IP, -servername by name: the cert is still validated for the FQDN, but DNS stays
+  # OUT of the probe. Resolving here would make a DNS failure emit no series at all, and the
+  # cert-expiry alert is noDataState:OK -- the one certificate nothing renews would expire silently.
+  na=$(echo | timeout 10 openssl s_client -connect 192.168.100.5:5001 -servername z-home-storage.zhaow.pro 2>/dev/null \
        | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2) || true
   if [ -n "${na:-}" ]; then
     echo "zaccess_tls_not_after_seconds{target=\"nas-dsm\"} $(date -d "$na" +%s)"
