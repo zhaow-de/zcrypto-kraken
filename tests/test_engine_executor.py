@@ -27,6 +27,7 @@ from nautilus_trader.model import (
     OrderCancelRejected,
     OrderExpired,
     OrderFilled,
+    OrderFillVoided,
     OrderRejected,
     OrderSide,
     OrderStatus,
@@ -3537,6 +3538,127 @@ def test_a_cancel_that_landed_while_the_process_was_down_closes_its_row_without_
     assert client.canceled == []
 
 
+# --- D16: the venue withdrawing a fill from an order this engine already closed (spec 00100) -----
+
+
+_FINISHED_QTY = 0.001
+
+
+def _finished_row_executor(tmp_path, *, withdrawn):
+    """A row a previous process CLOSED on `_FINISHED_QTY`, plus the venue order left behind for it --
+    with the venue's own fill withdrawal applied, or without.
+
+    The order is a REAL `LimitOrder` driven through the library's own events, because only the
+    library's state machine can say what a withdrawal does to one: `OrderFillVoided` for the fill
+    that completed it lands `OrderStatus.VOIDED` with `filled_qty` back at zero, while the arm that
+    skips it stays `FILLED` at the full quantity. The event carries `reconciliation=True`, which is
+    what the framework mints -- the flag changes nothing here, and a fixture claiming otherwise
+    would be lying about the only shape this engine can meet.
+
+    THE PAIR IS THE FIXTURE. Both arms are closed, so neither order appears in `orders_open` and
+    both are reachable only through the wide read; both rows are identical on disk; and the two
+    differ in exactly the quantity the sweep compares. An order the withdrawal does not move -- a
+    voided PARTIAL fill, say, which returns the order to `ACCEPTED` and leaves the row in the
+    re-attach set -- would pass under either behaviour and prove nothing."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-finished", reduce_only=True, when=earlier)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=_FINISHED_QTY)
+    order = _resting_limit_order("O-finished", quantity=f"{_FINISHED_QTY:.8f}")
+    order.apply(_fill("O-finished", _FINISHED_QTY))
+    assert order.status == OrderStatus.FILLED and float(order.filled_qty) == _FINISHED_QTY
+    if withdrawn:
+        order.apply(_fill_voided("O-finished", _FINISHED_QTY))
+        assert order.status == OrderStatus.VOIDED and float(order.filled_qty) == 0.0
+    client = StubClient(StubCache(closed_orders=[order]))
+    return _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY)), client, earlier
+
+
+def _fill_voided(client_order_id, qty, *, trade_id="T-1"):
+    """The library's own `OrderFillVoided` for a fill `_fill` produced, in the shape the framework's
+    reconciliation mints: `reconciliation=True`, the ORIGINAL fill's trade id (a void references the
+    trade it undoes, unlike a synthesized fill, which mints one), and a `correction_id` naming the
+    report it came from."""
+    return OrderFillVoided(
+        _TRADER_ID, _STUB_STRATEGY_ID, InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]), ClientOrderId(client_order_id),
+        _VENUE_ORDER_ID, _ACCOUNT_ID, f"reconciliation-R-1-{trade_id}", TradeId(trade_id), _quantity(qty),
+        OrderSide.BUY, OrderType.LIMIT, _price(30000.0), Currency.from_str("EUR"), LiquiditySide.MAKER,
+        UUID4(), 0, 0, True,
+    )  # fmt: skip
+
+
+def test_a_withdrawn_fill_on_a_row_this_engine_closed_latches_the_kill_switch(tmp_path, kill_trip_expected):
+    """The one correction that lands on a FINISHED order, and the row `open_submitted_rows` cannot
+    show anyone: the venue reports the order filled for less than the quantity this engine recorded,
+    published and sized against.
+
+    The engine never sees the withdrawal as an event -- the library applies it during the node's
+    startup reconciliation, which completes before the trader starts and therefore before any
+    handler is subscribed -- so the venue order's own lowered `filled_qty` is the whole signal, and
+    the sweep over the rows the re-attach set omits is the only thing that reads it.
+
+    NOTHING is reversed, and that is asserted rather than assumed: the row keeps `filled` and keeps
+    its quantity, because the ledger records what the venue reported when it reported it and the
+    disagreement between the two figures is what the kill is about. A ledger silently corrected to
+    match would no longer show that they ever disagreed."""
+    ex, client, earlier = _finished_row_executor(tmp_path, withdrawn=True)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_timer(NOW)
+
+    assert (
+        _kill_file(tmp_path)
+        .read_text()
+        .endswith("order O-finished shows 0 filled at the venue, less than the 0.001 this engine recorded and closed it on\n")
+    )
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "filled"  # never demoted: the fills that completed it were reported and counted
+    assert row["filled_qty"] == _FINISHED_QTY  # and never subtracted
+    assert row["events"] == [{"event": "withdrawn", "at": NOW.isoformat(), "qty": -_FINISHED_QTY, "venue_filled_qty": 0.0}]
+    assert "O-finished" not in ex._attached  # a finished row is not re-attached by this sweep
+    assert metrics.orders == []  # the outcome counters are never retracted, and none is added
+    assert client.canceled == []  # nothing was resting to pull
+
+
+def test_a_finished_row_the_venue_still_agrees_with_is_swept_silently(tmp_path):
+    """The true positive, and the arm that makes the pair able to tell the behaviours apart: the
+    same closed row, the same completed order, the withdrawal alone removed.
+
+    A sweep that latched on every finished row -- or on the mere fact that a row is closed -- would
+    pass the test above and kill the engine at every boot after any order ever filled. Nothing
+    happens here at all: no kill, no journal write, no counter."""
+    ex, client, earlier = _finished_row_executor(tmp_path, withdrawn=False)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_timer(NOW)
+
+    assert not _kill_file(tmp_path).exists()
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "filled"
+    assert row["filled_qty"] == _FINISHED_QTY
+    assert row["events"] == []
+    assert metrics.orders == []
+    assert client.canceled == []
+
+
+def test_a_ledger_the_finished_row_sweep_cannot_write_still_latches_the_kill_switch(tmp_path, monkeypatch, kill_trip_expected):
+    """The journal write stands IN FRONT of the trip, so a read-only journal must not be able to
+    swallow the latch -- `_record_trip_fill`'s ruling, on this path. Guard-proving: the failure is
+    constructed, and WHICH log line fired is read rather than merely that one did."""
+    ex, _client, _earlier = _finished_row_executor(tmp_path, withdrawn=True)
+
+    def _raise(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(executor_module, "update_submitted_row", _raise)
+    with _executor_errors() as records:
+        ex.on_timer(NOW)
+
+    assert "the withdrawal on finished row O-finished could not be journaled" in [r.getMessage() for r in records]
+    assert _kill_file(tmp_path).exists()
+
+
 def _limit_orders_by_status():
     """One REAL `LimitOrder` per `OrderStatus` the library defines, driven there by applying the
     library's own events, plus the refusals for the statuses this order type cannot wear.
@@ -3549,7 +3671,6 @@ def _limit_orders_by_status():
     from nautilus_trader.model import (
         OrderDenied,
         OrderEmulated,
-        OrderFillVoided,
         OrderPendingCancel,
         OrderPendingUpdate,
         OrderReleased,

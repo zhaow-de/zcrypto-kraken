@@ -119,6 +119,10 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                     )
                     continue
                 if kind != "fill":
+                    # A `withdrawn` event -- the venue reporting a closed order filled for LESS than
+                    # this row recorded -- falls through here on purpose (spec 00100 D16): it is
+                    # journaled as evidence and reverses nothing, here included, and the engine it
+                    # describes is stopped by the kill switch that same event latched.
                     continue
                 liq = ev.get("liquidity")
                 if liq not in _VENUE_LIQUIDITY:

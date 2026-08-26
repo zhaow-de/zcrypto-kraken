@@ -37,6 +37,7 @@ from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict
 from cli.engine.execledger import (
     append_plan_entry,
     append_submitted_row,
+    closed_submitted_rows,
     exec_records_through,
     ledgered_intent_keys,
     ledgered_plan_ids,
@@ -97,6 +98,12 @@ _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 # `inflight_check_retries` it stops waiting on an unanswered in-flight order and publishes one of
 # these itself, carrying `reconciliation=True`. `OrderFilled` carries the same flag and is
 # deliberately absent -- `_on_order_event` says why.
+#
+# `OrderFillVoided` carries it too and is absent for a different reason: it cannot be dispatched to
+# a strategy here at all. The only route to one at this venue is the mass-status reconciliation the
+# node runs before it starts the trader, so no handler is subscribed when it publishes; what reaches
+# this engine is the venue order the library already lowered, and `_reconcile_finished_rows` is what
+# reads it (spec 00100 D16).
 _RECONCILED_TERMINALS = frozenset({"OrderRejected", "OrderCanceled", "OrderExpired"})
 # What an ADOPTED order's row writes as its state, on BOTH paths that write one -- the startup
 # reconciliation and the live external stream -- taken from `execledger._ROW_STATES`' existing names
@@ -718,6 +725,12 @@ class ProbeExecutor:
 
         try:
             rows = {row["client_order_id"]: (boundary, row) for boundary, row in open_submitted_rows(self._journal_dir, now)}
+            # The two reads partition the same window's rows and come from the same records, so one
+            # failing means neither is available -- hence one `try` around both. Only `rows` reaches
+            # the classification loop below: a resting order matching a CLOSED row is a ledger that
+            # disagrees with the venue about the order's lifecycle, and letting such a row vouch for
+            # it as a resting reducer would leave a live order working on a stale claim.
+            finished = {row["client_order_id"]: (boundary, row) for boundary, row in closed_submitted_rows(self._journal_dir, now)}
         except Exception:
             # The claim is scoped to what is actually resting: the rows are now read on every
             # startup, including idle ones where nothing could be canceled at all.
@@ -726,14 +739,15 @@ class ProbeExecutor:
                 " and every resting order will be canceled" if resting else "",
                 exc_info=True,
             )
-            rows = {}
+            rows, finished = {}, {}
         self._reconcile_adopted_rows(rows)
+        self._reconcile_finished_rows(finished)
         if not resting:
             return  # nothing adopted -- and no gate read, so an idle startup stays the cheap path
 
-        # Read AFTER the sweep: a repair that latched the kill switch above makes this `none`, and
-        # then the pass cancels everything, ledgered reducers included -- which is exactly what a
-        # latched kill file means.
+        # Read AFTER both sweeps: a repair or a withdrawal that latched the kill switch above makes
+        # this `none`, and then the pass cancels everything, ledgered reducers included -- which is
+        # exactly what a latched kill file means.
         kill_latched = self._evaluate(now).level == GateLevel.NONE
 
         for order in resting:
@@ -891,6 +905,77 @@ class ProbeExecutor:
                 f"adopted order {client_order_id} shows {total:.10g} filled at the venue, "
                 f"more than the {ordered:.10g} the ledger says it was submitted for"
             )
+
+    def _reconcile_finished_rows(self, rows: dict) -> None:
+        """The rows the sweep above cannot reach (spec 00100 D16): every ledgered row this engine
+        already closed, asked the one question a finished order can still answer wrongly.
+
+        The population is the whole reason this exists. `_reconcile_adopted_rows` runs over the
+        re-attach set, which by definition holds only the states an order can still be live in -- so
+        a row that reads `filled`, `canceled`, `venue_canceled` or `rejected` is compared against
+        nothing, ever. That is fine for everything an order can do going forward and wrong for the
+        one thing it can do backwards: the venue withdrawing a fill it already reported. A withdrawal
+        lands on a COMPLETED order by construction, which is exactly the row the re-attach set omits.
+
+        This engine never sees the withdrawal as an event. The library's reconciliation applies it to
+        the order before this process has a strategy subscribed to anything, so what arrives is a
+        venue order whose own `filled_qty` has come DOWN -- and the ledger row beside it still
+        carries the quantity this engine recorded, published and sized against.
+
+        Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
+        ledger write carries its own `try` for the same one: the trip stands behind it, so a
+        read-only journal may never swallow a latch.
+        """
+        try:
+            for client_order_id, (boundary, row) in rows.items():
+                try:
+                    order = self._client.cache.order(ClientOrderId(client_order_id))
+                    if order is None:
+                        continue  # no venue-truth source for it -- the same answer the sweep above gives
+                    self._reconcile_finished_row(boundary, client_order_id, row, order)
+                except Exception:
+                    logger.critical("finished row %s could not be reconciled against the venue", client_order_id, exc_info=True)
+        except Exception:
+            logger.critical("the finished-row sweep raised -- classifying resting orders anyway", exc_info=True)
+
+    def _reconcile_finished_row(self, boundary: datetime, client_order_id: str, row: dict, order) -> None:
+        """One closed row against the venue's own figure: does the venue still report the quantity
+        this row was closed on?
+
+        ONE direction, on the same `_OVERFILL_TOLERANCE` dead-band the sweep above uses and for the
+        same reason -- the ledgered figure is a sum of per-fill floats and the venue's is one
+        exactly-rounded `float(Quantity)`, so a clean multi-fill order differs by ulps. A shortfall
+        is the withdrawal's whole signature, and it means this engine holds less than every figure
+        downstream of the row already says it does: `held`, the position the ladder sizes against,
+        the fills and fee counters. That is the same divergence 00098 D7's negative arm latches on
+        for an open row, reaching the rows D7 cannot see.
+
+        NOTHING is repaired, reversed or restated, and that is the decision rather than an omission.
+        The row records what the venue reported when it reported it, and the withdrawal appends
+        beside it, so the two readings sit together for whoever reads the kill. Subtracting instead
+        would move the overfill trip's base under it, and would leave a ledger that agrees with the
+        venue and no longer shows that they ever disagreed -- deleting exactly the evidence the trip
+        is about. There is no next order to size correctly either: a latched kill is the last thing
+        this process decides about trading.
+        """
+        ledgered = row["filled_qty"]
+        venue_filled = float(order.filled_qty)
+        if venue_filled >= ledgered - _OVERFILL_TOLERANCE:
+            return
+        payload = {
+            "event": "withdrawn",
+            "at": self._now().isoformat(),
+            "qty": venue_filled - ledgered,
+            "venue_filled_qty": venue_filled,
+        }
+        try:
+            update_submitted_row(self._journal_dir, boundary, client_order_id, event=payload)
+        except Exception:
+            logger.critical("the withdrawal on finished row %s could not be journaled", client_order_id, exc_info=True)
+        self._trip_kill(
+            f"order {client_order_id} shows {venue_filled:.10g} filled at the venue, less than the "
+            f"{ledgered:.10g} this engine recorded and closed it on"
+        )
 
     def _pickup(self, now: datetime) -> None:
         path = exec_dir(self._state_dir) / PLAN_FILENAME
