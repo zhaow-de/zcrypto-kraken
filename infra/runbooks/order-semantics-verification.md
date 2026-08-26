@@ -31,7 +31,7 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## 1. Pre-flight — do all of these before exporting any credential
+## 1. Pre-flight — do all of these before the first credentialed run
 
 ### 1.1 Kraken maintenance window
 
@@ -203,7 +203,7 @@ $PY $PROBE --probes 3 --no-exec --evidence-dir "$EVID"
 is correct here), quotes arrive for all 10 EUR pairs within seconds, probe 3 reports `PASS`, the node
 shuts down, exit 0. This is a public-market-data connection: no credentials, no orders, nothing to
 lose. It proves the node assembly, the WS path, the callback sequence, the teardown and the exit path
-all work before any key is in the shell.
+all work before the trade key is anywhere near the process.
 
 **Failure here is a harness problem, not an adapter finding.** Fix it before step 4.
 
@@ -211,13 +211,29 @@ ______________________________________________________________________
 
 ## 4. Credentials
 
-Decrypt the trade key from `infra/ansible/group_vars/engine_host/vault.yml` (T0061 moved it there
-from `capture_host`) using the documented sops+GPG → ansible-vault path in `infra/README.md`, and
-export it into **this shell only**:
+**Do not export the key into your shell. Run the harness through the wrapper instead:**
 
 ```
-export KRAKEN_SPOT_API_KEY='...'
-export KRAKEN_SPOT_API_SECRET='...'
+RUN=infra/scripts/probe-with-vaulted-key.sh
+```
+
+`$RUN` decrypts `kraken_trade_api_key` and `kraken_trade_api_secret` from
+`infra/ansible/group_vars/engine_host/vault.yml` (T0061 moved them there from `capture_host`) using
+`infra/ansible/scripts/vault-pass.sh` — the documented sops+GPG path from `infra/README.md`, which
+keeps its own ancestry refusals — and `execve`s the harness with the two values in the child's
+environment. It never echoes them, never writes them to a file, and never puts them on a command
+line, so `ps` shows the harness's flags and nothing else; it is one process throughout, so they
+never cross a pipe either. The program it runs is **hardcoded** and arguments select nothing, which
+is what lets the operation be permitted narrowly rather than as a general secrets-reading
+capability. It refuses outside the repo root, so neither the harness nor the vault path can be
+shadowed.
+
+**From here on, every invocation that needs the key runs as `$RUN <args>` in place of
+`$PY $PROBE <args>` — the same arguments, nothing else changes.** §3's two checks need no
+credentials and keep using `$PY $PROBE`. So §5.1's dry run is:
+
+```
+$RUN --probes all --evidence-dir "$EVID"
 ```
 
 Rules, all of them absolute:
@@ -225,9 +241,13 @@ Rules, all of them absolute:
 - Never write either value into a file, a history-recorded command, or a subagent prompt.
 - Never run `ansible-inventory --host` / `--list` / `--graph --vars` — `ansible.cfg` sets
   `vault_password_file`, so all three print the cleartext key.
-- The harness never reads these values. It checks only that the variables are **present**; the
-  Kraken adapter's own factory sources them from the environment.
-- Close the shell when the run is done.
+- The harness reads both **values**, not merely their presence: `exec_client_config()` takes them
+  from `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` and passes them into
+  `KrakenExecutionClientConfig(api_key=…, api_secret=…)`, which requires them. What bounds the
+  exposure is what it does next — they are never stored on a harness object, logged, printed,
+  interpolated into a message, or written to the evidence file, and its refusals name the two
+  VARIABLES, never their contents.
+- Close the shell when the run is done. Nothing sensitive should be in it, and that is the check.
 
 **Nonce warning (2026-07-10 Observation 4):** the adapter was measured using finer-than-millisecond
 nonces. After any harness run, millisecond-nonce REST scripts on the same key then got
@@ -244,7 +264,7 @@ Re-check the maintenance feed (§1.1) and the boundary clock (§1.2) **now**, th
 ### 5.1 Dry run — mandatory, and read the output
 
 ```
-$PY $PROBE --probes all --evidence-dir "$EVID"
+$RUN --probes all --evidence-dir "$EVID"
 ```
 
 Probes 1–3 and 6 execute for real (all read-only). Probes 4 and 5 print the exact submission they
@@ -275,7 +295,7 @@ Get the human's explicit go (spec 00039 D4: *every order-placing probe executes 
 human's explicit go immediately before the probe script runs*), then:
 
 ```
-$PY $PROBE --probes 1,2,3,4 --apply --evidence-dir "$EVID"
+$RUN --probes 1,2,3,4 --apply --evidence-dir "$EVID"
 ```
 
 Between the printed probes, watch for:
@@ -297,7 +317,7 @@ a stale quote, a size under the venue minimum, a distance that quantized under 2
 Get a second explicit go. Then, and only then:
 
 ```
-$PY $PROBE --probes 5 --apply --probe5 --evidence-dir "$EVID"
+$RUN --probes 5 --apply --probe5 --evidence-dir "$EVID"
 ```
 
 `--probe5` is required *on top of* `--apply`; without it the row reads `GATED` and nothing is
@@ -324,7 +344,7 @@ adapter failure.
 ### 5.4 Probe 6 — post-run reconciliation, as a fresh process
 
 ```
-$PY $PROBE --probes 6 --evidence-dir "$EVID"
+$RUN --probes 6 --evidence-dir "$EVID"
 ```
 
 Running it as its **own invocation** is deliberate: the new node's startup reconciliation reads venue
@@ -435,7 +455,7 @@ believes is still working.
 1. Kraken → Trade → Open Orders. Cancel each listed order **by hand**. Do not leave the terminal
    until they are gone.
 2. If a probe-5 buy filled and its sell did not, flatten the position by hand in the same place.
-3. Only then, re-run `$PY $PROBE --probes 6 --evidence-dir "$EVID"` and confirm `open orders 0 (ours 0 …)`.
+3. Only then, re-run `$RUN --probes 6 --evidence-dir "$EVID"` and confirm `open orders 0 (ours 0 …)`.
 
 Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads
 every resting order at the venue, finds no ledgered row for a probe order, and **cancels it** — a
@@ -468,12 +488,13 @@ ______________________________________________________________________
 ```
 $PY $PROBE --selftest                          # pure rails, no network, no credentials
 $PY $PROBE --probes 3 --no-exec --evidence-dir "$EVID"        # public market data only, no credentials
-# every line below assumes EVID is set as in section 2; the flag keeps evidence out of the repo
-$PY $PROBE --probes all --evidence-dir "$EVID"                # full dry run: 1,2,3,6 real; 4,5 printed
-$PY $PROBE --probes 1,2,3,4 --apply --evidence-dir "$EVID"    # the zero-fill order sweep
-$PY $PROBE --probes 5 --apply --probe5 --evidence-dir "$EVID" # the one real fill
-$PY $PROBE --probes 6 --evidence-dir "$EVID"                  # fresh-process venue reconciliation read
-$PY $PROBE --probes 4 --apply --log-level INFO --evidence-dir "$EVID"  # re-run probe 4, adapter narrating
+# every line below needs the trade key, so it goes through $RUN (section 4) and never through $PY
+# $PROBE; each also assumes EVID is set as in section 2, keeping evidence out of the repo
+$RUN --probes all --evidence-dir "$EVID"                # full dry run: 1,2,3,6 real; 4,5 printed
+$RUN --probes 1,2,3,4 --apply --evidence-dir "$EVID"    # the zero-fill order sweep
+$RUN --probes 5 --apply --probe5 --evidence-dir "$EVID" # the one real fill
+$RUN --probes 6 --evidence-dir "$EVID"                  # fresh-process venue reconciliation read
+$RUN --probes 4 --apply --log-level INFO --evidence-dir "$EVID"  # re-run probe 4, adapter narrating
 ```
 
 Knobs worth knowing: `--pair` (default `BTC/EUR`), `--notional` (default 10), `--max-notional`
