@@ -5,7 +5,7 @@ Generation-guards `panel-meta.json` (spec 00052 D5): writes it on a fresh panel 
 against an existing one whose generation (schema_version, grid, notionals, k_levels) differs from
 this code's -- a generation change must be an explicit regeneration, never a silent mix.
 
-Also guards the `--since`/watermark hole (Task 2 review I2): if `--since` is newer than an affected
+Also guards the `--since`/watermark hole (a review finding): if `--since` is newer than an affected
 pair's current panel watermark, the sweep would skip `[watermark+1h, since)` forever once later hours
 are written -- refused by default, proceed only with `--allow-holes`.
 """

@@ -29,8 +29,8 @@ _SIZES: tuple[tuple[int, str], ...] = ((100, "100"), (1_000, "1k"), (10_000, "10
 
 @dataclass(frozen=True)
 class CalibrationResult:
-    """`calibrate()`'s output: the re-keyed table plus the provenance figures Task 7 restamps
-    `cli/costs/spread.py`'s constants from."""
+    """`calibrate()`'s output: the re-keyed table plus the provenance figures
+    `cli/costs/spread.py`'s constants are restamped from."""
 
     table: dict[str, dict[int, float]]
     hours: int

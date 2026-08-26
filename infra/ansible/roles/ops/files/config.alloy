@@ -225,7 +225,7 @@ prometheus.remote_write "grafana" {
 // What it drops is the tail of a (pair, hour)-SORTED stream: the last pairs in sort order --
 // all of their hours, not just recent ones -- plus both summary lines. Alerting is unaffected
 // (the runner parses its own temp file, not the journal); the operator's read of it is not.
-// Tracked in docs/open-topics/T0114-*; the incremental fix there dissolves it. The
+// T0114 (resolved) tracked this; spec 00078's incremental replay dissolved it. The
 // host keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
 // /host/journal by alloy-compose.yaml.j2.
 //

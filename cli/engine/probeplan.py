@@ -171,7 +171,7 @@ def plan_refusals(
     because no price exists yet to convert its base quantity into EUR at validation time -- it is
     NOT exempt from the cap, only deferred. Its real notional (`qty x the chosen limit price`) is
     known only at sizing time, where the executor enforces the cumulative plan cap on first
-    submission (Task 6).
+    submission.
 
     The margin floor (Sec 10's 250% floor at rung scale) sums `notional_eur / leverage` over
     margin intents (those with `leverage is not None`) and requires that sum, x2.5, to fit under

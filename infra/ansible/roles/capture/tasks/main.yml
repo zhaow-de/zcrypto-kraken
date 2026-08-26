@@ -258,7 +258,7 @@
 # path keeps the forced command independent of the login shell's PATH.
 # The capture data export the NAS pulls now lands on zcrypto-data (the m2m data user, spec 00057),
 # not the admin `deploy`. exclusive:false ADDS it; deploy's old copy is dropped by a one-time step
-# AFTER the NAS repoints (Task 5/8) — dual authorization so the pull never drops. zcrypto-data OWNS
+# AFTER the NAS repoints (the cutover's dual-authorization window) so the pull never drops. zcrypto-data OWNS
 # the 0750 capture dir now, so the old `deploy`-in-kraken-capture-group traversal hack is gone.
 - name: install the sync_capture pubkey as a forced-command entry on zcrypto-data (segments read-only)
   ansible.posix.authorized_key:

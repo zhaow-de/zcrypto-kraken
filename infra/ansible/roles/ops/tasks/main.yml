@@ -153,12 +153,12 @@
 
 # --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
 # authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
-# exist before any data ownership or container-user change (Task 3).
+# exist before any data ownership or container-user change.
 #
 # Shell is the rrsync-only wrapper (ops_rrsync_shell), NOT nologin and NOT a general shell: this user
 # SERVES the NAS pulls via `command="rrsync -ro ..."` forced-command keys, and sshd runs a forced
 # command as `<login-shell> -c "<cmd>"`. A nologin shell swallows it ("account not available", every
-# pull fails -- caught by the Task-4 pre-flight); a general shell (/bin/bash) works but grants more
+# pull fails -- caught by the repoint pre-flight); a general shell (/bin/bash) works but grants more
 # than needed. The wrapper permits ONLY rrsync and refuses everything else, so even a mis-added
 # forced-command-less key still can't get a shell. With command=+restrict per key + no password, no
 # interactive login is reachable. Deployed just below, BEFORE the account's shell points at it.
@@ -205,7 +205,7 @@
 # --- The four NAS pull channels, now role-provisioned on zcrypto-data (spec 00057; they were
 # hand-installed on deploy). Each `rrsync -ro` pins its own subtree -- least-privilege per channel,
 # mirroring the capture/engine roles' sync forced commands. exclusive:false so these ADD to (do not
-# replace) zcrypto-data's keys; deploy kept its copies through the Task-4 NAS-repoint cutover, then dropped.
+# replace) zcrypto-data's keys; deploy kept its copies through the NAS-repoint cutover, then dropped.
 - name: install the liquidations pull key (rrsync -ro) on zcrypto-data
   ansible.posix.authorized_key:
     user: "{{ ops_data_user }}"
@@ -520,10 +520,10 @@
   when: ops_image_digest is defined
   block:
     # OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
-    # every deliberate restart) is an attended step (`docker compose up -d`, plan Task 5): the
+    # every deliberate restart) is an attended step (`docker compose up -d`): the
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
     #
-    # mode 0600 (not 0644): the rendered file now carries COINALYZE_API_KEY in plaintext (Task 10,
+    # mode 0600 (not 0644): the rendered file now carries COINALYZE_API_KEY in plaintext (
     # spec 00051 OPS-2) — zcrypto-deploy-only readable, matching the vault's own secrecy expectation.
     - name: render the ops compose file (liquidations poller)
       ansible.builtin.template:

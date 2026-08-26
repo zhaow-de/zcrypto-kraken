@@ -20,7 +20,7 @@ prometheus.exporter.unix "host" {
   rootfs_path = "/host/root"
 
   textfile {
-    // Task 2's `zcrypto engine gate-export` writes gate.prom here after every journal pull
+    // The `zcrypto engine gate-export` step writes gate.prom here after every journal pull
     // (infra/nas/pull-entrypoint.sh); mounted read-only into this container at the same path the
     // archive-pull container mounts read-write (compose.yaml).
     directory = "/textfile"
