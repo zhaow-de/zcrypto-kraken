@@ -14,9 +14,8 @@ TMP="$(mktemp "${OUT}.XXXX")"; trap 'rm -f "$TMP"' EXIT
   # -connect by IP, -servername by name: SNI still makes DSM serve the FQDN's certificate, so the
   # notAfter read here is the right one -- this probe VERIFIES nothing (no -verify_hostname, stderr
   # dropped); Caddy's tls_trusted_ca_certs + tls_server_name are what validate this leg. Keeping DNS
-  # out matters because a
-  # resolution failure would emit no series at all, and the cert-expiry alert is noDataState:OK --
-  # the one certificate nothing renews would expire silently.
+  # out matters because a resolution failure would emit no series at all, and the cert-expiry alert
+  # is noDataState:OK -- the one certificate nothing renews would expire silently.
   na=$(echo | timeout 10 openssl s_client -connect 192.168.100.5:5001 -servername z-home-storage.zhaow.pro 2>/dev/null \
        | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2) || true
   if [ -n "${na:-}" ]; then

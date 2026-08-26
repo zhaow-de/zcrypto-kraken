@@ -35,7 +35,8 @@
 # and gates notification on the AGGREGATE changed result, so a service-only edit would also fire the
 # socket handler -- and the service's `Requires=` propagates that restart, bouncing the live relay
 # twice per converge. Split, each half notifies only what it can apply.
-- name: nas relay socket unit (spec 00075 D6 -- systemd-socket-proxyd, no NAT/forwarding)
+# spec 00075 D6 -- systemd-socket-proxyd, no NAT/forwarding anywhere.
+- name: nas relay socket unit
   ansible.builtin.template:
     src: zaccess-nas-proxy.socket.j2
     dest: /etc/systemd/system/zaccess-nas-proxy.socket
