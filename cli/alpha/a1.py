@@ -137,7 +137,7 @@ def _asset_directions(
     prices/features at <= union index k -> no look-ahead. None where the asset itself has no valid
     return that period (either endpoint's price is None). Assumes btc_prices/asset_ts["BTC"] have
     full coverage of union_ts (no internal gaps) -- true for the real BTC series; a1_book_returns
-    (Task 4) enforces this at its validation boundary."""
+    enforces this at its validation boundary."""
     g_btc_own = sma_gate(btc_prices, window=config.gate_window)
     g_btc = _map_to_union_index(asset_ts["BTC"], g_btc_own, union_ts)
     bear_own = _btc_market_bear(btc_prices, window=config.gate_window, band=config.short_band)
@@ -187,7 +187,7 @@ def _inverse_vol_weights(prices_by_asset: dict[str, list[float | None]], *, look
     asset i qualifies at period t iff ret_i[t] is present, its trailing window ret_i[t-lookback:t]
     (strictly before t) is fully non-None, and that window has positive stdev; weight 1/stdev,
     renormalized over qualifiers. No qualifier -> {}. Returns weights (not a pre-combined return
-    series) so a1_book_returns (Task 4) can apply per-asset directions before combining. Private
+    series) so a1_book_returns can apply per-asset directions before combining. Private
     helper: trusts a validated, equal-length, non-empty prices_by_asset (mirrors
     dynamic_inverse_vol_basket's own private _inverse_vol_weight)."""
     length = len(next(iter(prices_by_asset.values())))
