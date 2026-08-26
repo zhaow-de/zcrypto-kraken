@@ -345,7 +345,8 @@ class StubCache:
         The NETTING position id is stamped onto a copy for this arithmetic and only here -- opening
         a `Position` needs one, and a dispatched fill that carries one cannot be voided afterwards.
         Rebuilt field by field rather than round-tripped through `to_dict`/`from_dict`, which cannot
-        carry this file's fills at all: `from_dict` rejects the `ZEUR` commission Kraken sends."""
+        carry every fill this file delivers: `from_dict` answers `Unknown currency` for the venue's
+        alias codes, so a commission denominated `ZEUR` or `XXBT` never survives the trip."""
         identified = OrderFilled(
             fill.trader_id, fill.strategy_id, fill.instrument_id, fill.client_order_id, fill.venue_order_id,
             fill.account_id, fill.trade_id, fill.order_side, fill.order_type, fill.last_qty, fill.last_px,
@@ -1507,8 +1508,8 @@ def _fill(
     last_qty,
     *,
     px=30000.0,
-    fee=0.012,
-    fee_code="ZEUR",
+    fee=0.08,
+    fee_code="EUR",
     symbol="BTC/EUR",
     side="buy",
     liquidity=LiquiditySide.MAKER,
@@ -1517,11 +1518,17 @@ def _fill(
     """A REAL `OrderFilled`, carrying every field the executor's fill row reads in the venue's own
     types.
 
-    `fee_code` is `ZEUR`, which is what Kraken sends -- 546 live instruments carry that code and
-    none carry `EUR`, and `cli/engine/node.py` reads the margin balance under it. It also has to be,
-    for the fee numbers here to mean what they say: a `Money` quantizes to its currency's precision,
-    `ZEUR` mints at 8 decimals and `EUR` at 2, so this file's 0.012 fee is 0.012 exactly as the
-    venue sends it and would be 0.01 under a `EUR` fixture.
+    `fee_code` is `EUR` -- the currency a Kraken fill's commission carries, measured on both legs of
+    a live round trip (`docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, observation 4).
+    The venue's `ZEUR` spelling belongs to its asset and instrument-quote surfaces, not to a
+    commission; `cli.engine.instruments.EUR_CODES` accepts both, and the fill that pins the second
+    spelling says so by name.
+
+    The fee VALUES follow from that, because a `Money` quantizes to its currency's precision: `EUR`
+    mints at 2 decimals, so every fee written in this file is an amount two decimals can hold, and
+    `0.08` is what that round trip was actually charged. A finer fixture fee is not a finer
+    measurement -- `Money(0.012, EUR)` is `0.01`, and the assertion would be reading the fixture's
+    own rounding back.
 
     `fee=None` builds the commission-less fill the event type permits: `commission` is `Money |
     None`, so a fixture that can only produce a Money cannot reach the row builder's absent-fee
@@ -1769,7 +1776,7 @@ def test_a_fills_liquidity_side_is_named_not_numbered_in_both_the_row_and_the_me
 
     fill_events = [e for e in _record(tmp_path)["submitted"][0]["events"] if e.get("event") == "fill"]
     assert [e["liquidity"] for e in fill_events] == [row_value]
-    assert metrics.fills == [(label, pytest.approx(0.012))]
+    assert metrics.fills == [(label, pytest.approx(0.08))]
 
 
 def test_an_unrecognisable_liquidity_side_is_recorded_verbatim_rather_than_raised():
@@ -1805,6 +1812,27 @@ def test_a_non_eur_commission_reaches_the_metric_as_no_fee_at_all(tmp_path):
     _deliver_fill(ex, client, "O-1", 0.001, fee=0.00002, fee_code="XXBT")
 
     assert metrics.fills == [("maker", None)]
+
+
+def test_the_venues_other_euro_spelling_reaches_the_metric_as_a_euro_fee(tmp_path):
+    """`EUR_CODES` carries both spellings and `_fee_eur` reads the constant, not a literal. The
+    fills here are `EUR`, the spelling a commission was measured carrying, so nothing else in this
+    file exercises the second entry -- and a `_fee_eur` narrowed to `== "EUR"` would drop every
+    `ZEUR` fee out of the counter with the whole module still green.
+
+    The counter is what is read: a fee excluded from a EUR total is `None`, not zero, so asserting
+    the value distinguishes the two outcomes where a fill count could not."""
+    client = StubClient()
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001, fee=0.08, fee_code="ZEUR")
+
+    assert metrics.fills == [("maker", 0.08)]
 
 
 def test_a_commission_less_fill_still_gets_its_forensic_row_with_a_null_fee(tmp_path):
@@ -2972,7 +3000,7 @@ def test_an_external_fill_completing_an_adopted_order_appends_counts_and_closes_
     assert "O-attached" in ex._attached  # retained: a racing fill must still find its row
     assert metrics.external == ["matched"]
     assert metrics.orders == ["filled"]
-    assert metrics.fills == [("maker", 0.012)] and metrics.positions == [("BTC/EUR", -0.001)]
+    assert metrics.fills == [("maker", 0.08)] and metrics.positions == [("BTC/EUR", -0.001)]
 
 
 def test_a_partial_external_fill_leaves_the_adopted_row_open_and_attached(tmp_path):
@@ -3122,7 +3150,7 @@ def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_r
     assert row["filled_qty"] == 0.0004  # journaled, not counted-and-dropped
     assert row["state"] == expected_state  # the detached append makes no state claim of its own
     assert metrics.external == ["matched", "matched"]  # never `unmatched`: the row is still vouched
-    assert metrics.fills == [("maker", 0.012)]
+    assert metrics.fills == [("maker", 0.08)]
     assert not _kill_file(tmp_path).exists()
 
 
@@ -4979,19 +5007,23 @@ def test_a_real_money_answers_both_accessors_the_fill_row_reads():
     accumulating. A name check cannot see that; a value can.
 
     The second half is the arithmetic every fee number in this file rests on. A `Money` quantizes
-    to its currency's precision: the codes a Kraken fill actually carries mint at 8 decimals and
-    hold 0.012 exactly, while `EUR` carries 2 and renders the same amount 0.01. That is why the
-    fills here are denominated `ZEUR` -- the code the venue actually sends -- and it is measured
-    here rather than assumed, so a changed precision stops the sentence being true out loud."""
+    to its currency's precision, and a commission arrives denominated `EUR`, which carries 2: the
+    `0.08` the fills default to survives that quantization, and a finer fee like `0.012` does not --
+    it comes back 0.01, so a fixture written that way would be asserting its own rounding. The
+    `XXBT` reading is the same check for the non-EUR fill: 8 decimals hold its 0.00002 exactly, so
+    that fixture excludes a fee that is really there rather than one that quantized to nothing.
+
+    Measured here rather than assumed, so a changed precision stops the sentence being true out
+    loud instead of quietly re-rounding every fee assertion in the file."""
     real = Money(1.25, Currency.from_str("EUR"))
     assert float(real) == pytest.approx(1.25)
     assert real.currency.code == "EUR"
 
-    for code in ("ZEUR", "XXBT"):
-        assert Currency.from_str(code).precision == 8
-        assert float(Money(0.012, Currency.from_str(code))) == pytest.approx(0.012)
     assert Currency.from_str("EUR").precision == 2
+    assert float(Money(0.08, Currency.from_str("EUR"))) == pytest.approx(0.08)
     assert float(Money(0.012, Currency.from_str("EUR"))) == pytest.approx(0.01)
+    assert Currency.from_str("XXBT").precision == 8
+    assert float(Money(0.00002, Currency.from_str("XXBT"))) == pytest.approx(0.00002)
 
 
 # Names each stub below carries for the harness's own sake, modelling nothing on the real type: the
