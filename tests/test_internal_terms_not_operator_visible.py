@@ -159,7 +159,7 @@ def _ansible_task_names() -> list[tuple[str, int, str]]:
         # `name:` at deeper indent is a module argument (`ansible.builtin.systemd: name: alloy`)
         # and is not printed. Per .claude/rules/operator-facing-text.md, a new operator-visible surface joins
         # this list AND the test together.
-        for p in (REPO / "infra/ansible").rglob("*.yml")
+        for p in chain((REPO / "infra/ansible").rglob("*.yml"), (REPO / "infra/ansible").rglob("*.yaml"))
         for i, line in _assembled_task_names(p.read_text(encoding="utf-8", errors="replace").splitlines())
     ]
     assert out, "found no ansible task names — the glob is broken, not the tree clean"
@@ -207,7 +207,10 @@ def test_ansible_task_names_carry_no_internal_vocabulary(unit, lineno, line):
 
 
 def _ansible_operator_messages() -> list[tuple[str, str, str]]:
-    """Yield `(file, key, value)` per string-valued `msg`/`fail_msg`/`success_msg` in `infra/ansible/**/*.yml`.
+    """Yield `(file, key, value)` per `msg`/`fail_msg`/`success_msg` in `infra/ansible/**/*.{yml,yaml}`.
+
+    The string SHAPE is asserted, never used as a filter — a non-string value fails collection
+    instead of dropping out of it.
 
     A task `name:` is not the only string ansible prints. A `debug: msg:` tagged `[always]` prints
     on every run including `--check`, and an `assert: fail_msg:` IS the refusal text an operator
@@ -224,7 +227,10 @@ def _ansible_operator_messages() -> list[tuple[str, str, str]]:
                     # A list-valued msg is legal and ansible prints it, but the walk would descend
                     # past it and see only list ITEMS, never a value under a printing key. Assert
                     # the shape so a new one fails loudly instead of dropping out of the scan.
-                    assert isinstance(value, str), f"{path}: non-string {key}= ({type(value).__name__}) is unscanned"
+                    assert isinstance(value, str), (
+                        f"{path}: non-string {key}= ({type(value).__name__}) is unscanned — flatten "
+                        f"non-string values into the walk; never reshape the task to satisfy this"
+                    )
                     out.append((path, key, " ".join(value.split())))
                 walk(value, path)
         elif isinstance(node, list):
