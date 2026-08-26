@@ -174,3 +174,60 @@
   notify: reload caddy
 - name: caddy enabled + started
   ansible.builtin.systemd: {name: caddy, enabled: true, state: started}
+
+# --- LAST IN THE ROLE ON PURPOSE. An assert that drops the host takes every task below it with it,
+# and below here would be the pinned-leaves + Caddyfile tasks that ARE the client-cert revocation
+# path -- the exact blast radius the alloy version pin caused live on 2026-08-20, recorded at the top
+# of this file. A relay whose target drifted must not be able to block a cert revocation that has
+# nothing to do with it, so this runs after everything that can still be needed in an emergency.
+#
+# The relay is Accept=no with no --exit-idle-time, so ONE long-lived systemd-socket-proxyd holds the
+# listener for as long as it runs. Nothing above can replace its target: `reload` is not applicable
+# (the unit defines no ExecReload, and the target is a command-line argument rather than config),
+# `daemon-reload` only refreshes systemd's view of the FILE, and the enable task's `state: started`
+# is a no-op on a running unit. So a converge that rewrites this unit reports `changed` and reaches
+# nothing.
+#
+# Asserted rather than restarted: a restart drops every SSH session traversing the relay INTO the ops
+# node -- including the shell a remote operator may be driving this play from. (It cannot cut the
+# play's own transport: this converge reaches zaccess's own sshd directly on :10022, per fleet.md.)
+# The sibling zaccess-nas-proxy relay in roles/access_ops does get restart handlers -- it carries DSM
+# traffic, not an operator's session.
+#
+# Read the RUNNING process's argv, never `systemctl show`: after a daemon-reload that reports the NEW
+# value while the process keeps the old one -- the same trap capture-deploys.md records for the Alloy
+# drift assert, which compares the deployed FILE and not what the process loaded.
+- name: read the ssh relay's running target
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      pid=$(systemctl show -p MainPID --value zaccess-ssh-proxy.service)
+      if [ "$pid" = "0" ]; then echo __not_running__; else tr '\0' '\n' < "/proc/$pid/cmdline" | tail -1; fi
+    executable: /bin/bash
+  register: access_ssh_relay_running
+  changed_when: false
+  check_mode: false
+- name: read the ssh relay's rendered target
+  # $NF is the LAST token, which is the target only while the target stays last. If an option is ever
+  # appended after it (--exit-idle-time, say) both sides shift together and this compares a constant
+  # to itself -- an always-passing guard. Keep the target last, or match the argument explicitly.
+  ansible.builtin.shell:
+    cmd: awk '/^ExecStart=/{print $NF}' /etc/systemd/system/zaccess-ssh-proxy.service
+    executable: /bin/bash
+  register: access_ssh_relay_rendered
+  changed_when: false
+  check_mode: false
+- name: the ssh relay is running the target this play renders
+  # __not_running__ PASSES: the socket is Accept=no and the service has no [Install], so it is
+  # inactive from boot until the first connection on :20022 and MainPID reads 0. An inactive unit
+  # execs from the rendered file at its next activation, so it cannot be drifted -- failing there
+  # would refuse a healthy converge on any host that has rebooted without a remote session since.
+  ansible.builtin.assert:
+    that: access_ssh_relay_running.stdout in ['__not_running__', access_ssh_relay_rendered.stdout]
+    fail_msg: >-
+      The SSH relay is running "{{ access_ssh_relay_running.stdout }}" but this host now carries a unit
+      rendering "{{ access_ssh_relay_rendered.stdout }}". A reload cannot apply that: the unit defines
+      no ExecReload and the target is a command-line argument, not config. Restart it by hand --
+      `sudo systemctl restart zaccess-ssh-proxy.service` -- from a session that did NOT reach the ops
+      node through port 20022, because the restart drops every connection traversing the relay. Then
+      re-run this play.

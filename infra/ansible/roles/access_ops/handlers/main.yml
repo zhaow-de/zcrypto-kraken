@@ -12,12 +12,12 @@
   # socket restart would risk EADDRINUSE; it does not, because the service's `Requires=` propagates
   # the restart and its `After=` stops the service first, releasing the fd. Ansible runs handlers in
   # DEFINITION order, so this one precedes the service handler regardless of notify order.
-  ansible.builtin.systemd: {name: zaccess-nas-proxy.socket, state: restarted}
+  ansible.builtin.systemd_service: {name: zaccess-nas-proxy.socket, state: restarted}
 
 - name: restart zaccess-nas-proxy
   # Accept=no and no --exit-idle-time, so one long-lived instance holds the socket: a daemon-reload
   # leaves it running the ExecStart it started with. Only a restart applies a changed relay target.
-  ansible.builtin.systemd: {name: zaccess-nas-proxy.service, state: restarted}
+  ansible.builtin.systemd_service: {name: zaccess-nas-proxy.service, state: restarted}
 
 - name: source tmux conf
   ansible.builtin.command: tmux source-file /home/zhaow/.tmux.conf
