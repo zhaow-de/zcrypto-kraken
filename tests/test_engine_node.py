@@ -809,12 +809,20 @@ _ORDER_STREAM_WIDENERS = {
 
 
 def test_no_module_widens_the_engines_order_event_stream():
-    """The structural half of the same property, as a text walk (the D4 pin's shape): nothing under
-    cli/ may claim external orders, nor reach past the strategy's own subscription onto the raw
-    message bus beyond the one allowlisted occurrence. Text, not imports -- a reference in a comment
-    is one a refactor can activate. The allowance is a COUNT, so a second reach inside the
-    allowlisted file is an offender like any other; and the walk asserts it found the tree at all,
-    since `Path("cli").rglob` off-root yields nothing and would pass everything."""
+    """The structural half of the same property, as a text walk (the D4 pin's shape): no file under
+    cli/ may claim external orders or reach past the strategy's own subscription onto the raw
+    message bus, ANYWHERE. Every entry above allows zero occurrences in zero files, and that is the
+    property -- the engine's order-event stream is the strategy's own subscription plus the observer
+    registered under the reserved external identity, and neither needs a bus or a claim to exist.
+
+    A red run here is a widening to remove, never one to record: adding a path to an allowance map
+    puts back on the live trade path exactly what these three literals exist to keep off it. The map
+    shape is what makes an allowance spell itself out as a path AND a count if one is ever argued
+    for, so a reviewer sees the widening rather than a deleted line.
+
+    Text, not imports -- a reference in a comment is one a refactor can activate; and the walk
+    asserts it found the tree at all, since `Path("cli").rglob` off-root yields nothing and would
+    pass everything."""
     offenders = []
     files = sorted(Path("cli").rglob("*.py"))
     assert len(files) > 100, f"the walk found only {len(files)} files -- vacuous"
