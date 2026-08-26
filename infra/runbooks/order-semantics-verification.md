@@ -385,6 +385,15 @@ ssh zcrypto 'ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/'
 A `cycle-<HH>.json` with `completed_at` inside `[B, B+30 min]` for the first boundary after the run.
 That is the outcome that says the probes cost the engine nothing.
 
+**That boundary is normally hours away when you finish**, because §1.2 puts the run at B+35 or later
+— so this check is almost always **deferred, not done**, and the write-up happens first. Carry it
+across that gap explicitly: give the version's record an **`## Owed checks not discharged by this pass`** section naming the exact boundary (`HH:00 UTC` on the run's date) and what would satisfy it,
+then come back at that boundary, take the reading, and **write it into that same section** as its
+outcome. The record is the registration; the arming step in [`engine.md`](engine.md) refuses to arm
+while any item in it is open, which is what makes the deferral bite instead of evaporating. The same
+applies to any reading this section asks for that the run could not take — an `unmatched` delta with
+no before-reading, for instance, is an absolute number and not the rise this section wants.
+
 ### 7.3 Close the IP exception — mandatory
 
 Kraken → Settings → API → `zcrypto-engine` → edit IP restrictions → **remove the workstation IP**,
