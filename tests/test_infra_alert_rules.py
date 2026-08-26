@@ -20,8 +20,7 @@ ALERTS = REPO / "infra/grafana/alerts.yaml"
 # Grafana's alert-rule UID column is `varchar(40)`, and the provisioning API's OpenAPI spec declares
 # `maxLength: 40`. A uid is IMMUTABLE once the rule exists, so an update never carries a new uid --
 # the length is therefore only ever tested at creation, and a too-long uid breaks exactly once, on
-# the run that first introduces it, which is when the diagnosis is hardest. (It is not that updates
-# skip a validation: they simply never present a fresh uid to validate.)
+# the run that first introduces it, which is when the diagnosis is hardest.
 _UID_MAX = 40
 
 # The provisioning API's enums. A value outside these is a 400, not a validation message.
@@ -135,17 +134,12 @@ NOT_A_FAULT_SIGNAL = {
     # alongside a process_start_time_seconds jump (a crash-restart), which needs the correlation,
     # not a raw count -- it stays that topic's work.
     "zcrypto_capture_reconnects_total",
-    # Cumulative gap seconds. BOTH of this exclusion's original grounds were falsified on 2026-07-27
-    # (T0101) and are rewritten rather than left standing, because as written they argue against the
-    # fix. It said the metric measured zero across all 24 series -- that ZERO WAS THE BLIND SPOT: the
-    # daemon booked nothing through a total 12-pair blackout on both hosts. And it said an open gap
-    # is covered twice over by the dead-man and the desync rule -- NEITHER saw it, because
-    # `is_healthy()` consults open gap windows and a connected-but-silent stream opened none.
-    # Spec 00073 makes the silence observable. No rule reads THIS counter, and none is owed: the
-    # paging half shipped 2026-08-05 on `zcrypto_capture_seconds_since_last_book_message` instead,
-    # which never touches `gap_monitor.is_healthy()` -- so a bad bar there costs a false page rather
-    # than darkening the dead-man fleet-wide on both hosts, which is the hazard that kept an
-    # unfitted threshold off this counter in the first place.
+    # Cumulative gap seconds. No rule reads THIS counter and none is owed: the paging half shipped
+    # 2026-08-05 on `zcrypto_capture_seconds_since_last_book_message` instead, which never touches
+    # `gap_monitor.is_healthy()` -- so a bad bar there costs a false page rather than darkening the
+    # dead-man fleet-wide, the hazard that kept an unfitted threshold off this counter. The blackout
+    # that falsified this exclusion's two original grounds (T0101) is told at the total-blackout
+    # rule's own test below, where it is what the aggregation assertion rests on.
     "zcrypto_capture_gap_seconds_total",
     # Engine intent and execution LEVELS, plus the cycle's own duration. Every value any of them can
     # take is legitimate -- a weight that moved, an order that was placed, a cycle that ran long -- so
@@ -338,8 +332,8 @@ _BACKLOG_STUCK = "zcrypto-ops-verify-replay-backlog-stuck"
 
 def test_the_backlog_stuck_rule_exists_and_fits_the_uid_column():
     """Presence, pinned separately so the shape tests below fail on their own subject rather than on
-    a `StopIteration` from the lookup helper. The 40-char ceiling is the same one that cost an
-    attended round-trip; this uid sits one character under it."""
+    a `StopIteration` from the lookup helper. This uid sits one character under the 40-char
+    ceiling."""
     assert _BACKLOG_STUCK in [r["uid"] for r in _rules()], "the re-verification backlog has no alert rule"
     assert len(_BACKLOG_STUCK) <= _UID_MAX, f"{len(_BACKLOG_STUCK)} chars -- the create call will 400"
 
@@ -687,11 +681,9 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
 
 # Empty by design. An entry here declares a threshold this file ships knowing it is provisional;
 # the paired staleness test refuses an entry whose rule no longer carries the marker, so a bar that
-# has been derived cannot leave its excuse behind. `zcrypto-capture-stream-silent` was the last
-# occupant, derived on 2026-08-05 from the gauge's WHOLE LIFE -- ~7.2 d (primary) / ~7.5 d
-# (secondary) of samples, not the 30 days the `[30d]` selector reads as, because the series only
-# started reaching Cloud with the 2026-07-29 converges. Re-derivation on a genuinely full 30 d
-# window is T0129; the bar itself is not provisional, its base is just younger than a month.
+# has been derived cannot leave its excuse behind. Last occupant: `zcrypto-capture-stream-silent`,
+# derived 2026-08-05. Its bar is not provisional -- its base is just younger than the `[30d]`
+# selector suggests, and T0129 carries the re-derivation with the measured sample counts.
 PROVISIONAL_THRESHOLDS: set[str] = set()
 
 _PROVISIONAL = "PROVISIONAL"
