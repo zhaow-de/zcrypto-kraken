@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "the next `access_ops` converge — one run of `site.yml --limit zaccess --tags access` applies it; nothing else is waiting on it"
+ripe_when: "the next `access_ops` converge — one run of `site.yml --limit zcrypto-ops --tags access` applies it; nothing else is waiting on it"
 ---
 
 # The NAS relay's FQDN swap is committed but not converged
@@ -20,10 +20,10 @@ Two reasons the drift is worth tracking rather than assuming:
 
 - The relay carries already-TLS'd DSM traffic Caddy forwards over the tunnel; a restart is a brief interruption of that path only, and nothing on the capture or trade paths touches it.
 - The FQDN resolves on the ops host today (the four archive-pull channels already address it by name), so the converge is not gated on a DNS change.
-- The monitoring path was deliberately kept off DNS: `zaccess-probe-ops.sh.j2` connects by IP and passes the FQDN as `-servername`, so the certificate is still validated by name while a resolution failure cannot silently drop `zaccess_tls_not_after_seconds` — that alert is `noDataState: OK`, and the certificate behind it is the one nothing renews.
+- The monitoring path was deliberately kept off DNS: `zaccess-probe-ops.sh.j2` connects by IP and passes the FQDN as `-servername`, so SNI still selects the right certificate (the probe itself verifies nothing — Caddy's `tls_server_name` validates this leg) while a resolution failure cannot silently drop `zaccess_tls_not_after_seconds` — that alert is `noDataState: OK`, and the certificate behind it is the one nothing renews.
 
 ## Suggested next steps
 
-- Run `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` (attended; it previews `--check --diff` and takes a typed confirm). Expect the two template tasks to report changed and the `restart zaccess-nas-proxy` handler to fire.
+- Run `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-ops --tags access` (attended; it previews `--check --diff` and takes a typed confirm). The `access_ops` role runs in the **ops-node** play, not the bridgehead's — `--limit zaccess` converges the wrong host and reports success. Expect ONE changed item (the `service` half of the two-item template loop; the `socket` half is untouched by the swap) and the `restart zaccess-nas-proxy` handler to fire.
 - Verify by outcome on `zcrypto-ops`: `systemctl show -p ExecStart zaccess-nas-proxy.service` names `z-home-storage.zhaow.pro:5001`, and the DSM UI still loads through the relay.
 - Re-true `docs/reference/fleet.md`'s socket-proxyd row to the FQDN in the same change, and close this topic.

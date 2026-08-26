@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: "the next attended, canary-gated engine converge window — the trigger this topic was opened on has FIRED and decided the option; what remains is shipping it"
+status: partial
+ripe_when: "ripe NOW for the code half — Option A is one line in `cli/engine/node.py::_data_client_config` and needs no deploy to write; only its delivery waits on the next attended, canary-gated engine converge"
 ---
 
 # The engine's market-data socket reconnects every ~14 s whenever it is idle
@@ -71,15 +71,17 @@ Kraken answers the keepalive with a text payload, which is why the 200 s run loo
 
 **Reproduction** is keyless and local — the data client is public, so no credentials and no IP whitelisting are needed. A data-only `LiveNode` (`exec_enabled=False` never reads credentials) reproduces the loop exactly: 5 timeouts in 70 s at the default.
 
-## Suggested next steps
+## Done so far
 
-**The deferral is discharged: Option A.** The first v2 boundary cycle after the converge journalled `cycle-20.json` with `started_at` 20:01:30.002Z and `completed_at` 20:01:41.862Z (2026-08-26) — 11.9 s, well inside `[B, B+30 min]`. The reconnect loop therefore costs cycle completion nothing: it is churn and noise, not breakage. Ship A; B stays written up as the better end-state, on its own evidence.
+- **The option is DECIDED: A.** The topic was opened deferring the choice until the first v2 boundary cycle showed whether the loop affects cycle completion. It does not. `cycle-20.json` records `started_at` 20:01:30.002Z and `completed_at` 20:01:41.862Z (2026-08-26) — 11.86 s against a 30-minute budget — so the reconnect loop is churn and noise, not breakage. The deciding input was read where it lives: `cycle-<HH>.json`'s `completed_at` under `<engine_state_dir>/journal/` on the engine host. Re-read it after any change here.
+- **Both options are written up with measurements** (below), so shipping is a transcription rather than a re-derivation, and B remains available on its own evidence rather than as a fallback.
+
+## Suggested next steps
 
 - **Option A — set `ws_idle_timeout_ms=0` on the data client** (`cli/engine/node.py::_data_client_config`). One line, no trading-behaviour change, reverts in one line. Gives up socket-level stalled-stream detection, whose *response* is to reconnect — which mid-order delays quotes by a further 3–5 s rather than helping; the executor's 30 s per-instrument guards are what actually govern behaviour and are unaffected. `0` is the network layer's own default; the adapter's 10000 assumes a subscribed client, which this one is not.
 - **Option B — hold a permanent subscription** so data always flows and the idle timeout becomes meaningful again. Strictly better end-state on two counts: it removes the 2.3–2.8 s subscribe→first-quote latency from every intent (against `_TICK_SECONDS = 5.0`), and it restores continuous observability of a socket that is otherwise a black box between cycles. Costs a live-trade-path behavioural change that, by the same standard spec `00100` D10 applied to `use_ws_trade`, needs its own evidence rather than riding on a churn fix.
 
 They compose: if B lands, `ws_idle_timeout_ms` is **restored to 10000**, because a permanently-subscribed client is the shape the adapter default assumes. A is the correct setting until B exists, not a step away from it.
 
-- **The deciding input has been read** — `cycle-<HH>.json`'s `completed_at` under `<engine_state_dir>/journal/` on the engine host, against `[B, B+30 min]`. It landed inside the window, so A is sufficient for now. Re-read it after any change here.
 - **B's latency benefit cannot be measured until the engine is armed**, which is itself an argument for taking A first and measuring B's payoff rather than assuming it.
 - Whichever lands, it ships on an attended, canary-gated engine converge — never a hot edit.
