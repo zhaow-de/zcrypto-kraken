@@ -23,7 +23,7 @@ Spec: `docs/specs/00100-nautilus-v2-migration-design.md`. Every `D<N>` below ref
 - **Trailer the reviewer at review time**, not at branch end — `Co-Authored-By:` first, `Reviewed-by:` last, amended onto the commits the review covered while they are still local.
 - **Review at each task's completion**, covering that task's commits, rather than one whole-branch pass at the end.
 - **Code comments and docstrings describe what the code does now.** No "v1 did X", no migration narrative, no before-and-after. Why it moved belongs in the commit message and the spec; a future reader of `cli/engine/` should not be able to tell a migration happened.
-- **Deployment is out of this plan's scope.** The deployable pin is a stable release (D1); nothing here converges anything.
+- **Deployment is out of this plan's scope.** D1 as amended makes the pinned nightly the deployable version, at probe scale; nothing here converges anything.
 
 ______________________________________________________________________
 
@@ -231,7 +231,7 @@ def test_the_strategys_order_id_tag_is_explicit_not_positional(tmp_path):
     config -- so registering a SECOND strategy silently changes this one's client-order-id prefix,
     which is visible at the venue. Pinned so a registration-order change is a red test."""
     strategy = ShadowStrategy(_config(tmp_path))
-    assert strategy.order_id_tag == "000"  # the value read off the live ledger in Step 1
+    assert strategy.order_id_tag == "000"  # the value read off a registered strategy in Step 1
 ```
 
 - [x] **Step 3: Make it pass** — pass `StrategyConfig(order_id_tag="000")`. Leave `external_order_claims` unset; the standing ban is on the token and on a non-`None` value, and both still hold.
@@ -442,13 +442,13 @@ Each of these is a real guard whose *mechanism* v2 removed. The hazard is repair
 - [x] **Step 2:** `infra/scripts/nautilus-logger-guard-probe.py` cannot run on v2 — and note `uvloop` left the lock with nautilus's other transitive dependencies, so its arm 3 (`import uvloop` inside the probe's `_TWO_NODES` source string) now fails on that too; the rewrite must re-derive the loop-selection premise, not just the logging one — `is_logging_initialized` does not exist. Re-express it against v2's logging surface or retire it with the reason recorded, and update T0085, which records the probe as discharged for the 1.231.0 bump.
 - [x] **Step 3:** Commit.
 
-**`test_pinned_version` was red from Task 4 and is now green on a different assertion — the routing moved, it was not dropped (Task 15 Step 1).** It asserted a hardcoded version, so it reddened at every bump; on a nightly pin that moves daily that becomes noise and gets rubber-stamped. It now checks the installed version against the version `pyproject.toml` pins, which catches a stale venv, a resolver surprise and the `===` local-segment trap, and stays green across bumps. Nothing about the money guard moved: `cli/engine/order-semantics-verified.json` is untouched, and the two refusals that read it — the converge assert and the runtime gate — are now the tripwire, met at the arming step. `tests/test_nautilus_adapter.py::test_the_arming_gate_consults_this_interpreter_and_the_committed_record` covers that refusal on the real interpreter with nothing injected.
+**`test_pinned_version` was red from Task 4 and is now green on a different assertion — the routing moved, it was not dropped (Task 15 Step 1).** It asserted a hardcoded version, so it reddened at every bump; on a nightly pin that moves daily that becomes noise and gets rubber-stamped. It now checks the installed version against the version `pyproject.toml` pins, which catches a stale venv, a resolver surprise and the `===` local-segment trap, and stays green across bumps. Nothing about the money guard moved: the two refusals that read `cli/engine/order-semantics-verified.json` — the converge assert and the runtime gate — are the tripwire, met at the arming step, and the pinned version reaches that record only through the attended pass Task 15 sequences. `tests/test_nautilus_adapter.py::test_the_arming_gate_consults_this_interpreter_and_the_committed_record` covers that refusal on the real interpreter with nothing injected.
 
 ### Task 15: Sequencing the arming pass (D9, D11)
 
 Nothing here arms anything; this task makes the arming pass *possible* and correctly ordered.
 
-**The arming pass is gated on reworking the probe harness — not on upstream.** Researched against upstream's own corpus: every live example calls the blocking `node.run()`, none calls `run_async`, none uses a thread, and every order action sits inside a strategy callback. A node installs its message bus and registries into thread-local storage for the thread that drives it, which is why the unsendable types abort — a driver thread has no bus at all. `LiveNodeHandle` is deliberately sendable and is the only sanctioned cross-thread surface; it stops the node and nothing else.
+**The arming pass was gated on reworking the probe harness — not on upstream.** Researched against upstream's own corpus: every live example calls the blocking `node.run()`, none calls `run_async`, none uses a thread, and every order action sits inside a strategy callback. A node installs its message bus and registries into thread-local storage for the thread that drives it, which is why the unsendable types abort — a driver thread has no bus at all. `LiveNodeHandle` is deliberately sendable and is the only sanctioned cross-thread surface; it stops the node and nothing else.
 
 So the harness runs on `node.run()` with the sequence driven from inside callbacks, as an explicit state machine rather than as coroutines a timer resumes. A trampoline preserving the `async def` bodies behind a 100 ms timer was built first and measured working, and was then discarded: its only purpose was keeping a foreign shape alive, and the polling loop inside it survived as a shape the library never asks for. What replaced it is a step queue plus one waiting primitive — a predicate, a clock alert and a continuation — where an already-satisfied wait continues immediately and arms nothing.
 
@@ -457,13 +457,13 @@ So the harness runs on `node.run()` with the sequence driven from inside callbac
 - [x] **Step 1: Stop bumping the pin** — declared in the runbook, `order-semantics-verification.md` §1.6, and pointed at from the intro. The arming record does exact string membership, so any bump after the attended pass silently disarms the engine: freeze before the pass, and treat any later bump as a decision to re-run it or revert the pin.
 - [x] **Step 2:** The record's granularity is settled in `order-semantics-verification.md` §2.1 — exact complete strings, matched exactly, no family or prefix match, and the string recorded is the one the *interpreter* reports. The version-specific instructions are re-derived (§1.3, §1.4, §4's nonce note, §5.2's 4b row, §5.3's positions note, §7.4's write-up), and the two harness strings that stated an earlier build's readings as this run's expectations now state the requirement and mark the mapping as owed. Also fixed here: the converge assert read a `===` pin as `=<version>`, so it could never be satisfied again once a pass legitimately landed.
 - [x] **Step 3: Take a startup baseline BEFORE setting the alert's threshold.** Cannot execute here — it needs a real disarmed startup against the venue. Landed as `engine.md`'s pre-probe step 4, first sub-item, with what to measure and where to write it, and registered on [[T0152]], whose `ripe_when` already names the first v2 converge.
-- [x] **Step 4:** The unmatched-external alert is owed **after** the metric's first record — `engine.md` pre-probe step 4, second sub-item, explicitly ordered behind the baseline.
-- [x] **Step 5: Do not touch `order-semantics-verified.json`.** Untouched; verified absent from the branch diff.
+- [x] **Step 4:** The unmatched-external alert is owed **after** the healthy-boot baseline, not merely after the metric's first sample — `engine.md` pre-probe step 4, second sub-item, explicitly ordered behind the baseline.
+- [x] **Step 5: `order-semantics-verified.json` gains a version only once that version's attended pass has actually run.** It has. The attended ~€0.20 pass ran 2026-08-26 against the live Kraken account and PASSED on all six probes, so the record carries `2.0.0rc4.dev20260825` beside its `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md` write-up, and **both guards clear the pinned version** — constructed, not inferred: the runtime gate resolves the running interpreter's `2.0.0rc4.dev20260825` as recorded, and the engine role's arming assert evaluates TRUE against the committed `pyproject.toml` pin and the committed record with `exec_armed = true` rendered, while a control that drops the pinned version from the record makes it refuse. The pin is frozen at that string until the engine is armed on it.
 - [x] **Step 6:** Commit.
 
 ### Task 16: Hand D2's delivery leg to the arming checklist — it cannot execute here
 
-The publish leg is established from source and the delivery leg in a backtest, but the join needs a genuine venue-sourced external order, which needs live Kraken reconciliation. This plan converges nothing, D1 forbids deploying a development wheel, and the exec key is IP-bound to the engine host — so no step in this plan can reach it. Pretending otherwise would produce a step that is silently skipped or improvised into a non-equivalent local check.
+The publish leg is established from source and the delivery leg in a backtest, but the join needs a genuine venue-sourced external order, which needs live Kraken reconciliation. This plan converges nothing, and the exec key is IP-bound to the engine host — so no step in this plan can reach it. Pretending otherwise would produce a step that is silently skipped or improvised into a non-equivalent local check.
 
 - [x] **Step 1:** Confirm the obligation is registered as `T0152` with a `ripe_when` naming the first v2 converge, and that its index bullet reflects it. Registration and this plan's closeout travel together — prose in a plan is never a deferral's only home.
 - [ ] **Step 2:** State the residual plainly in the PR body: D2 merges with its publish leg proven from source and its delivery leg proven only in a backtest. The fallback if the join fails is known and cheap — Cache polling on the executor's existing 5-second tick.
@@ -474,5 +474,5 @@ The publish leg is established from source and the delivery leg in a backtest, b
 
 - [x] **Step 1:** `docs/reference/data-catalog*.md` — no dataset change; confirm and move on.
 - [x] **Step 2:** Update T0085's nautilus sub-item and its `ripe_when`, which still names the cancelled 1.231.0 converge.
-- [x] **Step 3:** Append the iterations-history entry via the `iteration-closeout` skill, routed to the Phase-6 changelog. Re-verify every status claim against the full branch log immediately before PR-open.
+- [x] **Step 3:** Append the iterations-history entry via the `iteration-closeout` skill, routed to the Phase-6 changelog. **Re-verify every status claim against the full branch log immediately before PR-open** — the first pass was itself overtaken, by the commits that landed after it (the attended pass, D1's amendment, D15, D16 and both topic closures), which is exactly the failure this step exists to prevent. It has been re-run against the finished branch. Anything that lands after this owes it again.
 - [x] **Step 4:** Commit.
