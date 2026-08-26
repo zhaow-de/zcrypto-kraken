@@ -2244,8 +2244,7 @@ rules:
       # dead, or the container gone) -- not a quiet host, since the poller runs continuously on a
       # ~5-min cycle. `or on() vector(0)` keeps the query returning data while intact.
       #
-      # `by (host)` is for the notification's label line and is INERT at fire time -- the fire path is
-      # the unlabelled `or on() vector(0)` arm -- so the summary names host and container literally.
+      # `by (host)` is inert at fire time -- see `zcrypto-ops-log-pipeline-dead` above for why.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 21600, to: 0}
@@ -2393,8 +2392,7 @@ rules:
       # echoes carry no level label, so a level-filtered query would false-fire during a
       # pull-failure streak. 26h = a full day of hourly runs plus headroom.
       #
-      # `by (host)` is for the notification's label line and is INERT at fire time -- the fire path is
-      # the unlabelled `or on() vector(0)` arm -- so the summary names host and container literally.
+      # `by (host)` is inert at fire time -- see `zcrypto-ops-log-pipeline-dead` above for why.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 93600, to: 0}
@@ -3761,14 +3759,8 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
-          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
-          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
-          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
-          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
-          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
-          # so it would need noDataState: OK and would then park green if the datasource itself went
-          # away.
+            # Same SILENCE shape as `zcrypto-alloy-dark-nas` above, including why `count()` and not
+            # `sum()`, and why the `or on() vector(0)` fallback is what lets noDataState stay Alerting.
           expr: >-
             count(up{host="ops"}) or on() vector(0)
           instant: true
@@ -3811,14 +3803,8 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
-          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
-          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
-          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
-          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
-          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
-          # so it would need noDataState: OK and would then park green if the datasource itself went
-          # away.
+            # Same SILENCE shape as `zcrypto-alloy-dark-nas` above, including why `count()` and not
+            # `sum()`, and why the `or on() vector(0)` fallback is what lets noDataState stay Alerting.
           expr: >-
             count(up{host="zcrypto"}) or on() vector(0)
           instant: true
@@ -3861,14 +3847,8 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
-          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
-          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
-          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
-          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
-          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
-          # so it would need noDataState: OK and would then park green if the datasource itself went
-          # away.
+            # Same SILENCE shape as `zcrypto-alloy-dark-nas` above, including why `count()` and not
+            # `sum()`, and why the `or on() vector(0)` fallback is what lets noDataState stay Alerting.
           expr: >-
             count(up{host="zcrypto-red"}) or on() vector(0)
           instant: true
@@ -3911,14 +3891,8 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
-          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
-          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
-          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
-          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
-          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
-          # so it would need noDataState: OK and would then park green if the datasource itself went
-          # away.
+            # Same SILENCE shape as `zcrypto-alloy-dark-nas` above, including why `count()` and not
+            # `sum()`, and why the `or on() vector(0)` fallback is what lets noDataState stay Alerting.
           expr: >-
             count(up{host="zaccess"}) or on() vector(0)
           instant: true
