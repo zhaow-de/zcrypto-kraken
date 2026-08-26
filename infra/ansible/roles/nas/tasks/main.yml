@@ -218,7 +218,7 @@
 # with -- a drift the deployed-file assert cannot see. Added for T0048 (Alloy's docker tailer kept
 # following a DEAD container id after a recreate); that mechanism is RETIRED here -- config.alloy
 # runs `loki.source.journal` only, and the sole `discovery.docker` left in it is a comment.
-- name: apply — restart alloy (T0048; recreated containers' logs stop shipping until it restarts)
+- name: apply — restart alloy (re-reads the config.alloy this converge deployed)
   ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose restart alloy
   when: nas_apply_compose | default(false) | bool
   changed_when: true
