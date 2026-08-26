@@ -150,6 +150,63 @@ def test_python_string_literals_carry_no_internal_vocabulary(path):
     )
 
 
+def _ansible_task_names() -> list[tuple[str, int, str]]:
+    out = [
+        (str(p.relative_to(REPO)), i, line)
+        # An ansible task `name:` is printed by every play and by every `--check --diff` preview an
+        # operator reads before confirming a converge, so it is as operator-visible as
+        # `Description=`. Only the `- name:` list-item form is a task name; a bare `name:` at
+        # deeper indent is a module argument (`ansible.builtin.systemd: name: alloy`) and is not
+        # printed. Per .claude/rules/operator-facing-text.md, a new operator-visible surface joins
+        # this list AND the test together.
+        for p in (REPO / "infra/ansible").rglob("*.yml")
+        for i, line in _assembled_task_names(p.read_text(encoding="utf-8", errors="replace").splitlines())
+    ]
+    assert out, "found no ansible task names — the glob is broken, not the tree clean"
+    return sorted(out)
+
+
+def _assembled_task_names(lines: list[str]):
+    """Yield `(lineno, full name value)` per task, ASSEMBLING folded/literal scalars.
+
+    A `- name: >-` header carries its value on the CONTINUATION lines, and ansible renders the
+    assembled value into the play log — so a single-line check reads only the vocabulary-free
+    `>-` marker and passes a leaking name as clean (review catch: a folded Caddyfile task name
+    carried `D14` invisibly). Plain single-line names pass through unchanged."""
+    header = re.compile(r"^(\s*)-\s+name:\s*(.*\S)\s*$")
+    for i, line in enumerate(lines, 1):
+        m = header.match(line)
+        if not m:
+            continue
+        value = m.group(2)
+        if re.fullmatch(r"[>|][+-]?", value):
+            # The block ends at the first nonblank line indented LESS than the block's own content
+            # — measured from the first continuation line, not from the `-`: the task's module keys
+            # sit between those two depths, and bounding on the `-` swallowed them into the value.
+            block, content_indent = [], None
+            for cont in lines[i:]:
+                if cont.strip() == "":
+                    continue
+                cur = len(cont) - len(cont.lstrip())
+                if content_indent is None:
+                    content_indent = cur
+                if cur < content_indent:
+                    break
+                block.append(cont.strip())
+            value = " ".join(block)
+        yield i, value
+
+
+@pytest.mark.parametrize("unit,lineno,line", _ansible_task_names(), ids=lambda v: v if isinstance(v, str) else "")
+def test_ansible_task_names_carry_no_internal_vocabulary(unit, lineno, line):
+    """A task `name:` is the line an operator reads in the play log and in every converge preview."""
+    hits = _leaks(line)
+    assert not hits, (
+        f"{unit}:{lineno} leaks {hits} into the play log — keep the semantic content, move the "
+        f"token to the comment above the task: {line.strip()!r}"
+    )
+
+
 def _systemd_descriptions() -> list[tuple[str, int, str]]:
     out = [
         (str(p.relative_to(REPO)), i, line)

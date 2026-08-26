@@ -5,7 +5,7 @@
 # Fleet users/groups (spec 00057): zcrypto-data (renamed from kraken-capture, uid kept) SERVES the
 # NAS capture pull via an rrsync forced-command key, so it needs a login-capable shell. DSM rejects a
 # custom shell, but these hosts are Debian, so the same rrsync-only wrapper the ops node uses works.
-- name: install the rrsync-only login shell for zcrypto-data (spec 00057)
+- name: install the rrsync-only login shell for zcrypto-data
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/files/rrsync-shell"
     dest: "{{ capture_rrsync_shell }}"

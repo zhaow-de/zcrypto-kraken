@@ -35,14 +35,14 @@
 # and gates notification on the AGGREGATE changed result, so a service-only edit would also fire the
 # socket handler -- and the service's `Requires=` propagates that restart, bouncing the live relay
 # twice per converge. Split, each half notifies only what it can apply.
-# spec 00075 D6 -- systemd-socket-proxyd, no NAT/forwarding anywhere.
-- name: nas relay socket unit
+# spec 00075 D6.
+- name: nas relay socket unit (systemd-socket-proxyd, no NAT/forwarding)
   ansible.builtin.template:
     src: zaccess-nas-proxy.socket.j2
     dest: /etc/systemd/system/zaccess-nas-proxy.socket
     mode: '0644'
   notify: [reload systemd, restart zaccess-nas-proxy.socket]
-- name: nas relay service unit
+- name: nas relay service unit (relays the socket above to the NAS on the home LAN)
   ansible.builtin.template:
     src: zaccess-nas-proxy.service.j2
     dest: /etc/systemd/system/zaccess-nas-proxy.service
@@ -51,7 +51,8 @@
 - name: nas relay socket enabled
   ansible.builtin.systemd: {name: zaccess-nas-proxy.socket, enabled: true, state: started, daemon_reload: true}
 
-- name: managed ~/.tmux.conf for zhaow (D15 -- hand edits are overwritten by design)
+# spec 00075 D15.
+- name: managed ~/.tmux.conf for zhaow (hand edits are overwritten by design)
   ansible.builtin.template:
     src: tmux.conf.j2
     dest: /home/zhaow/.tmux.conf
@@ -80,7 +81,8 @@
 # the exact version is absent -- e.g. after a node upgrade moved the global bin -- which re-triggers
 # the install for the new node. community.general.npm was considered but a user-scope global install
 # needs nvm's node prefix on PATH and the module has no "source nvm.sh first" hook.
-- name: agentboard -- is the pinned version present under nvm's current node? (spec 00075 D13, G2)
+# spec 00075 D13, gate G2.
+- name: agentboard -- is the pinned version present under nvm's current node?
   ansible.builtin.command:
     cmd: >-
       bash -c 'source {{ access_ops_agentboard_nvm_sh }} &&
@@ -119,7 +121,8 @@
     src: zaccess-agentboard-start.sh.j2
     dest: /usr/local/sbin/zaccess-agentboard-start
     mode: '0755'
-- name: agentboard unit rendered (spec 00075 D13 -- G2 web terminal, tunnel-bound)
+# spec 00075 D13, gate G2.
+- name: agentboard unit rendered (web terminal, tunnel-bound)
   ansible.builtin.template:
     src: zaccess-agentboard.service.j2
     dest: /etc/systemd/system/zaccess-agentboard.service
@@ -130,7 +133,7 @@
 # set by hand. Idempotent both ways -- default (false) converges to disabled+stopped every time
 # (so a reboot before the spike passes cannot auto-start it via WantedBy=), and once the owner
 # flips the flag true (after the spike passes), converges keep it enabled+started.
-- name: agentboard unit state — gated on the D13 spike (access_ops_agentboard_live)
+- name: agentboard unit state — gated on the spike (access_ops_agentboard_live)
   ansible.builtin.systemd:
     name: zaccess-agentboard.service
     enabled: "{{ access_ops_agentboard_live | bool }}"

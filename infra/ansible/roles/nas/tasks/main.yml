@@ -138,7 +138,8 @@
     group: zcrypto
     mode: "2775"
 
-- name: deploy the vendored rrsync jailer (the NAS ships no rrsync -- rsync 3.4.1's python3 rrsync, T0056)
+# T0056.
+- name: deploy the vendored rrsync jailer (the NAS ships no rrsync -- rsync 3.4.1's python3 rrsync)
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../nas/rrsync"
     dest: "{{ nas_stack_dir }}/rrsync"
