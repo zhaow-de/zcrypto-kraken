@@ -13,7 +13,7 @@ The IP→FQDN swap changed `roles/access_ops/templates/zaccess-nas-proxy.service
 
 Two reasons the drift is worth tracking rather than assuming:
 
-- **`Accept=no` with no `--exit-idle-time`.** One long-lived `systemd-socket-proxyd` instance holds the socket, so `daemon-reload` alone never replaces its `ExecStart` — the unit would keep relaying to the IP indefinitely after a converge that merely rewrote the file. The role now carries a `restart zaccess-nas-proxy` handler notified from the template task, so the class is closed; this topic tracks the one deploy that still owes the run.
+- **`Accept=no` with no `--exit-idle-time`.** One long-lived `systemd-socket-proxyd` instance holds the socket, so `daemon-reload` alone never replaces its `ExecStart` — the unit would keep relaying to the IP indefinitely after a converge that merely rewrote the file. The role now carries a `restart zaccess-nas-proxy.socket` + `restart zaccess-nas-proxy` handler pair, each notified from its own template task rather than from a shared two-item loop — a loop assigns its whole notify list to every item and gates on the aggregate result, so it cannot notify them selectively. The class is closed; this topic tracks the one deploy that still owes the run.
 - **`fleet.md` must not run ahead of the fleet.** The row was briefly written to the FQDN before any converge and has been put back to the IP. It flips at the converge, not before.
 
 ## Findings so far
@@ -24,6 +24,6 @@ Two reasons the drift is worth tracking rather than assuming:
 
 ## Suggested next steps
 
-- Run `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-ops --tags access` (attended; it previews `--check --diff` and takes a typed confirm). The `access_ops` role runs in the **ops-node** play, not the bridgehead's — `--limit zaccess` converges the wrong host and reports success. Expect ONE changed item (the `service` half of the two-item template loop; the `socket` half is untouched by the swap) and the `restart zaccess-nas-proxy` handler to fire.
+- Run `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-ops --tags access` (attended; it previews `--check --diff` and takes a typed confirm). The `access_ops` role runs in the **ops-node** play, not the bridgehead's — `--limit zaccess` converges the wrong host and reports success. Expect **two** changed items: the relay's `service` unit (the `socket` unit is untouched by the swap) and the ops-side probe script, whose cert-probe comment this branch also rewrote. Two handlers fire — `reload systemd` and `restart zaccess-nas-proxy`; the probe-script task deliberately notifies nothing, since the timer reads the script fresh on its next tick.
 - Verify by outcome on `zcrypto-ops`: `systemctl show -p ExecStart zaccess-nas-proxy.service` names `z-home-storage.zhaow.pro:5001`, and the DSM UI still loads through the relay.
 - Re-true `docs/reference/fleet.md`'s socket-proxyd row to the FQDN in the same change, and close this topic.

@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "ripe NOW for the code half — Option A is one line in `cli/engine/node.py::_data_client_config` and needs no deploy to write; only its delivery waits on the next attended, canary-gated engine converge"
+ripe_when: "no precondition for the code half — Option A is one line in `cli/engine/node.py::_data_client_config`, writable on any branch; its delivery rides the next attended, canary-gated engine converge"
 ---
 
 # The engine's market-data socket reconnects every ~14 s whenever it is idle
@@ -77,6 +77,8 @@ Kraken answers the keepalive with a text payload, which is why the 200 s run loo
 - **Both options are written up with measurements** (below), so shipping is a transcription rather than a re-derivation, and B remains available on its own evidence rather than as a fallback.
 
 ## Suggested next steps
+
+**Remainder — ship Option A.** Set `ws_idle_timeout_ms=0` in `cli/engine/node.py::_data_client_config`, on its own branch (not a deploy branch — that would make it an omnibus PR). It reaches the fleet on the next attended, canary-gated engine converge; no converge is owed for it alone. Both options stay written up below so B remains available on its own evidence.
 
 - **Option A — set `ws_idle_timeout_ms=0` on the data client** (`cli/engine/node.py::_data_client_config`). One line, no trading-behaviour change, reverts in one line. Gives up socket-level stalled-stream detection, whose *response* is to reconnect — which mid-order delays quotes by a further 3–5 s rather than helping; the executor's 30 s per-instrument guards are what actually govern behaviour and are unaffected. `0` is the network layer's own default; the adapter's 10000 assumes a subscribed client, which this one is not.
 - **Option B — hold a permanent subscription** so data always flows and the idle timeout becomes meaningful again. Strictly better end-state on two counts: it removes the 2.3–2.8 s subscribe→first-quote latency from every intent (against `_TICK_SECONDS = 5.0`), and it restores continuous observability of a socket that is otherwise a black box between cycles. Costs a live-trade-path behavioural change that, by the same standard spec `00100` D10 applied to `use_ws_trade`, needs its own evidence rather than riding on a churn fix.
