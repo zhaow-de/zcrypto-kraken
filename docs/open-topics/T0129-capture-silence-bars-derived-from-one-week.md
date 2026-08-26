@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "`count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` reads >= 42000 on both capture hosts"
+ripe_when: "ripe NOW — the 30 d base is unreachable, so nothing is being waited for. Decide: re-derive against the 14 d maximum the platform retains, or keep the bars and record the base they rest on."
 ---
 
 # Both capture silence bars are derived from one week of data, not thirty days
@@ -9,7 +9,7 @@ ripe_when: "`count_over_time(zcrypto_capture_seconds_since_last_book_message[30d
 
 `zcrypto-capture-all-streams-silent` (fleet-wide, `min by (host) (…) > 120`, critical) and `zcrypto-capture-stream-silent` (per-pair, `> 300`, warning) were both derived on 2026-08-05 from `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])`. The `[30d]` selector was read as thirty days of evidence. It is not: `zcrypto_capture_seconds_since_last_book_message` only started reaching Grafana Cloud with the 2026-07-29 capture converges (secondary 00:52:53Z, primary 07:36:13Z, image `99faf16514e3` — `docs/reference/fleet-pins.md`), so the selector maxed over the series' entire life and no more. `count_over_time(…[30d])` at the same moment returned **10435** samples on the primary and **10838** on the secondary — at one sample per 60 s, **7.24 d** and **7.53 d**.
 
-Both bars stay where they are. What is owed is the re-derivation once the window the derivation claimed actually exists.
+Both bars stay where they are. What is owed is a DECISION, not a wait: the window the derivation claimed cannot exist on this platform (see the retention ceiling below), so the re-derivation can only ever run against the 14 days actually retained.
 
 ## Why this matters
 
@@ -26,10 +26,11 @@ The rules sit on the unbackfillable capture path, where both error directions co
 - **Daily min-by-host maxima over the whole life** (primary): 30.261266 (07-29), then 2.6418, 1.013259, 0.18049, 1.068947, 4.328992, 10.380023. Every day but the event day sits between 0.18 s and 10.4 s.
 - **What 30 s is in the daemon, since the per-pair bar's warrant leans on it**: `_staleness_loop` calls `monitor.start_silence` and nothing else — no resubscribe, no reconnect. `_desync_recovery_loop` (the only path that resubscribes or forces a reconnect) skips every pair whose book is not `desynced`, and `gap_monitor.is_healthy()` deliberately ignores silence, so a silent-but-synced stream does not even withhold the dead-man ping. It never self-heals at any age.
 
-- **Why the threshold is ~42,000 samples.** A genuinely full 30-day window is 43,200 samples at one per 60 s, less scrape misses. At the 2026-08-05 derivation the query returned 10,435 / 10,838; on 2026-08-23 it reads 20,188 on both hosts, so it is tracking as designed. It is measured rather than dated on purpose — a capture outage or a gauge re-ship pushes it back on its own.
+- **The 42,000-sample threshold was unreachable from the start, and the series had already plateaued when this topic read it as progress.** A full 30 d is 43,200 samples at one per 60 s. The readings: 10,435 / 10,838 at the 2026-08-05 derivation, 20,188 on 2026-08-23 — recorded here as "tracking as designed" — and **20,169 on 2026-08-26, which is LOWER**. It was not tracking; it had hit a ceiling and the window was sliding. Measured the same day: `[14d]` = **20,160**, an exactly complete 14 days, while `[21d]` and `[30d]` both return 20,169 — the same ~14 days plus 9 stragglers at the boundary.
+- **The cause is the plan, not the fleet: Grafana Cloud's free tier retains a maximum of 14 days.** No `[30d]` selector can ever return more than ~20,160 samples here, so `>= 42000` could never fire and the "genuinely full 30 d window" this topic was waiting for does not exist. The alert rule's own comment came close — "THE BASE IS ONE WEEK, NOT A MONTH, which the `[30d]` selector hides" — but assumed the window would fill in time. It cannot.
 
 ## Suggested next steps
 
-- *(autonomous, when the trigger fires)* Re-run the derivation on the full window and record both outcomes, including "unchanged": `count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` first (to confirm the window is genuinely full), then `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per host and `max_over_time(min by (host) (zcrypto_capture_seconds_since_last_book_message)[30d:1m])`. Exclude any interval containing a known fleet-wide event before reading the *natural* per-pair maximum — the 2026-07-29 event is the reason the raw per-pair maxima were misread once already.
+- *(needs a ruling first: re-derive on 14 d, or keep the bars and record the base)* If re-deriving, run it against `[14d]` — the maximum retained — and record both outcomes, including "unchanged". Confirm the window is complete with `count_over_time(zcrypto_capture_seconds_since_last_book_message[14d])` (≈20,160 is full), then `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per host and `max_over_time(min by (host) (zcrypto_capture_seconds_since_last_book_message)[30d:1m])`. Exclude any interval containing a known fleet-wide event before reading the *natural* per-pair maximum — the 2026-07-29 event is the reason the raw per-pair maxima were misread once already.
 - *(autonomous, same pass)* If either bar moves, move every surface that carries it in the same commit: the evaluator in `infra/grafana/alerts.yaml`, that rule's `for`, its summary's stated notice period, the D11 row in `docs/specs/00084-dashboards-and-notifications-design.md`, and `data-integrity-dashboard.json` panel 102 (both its threshold step and its description). The per-pair number lives on four surfaces and the panel is the one previously missed.
 - *(autonomous, same pass)* Re-check whether the 2026-07-29 fleet-wide silence has a sibling. A second instance turns an unexplained one-off into a distribution with a shape, which is what the 4× margin is currently standing in for; a full month with no repeat is itself the evidence that the margin can be reasoned about rather than guessed.
