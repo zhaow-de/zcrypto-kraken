@@ -4858,6 +4858,7 @@ def _nautilus_standins():
         ("StubCache", StubCache(), Cache, _STUB_CACHE_PLUMBING),
         ("_FlakyOrdersCache", _FlakyOrdersCache(), Cache, _STUB_CACHE_PLUMBING | {"calls"}),
         ("_PositionReadFails", _PositionReadFails(), Cache, _STUB_CACHE_PLUMBING | {"broken"}),
+        ("_UnreadableOrderCache", _UnreadableOrderCache(), Cache, _STUB_CACHE_PLUMBING | {"fail_order_reads", "refused"}),
         ("StubOrderFactory", StubOrderFactory(), OrderFactory, frozenset({"_n"})),
         (
             "StubClient",
@@ -4891,3 +4892,23 @@ def test_no_stub_in_this_file_offers_a_name_its_real_nautilus_type_lacks():
         if stale:
             violations.append(f"{label}'s plumbing list exempts {stale}, which {real.__name__} DOES carry -- check them instead")
     assert violations == [], "; ".join(violations)
+
+
+def test_the_offers_walk_reaches_every_stub_the_fidelity_table_points_at_it():
+    """`_nautilus_standins` is the entire reach of the guard above, and tests/test_engine_stub_fidelity.py's
+    table is what CLAIMS that guard covers a given stub. Nothing joined the two: the table asks only
+    whether the guard's NAME exists somewhere in the engine suite, never whether it iterates the stub
+    the row is about. A stub can therefore wear the claim while sitting outside the list -- measured,
+    not hypothetical: a fabricated accessor on a cache stub in exactly that position survived a
+    mutation probe with the whole suite green.
+
+    The join, as a set equality both ways. A table row the walk omits is coverage claimed and not
+    delivered; a walked stub the table does not point here is a library stand-in nobody classified.
+    Imported rather than restated: the fidelity module imports none of what it classifies, so
+    reading it from here costs no library import and cannot be satisfied by a copy that drifts."""
+    from test_engine_stub_fidelity import _OFFERS_EXECUTOR, TABLE
+
+    named = {name for name, entry in TABLE[Path(__file__).name].items() if _OFFERS_EXECUTOR in entry.guards}
+    assert len(named) > 5, f"the table points only {sorted(named)} at this guard -- the join is checking nothing"
+    walked = {label for label, *_ in _nautilus_standins()}
+    assert named == walked, f"{sorted(named ^ walked)} is claimed on one side of the join and absent from the other"
