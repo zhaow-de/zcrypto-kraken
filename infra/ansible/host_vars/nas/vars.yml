@@ -114,9 +114,16 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # the day unclean, and ZERO the ratified streak with the engine deploy fully correct. Converging
 # ahead is safe because every existing record is v1 and this image loads {1, 2} -- verified by
 # execution in the pulled image, not inferred from the tag.
-# Previous pin: 620114511f19 -- verified RESIDENT on the NAS at the re-pin, and verified as the
-# actually-running digest (the row that recorded it said "running digest unverified"; it is now).
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:5f890c26237af99ad37ae1b7fe884c4d33476d285774be90cc8c909b3ed049a1
+# Previous pin: 5f890c26237a -- verified RESIDENT on the NAS at the re-pin.
+# This re-pin carries the nautilus v2 migration. It is FINGERPRINT-INVALIDATING: seven modules inside
+# `_replay_code_paths()`'s transitive closure changed (command, execgate, execledger, executor, node,
+# tracking, venuestate), so gate-export replays the WHOLE journal cold. Size the window against the
+# measured 2490 s, never the ~627 s smaller-journal figure.
+# Schema is unaffected: SCHEMA_VERSION stays 2, journal.py and cycle.py are untouched by the merge,
+# and 00091's `nav`/`held` widening is additive within schema 2 (both Optional, defaulting None), so
+# the reader tolerates them. The NAS-converges-FIRST order below is kept anyway -- it costs nothing,
+# and being wrong about a widening zeroes a ratified streak with the engine deploy fully correct.
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ec71ecac77566483acca711131459701f16e7fac8d9c60790b6bec126251ce7c
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the same
 # trap class the committed pin kills.
 # Alloy v1.18.0, published 2026-07-20. Previous pin: 4f6ddc56ffdc (v1.17.1).
