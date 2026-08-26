@@ -1851,9 +1851,19 @@ class ProbeExecutor:
             # minted, because the report carries none -- so it is a fill that HAPPENED, and its row,
             # its quantity credit and its published fill are all owed for money that moved: no fill
             # without a record. Dropping the credit would also make the next resubmission over-ask
-            # by exactly that quantity, which is this same double exposure in the other direction. A
-            # fill that did not happen is caught where it already was: the fill-time trips above,
-            # and the post-terminal position reconciliation.
+            # by exactly that quantity, which is this same double exposure in the other direction.
+            #
+            # What covers a fill that did NOT happen is narrower than it looks, and naming the limit
+            # is the point. Reconciliation tops an order up to the venue report's CUMULATIVE
+            # quantity and infers nothing unless the report exceeds what the order already holds, so
+            # a stale or replayed report cannot over-report; upstream's `check_overfill`, with
+            # `allow_overfills` False, refuses an application past the order's own quantity; and the
+            # fill-time trips above latch on anything past the quantity the row was submitted for.
+            # `_reconcile_terminal` is NOT one of them: a minted fill reaches the order and the Cache
+            # before it is dispatched, so it moves `active.filled` and the strategy-scoped position
+            # that comparison holds it against by the same amount, and the check passes. A phantom
+            # INSIDE the remaining quantity, born of a venue misreport, is past every guard this
+            # process has.
             self._update_row(active, state="ambiguous", event=payload)
             self._strand_ambiguous(active, f"{name} was reconciled, not received -- the venue never answered")
             return
