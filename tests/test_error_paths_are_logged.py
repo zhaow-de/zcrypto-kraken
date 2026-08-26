@@ -7,7 +7,7 @@ excepthook — carries no timestamp and no level, so Alloy never labels it and t
 `NAS · archive-pull ERROR logs` rule cannot see it. The archive path is unbackfillable;
 a detector that stays green while the thing it watches is broken is worse than none.
 
-See docs/open-topics/T0041-archive-pull-failures-do-not-page.md.
+See docs/open-topics/archive/T0041-archive-pull-failures-do-not-page.md.
 """
 
 from __future__ import annotations

@@ -141,8 +141,11 @@ NOT_A_FAULT_SIGNAL = {
     # daemon booked nothing through a total 12-pair blackout on both hosts. And it said an open gap
     # is covered twice over by the dead-man and the desync rule -- NEITHER saw it, because
     # `is_healthy()` consults open gap windows and a connected-but-silent stream opened none.
-    # Spec 00073 makes the silence observable; alerting on it is deliberately deferred to T0105,
-    # since an unfitted threshold in `is_healthy()` darkens the dead-man fleet-wide on both hosts.
+    # Spec 00073 makes the silence observable. No rule reads THIS counter, and none is owed: the
+    # paging half shipped 2026-08-05 on `zcrypto_capture_seconds_since_last_book_message` instead,
+    # which never touches `gap_monitor.is_healthy()` -- so a bad bar there costs a false page rather
+    # than darkening the dead-man fleet-wide on both hosts, which is the hazard that kept an
+    # unfitted threshold off this counter in the first place.
     "zcrypto_capture_gap_seconds_total",
     # Engine intent and execution LEVELS, plus the cycle's own duration. Every value any of them can
     # take is legitimate -- a weight that moved, an order that was placed, a cycle that ran long -- so

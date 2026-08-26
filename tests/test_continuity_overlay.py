@@ -182,8 +182,8 @@ def _column(out: str, prefix: str, field: str) -> str:
 def test_column_reads_blank_cells_on_unmeasured_and_total_rows(tmp_path, capsys, monkeypatch):
     """`_column` is now load-bearing for this file too (T0097 Finding 3): a `str.split()`-based
     version misreads an UNMEASURED row's blank `gap_s` cell as its NEXT non-blank cell's value, and
-    raises `IndexError` on the TOTAL row (which has two blank cells of its own) -- exactly what
-    Task 4's planned TOTAL-row lookups need to not crash on."""
+    raises `IndexError` on the TOTAL row (which has two blank cells of its own) -- exactly what this
+    file's own TOTAL-row lookups, such as `_column(out, "TOTAL", "tail")` above, need to survive."""
     raw = tmp_path / "raw"
     _dense_stream(raw, "BTC/EUR")
     _write_hour(raw, "THIN/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
