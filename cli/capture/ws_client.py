@@ -90,7 +90,8 @@ def classify(msg: dict) -> str:
         # (online / cancel_only / maintenance / post_only), and its planned-downtime notification
         # carries an `effectiveTime`. It used to fall through to "other" and be dropped unlogged,
         # which is why "did the venue announce the 2026-07-27 outage?" is unanswerable rather than
-        # answered no (T0101). Recorded now; ACTED ON by nothing yet -- see spec 00073 D1.
+        # answered no (T0101, spec 00073 D1). Recorded as `zcrypto_capture_venue_status_total`, which
+        # two alert rules page on -- one named the cause of the 2026-08-06 Kraken maintenance outage.
         return "status"
     if msg.get("method") == "subscribe":
         return "subscribe_ack" if msg.get("success") else "subscribe_error"
