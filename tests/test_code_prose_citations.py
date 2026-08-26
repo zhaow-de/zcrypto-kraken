@@ -19,9 +19,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-_TASK_TOKEN = re.compile(r"\bTask[\s-]\d+")
+_TASK_TOKEN = re.compile(r"\btask[\s-]\d+", re.IGNORECASE)
 _SERIAL = re.compile(r"\b\d{5}\b")
-_GLOBS = ("*.py", "*.yml", "*.yaml", "*.sh", "*.j2", "*.alloy")
+# `*.md` is in scope: `infra/`'s runbooks and READMEs are read DURING a deploy — one offender sat
+# on an attended start step. Case-insensitive for the same reason the pattern takes a hyphen OR a
+# space: a lowercase task number sat in `cli/` while a capital-only pattern reported the tree clean.
+_GLOBS = ("*.py", "*.yml", "*.yaml", "*.sh", "*.j2", "*.alloy", "*.md")
 
 
 def _candidate_files() -> list[Path]:

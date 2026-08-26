@@ -2920,7 +2920,8 @@ rules:
             # `count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` returns 10435
             # (primary) / 10838 (secondary) samples at 60 s each = 7.2 d / 7.5 d. So 120 is 4x the
             # worst event in the series' whole LIFE so far -- materially thinner than 4x a month's
-            # worst, which is why re-derivation on a genuinely full window is registered as T0129.
+            # worst, which is why the base this rests on is registered as T0129 -- and that base is capped:
+            # the platform retains 14 days, so a fuller window never arrives and T0129 is a decision, not a wait.
             # NOT a converge artefact, and better localized than "hours after": a 6 h bisection puts
             # the event inside 2026-07-29 19:14-01:14 UTC, >=11.6 h after the primary's 07:36:13Z
             # converge, with the adjacent 6 h windows maxing 0.12 / 0.20 / 0.14 s. Cause
@@ -3002,7 +3003,7 @@ rules:
             # gauge only started reaching Cloud with the 2026-07-29 converges, so
             # `count_over_time(...[30d])` returns 10435 (primary) / 10838 (secondary) samples at
             # 60 s each = 7.2 d / 7.5 d. The window is the series' whole life, and re-derivation on
-            # a genuinely full 30 d is registered as T0129.
+            # a fuller window is registered as T0129 -- which is a decision now, not a wait: retention caps the base at 14 d.
             # All twelve primary maxima (30.26-31.59 s) are ONE simultaneous fleet-wide event, not
             # per-pair spacing, and the proof is exact rather than inferred: the min-by-host maximum
             # is 30.261266, which equals AVAX/EUR's per-pair maximum to the digit, so at that

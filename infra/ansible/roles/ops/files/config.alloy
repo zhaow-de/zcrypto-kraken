@@ -218,14 +218,14 @@ prometheus.remote_write "grafana" {
 // instead, so the journal is their only transport too now. "Lossless" for the attached-container
 // case is bounded upstream by journald's own per-service rate limit (Debian default
 // RateLimitBurst=10000 per RateLimitIntervalSec=30s), which drops lines before Alloy ever sees
-// them. Three of our four units emit orders of magnitude less than that; the verify-replay
-// sweep does NOT -- it replays the whole archive and logs a line per hour, ~5,726 today and
-// growing +288/day, so it sits at ~57% of the burst and crosses it around 2026-08-14 (later
-// if journald's free-space burst scaling is in effect -- that only ever raises the ceiling).
-// What it drops is the tail of a (pair, hour)-SORTED stream: the last pairs in sort order --
-// all of their hours, not just recent ones -- plus both summary lines. Alerting is unaffected
-// (the runner parses its own temp file, not the journal); the operator's read of it is not.
-// T0114 (resolved) tracked this; spec 00078's incremental replay dissolved it. The
+// them. All four units now emit orders of magnitude less than that. The verify-replay sweep
+// used to be the exception -- it replayed the WHOLE archive and logged a line per hour, which
+// put it on course to cross the burst around 2026-08-14 and drop the tail of a (pair, hour)-
+// SORTED stream: the last pairs in sort order, all of their hours, plus both summary lines.
+// That never happened. Spec 00078 made the sweep incremental (2026-08-01), so a steady-state
+// run reports the day's ~288 new hours in four lines rather than the archive in thousands,
+// and T0114's two dated cliffs were dissolved rather than pushed out. Alerting was never
+// affected either way (the runner parses its own temp file, not the journal). The
 // host keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
 // /host/journal by alloy-compose.yaml.j2.
 //

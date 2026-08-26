@@ -23,7 +23,7 @@ The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_com
 
 1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_image_digest=sha256:<...>` (from `infra/ansible/`; read the **default AVX** digest from the capture-image workflow's job summary, and confirm `zcrypto liquidations-poll --help` exists in that image before pinning).
 2. Secrets, both vaulted in `host_vars/zcrypto-ops/vault.yml` and wired via `vars.yml`: `coinalyze_api_key` (free key from coinalyze.net → account → API key) and `liquidations_healthcheck_url` (a healthchecks.io check, e.g. `zcrypto-liquidations`; the dead-man alerts by **missed** pings, so an attached notification channel is what pages). The rendered compose is mode `0600` because it carries the API key.
-3. Start it (attended, plan Task 5): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/compose.yaml up -d`.
+3. Start it (attended): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/compose.yaml up -d`.
 4. Verify by outcome within a minute: the first cycle back-fills the ~30 h catch-up window, so hour finals appear immediately at `/var/lib/zcrypto-ops/liquidations/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet` with valid `.sha256` sidecars, for all 10 coins. The dead-man pings after each fully-successful cycle. Sparse hours (no liquidation for a coin) simply have no bucket; the open hour lingers as `.part` files until a later bucket closes it ([T0046]).
 
 ### Env contract (rendered into `compose.yaml`)
@@ -254,4 +254,4 @@ holds the API any more.
 3. Verify by outcome: the four textfile series (`ops_archive_pull_*`, `ops_panel_*`,
    `ops_verify_replay_*`, `ops_verified_replay_*`) and host metrics appear in Grafana Cloud within a
    scrape interval; `tests/test_infra_alloy_series.py` pins the keep-regex against every series this
-   stack (present + Task 6's future writer move) actually publishes.
+   stack (present + the future writer move) actually publishes.
