@@ -1066,7 +1066,7 @@ class _StubGate:
     tests/test_engine_execgate.py, so these tests only need a canned, network-free verdict to
     exercise the WIRING `run()` builds around it -- the sink it installs, the gauges it updates,
     the ledger it writes. `instances` records every construction so a test can pin the args `run()`
-    passed (e.g. `state_dir` -- Task 4's exact silent-failure shape: `journal_dir` instead of
+    passed (e.g. `state_dir` -- the exact silent-failure shape: `journal_dir` instead of
     `journal_dir.parent` would leave the hold permanently invisible with every other test green)."""
 
     instances: list["_StubGate"] = []
@@ -1310,7 +1310,7 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
 
     assert cli_result.exit_code == 0, cli_result.output
     (gate_instance,) = _StubGate.instances
-    assert gate_instance.state_dir == engine_cfg.journal_dir.parent  # Task 4's exact silent-fail shape
+    assert gate_instance.state_dir == engine_cfg.journal_dir.parent  # the exact silent-fail shape
     # run() passes venue_reader explicitly rather than relying on ExecutionGate's default, so
     # `monkeypatch.setattr(command, "read_system_status", ...)` is a working seam for tests.
     assert gate_instance.venue_reader is command.read_system_status

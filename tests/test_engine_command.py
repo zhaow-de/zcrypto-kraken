@@ -552,7 +552,7 @@ def test_report_empty_journal_is_a_zero_streak_not_an_error(tmp_path, monkeypatc
 
 
 def test_execution_records_do_not_change_the_gate_report(tmp_path, monkeypatch):
-    """Task 5's load-bearing invariant, pinned at the real call sites rather than against
+    """The load-bearing invariant, pinned at the real call sites rather than against
     `evaluate_gate` directly (which never globs, so a test against it proves nothing): drive
     `report` -> `_evaluate_journal` -> the `_journal_artifacts` call-site globs -> `evaluate_gate`
     over a journal of clean days, once with no execution records and once with a refusing verdict
@@ -614,7 +614,7 @@ def test_help_does_not_import_nautilus():
 
 def test_report_classifies_a_corrupt_snapshot_without_crashing(tmp_path, monkeypatch):
     # A truncated snapshot parquet (the partial-rsync case) is bad evidence -> validation-failed
-    # CycleOutcome, streak reset, no traceback (the Task-4 review's hardening item).
+    # CycleOutcome, streak reset, no traceback (a review hardening item).
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     day = datetime(2026, 7, 7, tzinfo=UTC)
