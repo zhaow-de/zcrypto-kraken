@@ -106,7 +106,7 @@ Scoping the position gauge to our strategy would be actively worse: when the ope
 
 `order_id_tag` is assigned positionally for tag-less strategies (`f"{len(order_id_tags):03d}"`), and `ShadowStrategy` passes no `StrategyConfig`. Registering D2's observer therefore makes the main strategy's client-order-id prefix — a venue-visible identifier — depend on registration order, silently. Both strategies get an explicit id and tag, and a test pins the main strategy's so a reordering cannot move it.
 
-The current live value is read from a real client order id before being pinned, never derived: pinning a wrong value changes every future order id.
+The value is read before it is pinned, never taken from this document: pinning a wrong one changes every future order id, and the id is visible at the venue. There is no real client order id to read it off — the exec ledger is empty and the engine has journaled no fills — so it is read off a strategy registered through the library's own `Trader.add_strategy`, which is the mechanism that assigns the tag.
 
 Measured stronger than assumed: registration REFUSES a colliding explicit tag (`RuntimeError: Strategy order_id_tag conflict for '000'`) rather than silently shifting it, and re-derives `strategy_id` from the config at registration. So the prefix is either the pinned value or startup fails loudly — the silent-shift case the pin was written against cannot occur once the tag is explicit. The pin stays: it is what makes the tag explicit.
 
@@ -116,7 +116,7 @@ Passing a `StrategyConfig` does not breach the standing ban on `external_order_c
 
 `zcrypto_exec_external_events_total{disposition="unmatched"}` already carries the right meaning — its help text names both the operator's hand settle and unsanctioned activity — and nothing watches it. It is the correct detection channel for what D6 stops catching.
 
-The rule is pushed only after the metric's first record. The counter has never moved (no journaled fills), and a rule pushed before its metric exists pages a spurious no-data alert. The obligation lands on the arming checklist, where the first sample appears.
+The rule is pushed only once a healthy-boot baseline for the counter exists — which is a stronger condition than a first sample, and the operative one. Samples already exist: the 1.231.0 pass drove `unmatched` 0 → 12 and the v2 pass read it at 24. But the observer is registered when the node is built, so events published during the engine's own startup reconciliation reach it and count `unmatched` at every healthy boot; a threshold set as though `unmatched` meant "an operator must act" would page on a clean start. The obligation therefore lands on the arming checklist, where the baseline is taken, ahead of the rule.
 
 ### D10 — the submission transport is pinned to REST, so the classification stays derived
 
@@ -211,7 +211,7 @@ Resolves [[T0153]]. `OrderFillVoided` is the venue undoing a fill it already rep
 
 So no handler under `cli/` needs an `OrderFillVoided` arm, and adding one would be a guard on a door with no caller. What reaches this engine is the venue **order**: the library applies the void to it, and to the Cache, while the process has no strategy at all.
 
-**One place reads that order, and its population had the hole.** `_reconcile_adopted_rows` (00098 D7) drives every ledgered row against `cache.order(...)`, and its negative arm already latches the kill switch on exactly this statement — the venue reporting less filled than the ledger. But it is fed `open_submitted_rows`, D10's re-attach input, which by construction serves only the states an order can still be LIVE in. A withdrawal that empties a completing fill lands on a row reading `filled`, and a `filled` row is in no re-attach set: it was compared against nothing, ever. The partial case was already covered and stays so — voiding a partial returns the order to `ACCEPTED`, the row keeps an open state, and D7 sweeps it.
+**One place reads that order, and its population had the hole.** `_reconcile_adopted_rows` (00098 D7) drives every ledgered row against `cache.order(...)`, and its negative arm already latches the kill switch on exactly this statement — the venue reporting less filled than the ledger. But it is fed `open_submitted_rows`, 00090 D10's re-attach input, which by construction serves only the states an order can still be LIVE in. A withdrawal that empties a completing fill lands on a row reading `filled`, and a `filled` row is in no re-attach set: it was compared against nothing, ever. The partial case was already covered and stays so — voiding a partial returns the order to `ACCEPTED`, the row keeps an open state, and D7 sweeps it.
 
 **So the sweep gains its complement.** `closed_submitted_rows` is written as the negation of the same predicate, so the two are total over `submitted` by construction and a row in neither set cannot exist. `_reconcile_finished_rows` runs it through one question in one direction on D7's own `_OVERFILL_TOLERANCE` dead-band: does the venue still report the quantity this row was closed on? A shortfall latches, naming both figures.
 
