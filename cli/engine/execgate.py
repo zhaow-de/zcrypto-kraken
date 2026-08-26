@@ -233,7 +233,7 @@ class ExecutionGate:
 def write_restart_hold(state_dir: Path, started_at: datetime) -> Path:
     """Latch `reduce_only` for this process. Written unconditionally on every engine start.
 
-    After a restart -- a converge, the supervision watchdog's `os._exit(1)`, a host reboot -- what
+    After a restart -- a converge, a supervisor healing a start the node aborted, a host reboot -- what
     has NOT been re-established is the engine's belief about what it holds, so holding at
     reduce-only until a human says otherwise is the honest response. Nothing in this module
     removes it; a later spec may add a further PRECONDITION to clearing (e.g. reconciliation

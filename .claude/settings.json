@@ -3,6 +3,12 @@
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
   },
+  "permissions": {
+    "allow": [
+      "Bash(infra/scripts/probe-with-vaulted-key.sh:*)",
+      "Bash(./infra/scripts/probe-with-vaulted-key.sh:*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

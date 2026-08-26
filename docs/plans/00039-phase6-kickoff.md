@@ -39,7 +39,7 @@ Precondition: spot EUR ≥ €50 confirmed. Scratchpad driver (`probe_orders.py`
 
 ### Task 4 (orchestrator): verification memo + closeout
 
-- [ ] Write `docs/research/14.phase6-adapter-verification-1.230.0.md`: per-probe expected vs observed, the pass/fail verdict per the spec's pre-registered rule, the harness shapes used, and a re-check note for future version bumps. Append it to the mdformat allowlist in `.pre-commit-config.yaml` (research-report rule).
+- [ ] Write `docs/reference/adapter-verification/1.230.0.md`: per-probe expected vs observed, the pass/fail verdict per the spec's pre-registered rule, the harness shapes used, and a re-check note for future version bumps. Append it to the mdformat allowlist in `.pre-commit-config.yaml` (research-report rule).
 - [ ] Human action (after the memo lands): remove the workstation IP from the key's allowlist (spec decision 3 closure); confirm in the memo's closing line.
 - [ ] Append the iter-079 entry to `docs/iterations-history.md` (kickoff decisions ratified, key ceremony, verification verdict, T0018/T0005 sync, go-live criteria pre-registered).
 - [ ] `uv run pre-commit run -a` → stage everything → commit; PR into `develop` titled `feat(config): iter-079 — phase-6 kickoff: adapter verification, key ceremony, go-live pre-registration` (aggregated trailers per `pull-requests.md`); hold the merge for the human's go.

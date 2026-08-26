@@ -306,3 +306,19 @@ def open_submitted_rows(journal_dir: Path, now: datetime) -> list[tuple[datetime
         boundary = datetime.fromisoformat(doc["cycle_ts"])
         out.extend((boundary, row) for row in doc["submitted"] if row["state"] in _OPEN_ORDER_STATES)
     return out
+
+
+def closed_submitted_rows(journal_dir: Path, now: datetime) -> list[tuple[datetime, dict]]:
+    """The rows `open_submitted_rows` leaves behind, over the same window: the ones whose state says
+    this engine is finished with the order.
+
+    Written as the complement of the same predicate rather than as its own state list, so the two
+    are total over `submitted` by construction -- a state that moves from one side to the other, or
+    a new one added to `_ROW_STATES`, lands in exactly one of them and never in neither. Which
+    matters because these two are what decide whether a row is ever compared against venue truth at
+    all: a row in neither set is one nothing checks."""
+    out: list[tuple[datetime, dict]] = []
+    for doc in _exec_records_in_window(journal_dir, now):
+        boundary = datetime.fromisoformat(doc["cycle_ts"])
+        out.extend((boundary, row) for row in doc["submitted"] if row["state"] not in _OPEN_ORDER_STATES)
+    return out

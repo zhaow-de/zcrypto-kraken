@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import cli.engine.execledger as execledger_module
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import GateLevel, GateVerdict
 from cli.engine.execledger import (
     EXEC_SCHEMA_VERSION,
     append_plan_entry,
     append_submitted_row,
+    closed_submitted_rows,
     exec_record_path,
     exec_records_through,
     ledgered_intent_keys,
@@ -436,6 +438,14 @@ def test_the_re_attach_set_is_every_state_a_possibly_live_order_can_wear(tmp_pat
 
     open_coids = {row["client_order_id"] for _, row in open_submitted_rows(tmp_path, CYCLE_TS)}
     assert open_coids == {"coid-submitting", "coid-accepted", "coid-ambiguous"}
+
+    # The two readers PARTITION the window, which is the property the startup sweeps rest on: a row
+    # in neither set is one nothing ever compares against venue truth. `_ROW_STATES` supplies the
+    # domain, so a state added to the ledger and forgotten here fails on the first assert.
+    closed_coids = {row["client_order_id"] for _, row in closed_submitted_rows(tmp_path, CYCLE_TS)}
+    assert set(states) == execledger_module._ROW_STATES
+    assert closed_coids == {f"coid-{state}" for state in states} - open_coids
+    assert not (closed_coids & open_coids)
 
 
 def test_a_corrupt_exec_record_makes_the_ledger_scan_raise(tmp_path):

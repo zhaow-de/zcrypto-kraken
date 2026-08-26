@@ -80,6 +80,61 @@ def test_pull_entrypoint_log_helper_emits_a_labellable_line() -> None:
     assert "capture pull failed" in m.group("rest")
 
 
+@pytest.mark.parametrize(
+    "base,exc_name",
+    [
+        ("Exception", "RuntimeError"),
+        # A Rust panic reaches Python as `pyo3_runtime.PanicException`, which derives from
+        # `BaseException` so that `except Exception` does NOT catch it. The engine's node core is
+        # compiled Rust, so this is the shape of its loudest possible fault -- and the one a narrow
+        # catch drops through Typer's excepthook unlabelled, where the alerting cannot see it.
+        ("BaseException", "Panicky"),
+    ],
+    ids=["exception", "baseexception-panic-shaped"],
+)
+def test_an_unhandled_fault_of_either_base_is_logged_before_the_process_dies(base, exc_name) -> None:
+    """Guard-proving: the `BaseException` case FAILS against a wrapper that catches only
+    `Exception` -- the process still dies, but with no ERROR-labelled line for Alloy to ingest."""
+    prog = (
+        "import typer\n"
+        "from cli import __main__ as m\n"
+        f"class Panicky({base}): pass\n"
+        "@m.app.command()\n"
+        "def boom():\n"
+        f"    raise {exc_name}('kaboom')\n"
+        "m.run()\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", prog, "boom"], capture_output=True, text=True)
+
+    assert proc.returncode != 0, "a crash must not exit 0"
+    combined = proc.stdout + proc.stderr
+    levelled = [line for line in combined.splitlines() if (m := INGEST_RE.match(line)) and m.group("level") == "ERROR"]
+    assert levelled, f"no ERROR-labelled line Alloy could see; got:\n{combined}"
+    assert "kaboom" in combined, "the original exception must still be reported"
+
+
+@pytest.mark.parametrize("raiser,expected_code", [("SystemExit(3)", 3), ("KeyboardInterrupt()", 130)])
+def test_the_two_control_flow_exits_pass_through_unlogged(raiser, expected_code) -> None:
+    """The widened catch must not swallow either: click renders usage errors and `typer.Exit` as
+    `SystemExit`, whose CODE carries meaning, and a Ctrl-C is an operator action, not a fault. A
+    wrapper that logged these would page on every mistyped command.
+
+    What each arm pins is different, and only the first pins the `except` clause. click converts a
+    `KeyboardInterrupt` raised inside a command into `SystemExit(130)` before `run()` sees it --
+    measured -- so the second arm passes with or without `KeyboardInterrupt` named in the clause. It
+    pins the OUTCOME an operator cares about (130, unlogged), not the mechanism that delivers it;
+    naming the exception as well costs one word and covers a Ctrl-C arriving outside a command
+    invocation, where click's conversion does not apply."""
+    prog = f"import typer\nfrom cli import __main__ as m\n@m.app.command()\ndef boom():\n    raise {raiser}\nm.run()\n"
+    proc = subprocess.run([sys.executable, "-c", prog, "boom"], capture_output=True, text=True)
+
+    combined = proc.stdout + proc.stderr
+    assert not [line for line in combined.splitlines() if (m := INGEST_RE.match(line)) and m.group("level") == "ERROR"], (
+        f"control-flow exit must not be logged as a fault; got:\n{combined}"
+    )
+    assert proc.returncode == expected_code, "the exit code carries meaning and must survive"
+
+
 def test_unhandled_exception_is_logged_before_the_process_dies() -> None:
     """An uncaught exception must reach `logging` (level=ERROR + traceback), not just stderr.
 

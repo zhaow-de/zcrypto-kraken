@@ -1,9 +1,10 @@
 """CLI tests for the `zcrypto engine` sub-app (spec 00041 SS The CLI): CliRunner over every
 subcommand with tmp dirs and monkeypatched seeder/cycle/builder stubs -- no network, no dataset,
-no live node. `run`'s fail-fast checks and watchdog are exercised against a stub node + a
-synchronous timer; nautilus lazy-import stays a subprocess check at the bottom; the attended soak
-is the live smoke."""
+no live node. `run`'s fail-fast checks and its handling of a start the node could not complete are
+exercised against a stub node; nautilus lazy-import stays a subprocess check at the bottom; the
+attended soak is the live smoke."""
 
+import ast
 import json
 import re
 import subprocess
@@ -648,38 +649,26 @@ def test_cycle_rejects_a_future_boundary(tmp_path, monkeypatch):
     assert called == []
 
 
-# --- run: fail-fast + the supervision watchdog (spec 00042) ----------------------------------------
+# --- run: fail-fast, and what a start it cannot complete does -------------------------------------
 
 
-class FakeTimer:
-    """A synchronous stand-in for threading.Timer: start() fires the callback immediately, so the
-    watchdog check runs deterministically inside `engine run` without waiting out the real delay."""
+class _FakeNode:
+    """`LiveNode` as `engine run` uses it: `run` and `dispose`, both on the thread that built it.
+    `run` raises whatever it is handed, standing in for a start the node aborted on its own."""
 
-    instances: list["FakeTimer"] = []
+    def __init__(self, raises=None):
+        self._raises = raises
 
-    def __init__(self, interval, function):
-        self.interval = interval
-        self.function = function
-        self.daemon = False
-        self.started = False
-        self.cancelled = False
-        FakeTimer.instances.append(self)
+    def run(self):
+        if self._raises is not None:
+            raise self._raises
 
-    def start(self):
-        self.started = True
-        self.function()
-
-    def cancel(self):
-        self.cancelled = True
+    def dispose(self):
+        pass
 
 
-def _fake_node(is_running: bool):
-    return types.SimpleNamespace(
-        _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
-        trader=types.SimpleNamespace(is_running=is_running),
-        run=lambda: None,
-        dispose=lambda: None,
-    )
+def _fake_node(raises=None):
+    return _FakeNode(raises)
 
 
 def _write_basket_store(store_dir: Path, symbols=BASKET) -> None:
@@ -692,23 +681,18 @@ def _write_basket_store(store_dir: Path, symbols=BASKET) -> None:
             path.write_bytes(b"")
 
 
-def _run_env(monkeypatch, tmp_path, *, is_running: bool, symbols=BASKET) -> list[int]:
-    """A passable `engine run` environment: valid store, stub node builder, synchronous timer, and
-    a recording os._exit. Returns the list force-exit codes are recorded into."""
+def _run_env(monkeypatch, tmp_path, *, symbols=BASKET) -> None:
+    """A passable `engine run` environment: valid store and a stub node builder whose node starts
+    and stops cleanly. A test wanting a different node re-points the builder itself."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     _write_basket_store(engine_cfg.store_dir, symbols)
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
-    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(is_running))
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node())
     # Stubbed for EVERY `run` test, not just the two that assert on it: the real re-arm would
     # re-point this pytest process's own faulthandler at fd 2 (pytest's plugin aims it at its
     # capture), and an earlier default-`sys.stderr` form left it switched OFF for the rest of the
     # session -- silently removing native-crash dumps from every later test in the process.
     monkeypatch.setattr(command, "faulthandler", types.SimpleNamespace(disable=lambda: None, enable=lambda **_: None))
-    monkeypatch.setattr(command.threading, "Timer", FakeTimer)
-    FakeTimer.instances.clear()
-    exits: list[int] = []
-    monkeypatch.setattr(command.os, "_exit", lambda code: exits.append(code))
-    return exits
 
 
 def test_run_require_config_aborts_without_zcrypto_toml(tmp_path, monkeypatch):
@@ -741,7 +725,7 @@ def test_run_aborts_when_the_store_holds_every_eur_leg_but_neither_btc_leg(tmp_p
     passes on exactly this store, so the node starts and looks healthy; the first boundary's
     `refresh_store` then dies on a missing `ETH/BTC/240.parquet`, and the failed-cycle sidecar makes
     that boundary unretryable at any time (capture-deploys.md), costing the ratified gate streak."""
-    _run_env(monkeypatch, tmp_path, is_running=True, symbols=[s for s in BASKET if s.endswith("/EUR")])
+    _run_env(monkeypatch, tmp_path, symbols=[s for s in BASKET if s.endswith("/EUR")])
 
     result = runner.invoke(app, ["engine", "run"])
 
@@ -756,40 +740,38 @@ def test_run_aborts_when_the_store_holds_every_eur_leg_but_neither_btc_leg(tmp_p
 def test_run_starts_on_a_complete_twelve_leg_store(tmp_path, monkeypatch):
     """The guard's healthy path: every basket leg present on both grids and `run()` proceeds -- a
     guard that also trips here would abort every correct deploy."""
-    exits = _run_env(monkeypatch, tmp_path, is_running=True)
+    _run_env(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["engine", "run"])
 
     out = _output(result)
     assert result.exit_code == 0, out
     assert "basket series" not in out
-    assert exits == []
 
 
 def test_run_logs_the_effective_config_line(tmp_path, monkeypatch):
-    exits = _run_env(monkeypatch, tmp_path, is_running=True)
+    _run_env(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["engine", "run"])
 
     out = _output(result)
     assert result.exit_code == 0, out
     assert f"engine run: exec_enabled=False, store_dir={tmp_path / 'store'}, journal_dir={tmp_path / 'journal'}" in out
-    assert exits == []
 
 
 def test_run_re_arms_faulthandler_immediately_after_the_node_is_built(tmp_path, monkeypatch):
-    """Building the node registers nautilus's asyncio SIGABRT handler, which installs CPython's own
-    no-op C handler over faulthandler's -- after which a native abort prints nothing at all. Both
-    calls and their order are pinned: the re-arm must follow the build (before it, there is nothing
-    to undo), and `disable()` must precede `enable()` (`enable()` returns early when faulthandler
-    already considers itself enabled, so on its own it cannot reinstall the clobbered handler).
-    The `file=2` is pinned too -- see the sibling test for the defect the default form causes.
-    `tests/test_engine_node.py` measures the underlying library behaviour this rests on."""
-    _run_env(monkeypatch, tmp_path, is_running=True)
+    """Nothing else in the engine arms faulthandler, so without this call a native abort kills the
+    process with exit 134 and an empty stderr. Both calls and their order are pinned: it lands
+    before `node.run()`, and `disable()` precedes `enable()` (`enable()` installs the fatal-signal
+    handlers only while faulthandler considers itself disabled, so the pair is what makes this call
+    install its own whatever the process's prior state). The `file=2` is pinned too -- see the
+    sibling test for the defect the default form causes. `tests/test_engine_node.py` measures the
+    underlying library behaviour this rests on."""
+    _run_env(monkeypatch, tmp_path)
     calls: list[object] = []
     monkeypatch.setattr(
         "cli.engine.node.build_shadow_node",
-        lambda config: (calls.append("build"), _fake_node(True))[1],
+        lambda config: (calls.append("build"), _fake_node())[1],
     )
     monkeypatch.setattr(
         command,
@@ -840,36 +822,33 @@ sys.__stdout__.write(f"default: {default}\nfd2: armed={faulthandler.is_enabled()
     assert "fd2: armed=True" in result.stdout, result.stdout
 
 
-def test_run_watchdog_force_exits_when_the_trader_never_runs(tmp_path, monkeypatch):
-    exits = _run_env(monkeypatch, tmp_path, is_running=False)
+def test_run_lets_a_start_the_node_could_not_complete_escape(tmp_path, monkeypatch):
+    """A node that cannot finish starting -- a client that never connects, a startup reconciliation
+    that never completes -- disconnects, stops, and raises out of `node.run()`. That raise must
+    escape `engine run` intact: `cli/__main__.py` logs it at ERROR and exits 1, compose restarts the
+    container, and the failure is visible. Caught or converted here it becomes the silent zombie
+    instead -- a container reported healthy by every supervisor, trading nothing, burning ratified
+    gate days. The `finally` still runs, so the node is disposed on the way out."""
+    disposed: list[str] = []
+    _run_env(monkeypatch, tmp_path)
+    node = _fake_node(RuntimeError("Startup reconciliation timeout reached"))
+    node.dispose = lambda: disposed.append("disposed")
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: node)
 
     result = runner.invoke(app, ["engine", "run"])
 
     out = _output(result)
-    assert result.exit_code == 0, out  # os._exit is stubbed to record; run() then completes normally
-    assert exits == [1]
-    assert "trader not running" in out
-    (timer,) = FakeTimer.instances
-    assert timer.interval == pytest.approx(1.5 + 2.0 + 30.0)  # the node config's timeouts + the 30 s slack
-    assert timer.daemon is True
-    assert timer.started is True
-    assert timer.cancelled is True  # cancelled in the finally once node.run() returned
-
-
-def test_run_watchdog_does_nothing_when_the_trader_is_running(tmp_path, monkeypatch):
-    exits = _run_env(monkeypatch, tmp_path, is_running=True)
-
-    result = runner.invoke(app, ["engine", "run"])
-
-    assert result.exit_code == 0, _output(result)
-    assert exits == []
+    assert result.exit_code != 0, out
+    assert isinstance(result.exception, RuntimeError), f"{result.exception!r}\n{out}"
+    assert "Startup reconciliation timeout reached" in str(result.exception)
+    assert disposed == ["disposed"], "the node was left undisposed on the way out"
 
 
 def test_engine_startup_latches_the_restart_hold(tmp_path, monkeypatch):
     # The hold must land beside the journal (journal_dir.parent), not inside it -- a hold at
     # journal_dir/exec/restart-hold is where the gate never looks (see execgate.exec_dir), so
     # the latch would be silently invisible and every other test would still pass.
-    _run_env(monkeypatch, tmp_path, is_running=True)
+    _run_env(monkeypatch, tmp_path)
 
     result = runner.invoke(app, ["engine", "run"])
 
@@ -1188,3 +1167,57 @@ def test_report_journal_dir_overrides_the_configured_journal(tmp_path, monkeypat
     assert result.exit_code == 0, out
     assert "6 journaled outcome(s)" in out
     assert "streak: 1" in out
+
+
+# --- the stub node is a restatement of LiveNode --------------------------------------------------
+#
+# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
+# guards below; the reasoning that makes them worth having lives there.
+
+
+def _surface_run_reaches(local: str) -> set[str]:
+    """Every name `cli/engine/command.py` reaches through its `node` local, read off production's
+    own source. Derived rather than listed: a hand-written list is a second restatement of the same
+    contract and goes stale the moment a new read appears."""
+    tree = ast.parse(Path(command.__file__).read_text())
+    return {
+        n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == local
+    }
+
+
+def test_every_node_surface_engine_run_reaches_exists_on_the_real_type():
+    """`run()` drives a real `LiveNode`; every test above drives `_FakeNode`. A name the library has
+    dropped raises where it is read -- inside `engine run`, at start, on the live trade path -- while
+    the stub keeps the whole file green. So production's read set is checked against the REAL class
+    and never against the stub: a name planted in the stub cannot trip this, and a name planted in
+    production cannot be rescued by the stub carrying it."""
+    from nautilus_trader.live import LiveNode
+
+    surface = _surface_run_reaches("node")
+    assert surface, "the walk found no `node.` reads -- it is checking nothing"
+    missing = sorted(name for name in surface if not hasattr(LiveNode, name))
+    assert missing == [], f"run() reaches {missing} on its node, which the real LiveNode does not carry"
+
+
+# What the stub carries for the harness's own sake, modelling nothing on the real type: the failure
+# it raises from `run()`. Listed one by one on purpose -- a blanket "underscore-prefixed names are
+# plumbing" rule would exempt exactly the shape that has already slipped through this file once.
+_NODE_PLUMBING = frozenset({"_raises"})
+
+
+def test_the_node_stub_offers_nothing_the_real_type_lacks():
+    """The direction the test above cannot cover. A stub MISSING something production reads fails
+    loudly the first time a test runs it. A stub OFFERING something the real type lacks fails
+    NOTHING -- every test simply believes the fabricated attribute, and production is the only place
+    the read comes back wrong. This file has already paid for that asymmetry once, with a stub node
+    carrying an attribute the library never had: production raised on the read, every test here
+    stayed green, and the raise landed on the live trade path."""
+    from nautilus_trader.live import LiveNode
+
+    stub = _fake_node()
+    offered = {name for name in dir(stub) if not name.startswith("__")} - _NODE_PLUMBING
+    assert offered, "the stub node offers nothing outside its plumbing list -- the check is vacuous"
+    stale = sorted(name for name in _NODE_PLUMBING if hasattr(LiveNode, name))
+    assert stale == [], f"the plumbing list exempts {stale}, which LiveNode DOES carry -- check them instead"
+    extra = sorted(name for name in offered if not hasattr(LiveNode, name))
+    assert extra == [], f"the stub node offers {extra}, which the real LiveNode does not carry"

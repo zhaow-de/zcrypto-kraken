@@ -86,6 +86,8 @@ Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
 **Except what CI cannot run.** Tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage: `tests/test_costmin_drift.py` is COSTMIN's only guard, sits on the live trade path, and skips in CI.
 
+**A network-gated test is not data-gated** — one that reaches a live venue endpoint runs in CI, where it is a flake source, and skips silently if the venue ever blocks the runner. Gate such a test on an explicit opt-in env var rather than on reachability, so a skip is a decision and never an outage read as coverage.
+
 **A change to `uv.lock`, `pyproject.toml` or a `conftest.py` reaches everything** — run the suite in full for those.
 
 ## Conventions

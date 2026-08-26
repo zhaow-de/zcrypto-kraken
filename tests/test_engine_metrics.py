@@ -1043,13 +1043,9 @@ def _free_port() -> int:
     return port
 
 
-def _fake_node(is_running: bool = True):
-    return types.SimpleNamespace(
-        _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
-        trader=types.SimpleNamespace(is_running=is_running),
-        run=lambda: None,
-        dispose=lambda: None,
-    )
+def _fake_node(run=lambda: None):
+    """The assembled node as `run()` reaches for it: run and dispose, nothing else."""
+    return types.SimpleNamespace(run=run, dispose=lambda: None)
 
 
 def _patch_engine_config(monkeypatch, tmp_path: Path) -> EngineConfig:
@@ -1307,12 +1303,7 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
 
     monkeypatch.setattr(
         "cli.engine.node.build_shadow_node",
-        lambda config: types.SimpleNamespace(
-            _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
-            trader=types.SimpleNamespace(is_running=True),
-            run=_run_and_complete_a_cycle,
-            dispose=lambda: None,
-        ),
+        lambda config: _fake_node(run=_run_and_complete_a_cycle),
     )
 
     cli_result = runner.invoke(app, ["engine", "run"])
@@ -1413,12 +1404,7 @@ def test_the_exec_ledger_writes_even_when_the_metrics_port_is_unset(tmp_path, mo
 
     monkeypatch.setattr(
         "cli.engine.node.build_shadow_node",
-        lambda config: types.SimpleNamespace(
-            _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
-            trader=types.SimpleNamespace(is_running=True),
-            run=_run_and_complete_a_cycle,
-            dispose=lambda: None,
-        ),
+        lambda config: _fake_node(run=_run_and_complete_a_cycle),
     )
 
     cli_result = runner.invoke(app, ["engine", "run"])
@@ -1446,16 +1432,25 @@ def test_the_order_outcome_labels_cover_every_outcome_the_executor_can_emit():
 
 
 def test_the_liquidity_labels_are_the_venue_enums_own_names():
-    """DERIVED from the real `LiquiditySide`, because the bug this pins was invisible to every
-    string-based fake: the enum is an `IntFlag` over `ReprEnum`, so `str(LiquiditySide.MAKER)` is
-    `'1'`. The label set must be exactly what the venue can report, lower-cased -- a member this
-    tuple omits would spring into existence as an unadmitted series on the first live fill that
-    carried it, while the pre-registered children read zero for the whole probe window."""
-    from nautilus_trader.model.enums import LiquiditySide, liquidity_side_to_str
+    """DERIVED from the real `LiquiditySide` and routed through the executor's own emit-site helper,
+    because a string-based fake agrees with any rendering that helper produces. The label set must
+    be exactly what the venue can report, lower-cased -- a member this tuple omits would spring into
+    existence as an unadmitted series on the first live fill that carried it, while the
+    pre-registered children read zero for the whole probe window."""
+    from nautilus_trader.model import LiquiditySide
 
-    assert {liquidity_side_to_str(member).lower() for member in LiquiditySide} == set(command._EXEC_LIQUIDITY_SIDES)
-    # The trap itself, stated: were `str()` used at the emit site these would be the labels instead.
-    assert {str(member) for member in LiquiditySide} == {"0", "1", "2"}
+    members = tuple(LiquiditySide.variants())  # the class itself is not iterable
+    assert len(members) >= 3, f"the enum yielded {[m.name for m in members]} -- this guard would pass vacuously"
+    assert {executor_module._liquidity(member).lower() for member in members} == set(command._EXEC_LIQUIDITY_SIDES)
+
+    # And the consequence, measured: a real member mints no child the registry had not already
+    # seeded. A numeric label would add `0`/`1`/`2` here and leave the admitted series at zero.
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+    seeded = {s.labels["liquidity"] for s in _families(registry)["zcrypto_exec_fills_total"].samples}
+    for member in members:
+        metrics.inc_fill(executor_module._liquidity(member).lower(), None)
+    assert {s.labels["liquidity"] for s in _families(registry)["zcrypto_exec_fills_total"].samples} == seeded
 
 
 def test_every_outcome_and_liquidity_series_exists_before_anything_happens():
@@ -1745,3 +1740,25 @@ def test_the_tracking_state_alphabet_never_publishes_zero_and_the_help_names_eve
     metrics.set_tracking_state(sorted(emitted)[0])
     documentation = _families(registry)["zcrypto_exec_tracking_state"].documentation
     assert {int(code) for code in re.findall(r"(\d+) = ", documentation)} == emitted
+
+
+# --- this file's own stub node is a restatement of LiveNode / LiveNodeHandle ---------------------
+#
+# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
+# guard below; the reasoning that makes it worth having lives there. The names `run()` READS off a
+# node are checked against the real class in tests/test_engine_command.py -- one walk over the one
+# production module covers both files' stubs, so only the offered direction is owed here.
+
+
+def test_the_stub_node_offers_nothing_the_real_type_lacks():
+    """A stub MISSING something `run()` reads fails loudly the first time a test runs it. A stub
+    OFFERING something the real type lacks fails NOTHING -- every test believes the fabricated
+    attribute, and production is the only place the read comes back wrong. This stub's sibling in
+    tests/test_engine_command.py has already paid for that asymmetry once."""
+    from nautilus_trader.live import LiveNode
+
+    stub = _fake_node()
+    offered = {name for name in dir(stub) if not name.startswith("__")}
+    assert offered, "the stub node offers nothing at all -- the check is vacuous"
+    extra = sorted(name for name in offered if not hasattr(LiveNode, name))
+    assert extra == [], f"the stub node offers {extra}, which the real LiveNode does not carry"

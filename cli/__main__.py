@@ -114,13 +114,21 @@ def run() -> None:
     (infra/nas/config.alloy), and the level-based alerting is blind to the single worst failure of
     the unbackfillable archive path: the pull loop dying. See T0041.
 
-    Catches `Exception`, not `BaseException`: click already turns its own errors (usage, abort,
-    `typer.Exit`) into `SystemExit`, which must pass through untouched, and a KeyboardInterrupt is
-    an operator action rather than a fault.
+    `SystemExit` and `KeyboardInterrupt` re-raise untouched: click already turns its own errors
+    (usage, abort, `typer.Exit`) into the former, and the latter is an operator action rather than a
+    fault. Everything else is logged, INCLUDING the rest of `BaseException`. That width is
+    load-bearing rather than defensive: a Rust panic surfaces in Python as `pyo3_runtime
+    .PanicException`, which derives from `BaseException` specifically so that `except Exception`
+    does not catch it. The engine holds a nautilus node whose core is compiled Rust, and a panic
+    escaping it is precisely the fault that most needs to page -- caught only by `Exception` it
+    would die through Typer's excepthook with no level for Alloy to label, and the level-based
+    alerting would never see the engine go.
     """
     try:
         app()
-    except Exception:
+    except SystemExit, KeyboardInterrupt:
+        raise
+    except BaseException:
         get_logger("main").exception("unhandled exception -- aborting")
         raise SystemExit(1) from None
 

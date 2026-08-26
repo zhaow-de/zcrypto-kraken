@@ -128,7 +128,7 @@ def test_lowercase_liquidity_is_refused_because_the_ledger_never_writes_it():
 
 
 def test_a_liquidity_the_enum_cannot_name_aborts():
-    # `str()` on the pinned IntFlag yields "1" -- this repo shipped exactly that once.
+    # A number reaching the ledger is the defect this refusal exists for; the repo shipped it once.
     with pytest.raises(EngineError, match="liquidity"):
         extract_fills([_rec([_fill(liquidity="1")])])
 

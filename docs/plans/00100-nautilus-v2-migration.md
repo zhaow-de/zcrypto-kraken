@@ -1,0 +1,478 @@
+# nautilus-trader v2 Migration Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Move the engine from `nautilus-trader==1.231.0` to 2.x, preserving every behaviour the live trade path depends on, and redesigning the two things v2 removes outright.
+
+**Architecture:** Three phases, and their order is load-bearing. Phase A lands guards that are only meaningful while v1 is still installed — a guard written after the flip can never be seen to bite on the old layout. Phase B flips the pin in one commit; the branch is red from there. Phase C works it green, using the red suite as the work-list.
+
+**Tech Stack:** Python 3.14, uv, pytest, nautilus-trader `2.0.0rc4.dev20260825` (cp314 manylinux) from `https://packages.nautechsystems.io/simple`.
+
+Spec: `docs/specs/00100-nautilus-v2-migration-design.md`. Every `D<N>` below refers to its decisions.
+
+## Global Constraints
+
+- **Pinned wheel:** `nautilus-trader===2.0.0rc4.dev20260825`. Exact, never floating. Bumping it is a deliberate act that re-runs Task 1's pin.
+- **The suite is the proof.** It resolves against `pyproject.toml`, so it can only prove the version it runs against. This is why the flip is Phase B, not the end.
+- **The branch is red from Task 4 until Phase C completes.** Expected, not a failure. `coverage.yml` triggers on `pull_request` only, and the PR opens at component completion — so no CI noise and no PR until green.
+- **Live-trade-path changes take the Fable review floor** (`.claude/rules/spec-plan-locations.md`). `cli/engine/{node,executor,execgate,command}.py` are all live trade path.
+- **Never construct a `MessageBus`** (D3). It registers itself globally and replaces the engine's own: orders freeze at `INITIALIZED`, no events fire, nothing raises.
+- **`external_order_claims` stays unset** on every strategy, and the token stays absent from `cli/` — the existing structural ban.
+- **A `uv.lock` change reaches every test** (D12), so from Task 4 onward the full suite is owed, never the diff's reachable subset. The image is shared — one Dockerfile, one lock — so the pin change rebuilds capture, engine, ops and NAS; the NAS runs `-compat` builds only.
+- **One branch, one PR, however large.** Every phase lands here; the PR opens at migration completion.
+- **Trailer the reviewer at review time**, not at branch end — `Co-Authored-By:` first, `Reviewed-by:` last, amended onto the commits the review covered while they are still local.
+- **Review at each task's completion**, covering that task's commits, rather than one whole-branch pass at the end.
+- **Code comments and docstrings describe what the code does now.** No "v1 did X", no migration narrative, no before-and-after. Why it moved belongs in the commit message and the spec; a future reader of `cli/engine/` should not be able to tell a migration happened.
+- **Deployment is out of this plan's scope.** D1 as amended makes the pinned nightly the deployable version, at probe scale; nothing here converges anything.
+
+______________________________________________________________________
+
+### Task 0: Cold spec+plan review — before any code
+
+- [x] **Step 1: Dispatch a fresh-context reviewer at the Fable floor**
+
+Per `.claude/rules/spec-plan-locations.md`, the pair gets a cold review before Task 1: coverage (every spec decision has a task), internal consistency, whether the planned verification pins the spec's load-bearing properties, and that every deferral names a registered topic or an explicit drop. Fable floor because this touches the live trade path.
+
+- [x] **Step 2: Fold material findings into the plan, not into a notes file**
+
+______________________________________________________________________
+
+**D6 landed on v1, and the crossing it could not survive unaided was made here.** The fix shipped on this branch because the defect exists on v1 today, and it read `self._client.id` at its two call sites in `cli/engine/executor.py` (the read in `_start_intent` and the one in `_reconcile_terminal`); v2 renames that attribute to `strategy_id` (measured: `hasattr(Strategy, "id")` is `False` on the pinned wheel). Both sites read `strategy_id`. **Its own tests could not have caught it**: `StubClient` set `self.id`, so the `test_reconcile_terminal_*` tests would have stayed green while production raised — inside `_reconcile_terminal`'s own `except`, which calls `_trip_kill`, latching the kill switch after every completed intent. That whole class — a stub restating a library contract with nothing verifying the restatement — is what Task 12a's fidelity guard now covers.
+
+## Phase A — guards that must be proved on v1
+
+### Task 1: The nautilus interface pin (D4)
+
+Our whole dependency is twenty symbols. Pin them exhaustively so a bump reports exactly what moved.
+
+**Files:**
+
+- Create: `tests/test_nautilus_interface_pin.py`
+
+**Interfaces:**
+
+- Produces: nothing importable; it is a guard. Later tasks read its failures as the migration work-list.
+
+- [x] **Step 1: Write the pin, against v1**
+
+```python
+"""Every nautilus symbol this project depends on, pinned by path, shape and value.
+
+The development pin moves daily and upstream reshapes our exact surface -- `KrakenExecClientConfig`
+became `KrakenExecutionClientConfig` and `trader_id` was removed from the exec config within four
+days of each other. This file answers "what changed under us on this bump?" for the whole surface we
+actually use, in one run. It is deliberately preferred over adopting more of the library to widen
+coverage: adopting does not deepen coverage of what we depend on, it enlarges what we depend on.
+"""
+
+import importlib
+
+import pytest
+
+# (module, symbol) for every nautilus name imported anywhere under cli/.
+PINNED_SYMBOLS = [
+    ("nautilus_trader.adapters.kraken.config", "KrakenDataClientConfig"),
+    ("nautilus_trader.adapters.kraken.config", "KrakenExecClientConfig"),
+    ("nautilus_trader.adapters.kraken.constants", "KRAKEN"),
+    ("nautilus_trader.adapters.kraken.factories", "KrakenLiveDataClientFactory"),
+    ("nautilus_trader.adapters.kraken.factories", "KrakenLiveExecClientFactory"),
+    ("nautilus_trader.config", "InstrumentProviderConfig"),
+    ("nautilus_trader.config", "LiveExecEngineConfig"),
+    ("nautilus_trader.config", "LoggingConfig"),
+    ("nautilus_trader.config", "TradingNodeConfig"),
+    ("nautilus_trader.live.node", "TradingNode"),
+    ("nautilus_trader.model.enums", "AccountType"),
+    ("nautilus_trader.model.enums", "LiquiditySide"),
+    ("nautilus_trader.model.enums", "OrderSide"),
+    ("nautilus_trader.model.enums", "OrderStatus"),
+    ("nautilus_trader.model.enums", "TimeInForce"),
+    ("nautilus_trader.model.enums", "liquidity_side_to_str"),
+    ("nautilus_trader.model.identifiers", "InstrumentId"),
+    ("nautilus_trader.model.identifiers", "StrategyId"),
+    ("nautilus_trader.model.identifiers", "Venue"),
+    ("nautilus_trader.trading.strategy", "Strategy"),
+]
+
+# Attributes, not just symbols. `Strategy.id` is read on the live trade path
+# (`positions_open(strategy_id=self._client.id)`); v2 renames it `strategy_id`.
+PINNED_ATTRIBUTES = [("nautilus_trader.trading.strategy", "Strategy", "id")]
+
+
+@pytest.mark.parametrize("module_path,cls_name,attr", PINNED_ATTRIBUTES, ids=lambda v: str(v))
+def test_every_attribute_we_read_still_exists_on_its_class(module_path, cls_name, attr):
+    cls = getattr(importlib.import_module(module_path), cls_name)
+    assert hasattr(cls, attr), f"{cls_name}.{attr} is gone -- the live trade path reads it"
+
+
+
+@pytest.mark.parametrize("module_path,symbol", PINNED_SYMBOLS, ids=lambda v: v.rsplit(".", 1)[-1])
+def test_every_symbol_we_import_still_exists_where_we_import_it(module_path, symbol):
+    module = importlib.import_module(module_path)
+    assert hasattr(module, symbol), f"{module_path}.{symbol} is gone -- our import site breaks"
+
+
+# Name -> integer, for every enum whose VALUE we persist into a durable record or compare across a
+# restart. A rename is loud; a silent value change corrupts stored rows, so both halves are pinned.
+PINNED_ENUM_VALUES = {
+    "LiquiditySide": {"NO_LIQUIDITY_SIDE": 0, "MAKER": 1, "TAKER": 2},
+    "OrderSide": {"NO_ORDER_SIDE": 0, "BUY": 1, "SELL": 2},
+    "TimeInForce": {"GTC": 1, "IOC": 2, "FOK": 3, "GTD": 4},
+    "AccountType": {"CASH": 1, "MARGIN": 2, "BETTING": 3},
+    # Exactly the members cli/engine references. Generated from the installed wheel, never typed.
+    "OrderStatus": {"CANCELED": 8, "DENIED": 2, "EXPIRED": 9, "FILLED": 14, "REJECTED": 7},
+}
+
+
+@pytest.mark.parametrize("enum_name", sorted(PINNED_ENUM_VALUES))
+def test_enum_member_names_and_integer_values_are_unchanged(enum_name):
+    from nautilus_trader.model import enums as nt_enums
+
+    enum_cls = getattr(nt_enums, enum_name)
+    for member_name, expected in PINNED_ENUM_VALUES[enum_name].items():
+        member = getattr(enum_cls, member_name, None)
+        assert member is not None, f"{enum_name}.{member_name} is gone -- stored rows reference it"
+        assert int(member) == expected, (
+            f"{enum_name}.{member_name} changed from {expected} to {int(member)} -- every persisted "
+            f"row carrying the old value now means something else"
+        )
+
+
+# Defaults we rely on WITHOUT setting them. A default that flips is the quietest possible change.
+def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
+    from nautilus_trader.config import LiveExecEngineConfig
+
+    config = LiveExecEngineConfig()
+    assert config.reconciliation is True
+    assert config.filter_unclaimed_external_orders is False, (
+        "unclaimed external orders would stop materialising -- the external-order stream, the "
+        "adopted-row sweep and the unmatched counter all go dark at once"
+    )
+```
+
+- [x] **Step 2: Run it — expect green on v1**
+
+Run: `uv run pytest tests/test_nautilus_interface_pin.py -q`
+Expected: PASS. It is describing the installed v1.
+
+- [x] **Step 3: Prove it is not vacuous**
+
+Run `infra/scripts/mutate-probe.sh` against the test file itself, **twice** — once mutating a pinned integer (`"MAKER": 1` → `"MAKER": 7`) and once mutating a `PINNED_ATTRIBUTES` entry (`"id"` → `"id_"`).
+Expected: KILLED both times. One probe covers one table: an enum mutation leaves the attribute pin unexercised, and a table no test consumes passes every probe aimed elsewhere.
+
+- [x] **Step 3b: Pin the constructors, not only the names.** Every drift this guard exists to catch has been a signature change; construct each config exactly as `cli/engine/node.py` does, so the pin fails on the call we actually make rather than on a name that survives.
+
+- [x] **Step 4: Commit**
+
+```bash
+git add tests/test_nautilus_interface_pin.py
+git commit -m "test(engine): pin the whole nautilus interface we depend on"
+```
+
+### Task 2: The handler-existence guard (D4)
+
+`on_quote_tick` → `on_quote` is invisible: Python does not complain about a subclass method the framework never calls, and every existing test drives our handler directly through stubs, so the suite stays green while production sees no quotes.
+
+**Files:**
+
+- Modify: `tests/test_engine_node.py`
+
+- [x] **Step 1: Write the guard**
+
+```python
+def test_every_handler_our_strategy_overrides_exists_on_the_library_base_class():
+    """The silent-rename guard. A handler the framework no longer dispatches to is not an error in
+    Python -- it is a method nobody calls, and a stub-driven suite cannot see the difference. This
+    turns the whole class of handler renames into one red test.
+
+    It is deliberately general rather than named after `on_quote_tick`: the next rename will be a
+    different handler.
+    """
+    from nautilus_trader.trading.strategy import Strategy
+
+    overridden = {
+        name
+        for name in vars(ShadowStrategy)
+        if name.startswith("on_") and callable(getattr(ShadowStrategy, name, None))
+    }
+    assert overridden, "found no handlers to check -- the walk is broken, not the strategy"
+    missing = sorted(name for name in overridden if not hasattr(Strategy, name))
+    assert not missing, (
+        f"{missing} are overridden here but do not exist on the library's Strategy -- the framework "
+        f"will never call them, and nothing else in this suite would notice"
+    )
+```
+
+- [x] **Step 2: Run — expect green on v1**
+
+Run: `uv run pytest tests/test_engine_node.py -k handler_our_strategy -q`
+Expected: PASS (v1 `Strategy` has `on_quote_tick`).
+
+- [x] **Step 3: Prove it bites** — temporarily rename `ShadowStrategy.on_quote_tick` to `on_quote_tickk`, re-run, expect FAIL naming it, restore.
+
+- [x] **Step 4: Commit**
+
+### Task 3: Pin the strategy identity explicitly (D8)
+
+`order_id_tag` is positional for tag-less strategies (`f"{len(order_id_tags):03d}"`), and `ShadowStrategy` passes no `StrategyConfig`. Registering Task 9's observer would silently change the main strategy's client-order-id prefix — a venue-visible identifier — based on registration order.
+
+**Files:**
+
+- Modify: `cli/engine/node.py`, `tests/test_engine_node.py`
+
+- [x] **Step 1: Read the CURRENT live tag before pinning anything**
+
+Do not take it from this plan. The exec ledger is empty locally — the engine has journaled no fills — so read it off a strategy REGISTERED through the real `Trader.add_strategy`, which is what assigns the tag. Expected `"000"`: the tag is positional (`f"{len(order_id_tags):03d}"`) and `ShadowStrategy` is currently the only strategy. Confirm that by registration rather than trusting it — pinning a wrong value changes every future order id, and the value is visible at the venue.
+
+- [x] **Step 2: Write the failing pin test**
+
+```python
+def test_the_strategys_order_id_tag_is_explicit_not_positional(tmp_path):
+    """`order_id_tag` is assigned as `f"{len(order_id_tags):03d}"` for a strategy that passes no
+    config -- so registering a SECOND strategy silently changes this one's client-order-id prefix,
+    which is visible at the venue. Pinned so a registration-order change is a red test."""
+    strategy = ShadowStrategy(_config(tmp_path))
+    assert strategy.order_id_tag == "000"  # the value read off a registered strategy in Step 1
+```
+
+- [x] **Step 3: Make it pass** — pass `StrategyConfig(order_id_tag="000")`. Leave `external_order_claims` unset; the standing ban is on the token and on a non-`None` value, and both still hold.
+
+- [x] **Step 4: Confirm the claims assertion still passes** — `test_the_strategy_claims_no_external_orders` must stay green.
+
+- [x] **Step 5: Record D7's deliberate asymmetry where it is still unwritten**
+
+`_publish_fill`'s docstring already says its read is instrument-scoped and that `_reconcile_terminal` doubts the strategy-scoped quantity instead. `_realized_eur` carries no such note. Add one: it stays instrument-scoped on purpose, because a hand settle of an engine leg realizes an outcome that is genuinely the engine's, and strategy-scoping would systematically undercount exactly the sanctioned case. Without the note, a later reader aligns it with D6 and reintroduces the phantom-long class of error.
+
+- [x] **Step 6: Note that this pin does not survive the crossing unaided**
+
+v2 exposes no `order_id_tag` attribute on the class or an instance — only `strategy.config.order_id_tag` and the derived `strategy_id`. Task 7a re-expresses the pin against the registered strategy's *effective* identity, which is what the venue sees.
+
+- [x] **Step 7: Run the engine suites and commit**
+
+______________________________________________________________________
+
+## Phase B — the flip
+
+### Task 4: Flip the pin (D1)
+
+**Files:**
+
+- Modify: `pyproject.toml`, `uv.lock`
+
+- [x] **Step 1: Add the index and flip the pin**
+
+```toml
+[[tool.uv.index]]
+name = "nautechsystems"
+url = "https://packages.nautechsystems.io/simple"
+explicit = true
+```
+
+with `nautilus-trader = { index = "nautechsystems" }` under `[tool.uv.sources]`, and the dependency pinned to `nautilus-trader===2.0.0rc4.dev20260825`. `explicit = true` so this index serves only this package and never shadows PyPI.
+
+- [x] **Step 2: Relock and sync**
+
+Run: `uv lock && uv sync`
+Expected: the pinned wheel resolves. Note the v2 wheel declares no required runtime dependencies where 1.231.0 pulled several — expect the lock to shrink.
+
+- [x] **Step 3: Capture the red baseline — this IS the work-list**
+
+Run: `uv run pytest -q 2>&1 | tail -80` and save the failure list to the plan's workspace. Every later task in Phase C closes a named part of it. Record the count.
+
+- [x] **Step 4: Confirm Task 1 and Task 2's guards are among the failures**
+
+If the interface pin and the handler guard are green on v2, they are not doing their job — investigate before proceeding. They should name the renamed symbols and handlers precisely.
+
+- [x] **Step 5: Commit the flip alone**
+
+```bash
+git add pyproject.toml uv.lock
+git commit -m "build(config): flip the nautilus pin to the v2 development wheel"
+```
+
+______________________________________________________________________
+
+## Phase C — work it green
+
+Each task below closes part of Task 4's baseline. The inventory behind these is the spec's measured basis. Where a step says "measured", the value was read off the running wheel — which is not the same as infallible: Task 1's `OrderStatus` integers were recorded as measured and were in fact transposed, so re-derive any value a guard's verdict rests on.
+
+### Task 5: Mechanical import moves
+
+Flat `nautilus_trader.model` replaces `model.enums` / `model.identifiers`; `nautilus_trader.trading` replaces `trading.strategy`; `adapters.kraken` replaces its three submodules. `nautilus_trader.live.node` and `model.orders.base` have no v2 target.
+
+**Files:** `cli/engine/{node,executor,venuestate}.py`, `tests/test_engine_{executor,node,metrics}.py`, `tests/test_nautilus_adapter.py`, and Task 1's `PINNED_SYMBOLS` table.
+
+- [x] **Step 1:** Move every import; update `PINNED_SYMBOLS` to the new paths **and the new names**: `KrakenExecutionClientConfig`, `KrakenDataClientFactory`, `KrakenExecutionClientFactory`, and **`LiveExecEngineConfig` → `LiveExecutionEngineConfig`** — measured, and easy to miss because it is the config carrying `reconciliation` and `filter_unclaimed_external_orders`, the two defaults the whole external-order path rests on. Update `PINNED_ATTRIBUTES` to `strategy_id`.
+- [x] **Step 2:** `uv run pytest tests/test_nautilus_interface_pin.py -q` → green again. The pin is now describing v2.
+- [x] **Step 3:** Commit.
+
+### Task 6: Node assembly (D1, D5)
+
+`TradingNodeConfig` / `TradingNode` / `add_data_client_factory` are gone in favour of `LiveNode.builder(name, TraderId(...), Environment.LIVE)`. `LoggingConfig` → `LoggerConfig`. `instrument_provider=` is rejected on both client configs.
+
+**Files:** `cli/engine/node.py`, `tests/test_engine_node.py`
+
+- [x] **Step 1:** Rewrite `_node_config` / `build_shadow_node` to the builder chain.
+- [x] **Step 2:** Drop `instrument_provider=` from both client configs.
+- [x] **Step 2b (D13): Supply the exec credentials, which v2 now requires**
+
+Measured: `KrakenExecutionClientConfig(...)` without `account_id`, `api_key` and `api_secret` raises `TypeError: missing 3 required positional arguments`. v1 needed none — the adapter read the environment itself. Read the same `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` already rendered onto the host and pass them explicitly; `account_id` is an explicit `AccountId`.
+
+Two properties are load-bearing and each gets a test.
+
+**Keyless local construction builds a DATA-ONLY node** — with no credentials in the environment the exec client is not wired at all, which is what keyless already meant given the key is IP-bound to the host. If execution is explicitly enabled and the environment is empty, construction **refuses loudly**. Never substitute placeholder credentials: a node that looks armed and is not defers the failure from construction to first submission. Two tests: no credentials → a node with no exec client; exec enabled + empty environment → raises.
+
+**The key must never reach a message** — never interpolated into an error string, never logged with its config. Assert on OUR own message-forming paths, not on nautilus's `TypeError` text, which cannot contain a value that was never passed.
+
+- [x] **Step 3 (D5): Measure how the twelve instruments reach the Cache**, against a running v2 node — do not infer it from config. `venue_state_from_cache` raises if any of `INSTRUMENT_IDS` is absent, so establish what now guarantees their presence before the first cycle, and write the guard that proves it.
+- [x] **Step 4:** Re-point the config-shape pins in `tests/test_engine_node.py`; v2 exposes no node-side config readback, so assert on the config objects handed to the builder instead.
+- [x] **Step 5:** Commit.
+
+### Task 7: Renamed call sites on the live trade path
+
+All measured: `cancel_order(order)` → `cancel_order(order.client_order_id)` at three sites **including the kill sweep**; `subscribe_quote_ticks` → `subscribe_quotes`; `unsubscribe_quote_ticks` → `unsubscribe_quotes` (three sites); `on_quote_tick` → `on_quote`.
+
+**Files:** `cli/engine/{node,executor}.py`
+
+- [x] **Step 1:** Apply the renames; update the `ProbeExecutor` client-contract docstring, which enumerates the old surface.
+- [x] **Step 2:** Task 2's handler guard goes green — that is the acceptance signal for the handler rename.
+- [x] **Step 3: Assert the subscription's effect, not the absence of an exception.** A missing `subscribe_*` raises `AttributeError` inside `on_timer`'s blanket `except`, which drops the plan with no gate reason and no kill file. A test that only checks "no exception escaped" cannot see it.
+- [x] **Step 4:** Commit.
+
+### Task 7a: Re-point the strategy identity, and stop the stub hiding the next one
+
+The cold review found this: D6's landed fix reads `self._client.id`, v2 renames it `strategy_id`, and the stub-driven suite is structurally blind because `StubClient` sets `self.id`. No test anywhere drives `ProbeExecutor` with a real `Strategy`, so **any** drift between our client contract and the real one is invisible.
+
+**Files:** `cli/engine/executor.py`, `tests/test_engine_executor.py`
+
+- [x] **Step 1: DONE during Task 5.** Both `self._client.id` call sites in `cli/engine/executor.py` read `strategy_id`, and `StubClient` was renamed to match.
+- [x] **Step 2: Re-express Task 3's tag pin against the effective identity** — assert the *registered* strategy's `strategy_id` and its client-order-id prefix, parametrised over both registration orders (observer first, observer second). v2 exposes no `order_id_tag` attribute, and the config input is not what the venue sees.
+
+**Step 2 has a construction blocker in front of it, measured during Task 6 and owed here because the fix IS the identity decision.** `Strategy` is a pyo3 class, so Python's construction protocol hands `__new__` the subclass's own keyword arguments: `ShadowStrategy(config, executor_factory=...)` raises `TypeError: Strategy.__new__() got an unexpected keyword argument 'executor_factory'`, and `build_shadow_node` therefore cannot construct its own strategy. A `__new__` that swallows them unblocks it — and its argument is what fixes the identity, measured three ways on the installed wheel: `super().__new__(cls, StrategyConfig(order_id_tag="000"))` yields `strategy_id == "ShadowStrategy-000"`; `super().__new__(cls)` yields `"ShadowStrategy-None"` **even though `__init__` still calls `super().__init__(config=StrategyConfig(order_id_tag="000"))` and `strategy.config.order_id_tag` reads `"000"`**. That split is exactly this step's trap: `.config` agrees with the intent while the venue-visible prefix does not. Land `__new__` and this step's registration-order tests together.
+- [x] **Step 2b: Prove the own-position read's guard.** The try/except around it is unreachable by any current fixture — `StubCache(raises=True)` raises in `instrument()`, which the earlier venue-truth guard catches first. Build a cache that raises only when `strategy_id is not None`, and confirm the intent is refused rather than the exception escaping. Without it, deleting that try passes the whole suite.
+- [x] **Step 3: Add the guard that generalises this.** Assert every attribute and method `ProbeExecutor` calls on `self._client` exists on the real nautilus `Strategy`. A stub is a contract restatement, and an unverified restatement drifts silently — which is exactly how this defect stayed green.
+- [x] **Step 4: Prove BOTH halves bite, separately.** Step 3's guard derives the checked set from production's calls and asserts them against the real `Strategy`, so a defect planted in the stub cannot trip it. Run two probes: (a) revert the stub attribute to `id` — the contract test must fail; (b) point production at a name the real `Strategy` lacks — the real-class assertion must fail. **Record which failure fired each time**; a red exit can be the guard misfiring on a healthy path rather than catching the planted defect.
+- [x] **Step 5:** Restore, then commit.
+
+### Task 8: Delete the `_liquidity` survival guard
+
+Forced: `liquidity_side_to_str` no longer exists and v2 enums are not iterable (`TypeError: 'type' object is not iterable`). `LiquiditySide` is a plain enum with `.name`, so the 27-line guard and `_LIQUIDITY_VALUES` go.
+
+**Files:** `cli/engine/executor.py`, `tests/test_engine_{executor,metrics}.py`
+
+- [x] **Step 1:** Replace the body with `side.name`; delete `_LIQUIDITY_VALUES` and the `isinstance(side, int)` branch.
+- [x] **Step 2: Rewrite the tests that pinned v1 behaviour**, which is the hazardous half. The composite-`IntFlag` test is unconstructible on v2 (`MAKER | TAKER` raises `TypeError`), and `{str(member) for member in LiquiditySide}` asserted `'1'` where v2 gives `'MAKER'`. A three-case test that still passes verbatim after the migration is proving nothing — replace it, do not keep it.
+- [x] **Step 3:** Commit.
+
+### Task 9: The sealed EXTERNAL observer (D2)
+
+**Files:** `cli/engine/node.py`, `tests/test_engine_node.py`
+
+- [x] **Step 1:** Add a `Strategy` subclass registered as `StrategyConfig(strategy_id=StrategyId("EXTERNAL"))` with **`order_id_tag` LEFT UNSET**, routing `on_order_event` to the existing external handler.
+
+Measured, and the reason this is spelled out: supplying a tag yields `strategy_id == EXTERNAL-001`, while unclaimed external orders are stamped exactly `EXTERNAL`. The observer would receive nothing — no exception, no log, no failing test — and D2 would evaporate silently. Unset, it survives `add_strategy` as `EXTERNAL`. Assert that **after registration**, not at construction.
+- [x] **Step 2: Seal the order surface** — override all twelve to raise: `submit_order`, `submit_order_list`, `cancel_order`, `cancel_orders`, `cancel_all_orders`, `cancel_gtd_expiry`, `modify_order`, `modify_orders`, `close_position`, `close_all_positions`, `market_exit`, `post_market_exit`.
+
+The first draft listed eight and left `cancel_orders`, `modify_orders` and `post_market_exit` live — which is why Step 3 derives the set rather than trusting this list.
+- [x] **Step 3: Test that each one raises, and that the list is COMPLETE.** Derive the mutating surface — everything on `Strategy` that is absent from `DataActor`, minus `on_*` handlers and the read-only queries — and assert every member of it is sealed. A hand-enumerated seal regains a hole the next time upstream adds a method, silently; a derived one fails loudly and names it. This is the barrier: on an EXTERNAL-registered strategy every scoping default points its authority at the operator's book.
+- [x] **Step 4:** Extend `test_the_strategy_claims_no_external_orders` and `_ORDER_STREAM_WIDENERS` to cover the observer; retire the `msgbus` allowance, which is now zero.
+- [x] **Step 5 (D3): Give the prohibition a guard, because the existing one cannot see it.** `_ORDER_STREAM_WIDENERS` is a `text.count(name)` walk over lowercase `msgbus`, and `"MessageBus".count("msgbus")` is **0** — so a `MessageBus(...)` constructed in `cli/` passes every check in the repo today. Add `"MessageBus": {}` to that map (allowed nowhere) and prove it bites by temporarily constructing one under `cli/`. Text-count, matching the guard's own stated reasoning.
+
+This matters most during Phase C specifically: the red suite hands an implementer failing external-topic tests whose most obvious repair is the forbidden one, and its failure mode is an engine that accepts orders and never sends them.
+- [x] **Step 6:** Commit.
+
+### Task 10: Supervision
+
+`node._config` and `node.trader` do not exist on `LiveNode`, so `engine run`'s startup watchdog lost both of the reads it was built on. It was repaired here first and then **deleted**, which is the governing principle's answer and is recorded as D14: the node aborts its own failed start, in every condition the watchdog named, and a hand-rolled timer beside it is a net loss on the live trade path. The steps below are kept because their measurements are what condemned it.
+
+**Files:** `cli/engine/command.py`
+
+- [x] **Step 1: Repaired, then superseded — and the repair was NOT `node.is_running`.** `LiveNode` is pyo3-*unsendable*: reading any attribute of it off the thread that built it panics and aborts the process (SIGABRT, exit 134), which `except Exception` cannot intercept. The watchdog ran on a `threading.Timer` thread, so that re-point would have killed a HEALTHY engine the moment the timer fired. It read `handle.state is NodeState.RUNNING` off a `node.handle()` captured on the building thread, which answers normally off-thread. The unsendability measurement outlives the deletion; the code does not.
+- [x] **Step 1b: Re-sourced, and the re-sourcing is what decided D14.** The delay came from `node._config.timeout_connection + timeout_reconciliation`; v2's `LiveNode` exposes no `_config`, and `LiveNodeConfig` renames both fields to `*_secs`. Re-deriving it against the installed wheel showed the budget had always been wrong: `LiveNodeConfig` carries FIVE timeout phases — connection 60.0, portfolio 10.0, reconciliation 30.0, disconnection 10.0, shutdown 5.0 — and the hand-rolled sum modelled two of them while calling them the entire budget, so the 120 s timer held 20 s of margin rather than the 30 s its design assumed.
+- [x] **Step 2: The fixture is what condemned it.** Every not-RUNNING state its own parametrised test listed is one the node self-aborts in before the 120 s timer could fire; the single state left in which it *could* fire is a node that reached RUNNING and began a graceful shutdown inside the window, where `os._exit(1)` truncates the residual-event drain and the disconnect on the live trade path and skips `logging.shutdown()`. Two guards replace it, each seen to bite: the raise escaping `engine run` with the node still disposed, and the library's own abort measured in a child interpreter against a closed loopback port.
+- [x] **Step 3:** Re-derive the faulthandler re-arm's justification against v2's Rust/tokio runtime, or remove it with the reason recorded.
+- [x] **Step 4:** Commit.
+
+### Task 11: Rejection classification against the WS transport (D10)
+
+`use_ws_trade` defaults **True**, so submission moves REST → WS while `_KRAKEN_ERROR_MARKERS` is REST-shaped. An unmatched rejection classifies as ambiguous, which stops the plan and leaves an open row.
+
+- [x] **Step 1: Pin `use_ws_trade=False`** (D10). The default is True, which would move submission to WebSocket; the REST classification is the one this project derived against a real venue, and re-deriving for WS needs live submissions this plan cannot reach — the same constraint that moved Task 16 out.
+- [x] **Step 2: Verify the classification still applies over REST on v2**, rather than re-deriving it. `OrderRejected`/`OrderDenied` still carry only a string `reason` (and lost `venue_order_id`), so `_KRAKEN_ERROR_MARKERS` stays string-shaped and applicable. Pin `use_ws_trade`'s value in Task 1's defaults section so a later default flip is a red test rather than a silent transport change.
+- [x] **Step 3:** Record that adopting WS is deliberately deferred and is its own change with its own evidence — not a follow-up hiding in this one.
+- [x] **Step 4:** Commit.
+
+### Task 12: Rounding fixtures
+
+The spec's framing of this was corrected by the cold review: a quantity rounding to zero raises on **both** wheels, so a fixture built on that premise proves nothing. The real divergences are narrower and quieter, and there are three classes:
+
+1. **Price half-even at decimal midpoints** — v1 rounds the binary float, v2 the exact decimal.
+2. **`make_qty` raising at the exact half-increment** (`5e-9` at `size_precision=8`) where v1 returned a value.
+3. **`make_qty` value divergence at half-increments** (`1.5e-8` → v1 `0.00000001`, v2 `0.00000002`) — a silent one-increment difference in submitted quantity, which the spec named nowhere.
+
+- [x] **Step 1: Re-measure all three against a REAL nautilus `Instrument`**, not a `Quantity` constructed by hand — the rounding lives in the instrument's precision, so a hand-built value tests a different code path than production takes.
+- [x] **Step 2:** Add fixtures on the **divergent** values from that measurement. Class 3 is the one to get right: it is silent, it changes an order's quantity, and no existing test would see it.
+- [x] **Step 3:** Decide and record whether class 2's raise needs containment — `instrument.make_qty(sized.qty)` sits outside the only `try` wrapping sizing.
+- [x] **Step 4:** Commit.
+
+### Task 12a: Verify every stub that stands in for a nautilus type
+
+Both review rounds produced blocking findings with one root: the engine suite is stub-driven, and each stub is a hand-written restatement of a nautilus contract with nothing verifying the restatement. Point-patching them one at a time is why the second round found two more.
+
+**Files:** `tests/test_engine_executor.py`, `tests/test_engine_node.py`
+
+- [x] **Step 1: Enumerate every stub standing in for a nautilus type** — `StubClient`, `StubCache`, `_fake_instrument`, `_fake_node`, the order/event doubles — and state, per stub, how it is verified against the real type. Task 7a Step 3 does this for `StubClient`; generalise it.
+- [x] **Step 2: Fix the two already known to be wrong.** (`StubCache`'s strategy-id partition and its `str` refusal were closed on this branch; start the enumeration from what remains.) `_fake_instrument` sets `make_qty=lambda value: value` and `make_price=lambda value: value` — identity — so no fixture through it can reach the production rounding path, which is what Task 12 measures. `_fake_node` fabricates `_config` with `timeout_connection`, a field v2 renames and `LiveNode` no longer exposes at all.
+- [x] **Step 3: Task 12's fixtures must drive `_place` itself** through a real `CurrencyPair` (or a parametrised `_fake_instrument` delegating to one), asserting the SUBMITTED order's quantity and price. A rounding fixture that never reaches the rounding code proves nothing.
+- [x] **Step 4:** Commit.
+
+### Task 13: Repair the guards that lost their anchors
+
+Each of these is a real guard whose *mechanism* v2 removed. The hazard is repairing them into something weaker.
+
+- [x] **Step 1:** The terminal-map totality proof parses closed statuses out of `Order.is_closed.__doc__`, which is `None` on v2. Find another way to derive the library's own closed set — **do not hardcode the list**, which converts a proof into an assertion.
+- [x] **Step 2:** The external-topic tests need `MessageBus`, `Strategy.register` and `model.events`; re-express them against the observer from Task 9.
+- [x] **Step 2b: The faulthandler re-arm's premise is gone.** Both arms of `test_a_native_abort_after_a_node_build_is_readable_only_once_faulthandler_is_re_armed` assert the dump is SUPPRESSED after a node build; it now appears, because the build no longer clobbers an armed faulthandler. Same class as Step 1 — a guard whose mechanism the library removed. Decide whether `cli/engine/command.py`'s `faulthandler.disable(); faulthandler.enable(file=2)` still earns its place, and rewrite or retire both arms with the reason recorded. Do not delete the arms to make the suite green.
+- [x] **Step 3:** Commit.
+
+### Task 14: The probe harness and the logger guard
+
+- [x] **Step 1:** Port `infra/scripts/kraken-order-semantics-probe.py` — same import and node-assembly port as Task 6. It places real orders and is the only instrument that can validate the arming pass, so it must be ported before that pass can be scheduled.
+
+**`run_async` deadlocks once a Python `Strategy` is registered** — measured during Task 6 against a data-only node on live Kraken: with no strategy the hosted run connects in ~0.5 s, and with one it hangs at `Connecting data clients...` indefinitely. `node.run()` on the main thread (what `cli/engine/command.py` uses) is unaffected, and `node.cache` / `node.portfolio`, which RAISE while `run_async` owns the node, are readable on the run's own thread once it returns. The harness therefore runs on `node.run()` with the whole probe sequence in the strategy's callbacks; no watcher thread is involved, because the only thing a second thread may touch is `LiveNodeHandle`, and the sequence needs the cache and the order surface.
+- [x] **Step 2:** `infra/scripts/nautilus-logger-guard-probe.py` cannot run on v2 — and note `uvloop` left the lock with nautilus's other transitive dependencies, so its arm 3 (`import uvloop` inside the probe's `_TWO_NODES` source string) now fails on that too; the rewrite must re-derive the loop-selection premise, not just the logging one — `is_logging_initialized` does not exist. Re-express it against v2's logging surface or retire it with the reason recorded, and update T0085, which records the probe as discharged for the 1.231.0 bump.
+- [x] **Step 3:** Commit.
+
+**`test_pinned_version` was red from Task 4 and is now green on a different assertion — the routing moved, it was not dropped (Task 15 Step 1).** It asserted a hardcoded version, so it reddened at every bump; on a nightly pin that moves daily that becomes noise and gets rubber-stamped. It now checks the installed version against the version `pyproject.toml` pins, which catches a stale venv, a resolver surprise and the `===` local-segment trap, and stays green across bumps. Nothing about the money guard moved: the two refusals that read `cli/engine/order-semantics-verified.json` — the converge assert and the runtime gate — are the tripwire, met at the arming step, and the pinned version reaches that record only through the attended pass Task 15 sequences. `tests/test_nautilus_adapter.py::test_the_arming_gate_consults_this_interpreter_and_the_committed_record` covers that refusal on the real interpreter with nothing injected.
+
+### Task 15: Sequencing the arming pass (D9, D11)
+
+Nothing here arms anything; this task makes the arming pass *possible* and correctly ordered.
+
+**The arming pass was gated on reworking the probe harness — not on upstream.** Researched against upstream's own corpus: every live example calls the blocking `node.run()`, none calls `run_async`, none uses a thread, and every order action sits inside a strategy callback. A node installs its message bus and registries into thread-local storage for the thread that drives it, which is why the unsendable types abort — a driver thread has no bus at all. `LiveNodeHandle` is deliberately sendable and is the only sanctioned cross-thread surface; it stops the node and nothing else.
+
+So the harness runs on `node.run()` with the sequence driven from inside callbacks, as an explicit state machine rather than as coroutines a timer resumes. A trampoline preserving the `async def` bodies behind a 100 ms timer was built first and measured working, and was then discarded: its only purpose was keeping a foreign shape alive, and the polling loop inside it survived as a shape the library never asks for. What replaced it is a step queue plus one waiting primitive — a predicate, a clock alert and a continuation — where an already-satisfied wait continues immediately and arms nothing.
+
+**Independent of run mode, a safety defect had to be fixed first, and was**: the harness read held `Order` objects at roughly thirty sites, and a held order never advances past `INITIALIZED`. Its `teardown()` classified `INITIALIZED` as "never submitted" and returned a clean bill — while real orders rested at the venue on the account the engine trades. A real-money bug, exposed by the migration rather than caused by it. The rebuilt harness holds no order object at all: it keeps client order ids and reads `cache.order(ClientOrderId(...))` wherever status, fill, average price, venue order id or closedness matters, and "never submitted" is no longer inferred from a status — it is whether the harness called `submit_order`.
+
+- [x] **Step 1: Stop bumping the pin** — declared in the runbook, `order-semantics-verification.md` §1.6, and pointed at from the intro. The arming record does exact string membership, so any bump after the attended pass silently disarms the engine: freeze before the pass, and treat any later bump as a decision to re-run it or revert the pin.
+- [x] **Step 2:** The record's granularity is settled in `order-semantics-verification.md` §2.1 — exact complete strings, matched exactly, no family or prefix match, and the string recorded is the one the *interpreter* reports. The version-specific instructions are re-derived (§1.3, §1.4, §4's nonce note, §5.2's 4b row, §5.3's positions note, §7.4's write-up), and the two harness strings that stated an earlier build's readings as this run's expectations now state the requirement and mark the mapping as owed. Also fixed here: the converge assert read a `===` pin as `=<version>`, so it could never be satisfied again once a pass legitimately landed.
+- [x] **Step 3: Take a startup baseline BEFORE setting the alert's threshold.** Cannot execute here — it needs a real disarmed startup against the venue. Landed as `engine.md`'s pre-probe step 4, first sub-item, with what to measure and where to write it, and registered on [[T0152]], whose `ripe_when` already names the first v2 converge.
+- [x] **Step 4:** The unmatched-external alert is owed **after** the healthy-boot baseline, not merely after the metric's first sample — `engine.md` pre-probe step 4, second sub-item, explicitly ordered behind the baseline.
+- [x] **Step 5: `order-semantics-verified.json` gains a version only once that version's attended pass has actually run.** It has. The attended ~€0.20 pass ran 2026-08-26 against the live Kraken account and PASSED on all six probes, so the record carries `2.0.0rc4.dev20260825` beside its `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md` write-up, and **both guards clear the pinned version** — constructed, not inferred: the runtime gate resolves the running interpreter's `2.0.0rc4.dev20260825` as recorded, and the engine role's arming assert evaluates TRUE against the committed `pyproject.toml` pin and the committed record with `exec_armed = true` rendered, while a control that drops the pinned version from the record makes it refuse. The pin is frozen at that string until the engine is armed on it.
+- [x] **Step 6:** Commit.
+
+### Task 16: Hand D2's delivery leg to the arming checklist — it cannot execute here
+
+The publish leg is established from source and the delivery leg in a backtest, but the join needs a genuine venue-sourced external order, which needs live Kraken reconciliation. This plan converges nothing, and the exec key is IP-bound to the engine host — so no step in this plan can reach it. Pretending otherwise would produce a step that is silently skipped or improvised into a non-equivalent local check.
+
+- [x] **Step 1:** Confirm the obligation is registered as `T0152` with a `ripe_when` naming the first v2 converge, and that its index bullet reflects it. Registration and this plan's closeout travel together — prose in a plan is never a deferral's only home.
+- [ ] **Step 2:** State the residual plainly in the PR body: D2 merges with its publish leg proven from source and its delivery leg proven only in a backtest. The fallback if the join fails is known and cheap — Cache polling on the executor's existing 5-second tick.
+
+**Run the live-venue tests deliberately at closeout**: `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest tests/test_engine_node.py -k twelve_instruments` covers the instrument-arrival guard, which is opt-in so CI neither flakes on a live endpoint nor skips it silently forever.
+
+### Task 17: Closeout
+
+- [x] **Step 1:** `docs/reference/data-catalog*.md` — no dataset change; confirm and move on.
+- [x] **Step 2:** Update T0085's nautilus sub-item and its `ripe_when`, which still names the cancelled 1.231.0 converge.
+- [x] **Step 3:** Append the iterations-history entry via the `iteration-closeout` skill, routed to the Phase-6 changelog. **Re-verify every status claim against the full branch log immediately before PR-open** — the first pass was itself overtaken, by the commits that landed after it (the attended pass, D1's amendment, D15, D16 and both topic closures), which is exactly the failure this step exists to prevent. It has been re-run against the finished branch. Anything that lands after this owes it again.
+- [x] **Step 4:** Commit.

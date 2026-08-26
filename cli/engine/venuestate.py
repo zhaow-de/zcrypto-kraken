@@ -48,7 +48,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
-from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model import InstrumentId, Venue
 
 from cli.engine.errors import EngineError
 from cli.engine.instruments import COSTMIN, INSTRUMENT_IDS

@@ -569,9 +569,9 @@ def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
     assert not (repo / "infra" / "ansible" / "order-semantics-verified.yml").exists()
     role = (repo / "infra" / "ansible" / "roles" / "engine" / "tasks" / "main.yml").read_text()
     assert "cli/engine/order-semantics-verified.json" in role
-    assert _verified_nautilus_versions() == frozenset({"1.230.0", "1.231.0"}), (
+    assert _verified_nautilus_versions() == frozenset({"1.230.0", "1.231.0", "2.0.0rc4.dev20260825"}), (
         "the record changed. If an attended order-semantics pass really ran, update this "
-        "deliberately alongside the new docs/research/ verification doc -- and sweep the other "
+        "deliberately alongside the new docs/reference/adapter-verification/ record -- and sweep the other "
         "homes of 'that version is unverified', enumerated in infra/runbooks/"
         "order-semantics-verification.md's write-up step, including this file"
     )

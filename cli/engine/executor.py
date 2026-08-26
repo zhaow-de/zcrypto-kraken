@@ -29,8 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.model.enums import LiquiditySide, OrderSide, OrderStatus, TimeInForce, liquidity_side_to_str
-from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model import ClientOrderId, InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
@@ -38,6 +37,7 @@ from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict
 from cli.engine.execledger import (
     append_plan_entry,
     append_submitted_row,
+    closed_submitted_rows,
     exec_records_through,
     ledgered_intent_keys,
     ledgered_plan_ids,
@@ -94,23 +94,41 @@ _TRIPPED_REFUSAL = "the kill switch tripped in this process"
 FIRST_FILL_FILE = "first-fill"
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
-# What a terminal event on an ADOPTED order's row writes as its state, taken from
-# `execledger._ROW_STATES`' existing names rather than minting one. `OrderCancelRejected` is
-# deliberately absent: the venue positively says the cancel did NOT take, so the order may still
-# rest and the row has to keep pointing at a possibly-live order.
-_EXTERNAL_TERMINAL_STATES = {"OrderCanceled": "canceled", "OrderExpired": "venue_canceled", "OrderRejected": "rejected"}
-# What the STARTUP reconciliation writes for an order the cache holds as closed -- keyed on the
-# order's own status, not on an event class name, because the commonest closed-while-down shape is a
-# cancel with zero fills: it publishes no event this process is alive to hear and leaves no quantity
-# delta to notice it by, so `_EXTERNAL_TERMINAL_STATES` has no entry that could reach it. Every
-# closed `OrderStatus` the library defines is here; a status outside the map leaves the row's state
-# untouched rather than minting one, since `_store` refuses a state outside `_ROW_STATES` and a
-# raise here would cost the classification pass. `canceled` makes no we-requested claim either --
-# nothing at startup can tell a venue cancel from one the previous process sent.
+# The terminal order events the execution engine can MINT rather than receive. Past
+# `inflight_check_retries` it stops waiting on an unanswered in-flight order and publishes one of
+# these itself, carrying `reconciliation=True`. `OrderFilled` carries the same flag and is
+# deliberately absent -- `_on_order_event` says why.
+#
+# `OrderFillVoided` carries it too and is absent for a different reason: it cannot be dispatched to
+# a strategy here at all. The only route to one at this venue is the mass-status reconciliation the
+# node runs before it starts the trader, so no handler is subscribed when it publishes; what reaches
+# this engine is the venue order the library already lowered, and `_reconcile_finished_rows` is what
+# reads it (spec 00100 D16).
+_RECONCILED_TERMINALS = frozenset({"OrderRejected", "OrderCanceled", "OrderExpired"})
+# What an ADOPTED order's row writes as its state, on BOTH paths that write one -- the startup
+# reconciliation and the live external stream -- taken from `execledger._ROW_STATES`' existing names
+# rather than minting one.
+#
+# Keyed on the order's own status, never on an event class name, and that is the whole point: the
+# library's closed statuses are a finite declared set, so this map can be PROVEN total over them and
+# is; a class name is an open string space where no such proof is even expressible. It also reaches
+# what no event could -- the commonest closed-while-down shape is a cancel with zero fills, which
+# publishes no event this process is alive to hear and leaves no quantity delta to notice it by.
+#
+# A status outside the map leaves the row's state untouched rather than minting one, since `_store`
+# refuses a state outside `_ROW_STATES` and a raise here would cost the caller its pass. The open
+# statuses fall through that way on purpose: an order the venue REFUSED to move -- a rejected
+# cancel, a stale ack the state machine declined -- is still resting, and its row has to keep
+# pointing at a possibly-live order.
+#
+# `canceled` makes no we-requested claim -- nothing here can tell a venue cancel from one this
+# engine sent -- and `VOIDED`, the venue undoing an order's fills, reads `venue_canceled` for the
+# reason `EXPIRED` does: the venue ended it and this engine did not ask.
 _ADOPTED_TERMINAL_STATES = {
     OrderStatus.FILLED: "filled",
     OrderStatus.CANCELED: "canceled",
     OrderStatus.EXPIRED: "venue_canceled",
+    OrderStatus.VOIDED: "venue_canceled",
     OrderStatus.REJECTED: "rejected",
     OrderStatus.DENIED: "rejected",
 }
@@ -141,12 +159,6 @@ _TRACKING_WITHIN_BAND = 3
 _TRACKING_BREACHED = 4
 
 _VENUE = Venue("KRAKEN")
-# The integer value of every REAL `LiquiditySide` member, derived from the enum rather than written
-# out, so a member the library adds is admitted automatically. Plain ints, and the test is
-# `isinstance(side, int) and int(side) in ...`: a set membership on the enum member itself would
-# lean on Enum's own hashing, and a string that happens to spell a number must not slip through.
-# See `_liquidity` for why this gate exists at all -- it is a process-survival guard, not a filter.
-_LIQUIDITY_VALUES = frozenset(int(member) for member in LiquiditySide)
 # The instrument-id -> symbol direction, for labelling a fill's metric. Inverted from the ratified
 # map rather than string-split off the id, so an id this engine never ratified raises instead of
 # inventing a label.
@@ -210,30 +222,16 @@ def _set_tracking_state(state: int) -> None:
 
 
 def _liquidity(side) -> str:
-    """The venue's own NAME for a fill's liquidity side ("MAKER"/"TAKER"/"NO_LIQUIDITY_SIDE").
+    """The venue's own NAME for a fill's liquidity side -- `LiquiditySide.name`, so the forensic row
+    and the metric label both read `MAKER`/`TAKER`/`NO_LIQUIDITY_SIDE` rather than a number.
 
-    Never `str(side)`: in the installed nautilus-trader `LiquiditySide` is an `IntFlag` over
-    `ReprEnum`, so `str(LiquiditySide.MAKER)` is `'1'` and TAKER's is `'2'`. That number would go
-    into the forensic row that outlives the probe, and would mint a `liquidity="1"` metric child
-    while the pre-registered maker/taker series read zero for a whole window -- a board reporting
-    that nothing traded while money moves, and the maker-vs-taker blend is the measurement the
-    maker-first ladder exists to produce.
-
-    Falls back to `str(side)`, logged, for anything the enum cannot name. This sits on the
-    write-ahead path where a raise costs the fill its row, and `liquidity_side_to_str` is not
-    total: it raises `TypeError` on a non-int, `OverflowError` on -1, and on an out-of-range
-    positive int decodes garbage memory into a `UnicodeDecodeError`. An unnameable side is recorded
-    verbatim, never dropped.
-
-    The membership test in front of that call is NOT redundant with the `except`, and must not be
-    "simplified" away: on 3 the helper does not raise at all, it ABORTS THE PROCESS with a Rust
-    capacity-overflow panic (SIGABRT) that no `except BaseException` can catch -- and 3 is
-    constructible as `LiquiditySide.MAKER | LiquiditySide.TAKER`, because IntFlag keeps
-    out-of-range composites under its KEEP boundary. Only never making the call survives it, and
-    dying here would kill a live engine mid-probe with money in flight. `_LIQUIDITY_VALUES` is
-    derived from the enum, so a member the library adds widens the guard with it."""
-    if isinstance(side, int) and int(side) in _LIQUIDITY_VALUES:
-        return liquidity_side_to_str(side)
+    Anything the enum cannot name is recorded verbatim and logged: this sits on the write-ahead path
+    where a raise costs the fill its row, so an unnameable side is never allowed to become an
+    exception. `tracking.py` refuses a liquidity outside the venue's own names downstream, where a
+    refusal is affordable."""
+    name = getattr(side, "name", None)
+    if isinstance(name, str):
+        return name
     logger.warning("fill carries an unrecognisable liquidity side %r -- recording it verbatim", side)
     return str(side)
 
@@ -498,9 +496,14 @@ class _ActiveIntent:
     close_qty: float | None = None
     reduce_only: bool = False
     # What the Cache said was held in this symbol when the intent started, off the SAME frozen venue
-    # truth the intent was authorized against. The post-terminal reconciliation subtracts against it,
-    # so the two ends of that comparison cannot disagree about anything except real movement.
+    # truth the intent was authorized against. Instrument-scoped, because SIZING trades the real
+    # book: what the operator holds is part of what this engine must size against.
     position_before: float = 0.0
+    # The same read scoped to THIS engine's strategy, which the post-terminal reconciliation
+    # subtracts against instead: NETTING position ids are `f"{instrument_id}-{strategy_id}"`, so an
+    # external fill lands in a separate position and a scoped read excludes it by construction.
+    # The two baselines are never compared to each other, so they need not be simultaneous.
+    own_position_before: float = 0.0
     order: object | None = None
     order_payload: dict | None = None
     client_order_id: str | None = None
@@ -518,8 +521,8 @@ class ProbeExecutor:
     """Owns every venue-mutating call in this repository.
 
     `client` is the strategy handle (or a stub with the same surface): `.cache`,
-    `.order_factory.limit(...)`, `.submit_order(order, params=...)`, `.cancel_order(order)`,
-    `.subscribe_quote_ticks(id)`, `.unsubscribe_quote_ticks(id)`.
+    `.order_factory.limit(...)`, `.submit_order(order, params=...)`, `.cancel_order(client_order_id)`,
+    `.subscribe_quotes(id)`, `.unsubscribe_quotes(id)`.
     """
 
     def __init__(self, *, client, gate: ExecutionGate, config: EngineConfig, clock=_utc_now) -> None:
@@ -667,11 +670,12 @@ class ProbeExecutor:
         write-ahead row is the only trusted witness. An order matching a non-terminal row whose
         LEDGERED order was reduce-only is left resting, and its row is preserved. Its later fills
         are preserved with it: the live engine reconciles a venue-resting order under the EXTERNAL
-        strategy id (the instrument is never claimed) and publishes its events on
-        `events.order.EXTERNAL`, which `node.py` subscribes and routes into `_on_external_event`
-        (spec 00098 D1) -- so the `_attached` entry this pass writes below is precisely what that
-        filter matches a post-restart fill against, and a matched fill appends to the row, moves the
-        counters, and latches the overfill trip exactly as an own order's does. The claim list stays
+        strategy id (the instrument is never claimed) and routes its events to the strategy
+        registered under that id -- `node.py`'s external order observer, which forwards them into
+        `_on_external_event` (spec 00098 D1, 00100 D2) -- so the `_attached` entry this pass writes
+        below is precisely what that filter matches a post-restart fill against, and a matched fill
+        appends to the row, moves the counters, and latches the overfill trip exactly as an own
+        order's does. The claim list stays
         empty, so a genuinely external act -- the owner's sanctioned hand settle -- still matches no
         ledgered row and is counted and dropped rather than acted on. Everything else is canceled: a
         resting opener is a pending widening the hold exists to forbid, and an order with no row
@@ -692,20 +696,24 @@ class ProbeExecutor:
         ack itself, in a forensic row.
 
         BEFORE any of that, the pass reconciles every row it can match against the venue's own
-        figure (spec 00098 D7), because the subscription above cannot reach backwards: nautilus
-        awaits execution reconciliation and only then starts the trader, which is what installs the
-        subscription, so a fill that happened while this process was down is published to nobody.
-        The quantity is not lost with it -- the engine applies the fill to the order and publishes
-        it in one synchronous body, so it is resident in the reconciled order's own `filled_qty` by
-        the time this runs, and that is what `_reconcile_adopted_rows` reads. Which is also why the
-        cache read below is the WIDE one: an order that filled, was canceled or expired while this
-        process was down is reconciled as CLOSED and never appears in `orders_open` at all, so the
-        pass can no longer return early when nothing is resting -- an idle startup can still owe row
-        repairs. The classification population is unchanged: it is the open orders, taken from that
-        same list by the order's own predicate.
+        figure (spec 00098 D7), because the stream above cannot reach backwards: a fill applied
+        during nautilus's own reconciliation is published before this pass has attached a single
+        row, so it matches nothing and is dropped as a genuinely external act.
+        The quantity is not lost with it -- an order event is applied to the order and to the Cache
+        BEFORE it is dispatched, so the fill is resident in the reconciled order's own `filled_qty`
+        by the time this runs, and that is what `_reconcile_adopted_rows` reads. That ordering is a
+        measurement, not a reading: the execution engine is compiled and offers no source, so
+        tests/test_engine_executor.py drives a real order through a real engine and reads the Cache
+        from inside the handler.
+
+        The classification population below is `orders_open`, but the row sweep is NOT: an order that
+        filled, was canceled or expired while this process was down is reconciled as CLOSED and never
+        appears in `orders_open` at all, so the pass cannot return early when nothing is resting -- an
+        idle startup can still owe row repairs. It reaches those orders one at a time, by the id each
+        ROW already names.
         """
         try:
-            orders = list(self._client.cache.orders(venue=_VENUE))
+            resting = list(self._client.cache.orders_open(venue=_VENUE))
         except Exception:
             # Nothing can be adopted OR canceled without the list, and nothing has been touched --
             # so the pass does NOT latch: leaving a previous process's orders unclassified for the
@@ -713,14 +721,16 @@ class ProbeExecutor:
             # duplicate.
             logger.critical("venue orders could not be read at startup -- retrying on the next tick", exc_info=True)
             return
-        # Derived from the list already read rather than from a second cache call: two reads can
-        # disagree, and one of them failing would leave the sweep and the classification reasoning
-        # from different populations of the same account.
-        resting = [order for order in orders if order.is_open]
         self._adopted = True  # the read succeeded: this pass classified what there was to classify
 
         try:
             rows = {row["client_order_id"]: (boundary, row) for boundary, row in open_submitted_rows(self._journal_dir, now)}
+            # The two reads partition the same window's rows and come from the same records, so one
+            # failing means neither is available -- hence one `try` around both. Only `rows` reaches
+            # the classification loop below: a resting order matching a CLOSED row is a ledger that
+            # disagrees with the venue about the order's lifecycle, and letting such a row vouch for
+            # it as a resting reducer would leave a live order working on a stale claim.
+            finished = {row["client_order_id"]: (boundary, row) for boundary, row in closed_submitted_rows(self._journal_dir, now)}
         except Exception:
             # The claim is scoped to what is actually resting: the rows are now read on every
             # startup, including idle ones where nothing could be canceled at all.
@@ -729,14 +739,15 @@ class ProbeExecutor:
                 " and every resting order will be canceled" if resting else "",
                 exc_info=True,
             )
-            rows = {}
-        self._reconcile_adopted_rows(orders, rows)
+            rows, finished = {}, {}
+        self._reconcile_adopted_rows(rows)
+        self._reconcile_finished_rows(finished)
         if not resting:
             return  # nothing adopted -- and no gate read, so an idle startup stays the cheap path
 
-        # Read AFTER the sweep: a repair that latched the kill switch above makes this `none`, and
-        # then the pass cancels everything, ledgered reducers included -- which is exactly what a
-        # latched kill file means.
+        # Read AFTER both sweeps: a repair or a withdrawal that latched the kill switch above makes
+        # this `none`, and then the pass cancels everything, ledgered reducers included -- which is
+        # exactly what a latched kill file means.
         kill_latched = self._evaluate(now).level == GateLevel.NONE
 
         for order in resting:
@@ -754,28 +765,32 @@ class ProbeExecutor:
                 "the kill switch is latched" if kill_latched else "the ledger does not carry it as a resting reducer",
             )
             try:
-                self._client.cancel_order(order)
+                self._client.cancel_order(order.client_order_id)
             except Exception:
                 logger.critical(
                     "cancel of adopted order %s raised -- it may still rest at the venue", client_order_id, exc_info=True
                 )
 
-    def _reconcile_adopted_rows(self, orders: list, rows: dict) -> None:
-        """The startup reconciliation sweep (spec 00098 D7): every ledgered row this pass can match
-        to a cache order, compared against that order's own quantity, before anything is classified.
+    def _reconcile_adopted_rows(self, rows: dict) -> None:
+        """The startup reconciliation sweep (spec 00098 D7): every ledgered row whose order the cache
+        holds, compared against that order's own quantity, before anything is classified.
 
-        The ROWS are iterated and the orders indexed, never the other way round: the cache holds no
-        previous session's state, but the venue's mass-status read is unbounded, so `orders` can be
-        the account's entire closed-order history while the rows are the two-day re-attach window.
+        The ROWS drive it, and each asks the cache for exactly the order it names. The alternative --
+        reading the account's whole order index and matching it against the rows -- reads a
+        population with no bound on it: a mass-status read carries every closed order the account
+        has, while the rows are the two-day re-attach window. Nothing about that read gets smaller
+        as the account gets older, and every one of those orders would be materialised to answer a
+        question about at most a handful of ids.
+
         A row whose order the cache holds no record of at all is left exactly as it is -- there is
         no venue-truth source for it at this point in startup, and inventing one would be worse than
         an open row a human can read.
 
-        Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- or its
-        trip -- costs only that row and the rest still get their repairs. And around the whole
-        sweep, because `_adopted` is already set when this runs: an escape would leave a previous
-        process's resting opener working at the venue, uncanceled and unattached, for the life of
-        this process, and the sweep introduces raising calls the pass never had.
+        Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
+        lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
+        And around the whole sweep, because `_adopted` is already set when this runs: an escape would
+        leave a previous process's resting opener working at the venue, uncanceled and unattached,
+        for the life of this process.
 
         Neither of those is what protects the kill trips, and the difference is load-bearing: each
         ledger write inside `_reconcile_adopted_row` carries its OWN `try` (`_record_trip_fill`'s
@@ -784,12 +799,14 @@ class ProbeExecutor:
         logged, no kill file, and the gate reading normal.
         """
         try:
-            by_client_order_id = {str(getattr(order, "client_order_id", "")): order for order in orders}
             for client_order_id, (boundary, row) in rows.items():
-                order = by_client_order_id.get(client_order_id)
-                if order is None:
-                    continue
                 try:
+                    # `cache.order` is typed and refuses a plain str, and it serves closed orders as
+                    # readily as open ones -- which is the whole reason a row can be repaired at all
+                    # after the order it names filled or was canceled while this process was down.
+                    order = self._client.cache.order(ClientOrderId(client_order_id))
+                    if order is None:
+                        continue
                     self._reconcile_adopted_row(boundary, client_order_id, row, order)
                 except Exception:
                     logger.critical("adopted row %s could not be reconciled against the venue", client_order_id, exc_info=True)
@@ -888,6 +905,77 @@ class ProbeExecutor:
                 f"adopted order {client_order_id} shows {total:.10g} filled at the venue, "
                 f"more than the {ordered:.10g} the ledger says it was submitted for"
             )
+
+    def _reconcile_finished_rows(self, rows: dict) -> None:
+        """The rows the sweep above cannot reach (spec 00100 D16): every ledgered row this engine
+        already closed, asked the one question a finished order can still answer wrongly.
+
+        The population is the whole reason this exists. `_reconcile_adopted_rows` runs over the
+        re-attach set, which by definition holds only the states an order can still be live in -- so
+        a row that reads `filled`, `canceled`, `venue_canceled` or `rejected` is compared against
+        nothing, ever. That is fine for everything an order can do going forward and wrong for the
+        one thing it can do backwards: the venue withdrawing a fill it already reported. A withdrawal
+        lands on a COMPLETED order by construction, which is exactly the row the re-attach set omits.
+
+        This engine never sees the withdrawal as an event. The library's reconciliation applies it to
+        the order before this process has a strategy subscribed to anything, so what arrives is a
+        venue order whose own `filled_qty` has come DOWN -- and the ledger row beside it still
+        carries the quantity this engine recorded, published and sized against.
+
+        Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
+        ledger write carries its own `try` for the same one: the trip stands behind it, so a
+        read-only journal may never swallow a latch.
+        """
+        try:
+            for client_order_id, (boundary, row) in rows.items():
+                try:
+                    order = self._client.cache.order(ClientOrderId(client_order_id))
+                    if order is None:
+                        continue  # no venue-truth source for it -- the same answer the sweep above gives
+                    self._reconcile_finished_row(boundary, client_order_id, row, order)
+                except Exception:
+                    logger.critical("finished row %s could not be reconciled against the venue", client_order_id, exc_info=True)
+        except Exception:
+            logger.critical("the finished-row sweep raised -- classifying resting orders anyway", exc_info=True)
+
+    def _reconcile_finished_row(self, boundary: datetime, client_order_id: str, row: dict, order) -> None:
+        """One closed row against the venue's own figure: does the venue still report the quantity
+        this row was closed on?
+
+        ONE direction, on the same `_OVERFILL_TOLERANCE` dead-band the sweep above uses and for the
+        same reason -- the ledgered figure is a sum of per-fill floats and the venue's is one
+        exactly-rounded `float(Quantity)`, so a clean multi-fill order differs by ulps. A shortfall
+        is the withdrawal's whole signature, and it means this engine holds less than every figure
+        downstream of the row already says it does: `held`, the position the ladder sizes against,
+        the fills and fee counters. That is the same divergence 00098 D7's negative arm latches on
+        for an open row, reaching the rows D7 cannot see.
+
+        NOTHING is repaired, reversed or restated, and that is the decision rather than an omission.
+        The row records what the venue reported when it reported it, and the withdrawal appends
+        beside it, so the two readings sit together for whoever reads the kill. Subtracting instead
+        would move the overfill trip's base under it, and would leave a ledger that agrees with the
+        venue and no longer shows that they ever disagreed -- deleting exactly the evidence the trip
+        is about. There is no next order to size correctly either: a latched kill is the last thing
+        this process decides about trading.
+        """
+        ledgered = row["filled_qty"]
+        venue_filled = float(order.filled_qty)
+        if venue_filled >= ledgered - _OVERFILL_TOLERANCE:
+            return
+        payload = {
+            "event": "withdrawn",
+            "at": self._now().isoformat(),
+            "qty": venue_filled - ledgered,
+            "venue_filled_qty": venue_filled,
+        }
+        try:
+            update_submitted_row(self._journal_dir, boundary, client_order_id, event=payload)
+        except Exception:
+            logger.critical("the withdrawal on finished row %s could not be journaled", client_order_id, exc_info=True)
+        self._trip_kill(
+            f"order {client_order_id} shows {venue_filled:.10g} filled at the venue, less than the "
+            f"{ledgered:.10g} this engine recorded and closed it on"
+        )
 
     def _pickup(self, now: datetime) -> None:
         path = exec_dir(self._state_dir) / PLAN_FILENAME
@@ -1063,7 +1151,19 @@ class ProbeExecutor:
                 return
 
         instrument_id = InstrumentId.from_str(INSTRUMENT_IDS[intent.symbol])
-        self._client.subscribe_quote_ticks(instrument_id)
+        try:
+            # Before the subscribe, and guarded like the venue-truth read above: this is the second
+            # Cache read of the same instant, and a raise after subscribing would leak the quote
+            # subscription until restart.
+            own_position_before = sum(
+                float(p.signed_qty)
+                for p in self._client.cache.positions_open(instrument_id=instrument_id, strategy_id=self._client.strategy_id)
+            )
+        except Exception:
+            logger.warning("own position unreadable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
+            self._refuse_intent(index, ("no venue truth",))
+            return
+        self._client.subscribe_quotes(instrument_id)
         self._active = _ActiveIntent(
             index=index,
             intent=intent,
@@ -1077,6 +1177,7 @@ class ProbeExecutor:
             close_qty=decision.qty if intent.action == "close" else None,
             reduce_only=decision.reduce_only,
             position_before=state.positions.get(intent.symbol, 0.0),
+            own_position_before=own_position_before,
         )
 
     def _classify_close(self, intent: ProbeIntent, state, level: str) -> _CloseDecision:
@@ -1180,6 +1281,11 @@ class ProbeExecutor:
         # `reduce_only` is passed ONLY when the classification set it (a margin closer). Kraken's
         # reduce-only is a margin-order concept, so a spot order never carries it at all.
         flag = {"reduce_only": True} if active.reduce_only else {}
+        # `make_qty` REFUSES a quantity that rounds to zero, and it is called outside the try above.
+        # What keeps that unreachable is `size_order`: it floors to `lot_step`, so `sized.qty` is a
+        # whole number of increments, and the notional floors refuse zero of them. `ordermin` is the
+        # usual one, but it reads 0.0 when the venue reports no minimum, and 0.0 < 0.0 refuses
+        # nothing -- the floor that always holds is the committed `costmin`, positive on every leg.
         order = self._client.order_factory.limit(
             instrument_id=active.instrument_id,
             order_side=OrderSide.BUY if intent.side == "buy" else OrderSide.SELL,
@@ -1333,7 +1439,7 @@ class ProbeExecutor:
 
     def _cancel(self, active: _ActiveIntent) -> None:
         try:
-            self._client.cancel_order(active.order)
+            self._client.cancel_order(active.order.client_order_id)
         except Exception:
             # No retry and no fallback: the order may still rest, and the intent stays in
             # `cancelling` -- an open ledger row for reconciliation, and no further order.
@@ -1596,7 +1702,7 @@ class ProbeExecutor:
         self._cancel_resting(active)
         if active is not None:
             try:
-                self._client.unsubscribe_quote_ticks(active.instrument_id)
+                self._client.unsubscribe_quotes(active.instrument_id)
             except Exception:
                 logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
             # The intent was mid-flight, so nothing else will ever journal it: without this its line
@@ -1656,7 +1762,7 @@ class ProbeExecutor:
             if client_order_id in requested:
                 continue
             try:
-                self._client.cancel_order(order)
+                self._client.cancel_order(order.client_order_id)
             except Exception:
                 logger.critical(
                     "cancel of %s raised while tripping -- it may still rest at the venue", client_order_id, exc_info=True
@@ -1742,16 +1848,22 @@ class ProbeExecutor:
             attached[1]["filled_qty"] = attached[1]["filled_qty"] + qty
 
     def _reconcile_terminal(self, active: _ActiveIntent) -> None:
-        """The post-terminal reconciliation: what this intent's fills say the position should now be,
-        against what the Cache says it is.
+        """The post-terminal reconciliation: what this intent's fills say this engine's OWN position
+        should now be, against what the Cache says it is.
+
+        Scoped to this engine's strategy on BOTH ends, never to the instrument: an instrument-scoped
+        read carries holdings this engine never ordered, and an operator's hand settle must reach no
+        trip, no row and no cancel (spec 00098 D1). `position_before` stays instrument-scoped
+        because SIZING trades the real book; only this comparison is narrowed.
 
         The tolerance is the instrument's own lot step -- the smallest quantity the venue can even
         express, so nothing tradeable hides under it. Anything larger is either a fill this engine
         never saw or one it saw and mis-accounted, and both are reasons to stop rather than to place
         the next order against a position it cannot describe.
 
-        DELIBERATELY NOT reached from the four ambiguous exits (a raising submit, an unclassifiable
-        rejection, a cancel the venue rejected, a cancel or IOC it never answered): each of those
+        DELIBERATELY NOT reached from the five ambiguous exits (a raising submit, an unclassifiable
+        rejection, a cancel the venue rejected, a cancel or IOC it never answered, and a terminal
+        this engine minted for itself rather than received): each of those
         means an order may still be live and may still legitimately fill, so `filled` is not an
         expectation to hold the Cache to, and checking there would fire on a delayed venue answer
         rather than on a divergence. The cost is real and accepted: a divergence born during an
@@ -1759,9 +1871,12 @@ class ProbeExecutor:
         away. What covers it instead is that an ambiguous outcome already stops the whole plan and
         leaves an open row for the attended operator, which is the state that path exists to produce.
         """
-        expected = active.position_before + (active.filled if active.intent.side == "buy" else -active.filled)
+        expected = active.own_position_before + (active.filled if active.intent.side == "buy" else -active.filled)
         try:
-            actual = sum(float(p.signed_qty) for p in self._client.cache.positions_open(instrument_id=active.instrument_id))
+            actual = sum(
+                float(p.signed_qty)
+                for p in self._client.cache.positions_open(instrument_id=active.instrument_id, strategy_id=self._client.strategy_id)
+            )
         except Exception:
             # The venue-truth read at intent start proved this same Cache readable minutes ago, so a
             # raise here is an anomaly rather than routine -- and an unverifiable position after a
@@ -1774,8 +1889,8 @@ class ProbeExecutor:
             return
         if abs(actual - expected) > active.constraints.lot_step:
             self._trip_kill(
-                f"{active.intent.symbol} holds {actual:.10g} after intent {active.index}, not the {expected:.10g} "
-                "this engine's own fills account for"
+                f"{active.intent.symbol} holds {actual:.10g} in this engine's own position after intent "
+                f"{active.index}, not the {expected:.10g} its fills account for"
             )
 
     # --- order events --------------------------------------------------------------------------
@@ -1805,6 +1920,38 @@ class ProbeExecutor:
         reason = getattr(event, "reason", None)
         if reason is not None:
             payload["reason"] = str(reason)
+
+        if name in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
+            # This terminal was MINTED by the execution engine, not sent by the venue: past its
+            # in-flight retry budget it stops waiting on an unanswered order and publishes the
+            # `OrderCanceled`, or the `INFLIGHT_TIMEOUT` `OrderRejected`, on its own authority. It
+            # says nothing about what happened at the venue, so the order may still be resting --
+            # which is the ambiguous exit's whole definition, and exactly what `_ACK_WAIT` expiring
+            # already means. Taken ABOVE the dispatch so no arm below can reach `_fallback`,
+            # `_reprice` or `_finish_revoked` on it, and so an entry added to
+            # `_KRAKEN_ERROR_MARKERS` cannot turn the rejection into a resubmission.
+            #
+            # `OrderFilled` is excluded deliberately. A reconciled fill is the venue's OWN report
+            # transcribed late -- its quantity and price are the venue's, and only the trade id is
+            # minted, because the report carries none -- so it is a fill that HAPPENED, and its row,
+            # its quantity credit and its published fill are all owed for money that moved: no fill
+            # without a record. Dropping the credit would also make the next resubmission over-ask
+            # by exactly that quantity, which is this same double exposure in the other direction.
+            #
+            # What covers a fill that did NOT happen is narrower than it looks, and naming the limit
+            # is the point. Reconciliation tops an order up to the venue report's CUMULATIVE
+            # quantity and infers nothing unless the report exceeds what the order already holds, so
+            # a stale or replayed report cannot over-report; upstream's `check_overfill`, with
+            # `allow_overfills` False, refuses an application past the order's own quantity; and the
+            # fill-time trips above latch on anything past the quantity the row was submitted for.
+            # `_reconcile_terminal` is NOT one of them: a minted fill reaches the order and the Cache
+            # before it is dispatched, so it moves `active.filled` and the strategy-scoped position
+            # that comparison holds it against by the same amount, and the check passes. A phantom
+            # INSIDE the remaining quantity, born of a venue misreport, is past every guard this
+            # process has.
+            self._update_row(active, state="ambiguous", event=payload)
+            self._strand_ambiguous(active, f"{name} was reconciled, not received -- the venue never answered")
+            return
 
         if name == "OrderAccepted":
             # Deliberately does NOT set `phase = "resting"`. The submission paths already did, and
@@ -1866,6 +2013,11 @@ class ProbeExecutor:
         adapter maps any submit failure onto a rejection, so the order may be live at the venue --
         no resubmission, no fallback, and the plan halts until an open-orders re-read says what
         actually reached it.
+
+        A rejection this engine minted for itself never arrives here: `_on_order_event` routes it
+        straight to the ambiguous exit above the dispatch. So a marker added to
+        `_KRAKEN_ERROR_MARKERS` is a statement about the VENUE's error text only, and cannot
+        promote an in-flight timeout into a terminal verdict.
         """
         if due_post_only or _POST_ONLY_MARKER in reason:
             self._update_row(active, state="rejected", event=payload)
@@ -1918,6 +2070,64 @@ class ProbeExecutor:
             # on_order_event idiom).
             logger.exception("executor external-order-event handling raised -- continuing")
 
+    def _venue_terminal_state(self, event) -> str | None:
+        """The row state a non-fill event writes, read off the VENUE's own order.
+
+        An event the execution engine MINTED for itself writes none, and that is decided first,
+        before the order is even read. Past its in-flight retry budget the engine stops waiting on an
+        unanswered order and publishes that order's terminal itself, flagged `reconciliation`; the
+        Cache's order has already taken it, so its status reads CANCELED or EXPIRED or REJECTED
+        exactly as a venue answer would. It is not one. Nobody at the venue confirmed anything and
+        the adopted order may still be resting, so a terminal state here would put a venue claim in
+        the ledger on this engine's own authority -- and close a row that `_OPEN_ORDER_STATES` then
+        never re-attaches, leaving a live order untracked for the life of the process. Left open, the
+        event still appends as evidence, the entry stays in `_attached` for a fill that can still
+        arrive, and the next startup's sweep settles the row against the order's own status. Keyed on
+        the FLAG and never on the mechanism that set it, so a synthesis route nothing here enumerates
+        is covered by construction; the cost when the flag sits on a venue-derived terminal is one
+        row settled a restart later, which is the direction to be wrong in. `OrderFilled` never
+        reaches this method -- the caller's fill branch returns above it -- so a reconciled fill
+        keeps its row, its credit and its counter without anything here having to exempt it.
+
+        The order already carries the event by the time this runs -- an order event is applied to the
+        order and to the Cache before it is dispatched, which tests/test_engine_executor.py measures
+        against a real engine -- so its status is the settled answer to what the event did, and
+        `_ADOPTED_TERMINAL_STATES` is proven total over every closed status the library defines.
+
+        It is also the more truthful answer wherever the order's status and the event's name
+        disagree, and they do exactly when the state machine REFUSED the event and it was published
+        anyway. `ownTrades` and `openOrders` are separate Kraken WS channels with no cross-stream
+        ordering guarantee, so a stale `OrderExpired` can land after a cancel this engine asked for
+        and got: the name claims the venue ended the order, the order says CANCELED, and the order
+        is right.
+
+        Three further things mean the same thing here -- no terminal state, row untouched: a status
+        outside the map (every OPEN one, so a refused cancel leaves the row pointing at a live
+        order), an order the Cache does not hold, and a Cache that cannot be read at all. The last is
+        not hypothetical: a read inside a handler for an event this process's own command generated
+        raises `Already mutably borrowed`, because the Cache is still mutably borrowed for the write
+        that produced it. Letting that escape would abandon the whole handler and cost the row its
+        event payload -- the forensic record this path exists to keep -- to decide a state those
+        events never carried anyway.
+        """
+        if getattr(event, "reconciliation", False):
+            logger.warning(
+                "%s for %s was reconciled, not received -- the venue never answered, so its row keeps the state it has",
+                type(event).__name__,
+                getattr(event, "client_order_id", "?"),
+            )
+            return None
+        try:
+            order = self._client.cache.order(event.client_order_id)
+        except Exception:
+            logger.warning(
+                "the venue order behind %s could not be read -- its row keeps the state it has",
+                getattr(event, "client_order_id", "?"),
+                exc_info=True,
+            )
+            return None
+        return None if order is None else _ADOPTED_TERMINAL_STATES.get(order.status)
+
     def _on_external_event(self, event) -> None:
         """Events from `events.order.EXTERNAL` (spec 00098 D1): the delivery path for orders this
         process adopted at startup, filtered by disposition BEFORE anything else runs.
@@ -1928,10 +2138,11 @@ class ProbeExecutor:
         appends the row by the order's own boundary, mirrors the quantity, and publishes counters.
         A fill completing the ledgered quantity additionally writes the row's state `filled` --
         nautilus publishes no terminal event after a resting order's final fill, so without that the
-        row would read open forever -- and terminal events write theirs from
-        `_EXTERNAL_TERMINAL_STATES`. `canceled` there makes no we-requested claim: the dominant real
-        source on this path is a cancel THIS process sent -- from the adopt pass, or from a trip --
-        whose ack now arrives matched, and `venue_canceled` would be false for exactly those.
+        row would read open forever -- and every other event asks `_venue_terminal_state`, which
+        reads the VENUE's own order rather than the event's class name. `canceled` there makes no
+        we-requested claim: the dominant real source on this path is a cancel THIS process sent --
+        from the adopt pass, or from a trip -- whose ack now arrives matched, and `venue_canceled`
+        would be false for exactly those.
 
         What NEITHER of those does is end tracking: no path here pops `_attached`, exactly as the own
         path does not. `ownTrades` and `openOrders` are separate Kraken WS channels with no
@@ -1944,7 +2155,7 @@ class ProbeExecutor:
 
         Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and
         NOTHING else -- it must never reach `_trip_on_fill`, a row write, or a cancel. That filter
-        is what keeps the unknown-order trip scoped while this subscription exists at all.
+        is what keeps the unknown-order trip scoped while this second stream exists at all.
         """
         client_order_id = str(getattr(event, "client_order_id", ""))
         attached = self._attached.get(client_order_id)
@@ -1982,7 +2193,7 @@ class ProbeExecutor:
         if reason is not None:
             payload["reason"] = str(reason)
         boundary, row = attached
-        terminal_state = _EXTERNAL_TERMINAL_STATES.get(name)
+        terminal_state = self._venue_terminal_state(event)
         if row.get("state") == "filled":
             # A completed row is never demoted by a later or replayed terminal ack: the fills that
             # completed it happened and `_inc_order("filled")` already counted them, and the venue
@@ -2013,8 +2224,9 @@ class ProbeExecutor:
         leg whose only fill happened while this process was down does not enter the realized-PnL
         gauge until it fills live again.
 
-        The position comes from the CACHE, never from this process's own running total: what the
-        engine thinks it holds is exactly the quantity `_reconcile_terminal` exists to doubt.
+        The position comes from the CACHE, never from this process's own running total. Note this
+        read is instrument-scoped, so it carries any holding this engine never ordered too --
+        `_reconcile_terminal` doubts the strategy-scoped quantity, not this one.
 
         Wrapped whole, `_inc_order`'s contract: the Cache reads here are telemetry and a metrics
         failure may never alter what this engine does with a fill. `inc_fill` runs first, so a
@@ -2038,7 +2250,12 @@ class ProbeExecutor:
         Both halves are needed: an OPEN position accrues realized PnL as it is partly closed, and a
         round trip's final PnL lives only on the CLOSED one. `Position.realized_pnl` is
         `Money | None` -- a `None` contributes zero and is never `float()`-ed -- and a position
-        denominated in anything but EUR is logged and skipped rather than added to a EUR total."""
+        denominated in anything but EUR is logged and skipped rather than added to a EUR total.
+
+        Instrument-scoped on purpose, unlike the post-terminal reconciliation: a hand settle of a
+        leg this engine opened realizes an outcome that is genuinely this engine's, and scoping to
+        our own strategy would systematically miss exactly that case. Telemetry answers what the
+        account did; the reconciliation answers what our own orders did."""
         cache = self._client.cache
         total = 0.0
         for instrument_id in self._traded:
@@ -2063,13 +2280,20 @@ class ProbeExecutor:
     def _fill_payload(self, event) -> dict:
         """The forensic shape of one fill. Shared by the in-flight path and the detached one so an
         adopted order's fill is recorded in exactly the same terms as an order this process placed."""
+        commission = event.commission
         return {
             "event": "fill",
             "at": self._now().isoformat(),
             "qty": float(event.last_qty),
             "px": float(event.last_px),
-            "fee": float(event.commission),
-            "fee_currency": event.commission.currency.code,
+            # `commission` is optional on the event, and a fee-less fill still gets its row: the
+            # quantity and price ARE the fill, and "no fee reported" is a truthful null. Read bare,
+            # an absent commission raises inside the handler's blanket except, dropping the row
+            # entirely -- while `_on_fill` has ALREADY credited the quantity to the ladder. That is
+            # a split brain on the one invariant this path exists to hold, so the row never gives
+            # way. `_fee_eur` guards the same field for the EUR counter.
+            "fee": None if commission is None else float(commission),
+            "fee_currency": None if commission is None else commission.currency.code,
             "liquidity": _liquidity(event.liquidity_side),
             "trade_id": str(event.trade_id),
         }
@@ -2216,7 +2440,7 @@ class ProbeExecutor:
         whether the order was refused or left ambiguous, and this does not."""
         active = self._active
         try:
-            self._client.unsubscribe_quote_ticks(active.instrument_id)
+            self._client.unsubscribe_quotes(active.instrument_id)
         except Exception:
             logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
         if outcome is not None:
@@ -2259,13 +2483,14 @@ class ProbeExecutor:
         forbids. Rung-1 plans carry one or two intents and the operator is attended, so the cost of
         stopping is a re-drop after reading the venue.
 
-        Four callers, one meaning -- "this process cannot say what reached the venue": a raising
-        submit, an unclassifiable rejection, a cancel the venue rejected, and a cancel or IOC it
-        never answered. Each has already journaled its own intent by the time it gets here, and each
-        leaves the row in one of `execledger._OPEN_ORDER_STATES` so re-attach still sees the order.
+        Five callers, one meaning -- "this process cannot say what reached the venue": a raising
+        submit, an unclassifiable rejection, a cancel the venue rejected, a cancel or IOC it never
+        answered, and a terminal this engine minted for itself rather than received. Each has
+        already journaled its own intent by the time it gets here, and each leaves the row in one of
+        `execledger._OPEN_ORDER_STATES` so re-attach still sees the order.
         """
         try:
-            self._client.unsubscribe_quote_ticks(active.instrument_id)
+            self._client.unsubscribe_quotes(active.instrument_id)
         except Exception:
             logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
         logger.critical(

@@ -10,6 +10,8 @@ disable-model-invocation: false
 
 A PR delivers **one completed, nameable component**. Before anything below: (1) name the component from durable state — branch name, spec serial, memo queue item, `T<NNNN>` topic; cannot name it → stop, report the branch ready-or-not instead. (2) Confirm the component is complete — topic `resolved`, or `partial` with the remainder registered. (3) Attended session → the user has explicitly said to open; a `/zcrypto-auto-exec` run opens at item completion. A green commit is not a reason; a different component is not a reason to reuse this PR.
 
+(4) **Run `infra/scripts/review-trailer-audit.sh <base>` and read its output** — never infer review compliance from memory, which is routinely wrong by an order of magnitude. A non-zero exit lists code-kind commits that must be reviewed by a subagent other than their author, with the trailer amended on, before push. Doc-kind commits are reported rather than failed, because the spec/plan/closeout-docs exemption turns on the user's approval in the producing flow and no script can see that: decide each one, don't skim past the section.
+
 ## Title (iteration PRs)
 
 GitHub PRs that ship an iteration's work use this exact shape:
