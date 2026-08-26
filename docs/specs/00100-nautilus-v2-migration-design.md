@@ -50,13 +50,15 @@ Only `KRAKEN` held still across rc3 → nightly → develop. `trader_id` was a r
 
 ## Decisions
 
-### D1 — develop against the pinned development wheel; deploy only on a stable release
+### D1 — develop against the pinned development wheel, and deploy on it at probe scale
 
 Development targets an exact pinned wheel, bumped deliberately, never a floating "latest". rc3 is already superseded in our own dependency surface — `KrakenExecClientConfig` → `KrakenExecutionClientConfig` and the `trader_id` removal both landed after it — so code written against rc3 would be wrong twice before it shipped.
 
 **The pin flips early, not last.** The suite resolves against `pyproject.toml`, so there is no state in which it is green on v2 while the project is pinned to v1 — the suite is this migration's proof, and it can only prove the version it actually runs against. What lands *before* the flip is exactly the work that must be proved on v1 to mean anything: D4's handler guard, which is worthless unless it is seen to pass on v1 and fail on v2; D6, which fixes a defect v1 has today; and D8's pinning test, which must capture the live tag before a second strategy can move it. The flip is then a single commit — pin plus lock — and the branch is **red** from it until the migration completes. That is the expected state of a migration branch, not a failure, and it costs no CI noise: `coverage.yml` triggers on `pull_request` only, and the PR opens at component completion.
 
-Deployment waits for a stable release. Upstream states plainly that development wheels are not recommended for production with real capital, and the engine arms into real capital at RUNG 1. Probe scale is not treated as production for the purpose of *running* a dev wheel, but the deployable pin is still a release.
+**Amended, on the owner's ruling: the deployable pin is the pinned nightly, not a release.** The original ruling was that deployment waits for a stable release — upstream states plainly that development wheels are not recommended for production with real capital, and the engine arms into real capital at RUNG 1. That ruling is reversed for the same reason it already exempted *running* a dev wheel: RUNG 1 is probe scale, and probe scale is not production. Holding the deploy for a 2.0.0 that is not published would park a finished migration behind an external clock nobody here controls, while the engine keeps trading on a version entering maintenance — the exact exposure this migration exists to end.
+
+What is accepted rather than argued away: upstream's recommendation stands, and we are deploying against it at a scale where the loss is bounded by the probe's own sizing. The compensating controls are the ones already built — the attended order-semantics pass binds to one exact version string, both arming guards refuse any version absent from the record, and the ladder's per-order and per-run notional ceilings bound what a defect can spend. When a stable 2.0.0 does publish, moving to it is a fresh bump owing its own attended pass; it is not automatic, and D11's freeze rule (below) is what makes that deliberate rather than silent.
 
 ### D2 — a second `Strategy` registered as `StrategyId("EXTERNAL")`, with its order surface sealed
 
@@ -124,7 +126,7 @@ The rule is pushed only after the metric's first record. The counter has never m
 
 ### D11 — the arming record is reconciled with a moving pin before the arming pass
 
-`cli/engine/order-semantics-verified.json` records `verified_nautilus_versions`, and both arming guards do exact string membership. On a pin that bumps daily, any bump after the attended probe pass silently disarms the engine. The guards are correct; the sequencing is what must change — the arming pass comes after the pin stops moving, and the record's granularity is decided before that pass, not discovered at it.
+`cli/engine/order-semantics-verified.json` records `verified_nautilus_versions`, and both arming guards do exact string membership. On a pin that bumps daily, any bump after the attended probe pass kills the path forward, and nothing warns at the moment of the bump: a running container is untouched, so an engine already armed keeps trading, but the armed converge is refused from that tree and the gate refuses once an image built from it deploys. The refusal arrives at the arming step, which is the worst moment to meet it. The guards are correct; the sequencing is what must change — the arming pass comes after the pin stops moving, and the record's granularity is decided before that pass, not discovered at it.
 
 ### D12 — the surfaces that move together
 
