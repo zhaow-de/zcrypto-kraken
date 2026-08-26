@@ -16,7 +16,7 @@ Phase-4/5 verdicts currently charge Tier-1 maker fees + margin carry but assume 
 
 `cli/costs/` has the fee ladder + margin accrual (iter-017); the capture daemon has been recording depth-100 books since 2026-07-08 (hourly zstd-Parquet + manifests on the VPS). ~~The workstation pull / NAS sync is a T0003 remainder — this topic's analysis waits on that synced copy~~ *\[superseded by iter-098: the compute home is the **ops-node 1s L2 panel** (`l2-panel/`, spread + effective-spread-at-size for all pairs) — the analysis reads that, never the VPS\]*.
 
-**First real-fill fee observation (iter-079, 2026-07-10, adapter-verification probe 5)**: taker fee **exactly 0.80 %/side** (€0.08000 on €9.99997, from `TradesHistory`) on the live account at zero 30-day volume, vs the modeled 0.6 %/side; spread cost on BTC/EUR ≈ 0.018 %. Within the pre-registered 2× band for the Stage-6b gate, but the tier discrepancy (fee ladder assumed Tier-1 maker-leaning rates) should be understood in this topic's calibration pass — see `docs/research/14.phase6-adapter-verification-1.230.0.md` §Observations.
+**First real-fill fee observation (iter-079, 2026-07-10, adapter-verification probe 5)**: taker fee **exactly 0.80 %/side** (€0.08000 on €9.99997, from `TradesHistory`) on the live account at zero 30-day volume, vs the modeled 0.6 %/side; spread cost on BTC/EUR ≈ 0.018 %. Within the pre-registered 2× band for the Stage-6b gate, but the tier discrepancy (fee ladder assumed Tier-1 maker-leaning rates) should be understood in this topic's calibration pass — see `docs/reference/adapter-verification/1.230.0.md` §Observations.
 
 ## Done so far
 

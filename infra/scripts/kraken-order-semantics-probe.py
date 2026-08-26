@@ -161,6 +161,11 @@ PROBE_NODE_NAME = "p6probe"
 PROBE_ACCOUNT_ID = "KRAKEN-901"
 # The two variables carrying the trade credentials. Named here so the refusals can say WHICH is
 # missing without ever touching a value.
+# Where a run's PASS is written up, one file per version, named for the exact version string the
+# interpreter reports. `cli/engine/order-semantics-verified.json` maps version -> doc and is the
+# index; there is deliberately no second list to drift.
+VERIFICATION_DOC_DIR = "docs/reference/adapter-verification/"
+
 API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 
@@ -2222,7 +2227,7 @@ def main(argv: list[str] | None = None) -> int:
         print("!" * 78)
 
     print("\n" + "=" * 78)
-    print("PROBE RESULTS -- paste these rows into this version's docs/research/ verification doc")
+    print(f"PROBE RESULTS -- paste these rows into {VERIFICATION_DOC_DIR}<version>.md")
     print("=" * 78)
     print(render_table(state.results))
 

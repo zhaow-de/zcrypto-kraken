@@ -5,7 +5,7 @@
 Attended operator procedure for `infra/scripts/kraken-order-semantics-probe.py`, the six-probe protocol re-run demanded by the
 memo's **Version re-check rule** ("a fresh ~€0.20 zero-fill + round-trip pass must re-run the
 order-semantics probes before the engine trades on the new version" —
-`docs/research/14.phase6-adapter-verification-1.230.0.md`). Nothing trades until the engine is armed by
+`docs/reference/adapter-verification/1.230.0.md`). Nothing trades until the engine is armed by
 hand, so it gates **arming**, not merging: the repo may sit on a bumped version indefinitely while
 disarmed. It is owed at **every** nautilus-trader bump, before the engine may be armed on that version.
 
@@ -394,14 +394,14 @@ Do this in the same session as the run. Then close the credential-bearing shell.
 ### 7.4 Write it up
 
 `kraken-order-semantics-probe.py` prints the table under
-`PROBE RESULTS -- paste these rows into this version's docs/research/ verification doc`, and writes
+`PROBE RESULTS -- paste these rows into docs/reference/adapter-verification/<version>.md`, and writes
 `evidence-<stamp>.json` into `--evidence-dir` (default: the cwd) with the full event stream, every planned order, and every
 client order id. **Then sweep the homes of "<version> is unverified" in the SAME change**, or the next reader meets a contradiction — the act that satisfies the predicate updates none of the others:
 
-1. **Add the version to `cli/engine/order-semantics-verified.json`**, exactly as the interpreter spells it (§2.1). This clears BOTH guards at once, since they share the file — and it is the act that says the re-run happened, a reviewed diff rather than a memory. Never add a version without the `docs/research/` doc recording its PASS.
+1. **Add the version to `cli/engine/order-semantics-verified.json`**, exactly as the interpreter spells it (§2.1). This clears BOTH guards at once, since they share the file — and it is the act that says the re-run happened, a reviewed diff rather than a memory. Never add a version without the `docs/reference/adapter-verification/<version>.md` doc recording its PASS.
 2. **`tests/test_engine_execgate.py`**, which pins the record's exact contents and therefore **FAILS deliberately the moment you do (1)**. That failure is the routing for the rest of this list: its assertion message enumerates the sweep and points back here. Update it deliberately, never by pasting whatever the diff shows.
 3. **The arming step in [`engine.md`](engine.md)** — pre-probe step 3, which names the verified version and its record.
-4. **The previous version's `docs/research/` record**, cross-linked so the series reads as one and neither file claims to be current.
+4. **The previous version's `docs/reference/adapter-verification/` record**, cross-linked so the series reads as one and neither file claims to be current.
 
 **What is deliberately NOT on this list, and why.** `tests/test_nautilus_adapter.py` used to assert a hardcoded version and go red at every bump; that red was the routing. It no longer does: it now checks only that the installed version equals the version `pyproject.toml` pins, which stays green across bumps and carries no version string to sweep. The pin moves on a nightly cadence, and a test that goes red on every routine move stops being read and starts being repaired — so the routing moved to where it cannot be repaired away:
 
