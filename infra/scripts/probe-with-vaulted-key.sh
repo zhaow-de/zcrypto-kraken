@@ -18,8 +18,12 @@
 #   * `group_vars/engine_host/vault.yml` is plain YAML carrying inline `!vault` scalars, NOT a
 #     wholly-encrypted file -- `ansible-vault view` refuses it. The loader below resolves the tagged
 #     values, which is what reaches them without decrypting the file to stdout.
-#   * the harness reads only the PRESENCE of the two variables; the Kraken adapter's own factory
-#     sources the values from the environment.
+#   * the harness reads both VALUES out of the environment and passes them into
+#     `KrakenExecutionClientConfig(api_key=..., api_secret=...)`, which requires them -- so this
+#     wrapper's job is to put them there and nothing more. What bounds the exposure is what the
+#     harness then does with them: they are never stored on a harness object, logged, printed,
+#     interpolated into a message, or written to the evidence file, and its refusals name the two
+#     VARIABLES, never their contents.
 #
 # The credential is IP-bound. Running this from a workstation needs that workstation's public IP
 # temporarily allowlisted on the key, and removing it again is a numbered step of the procedure,
