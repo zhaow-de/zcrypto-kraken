@@ -413,7 +413,9 @@
 # narrowing this to the one known-failing file today would just relocate the next EACCES. Safe to
 # leave unconditional and recursive on every converge: the tree is ops-produced from here on (this
 # same commit dropped it from the ops pull list, so nothing re-imports uid 1000), so post-correction
-# runs are a no-op scan, and at today's size (~6.7 MB / ~1175 files) that scan is cheap regardless.
+# runs are a no-op scan, and a chown walk costs per INODE rather than per byte -- so what bounds it
+# is the FILE COUNT, which tracks healed hours, not the tree's size on disk. Deliberately pinned to
+# no figure: measure it (`find <tree> -type f | wc -l`) if this ever stops being cheap.
 # Deliberately NOT inside the `ops_image_digest`-gated block below: ops_reconciled_subdir has a
 # default (unlike the runner script, which needs the pinned image and would render an invalid
 # `docker run` without it), and the mismatch is a filesystem fact independent of any digest -- gating
