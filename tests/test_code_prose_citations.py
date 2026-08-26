@@ -6,6 +6,11 @@ accumulated in `tests/` alone before the 2026-08-26 sweep zeroed them; this keep
 zero. Any task-number token in code prose must carry a 5-digit spec/plan serial on the same or the
 immediately preceding line (the wrapped-citation form), which is what makes it resolvable.
 
+The preceding-line excuse cannot tell a wrapped citation from an unrelated neighbour, so a task
+number one line below any 5-digit number is excused whether or not that serial is its own. That is
+the guard's known hole: it under-reports, never over-reports, and tightening it would reject the
+wrapped form this repo actually uses.
+
 Scoped to the code trees (`cli/`, `tests/`, `infra/`) on purpose: `docs/` specs and plans are
 point-in-time records where a bare task number names the document's own structure — the genre, not
 a defect. The match pattern is hyphen-or-space (the hyphenated and spaced forms alike): the sweep's edit
@@ -21,9 +26,9 @@ REPO = Path(__file__).resolve().parents[1]
 
 _TASK_TOKEN = re.compile(r"\btask[\s-]\d+", re.IGNORECASE)
 _SERIAL = re.compile(r"\b\d{5}\b")
-# `*.md` is in scope: `infra/`'s runbooks and READMEs are read DURING a deploy — one offender sat
-# on an attended start step. Case-insensitive for the same reason the pattern takes a hyphen OR a
-# space: a lowercase task number sat in `cli/` while a capital-only pattern reported the tree clean.
+# `*.md` is in scope because `infra/`'s runbooks and READMEs are read DURING a deploy, where an
+# unresolvable citation costs an operator mid-converge. Case-insensitive AND hyphen-or-space
+# because all four spellings occur; a capital-and-space-only pattern reports the other three clean.
 _GLOBS = ("*.py", "*.yml", "*.yaml", "*.sh", "*.j2", "*.alloy", "*.md")
 
 

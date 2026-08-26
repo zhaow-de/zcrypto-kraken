@@ -218,7 +218,7 @@ prometheus.remote_write "grafana" {
 // instead, so the journal is their only transport too now. "Lossless" for the attached-container
 // case is bounded upstream by journald's own per-service rate limit (Debian default
 // RateLimitBurst=10000 per RateLimitIntervalSec=30s), which drops lines before Alloy ever sees
-// them. All four units now emit orders of magnitude less than that. The verify-replay sweep
+// them. All five units now emit orders of magnitude less than that. The verify-replay sweep
 // used to be the exception -- it replayed the WHOLE archive and logged a line per hour, which
 // put it on course to cross the burst around 2026-08-14 and drop the tail of a (pair, hour)-
 // SORTED stream: the last pairs in sort order, all of their hours, plus both summary lines.

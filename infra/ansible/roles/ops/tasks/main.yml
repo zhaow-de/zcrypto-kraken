@@ -424,7 +424,6 @@
 # it on the digest would leave a digest-less converge (or a host that never gets one) permanently
 # stuck with the NAS's ownership. It must merely run before the archive-pull runner below, which
 # Ansible's linear task order already guarantees.
-# spec 00054 D2.
 - name: ensure the overlay tree is owned by zcrypto-data
   ansible.builtin.file:
     path: "{{ ops_data_dir }}/{{ ops_reconciled_subdir }}"

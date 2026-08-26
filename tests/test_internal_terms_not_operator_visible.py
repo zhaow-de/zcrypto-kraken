@@ -155,9 +155,9 @@ def _ansible_task_names() -> list[tuple[str, int, str]]:
         (str(p.relative_to(REPO)), i, line)
         # An ansible task `name:` is printed by every play and by every `--check --diff` preview an
         # operator reads before confirming a converge, so it is as operator-visible as
-        # `Description=`. Only the `- name:` list-item form is a task name; a bare `name:` at
-        # deeper indent is a module argument (`ansible.builtin.systemd: name: alloy`) and is not
-        # printed. Per .claude/rules/operator-facing-text.md, a new operator-visible surface joins
+        # `Description=`. Collected: the `- name:` list-item form, inline or folded/literal. A bare
+        # `name:` at deeper indent is a module argument (`ansible.builtin.systemd: name: alloy`)
+        # and is not printed. Per .claude/rules/operator-facing-text.md, a new operator-visible surface joins
         # this list AND the test together.
         for p in (REPO / "infra/ansible").rglob("*.yml")
         for i, line in _assembled_task_names(p.read_text(encoding="utf-8", errors="replace").splitlines())
@@ -171,8 +171,7 @@ def _assembled_task_names(lines: list[str]):
 
     A `- name: >-` header carries its value on the CONTINUATION lines, and ansible renders the
     assembled value into the play log — so a single-line check reads only the vocabulary-free
-    `>-` marker and passes a leaking name as clean (review catch: a folded Caddyfile task name
-    carried `D14` invisibly). Plain single-line names pass through unchanged."""
+    `>-` marker and passes a leaking name as clean. Plain single-line names pass through unchanged."""
     header = re.compile(r"^(\s*)-\s+name:\s*(.*\S)\s*$")
     for i, line in enumerate(lines, 1):
         m = header.match(line)
@@ -204,6 +203,54 @@ def test_ansible_task_names_carry_no_internal_vocabulary(unit, lineno, line):
     assert not hits, (
         f"{unit}:{lineno} leaks {hits} into the play log — keep the semantic content, move the "
         f"token to the comment above the task: {line.strip()!r}"
+    )
+
+
+def _ansible_operator_messages() -> list[tuple[str, str, str]]:
+    """Yield `(file, key, value)` for every `msg`/`fail_msg`/`success_msg` in infra/ansible.
+
+    A task `name:` is not the only string ansible prints. A `debug: msg:` tagged `[always]` prints
+    on every run including `--check`, and an `assert: fail_msg:` IS the refusal text an operator
+    reads when a guard trips — the surface with the least repo access of any of them. Parsed rather
+    than line-matched: these values are folded scalars far more often than names are, and the
+    parser assembles them for free.
+    """
+    out, unparsed = [], []
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ("msg", "fail_msg", "success_msg") and isinstance(value, str):
+                    out.append((path, key, " ".join(value.split())))
+                walk(value, path)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, path)
+
+    for p in (REPO / "infra/ansible").rglob("*.yml"):
+        rel = str(p.relative_to(REPO))
+        try:
+            documents = list(yaml.safe_load_all(p.read_text(encoding="utf-8", errors="replace")))
+        except yaml.YAMLError:
+            unparsed.append(rel)
+            continue
+        for document in documents:
+            walk(document, rel)
+    # The only files a plain parser cannot read are the vaulted ones (`!vault` is an ansible-only
+    # tag), and those hold variables, never tasks. Asserted rather than skipped silently: a NEW
+    # unparseable file would otherwise drop out of the scan and read as a clean tree.
+    assert all(p.endswith("vault.yml") for p in unparsed), f"unparseable non-vault YAML: {unparsed}"
+    assert out, "found no ansible operator messages — the walk is broken, not the tree clean"
+    return sorted(out)
+
+
+@pytest.mark.parametrize("path,key,text", _ansible_operator_messages(), ids=lambda v: v if isinstance(v, str) else "")
+def test_ansible_operator_messages_carry_no_internal_vocabulary(path, key, text):
+    """`debug: msg:` prints on every run; `assert: fail_msg:` is what a tripped guard tells the operator."""
+    hits = _leaks(text)
+    assert not hits, (
+        f"{path} {key}= leaks {hits} into the operator's console — keep the semantic content, move "
+        f"the token to the comment above the task: {text[:120]!r}"
     )
 
 

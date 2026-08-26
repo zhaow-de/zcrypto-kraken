@@ -25,8 +25,8 @@
     fail_msg: >-
       REFUSING to converge the NAS: its clock offset is {{ nas_tz_offset.stdout }}, not +0000.
       `docker logs --since` parses LOCAL time, so every log-window query against a non-UTC NAS is
-      silently wrong — the CEST/UTC mismatch produced two false review verdicts on 2026-07-16
-      (T0056). Fix: DSM Control Panel -> Regional Options -> Time Zone -> (GMT) Greenwich Mean
+      silently wrong — a local-time mismatch has already produced false review verdicts here.
+      Fix: DSM Control Panel -> Regional Options -> Time Zone -> (GMT) Greenwich Mean
       Time, then re-run this play.
     success_msg: NAS clock is UTC (+0000) — proceeding.
   tags: [always]
