@@ -206,6 +206,7 @@ def test_the_kraken_client_configs_accept_the_arguments_we_pass():
     KrakenDataClientConfig(
         product_type=KrakenProductType.SPOT,
         environment=KrakenEnvironment.LIVE,
+        ws_idle_timeout_ms=0,
     )
     KrakenExecutionClientConfig(
         account_id=AccountId("KRAKEN-001"),
@@ -217,6 +218,26 @@ def test_the_kraken_client_configs_accept_the_arguments_we_pass():
         margin_balance_asset="ZEUR",
         spot_positions_quote_currency="ZEUR",
         use_ws_trade=False,
+    )
+
+
+# The two values spec 00101 D1 rests on, measured here rather than remembered: `0` disables the
+# idle timer, and `None` is NOT "off" -- it silently falls back to the adapter default and reinstates
+# the reconnect loop. A future upstream change to either reading would pass every other test.
+def test_ws_idle_timeout_zero_disables_and_none_means_the_default():
+    from nautilus_trader.adapters.kraken import KrakenDataClientConfig, KrakenEnvironment, KrakenProductType
+
+    off = KrakenDataClientConfig(product_type=KrakenProductType.SPOT, environment=KrakenEnvironment.LIVE, ws_idle_timeout_ms=0)
+    assert off.ws_idle_timeout_ms == 0, "0 must read back as 0 -- that is the literal the engine ships"
+
+    fallback = KrakenDataClientConfig(
+        product_type=KrakenProductType.SPOT, environment=KrakenEnvironment.LIVE, ws_idle_timeout_ms=None
+    )
+    assert fallback.ws_idle_timeout_ms == 10000, (
+        f"None must read back as the adapter default (10000), not as off: {fallback.ws_idle_timeout_ms!r}"
+    )
+    assert fallback.ws_idle_timeout_ms != off.ws_idle_timeout_ms, (
+        "if these ever coincide, None has become a valid 'off' and D1's literal-0 rule is moot"
     )
 
 
