@@ -189,15 +189,17 @@ Nothing fires this. You are reading `docker logs zcrypto-engine` on the engine h
 
 ### What it means
 
-The engine's Kraken **data** socket is idle by design while disarmed: nothing is subscribed between intents, the executor subscribes quotes per intent, and the socket's idle timer is OFF (`ws_idle_timeout_ms=0`, spec `00101`). Its lines therefore mean:
+The engine's Kraken **data** socket is idle by design while disarmed: nothing is subscribed between intents, and the executor subscribes quotes per intent.
+
+**First check whether the timer is actually off yet.** It is off only on an engine running a digest built from a revision that sets `ws_idle_timeout_ms=0` (spec `00101`); `docs/reference/fleet-pins.md`'s engine row records what is deployed. **Until that converge lands, a continuous `Read idle timeout` → reconnect loop every ~14.8 s is the EXPECTED state, not a regression** — and the crossing named below is then ~4.4 min rather than ~6.3, because the engine's own idle churn is already sitting in the rolling window. With the timer off, the lines mean:
 
 - **`Read idle timeout: no data received for 10.0s`** — the timer has been turned back on. That is a config regression, not a venue event: the literal `0` was replaced (writing `None` does it, silently). Nothing to do on the host; fix the config and redeploy.
-- **`Reconnecting` → `Reconnect succeeded`**, without a preceding idle-timeout line — a real drop. Read it against `zcrypto_capture_reconnects_total{host="zcrypto"}` on the capture dashboard: both moving means the venue or the host's network moved; the engine alone moving is the engine's problem.
+- **`Reconnecting` → `Reconnect succeeded`**, without a preceding `Read idle timeout` **or** `Heartbeat timeout` line — a real drop. Read it against `zcrypto_capture_reconnects_total{host="zcrypto"}` on the capture dashboard: both moving means the venue or the host's network moved; the engine alone moving is the engine's problem.
 - **`Heartbeat timeout: no frame received for 90.0s`** — a dead peer, caught by the heartbeat at three intervals. Expect a reconnect to follow.
 
 None of these lines reaches Loki — the engine ships only the `zcrypto` logger — so `docker logs` on the host is the only place they can be read.
 
-**Why the socket's behaviour is capture's problem.** Kraken's edge rate-limits connection attempts to ~150 per rolling 10 minutes **per IP**, and bans the IP for 10 minutes on breach. The engine host is the L2 capture primary; `ws.kraken.com`, `ws-auth.kraken.com` and `api.kraken.com` resolve to the same edge. So a retry storm from the engine's two sockets can take the capture daemon's ability to reconnect with it — and L2 is unbackfillable. The engine's failure backoff (≈ 0.7 → 5 s, ~30 attempts per 150 s per socket, no knob to change it) crosses that limit at roughly six minutes into a fast-failing outage.
+**Why the socket's behaviour is capture's problem.** Kraken's edge rate-limits connection attempts to ~150 per rolling 10 minutes **per IP**, and bans the IP for 10 minutes on breach. The engine host is the L2 capture primary; `ws.kraken.com`, `ws-auth.kraken.com` and `api.kraken.com` resolve to the same edge. So a retry storm from the engine's two sockets can take the capture daemon's ability to reconnect with it — and L2 is unbackfillable. The engine's failure backoff (≈ 0.7 → 5 s, ~30 attempts per 150 s per socket, no knob to change it) crosses that limit about 6.3 minutes into a fast-failing outage.
 
 ### What to do
 
@@ -215,7 +217,7 @@ None of these lines reaches Loki — the engine ships only the `zcrypto` logger 
 
 - **A single `Reconnecting`/`Reconnect succeeded` pair** with the venue quiet — note it and move on; the heartbeat did its job.
 
-- **Any `Read idle timeout` line at all** — the knob regressed. Find the change to `cli/engine/node.py::_data_client_config` and redeploy; the builder test that pins it (`test_engine_node.py`) says which value was written.
+- **Any `Read idle timeout` line at all, on an engine whose deployed revision sets `ws_idle_timeout_ms=0`** — the knob regressed. Find the change to `cli/engine/node.py::_data_client_config` and redeploy; the builder test that pins it (`test_engine_node.py`) says which value was written. On an engine that predates that converge the same line is expected — check the pins row first.
 
 ### Retire when
 
