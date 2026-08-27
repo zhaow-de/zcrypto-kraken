@@ -439,10 +439,18 @@ def _data_client_config() -> KrakenDataClientConfig:
     `product_type` and `environment` are stated rather than inherited. Both equal the library's
     defaults today, so nothing moves; they are the two fields that select WHICH Kraken venue this
     engine reaches, and an upstream default flip would otherwise land on the live trade path with
-    nothing red anywhere. `test_nautilus_interface_pin.py` pins both enums."""
+    nothing red anywhere. `test_nautilus_interface_pin.py` pins both enums.
+
+    `ws_idle_timeout_ms=0` is spec 00101 D1, and the value is the LITERAL zero: `None` reads back as
+    the adapter default and reinstates the reconnect loop while looking like "off". Disarmed, nothing
+    is subscribed on this socket, so the timer can only ever detect the absence of data it was never
+    sent; a dead peer is still caught by the heartbeat, which is why that field is left alone.
+    D5: if a standing subscription ever lands (spec 00101 D3), restore this to the adapter default in
+    the same change -- a permanently-subscribed client is the shape that default assumes."""
     return KrakenDataClientConfig(
         product_type=KrakenProductType.SPOT,
         environment=KrakenEnvironment.LIVE,
+        ws_idle_timeout_ms=0,
     )
 
 
