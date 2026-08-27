@@ -1111,6 +1111,12 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert data_client["name"] == "KRAKEN"
     assert isinstance(data_client["factory"], KrakenDataClientFactory)
     assert isinstance(data_client["config"], KrakenDataClientConfig)
+    # spec 00101 D1: the idle timer is OFF, asserted as the literal 0 -- None reads back as 10000
+    # (pinned in test_nautilus_interface_pin.py) and would silently reinstate the reconnect loop.
+    # heartbeat_interval_secs is pinned unchanged because it, not the idle timer, is what still
+    # catches a dead peer; tests/test_engine_data_socket.py proves that on a loopback peer.
+    assert data_client["config"].ws_idle_timeout_ms == 0
+    assert data_client["config"].heartbeat_interval_secs == 30
 
     exec_client = recorder.named("add_exec_client")[0]
     assert exec_client["name"] == "KRAKEN"
