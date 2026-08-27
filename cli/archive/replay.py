@@ -21,8 +21,11 @@ CRC32 is NOT byte-exact re-derivable — a re-derived `OrderBook.checksum()` mis
 therefore trusted as capture-time ground truth and never re-derived; the CRC-based return value of
 `ingest_snapshot`/`ingest_update` is deliberately ignored. A "structural desync" heuristic is
 likewise NOT implemented: for a depth-bounded book, a legitimate update to an out-of-window level is
-indistinguishable from corruption without the CRC. The byte-exact CRC replay is deferred to T0045
-(the raw-string schema change unblocks it).
+indistinguishable from corruption without the CRC. Byte-exact CRC re-attestation was considered and consciously
+DROPPED (T0045, 2026-08-23): it would cost a schema change on the unbackfillable live capture stream
+and could only ever attest data captured after it. That is an accepted limit of the archive, not
+work awaiting a turn -- a discrepancy the structural check cannot localise opens a NEW topic rather
+than reviving that one.
 """
 
 from __future__ import annotations

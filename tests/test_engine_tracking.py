@@ -185,7 +185,7 @@ def test_a_venue_repair_is_real_base_quantity_and_reaches_the_drift_half():
     # No price and no fee exist for a repair, so it is counted but stays out of the cost blend.
     assert f.px is None and f.fee is None
     assert f.liquidity == "NO_LIQUIDITY_SIDE"
-    # Task 5 matches ledger rows by trade_id, so a repair's must be non-empty and unmistakable.
+    # the repair path matches ledger rows by trade_id, so a repair's must be non-empty and unmistakable.
     assert f.trade_id.startswith("reconciled:") and f.trade_id.endswith(":2026-09-01T00:02:00+00:00")
     assert any("repair" in n and "0.002" in n for n in notes)
 

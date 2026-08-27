@@ -11,12 +11,12 @@
 #
 # Modeled on infra/nas/compose.yaml's `alloy` service; see config.alloy for the two
 # deliberate divergences from the NAS's pipeline (cadvisor, user/rootfs). Deliberately NOT started
-# here -- first start is an attended step (plan Task 3), same rationale as the liquidations poller
+# here -- first start is an attended step, same rationale as the liquidations poller
 # in compose.yaml.j2: this task's job is to make the render correct, not to restart anything as a
 # converge side effect.
 services:
   alloy:
-    # Pin this to a digest at deploy time (plan Task 3) -- ops_alloy_digest has NO default
+    # Pin this to a digest at deploy time -- ops_alloy_digest has NO default
     # (defaults/main.yml), so a converge without it skips this whole role block rather than
     # rendering a compose file pointing at a broken image reference.
     image: "{{ ops_alloy_image }}@{{ ops_alloy_digest }}"
@@ -93,7 +93,7 @@ services:
           memory: 512m
           # Unlike the NAS (no CPU cgroup on DSM), Debian has a real CPU cgroup, so a `cpus:` limit
           # actually holds here -- and it must: this box exists to run the overlay writer fast
-          # (plan Task 6/7), and Alloy must never contend with it for CPU. 2.0 of the box's 24
+          # and Alloy must never contend with it for CPU. 2.0 of the box's 24
           # threads is ample for a metrics/logs shipper.
           cpus: "2.0"
     # journald, not json-file (00068 D6): Alloy's own logs now reach Grafana Cloud through the

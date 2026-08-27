@@ -205,7 +205,7 @@ def test_a_stream_with_no_data_at_all_is_not_a_total_loss():
 #
 # Found in production on 2026-07-14, on the very first reconcile cycle: LINK/EUR trades hour 02 was
 # ledgered `total_loss` -- permanent, unrecoverable loss -- and logged at ERROR, which pages through
-# the archive-pull ERROR rule and books into the monotonic residual counter Task 11 wires to a
+# the archive-pull ERROR rule and books into the monotonic residual counter wired to a
 # permanent-loss alarm. It was nothing of the kind: LINK/EUR traded 8 times in hour 01 and 9 times in
 # hour 04, and simply had ZERO prints in hour 02. The book segment for that same pair+hour EXISTS, so
 # the stream was demonstrably connected the whole time.

@@ -82,11 +82,12 @@
   hosts: engine_host
   become: true
   pre_tasks:
+    # The redundant-secondary design is spec 00050's.
     - name: note — engine_host is deliberately narrower than capture_host
       ansible.builtin.debug:
         msg: >-
           The engine role renders the LIVE Kraken trade key. It targets engine_host, not
-          capture_host, so a capture-only host (spec 00050's redundant secondary) can join
+          capture_host, so a capture-only host (the redundant secondary) can join
           capture_host without the key ever landing on it. Adding a host here is a
           deliberate act — never a side effect of adding a capture host.
       tags: [always]
@@ -177,15 +178,16 @@
     - role: engine
       tags: [engine]
 
-- name: converge the ops node — compute tier (spec 00051)
+# spec 00051; the pull-only-transport ruling is its D10.
+- name: converge the ops node — compute tier
   hosts: ops_host
   become: true
   pre_tasks:
     - name: note — the ops node's charter
       ansible.builtin.debug:
         msg: >-
-          The ops node is the compute tier (spec 00051): no trade key, never engine_host,
-          pull-only transport (D10). It is a home-LAN box behind NAT, NOT a public-IP host,
+          The ops node is the compute tier: no trade key, never engine_host,
+          pull-only transport. It is a home-LAN box behind NAT, NOT a public-IP host,
           so it deliberately omits the internet-facing hardening/firewall/fail2ban roles the
           capture/engine hosts run — it reuses only base/chrony/docker plus the new `ops` role.
           Unlike the capture/engine plays above, this play has no `converge_primary` guard —
@@ -203,7 +205,8 @@
     - role: access_ops
       tags: [access]
 
-- name: converge the NAS — the zcrypto payload only (T0056)
+# T0056.
+- name: converge the NAS — the zcrypto payload only
   hosts: nas_host
   become: true
   pre_tasks:
@@ -214,21 +217,22 @@
           Synology manages the platform, and this play manages ONLY the zcrypto payload under
           the stack dir (the archive-pull + alloy compose stack, its .env, and the alloy
           secrets). The nas role's first act is the UTC clock guard — it FAILS on a non-UTC NAS
-          (docker logs --since parses LOCAL time; T0056) — and render-only is the default:
+          (docker logs --since parses LOCAL time) — and render-only is the default:
           restarts happen only with -e nas_apply_compose=true.
       tags: [always]
   roles:
     - role: nas
       tags: [nas]
 
-- name: converge the access bridgehead — the internet edge (spec 00075)
+# spec 00075.
+- name: converge the access bridgehead — the internet edge
   hosts: access_host
   become: true
   pre_tasks:
     - name: note — the bridgehead's charter
       ansible.builtin.debug:
         msg: >-
-          Internet edge (spec 00075): no trade key, no capture data, no containers. Everything
+          Internet edge: no trade key, no capture data, no containers. Everything
           on it is re-issuable (certs re-ACME, keys vaulted) — losing the VPS is re-provisioning,
           not data loss. Never in engine_host/capture_host; ordinary runs are --limit zaccess.
       tags: [always]

@@ -133,7 +133,7 @@ def test_the_generation_manifest_records_the_per_quote_ladder() -> None:
 
 def test_a_tree_built_on_the_old_eur_only_manifest_refuses(tmp_path: Path) -> None:
     # A panel-meta.json carrying the OLD generation must abort: its columns mean something else now.
-    # This is the regeneration gate doing its job, and it is what forces the Task 6 rebuild.
+    # This is the regeneration gate doing its job, and it is what forces the rebuild.
     from cli.panel.command import _check_generation
 
     panel_root = tmp_path / "l2-panel"

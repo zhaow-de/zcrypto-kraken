@@ -1,11 +1,11 @@
 ---
 # Defaults for the `access` role (spec 00075): the internet bridgehead.
 
-# WireGuard server listen port (Task 6 wires the tunnel itself); firewall_extra_udp_ports
+# WireGuard server listen port (the role wires the tunnel itself); firewall_extra_udp_ports
 # (group_vars/access_host/vars.yml) already opens it.
 access_wg_listen_port: 51820
 
-# ACME registration contact (Task 7's Caddy role reads this).
+# ACME registration contact (the Caddy config reads this).
 access_acme_email: zhaow.km@gmail.com
 
 # Pinned mTLS client leaves (spec 00075 D16): the file's presence in roles/access/files/pinned-leaves/

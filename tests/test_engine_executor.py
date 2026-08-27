@@ -83,7 +83,7 @@ _LIQUIDITY_CASES = (
 )
 
 
-# --- the sizing seam (Task 4) -------------------------------------------------------------------
+# --- the sizing seam -------------------------------------------------------------------
 
 
 _VERIFIED_VERSION = "1.230.0"  # in cli/engine/order-semantics-verified.json

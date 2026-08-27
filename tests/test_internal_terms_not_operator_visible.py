@@ -7,9 +7,8 @@ with exactly two recorded carriers (enforced by the last test in this file). On 
 confusion at worst — the triggering example was a systemd unit announcing itself to `systemctl` as
 `zcrypto shadow engine (Phase 6a soak)`.
 
-- **In scope** — systemd `Description=`, CLI `--help`, CLI runtime output, Prometheus metric HELP
-  text, Grafana alert summaries and panel titles/descriptions/legends, compose interpolation errors,
-  README.
+- **In scope** — the surface list lives in `.claude/rules/operator-facing-text.md` and is not
+  restated here: a second copy drifts, and this one had already fallen four surfaces behind.
 - **Out of scope** — source comments, docstrings, `docs/`, commit messages. Cleansing those would
   destroy traceability for zero operator benefit.
 - **Log lines are deliberately out of scope.** They are the primary debugging surface and whoever
@@ -45,6 +44,7 @@ import json
 import re
 import subprocess
 from fnmatch import fnmatch
+from itertools import chain
 from pathlib import Path
 
 import pytest
@@ -147,6 +147,124 @@ def test_python_string_literals_carry_no_internal_vocabulary(path):
     ]
     assert not found, "\n".join(
         f"{path.relative_to(REPO)}:{ln} leaks {hits} — move the token to an adjacent comment: {txt!r}" for ln, txt, hits in found
+    )
+
+
+def _ansible_task_names() -> list[tuple[str, int, str]]:
+    out = [
+        (str(p.relative_to(REPO)), i, line)
+        # An ansible task `name:` is printed by every play and by every `--check --diff` preview an
+        # operator reads before confirming a converge, so it is as operator-visible as
+        # `Description=`. Collected: the `- name:` list-item form, inline or folded/literal. A bare
+        # `name:` at deeper indent is a module argument (`ansible.builtin.systemd: name: alloy`)
+        # and is not printed. Per .claude/rules/operator-facing-text.md, a new operator-visible surface joins
+        # this list AND the test together.
+        for p in chain((REPO / "infra/ansible").rglob("*.yml"), (REPO / "infra/ansible").rglob("*.yaml"))
+        for i, line in _assembled_task_names(p.read_text(encoding="utf-8", errors="replace").splitlines())
+    ]
+    assert out, "found no ansible task names — the glob is broken, not the tree clean"
+    return sorted(out)
+
+
+def _assembled_task_names(lines: list[str]):
+    """Yield `(lineno, full name value)` per task, ASSEMBLING folded/literal scalars.
+
+    A `- name: >-` header carries its value on the CONTINUATION lines, and ansible renders the
+    assembled value into the play log — so a single-line check reads only the vocabulary-free
+    `>-` marker and passes a leaking name as clean. Plain single-line names pass through unchanged."""
+    header = re.compile(r"^(\s*)-\s+name:\s*(.*\S)\s*$")
+    for i, line in enumerate(lines, 1):
+        m = header.match(line)
+        if not m:
+            continue
+        value = m.group(2)
+        if re.fullmatch(r"[>|][+-]?", value):
+            # The block ends at the first nonblank line indented LESS than the block's own content
+            # — measured from the first continuation line, not from the `-`: the task's module keys
+            # sit between those two depths, and bounding on the `-` swallowed them into the value.
+            block, content_indent = [], None
+            for cont in lines[i:]:
+                if cont.strip() == "":
+                    continue
+                cur = len(cont) - len(cont.lstrip())
+                if content_indent is None:
+                    content_indent = cur
+                if cur < content_indent:
+                    break
+                block.append(cont.strip())
+            value = " ".join(block)
+        yield i, value
+
+
+@pytest.mark.parametrize("unit,lineno,line", _ansible_task_names(), ids=lambda v: v if isinstance(v, str) else "")
+def test_ansible_task_names_carry_no_internal_vocabulary(unit, lineno, line):
+    """A task `name:` is the line an operator reads in the play log and in every converge preview."""
+    hits = _leaks(line)
+    assert not hits, (
+        f"{unit}:{lineno} leaks {hits} into the play log — keep the semantic content, move the "
+        f"token to the comment above the task: {line.strip()!r}"
+    )
+
+
+def _ansible_operator_messages() -> list[tuple[str, str, str]]:
+    """Yield `(file, key, value)` per `msg`/`fail_msg`/`success_msg` in `infra/ansible/**/*.{yml,yaml}`.
+
+    The string SHAPE is asserted, never used as a filter — a non-string value fails collection
+    instead of dropping out of it.
+
+    A task `name:` is not the only string ansible prints. A `debug: msg:` tagged `[always]` prints
+    on every run including `--check`, and an `assert: fail_msg:` IS the refusal text an operator
+    reads when a guard trips — the surface with the least repo access of any of them. Parsed rather
+    than line-matched: these values are folded scalars far more often than names are, and the
+    parser assembles them for free.
+    """
+    out, unparsed = [], []
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ("msg", "fail_msg", "success_msg"):
+                    # A list-valued msg is legal and ansible prints it, but the walk would descend
+                    # past it and see only list ITEMS, never a value under a printing key. Assert
+                    # the shape so a new one fails loudly instead of dropping out of the scan.
+                    assert isinstance(value, str), (
+                        f"{path}: non-string {key}= ({type(value).__name__}) is unscanned — flatten "
+                        f"non-string values into the walk; never reshape the task to satisfy this"
+                    )
+                    out.append((path, key, " ".join(value.split())))
+                walk(value, path)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, path)
+
+    for p in sorted(chain((REPO / "infra/ansible").rglob("*.yml"), (REPO / "infra/ansible").rglob("*.yaml"))):
+        rel = str(p.relative_to(REPO))
+        try:
+            documents = list(yaml.safe_load_all(p.read_text(encoding="utf-8", errors="replace")))
+        except yaml.YAMLError:
+            unparsed.append(rel)
+            continue
+        for document in documents:
+            walk(document, rel)
+    # The only files a plain parser cannot read are the vaulted ones (`!vault` is an ansible-only
+    # tag), and those hold variables, never tasks. Keyed on the MARKER, not the filename: any name is
+    # a legal vault file, so `endswith("vault.yml")` would report a newly-vaulted `creds.yml` as a
+    # bug. Asserted rather than skipped silently — a genuinely unparseable file would otherwise drop
+    # out of the scan and read as a clean tree.
+    assert all("!vault" in (REPO / p).read_text(encoding="utf-8", errors="replace") for p in unparsed), (
+        f"unparseable YAML with no !vault marker: {unparsed}"
+    )
+    assert out, "found no ansible operator messages — the walk is broken, not the tree clean"
+    return sorted(out)
+
+
+@pytest.mark.parametrize("path,key,text", _ansible_operator_messages(), ids=lambda v: v if isinstance(v, str) else "")
+def test_ansible_operator_messages_carry_no_internal_vocabulary(path, key, text):
+    """`debug: msg:` prints on every run; `assert: fail_msg:` is what a tripped guard tells the operator."""
+    hits = _leaks(text)
+    assert not hits, (
+        f"{path} {key}= leaks {hits} into the operator's console — keep the semantic content, move "
+        f"the token to the comment above the task: {text[:120]!r}"
     )
 
 

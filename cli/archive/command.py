@@ -499,7 +499,7 @@ def reconcile(
         "--min-gap-seconds",
         help="Primary book silence longer than this, with the secondary alive inside it, is a gap. "
         "The default 30 s is validated from a 66h/217-window two-host soak: 2.48x the worst "
-        "coalescing artifact, 2.8x below the smallest real outage on record.",
+        "coalescing artifact, 2.8x below the smallest real outage on record (an 83 s reboot).",
     ),
     textfile: Optional[Path] = typer.Option(None, "--textfile", help="Prometheus textfile to publish."),
     mint: bool = typer.Option(
@@ -514,8 +514,9 @@ def reconcile(
     Detect-only by default: it ledgers every `would_mint` and writes no parquet. `--min-gap-seconds`
     30 s is validated cross-host: 2.48x the worst per-connection coalescing artifact in a 66 h /
     217-window two-host soak (12.08 s), 2.03x the single-host maximum natural quiescence
-    (14.78 s), and 2.8x below the smallest real outage on record -- and
-    a live 25-minute drill outage healed exactly, CRC-clean, while a healthy hour minted nothing.
+    (14.78 s), and 2.8x below the smallest real outage on record (an 83 s reboot; the next is a
+    270 s WS-503 crash), so it costs no detection power -- and a live 25-minute drill outage healed
+    exactly and replayed clean across both splice boundaries, while a healthy hour minted nothing.
     The deployed reconciler runs `--mint`; ad-hoc runs stay detect-only.
 
     The two correlated-loss detectors run regardless of the flag and are never minted from: when BOTH

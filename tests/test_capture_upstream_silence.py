@@ -123,9 +123,10 @@ def test_silence_and_a_desync_gap_are_independent_windows():
 
 def test_the_status_channel_is_recognised_rather_than_discarded():
     """D1. Kraken pushes `status` automatically on connect and on every engine-state change, and its
-    planned-downtime notification carries an `effectiveTime`. Today `classify()` returns "other" and
-    `_consume` drops it, so "did Kraken announce the outage?" is UNANSWERABLE rather than answered
-    no -- an empty log is not an absent event when nothing logs the event.
+    planned-downtime notification carries an `effectiveTime`. `classify()` must return "status" so
+    `_consume` records it instead of discarding it. While the frame fell through to "other" and was
+    dropped, "did Kraken announce the outage?" was UNANSWERABLE rather than answered no -- an empty
+    log is not an absent event when nothing logs the event.
     """
     assert classify({"channel": "status", "type": "update", "data": [{"system": "online"}]}) == "status"
     assert classify({"channel": "status", "type": "update", "data": [{"system": "maintenance"}]}) == "status"

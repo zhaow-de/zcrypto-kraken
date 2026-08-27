@@ -25,20 +25,34 @@ cd infra/ansible
 ./scripts/run.sh site.yml --limit nas --tags nas -e nas_apply_compose=true   # render + apply EVERYTHING currently rendered
 ```
 
-Without `-e nas_apply_compose=true` the converge is **render-only**: files land on the NAS and the play reports which ones changed, but nothing restarts — deliberate, the same explicit-apply discipline as the ops role's attended first start. With the flag, end-of-role apply tasks **always run and apply everything currently rendered — not just what changed this run** (they are gated on the flag itself, not on notifications: a notify consumed by a `when:`-skipped handler is dropped, not deferred, so the old handler-based "render now, apply later" sequence could never apply; finding, 2026-07-17). The apply is three steps: `compose up -d`, then an unconditional `archive-pull` restart (`pull-entrypoint.sh` is bind-mounted, so a content change never alters the compose service hash and `up -d` alone would leave the old loop running), then an Alloy restart — T0048 codified: after any `up -d` that recreates a container, Alloy's docker tailer keeps following the dead container ID and the recreated service's logs silently stop shipping until Alloy restarts. Idempotent-safe: restarting an already-current container is a harmless few seconds of downtime on best-effort loops.
+Without `-e nas_apply_compose=true` the converge is **render-only**: files land on the NAS and the play reports which ones changed, but nothing restarts — deliberate, the same explicit-apply discipline as the ops role's attended first start. With the flag, end-of-role apply tasks **always run and apply everything currently rendered — not just what changed this run** (they are gated on the flag itself, not on notifications: a notify consumed by a `when:`-skipped handler is dropped, not deferred, so the old handler-based "render now, apply later" sequence could never apply; finding, 2026-07-17). The apply is three steps: `compose up -d`, then an unconditional `archive-pull` restart (`pull-entrypoint.sh` is bind-mounted, so a content change never alters the compose service hash and `up -d` alone would leave the old loop running), then an Alloy restart — what applies the `config.alloy` the same converge redeploys. It was added for T0048 (Alloy's docker tailer kept following the dead container ID after a recreate), and **that failure mode is retired on this host**: the tailer is gone and logs reach Alloy through the host journal (see the Alloy section below). Idempotent-safe: restarting an already-current container is a harmless few seconds of downtime on best-effort loops.
 
 **The play's first act is a UTC clock guard and it fails closed**: `date +%z` must print `+0000`. `docker logs --since` parses its argument in the host's **local** time, and the NAS's CEST clock produced false review verdicts on 2026-07-16. Fix: DSM Control Panel → Regional Options → Time Zone → **(GMT) Greenwich Mean Time**, then re-run the play.
 
-Host quirks — encoded as `host_vars/nas/vars.yml` (all measured live 2026-07-16), repeated here for humans:
+Host quirks — encoded as `host_vars/nas/vars.yml`, repeated here for humans:
 
 - DSM's `/usr/bin/python3` is 3.8.15, below ansible-core 2.21's 3.9 floor — the play runs the `python314` package's `/usr/local/bin/python3.14` (`ansible_python_interpreter`).
 - DSM chroots sftp to the shared folders, so sftp/scp cannot write arbitrary paths — `ansible_ssh_transfer_method: piped` (plain ssh stdin).
 - Docker is `/usr/local/bin/docker` and **not** on sudo's PATH — a bare `sudo docker` fails command-not-found, and a script that ignored that failure once read the empty output as a false all-clear (`nas_docker`).
 
+### Image pins — three identifiers for one object
+
+A pin is a **manifest digest** (`@sha256:…`). Two other values name the same image and are easy to mistake for it:
+
+| | what it is | where you meet it |
+| --- | --- | --- |
+| tag | the GIT SHA of the commit built (`<github.sha><suffix>`) — 40 hex chars, so it *looks* like a digest | what a registry UI displays |
+| manifest digest | **what you pin** — `nas_capture_image` and the rendered `.env` | `docker pull` output, `RepoDigests` |
+| image ID | the local config-blob digest | the `docker images` ID column |
+
+`docker inspect <container>` reconciles them: `.Config.Image` is what compose asked for (the digest), `.Image` is the local ID, and inspecting that ID lists `RepoTags` + `RepoDigests`.
+
+**A digest-pinned image showing `<none>` locally is NORMAL and never evidence of anything.** `docker image ls` prints `<none>` for *any* image pulled by digest, which is what a pinned deploy always does. Reading that as "untagged, therefore stale" once motivated a re-pin on a false premise.
+
 ### One-time bootstrap (hand-placed once; not Ansible-managed)
 
 1. Place `zcrypto.toml` (the app config the `gate-export` step reads for its journal/store paths) under `/volume1/docker/zcrypto-archive/`.
-2. Drop the `sync_capture` private key at `/volume1/docker/zcrypto-archive/keys/sync_capture`, mode `0600` (the vaulted keypair from plan Task 6; the public half is installed on the VPS as a read-only `rrsync` forced-command channel for the capture segments).
+2. Drop the `sync_capture` private key at `/volume1/docker/zcrypto-archive/keys/sync_capture`, mode `0600` (the vaulted keypair; the public half is installed on the VPS as a read-only `rrsync` forced-command channel for the capture segments).
 3. Drop the `sync_journal` private key at `/volume1/docker/zcrypto-archive/keys/sync_journal`, mode `0600` — the engine journal's OWN least-privilege keypair (Role B), distinct from `sync_capture` so a leaked key exposes only one channel. The other pull channels' keys (`sync_capture_red`, `sync_liquidations`, `sync_panel`, `sync_reconciled`, `sync_hot`) follow the same pattern, one least-privilege keypair each.
 4. Pre-seed the pinned VPS host key at `/volume1/docker/zcrypto-archive/keys/known_hosts`. DSM ships no `ssh-keyscan`, so run it from a machine that has one (e.g. the workstation): `ssh-keyscan -p 10022 <vps-host>` and copy its output to that path. Host-key checking is strict (`StrictHostKeyChecking=yes`), so an unseeded or stale file fails the pull closed.
 5. Create the shared textfile-collector directory `/volume1/docker/zcrypto-archive/textfile`, owned `1000:1000` and `chmod 0775`:
@@ -175,10 +189,10 @@ Backup rules ([[T0057]]):
 
 One more service on the same `compose.yaml`, unrelated to `archive-pull`'s own deploy sequence above:
 **Grafana Alloy**, shipping NAS host metrics (load, memory, free disk space, network IO), the Role B
-gate metrics (Task 2's `gate.prom` textfile), and every container's logs to the already-provisioned
+gate metrics (the `gate.prom` textfile), and every container's logs to the already-provisioned
 Grafana Cloud instance.
 
-**Alloy no longer touches the Docker socket at all (00068 D6/T8).** It used to read the socket **directly**, behind a GET-only `docker-socket-proxy` (tecnativa) with `POST=0` as the boundary, removed on 2026-07-14 because it corrupted the logs it existed to carry — its HAProxy `timeout client/server 10m` severed Docker's long-lived `/containers/<id>/logs?follow=1` stream whenever a container went quiet, and Alloy's reconnect (inclusive `since=<second>`) re-ingested the last line each time, duplicating it every 10 minutes forever. The direct-socket read that replaced the proxy is itself now retired: `discovery.docker`/`loki.source.docker` are gone from `config.alloy`, the socket volume mount is deleted from `compose.yaml`, and both containers' logs instead reach Alloy through the host journal (`journald` logging driver on both services + `loki.source.journal` in `config.alloy` — see the compose file's own header comment for the full history). **T0042's docker-socket residual on this host CLOSES**: nothing here holds Docker API access any more. Alloy is still kept non-root (uid 1031); its one remaining `group_add` is DSM's `log` group (gid 19, measured 2026-07-22 — DSM ships no `systemd-journal` group, and the journal is `root:log`), which grants journal read only, confers **no** Docker API access, and so cannot reopen T0042. Tracked in `docs/open-topics/T0042-*` — the topic-status update itself lands at the attended rollout (spec D7), not this repo edit.
+**Alloy no longer touches the Docker socket at all (00068 D6/T8).** It used to read the socket **directly**, behind a GET-only `docker-socket-proxy` (tecnativa) with `POST=0` as the boundary, removed on 2026-07-14 because it corrupted the logs it existed to carry — its HAProxy `timeout client/server 10m` severed Docker's long-lived `/containers/<id>/logs?follow=1` stream whenever a container went quiet, and Alloy's reconnect (inclusive `since=<second>`) re-ingested the last line each time, duplicating it every 10 minutes forever. The direct-socket read that replaced the proxy is itself now retired: `discovery.docker`/`loki.source.docker` are gone from `config.alloy`, the socket volume mount is deleted from `compose.yaml`, and both containers' logs instead reach Alloy through the host journal (`journald` logging driver on both services + `loki.source.journal` in `config.alloy` — see the compose file's own header comment for the full history). **T0042's docker-socket residual on this host CLOSES**: nothing here holds Docker API access any more. Alloy is still kept non-root (uid 1031); its one remaining `group_add` is DSM's `log` group (gid 19, measured 2026-07-22 — DSM ships no `systemd-journal` group, and the journal is `root:log`), which grants journal read only, confers **no** Docker API access, and so cannot reopen T0042. T0042 is resolved and archived (`docs/open-topics/archive/`).
 
 **Container-level metrics (CPU/mem/fs per container) are NOT collected on this NAS.** `cadvisor`
 SIGSEGVs on Synology DSM — a nil-pointer panic because DSM's kernel has no CPU cgroup hierarchy for
@@ -214,7 +228,7 @@ cadvisor SIGSEGVs on DSM's cgroup-less kernel (removed entirely — see the cont
 above), the alloy-data volume's DSM ACL rejects the image's built-in uid 473 (Alloy runs as the
 dedicated non-secret-owning uid 1031 `zcrypto-dummy` — see the Alloy Deploy section above), and a
 `cpus:`/`cpu_shares:` limit fails hard on DSM's CPU-cgroup-less kernel (removed — see Resource budget
-above). This file now reflects a live-verified deploy, not just the originally-authored design.
+above).
 
 ## Grafana dashboard + alerts (spec 00049 Role B, Task 4)
 

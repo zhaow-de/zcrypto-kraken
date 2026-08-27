@@ -200,8 +200,8 @@ def test_identical_outage_counts_the_same_on_dense_and_slow_streams(tmp_path, ca
     a characterization test, not a regression carrier for the thin-stream false-GREEN the topic
     originally measured (a self-calibrating threshold that swallows the outage on a sparse stream) --
     that defect class is closed by refusal, not by this test's booking: any stream sparse enough to
-    exhibit it is exactly a stream D6 declares UNMEASURED (see Task 4's UNMEASURED -> FAIL). Confirmed
-    against the pre-Task-3 `report()` too: this same fixture already passes there (DENSE 200.1 /
+    exhibit it is exactly a stream D6 declares UNMEASURED (see the UNMEASURED -> FAIL rule). Confirmed
+    against the earlier `report()` too: this same fixture already passes there (DENSE 200.1 /
     SLOW 201.0, identical to the new code), so both assertions hold under either measurement basis.
 
     ONE outage among four clean hours, so the fixture sits inside D6a's safe regime -- with two
@@ -706,7 +706,7 @@ def test_depth_is_provably_not_a_detector():
 def test_the_refusal_reason_is_named_beside_measured_streams(tmp_path, capsys):
     """D4's distinguishability, on a MIXED tree -- which is where it has to work.
 
-    Reproduced against Task 1's code, where the note block sat inside `report()`'s `if not totals:`
+    Reproduced against the earlier code, where the note block sat inside `report()`'s `if not totals:`
     branch: one measured stream beside one contaminated stream printed `n=11332 UNMEASURED` and
     `*** FAIL *** (unmeasured streams: 1)` and NO reason line anywhere. The reason appeared only on
     an ALL-unmeasured tree, and in production a contaminated stream almost always sits beside

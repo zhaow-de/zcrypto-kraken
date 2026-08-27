@@ -23,7 +23,7 @@ The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_com
 
 1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_image_digest=sha256:<...>` (from `infra/ansible/`; read the **default AVX** digest from the capture-image workflow's job summary, and confirm `zcrypto liquidations-poll --help` exists in that image before pinning).
 2. Secrets, both vaulted in `host_vars/zcrypto-ops/vault.yml` and wired via `vars.yml`: `coinalyze_api_key` (free key from coinalyze.net → account → API key) and `liquidations_healthcheck_url` (a healthchecks.io check, e.g. `zcrypto-liquidations`; the dead-man alerts by **missed** pings, so an attached notification channel is what pages). The rendered compose is mode `0600` because it carries the API key.
-3. Start it (attended, plan Task 5): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/compose.yaml up -d`.
+3. Start it (attended): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/compose.yaml up -d`.
 4. Verify by outcome within a minute: the first cycle back-fills the ~30 h catch-up window, so hour finals appear immediately at `/var/lib/zcrypto-ops/liquidations/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet` with valid `.sha256` sidecars, for all 10 coins. The dead-man pings after each fully-successful cycle. Sparse hours (no liquidation for a coin) simply have no bucket; the open hour lingers as `.part` files until a later bucket closes it ([T0046]).
 
 ### Env contract (rendered into `compose.yaml`)
@@ -250,8 +250,8 @@ holds the API any more.
 ### Deploy
 
 1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` (from `infra/ansible/`). There is no hand-placed secrets file anywhere on this host (and none on the NAS either since T0056 — the `nas` role renders its copy from the same vault group): the `ops` role renders **two** such files, both mode `0600`, never hand-placed — this Alloy one, and `{{ ops_compose_dir }}/logship-secrets.env` for the liquidations poller's own direct-ship Loki creds (spec 00068 D3/T6 — see the Liquidations poller section above). For Alloy: the role renders `{{ ops_alloy_dir }}/alloy-secrets.env` (default `/etc/zcrypto-ops/alloy/alloy-secrets.env`) straight from the vault, owned by `zcrypto-alloy` (the container runs as that user and must be able to read a 0600 file it does not own by default), with `no_log: true` + `diff: false` so the converge never prints the values. The six vars (`GRAFANA_PROM_URL/USERNAME/PASSWORD`, `GRAFANA_LOKI_URL/USERNAME/PASSWORD`) live in `group_vars/observed/vault.yml` — rotate them there. `config.alloy` reads the rendered file via the River `sys.env(...)` stdlib function; `compose.yaml` itself stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name).
-2. Start it (attended, plan Task 3): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d`.
+2. Start it (attended): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d`.
 3. Verify by outcome: the four textfile series (`ops_archive_pull_*`, `ops_panel_*`,
    `ops_verify_replay_*`, `ops_verified_replay_*`) and host metrics appear in Grafana Cloud within a
    scrape interval; `tests/test_infra_alloy_series.py` pins the keep-regex against every series this
-   stack (present + Task 6's future writer move) actually publishes.
+   stack (present + the future writer move) actually publishes.

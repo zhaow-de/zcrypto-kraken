@@ -8,9 +8,14 @@ base_packages:
 
 # unattended-upgrades: security pocket only, email on failure only. Auto-reboot is per-host now --
 # ops reboots itself, the two capture VPSes are ATTENDED (T0027); see the variable below.
-# No mailer/relay is wired up for this host yet — "root" is the safe, always-present
-# local recipient (readable via the local mail spool even without an MTA); override
-# with a real address once alerting/monitoring lands.
+# `root` here NOTIFIES NOTHING and is kept deliberately: no MTA is installed on any fleet host and
+# /var/mail is empty, so unattended-upgrades' MailOnlyOnError shells out to a mailer that does not
+# exist and the report is dropped. Settled rather than left as a pending "wire a real address":
+# alerting landed on Grafana/Slack plus the healthchecks dead-men, which is a better channel than
+# host mail, and adding a relay to reach one report is not worth the attack surface on hosts that
+# hold the trade key. THE RESIDUAL, stated because nothing else states it: a FAILED upgrade pages
+# nobody. `node_reboot_required` (spec 00071) covers the opposite case -- a SUCCESSFUL upgrade whose
+# reboot is pending -- so the gap is patches that never install, not patches awaiting a reboot.
 # Reboot slot decided from measured capture traffic (2026-07-14, 6 days of archive): the book-row
 # trough is 20:00-21:00 UTC (~136k rows/pair-hr vs 242k at the old 02:00 slot, peak 359k at 14:00).
 # Criteria: >=1h from any 4h bar boundary (00/04/08/12/16/20), off the hour boundary, low book

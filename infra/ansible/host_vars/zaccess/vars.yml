@@ -3,5 +3,7 @@ ansible_host: zaccess.zhaow.me
 base_hostname: zaccess
 # Fleet reboot slots: 21:25 zcrypto, 22:25 zcrypto-red, 02:25 ops. 05:25 is >=1 h from every
 # other slot, off the hour boundary, >=1 h from the 4-hourly engine boundaries (04:00/08:00).
+# The base role's collision assert covers capture_host + ops_host only, so this host's slot is NOT
+# machine-checked — this list is the guard.
 base_unattended_upgrades_reboot_time: "05:25"
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zaccess_ed25519.pub') }}"

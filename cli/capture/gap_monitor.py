@@ -147,8 +147,8 @@ class GapMonitor:
         on lost time, not a measurement of it, and it can exceed the elapsed wall clock — a pair
         desynced *through* an upstream blackout books that window twice. A rule on
         `increase(zcrypto_capture_gap_seconds_total[...])` therefore reads "how bad, roughly",
-        never "what fraction of the window was lost"; T0105 owns that rule and must not treat this
-        as a coverage ratio.
+        never "what fraction of the window was lost" -- any rule reading it must not treat it as a
+        coverage ratio (T0105, resolved, records why).
         Each open window's contribution is clamped to >= 0: an `at` before a window's start (a
         backward-stepped wall clock) must not produce a negative gap or eat booked gap time."""
         total = self._closed_seconds.get(pair, 0.0) + self._watermark_seconds + self._silent_seconds.get(pair, 0.0)
@@ -166,7 +166,8 @@ class GapMonitor:
         """Gap seconds over `window_seconds`. **CAN EXCEED 1.0** — see `gap_seconds`: the three
         window kinds are summed independently, so a pair that is desynced *through* an upstream
         blackout books the same wall-clock seconds twice. Any consumer treating this as a fraction
-        of elapsed time must say what it does above 1.0 (T0101; the paging work is T0105)."""
+        of elapsed time must say what it does above 1.0 (T0101; the paging rules T0105 built are
+        deployed)."""
         if window_seconds <= 0:
             raise CaptureError(f"window_seconds must be > 0, got {window_seconds}")
         return self.gap_seconds(pair, at=at) / window_seconds

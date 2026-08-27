@@ -4,7 +4,7 @@ One row per `(pair, hour)` last verified, persisted to `<state_dir>/checkpoint.p
 sweep can skip an unchanged hour instead of replaying it. Written atomically — temp file in the same
 directory, then `os.replace` (`mint.py`'s idiom) — so a failed write can never corrupt a previously
 published checkpoint. `load_checkpoint` never raises: absent, corrupt, and wrong-`schema_version` all
-return `None`, and the caller (Task 4) announces the rebuild rather than crashing the nightly sweep.
+return `None`, and the caller announces the rebuild rather than crashing the nightly sweep.
 """
 
 from __future__ import annotations

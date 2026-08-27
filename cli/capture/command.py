@@ -690,8 +690,8 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     # SEEDED at process start, not left empty. An unseeded pair has no `last_seen`, so the watchdog
     # skips it forever and the gauge reports 0.0 -- indistinguishable from "a message this instant",
     # the healthiest possible value. A pair that is subscribed and never delivers anything would
-    # therefore be invisible to the very instrument built to see silence, and T0105's planned
-    # `max_over_time(...) > threshold` could never fire on it either. Seeding costs no phantom gap:
+    # therefore be invisible to the very instrument built to see silence, and the deployed per-pair
+    # stream-silent rule could never fire on it either. Seeding costs no phantom gap:
     # measured subscribe-to-first-book-message is 2.311 s (SOL/BTC) and 2.769 s (ETH/BTC), an order
     # of magnitude under the 30 s threshold.
     last_seen: dict[str, datetime] = dict.fromkeys(pairs, datetime.now(UTC))

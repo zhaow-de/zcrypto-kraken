@@ -1,12 +1,17 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION": "1000"
+  },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
   },
   "permissions": {
     "allow": [
       "Bash(infra/scripts/probe-with-vaulted-key.sh:*)",
-      "Bash(./infra/scripts/probe-with-vaulted-key.sh:*)"
+      "Bash(./infra/scripts/probe-with-vaulted-key.sh:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)"
     ]
   },
   "hooks": {
