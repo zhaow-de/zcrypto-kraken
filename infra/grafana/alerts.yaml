@@ -1156,6 +1156,97 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-reconcile-ledger-scan-slow
+    title: "Reconciler · the ledger scan has become the cost driver"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The ledger scan is O(ledger) and invisible inside cycle_duration until it dominates, which is
+      # far too late to be a warning. 10 s is comparable to a whole cycle today, so the ledger has
+      # stopped being a rounding error and become the cost driver. Not an outage: 10 s is 0.6% of the
+      # 1800 s tick, and by the measured fit ~3.2M records holding ~7 GiB, about 15% of the host's
+      # free memory. PROVISIONAL -- a linear fit in infra/scripts/bench-ledger-scan.py, not a ledger
+      # ever observed at that size.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: zcrypto_reconcile_ledger_scan_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [10]}
+    noDataState: OK  # absence = the cycle did not publish = zcrypto-reconcile-exporter-stale's page, not this one's
+    execErrState: Alerting
+    for: 0s  # the gauge only updates twice an hour -- one reading is already the signal
+    annotations:
+      summary: "Reading and summing the append-only ledger now takes over 10 s a cycle, which is comparable to what an entire cycle costs today. Nothing is broken and nothing is at risk yet: this is well under 1% of the 30-minute tick, and roughly a sixth of the host's free memory. It means the ledger has grown into the thing that dominates cycle cost, so the append-only-forever design is now worth revisiting rather than assumed. Re-measure first: infra/scripts/bench-ledger-scan.py reproduces the curve at any size, so the question is a command rather than an estimate. Runbook: infra/runbooks/ops.md#reconcile-ledger-scan-cost"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "207"
+      unit: "seconds spent reading and summing the ledger"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-reconcile-ledger-scan-critical
+    title: "Reconciler · the ledger scan is approaching the memory it can spend"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Why a SECOND rule rather than a higher threshold on the one above: this is the memory failure,
+      # and zcrypto-reconcile-cycle-duration structurally cannot see it. Every record is held as a dict
+      # in a list at ~11x the file's on-disk size, so memory binds long before time does -- and a cycle
+      # the OOM reaper kills publishes nothing, leaving cycle_duration STALE rather than high. By the
+      # measured fit 30 s is ~9.5M records holding ~21 GiB, about 45% of the host's free memory, with
+      # the wall near 21M records; time would not bind until ~568M. PROVISIONAL -- same fit, and the
+      # bar encodes the host's FREE MEMORY, which moves independently of this repo.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: zcrypto_reconcile_ledger_scan_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [30]}
+    noDataState: OK  # absence = the cycle did not publish = zcrypto-reconcile-exporter-stale's page, not this one's
+    execErrState: Alerting
+    for: 0s  # the gauge only updates twice an hour -- one reading is already the signal
+    annotations:
+      summary: "Reading and summing the append-only ledger now takes over 30 s a cycle. Time is not the problem -- memory is, and at this scan cost the ledger is holding roughly half the memory the host has free. Every record is held in memory at several times its size on disk, so at this scan cost the reconciler is claiming a large share of a host it shares with the panel materialiser and the replay jobs, and the failure when it arrives is abrupt: a cycle killed for memory publishes nothing, so the cycle-duration alert goes stale rather than high and cannot warn you. Act on this one rather than waiting for a louder signal. Runbook: infra/runbooks/ops.md#reconcile-ledger-scan-cost"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "207"
+      unit: "seconds spent reading and summing the ledger"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-reconcile-cycle-duration
     title: "Reconciler · cycle approaching its own tick"
     ruleGroup: zcrypto-reconciler

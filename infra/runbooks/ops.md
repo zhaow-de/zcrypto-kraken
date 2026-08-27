@@ -246,3 +246,31 @@ Nothing is lost yet: at 1,500 s the cycle still finishes inside its tick. Past 1
 ### Retire when
 
 `zcrypto-reconcile-cycle-duration` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+<a name="reconcile-ledger-scan-cost"></a>
+
+## reconcile-ledger-scan-cost — ALERT
+
+### What you are seeing
+
+One of two rules on `zcrypto_reconcile_ledger_scan_seconds`: the warning at 10 s, or the critical at 30 s. Both measure one thing — the wall-clock cost of reading and summing the whole append-only reconcile ledger, which every cycle does in full.
+
+### What it means
+
+The exporter's cumulative counters are derived by summing the entire ledger on every cycle, so both halves of that work are O(ledger). That is by design and is what keeps the counters monotone across a one-shot process with no memory; the cost is the price of it.
+
+- **Warning (10 s)** — the ledger has become the cost driver: comparable to what an entire cycle costs today, while still well under 1% of the 30-minute tick, so nothing is at risk. What has changed is that append-only-forever stopped being free, and is now worth revisiting on evidence.
+- **Critical (30 s)** — the constraint is **memory, not time**. Each record is held as a Python object at roughly eleven times its size on disk, so at this scan cost the ledger holds about half the memory the host has free, on a host it shares with the panel materialiser and the replay jobs. This is the failure `zcrypto-reconcile-cycle-duration` cannot warn you about: a cycle killed for memory publishes nothing, so that gauge goes **stale rather than high**, and the only other cover is the 3-hour exporter-stale page.
+
+Both bars are provisional and say so in `infra/grafana/alerts.yaml`: they come from a linear fit, not from a ledger observed at that size.
+
+### What to do
+
+1. **Re-measure before deciding anything.** `uv run python infra/scripts/bench-ledger-scan.py` reproduces the curve at any size, so the question is a command rather than an estimate. Compare what it reports against the live `zcrypto_reconcile_ledger_records` — if the fit still holds, the remaining headroom is arithmetic; if it has bent, the fit was the wrong model and the bars need re-deriving from the new curve.
+2. **Read the host's free memory**, because that is what the critical bar actually encodes and it moves independently of this repo. The reconciler runs uncapped, so its ceiling is whatever the host has spare.
+3. **Then renovate, not before.** The shape that preserves the counters is a compaction that folds everything older than the retention horizon into a single opening `carried_forward` record, so the sums stay exact while the scanned file stays bounded. Do NOT simply truncate — that resets every counter and pages the permanent-loss rule. One obligation comes with it: a compaction must not look like a ledger correction, since `zcrypto_reconcile_ledger_records` falling is what explains a counter reset.
+4. **A one-off spike with a flat record count is not this alert's subject** — that is host contention, and the record count beside it on the panel is what tells the two apart.
+
+### Retire when
+
+`zcrypto_reconcile_ledger_scan_seconds` is no longer published by `cli/archive/command.py`, or the ledger stops being scanned in full each cycle — i.e. compaction has landed and the counters are derived from a bounded read.

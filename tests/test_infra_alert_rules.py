@@ -714,7 +714,16 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
 # has been derived cannot leave its excuse behind. Last occupant: `zcrypto-capture-stream-silent`,
 # derived 2026-08-05. Its bar is not provisional -- its base is just younger than the `[30d]`
 # selector suggests, and T0129 carries the re-derivation with the measured sample counts.
-PROVISIONAL_THRESHOLDS: set[str] = set()
+PROVISIONAL_THRESHOLDS: set[str] = {
+    # Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` -- ~3 microseconds and
+    # ~1 KiB of resident memory per record, measured up to 2,000,000 synthetic records -- not from a
+    # ledger ever observed at that size. The live one holds ~100 records. What derives the real
+    # values: re-run that benchmark against the ledger's own record shape once it is large enough for
+    # the fit to be checked rather than extrapolated, and set the critical bar from the host's
+    # available memory at that time, which is the quantity it actually encodes.
+    "zcrypto-reconcile-ledger-scan-slow",
+    "zcrypto-reconcile-ledger-scan-critical",
+}
 
 _PROVISIONAL = "PROVISIONAL"
 
