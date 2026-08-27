@@ -124,7 +124,7 @@
 # `state: absent` rather than a plain deletion: the file persists on every host that already has
 # it, and a deleted task would leave it there rotating forever. Drop this task once every host has
 # converged past it (check: /etc/logrotate.d/zcrypto-capture-docker absent fleet-wide).
-- name: remove the docker json-log logrotate policy (T0089 — copytruncate wedges dockerd's readers)
+- name: remove the docker json-log logrotate policy (copytruncate wedges dockerd's readers)
   ansible.builtin.file:
     path: /etc/logrotate.d/zcrypto-capture-docker
     state: absent

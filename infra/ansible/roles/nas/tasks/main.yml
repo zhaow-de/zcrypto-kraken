@@ -25,8 +25,8 @@
     fail_msg: >-
       REFUSING to converge the NAS: its clock offset is {{ nas_tz_offset.stdout }}, not +0000.
       `docker logs --since` parses LOCAL time, so every log-window query against a non-UTC NAS is
-      silently wrong — the CEST/UTC mismatch produced two false review verdicts on 2026-07-16
-      (T0056). Fix: DSM Control Panel -> Regional Options -> Time Zone -> (GMT) Greenwich Mean
+      silently wrong — a local-time mismatch has already produced false review verdicts here.
+      Fix: DSM Control Panel -> Regional Options -> Time Zone -> (GMT) Greenwich Mean
       Time, then re-run this play.
     success_msg: NAS clock is UTC (+0000) — proceeding.
   tags: [always]
@@ -138,7 +138,8 @@
     group: zcrypto
     mode: "2775"
 
-- name: deploy the vendored rrsync jailer (the NAS ships no rrsync -- rsync 3.4.1's python3 rrsync, T0056)
+# T0056.
+- name: deploy the vendored rrsync jailer (the NAS ships no rrsync -- rsync 3.4.1's python3 rrsync)
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../nas/rrsync"
     dest: "{{ nas_stack_dir }}/rrsync"
@@ -213,10 +214,12 @@
   when: nas_apply_compose | default(false) | bool
   changed_when: true
 
-# T0048 CODIFIED: after any `up -d` that recreates a container, Alloy's docker tailer keeps
-# following the DEAD container id and the recreated service's logs silently stop shipping until
-# Alloy restarts. Baking the restart into the apply makes that runbook step impossible to forget.
-- name: apply — restart alloy (T0048; recreated containers' logs stop shipping until it restarts)
+# Restarts Alloy so it re-reads the config.alloy THIS converge deployed: the config dir is
+# bind-mounted read-only, so a new file lands while the running process keeps the config it started
+# with -- a drift the deployed-file assert cannot see. Added for T0048 (Alloy's docker tailer kept
+# following a DEAD container id after a recreate); that mechanism is RETIRED here -- config.alloy
+# runs `loki.source.journal` only, and the sole `discovery.docker` left in it is a comment.
+- name: apply — restart alloy (re-reads the config.alloy this converge deployed)
   ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose restart alloy
   when: nas_apply_compose | default(false) | bool
   changed_when: true

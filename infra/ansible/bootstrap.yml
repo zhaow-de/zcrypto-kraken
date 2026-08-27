@@ -56,7 +56,8 @@
         content: "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL\n"
         mode: '0440'
         validate: 'visudo -cf %s'
-    - name: install zcrypto-deploy authorized key (exclusive — one key, no drift, spec 00057 D1)
+    # spec 00057 D1.
+    - name: install zcrypto-deploy authorized key (exclusive — one key, no drift)
       ansible.posix.authorized_key: {user: zcrypto-deploy, key: "{{ deploy_authorized_key }}", state: present, exclusive: true}
     - name: ensure python3 + sudo
       ansible.builtin.apt: {name: [python3, sudo], state: present, update_cache: true}
@@ -96,7 +97,7 @@
         content: "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL\n"
         mode: '0440'
         validate: 'visudo -cf %s'
-    - name: install zcrypto-deploy authorized key (exclusive — one key, no drift, spec 00057 D1)
+    - name: install zcrypto-deploy authorized key (exclusive — one key, no drift)
       ansible.posix.authorized_key: {user: zcrypto-deploy, key: "{{ deploy_authorized_key }}", state: present, exclusive: true}
     - name: ensure python3 + sudo
       ansible.builtin.apt: {name: [python3, sudo], state: present, update_cache: true}

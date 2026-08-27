@@ -412,7 +412,7 @@ def _code_ref() -> str:
 def write_meta(panel_root: Path) -> Path:
     """Write (or overwrite) the panel's generation manifest (spec 00052 D5): schema_version, grid,
     the notional ladder, the K-levels, and the producing code ref. This is the raw writer only --
-    the "write if absent, refuse on a generation mismatch" policy belongs to the CLI (Task 3)."""
+    the "write if absent, refuse on a generation mismatch" policy belongs to the CLI."""
     panel_root.mkdir(parents=True, exist_ok=True)
     meta = {
         "schema_version": SCHEMA_VERSION,

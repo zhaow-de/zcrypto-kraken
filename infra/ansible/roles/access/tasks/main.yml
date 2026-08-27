@@ -80,7 +80,8 @@
 - name: probe timer enabled
   ansible.builtin.systemd: {name: zaccess-probe.timer, enabled: true, state: started, daemon_reload: true}
 
-- name: wireguard server conf (spec 00075 D6 -- the bridgehead end of the zaccess0 tunnel)
+# spec 00075 D6.
+- name: wireguard server conf (the bridgehead end of the zaccess0 tunnel)
   ansible.builtin.template:
     src: zaccess0.conf.j2
     dest: /etc/wireguard/zaccess0.conf
@@ -90,7 +91,8 @@
 - name: wireguard tunnel enabled
   ansible.builtin.systemd: {name: wg-quick@zaccess0, enabled: true, state: started}
 
-- name: ssh relay socket + service (spec 00075 D5 -- systemd-socket-proxyd, no NAT/forwarding)
+# spec 00075 D5.
+- name: ssh relay socket + service (systemd-socket-proxyd, no NAT/forwarding)
   ansible.builtin.template:
     src: "zaccess-ssh-proxy.{{ item }}.j2"
     dest: "/etc/systemd/system/zaccess-ssh-proxy.{{ item }}"
@@ -128,7 +130,8 @@
 - name: caddy is never held — same reason as alloy above
   ansible.builtin.dpkg_selections: {name: caddy, selection: install}
 
-- name: zaccess mTLS CA cert (spec 00075 D16 -- the trust_pool the Caddyfile's mtls snippet reads)
+# spec 00075 D16.
+- name: zaccess mTLS CA cert (the trust_pool the Caddyfile's mtls snippet reads)
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/files/zaccess_ca.crt"
     dest: /etc/caddy/zaccess_ca.crt
@@ -144,7 +147,8 @@
     group: root
     mode: '0755'
   notify: reload caddy
-- name: pinned mTLS client leaves (spec 00075 D16 -- a PEM's presence here IS the pin; absence is revocation)
+# spec 00075 D16.
+- name: pinned mTLS client leaves (a PEM's presence here IS the pin; absence is revocation)
   ansible.builtin.copy:
     src: pinned-leaves/
     dest: /etc/caddy/pinned-leaves/
@@ -153,7 +157,8 @@
     mode: '0644'
     directory_mode: '0755'  # the leaves are public certs -- caddy (uid 997, not in group root) just needs to traverse
   notify: reload caddy
-- name: NAS upstream CA (spec 00075 D7 -- the Sectigo intermediate the NAS omits from its chain; pins the ops->NAS TLS leg)
+# spec 00075 D7.
+- name: NAS upstream CA (the Sectigo intermediate the NAS omits from its chain; pins the ops->NAS TLS leg)
   ansible.builtin.copy:
     src: nas-upstream-ca.pem
     dest: /etc/caddy/nas-upstream-ca.pem
@@ -161,9 +166,11 @@
     group: root
     mode: '0644'
   notify: reload caddy
+# spec 00075 D14: mTLS is proven before any upstream exists; the NAS/agentboard upstreams are
+# wired behind this same gate.
 - name: >-
-    Caddyfile -- global block + the (mtls) snippet + the two static vhosts (D14: mTLS proven
-    before any upstream exists; Task 9/10 wire the NAS/agentboard upstreams behind this same gate)
+    Caddyfile -- global block + the (mtls) snippet + the two static vhosts (mTLS proven
+    before any upstream exists; later upstreams are wired behind this same gate)
   ansible.builtin.template:
     src: Caddyfile.j2
     dest: /etc/caddy/Caddyfile
@@ -174,3 +181,95 @@
   notify: reload caddy
 - name: caddy enabled + started
   ansible.builtin.systemd: {name: caddy, enabled: true, state: started}
+
+# --- LAST IN THE ROLE ON PURPOSE, and SKIPPED under --check. An assert that fails takes the rest of
+# the play with it, and below it would be the pinned-leaves + Caddyfile tasks that ARE the
+# client-cert revocation path -- the blast radius the alloy version pin caused live on 2026-08-20,
+# recorded at the top of this file.
+#
+# Two things make that protection real rather than nominal, and both were missing from the first cut:
+#
+#   * `when: not ansible_check_mode`. converge.sh runs `--check --diff` FIRST and exits without
+#     converging if the preview fails. An assert that trips in check mode therefore blocks the WHOLE
+#     run -- revocation included -- more completely than a mid-play failure would. It would also be
+#     judging the OLD file, since the template does not write under --check.
+#   * `flush_handlers` before the gate. force_handlers defaults to False, so a failure here strands
+#     every pending handler; `reload caddy` is the one that makes a deleted pinned leaf take effect.
+#     Applying them first stops a drifted relay from silently withholding a cert revocation.
+#
+# The relay is Accept=no with no --exit-idle-time, so ONE long-lived systemd-socket-proxyd holds the
+# listener for as long as it runs. Rewriting the unit does not replace its target: `reload` is not
+# applicable (no ExecReload, and the target is a command-line argument rather than config),
+# `daemon-reload` only refreshes systemd's view of the FILE, and `state: started` is a no-op on a
+# running unit. So a converge that rewrites this unit reports `changed` and reaches nothing.
+#
+# ONE thing above does restart it, and the flush below is what makes that so: `restart
+# wg-quick@zaccess0` is notified by the wireguard conf template, and BOTH relay halves declare
+# `Requires=wg-quick@zaccess0.service`, which systemd propagates as a restart. So a converge that
+# changes the tunnel conf DOES bounce the relay -- dropping the sessions this gate exists to avoid
+# dropping -- and the relay then re-execs from the new file, so the gate below passes. That is a
+# reason to keep the gate honest about what it observes, not a reason to move the flush: without it
+# a tripped gate strands `reload caddy`.
+#
+# It REPORTS drift; it does not prevent it. `converge.sh` previews with --check --diff and aborts on a
+# failed preview, so skipping check mode is what stops a drifted relay from blocking the whole run --
+# and the cost is that by the time this can fail, every task above it has applied. Read a failure as
+# "the converge landed and the relay still needs a hand", never as "the converge was refused".
+#
+# Asserted rather than restarted: a restart drops every SSH session traversing the relay INTO the ops
+# node -- including the shell a remote operator may be driving this play from. (It cannot cut the
+# play's own transport: this converge reaches zaccess's own sshd directly on :10022, per fleet.md.)
+# The sibling zaccess-nas-proxy relay in roles/access_ops gets restart handlers instead -- it carries
+# DSM traffic, not an operator's session. NOTE the socket half is covered by neither here: a changed
+# ListenStream is still written and never applied. It has never changed; widen this gate if it does.
+- name: apply pending handlers before the relay drift gate
+  ansible.builtin.meta: flush_handlers
+
+# Read the RUNNING process's argv, never `systemctl show`: after a daemon-reload that reports the NEW
+# value while the process keeps the old one -- the same trap capture-deploys.md records for the Alloy
+# drift assert, which compares the deployed FILE and not what the process loaded.
+- name: read the ssh relay's running target
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      pid=$(systemctl show -p MainPID --value zaccess-ssh-proxy.service)
+      if [ "$pid" = "0" ]; then echo __not_running__; else tr '\0' '\n' < "/proc/$pid/cmdline" | tail -1; fi
+    executable: /bin/bash
+  register: access_ssh_relay_running
+  changed_when: false
+  when: not ansible_check_mode
+- name: read the ssh relay's rendered target
+  # $NF is the LAST token, which is the target only while the target stays last. If an option is ever
+  # appended after it (--exit-idle-time, say) both sides shift together and this compares a constant
+  # to itself -- an always-passing guard. Keep the target last, or match the argument explicitly.
+  ansible.builtin.shell:
+    cmd: awk '/^ExecStart=/{print $NF}' /etc/systemd/system/zaccess-ssh-proxy.service
+    executable: /bin/bash
+  register: access_ssh_relay_rendered
+  changed_when: false
+  when: not ansible_check_mode
+- name: the ssh relay is running the target this play renders
+  # __not_running__ PASSES: the socket is Accept=no and the service has no [Install], so it is
+  # inactive from boot until the first connection on :20022 and MainPID reads 0. An inactive unit
+  # execs from the rendered file at its next activation, so it cannot be drifted -- failing there
+  # would fail a healthy converge on any host that rebooted without a remote session since.
+  # The length test closes the both-empty hole: no ExecStart line found AND a defunct proxyd whose
+  # /proc/<pid>/cmdline is empty would otherwise compare equal and pass.
+  #
+  # NO override, deliberately. spec 00082 D1 reserves overrides for exactly canary_override,
+  # pins_override and engine_window_override and says every other guard has none; and an override
+  # would buy nothing here, because this reports after the converge has already applied -- there is
+  # no refusal left to bypass. The remedy is the hand restart the message names, not a flag.
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: >-
+      (access_ssh_relay_rendered.stdout | default('') | length > 0)
+      and (access_ssh_relay_running.stdout | default('') in ['__not_running__', access_ssh_relay_rendered.stdout])
+    fail_msg: >-
+      This converge HAS ALREADY APPLIED -- this is a report, not a refusal. The SSH relay is still
+      running "{{ access_ssh_relay_running.stdout | default('') }}" while the unit on disk now renders
+      "{{ access_ssh_relay_rendered.stdout | default('') }}". A reload cannot close that gap: the unit
+      defines no ExecReload and the target is a command-line argument, not config. Restart it by hand
+      -- `sudo systemctl restart zaccess-ssh-proxy.service` -- from a session that did NOT reach the
+      ops node through port 20022, because the restart drops every connection traversing the relay.
+      Re-run this play afterwards for a green run.

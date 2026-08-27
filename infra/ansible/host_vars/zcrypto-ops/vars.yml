@@ -1,63 +1,52 @@
 # host_vars/zcrypto-ops — the home ops node: compute tier (spec 00051). ops_host ONLY — it must
 # never join engine_host, or the live Kraken trade key would be rendered onto a host that has no
 # business holding it (D10).
-#
-# The box currently calls itself zcrypto-red (collision with the secondary capture host); this pins
-# the inventory name + on-host hostname to zcrypto-ops instead.
-# Converge as the zcrypto-deploy user (the fleet's admin identity since spec 00057 D1 — the capture
-# group defaults to it too). The bootstrap play overrides this with `-e ansible_user=root` to create
-# the zcrypto-deploy user in the first place; every run.sh converge afterward connects as zcrypto-deploy.
+
+# The bootstrap play overrides this with `-e ansible_user=root` to create zcrypto-deploy in the
+# first place; every run.sh converge afterward connects as zcrypto-deploy.
 ansible_user: zcrypto-deploy
 
+# The base role defaults to "zcrypto"; without this the ops node would converge to the capture
+# primary's hostname.
 base_hostname: zcrypto-ops
 
-# Provisional: >= 1 h from every 4h bar boundary, off the hour boundary, >= 1 h from the capture
-# fleet's 21:25/22:25 slots. The fleet reboot-window assert in the base role reads this out of
-# hostvars alongside the capture hosts' slots (see host_vars/zcrypto/vars.yml,
-# host_vars/zcrypto-red/vars.yml) and asserts all of `capture_host + ops_host` are pairwise distinct.
+# >= 1 h from every 4h bar boundary, off the hour boundary, >= 1 h from the capture fleet's
+# 21:25/22:25 slots. The fleet-collision assert reads this out of hostvars alongside them (see
+# host_vars/zcrypto/vars.yml).
 base_unattended_upgrades_reboot_time: "02:25"
 
-# Wire the vaulted dead-man ping URL (host_vars/zcrypto-ops/vault.yml) into the role var the
-# rendered compose reads as LIQUIDATIONS_HEALTHCHECK_URL.
+# Wire the vaulted dead-man ping URLs (vault.yml beside this file) into the role vars the rendered
+# compose and the timers read.
 ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
-
-# Same wiring for the replay/panel timers' dead-men (vault.yml holds the encrypted URLs). The
-# archive-pull dead-man is LIVE again (restored 2026-07-17): the T0058 rewrite dropped the ping
-# with the retired pull, and the check went DOWN silently while Grafana stayed green on fresh
-# metrics -- the overlay writer now pings on rc=0 INCLUDING gate-skips (a skip = alive, refusing
-# stale input; the upstream problem pages through its own channels). Do NOT pause or remove the
-# `zcrypto-archive-pull` check -- it is the independent failure domain for this unit.
 ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
 ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
+# Do NOT pause or remove the `zcrypto-archive-pull` check — it is this unit's independent failure
+# domain, and it once went DOWN silently while Grafana stayed green on fresh metrics (T0058). The
+# overlay writer pings on rc=0 INCLUDING gate-skips: a skip means alive and refusing stale input.
 ops_archive_pull_healthcheck_url: "{{ archive_pull_healthcheck_url }}"
 ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
 ops_grafana_watchdog_healthcheck_url: "{{ grafana_watchdog_healthcheck_url }}"
 
-# The operator's fleet-wide deploy pubkey, loaded from the same file group_vars/capture_host reads
-# (single source: infra/ansible/files/ -- a key rotation edits the .pub file once). The bootstrap
-# play installs it for the `zcrypto-deploy` user (spec 00057 D1); `run.sh` then converges over it.
+# The operator's fleet-wide deploy pubkey, from the same files/ dir group_vars/capture_host reads —
+# a key rotation edits the .pub once. The bootstrap play installs it for zcrypto-deploy.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-ops_ed25519.pub') }}"
 
-# Fleet users/groups (spec 00057): the four NAS pull-channel public keys the ops role installs on
-# zcrypto-data as `rrsync -ro` forced commands (they were hand-installed on deploy). Same lookup
-# idiom as deploy_authorized_key above -- public material only; the private halves live on the NAS
-# (/volume1/docker/zcrypto-archive/keys). The forced-command roots are in roles/ops/tasks/main.yml.
+# The four NAS pull-channel public keys the ops role installs on zcrypto-data as `rrsync -ro` forced
+# commands (spec 00057). Public material only — the private halves live on the NAS under
+# /volume1/docker/zcrypto-archive/keys. The forced-command roots are in roles/ops/tasks/main.yml.
 ops_sync_liquidations_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_liquidations_ed25519.pub') }}"
 ops_sync_panel_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_panel_ed25519.pub') }}"
 ops_sync_reconciled_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_reconciled_ed25519.pub') }}"
 ops_sync_hot_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_hot_ed25519.pub') }}"
 
-# THE --mint FLIP (spec 00050 Task 12's final step; flipped 2026-07-17, owner present). Unlocked by
-# the 66 h cross-host soak: 217 witnessed silence windows, max 12.08 s (a hand-classified coalescing
-# artifact — 9 sibling pairs flowing on a healthy primary), threshold pinned at 30 s = 2.48x that
-# max. The ledger held ZERO would_mint entries at flip time, so this applied no backlog — the first
-# mint ever will be spec 00050 Task 13's Leg-A drill gap, deliberately created and fully observed.
-# Derivation: T0039. To disable: set false (or override -e ops_reconcile_mint=false) + converge.
+# Lets the reconciler mint healed hours (flipped 2026-07-17, owner present; derivation T0039). The
+# silence threshold that governs a mint is ops_reconcile_min_gap_seconds in
+# roles/ops/defaults/main.yml, where its derivation lives. To disable: set false (or
+# -e ops_reconcile_mint=false) + converge.
 ops_reconcile_mint: true
 
-# G2 LIVE 2026-07-30 (after the incident + fix): the fatal defect was `set -g window-size manual` in
-# the managed ~/.tmux.conf crashing tmux 3.5a on new-session -- REMOVED (commit 123c1954 + guard
-# test). agentboard itself is safe on the shared socket: it does not crash the server and refuses to
-# kill a discovered session ("Cannot kill external sessions"); reflow-on-attach is recoverable. This
-# flag enables + starts zaccess-agentboard. spec 00075 D13.
+# Enables + starts zaccess-agentboard; live since 2026-07-30 (spec 00075 D13). agentboard is safe on
+# the shared tmux socket: it does not crash the server and refuses to kill a discovered session. The
+# config pin that DID crash it is documented at roles/access_ops/templates/tmux.conf.j2 and guarded
+# by tests/test_infra_tmux_conf_no_window_size_manual.py.
 access_ops_agentboard_live: true

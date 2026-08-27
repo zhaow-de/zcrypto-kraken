@@ -5,7 +5,7 @@
 # Fleet users/groups (spec 00057): zcrypto-data (renamed from kraken-capture, uid kept) SERVES the
 # NAS capture pull via an rrsync forced-command key, so it needs a login-capable shell. DSM rejects a
 # custom shell, but these hosts are Debian, so the same rrsync-only wrapper the ops node uses works.
-- name: install the rrsync-only login shell for zcrypto-data (spec 00057)
+- name: install the rrsync-only login shell for zcrypto-data
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/files/rrsync-shell"
     dest: "{{ capture_rrsync_shell }}"
@@ -258,7 +258,7 @@
 # path keeps the forced command independent of the login shell's PATH.
 # The capture data export the NAS pulls now lands on zcrypto-data (the m2m data user, spec 00057),
 # not the admin `deploy`. exclusive:false ADDS it; deploy's old copy is dropped by a one-time step
-# AFTER the NAS repoints (Task 5/8) — dual authorization so the pull never drops. zcrypto-data OWNS
+# AFTER the NAS repoints (the cutover's dual-authorization window) so the pull never drops. zcrypto-data OWNS
 # the 0750 capture dir now, so the old `deploy`-in-kraken-capture-group traversal hack is gone.
 - name: install the sync_capture pubkey as a forced-command entry on zcrypto-data (segments read-only)
   ansible.posix.authorized_key:

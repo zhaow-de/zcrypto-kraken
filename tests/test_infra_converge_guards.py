@@ -1304,3 +1304,292 @@ def test_ops_pins_probe_inspects_the_container_the_compose_template_names():
         assert line.endswith('"liquidations-poll"]'), (
             f"every rendered entrypoint must invoke the liquidations-poll subcommand: {line}"
         )
+
+
+ACCESS_TASKS = ANSIBLE / "roles" / "access" / "tasks" / "main.yml"
+_RELAY_GATE = "the ssh relay is running the target this play renders"
+_RELAY_FLUSH = "apply pending handlers before the relay drift gate"
+
+
+def _relay_vars(running: str | None, rendered: str | None, **extra) -> dict:
+    # the guard reads .stdout off registered results; None models a task that never ran
+    v = {
+        "access_ssh_relay_running": {} if running is None else {"stdout": running},
+        "access_ssh_relay_rendered": {} if rendered is None else {"stdout": rendered},
+    }
+    v.update(extra)
+    return v
+
+
+@pytest.mark.parametrize(
+    "running,rendered,expected,why",
+    [
+        # NOT the production target on either side: a fixture set that only ever renders
+        # 10.99.0.2:22 cannot tell the committed expression from one that hardcodes it, and the
+        # rendered target IS hardcoded in the template -- so that mutation would be invisible.
+        ("10.99.0.7:22", "10.99.0.7:22", True, "healthy: the running argv is the rendered target"),
+        ("10.99.0.2:22", "10.99.0.3:22", False, "the template's target MOVED and the process kept the old one"),
+        ("__not_running__", "10.99.0.7:22", True, "healthy: socket-activated and never triggered, so it cannot be drifted"),
+        ("192.168.1.9:22", "10.99.0.2:22", False, "DRIFTED: the process kept a target the unit no longer renders"),
+        ("/usr/lib/systemd/systemd-socket-proxyd", "10.99.0.2:22", False, "argv carried no target at all"),
+        ("", "", False, "both empty -- equal, but proves nothing; must not read as healthy"),
+        # a reader that did not run at all: the gate's `| default('')` fallbacks are what decide
+        # here, and nothing else exercises them. Mutating the running side to
+        # `default('__not_running__')` -- a gate that passes whenever its probe is skipped -- is
+        # invisible without these rows.
+        (None, "10.99.0.7:22", False, "the running reader never ran; an absent read is not a healthy one"),
+        ("10.99.0.7:22", None, False, "the rendered reader never ran; nothing to compare against"),
+    ],
+)
+def test_the_ssh_relay_drift_gate_separates_drift_from_health(running, rendered, expected, why):
+    """The gate must pass BOTH healthy shapes and fail every drifted one.
+
+    `__not_running__` is the true-positive an earlier cut got wrong: the socket is `Accept=no` and
+    the service has no `[Install]`, so it is inactive from boot until the first connection and
+    `MainPID` reads 0 -- failing there would fail a healthy converge on any host that rebooted
+    without an intervening remote session.
+
+    The rendered-moved row is what stops this set from passing a gate that ignores the rendered side
+    altogether: it is the drift shape the sibling relay actually had (an IP->FQDN swap of the
+    template's own target), and it is the only row where the two sides differ because the TEMPLATE
+    changed rather than the process.
+    """
+    gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
+    assert truthy(assert_that(gate), _relay_vars(running, rendered)) is expected, why
+
+
+def test_the_ssh_relay_drift_gate_takes_no_override():
+    """spec 00082 D1 reserves overrides for canary/pins/engine-window and gives every other guard none.
+
+    An override here would also be inert: the gate is skipped under check mode and runs last, so it
+    reports after the converge has applied -- there is no refusal left to bypass.
+    """
+    gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
+    rendered = " ".join(assert_that(gate)) + " " + str(gate["ansible.builtin.assert"].get("fail_msg", ""))
+    assert "override" not in rendered.lower(), f"the relay gate must not grow an override (spec 00082 D1): {rendered}"
+    # and a drifted host must fail no matter what stray variable is set
+    drifted = _relay_vars("192.168.1.9:22", "10.99.0.2:22", access_ssh_relay_override="a stated reason, long enough")
+    assert not truthy(assert_that(gate), drifted), "no variable may buy past this gate"
+
+
+def test_the_ssh_relay_drift_gate_is_skipped_under_check_and_runs_last():
+    """`converge.sh` previews with `--check --diff` and ABORTS the run if the preview fails.
+
+    A gate that tripped in check mode would block the whole converge -- including the pinned-leaves
+    and Caddyfile tasks that are the client-cert revocation path -- which is the blast radius this
+    file's 2026-08-20 note records. It must skip under check mode, and be the role's last task so
+    nothing it can fail sits below it.
+    """
+    tasks = load_tasks(ACCESS_TASKS)
+    gate = find_task(tasks, _RELAY_GATE)
+    assert "not ansible_check_mode" in when_conditions(gate), "the gate must not evaluate under --check"
+    assert task_index(tasks, _RELAY_GATE) == len(tasks) - 1, "the gate must be the role's last task"
+
+    # Pinned by the task's ACTION, not by its name: force_handlers defaults False and is set nowhere,
+    # so a flush that stopped being a flush would strand `reload caddy` -- the handler that makes a
+    # pinned-leaf revocation take effect -- while a name-only assertion stayed green.
+    flush = task_index(tasks, _RELAY_FLUSH)
+    assert flush < task_index(tasks, _RELAY_GATE), "handlers must flush before the gate can fail the host"
+    assert tasks[flush].get("ansible.builtin.meta") == "flush_handlers", (
+        f"the pre-gate task must actually flush handlers, not merely be named so: {tasks[flush]}"
+    )
+
+
+def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice():
+    """The gate compares a running argv against a rendered unit; the tests above only pin the compare.
+
+    The trap the task's own comment names is repointing the running reader at the unit file — then
+    both sides read the same bytes, the gate passes on every converge, and the relay drifts unbounded.
+    That is the Alloy drift failure `capture-deploys.md` records, where the assert compared the
+    deployed FILE rather than what the process had loaded. Pinned as data so the readers cannot
+    quietly become the same read.
+    """
+    tasks = load_tasks(ACCESS_TASKS)
+    running = find_task(tasks, "read the ssh relay's running target")["ansible.builtin.shell"]["cmd"]
+    rendered = find_task(tasks, "read the ssh relay's rendered target")["ansible.builtin.shell"]["cmd"]
+
+    assert "/proc/" in running and "cmdline" in running, f"the running reader must read the process's argv: {running!r}"
+    assert "/etc/systemd/system/" not in running, (
+        f"the running reader must NOT read the unit file -- that makes both sides the same read: {running!r}"
+    )
+    assert "ExecStart" not in running, f"the running reader must not parse ExecStart: {running!r}"
+    assert "/etc/systemd/system/zaccess-ssh-proxy.service" in rendered, f"the rendered reader must read the unit file: {rendered!r}"
+    assert "ExecStart" in rendered, f"the rendered reader must take the target from ExecStart=: {rendered!r}"
+    for name, cmd in (("running", running), ("rendered", rendered)):
+        assert "zaccess-ssh-proxy" in cmd, f"the {name} reader must name the relay it is about: {cmd!r}"
+
+    # the sentinel the assert special-cases must be the one the shell actually emits, or the
+    # not-running case silently becomes a drift report on every socket-activated host
+    gate = " ".join(assert_that(find_task(tasks, _RELAY_GATE)))
+    sentinel = "__not_running__"
+    assert sentinel in running and sentinel in gate, (
+        f"the shell emits and the assert excuses the same sentinel; running={running!r} gate={gate!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "stub_pid,expect_sentinel,why",
+    [
+        ("0", True, "MainPID 0 means socket-activated and never triggered -- the sentinel is correct"),
+        (
+            "SELF",
+            False,
+            "a RUNNING relay must never read as not-running: the assert excuses the sentinel, so emitting it while alive makes the gate pass on a drifted relay forever",
+        ),
+    ],
+)
+def test_the_ssh_relay_running_reader_emits_the_sentinel_only_when_not_running(tmp_path, stub_pid, expect_sentinel, why):
+    """Behavioural, because the string checks cannot see an inverted condition.
+
+    Flipping `[ "$pid" = "0" ]` to `!=` keeps every structural assertion green while making the
+    reader emit `__not_running__` for every live relay — the silent-pass class this file's own
+    docstring cites from the Alloy failure. So run the committed `cmd` with a stub `systemctl`.
+    """
+    import os
+    import subprocess
+
+    cmd = find_task(load_tasks(ACCESS_TASKS), "read the ssh relay's running target")["ansible.builtin.shell"]["cmd"]
+    pid = str(os.getpid()) if stub_pid == "SELF" else stub_pid
+    stub = tmp_path / "systemctl"
+    stub.write_text("#!/bin/bash\n" + f'echo "{pid}"\n')
+    stub.chmod(0o755)
+
+    out = subprocess.run(
+        ["bash", "-c", cmd],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+    ).stdout.strip()
+
+    assert (out == "__not_running__") is expect_sentinel, f"{why} -- reader emitted {out!r}"
+    if not expect_sentinel:
+        # ...and it must be THIS process's own LAST argv token. Asserting only "not the sentinel"
+        # lets `| tail -1` become `| head -1` -- argv[0], the interpreter path, never the target.
+        # removesuffix, not rstrip: cmdline is `arg0\0...\0argN\0`, and when argN is the EMPTY string
+        # the file ends `\0\0` -- rstrip eats both and argv[-1] becomes the PREVIOUS arg, while the
+        # reader correctly yields "". The test would then fail for a reason that is not the defect.
+        argv = Path(f"/proc/{os.getpid()}/cmdline").read_bytes().removesuffix(b"\0").split(b"\0")
+        assert out == argv[-1].decode(), f"expected the real last argv token {argv[-1].decode()!r}, got {out!r}"
+
+
+def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
+    """This gate's only effect is failing the play, so `failed_when: false` reduces it to decoration.
+
+    Every other assertion here reaches `that`/`fail_msg`/`when`/position, all of which stay green
+    under that edit.
+    """
+    gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
+    assert "failed_when" not in gate, f"failed_when would make this gate a no-op: {gate.get('failed_when')!r}"
+    assert not gate.get("ignore_errors"), "ignore_errors would make this gate a no-op"
+    assert "override" not in str(gate.get("when", "")).lower(), "no override may hide in the when: either"
+    # exactly one condition: `when: [not ansible_check_mode, false]` keeps the substring check true
+    # while the gate never evaluates at all
+    assert when_conditions(gate) == ["not ansible_check_mode"], (
+        f"the gate's when: must be exactly the check-mode skip: {when_conditions(gate)}"
+    )
+
+
+AGENTBOARD_UNIT = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard.service.j2"
+AGENTBOARD_START = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard-start.sh.j2"
+ACCESS_OPS_TASKS = ANSIBLE / "roles" / "access_ops" / "tasks" / "main.yml"
+
+
+def _directives(unit: str) -> dict[str, list[str]]:
+    """Map systemd section -> its directive lines, comments and blank lines dropped."""
+    section, out = None, {}
+    for raw in unit.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+            continue
+        out.setdefault(section, []).append(line)
+    return out
+
+
+def test_agentboard_killmode_and_mainpid_stay_coupled():
+    """`KillMode=process` is only safe because the unit ExecStarts the SERVER, not the node shim.
+
+    The two halves live in two files with nothing coupling them, and both regressions are silent
+    until an operator restarts — which is rare and outside CI. Dropping `KillMode=process` restores
+    the control-group SIGKILL that destroyed four tmux sessions on 2026-08-27; reverting the ExecStart
+    to the shim while KillMode stays gives the worse mode the script's own header names, where systemd
+    kills the wrapper and the real server keeps `:4040` so the next start cannot bind.
+    """
+    unit = AGENTBOARD_UNIT.read_text()
+    start = AGENTBOARD_START.read_text()
+
+    # Section-aware and LAST-WINS, because three regressions all leave a bare `KillMode=process`
+    # somewhere in the file: commenting it out; appending a second `KillMode=control-group` (a scalar
+    # setting takes its last assignment); and moving it into [Unit], where it is an unknown key that
+    # systemd warns about and ignores, falling back to control-group.
+    section, per_section = None, {}
+    for raw in unit.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+            continue
+        if re.match(r"KillMode\s*=", line):
+            per_section.setdefault(section, []).append(line.split("=", 1)[1].strip())
+    assert set(per_section) <= {"[Service]"}, f"KillMode outside [Service] is silently ignored: {per_section}"
+    assert per_section.get("[Service]"), "the unit must carry an active KillMode in [Service]"
+    assert per_section["[Service]"][-1] == "process", f"the LAST KillMode in [Service] decides: {per_section['[Service]']}"
+
+    # The role comment explaining WHY KillMode matters rests entirely on this line -- and on it being
+    # in [Unit]. Relocated into [Service] systemd reports "Unknown key 'Requires' in section
+    # [Service], ignoring", so the propagation path would be gone while a section-blind check stayed
+    # green. Same walk as above.
+    requires = [sec for sec, keys in _directives(unit).items() for k in keys if k == "Requires=wg-quick@zaccess0.service"]
+    assert requires == ["[Unit]"], f"Requires=wg-quick must live in [Unit] or systemd ignores it: {requires or 'absent'}"
+
+    # ExecStart: strip before matching, because systemd does. An INDENTED `  ExecStart=` empty-value
+    # reset followed by a shim ExecStart loads clean with the last one in effect, so an unstripped
+    # startswith() would see one good line and miss the override entirely.
+    execstart = [l.strip().split("=", 1)[1].strip() for l in unit.splitlines() if re.match(r"\s*ExecStart\s*=", l)]
+    assert len(execstart) == 1, f"expected exactly one ExecStart (an empty-value reset counts): {execstart}"
+    assert execstart[0], "an empty ExecStart= resets the list and lets a later one take over"
+    assert not execstart[0].startswith("/bin/bash -c"), (
+        f"ExecStart must run the rendered script, not an inline shell that execs the PATH shim: {execstart[0]}"
+    )
+
+    # ...rendered by a task whose SRC is the script this test actually reads, and executable. Checking
+    # the dest against the role's dests alone lets the task's src be swapped for another template.
+    renderers = [
+        t["ansible.builtin.template"]
+        for t in load_tasks(ACCESS_OPS_TASKS)
+        if "ansible.builtin.template" in t and t["ansible.builtin.template"].get("dest") == execstart[0]
+    ]
+    assert len(renderers) == 1, f"ExecStart={execstart[0]} is rendered by {len(renderers)} tasks in this role"
+    assert renderers[0]["src"] == AGENTBOARD_START.name, (
+        f"the ExecStart'd file must be rendered from {AGENTBOARD_START.name}, not {renderers[0]['src']}"
+    )
+    assert str(renderers[0].get("mode")) == "0755", f"the ExecStart'd script must be executable: {renderers[0].get('mode')}"
+
+    # and that script must exec the resolved binary, never the shim
+    # code lines only: the script's own header explains why it does NOT `exec agentboard`, and a
+    # naive substring check over the whole file flags that explanation as the defect it warns about.
+    code = [l.strip() for l in start.splitlines() if l.strip() and not l.strip().startswith("#")]
+    execs = [l for l in code if l.startswith("exec ")]
+    assert execs == ['exec "$bin"'], f"the start script must exec the resolved server binary: {execs}"
+    assert not any("exec agentboard" in l for l in code), "exec'ing the PATH shim makes MainPID the wrapper again"
+
+    # ...and what is resolved INTO $bin, which pinning the exec line alone does not cover:
+    # `bin="$(command -v agentboard)"` keeps `exec "$bin"` intact and restores the wrapper as
+    # MainPID -- the shape KillMode=process makes WORSE than the default, because systemd would kill
+    # the wrapper while the real server kept :4040 and the next start could not bind.
+    # EVERY assignment feeding the exec, not just the first: the fallback at `[ -x "$bin" ] || bin=…`
+    # does not start with `bin=`, and `root=` is upstream of both. Any one of them repointed at the
+    # shim restores the wrapper as MainPID while `exec "$bin"` stays untouched.
+    assigns = [l for l in code if re.search(r"\b(?:bin|root)=", l)]  # \b excludes pkg_root=
+    assert len(assigns) >= 3, f"expected root= plus both bin= assignments, found: {assigns}"
+    for a in assigns:
+        assert not any(t in a for t in ("command -v", "which ", "$(type")), f"resolution must not go via PATH: {a}"
+    bins = [a for a in assigns if re.search(r"\bbin=", a)]
+    assert bins, f"the script must resolve the platform binary into $bin: {assigns}"
+    for b in bins:
+        assert "agentboard-linux-x64/bin/agentboard" in b, f"$bin must resolve to the platform binary: {b}"
+    roots = [a for a in assigns if re.search(r"\broot=", a)]
+    assert roots and all("npm root -g" in r for r in roots), f"the root must come from npm's global prefix: {roots}"

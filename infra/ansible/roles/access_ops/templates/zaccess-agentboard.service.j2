@@ -17,12 +17,21 @@ Environment=PORT=4040
 Environment=HOSTNAME=10.99.0.2
 Environment=TMUX_SESSION=agentboard
 Environment=DISCOVER_PREFIXES=zcrypto
-# Resolve node + agentboard at START time, not converge time: source nvm (which prepends the current
-# default node's bin to PATH, holding both `node` and the `agentboard` shim) then exec it. agentboard's
-# `#!/usr/bin/env node` shebang and its child node spawns then find node on that PATH; `tmux` comes
-# from systemd's default PATH (/usr/bin). Consequence: a node upgrade via nvm needs only a
-# `systemctl restart zaccess-agentboard` -- no re-render, no converge (spec 00075 D13).
-ExecStart=/bin/bash -c 'source {{ access_ops_agentboard_nvm_sh }} && exec agentboard'
+# KillMode=process is LOAD-BEARING, not tidiness. agentboard boots the operator's tmux server as a
+# child, and a forked process inherits the unit's cgroup for life -- reparenting to init does NOT move
+# it out. Under the default KillMode=control-group, `systemctl restart` therefore SIGKILLs the tmux
+# server and every operator session with it. That happened: 2026-08-27, four sessions destroyed by a
+# restart taken to pick up a version bump. `ppid 1` makes the tmux server look independent; read
+# /proc/<pid>/cgroup, never the ppid.
+#
+# KillMode=process only works because the start script execs the SERVER as MainPID. The `agentboard`
+# shim on PATH is a node wrapper that runs the real binary as a CHILD, so with the shim as MainPID
+# systemd would kill the wrapper and leave the server holding :4040 -- the next start would fail to
+# bind. The script resolves node and the binary at START time, so a node upgrade via nvm still needs
+# only `systemctl restart zaccess-agentboard` -- no re-render, no converge (spec 00075 D13) -- and
+# that restart no longer costs the operator their sessions.
+ExecStart=/usr/local/sbin/zaccess-agentboard-start
+KillMode=process
 Restart=on-failure
 
 [Install]

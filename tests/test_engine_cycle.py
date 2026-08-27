@@ -731,7 +731,7 @@ def test_aware_non_utc_cycle_ts_normalized(tmp_path, monkeypatch):
     assert from_json(result.record_path.read_text()).cycle_ts == CYCLE_TS
 
 
-# --- midnight-boundary settle (the iter-083 Task-2 review's catch) --------------------------------
+# --- midnight-boundary settle (the iter-083 review's catch) --------------------------------
 
 
 def test_settle_pending_covers_the_daily_grid_at_midnight_boundaries(tmp_path):

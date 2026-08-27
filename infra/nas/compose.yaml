@@ -180,7 +180,7 @@ services:
       # unreadable by the non-root Alloy -- and cadvisor (the only component that would use it) is not
       # run here at all (see config.alloy: it SIGSEGVs on DSM's cgroup-less kernel). Host metrics (the
       # requested load / netdev / disk-free) come from the unix exporter's /host mounts, not here.
-      # Same shared textfile dir Task 2's archive-pull mounts RW and writes gate.prom into.
+      # Same shared textfile dir archive-pull mounts RW and writes gate.prom into.
       - /volume1/docker/zcrypto-archive/textfile:/textfile:ro
       # The DIRECTORY, not the file. A single-file bind mount binds the inode, so any later
       # rewrite of config.alloy (atomic write = new inode) leaves this container reading a file no

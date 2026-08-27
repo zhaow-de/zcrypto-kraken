@@ -1001,7 +1001,7 @@ def test_governor_engagement_na_on_full_range_null_band():
     assert v.live == 1.0  # numbers kept: this n/a is a vacuous band, not an unavailable rebuild
     assert v.width == 1.0
     assert any("governor_engagement" in d and "full [0,1] range" in d and "no discriminating power" in d for d in a.disclosures)
-    # the vacuous metric no longer inflates the multiplicity denominator (spec D6/Task 3)
+    # the vacuous metric no longer inflates the multiplicity denominator (spec D6)
     assert "governor_engagement" not in {m for m, verdict in a.gating_verdicts.items() if verdict.verdict != "n/a"}
 
 

@@ -9,7 +9,7 @@ Two-layer failure design, deliberate:
   `INSTRUMENT_IDS` symbol entirely absent from the Cache, the Cache's own instrument disagreeing
   with the expected `InstrumentId` (a venue-truth divergence in its own right, never narrowed
   silently), or no account cached for the venue. Those mean the snapshot as a whole cannot be
-  trusted, so the caller (Task 5's strategy hook) converts the raise to `None` and the cycle
+  trusted, so the caller (the strategy hook) converts the raise to `None` and the cycle
   proceeds without venue truth (00089 D7): absence is loud, never blocking.
 - A present instrument's Cache-supplied numeric constraint (`ordermin`/`lot_step`/`tick_size`)
   that reads back `None` does NOT raise here -- it freezes as `0.0` and is left for

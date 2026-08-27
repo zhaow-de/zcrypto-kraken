@@ -146,7 +146,7 @@ def _report(
     seconds = [g for _p, _h, g in obs]
     stats = summarize(seconds)
 
-    # T0039 Task 12: the derivation this report backs.
+    # T0039: the derivation this report backs.
     lines.append("=== cross-host primary book-silence distribution ===")
 
     if skipped:

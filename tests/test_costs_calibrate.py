@@ -1,7 +1,7 @@
 """TDD for `cli/costs/calibrate.py` -- the committed spread-calibration query (spec 00085 D5).
 
 Replaces the prose query at `docs/reference/captured-spread-calibration.md` with runnable code.
-Task 7 restamps `cli/costs/spread.py`'s calibration constants from this module's output.
+`cli/costs/spread.py`'s calibration constants are restamped from this module's output.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ def test_calibrate_refuses_when_the_only_btc_eur_rows_fall_outside_the_window(tm
 
 
 def test_the_committed_script_reproduces_the_table_it_replaces():
-    """The script is the provenance of record (spec D5), and Task 7 replaced all ten EUR rows in the
+    """The script is the provenance of record (spec D5), and all ten EUR rows were replaced in the
     same commit that introduced it -- so a transcription error and the window move would have been
     indistinguishable in one diff. Run it over the SUPERSEDED window and require the SUPERSEDED
     table.
@@ -143,7 +143,7 @@ def test_the_committed_script_reproduces_the_table_it_replaces():
 
     # The table alone is structurally blind to a one-hour window error (a BTC@1k deviation of
     # 0.00029 from an `overlap` -> `start-inside` window-rule regression sits 34x inside the table's
-    # own tolerance below) -- pin the two provenance constants Task 7 restamps from these fields too.
+    # own tolerance below) -- pin the two provenance constants restamped from these fields too.
     assert result.hours == superseded_hours
     assert result.min_rows == superseded_min_rows
     # Joint-sampling, now measured on the REAL tree -- the synthetic fixture's delta is 0 by

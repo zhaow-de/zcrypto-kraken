@@ -236,7 +236,7 @@ _HOSTILE_RESULT = ReplayResult(
 def _cli_log_lines(caplog: pytest.LogCaptureFixture, argv: list[str]):
     """Invoke the real CLI and return `(result, the log lines it ACTUALLY emitted)`.
 
-    Task 1's ordering hazard: `cli/logging/config.py` flips propagate=False on the "zcrypto" logger
+    The ordering hazard: `cli/logging/config.py` flips propagate=False on the "zcrypto" logger
     on the CLI's first-ever invocation, and `caplog` only auto-attaches to an ALREADY
     non-propagating logger at fixture setup -- so a session whose first CLI call is this very test
     would otherwise capture nothing. Attach the handler to "zcrypto" directly so the assertion holds

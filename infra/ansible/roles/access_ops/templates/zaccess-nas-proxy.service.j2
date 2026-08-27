@@ -7,6 +7,6 @@ Requires=zaccess-nas-proxy.socket wg-quick@zaccess0.service
 After=zaccess-nas-proxy.socket wg-quick@zaccess0.service
 
 [Service]
-ExecStart=/usr/lib/systemd/systemd-socket-proxyd 192.168.100.5:5001
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd z-home-storage.zhaow.pro:5001
 DynamicUser=yes
 PrivateTmp=yes

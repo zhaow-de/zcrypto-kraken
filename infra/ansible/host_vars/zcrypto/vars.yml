@@ -1,17 +1,14 @@
 # host_vars/zcrypto — the PRIMARY capture host (also the engine host).
 #
-# The reboot slot lives here, not only in the base role's default, because the fleet-collision
-# assert (roles/base/tasks/main.yml) reads every capture host's slot out of `hostvars` — which sees
-# inventory vars but NOT role defaults. Declaring it per host is what lets the assert see the whole
-# fleet even under `--limit <one-host>`.
-#
-# 21:25 UTC: measured from 6 days of archive (2026-07-14) — the book-row trough is 20:00-21:00 UTC;
-# >= 1 h from any 4h bar boundary, off the hour boundary. The secondary sits +1 h at 22:25.
-# (Derivation: spec 00050; policy: .claude/rules/capture-deploys.md.)
+# The reboot slot lives here, not in the base role's default: the fleet-collision assert
+# (roles/base/tasks/main.yml) reads every host's slot out of `hostvars`, which sees inventory vars
+# but NOT role defaults — so a per-host declaration is what lets the assert see the whole fleet even
+# under `--limit <one-host>`. 21:25 UTC is the book-row trough (20:00-21:00); the secondary sits
+# +1 h at 22:25. Derivation: spec 00050; slot policy: .claude/rules/capture-deploys.md.
 base_unattended_upgrades_reboot_time: "21:25"
 
-# This machine's OWN deploy pubkey (per-machine keys, 2026-07-16): rotation edits files/ once.
+# This machine's OWN deploy pubkey: rotation edits files/ once.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto_ed25519.pub') }}"
 
-# The admin identity (zcrypto-deploy after the spec-00057 D1 rename) is now the group default:
-# `ansible_user` in group_vars/capture_host, `docker_deploy_user` in the docker role default.
+# No ansible_user here on purpose: zcrypto-deploy is the group default (group_vars/capture_host;
+# docker_deploy_user in the docker role).

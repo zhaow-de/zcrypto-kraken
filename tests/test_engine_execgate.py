@@ -245,7 +245,7 @@ def test_an_unreadable_restart_hold_file_caps_at_reduce_only(tmp_path):
     assert v.reasons == ("restart_hold",)
 
 
-# --- Task 9 mutation-probe closeout -------------------------------------------------------------
+# --- mutation-probe closeout -------------------------------------------------------------
 # A mutation probe against the ARM branch's `except OSError: return False` (removing/narrowing it)
 # survived every test above: on this Python's pathlib, `Path.exists()` already swallows OSError
 # (and ValueError) internally for every condition constructible on a real filesystem here --
@@ -410,7 +410,7 @@ def test_an_embedded_nul_in_the_state_dir_refuses_rather_than_raising(tmp_path):
     assert "kill_switch" in v.reasons
 
 
-# --- the restart hold, written at startup (Task 4) ----------------------------------------------
+# --- the restart hold, written at startup ----------------------------------------------
 
 
 def test_write_restart_hold_creates_the_marker_and_the_dir(tmp_path):

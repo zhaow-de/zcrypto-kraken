@@ -102,7 +102,12 @@ def liquidations(
         help="Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted.",
     ),
 ) -> None:
-    """Stream Binance USD-M futures forceOrder (liquidation) events to hourly zstd-Parquet segments."""
+    """Stream Binance USD-M futures forceOrder (liquidation) events to hourly zstd-Parquet segments.
+
+    NOT DEPLOYED: Binance geo-fences its futures WebSocket from our network egresses, so this
+    cannot reach the feed from the fleet. The deployed liquidations source is `liquidations-poll`.
+    Kept tested and portable in case a served egress appears.
+    """
     resolved_data_dir = data_dir or Path(os.environ.get(DATA_DIR_ENV_VAR, str(DEFAULT_DATA_DIR)))
     healthcheck_url = os.environ.get(HEALTHCHECK_ENV_VAR)
 

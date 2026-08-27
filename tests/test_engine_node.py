@@ -1,9 +1,9 @@
 """The node wrapper (spec 00041 SS the node wrapper): pure boundary arithmetic, the
 restart-inside-a-passable-window startup rule, the alert chain (schedule-next-first, run_cycle
 exceptions contained), and the production-shape LiveNode assembly. Building a node is offline
-(verified by the build tests, which construct both exec_enabled shapes without network); the one
-test that RUNS a node is the instrument-arrival test, which needs Kraken's public endpoint and
-skips loudly without it.
+(verified by the build tests, which construct both exec_enabled shapes without network); the two
+tests that RUN a node against Kraken's public endpoint are the instrument-arrival test and the
+idle-socket test, and both skip loudly without ZCRYPTO_LIVE_VENUE_TESTS=1.
 """
 
 import ast
@@ -1111,6 +1111,12 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert data_client["name"] == "KRAKEN"
     assert isinstance(data_client["factory"], KrakenDataClientFactory)
     assert isinstance(data_client["config"], KrakenDataClientConfig)
+    # spec 00101 D1: the idle timer is OFF, asserted as the literal 0 -- None reads back as 10000
+    # (pinned in test_nautilus_interface_pin.py) and would silently reinstate the reconnect loop.
+    # heartbeat_interval_secs is pinned unchanged because it, not the idle timer, is what still
+    # catches a dead peer; tests/test_engine_data_socket.py proves that on a loopback peer.
+    assert data_client["config"].ws_idle_timeout_ms == 0
+    assert data_client["config"].heartbeat_interval_secs == 30
 
     exec_client = recorder.named("add_exec_client")[0]
     assert exec_client["name"] == "KRAKEN"
@@ -1445,6 +1451,40 @@ threading.Thread(target=watcher, daemon=True).start()
 node.run()
 """
 
+# A data-only node against the real venue with the idle timer at argv[2], for a fixed window. The
+# override goes through `_data_client_config` itself -- `_node_builder` resolves that module global
+# at call time -- so the probe exercises the construction path the engine ships. Keyless: the data
+# client is public and the node is exec_enabled=False.
+_LIVE_IDLE_PROBE = """
+import os, sys, threading, time
+from pathlib import Path
+
+from cli.config import EngineConfig
+from cli.engine import node as node_mod
+from nautilus_trader.adapters.kraken import KrakenDataClientConfig, KrakenEnvironment, KrakenProductType
+
+root = Path(sys.argv[1])
+idle_ms = int(sys.argv[2])
+window_s = float(sys.argv[3])
+
+node_mod._data_client_config = lambda: KrakenDataClientConfig(
+    product_type=KrakenProductType.SPOT, environment=KrakenEnvironment.LIVE, ws_idle_timeout_ms=idle_ms,
+)
+live = node_mod._node_builder(
+    EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=False)
+).build()
+
+
+def stopper():
+    time.sleep(window_s)
+    sys.stdout.flush()
+    os._exit(0)
+
+
+threading.Thread(target=stopper, daemon=True).start()
+live.run()
+"""
+
 
 def _kraken_public_reachable() -> bool:
     import urllib.request
@@ -1487,6 +1527,37 @@ def test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts(tmp_pa
         f"{missing} were absent from the Cache when the strategy started, out of {facts['total']} "
         f"instruments loaded -- every cycle's venue-state read would degrade to None"
     )
+
+
+def test_the_shipped_idle_value_survives_krakens_own_inactivity_close(tmp_path):
+    """What the loopback fixture in test_engine_data_socket.py cannot show: Kraken closes an
+    inactive socket at ~60 s, and a local peer never does. With the idle timer off, the heartbeat
+    ping and Kraken's text pong are what hold the socket open -- so 180 s of silence must cross
+    three of the venue's inactivity windows without a single reconnect."""
+    # Opt-in, not reachability-gated, for the same reason as the instrument-arrival test above: a
+    # skip on an unreachable venue would read as coverage.
+    if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
+        pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
+    if not _kraken_public_reachable():
+        pytest.fail("ZCRYPTO_LIVE_VENUE_TESTS=1 was set but Kraken's public endpoint is unreachable")
+    env = os.environ.copy()
+    env.pop("KRAKEN_SPOT_API_KEY", None)
+    env.pop("KRAKEN_SPOT_API_SECRET", None)
+    result = subprocess.run(
+        [sys.executable, "-c", _LIVE_IDLE_PROBE, str(tmp_path), "0", "180"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
+    )
+    out = result.stdout + result.stderr
+    timeouts = out.count("Read idle timeout")
+    reconnects = out.count("websocket::client: Reconnecting")
+    connected = out.count("Connected: client_id=KRAKEN")
+    detail = f"exit={result.returncode} timeouts={timeouts} reconnects={reconnects}\n--- tail ---\n{out[-3000:]}"
+    assert connected >= 1, f"the socket never connected, so the window measured nothing: {detail}"
+    assert timeouts == 0, f"the idle timer fired at ws_idle_timeout_ms=0: {detail}"
+    assert reconnects == 0, f"Kraken's inactivity close was not held off by the heartbeat: {detail}"
 
 
 # --- a start the node cannot complete ------------------------------------------------------------

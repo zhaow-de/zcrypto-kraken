@@ -1,147 +1,76 @@
 # host_vars/nas — the Synology NAS: the archive/custody tier (spec 00048 Role A), Ansible-managed
-# since T0056 (hand-deploys drifted for days; a committed `:latest` placeholder killed the pull
-# loop for ~90 s on 2026-07-16). DSM owns the OS — the nas role manages ONLY the zcrypto payload
-# under nas_stack_dir. Every quirk below was MEASURED live on 2026-07-16; the secrets sibling
-# (vault.yml) holds nas_gate_healthcheck_url.
+# since T0056. DSM owns the OS; the nas role manages ONLY the zcrypto payload under nas_stack_dir.
+# The secrets sibling (vault.yml) holds nas_gate_healthcheck_url. Deploy background and the
+# image-identifier pitfalls live in infra/nas/README.md.
 
-ansible_host: 192.168.100.5
+ansible_host: z-home-storage.zhaow.pro
 ansible_user: zcrypto-deploy
 
-# Fleet users/groups (spec 00057): the m2m data user (uid 1000; renamed from `zcrypto`). It owns the
-# custody trees AND receives the inbound hot-push (an m2m data channel, so it belongs on zcrypto-data,
-# not the admin `zcrypto-deploy`). Serving the push means running an rrsync forced command via its DSM
-# login shell, so its shell is DSM's /bin/sh (set manually per infra/external-systems.md). DSM refuses
-# any custom login shell, so -- unlike ops -- there is NO rrsync-only wrapper here; the key's
-# command="...",restrict forced command is the sole rrsync jail. `ansible_user` (zcrypto-deploy) stays
-# purely admin.
+# The m2m data user (spec 00057, uid 1000): it owns the custody trees and receives the inbound
+# hot-push, so the channel belongs here rather than on the admin `zcrypto-deploy`. DSM refuses a
+# custom login shell, so — unlike ops — there is no rrsync-only wrapper: the key's
+# `command="...",restrict` forced command is the sole jail.
 nas_data_user: zcrypto-data
 
-# DSM's /usr/bin/python3 is 3.8.15 — BELOW ansible-core 2.21's target floor (3.9). The installed
-# `python314` package provides this interpreter; ad-hoc `ping` + `setup --become` both measured
-# working with it.
+# DSM's own /usr/bin/python3 is 3.8.15, below ansible-core 2.21's 3.9 floor; the `python314`
+# package provides this one.
 ansible_python_interpreter: /usr/local/bin/python3.14
 
-# DSM CHROOTS sftp to the shared folders, so sftp/scp cannot write arbitrary paths (a module
-# upload to /tmp fails "failed to upload"). Piped transfer (plain ssh stdin) measured working.
+# DSM CHROOTS sftp to the shared folders, so sftp/scp cannot write arbitrary paths (a module upload
+# to /tmp fails "failed to upload"). Piped transfer over plain ssh stdin works.
 ansible_ssh_transfer_method: piped
 ansible_pipelining: true
 
-# Docker's full path: /usr/local/bin is NOT on sudo's PATH, so a bare `sudo docker` fails
-# command-not-found — a script that ignored that failure once read the empty output as a false
-# all-clear. Everything that touches Docker on this host goes through this var.
+# /usr/local/bin is NOT on sudo's PATH, so a bare `sudo docker` fails command-not-found — and an
+# empty result from that reads as a false all-clear. Everything touching Docker here uses this var.
 nas_docker: /usr/local/bin/docker
 
 nas_stack_dir: /volume1/docker/zcrypto-archive
 
-# The image pins the rendered .env feeds into compose.yaml's ${...:?} placeholders — compose
-# refuses to start without them: the committed `:latest` placeholder these replace was deployed
-# verbatim once and killed the NAS pull loop for ~90 s on 2026-07-16 (T0056).
-#
-# ALWAYS the `-compat` (no-AVX) build: the NAS Atom has no AVX, and the default AVX build dies
-# instantly with `Illegal instruction` (measured 2026-07-16; T0029).
-#
-# Pinned 2026-07-17 to the `-compat` build of develop's tip 11d2cb1b (tag
-# 11d2cb1b3959199c0a8386f86bb5b9417a0f0ed8-compat). Pre-flighted ON THE NAS before landing here:
-# pulled, `RepoDigests` read for the authoritative digest (never a manifest guess), `zcrypto
-# --version` run on the Atom to prove it really is the no-AVX build, and `archive pull` +
-# `engine gate-export` — everything this host's entrypoint calls — confirmed present.
-#
-# It replaces sha256:854ca39e… (tag 0e796b15…-compat, 2026-07-15), which was never CHOSEN: it was
-# whatever happened to be running when the 2026-07-16 cutover deployed compose.yaml's `:latest`
-# placeholder verbatim, killed the Atom, and was recovered by copying the digest back out of the
-# backup compose. T0056's role then committed that accident as this declaration. It was 23 commits of
-# BUILD INPUTS behind develop (`cli/` + pyproject + uv.lock + infra/docker — the workflow's own paths
-# filter, i.e. exactly what makes a new image; 20 of them touched cli/). That is the whole reason to
-# move, and reason enough. (An earlier draft said "44 commits", a figure lifted from a different
-# comparison entirely — the ops-vs-NAS pin gap. Recorded, like the rest of this block, because the
-# error was mistaking one measurement for another.)
-#
-# NOT a reason: "it looked untagged". `docker image ls` shows <none> for ANY image pulled BY DIGEST,
-# which is what a pinned deploy always does — the new pin reads <none> too once the pre-flight's
-# tag-pull is pruned. 854ca39e was tagged in the registry all along, and its sha is on develop. That
-# misreading is recorded here because the diagnostic is the trap: a digest-pinned image looking
-# untagged locally is the NORMAL state, never evidence of anything.
-#
-# ONE IMAGE, THREE IDENTIFIERS — they all name the same object, and each is the honest answer to a
-# different question. Two separate 2026-07-17 confusions came from mixing them up, so:
-#
-#   tag            ghcr.io/…/zcrypto-capture:11d2cb1b3959…-compat   the GIT SHA of the commit built
-#                                                                   (workflow: `<github.sha><suffix>`);
-#                                                                   40 hex chars, so it LOOKS like a
-#                                                                   digest and is what a UI displays
-#   manifest digest  @sha256:91f2c80f…   what you PIN — the nas_capture_image line below, and
-#                                       the rendered .env. NB the three values here are a frozen
-#                                       2026-07-17 worked EXAMPLE, kept because they came from one
-#                                       real image; they are not the current pin (three re-pins on)
-#                                       and are deliberately not updated per re-pin. Read the live
-#                                       value off nas_capture_image, never off this block.
-#   image ID         sha256:5c759cc4…    the local config-blob digest; the `docker images` ID column
-#
-# `docker inspect <container>` reconciles them: .Config.Image is what compose asked for (the digest),
-# .Image is the local ID, and inspecting that ID lists RepoTags + RepoDigests.
-#
-# SELF-DESCRIBING PIN — verified by label before pinning, not by decoding a tag. This digest carries
-# `org.opencontainers.image.revision = ba86b6de…` (develop's tip: PR #168 + the websockets 16.1.1
-# bump) and `de.zhaow.zcrypto.polars-runtime = compat`. `-compat` is not optional — this Atom
-# Goldmont has no AVX, and the default build will not run on it; the same build publishes a
-# `default` digest that would fail here, so read the label, never pick by position.
-# Verified further by RUNNING the pulled image rather than trusting the labels: `_replay_code_paths()`
-# returns 61 modules from 3 roots, covering `cli/engine/__init__.py` and `cli/portfolio/__init__.py`,
-# and websockets reports 16.1.1.
-# Ships PR #168 — `replay_fingerprint` now derives its coverage from the transitive import closure
-# (spec 00065) instead of a hand-maintained list that covered 12 of 61 executing modules. The
-# fingerprint therefore CHANGES with this pin, which invalidates the whole cache; that costs one
-# cold `gate-export` (~627 s vs ~55 s warm) on the first pull. Expected, and not specific to this
-# pin: the cache lives at /tmp/gate-cache.json inside the container (00062 D9), so ANY re-pin
-# recreates it empty. What must NOT change across the transition is the gate itself —
-# zcrypto_gate_status / streak_days / mismatch_total identical before and after.
-# MEASURED 2026-08-15 on the twelve-leg re-pin: the cold export took 2490 s (41.5 min), 4x the
-# ~627 s quoted above. That figure was taken on a smaller journal and is the WRONG reference class
-# for a fingerprint-INVALIDATING pin: gate_cache.py digests the source bytes of the transitive
-# cli.* closure, journal.py moved, so all 214 cycles across 36 day-dirs replayed rather than the
-# incremental few. Size a maintenance window against 2490 s, not 627 s.
-# Previous pin: dfb80f48… (built from a731e54b, PR #165), which enabled `gate-export --cache`.
-#
-# Re-pinned 2026-08-15 to the twelve-leg build (spec 00094, iter-139, PR #297; revision e0757909,
-# runtime=compat) and CONVERGED 2026-08-15 13:40:38Z -- the tree and the fleet agree again.
-# Verify by outcome off the container, never off this file: the .env template task is
-# no_log/diff:false, so --check --diff reports .env changed with the digest INVISIBLE in the
-# preview. The converge's acceptance test was BY VALUE and it passed: zcrypto_gate_status 1,
-# streak_days 35, mismatch_total 0 -- all three identical across the re-pin.
-# The compat runtime was verified on the Atom by RUNNING polars in the pulled image, per T0029. The NAS
-# converges FIRST and the order is load-bearing: gate-export scores the streak here, so old code
-# meeting the engine's first schema-2 record would raise `unsupported schema_version 2`, classify
-# the day unclean, and ZERO the ratified streak with the engine deploy fully correct. Converging
-# ahead is safe because every existing record is v1 and this image loads {1, 2} -- verified by
-# execution in the pulled image, not inferred from the tag.
-# Previous pin: 620114511f19 -- verified RESIDENT on the NAS at the re-pin, and verified as the
-# actually-running digest (the row that recorded it said "running digest unverified"; it is now).
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:5f890c26237af99ad37ae1b7fe884c4d33476d285774be90cc8c909b3ed049a1
-# Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the same
-# trap class the committed pin kills.
-# Alloy v1.18.0, published 2026-07-20. Previous pin: 4f6ddc56ffdc (v1.17.1).
+# ALWAYS the `-compat` (no-AVX) build: this Atom dies instantly on the default build with `Illegal
+# instruction` (T0029). Prove it by RUNNING polars in the pulled image, never by reading the label.
+# Verify a re-pin off the CONTAINER, never off this file — the .env task is no_log/diff:false, so
+# `--check --diff` reports .env changed with the digest invisible.
+# The NAS converges BEFORE the engine: gate-export scores the ratified streak here, and a reader
+# meeting a record it cannot parse zeroes that streak with the engine deploy fully correct.
+# A fingerprint-invalidating re-pin replays the whole journal cold — 3363 s over 280 cycles
+# (2026-08-26). It grows with the journal, so size the window against the newest measurement.
+# `cache_invalidated` reads 0 across such a re-pin and that is CORRECT: /tmp is unmounted, so a
+# recreate leaves NO cache file, and `load_cache` returns rejected=False for an absent path (True
+# only when a file existed and was discarded). zcrypto_gate_cache_invalidated (spec 00060 D8)
+# publishes cache.rejected, so 0 is what an
+# absent cache must read -- it is not a missed invalidation. Read `cache_hits` instead.
+# Gate metrics describe the PREVIOUS image for ~1 h after a roll — check the textfile's mtime first.
+# Previous pin: 5f890c26237a, verified resident at the re-pin.
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ec71ecac77566483acca711131459701f16e7fac8d9c60790b6bec126251ce7c
+# Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the trap the
+# committed pin kills. Alloy v1.18.0 (2026-07-20); previous pin 4f6ddc56ffdc (v1.17.1).
 nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
 
-# Pull sources + per-channel SSH ports — the values the hand-maintained .env used to carry; the
-# nas role renders them back into {{ nas_stack_dir }}/.env (roles/nas/templates/env.j2; the
-# env-var contract lives in infra/nas/README.md). GATE_HEALTHCHECK_URL is deliberately NOT here:
-# it is a secret, vaulted as nas_gate_healthcheck_url in host_vars/nas/vault.yml.
+# Pull sources + per-channel SSH ports, rendered into {{ nas_stack_dir }}/.env by the nas role
+# (roles/nas/templates/env.j2; the env-var contract is in infra/nas/README.md). GATE_HEALTHCHECK_URL
+# is deliberately absent — it is a secret, vaulted as nas_gate_healthcheck_url in vault.yml.
 nas_capture_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
 nas_journal_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_capture_red_source: "zcrypto-data@zcrypto-red.zhaow.me:"
-nas_liquidations_source: "zcrypto-data@192.168.100.6:"
+# The four ops channels below address the host by FQDN (swapped 2026-08-26). The pull loop runs
+# StrictHostKeyChecking=yes with CheckHostIP=no against a pre-seeded keys/known_hosts, so it matches
+# on the HOSTNAME STRING alone — an unseeded name fails the pull CLOSED. Both names are pinned there,
+# with key material copied from the trusted IP lines rather than re-scanned, so either spelling works
+# and a revert needs no host-key change.
+nas_liquidations_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_liquidations_ssh_port: 22
-nas_panel_source: "zcrypto-data@192.168.100.6:"
+nas_panel_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_panel_ssh_port: 22
-nas_reconciled_source: "zcrypto-data@192.168.100.6:"
+nas_reconciled_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_reconciled_ssh_port: 22
-# OPS-6 (spec 00056 D2/D4): the ops node's hot-out outbox, pulled into the hot/ hub. Its own
-# least-privilege read-only key (sync_hot) + home-LAN port 22, same shape as panel/reconciled.
-nas_hot_source: "zcrypto-data@192.168.100.6:"
+# OPS-6 (spec 00056 D2/D4): the ops node's hot-out outbox, pulled into the hot/ hub, with its own
+# least-privilege read-only key (sync_hot).
+nas_hot_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_hot_ssh_port: 22
 
-# OPS-6 (spec 00056 D2): the workstation's hot-PUSH public half, installed by the nas role as a
-# write-capable rrsync forced command jailed to hot/. Public key material only -- the private half
-# lives on the workstation (~/.ssh/zcrypto-hot-push_ed25519), vaulted as a backup in files/.
+# Public key material only — the private half lives on the workstation
+# (~/.ssh/zcrypto-hot-push_ed25519), vaulted as a backup in files/. The nas role installs this as a
+# write-capable rrsync forced command jailed to hot/ (spec 00056 D2).
 nas_hot_push_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/zcrypto_hot_push_ed25519.pub') }}"

@@ -19,7 +19,7 @@ _ACCEPTANCE_TOL = 1e-2
 # Seam price tolerance. O/H/L/C survive re-bucketing without arithmetic (copies, max, min),
 # so this is slack for bit-identical values.
 _SEAM_PRICE_TOL = 1e-9
-# Seam volume tolerance — "exact up to float summation order" (ratified at the task-2 review):
+# Seam volume tolerance — "exact up to float summation order" (ratified at review):
 # re-bucketing reorders the minute-volume sum, shifting a fraction of hours by exactly 1 ULP
 # (~2.2e-16 rel), so volume matches at rel <= 5e-16 (<= 2 ULP); the Int64 `count` sum is
 # order-immune and is compared exactly, proving per-hour minute-set identity.
