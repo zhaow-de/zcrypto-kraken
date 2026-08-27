@@ -124,8 +124,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="1000,10000,50000,100000,250000,500000,1000000")
     ap.add_argument("--repeats", type=int, default=3, help="best-of, to shed scheduler noise")
+    # A committed operator tool the runbook tells you to run under alert pressure: 0 repeats would
+    # crash in the child on an unbound name rather than say what was wrong.
     ap.add_argument("--child", help=argparse.SUPPRESS)
     args = ap.parse_args()
+
+    if args.repeats < 1:
+        ap.error("--repeats must be >= 1")
 
     if args.child:  # re-entry: this process holds nothing else, so its ru_maxrss is this ledger's
         _child(Path(args.child), args.repeats)

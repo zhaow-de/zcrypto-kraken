@@ -1212,8 +1212,8 @@ rules:
       # and zcrypto-reconcile-cycle-duration structurally cannot see it. Every record is held as a dict
       # in a list at ~6x the file's on-disk size, so memory binds long before time does -- and a cycle
       # the OOM reaper kills publishes nothing, leaving cycle_duration STALE rather than high. By the
-      # measured fit 30 s is ~10M records holding ~12 GiB, about a quarter of the free memory read on
-      # the host 2026-08-27, with the wall near 40M records; time would not bind until ~600M.
+      # measured fit 30 s is ~10M records holding ~12 GiB, about a quarter of the MemAvailable read on
+      # zcrypto-ops 2026-08-27 (47 GiB; recorded in docs/reference/fleet.md), with the wall near 40M; time would not bind until ~600M.
       # PROVISIONAL -- same fit, and the bar encodes the host's FREE MEMORY, an operand this repo does
       # not record and which moves independently of it.
       - refId: A
