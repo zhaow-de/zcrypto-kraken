@@ -641,8 +641,8 @@ In `infra/runbooks/README.md`, directly above the `engine-probe-window` row, add
 
 - [ ] **Step 3: Verify the guards that read these files**
 
-Run: `uv run pytest tests/test_infra_alert_rules.py -k runbook -q`
-Expected: passed — this is the only test that reads `infra/runbooks/`; it checks anchor uniqueness and that the index routes to every section and only to real ones. A new section with no index row, or a row pointing at a typo'd anchor, fails here.
+Run: `uv run pytest tests/test_infra_alert_rules.py -k "runbook or index" -q`
+Expected: 4 passed — these are the only tests that read `infra/runbooks/`; they check anchor uniqueness and that the index routes to every section and only to real ones. A new section with no index row, or a row pointing at a typo'd anchor, fails here. **`or index` is load-bearing**: the index half is `test_the_index_routes_to_every_section_and_only_to_real_ones`, whose name carries no `runbook`, so a bare `-k runbook` deselects the only test that reads `README.md` and a section with no index row passes it green.
 
 Run: `uv run pytest tests/test_code_prose_citations.py tests/test_internal_terms_not_operator_visible.py -q`
 Expected: all passed — the section cites `spec 00101` in prose, which a runbook may (it is read with the repo open), and carries no plan-task number.

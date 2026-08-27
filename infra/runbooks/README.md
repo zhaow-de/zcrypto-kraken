@@ -46,6 +46,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-engine-exec-not-evaluated`](engine.md#zcrypto-engine-exec-not-evaluated) — ALERT: the execution safety gate has stopped being evaluated, so every gauge describing it is frozen.
 - [`zcrypto-venue-concordance-failed`](engine.md#zcrypto-venue-concordance-failed) — ALERT: a ratified instrument is missing from the venue's set, or its constraints came back absent or unparseable.
 - [`zcrypto-venue-snapshot-stale`](engine.md#zcrypto-venue-snapshot-stale) — ALERT: no successful venue-truth snapshot has landed in over five hours.
+- [`engine-data-socket-idle`](engine.md#engine-data-socket-idle) — KNOWN LIMITATION: the engine's data socket is idle by design while disarmed; what its reconnect lines mean, why they exist only in `docker logs`, and how to stop the engine during a Kraken outage so its retries cannot cost the capture primary its reconnect budget.
 - [`engine-probe-window`](engine.md#engine-probe-window) — PROCEDURE: the attended live-order probe window, and the only sanctioned way to run one. Nothing fires this; you open it deliberately, and real money moves.
 - [`engine-tracking-band`](engine.md#engine-tracking-band) — PROCEDURE: the weekly tracking-error trip — what its verdict tile is saying, and what has to be true before a band is set. Nothing fires this; a breach pages through the kill-switch alert above.
 
