@@ -1421,6 +1421,46 @@ def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice(
     )
 
 
+@pytest.mark.parametrize(
+    "stub_pid,expect_sentinel,why",
+    [
+        ("0", True, "MainPID 0 means socket-activated and never triggered -- the sentinel is correct"),
+        (
+            "SELF",
+            False,
+            "a RUNNING relay must never read as not-running: the assert excuses the sentinel, so emitting it while alive makes the gate pass on a drifted relay forever",
+        ),
+    ],
+)
+def test_the_ssh_relay_running_reader_emits_the_sentinel_only_when_not_running(tmp_path, stub_pid, expect_sentinel, why):
+    """Behavioural, because the string checks cannot see an inverted condition.
+
+    Flipping `[ "$pid" = "0" ]` to `!=` keeps every structural assertion green while making the
+    reader emit `__not_running__` for every live relay — the silent-pass class this file's own
+    docstring cites from the Alloy failure. So run the committed `cmd` with a stub `systemctl`.
+    """
+    import os
+    import subprocess
+
+    cmd = find_task(load_tasks(ACCESS_TASKS), "read the ssh relay's running target")["ansible.builtin.shell"]["cmd"]
+    pid = str(os.getpid()) if stub_pid == "SELF" else stub_pid
+    stub = tmp_path / "systemctl"
+    stub.write_text("#!/bin/bash\n" + f'echo "{pid}"\n')
+    stub.chmod(0o755)
+
+    out = subprocess.run(
+        ["bash", "-c", cmd],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+    ).stdout.strip()
+
+    assert (out == "__not_running__") is expect_sentinel, f"{why} -- reader emitted {out!r}"
+    if not expect_sentinel:
+        # and what it emits instead must be this process's own last argv token, i.e. a real read
+        assert out and out != "__not_running__", f"expected a real argv token, got {out!r}"
+
+
 def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
     """This gate's only effect is failing the play, so `failed_when: false` reduces it to decoration.
 
@@ -1431,6 +1471,11 @@ def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
     assert "failed_when" not in gate, f"failed_when would make this gate a no-op: {gate.get('failed_when')!r}"
     assert not gate.get("ignore_errors"), "ignore_errors would make this gate a no-op"
     assert "override" not in str(gate.get("when", "")).lower(), "no override may hide in the when: either"
+    # exactly one condition: `when: [not ansible_check_mode, false]` keeps the substring check true
+    # while the gate never evaluates at all
+    assert when_conditions(gate) == ["not ansible_check_mode"], (
+        f"the gate's when: must be exactly the check-mode skip: {when_conditions(gate)}"
+    )
 
 
 AGENTBOARD_UNIT = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard.service.j2"
@@ -1450,12 +1495,27 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     unit = AGENTBOARD_UNIT.read_text()
     start = AGENTBOARD_START.read_text()
 
-    # an ACTIVE directive: `# KillMode=process` still contains the substring, and a commented-out
-    # KillMode is exactly the regression -- systemd falls back to control-group and the tmux server
-    # dies with the next restart, while a substring check stays green.
-    directives = [l.strip() for l in unit.splitlines() if not l.strip().startswith("#")]
-    assert "KillMode=process" in directives, (
-        f"the unit must carry an active KillMode=process, not a commented one: {[d for d in directives if 'KillMode' in d]}"
+    # Section-aware and LAST-WINS, because three regressions all leave a bare `KillMode=process`
+    # somewhere in the file: commenting it out; appending a second `KillMode=control-group` (a scalar
+    # setting takes its last assignment); and moving it into [Unit], where it is an unknown key that
+    # systemd warns about and ignores, falling back to control-group.
+    section, per_section = None, {}
+    for raw in unit.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+            continue
+        if line.startswith("KillMode="):
+            per_section.setdefault(section, []).append(line.split("=", 1)[1].strip())
+    assert set(per_section) <= {"[Service]"}, f"KillMode outside [Service] is silently ignored: {per_section}"
+    assert per_section.get("[Service]"), "the unit must carry an active KillMode in [Service]"
+    assert per_section["[Service]"][-1] == "process", f"the LAST KillMode in [Service] decides: {per_section['[Service]']}"
+
+    # the role comment explaining WHY KillMode matters rests entirely on this line
+    assert any(l.strip() == "Requires=wg-quick@zaccess0.service" for l in unit.splitlines()), (
+        "the Requires= line is what makes a wg-quick restart propagate here"
     )
 
     execstart = [l.split("=", 1)[1].strip() for l in unit.splitlines() if l.startswith("ExecStart=")]
@@ -1475,3 +1535,14 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     execs = [l for l in code if l.startswith("exec ")]
     assert execs == ['exec "$bin"'], f"the start script must exec the resolved server binary: {execs}"
     assert not any("exec agentboard" in l for l in code), "exec'ing the PATH shim makes MainPID the wrapper again"
+
+    # ...and what is resolved INTO $bin, which pinning the exec line alone does not cover:
+    # `bin="$(command -v agentboard)"` keeps `exec "$bin"` intact and restores the wrapper as
+    # MainPID -- the shape KillMode=process makes WORSE than the default, because systemd would kill
+    # the wrapper while the real server kept :4040 and the next start could not bind.
+    assigns = [l for l in code if l.startswith("bin=")]
+    assert assigns, f"the script must resolve the binary into $bin: {code}"
+    for a in assigns:
+        assert "agentboard-linux-x64/bin/agentboard" in a, f"$bin must resolve to the platform binary: {a}"
+        assert not any(t in a for t in ("command -v", "which ", "$(type")), f"$bin must not resolve off PATH: {a}"
+    assert any("npm root -g" in l for l in code), "the resolution must be rooted at npm's global prefix"
