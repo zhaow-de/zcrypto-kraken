@@ -101,6 +101,15 @@
   become: true
   become_user: zhaow
 
+# Rendered ahead of the unit that ExecStarts it. Deliberately notifies NOTHING: restarting agentboard
+# is the operator's call, not a converge's, and a converge that restarted it would be exactly the
+# event that cost four tmux sessions on 2026-08-27. A changed script takes effect at the next restart
+# the operator chooses.
+- name: agentboard start script (execs the server as MainPID so KillMode=process is correct)
+  ansible.builtin.template:
+    src: zaccess-agentboard-start.sh.j2
+    dest: /usr/local/sbin/zaccess-agentboard-start
+    mode: '0755'
 - name: agentboard unit rendered (spec 00075 D13 -- G2 web terminal, tunnel-bound)
   ansible.builtin.template:
     src: zaccess-agentboard.service.j2

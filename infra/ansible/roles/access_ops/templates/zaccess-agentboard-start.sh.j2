@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Rendered by the `access_ops` role at /usr/local/sbin/zaccess-agentboard-start — edit the template,
+# not this. Resolves node + the agentboard server binary at START time (never converge time) and
+# execs the SERVER ITSELF, so it becomes the unit's MainPID.
+#
+# Why not just `exec agentboard`: that shim is a node wrapper which resolves the platform binary and
+# runs it as a CHILD (execFileSync). The unit's MainPID was therefore the wrapper, not the process
+# holding :4040 -- so `KillMode=process` would have killed the wrapper and orphaned the server on the
+# port, and the restart would fail to bind. Exec'ing the server directly is what makes KillMode=process
+# correct, which is what stops a restart from taking the operator's tmux server down with it.
+set -euo pipefail
+
+# shellcheck source=/dev/null
+source {{ access_ops_agentboard_nvm_sh }}
+
+root="$(npm root -g)"
+# npm may nest the platform package under the wrapper or hoist it to the global root; accept either,
+# and fail LOUDLY rather than falling back to the shim -- a silent fall back would restore the
+# wrapper-as-MainPID shape this script exists to avoid.
+bin="${root}/@gbasin/agentboard/node_modules/@gbasin/agentboard-linux-x64/bin/agentboard"
+[ -x "$bin" ] || bin="${root}/@gbasin/agentboard-linux-x64/bin/agentboard"
+[ -x "$bin" ] || {
+  echo "agentboard platform binary not found under ${root} -- reinstall @gbasin/agentboard" >&2
+  exit 1
+}
+
+# The shim sets this for the server; exec'ing the server directly means we must set it ourselves.
+pkg_root="$(dirname "$(dirname "$bin")")"
+export AGENTBOARD_STATIC_DIR="${pkg_root}/dist/client"
+[ -f "${AGENTBOARD_STATIC_DIR}/index.html" ] || {
+  echo "static client dir has no index.html at ${AGENTBOARD_STATIC_DIR}" >&2
+  exit 1
+}
+export NODE_ENV="${NODE_ENV:-production}"
+
+exec "$bin"
