@@ -849,7 +849,7 @@ def test_the_observers_identity_is_the_one_the_library_reserves_for_orders_we_di
     raise here.
 
     What this cannot reach is the join -- a genuine venue-sourced external order arriving on this
-    observer -- which needs live reconciliation and belongs to the arming pass (T0152)."""
+    observer -- which needs live reconciliation. That join was proven live on 2026-08-27 (T0152, resolved)."""
     from nautilus_trader.model import StrategyId
 
     reserved = str(node.ExternalOrderObserver(lambda event: None).strategy_id)

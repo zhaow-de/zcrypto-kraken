@@ -213,10 +213,40 @@ NOT_A_FAULT_SIGNAL = {
     # inherit the attended-window reasoning unexamined -- the siblings above move only when THIS
     # engine acts, i.e. inside a window by construction, while `unmatched` can move on a third
     # party's action at any hour (the sanctioned hand settle, but equally activity nobody
-    # sanctioned). It is excluded here because no rule should ship with it yet: the family has never been
-    # recorded in production, and a rule pushed before its metric's first sample pages a spurious
-    # no-data alert. Revisit once a live baseline exists -- the candidate is `unmatched` rising
-    # while `zcrypto_exec_armed` is 0, the one condition no human is positioned to see.
+    # sanctioned).
+    #
+    # NO rule, deliberately and not by omission (decided 2026-08-27, once the preconditions this
+    # entry used to wait on were met: the family has live samples and the healthy-boot baseline is
+    # 0). The candidate this entry previously named -- `unmatched` rising while `zcrypto_exec_armed`
+    # is 0 -- is UNSOUND, and the reason is the sensor rather than the framing. Disarmed is the
+    # right framing: the threat is a third party holding the key, whose access does not depend on
+    # arming, and the armed path already has the ledger, overfill and divergence trips. But
+    # `zcrypto_exec_armed` is published only when the gate is EVALUATED, which while disarmed is at
+    # engine start and each 4-hourly cycle -- `engine.md` states the lag ("at most one cycle,
+    # roughly four hours") and `zcrypto-engine-exec-not-evaluated` pages at 4.75h on exactly that
+    # cadence. So the gauge is a 4-hourly snapshot, not an attendance signal, and it is stale in
+    # BOTH directions: for up to ~4h after arming it still reads 0, so the rule pages on the
+    # owner's own attended activity; for up to ~4h after disarming it still reads 1, so the rule is
+    # mute through the highest-risk hour, when positions are fresh and nobody is watching. It is
+    # loudest when a human is present and silent when one is not, which inverts its own purpose.
+    # Measured consequences: the only non-zero this family has ever recorded -- the 2026-08-27
+    # delivery-leg proof, one owner-placed post-only limit -- would have paged; and from rung 1
+    # onward every disarmed converge is a candidate page, since it restarts the engine on a
+    # non-flat account and startup reconciliation books `unmatched` while the gauge reads 0 by
+    # construction. Widening the rule to compensate (a longer armed lookback, a post-boot mute)
+    # buys quiet by opening exactly the two seams an intruder would fall into -- just after a
+    # window closes, just after a converge -- so it would read as more rigorous while covering
+    # less.
+    #
+    # Visibility is unaffected: panel 61 of the engine dashboard plots both dispositions. The
+    # standard is rule => panel, never the converse. What is declined here is paging, not watching.
+    # What would make a rule viable is one change, recorded so nobody re-derives this from scratch:
+    # publish `zcrypto_exec_armed` at a cadence that makes it an attendance signal -- the executor
+    # already has a 5s tick -- after which the candidate above works as written. That is engine
+    # code on the live trade path plus a converge, so it is a decision of its own and is owed by
+    # nothing here. The silent failure a rule could never catch either way -- an adopted order
+    # whose events fail to key into `_attached`, where the working and broken worlds both read
+    # `matched` 0 -- is registered as a by-value reading in T0018.
     "zcrypto_exec_external_events_total",
     # The weekly tracking-error verdict. NO rule, deliberately and not by omission: the only value
     # that is a fault -- the band breached -- latches the kill file, and `zcrypto-engine-exec-kill-
