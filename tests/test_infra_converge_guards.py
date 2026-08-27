@@ -1333,6 +1333,12 @@ def _relay_vars(running: str | None, rendered: str | None, **extra) -> dict:
         ("192.168.1.9:22", "10.99.0.2:22", False, "DRIFTED: the process kept a target the unit no longer renders"),
         ("/usr/lib/systemd/systemd-socket-proxyd", "10.99.0.2:22", False, "argv carried no target at all"),
         ("", "", False, "both empty -- equal, but proves nothing; must not read as healthy"),
+        # a reader that did not run at all: the gate's `| default('')` fallbacks are what decide
+        # here, and nothing else exercises them. Mutating the running side to
+        # `default('__not_running__')` -- a gate that passes whenever its probe is skipped -- is
+        # invisible without these rows.
+        (None, "10.99.0.7:22", False, "the running reader never ran; an absent read is not a healthy one"),
+        ("10.99.0.7:22", None, False, "the rendered reader never ran; nothing to compare against"),
     ],
 )
 def test_the_ssh_relay_drift_gate_separates_drift_from_health(running, rendered, expected, why):
@@ -1457,8 +1463,13 @@ def test_the_ssh_relay_running_reader_emits_the_sentinel_only_when_not_running(t
 
     assert (out == "__not_running__") is expect_sentinel, f"{why} -- reader emitted {out!r}"
     if not expect_sentinel:
-        # and what it emits instead must be this process's own last argv token, i.e. a real read
-        assert out and out != "__not_running__", f"expected a real argv token, got {out!r}"
+        # ...and it must be THIS process's own LAST argv token. Asserting only "not the sentinel"
+        # lets `| tail -1` become `| head -1` -- argv[0], the interpreter path, never the target.
+        # removesuffix, not rstrip: cmdline is `arg0\0...\0argN\0`, and when argN is the EMPTY string
+        # the file ends `\0\0` -- rstrip eats both and argv[-1] becomes the PREVIOUS arg, while the
+        # reader correctly yields "". The test would then fail for a reason that is not the defect.
+        argv = Path(f"/proc/{os.getpid()}/cmdline").read_bytes().removesuffix(b"\0").split(b"\0")
+        assert out == argv[-1].decode(), f"expected the real last argv token {argv[-1].decode()!r}, got {out!r}"
 
 
 def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
@@ -1481,6 +1492,20 @@ def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
 AGENTBOARD_UNIT = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard.service.j2"
 AGENTBOARD_START = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard-start.sh.j2"
 ACCESS_OPS_TASKS = ANSIBLE / "roles" / "access_ops" / "tasks" / "main.yml"
+
+
+def _directives(unit: str) -> dict[str, list[str]]:
+    """Map systemd section -> its directive lines, comments and blank lines dropped."""
+    section, out = None, {}
+    for raw in unit.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+            continue
+        out.setdefault(section, []).append(line)
+    return out
 
 
 def test_agentboard_killmode_and_mainpid_stay_coupled():
@@ -1507,26 +1532,41 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
         if line.startswith("[") and line.endswith("]"):
             section = line
             continue
-        if line.startswith("KillMode="):
+        if re.match(r"KillMode\s*=", line):
             per_section.setdefault(section, []).append(line.split("=", 1)[1].strip())
     assert set(per_section) <= {"[Service]"}, f"KillMode outside [Service] is silently ignored: {per_section}"
     assert per_section.get("[Service]"), "the unit must carry an active KillMode in [Service]"
     assert per_section["[Service]"][-1] == "process", f"the LAST KillMode in [Service] decides: {per_section['[Service]']}"
 
-    # the role comment explaining WHY KillMode matters rests entirely on this line
-    assert any(l.strip() == "Requires=wg-quick@zaccess0.service" for l in unit.splitlines()), (
-        "the Requires= line is what makes a wg-quick restart propagate here"
-    )
+    # The role comment explaining WHY KillMode matters rests entirely on this line -- and on it being
+    # in [Unit]. Relocated into [Service] systemd reports "Unknown key 'Requires' in section
+    # [Service], ignoring", so the propagation path would be gone while a section-blind check stayed
+    # green. Same walk as above.
+    requires = [sec for sec, keys in _directives(unit).items() for k in keys if k == "Requires=wg-quick@zaccess0.service"]
+    assert requires == ["[Unit]"], f"Requires=wg-quick must live in [Unit] or systemd ignores it: {requires or 'absent'}"
 
-    execstart = [l.split("=", 1)[1].strip() for l in unit.splitlines() if l.startswith("ExecStart=")]
-    assert len(execstart) == 1, f"expected exactly one ExecStart: {execstart}"
+    # ExecStart: strip before matching, because systemd does. An INDENTED `  ExecStart=` empty-value
+    # reset followed by a shim ExecStart loads clean with the last one in effect, so an unstripped
+    # startswith() would see one good line and miss the override entirely.
+    execstart = [l.strip().split("=", 1)[1].strip() for l in unit.splitlines() if re.match(r"\s*ExecStart\s*=", l)]
+    assert len(execstart) == 1, f"expected exactly one ExecStart (an empty-value reset counts): {execstart}"
+    assert execstart[0], "an empty ExecStart= resets the list and lets a later one take over"
     assert not execstart[0].startswith("/bin/bash -c"), (
         f"ExecStart must run the rendered script, not an inline shell that execs the PATH shim: {execstart[0]}"
     )
 
-    # the thing it ExecStarts must be a file this role actually renders
-    dests = [t["ansible.builtin.template"]["dest"] for t in load_tasks(ACCESS_OPS_TASKS) if "ansible.builtin.template" in t]
-    assert execstart[0] in dests, f"ExecStart={execstart[0]} is rendered by no task in this role: {dests}"
+    # ...rendered by a task whose SRC is the script this test actually reads, and executable. Checking
+    # the dest against the role's dests alone lets the task's src be swapped for another template.
+    renderers = [
+        t["ansible.builtin.template"]
+        for t in load_tasks(ACCESS_OPS_TASKS)
+        if "ansible.builtin.template" in t and t["ansible.builtin.template"].get("dest") == execstart[0]
+    ]
+    assert len(renderers) == 1, f"ExecStart={execstart[0]} is rendered by {len(renderers)} tasks in this role"
+    assert renderers[0]["src"] == AGENTBOARD_START.name, (
+        f"the ExecStart'd file must be rendered from {AGENTBOARD_START.name}, not {renderers[0]['src']}"
+    )
+    assert str(renderers[0].get("mode")) == "0755", f"the ExecStart'd script must be executable: {renderers[0].get('mode')}"
 
     # and that script must exec the resolved binary, never the shim
     # code lines only: the script's own header explains why it does NOT `exec agentboard`, and a
@@ -1540,9 +1580,16 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     # `bin="$(command -v agentboard)"` keeps `exec "$bin"` intact and restores the wrapper as
     # MainPID -- the shape KillMode=process makes WORSE than the default, because systemd would kill
     # the wrapper while the real server kept :4040 and the next start could not bind.
-    assigns = [l for l in code if l.startswith("bin=")]
-    assert assigns, f"the script must resolve the binary into $bin: {code}"
+    # EVERY assignment feeding the exec, not just the first: the fallback at `[ -x "$bin" ] || bin=…`
+    # does not start with `bin=`, and `root=` is upstream of both. Any one of them repointed at the
+    # shim restores the wrapper as MainPID while `exec "$bin"` stays untouched.
+    assigns = [l for l in code if re.search(r"\b(?:bin|root)=", l)]  # \b excludes pkg_root=
+    assert len(assigns) >= 3, f"expected root= plus both bin= assignments, found: {assigns}"
     for a in assigns:
-        assert "agentboard-linux-x64/bin/agentboard" in a, f"$bin must resolve to the platform binary: {a}"
-        assert not any(t in a for t in ("command -v", "which ", "$(type")), f"$bin must not resolve off PATH: {a}"
-    assert any("npm root -g" in l for l in code), "the resolution must be rooted at npm's global prefix"
+        assert not any(t in a for t in ("command -v", "which ", "$(type")), f"resolution must not go via PATH: {a}"
+    bins = [a for a in assigns if re.search(r"\bbin=", a)]
+    assert bins, f"the script must resolve the platform binary into $bin: {assigns}"
+    for b in bins:
+        assert "agentboard-linux-x64/bin/agentboard" in b, f"$bin must resolve to the platform binary: {b}"
+    roots = [a for a in assigns if re.search(r"\broot=", a)]
+    assert roots and all("npm root -g" in r for r in roots), f"the root must come from npm's global prefix: {roots}"
