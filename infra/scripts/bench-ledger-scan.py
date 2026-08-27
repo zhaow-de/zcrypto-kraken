@@ -6,12 +6,17 @@ are O(ledger). T0044 registered that as a risk against a record-count trigger no
 This measures the curve instead, so the question is answered by running a command rather than by
 re-deriving an estimate under time pressure.
 
-What the numbers are judged against, and why those two:
-  * the reconcile cycle runs half-hourly, so a scan approaching 1800 s starts colliding with the
-    next cycle. That is the practical cliff.
-  * `zcrypto-reconcile-exporter-stale` and `zcrypto-reconcile-source-lag` both page at 3 h. A scan
-    cannot threaten those without having blown the cadence first, so the cadence is the binding
-    constraint and the alerts are the backstop.
+What the numbers are judged against, in the order they bind:
+  * MEMORY FIRST. The returned list costs several times the file's size on disk, and a cycle the OOM
+    reaper kills publishes nothing at all -- so this fails abruptly, and the cycle-duration alert goes
+    STALE rather than high and cannot warn about it. Peak resident against the ops host's
+    MemAvailable (`docs/reference/fleet.md`'s ops row; live as
+    `node_memory_MemAvailable_bytes{host="ops"}`, never MemFree) is the cliff.
+  * Time second, and it is far away. The cycle runs half-hourly, so a scan approaching 1800 s
+    collides with the next one -- but on the measured fit that needs an order of magnitude more
+    records than memory does.
+  * `zcrypto-reconcile-exporter-stale` and `zcrypto-reconcile-source-lag` page at 3 h. Both are
+    backstops: a scan cannot reach them without having blown cadence, and cadence trails memory.
 
 Synthetic records mirror what `_totals` actually reads, and the KEY SPACE is the part that has to be
 right: the writer emits each (pair, kind, hour) at most once, so a real ledger's `measured` dedup set
@@ -33,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import random
 import subprocess
 import sys
@@ -43,7 +49,7 @@ from pathlib import Path
 
 from cli.archive.command import _load_ledger, _totals
 
-CYCLE_PERIOD_SECONDS = 1800.0  # half-hourly reconcile cadence -- the binding constraint
+CYCLE_PERIOD_SECONDS = 1800.0  # half-hourly reconcile cadence -- the SECOND constraint; memory binds first
 PAGE_THRESHOLD_SECONDS = 10800.0  # exporter-stale / source-lag, both 3h -- the backstop
 
 # The writer's own vocabulary. `healable` is NOT one of them; `trade_deficit` and `failed` are.
@@ -93,6 +99,14 @@ def _write(root: Path, count: int, seed: int = 0) -> int:
     return path.stat().st_size
 
 
+def _vmhwm() -> float:
+    """This process's own peak resident set, in MiB. Not inherited across fork, unlike ru_maxrss."""
+    for line in pathlib.Path("/proc/self/status").read_text().splitlines():
+        if line.startswith("VmHWM"):
+            return int(line.split()[1]) / 1024
+    return float("nan")
+
+
 def _child(root: Path, repeats: int) -> None:
     """Time and measure one ledger in a process that has held no other.
 
@@ -104,6 +118,8 @@ def _child(root: Path, repeats: int) -> None:
     """
     import resource
 
+    # VmHWM is this process's own high-water; ru_maxrss is inherited across fork+exec and would
+    # report the parent's peak as a floor the moment main() stops being lean.
     before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
     best_load = best_totals = float("inf")
     for _ in range(repeats):
@@ -117,7 +133,7 @@ def _child(root: Path, repeats: int) -> None:
         n = len(records)
         del records
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-    print(f"{best_load} {best_totals} {peak} {peak - before} {n}")
+    print(f"{best_load} {best_totals} {_vmhwm()} {peak - before} {n}")
 
 
 def main() -> None:
@@ -155,8 +171,11 @@ def main() -> None:
                 f"{total:>9.3f} {total / CYCLE_PERIOD_SECONDS * 100:>10.2f}% {peak:>9.0f}"
             )
     print(
-        f"\ncycle period {CYCLE_PERIOD_SECONDS:.0f}s (half-hourly) is the binding constraint; "
-        f"exporter-stale/source-lag page at {PAGE_THRESHOLD_SECONDS:.0f}s."
+        f"\nMemory binds first: compare peak MiB against the ops host's MemAvailable "
+        f"(docs/reference/fleet.md's ops row), because a cycle killed for memory publishes nothing "
+        f"and the cycle-duration alert then goes stale rather than high. Time is the second "
+        f"constraint -- cycle period {CYCLE_PERIOD_SECONDS:.0f}s -- and exporter-stale/source-lag "
+        f"page at {PAGE_THRESHOLD_SECONDS:.0f}s as backstops."
     )
 
 

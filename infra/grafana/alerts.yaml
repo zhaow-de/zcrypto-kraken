@@ -1166,8 +1166,8 @@ rules:
       # The ledger scan is O(ledger) and invisible inside cycle_duration until it dominates, which is
       # far too late to be a warning. 10 s is comparable to a whole cycle today, so the ledger has
       # stopped being a rounding error and become the cost driver. Not an outage: 10 s is 0.6% of the
-      # 1800 s tick, and by the measured fit ~3.3M records holding ~4 GiB, under a tenth of the free
-      # memory the host had when the bar was set. PROVISIONAL -- a linear fit in infra/scripts/bench-ledger-scan.py, not a ledger
+      # 1800 s tick, and by the measured fit ~3.3M records holding ~4 GiB, under a tenth of the
+      # MemAvailable the host had when the bar was set. PROVISIONAL -- a linear fit in infra/scripts/bench-ledger-scan.py, not a ledger
       # ever observed at that size.
       - refId: A
         queryType: ""
@@ -1213,7 +1213,7 @@ rules:
       # in a list at ~6x the file's on-disk size, so memory binds long before time does -- and a cycle
       # the OOM reaper kills publishes nothing, leaving cycle_duration STALE rather than high. By the
       # measured fit 30 s is ~10M records holding ~12 GiB, about a quarter of the MemAvailable read on
-      # zcrypto-ops 2026-08-27 (47 GiB; recorded in docs/reference/fleet.md), with the wall near 40M;
+      # zcrypto-ops (the value is docs/reference/fleet.md's ops row, not restated here), wall near 40M;
       # time would not bind until ~600M. PROVISIONAL -- same fit, and the bar also encodes that
       # MemAvailable, which moves independently of this repo: read it live as
       # node_memory_MemAvailable_bytes{host="ops"}, never MemFree, which is ~10x smaller.

@@ -1789,6 +1789,12 @@
               {
                 "id": "unit",
                 "value": "short"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
               }
             ]
           }
