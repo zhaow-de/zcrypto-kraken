@@ -162,7 +162,7 @@ def _load_ledger(root: Path) -> list[dict]:
 
     Read line by line off the handle rather than `read_text().splitlines()`: the latter holds the
     whole file as one string AND a list of every line before the first record exists, so peak memory
-    carried both on top of the dicts. Measured at 1,000,000 records on a fixture keyed like the writer's, peak RSS 2489 -> 2273 MiB
+    carried both on top of the dicts. Measured at 1,000,000 records on a fixture keyed like the writer's, peak RSS 1372 -> 1231 MiB
     (`infra/scripts/bench-ledger-scan.py`). The RETURN TYPE stays a list on purpose -- the caller
     appends this cycle's own records to it, reads its length three times and re-queries it per
     pair-hour, so a generator breaks at the first append and, were those patched away, would then

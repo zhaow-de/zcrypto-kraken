@@ -21,9 +21,10 @@ short-circuits nearly every mint-family record at `if key in measured: continue`
 the time and the memory. Hours therefore advance monotonically here, with pair x kind cycling inside
 each hour, exactly as the writer does.
 
-Memory is measured in a FRESH SUBPROCESS per size. `ru_maxrss` is the peak since process start, so
-sizes measured in one loop carry the earlier peaks forward and every reading after the first is
-inflated.
+Timing AND memory are measured in a child process that has held no other ledger, because `ru_maxrss`
+is a high-water mark and a forked child inherits the parent's. Measuring sizes in one loop inflates
+every reading after the first; spawning a child from a parent that just did the timing inflates it
+identically, while looking rigorous.
 
 Run: `uv run python infra/scripts/bench-ledger-scan.py [--sizes 1000,10000,...]`
 """
@@ -92,25 +93,42 @@ def _write(root: Path, count: int, seed: int = 0) -> int:
     return path.stat().st_size
 
 
-def _rss_child(root: Path) -> None:
-    """Peak RSS of loading one ledger, in a process that has loaded nothing else."""
+def _child(root: Path, repeats: int) -> None:
+    """Time and measure one ledger in a process that has held no other.
+
+    Everything happens HERE, not in the parent, and that is the whole point. `ru_maxrss` is a
+    high-water mark, and a forked child INHERITS the parent's -- a child that allocates nothing
+    reports ~13 MiB from a small parent and ~1820 MiB from a 1.8 GiB one. So a parent that ran the
+    timing itself would hand every subsequent size its own peak, which is the same artifact as
+    measuring several sizes in one loop, only harder to see.
+    """
     import resource
 
     before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-    records = _load_ledger(root)
-    after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-    print(f"{after:.1f} {after - before:.1f} {len(records)}")
+    best_load = best_totals = float("inf")
+    for _ in range(repeats):
+        t0 = time.perf_counter()
+        records = _load_ledger(root)
+        t1 = time.perf_counter()
+        _totals(records)
+        t2 = time.perf_counter()
+        best_load = min(best_load, t1 - t0)
+        best_totals = min(best_totals, t2 - t1)
+        n = len(records)
+        del records
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    print(f"{best_load} {best_totals} {peak} {peak - before} {n}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="1000,10000,50000,100000,250000,500000,1000000")
     ap.add_argument("--repeats", type=int, default=3, help="best-of, to shed scheduler noise")
-    ap.add_argument("--rss-child", help=argparse.SUPPRESS)
+    ap.add_argument("--child", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
-    if args.rss_child:  # re-entry: one size, one fresh process, so no earlier peak carries forward
-        _rss_child(Path(args.rss_child))
+    if args.child:  # re-entry: this process holds nothing else, so its ru_maxrss is this ledger's
+        _child(Path(args.child), args.repeats)
         return
 
     print(f"{'records':>10} {'MiB':>7} {'load s':>9} {'totals s':>9} {'total s':>9} {'% of cycle':>11} {'peak MiB':>9}")
@@ -118,19 +136,15 @@ def main() -> None:
         root = Path(tmp)
         for size in (int(s) for s in args.sizes.split(",")):
             nbytes = _write(root, size)
-            best_load = best_totals = float("inf")
-            for _ in range(args.repeats):
-                t0 = time.perf_counter()
-                records = _load_ledger(root)
-                t1 = time.perf_counter()
-                _totals(records)
-                t2 = time.perf_counter()
-                best_load = min(best_load, t1 - t0)
-                best_totals = min(best_totals, t2 - t1)
-            assert len(records) == size, f"loaded {len(records)} of {size}"
+            out = subprocess.run(
+                [sys.executable, __file__, "--child", str(root), "--repeats", str(args.repeats)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.split()
+            best_load, best_totals, peak, _delta, n = float(out[0]), float(out[1]), float(out[2]), float(out[3]), int(out[4])
+            assert n == size, f"child loaded {n} of {size}"
             total = best_load + best_totals
-            child = subprocess.run([sys.executable, __file__, "--rss-child", str(root)], capture_output=True, text=True, check=True)
-            peak = float(child.stdout.split()[0])
             print(
                 f"{size:>10,} {nbytes / 1048576:>7.1f} {best_load:>9.3f} {best_totals:>9.3f} "
                 f"{total:>9.3f} {total / CYCLE_PERIOD_SECONDS * 100:>10.2f}% {peak:>9.0f}"

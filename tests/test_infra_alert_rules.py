@@ -709,18 +709,19 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
 # real value lands, the comment and the entry are deleted together and the staleness test below is
 # what forces the second half.
 
-# Empty by design. An entry here declares a threshold this file ships knowing it is provisional;
-# the paired staleness test refuses an entry whose rule no longer carries the marker, so a bar that
-# has been derived cannot leave its excuse behind. Last occupant: `zcrypto-capture-stream-silent`,
-# derived 2026-08-05. Its bar is not provisional -- its base is just younger than the `[30d]`
-# selector suggests, and T0129 carries the re-derivation with the measured sample counts.
+# An entry here declares a threshold this file ships knowing it is provisional; the paired staleness
+# test refuses an entry whose rule no longer carries the marker, so a bar that has been derived
+# cannot leave its excuse behind. A previous occupant, `zcrypto-capture-stream-silent`, was derived
+# 2026-08-05; its bar is not provisional -- its base is just younger than the `[30d]` selector
+# suggests, and T0129 carries the re-derivation with the measured sample counts.
 PROVISIONAL_THRESHOLDS: set[str] = {
     # Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` -- ~3 microseconds and
-    # ~1 KiB of resident memory per record, measured up to 2,000,000 synthetic records -- not from a
-    # ledger ever observed at that size. The live one holds ~100 records. What derives the real
-    # values: re-run that benchmark against the ledger's own record shape once it is large enough for
-    # the fit to be checked rather than extrapolated, and set the critical bar from the host's
-    # available memory at that time, which is the quantity it actually encodes.
+    # ~1.2 KiB of resident memory per record, measured at 1,000,000 synthetic records -- not from a
+    # ledger ever observed at that size. The live one holds ~100. The critical bar also encodes the
+    # ops host's FREE MEMORY, an operand this repo does not record anywhere, so its percentage is
+    # true only of the day it was read. What derives the real values: re-run that benchmark against
+    # the ledger's own record shape once it is large enough for the fit to be checked rather than
+    # extrapolated, and re-read the host's free memory at that time.
     "zcrypto-reconcile-ledger-scan-slow",
     "zcrypto-reconcile-ledger-scan-critical",
 }
