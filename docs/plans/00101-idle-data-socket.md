@@ -239,8 +239,6 @@ process. The Rust logger writes to stdout, and the counts are taken from the cap
 import subprocess
 import sys
 
-import pytest
-
 # One real AssetPairs entry, trimmed to two fee rungs. `GET /0/public/AssetPairs` is the only
 # endpoint the adapter requests before it opens the socket (measured against a path-logging stub);
 # the node refuses to start if it 404s, so the fixture must answer it with a parseable body.
@@ -268,7 +266,7 @@ _ONE_PAIR = """{
 #                  behaviour that must NOT be present here, so this peer cannot use it.
 #
 # A raw string: the child's source must carry the backslash escapes literally.
-_OFFLINE_PROBE = r'''
+_OFFLINE_PROBE = r"""
 import asyncio, base64, hashlib, json, os, socket, sys, threading, time
 import http.server, socketserver
 import websockets
@@ -355,7 +353,7 @@ try:
 except BaseException as exc:
     sys.__stdout__.write("RAISED %s: %s\n" % (type(exc).__name__, exc)); sys.__stdout__.flush()
 os._exit(0)
-'''
+"""
 
 
 def _run(mode: str, idle_ms: int, window_s: float, heartbeat_s: int) -> dict:
