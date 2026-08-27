@@ -718,10 +718,10 @@ PROVISIONAL_THRESHOLDS: set[str] = {
     # Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` -- ~3 microseconds and
     # ~1.2 KiB of resident memory per record, measured at 1,000,000 synthetic records -- not from a
     # ledger ever observed at that size. The live one holds ~100. The critical bar also encodes the
-    # ops host's FREE MEMORY, an operand this repo does not record anywhere, so its percentage is
-    # true only of the day it was read. What derives the real values: re-run that benchmark against
-    # the ledger's own record shape once it is large enough for the fit to be checked rather than
-    # extrapolated, and re-read the host's free memory at that time.
+    # ops host's MemAvailable, so its percentage is true only of the day it was read. What derives
+    # the real values: re-run that benchmark against the ledger's own record shape once it is large
+    # enough for the fit to be checked rather than extrapolated, and read the operand live as
+    # node_memory_MemAvailable_bytes{host="ops"} -- never MemFree, which is ~10x smaller.
     "zcrypto-reconcile-ledger-scan-slow",
     "zcrypto-reconcile-ledger-scan-critical",
 }

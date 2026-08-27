@@ -1192,7 +1192,7 @@ rules:
     execErrState: Alerting
     for: 0s  # the gauge only updates twice an hour -- one reading is already the signal
     annotations:
-      summary: "Reading and summing the append-only ledger now takes over 10 s a cycle, which is comparable to what an entire cycle costs today. Nothing is broken and nothing is at risk yet: this is well under 1% of the 30-minute tick, and well under a tenth of the memory the host had free when the bar was set. It means the ledger has grown into the thing that dominates cycle cost, so the append-only-forever design is now worth revisiting rather than assumed. Re-measure first: infra/scripts/bench-ledger-scan.py reproduces the curve at any size, so the question is a command rather than an estimate. Runbook: infra/runbooks/ops.md#reconcile-ledger-scan-cost"
+      summary: "Reading and summing the append-only ledger now takes over 10 s a cycle, which is comparable to what an entire cycle costs today. Nothing is broken and nothing is at risk yet: this is well under 1% of the 30-minute tick, and well under a tenth of the memory the host had available when the bar was set. It means the ledger has grown into the thing that dominates cycle cost, so the append-only-forever design is now worth revisiting rather than assumed. Re-measure first: infra/scripts/bench-ledger-scan.py reproduces the curve at any size, so the question is a command rather than an estimate. Runbook: infra/runbooks/ops.md#reconcile-ledger-scan-cost"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "207"
       unit: "seconds spent reading and summing the ledger"
@@ -1213,9 +1213,10 @@ rules:
       # in a list at ~6x the file's on-disk size, so memory binds long before time does -- and a cycle
       # the OOM reaper kills publishes nothing, leaving cycle_duration STALE rather than high. By the
       # measured fit 30 s is ~10M records holding ~12 GiB, about a quarter of the MemAvailable read on
-      # zcrypto-ops 2026-08-27 (47 GiB; recorded in docs/reference/fleet.md), with the wall near 40M; time would not bind until ~600M.
-      # PROVISIONAL -- same fit, and the bar encodes the host's FREE MEMORY, an operand this repo does
-      # not record and which moves independently of it.
+      # zcrypto-ops 2026-08-27 (47 GiB; recorded in docs/reference/fleet.md), with the wall near 40M;
+      # time would not bind until ~600M. PROVISIONAL -- same fit, and the bar also encodes that
+      # MemAvailable, which moves independently of this repo: read it live as
+      # node_memory_MemAvailable_bytes{host="ops"}, never MemFree, which is ~10x smaller.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -1239,7 +1240,7 @@ rules:
     execErrState: Alerting
     for: 0s  # the gauge only updates twice an hour -- one reading is already the signal
     annotations:
-      summary: "Reading and summing the append-only ledger now takes over 30 s a cycle. Time is not the problem -- memory is, and at this scan cost the ledger is holding roughly a quarter of the memory the host had free when the bar was set. Every record is held in memory at several times its size on disk, so at this scan cost the reconciler is claiming a large share of a host it shares with the panel materialiser and the replay jobs, and the failure when it arrives is abrupt: a cycle killed for memory publishes nothing, so the cycle-duration alert goes stale rather than high and cannot warn you. Act on this one rather than waiting for a louder signal. Runbook: infra/runbooks/ops.md#reconcile-ledger-scan-cost"
+      summary: "Reading and summing the append-only ledger now takes over 30 s a cycle. Time is not the problem -- memory is, and at this scan cost the ledger is holding roughly a quarter of the memory the host had available when the bar was set. Every record is held in memory at several times its size on disk, so at this scan cost the reconciler is claiming a large share of a host it shares with the panel materialiser and the replay jobs, and the failure when it arrives is abrupt: a cycle killed for memory publishes nothing, so the cycle-duration alert goes stale rather than high and cannot warn you. Act on this one rather than waiting for a louder signal. Runbook: infra/runbooks/ops.md#reconcile-ledger-scan-cost"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "207"
       unit: "seconds spent reading and summing the ledger"
