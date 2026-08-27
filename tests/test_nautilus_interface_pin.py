@@ -221,9 +221,11 @@ def test_the_kraken_client_configs_accept_the_arguments_we_pass():
     )
 
 
-# The two values spec 00101 D1 rests on, measured here rather than remembered: `0` disables the
-# idle timer, and `None` is NOT "off" -- it silently falls back to the adapter default and reinstates
-# the reconnect loop. A future upstream change to either reading would pass every other test.
+# The two readings spec 00101 D1 rests on, measured here rather than remembered: `0` is accepted and
+# reads back as `0`, and `None` is NOT "off" -- it silently falls back to the adapter default and
+# reinstates the reconnect loop. Readings only: that `0` actually silences the timer is measured
+# behaviourally by `test_the_shipped_value_stops_the_loop` in tests/test_engine_data_socket.py.
+# A future upstream change to either reading would pass every other test.
 def test_ws_idle_timeout_zero_disables_and_none_means_the_default():
     from nautilus_trader.adapters.kraken import KrakenDataClientConfig, KrakenEnvironment, KrakenProductType
 
