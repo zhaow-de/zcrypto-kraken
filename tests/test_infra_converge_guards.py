@@ -1387,3 +1387,91 @@ def test_the_ssh_relay_drift_gate_is_skipped_under_check_and_runs_last():
     assert tasks[flush].get("ansible.builtin.meta") == "flush_handlers", (
         f"the pre-gate task must actually flush handlers, not merely be named so: {tasks[flush]}"
     )
+
+
+def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice():
+    """The gate compares a running argv against a rendered unit; the tests above only pin the compare.
+
+    The trap the task's own comment names is repointing the running reader at the unit file — then
+    both sides read the same bytes, the gate passes on every converge, and the relay drifts unbounded.
+    That is the Alloy drift failure `capture-deploys.md` records, where the assert compared the
+    deployed FILE rather than what the process had loaded. Pinned as data so the readers cannot
+    quietly become the same read.
+    """
+    tasks = load_tasks(ACCESS_TASKS)
+    running = find_task(tasks, "read the ssh relay's running target")["ansible.builtin.shell"]["cmd"]
+    rendered = find_task(tasks, "read the ssh relay's rendered target")["ansible.builtin.shell"]["cmd"]
+
+    assert "/proc/" in running and "cmdline" in running, f"the running reader must read the process's argv: {running!r}"
+    assert "/etc/systemd/system/" not in running, (
+        f"the running reader must NOT read the unit file -- that makes both sides the same read: {running!r}"
+    )
+    assert "ExecStart" not in running, f"the running reader must not parse ExecStart: {running!r}"
+    assert "/etc/systemd/system/zaccess-ssh-proxy.service" in rendered, f"the rendered reader must read the unit file: {rendered!r}"
+    assert "ExecStart" in rendered, f"the rendered reader must take the target from ExecStart=: {rendered!r}"
+    for name, cmd in (("running", running), ("rendered", rendered)):
+        assert "zaccess-ssh-proxy" in cmd, f"the {name} reader must name the relay it is about: {cmd!r}"
+
+    # the sentinel the assert special-cases must be the one the shell actually emits, or the
+    # not-running case silently becomes a drift report on every socket-activated host
+    gate = " ".join(assert_that(find_task(tasks, _RELAY_GATE)))
+    sentinel = "__not_running__"
+    assert sentinel in running and sentinel in gate, (
+        f"the shell emits and the assert excuses the same sentinel; running={running!r} gate={gate!r}"
+    )
+
+
+def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
+    """This gate's only effect is failing the play, so `failed_when: false` reduces it to decoration.
+
+    Every other assertion here reaches `that`/`fail_msg`/`when`/position, all of which stay green
+    under that edit.
+    """
+    gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
+    assert "failed_when" not in gate, f"failed_when would make this gate a no-op: {gate.get('failed_when')!r}"
+    assert not gate.get("ignore_errors"), "ignore_errors would make this gate a no-op"
+    assert "override" not in str(gate.get("when", "")).lower(), "no override may hide in the when: either"
+
+
+AGENTBOARD_UNIT = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard.service.j2"
+AGENTBOARD_START = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess-agentboard-start.sh.j2"
+ACCESS_OPS_TASKS = ANSIBLE / "roles" / "access_ops" / "tasks" / "main.yml"
+
+
+def test_agentboard_killmode_and_mainpid_stay_coupled():
+    """`KillMode=process` is only safe because the unit ExecStarts the SERVER, not the node shim.
+
+    The two halves live in two files with nothing coupling them, and both regressions are silent
+    until an operator restarts — which is rare and outside CI. Dropping `KillMode=process` restores
+    the control-group SIGKILL that destroyed four tmux sessions on 2026-08-27; reverting the ExecStart
+    to the shim while KillMode stays gives the worse mode the script's own header names, where systemd
+    kills the wrapper and the real server keeps `:4040` so the next start cannot bind.
+    """
+    unit = AGENTBOARD_UNIT.read_text()
+    start = AGENTBOARD_START.read_text()
+
+    # an ACTIVE directive: `# KillMode=process` still contains the substring, and a commented-out
+    # KillMode is exactly the regression -- systemd falls back to control-group and the tmux server
+    # dies with the next restart, while a substring check stays green.
+    directives = [l.strip() for l in unit.splitlines() if not l.strip().startswith("#")]
+    assert "KillMode=process" in directives, (
+        f"the unit must carry an active KillMode=process, not a commented one: {[d for d in directives if 'KillMode' in d]}"
+    )
+
+    execstart = [l.split("=", 1)[1].strip() for l in unit.splitlines() if l.startswith("ExecStart=")]
+    assert len(execstart) == 1, f"expected exactly one ExecStart: {execstart}"
+    assert not execstart[0].startswith("/bin/bash -c"), (
+        f"ExecStart must run the rendered script, not an inline shell that execs the PATH shim: {execstart[0]}"
+    )
+
+    # the thing it ExecStarts must be a file this role actually renders
+    dests = [t["ansible.builtin.template"]["dest"] for t in load_tasks(ACCESS_OPS_TASKS) if "ansible.builtin.template" in t]
+    assert execstart[0] in dests, f"ExecStart={execstart[0]} is rendered by no task in this role: {dests}"
+
+    # and that script must exec the resolved binary, never the shim
+    # code lines only: the script's own header explains why it does NOT `exec agentboard`, and a
+    # naive substring check over the whole file flags that explanation as the defect it warns about.
+    code = [l.strip() for l in start.splitlines() if l.strip() and not l.strip().startswith("#")]
+    execs = [l for l in code if l.startswith("exec ")]
+    assert execs == ['exec "$bin"'], f"the start script must exec the resolved server binary: {execs}"
+    assert not any("exec agentboard" in l for l in code), "exec'ing the PATH shim makes MainPID the wrapper again"

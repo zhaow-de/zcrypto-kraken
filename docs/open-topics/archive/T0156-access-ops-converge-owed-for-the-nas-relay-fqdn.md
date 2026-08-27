@@ -12,7 +12,7 @@ The IP→FQDN swap changed `roles/access_ops/templates/zaccess-nas-proxy.service
 
 Two reasons the drift is worth tracking rather than assuming:
 
-- **`Accept=no` with no `--exit-idle-time`.** One long-lived `systemd-socket-proxyd` instance holds the socket, so `daemon-reload` alone never replaces its `ExecStart` — the unit would keep relaying to the IP indefinitely after a converge that merely rewrote the file. The role now carries a `restart zaccess-nas-proxy.socket` + `restart zaccess-nas-proxy` handler pair, each notified from its own template task rather than from a shared two-item loop — a loop assigns its whole notify list to every item and gates on the aggregate result, so it cannot notify them selectively. That closes the class for this relay. The bridgehead's `zaccess-ssh-proxy` is the identical shape, but a restart handler there would cut the operator's own session — `:20022` is that host's public SSH relay into the ops node — so it is guarded the other way, by an end-of-role assert that fails the converge when the running relay's TARGET no longer matches the rendered one. That covers the service half only: a changed `ListenStream` on the bridgehead socket is still written and never applied, by neither handler nor assert.
+- **`Accept=no` with no `--exit-idle-time`.** One long-lived `systemd-socket-proxyd` instance holds the socket, so `daemon-reload` alone never replaces its `ExecStart` — the unit would keep relaying to the IP indefinitely after a converge that merely rewrote the file. The role now carries a `restart zaccess-nas-proxy.socket` + `restart zaccess-nas-proxy` handler pair, each notified from its own template task rather than from a shared two-item loop — a loop assigns its whole notify list to every item and gates on the aggregate result, so it cannot notify them selectively. That closes the class for this relay. The bridgehead's `zaccess-ssh-proxy` is the identical shape, but a restart handler there would cut the operator's own session — `:20022` is that host's public SSH relay into the ops node — so it is guarded the other way, by an end-of-role assert that REPORTS — after the converge has applied, never refusing one — when the running relay's TARGET no longer matches the rendered one. That covers the service half only: a changed `ListenStream` on the bridgehead socket is still written and never applied, by neither handler nor assert.
 - **`fleet.md` must not run ahead of the fleet.** The row was briefly written to the FQDN before any converge and was put back to the IP; it flipped at the converge, not before.
 
 ## Findings so far
@@ -47,6 +47,6 @@ that state. The agentboard pin moved 0.4.8 → 0.4.23 on the same converge and i
 
 The defect class this topic named — an `Accept=no` socket-proxyd relay whose rendered unit never
 reaches the running instance — is closed on the NAS relay by a per-half handler pair, and on the
-bridgehead's SERVICE half only,
-the bridgehead's `zaccess-ssh-proxy` by an end-of-role assert that refuses a converge on drift rather
-than restarting a relay that carries operator sessions.
+bridgehead's SERVICE half only, by an end-of-role assert that REPORTS drift after the converge has
+applied — it does not refuse one — remedied by a hand restart rather than by restarting a relay that
+carries operator sessions. The bridgehead's socket half is applied by nothing.

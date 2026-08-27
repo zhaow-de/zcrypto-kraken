@@ -101,10 +101,19 @@
   become: true
   become_user: zhaow
 
-# Rendered ahead of the unit that ExecStarts it. Deliberately notifies NOTHING: restarting agentboard
-# is the operator's call, not a converge's, and a converge that restarted it would be exactly the
-# event that cost four tmux sessions on 2026-08-27. A changed script takes effect at the next restart
-# the operator chooses.
+# Rendered ahead of the unit that ExecStarts it, and notifying nothing on purpose: a changed script
+# takes effect at the next restart the operator chooses.
+#
+# That is NOT the same as "a converge cannot restart agentboard", and the difference is the whole
+# reason KillMode=process matters here. No task and no handler in this role restarts the unit -- but
+# `zaccess-agentboard.service` declares `Requires=wg-quick@zaccess0.service`, and the wireguard conf
+# template above notifies `restart wg-quick@zaccess0`; systemd propagates an explicit restart across
+# `Requires=`. So a converge that changes the tunnel conf DOES restart agentboard, and the notifying
+# task is `no_log: true`, so it shows as `changed` with no diff to warn you. Under the unit's old
+# default KillMode that path reached the operator's tmux server -- the 2026-08-27 destruction is
+# reachable from an ordinary `--limit zcrypto-ops --tags access` run, not only from a hand restart.
+# KillMode=process is what makes the propagated restart survivable, which is why it ships here rather
+# than waiting for a quieter change.
 - name: agentboard start script (execs the server as MainPID so KillMode=process is correct)
   ansible.builtin.template:
     src: zaccess-agentboard-start.sh.j2
