@@ -19,6 +19,7 @@ import json
 import math
 import os
 import subprocess
+import time
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
@@ -158,18 +159,27 @@ def _load_ledger(root: Path) -> list[dict]:
 
     A skipped line under-counts a cumulative counter; Prometheus reads the drop as a counter reset and
     `increase()` then invents a permanent-loss page out of nothing. So a malformed line is loud.
+
+    Read line by line off the handle rather than `read_text().splitlines()`: the latter holds the
+    whole file as one string AND a list of every line before the first record exists, so peak memory
+    carried both on top of the dicts. Measured at 1,000,000 records on a fixture keyed like the writer's, peak RSS 2489 -> 2273 MiB
+    (`infra/scripts/bench-ledger-scan.py`). The RETURN TYPE stays a list on purpose -- the caller
+    appends this cycle's own records to it, reads its length three times and re-queries it per
+    pair-hour, so a generator breaks at the first append and, were those patched away, would then
+    book zero on every re-read instead.
     """
     path = root / "reconcile-ledger.jsonl"
     if not path.exists():
         return []
     records = []
-    for number, line in enumerate(path.read_text().splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise CaptureError(f"{path}:{number} is not valid JSON: {exc}") from exc
+    with path.open() as handle:
+        for number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise CaptureError(f"{path}:{number} is not valid JSON: {exc}") from exc
     return records
 
 
@@ -366,6 +376,7 @@ def _write_textfile(
     totals: dict[str, float],
     lags: dict[str, float],
     hours_skipped: int,
+    ledger_scan_seconds: float,
 ) -> None:
     """Publish `reconcile.prom` atomically: a textfile is scraped in place, so a half-written one is
     scraped as garbage. Temp in the SAME directory (so the rename is a same-filesystem `os.replace`),
@@ -401,6 +412,12 @@ def _write_textfile(
         "gauge",
         "Wall-clock seconds the last completed reconcile cycle took, start to publish.",
         [("", (ended - now).total_seconds())],
+    )
+    _emit(
+        "ledger_scan_seconds",
+        "gauge",
+        "Wall-clock seconds spent reading and summing the whole append-only ledger this cycle.",
+        [("", ledger_scan_seconds)],
     )
     _emit(
         "source_lag_seconds",
@@ -534,11 +551,17 @@ def reconcile(
             logger.error("archive reconcile: the %s mirror is missing path=%s", label, root)
             raise typer.Exit(2)
 
+    # `_load_ledger` + `_totals` are the two halves of the O(ledger) scan T0044 tracks, and they sit
+    # ~500 lines apart, so the cost is summed rather than measured around one call. Published as
+    # `zcrypto_reconcile_ledger_scan_seconds`: the whole-cycle gauge cannot see this growing until it
+    # already dominates, which is far too late to be a warning.
+    _scan_started = time.perf_counter()
     try:
         records = _load_ledger(reconciled_root)
     except CaptureError as exc:
         logger.error("archive reconcile: %s", exc)
         raise typer.Exit(1) from exc
+    ledger_scan_seconds = time.perf_counter() - _scan_started
 
     scans = {
         "primary": {kind: scan_hours(primary_root, kind) for kind in KINDS},
@@ -1012,7 +1035,9 @@ def reconcile(
         else:
             scan_cache.save_cache(reconciled_root, new_cache, salt=salt)
 
+    _totals_started = time.perf_counter()
     totals = _totals(records)
+    ledger_scan_seconds += time.perf_counter() - _totals_started
     logger.info(
         "reconcile complete mode=%s window_h=%d spliced=%d union=%d healed_s=%.1f residual_s=%.1f "
         "failures=%d skipped=%d audited=%d",
@@ -1035,7 +1060,15 @@ def reconcile(
     if textfile is not None:
         lags = {source: _lag(scan, now=now) for source, scan in scans.items()}
         try:
-            _write_textfile(textfile, now=now, ended=_utc_now(), totals=totals, lags=lags, hours_skipped=hours_skipped)
+            _write_textfile(
+                textfile,
+                now=now,
+                ended=_utc_now(),
+                totals=totals,
+                lags=lags,
+                hours_skipped=hours_skipped,
+                ledger_scan_seconds=ledger_scan_seconds,
+            )
         except OSError as exc:
             logger.error("archive reconcile: could not publish the textfile path=%s: %s", textfile, exc)
             raise typer.Exit(1) from exc
