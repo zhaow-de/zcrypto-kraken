@@ -460,7 +460,7 @@ Co-Authored-By: <the authoring model> <noreply@anthropic.com>"
 ### Task 4: The live row — the one property loopback cannot show
 
 **Files:**
-- Modify: `tests/test_engine_node.py` — one new module constant `_LIVE_IDLE_PROBE` beside `_INSTRUMENT_ARRIVAL_PROBE`, and one new test beside `test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts`
+- Modify: `tests/test_engine_node.py` — one new module constant `_LIVE_IDLE_PROBE` beside `_INSTRUMENT_ARRIVAL_PROBE`, one new test beside `test_the_twelve_instruments_are_in_the_cache_when_the_strategy_starts`, and the module docstring's "the one test that RUNS a node" clause, which this task makes false
 
 **Interfaces:**
 - Consumes: `_kraken_public_reachable()` and the `ZCRYPTO_LIVE_VENUE_TESTS` opt-in, both already in the file; `cli.engine.node._data_client_config` as the injection point
@@ -544,17 +544,21 @@ def test_the_shipped_idle_value_survives_krakens_own_inactivity_close(tmp_path):
     assert reconnects == 0, f"Kraken's inactivity close was not held off by the heartbeat: {detail}"
 ```
 
-- [ ] **Step 3: Run it with the venue — expect PASS**
+- [ ] **Step 3: Re-true the module docstring**
+
+The file's opening docstring says "the one test that RUNS a node is the instrument-arrival test, which needs Kraken's public endpoint and skips loudly without it". Step 2 makes it two. Replace that clause with "the two tests that RUN a node against Kraken's public endpoint are the instrument-arrival test and the idle-socket test, and both skip loudly without `ZCRYPTO_LIVE_VENUE_TESTS=1`" — a docstring is a claim about what is below it (`code-prose.md`), and this one is falsified by this task's own change.
+
+- [ ] **Step 4: Run it with the venue — expect PASS**
 
 Run: `ZCRYPTO_LIVE_VENUE_TESTS=1 uv run pytest tests/test_engine_node.py -k survives_krakens_own -v`
 Expected: 1 passed, ~3 min wall clock, 0 timeouts and 0 reconnects with ≥ 1 `Connected: client_id=KRAKEN`.
 
-- [ ] **Step 4: Run it without the opt-in — expect SKIP, never a silent pass**
+- [ ] **Step 5: Run it without the opt-in — expect SKIP, never a silent pass**
 
 Run: `uv run pytest tests/test_engine_node.py -k survives_krakens_own -v`
 Expected: 1 skipped with the message naming the env var.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add tests/test_engine_node.py
