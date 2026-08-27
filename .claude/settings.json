@@ -11,7 +11,12 @@
       "Bash(infra/scripts/probe-with-vaulted-key.sh:*)",
       "Bash(./infra/scripts/probe-with-vaulted-key.sh:*)",
       "Bash(git push:*)",
-      "Bash(gh pr create:*)"
+      "Bash(gh pr create:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr list:*)",
+      "Bash(git fetch:*)",
+      "Bash(git ls-remote:*)"
     ]
   },
   "hooks": {
