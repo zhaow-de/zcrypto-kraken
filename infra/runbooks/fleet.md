@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**. Find the section whose anchor matches the alert `uid`. Each section is written to be actioned without opening any other document.
 
-These three rules are one routine — memory watched continuously across the fleet, regardless of converges — and they cover every long-lived process the fleet scrapes: both capture daemons, the engine, the ops liquidations poller, and Alloy on all four hosts. They replaced the hand-scheduled RSS reads the capture-image bake used to carry.
+These four rules are one routine — memory watched continuously across the fleet, regardless of converges — and they cover every long-lived process the fleet scrapes: both capture daemons, the engine, the ops liquidations poller, and Alloy on all four hosts. They replaced the hand-scheduled RSS reads the capture-image bake used to carry.
 
 `README.md` beside this file is the index, and states what belongs in a runbook at all.
 
@@ -39,7 +39,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its 512 MiB container limit** for fifteen minutes.
+A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its container limit** — 1 GiB on ops, 512 MiB on zcrypto, zcrypto-red and nas — for fifteen minutes. That 90 % bar is Alloy's Go soft limit (GOMEMLIMIT) on every host, so crossing it means the runtime lost its soft limit.
 
 ### What it means
 
@@ -49,7 +49,7 @@ If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark
 
 ### What to do
 
-1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. ops living near 0.78 is normal; ops at 0.92 is not.
+1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. Steady state sits well below the bar on every host, and a host climbing toward 0.9 is the runtime losing its soft limit — read the trend on panel 601 against that host's cap.
 2. **Restart Alloy if it is climbing** — `sudo docker restart grafana-alloy` (on the NAS: `sudo /usr/local/bin/docker restart grafana-alloy`). Telemetry-only, seconds, and the `alloy-data` WAL and journal cursor survive it, so no backlog is re-shipped and no log tail is lost.
 3. **Repeated firing on one host is a capacity finding, not an incident** — its Alloy needs a larger `memory:` in that host's Alloy compose, which is an ansible change and a converge, not a restart.
 

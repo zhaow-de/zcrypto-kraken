@@ -3945,11 +3945,10 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # PROVISIONAL: 0.9, which is ops's measured 24 h maximum plus ~12 points. The consequence
-            # of the ceiling is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already
-            # owns at 10 m -- so this is the EARLY warning for that fault, not its detector, and it
-            # is sized to clear steady state rather than to a distribution nobody has. What derives
-            # the real value: thirty days of the per-host floors, or the first time it fires.
+            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means the Go runtime lost
+            # its soft limit and RSS is heading for the cgroup limit. The consequence of the ceiling
+            # is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already owns at 10 m --
+            # so this is the EARLY warning for that fault, not its detector.
             - evaluator: {type: gt, params: [0.9]}
     noDataState: OK
     execErrState: Alerting

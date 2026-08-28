@@ -771,9 +771,6 @@ PROVISIONAL_THRESHOLDS: set[str] = {
     # to a distribution. What derives the real value: the first leak it fires on, or thirty days of
     # floor deltas read from the fleet board's growth-per-day panel.
     "zcrypto-fleet-memory-leak",
-    # 0.9 = ops's measured 24 h maximum plus ~12 points, not a distribution. What derives the real
-    # value: thirty days of per-host floors, or the first time it fires.
-    "zcrypto-fleet-alloy-memory-headroom",
 }
 
 _PROVISIONAL = "PROVISIONAL"
@@ -921,6 +918,28 @@ def _ansible_memory_limit_bytes(path: Path, key: str) -> int:
     return int(value[:-1]) * units[value[-1].lower()]
 
 
+_SIZE_UNITS = {"gib": 1024**3, "g": 1024**3, "mib": 1024**2, "m": 1024**2}
+
+
+def _parse_size_bytes(value: str) -> int:
+    """`"920MiB"` (Alloy's GOMEMLIMIT) or `"1g"` (docker's `memory:` cap) -- MiB/GiB/m/g, the only
+    suffixes either config surface uses."""
+    m = re.match(r"(\d+)(GiB|MiB|[gGmM])$", value.strip())
+    assert m, f"unparseable size: {value!r}"
+    return int(m.group(1)) * _SIZE_UNITS[m.group(2).lower()]
+
+
+def _compose_alloy_gomemlimit_bytes(path: Path) -> int:
+    """The `GOMEMLIMIT:` literal under the grafana-alloy service -- sibling of
+    `_compose_alloy_limit_bytes`, same container_name-scoped search, reading the Go soft limit
+    instead of the container cap."""
+    text = path.read_text()
+    start = text.index("container_name: grafana-alloy")
+    m = re.search(r'GOMEMLIMIT:\s*"?(\d+(?:GiB|MiB|[gGmM]))"?', text[start:])
+    assert m, f"no GOMEMLIMIT under grafana-alloy in {path}"
+    return _parse_size_bytes(m.group(1))
+
+
 def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
     """The ratio's denominators are literal bytes in the expr, because no metric carries the container
     limit (no cadvisor on the capture hosts). A literal drifts silently when the ansible var moves --
@@ -1024,6 +1043,25 @@ def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
         if "ops_alloy_memory_limit" in path.read_text()
     ]
     assert not hits, f"ops_alloy_memory_limit overridden outside roles/ops/defaults/main.yml: {hits}"
+
+
+def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
+    """The 0.9 headroom bar means "the runtime lost its soft limit" only if GOMEMLIMIT sits at the
+    same fraction of the container cap on every host -- ops's 920MiB/1g and the other three's
+    460MiB/512m both land at 0.898. [0.88, 0.92] tolerates the MiB-vs-binary-GiB rounding without
+    tolerating a cap raised (or a GOMEMLIMIT left behind) without its ratio partner."""
+    ops_defaults = ANSIBLE / "roles/ops/defaults/main.yml"
+    ops_soft = _parse_size_bytes(yaml.safe_load(ops_defaults.read_text())["ops_alloy_gomemlimit"])
+    ops_cap = _ansible_memory_limit_bytes(ops_defaults, "ops_alloy_memory_limit")
+    ratios = {"ops": ops_soft / ops_cap}
+    for host, compose_path in (
+        ("zcrypto", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
+        ("zcrypto-red", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
+        ("nas", REPO / "infra/nas/compose.yaml"),
+    ):
+        ratios[host] = _compose_alloy_gomemlimit_bytes(compose_path) / _compose_alloy_limit_bytes(compose_path)
+    for host, ratio in ratios.items():
+        assert 0.88 <= ratio <= 0.92, f"{host}: GOMEMLIMIT/cap = {ratio:.3f}, outside [0.88, 0.92]"
 
 
 @pytest.mark.parametrize("uid", [_MEM_HEADROOM, _MEM_LEAK, _DAEMON_RESTARTED])

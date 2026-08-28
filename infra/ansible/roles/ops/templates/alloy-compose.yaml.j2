@@ -44,7 +44,7 @@ services:
     network_mode: host
     environment:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
-      GOMEMLIMIT: 460MiB
+      GOMEMLIMIT: "{{ ops_alloy_gomemlimit }}"
     env_file:
       # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
       # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, never committed, rendered by this role
