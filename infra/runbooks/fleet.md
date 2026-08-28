@@ -39,17 +39,17 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its container limit** — 1 GiB on ops, 512 MiB on zcrypto, zcrypto-red and nas — for fifteen minutes. That 90 % bar is Alloy's Go soft limit (GOMEMLIMIT) on every host, so crossing it means the runtime lost its soft limit.
+A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its container limit** — 1 GiB on ops, 512 MiB on zcrypto, zcrypto-red and nas — for fifteen minutes. That 90 % bar is Alloy's Go soft limit (GOMEMLIMIT) on every host, so crossing it means RSS has passed the Go soft limit and is heading for the cgroup limit.
 
 ### What it means
 
-**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Ordered by proximity to its bar: ops highest (it reads the most journal — reconcile, panel, verify-replay, tape-bars, liquidations), then zcrypto, zcrypto-red, nas. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
+**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Each host is read against **its own** cap — ops's is 1 GiB, the other three's is 512 MiB — so a raw RSS number means nothing until it is divided by that host's cap; panel 601 plots raw RSS, so do that division before judging. Ops has the largest absolute working set (it reads the most journal — reconcile, panel, verify-replay, tape-bars, liquidations) **and the largest cap**, so absolute RSS and proximity to the bar do not rank the same way. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
 
 If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark` reports it within ~10 min. **This is the warning before that**, not the detector for it.
 
 ### What to do
 
-1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. Steady state sits well below the bar on every host, and a host climbing toward 0.9 is the runtime losing its soft limit — read the trend on panel 601 against that host's cap.
+1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. Steady state sits well below the bar on every host, and a host climbing toward 0.9 is RSS approaching the Go soft limit, heading for the cgroup limit — read the trend on panel 601 against that host's cap.
 2. **Restart Alloy if it is climbing** — `sudo docker restart grafana-alloy` (on the NAS: `sudo /usr/local/bin/docker restart grafana-alloy`). Telemetry-only, seconds, and the `alloy-data` WAL and journal cursor survive it, so no backlog is re-shipped and no log tail is lost.
 3. **Repeated firing on one host is a capacity finding, not an incident** — its Alloy needs a larger `memory:` in that host's Alloy compose, which is an ansible change and a converge, not a restart.
 
