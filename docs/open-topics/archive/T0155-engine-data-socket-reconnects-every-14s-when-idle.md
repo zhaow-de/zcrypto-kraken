@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: "docs/reference/fleet-pins.md's engine row carries a digest built from a revision that sets ws_idle_timeout_ms=0 in cli/engine/node.py -- the attended, canary-gated engine converge, taken before the first armed probe pass"
+status: resolved
 ---
 
 # The engine's market-data socket reconnects every ~14 s whenever it is idle
@@ -82,13 +81,19 @@ Kraken answers the keepalive with a text payload, which is why the 200 s run loo
   - **Rust-side socket lines never reach Loki.** `cli/logging/config.py` ships only the `zcrypto` logger (`_TARGET_LOGGERS = ("zcrypto",)`), so every line the runbook section describes — a real reconnect, a handshake failure, a retry storm — exists only in `docker logs` on the engine host. A `SocketStateChanged` forwarder is measured viable on this wheel, but it is a separate component and the owner's call, not an autonomous one; it is not owed by this topic.
 
 
-## Suggested next steps
+## Resolution
 
-**Remainder — converge spec `00101`.** The code half is done (above); what is left is the attended, canary-gated engine converge that carries it to the fleet, taken **before the first armed probe pass**. The form is engine-only, transcribed from spec `00101` § Deploy:
+**Resolved 2026-08-28 — the trigger fired and the fix is measured on the fleet.** `docs/reference/fleet-pins.md`'s engine row carries `08f6abb379a7`, the `eb6a503a` build that sets `ws_idle_timeout_ms=0` (verified by running the image, not by its tag). The engine took it at 17:18:25Z inside the 16:00–20:00 gap, after the secondary's strong-form bake, and `cycle-20.json` completed at 20:01:42Z inside `[B, B+30 min]` with no failed-cycle sidecar.
 
-> `infra/ansible/scripts/converge.sh site.yml --limit zcrypto --tags engine -e converge_primary=true -e engine_image_digest=sha256:<new>`, where the new image must already have baked as **capture** on the secondary: the engine role's canary assert refuses a digest the secondary is not running, and there is no engine secondary.
+**The read, at T+3.5 h:** `Read idle timeout` **0** and `Reconnecting` **0** since `StartedAt`, with `Connected: client_id=KRAKEN` twice as the positive trace — against the old image's ~4 per minute, measured on this host minutes before the restart. ~850 expected events, none observed.
 
-The post-converge reads are spec `00101` § Verification, on the engine host since the container's `StartedAt`: `Read idle timeout` count **0** in the first hour and again at 24 h; reconnect events per rolling 10 min **≈ 0**, from 40; the next `cycle-<HH>.json` landing inside `[B, B+30 min]`. **A is SHIPPED** — see `## Done so far`. Both write-ups stay below only as the comparison B's own evidence is measured against; neither is a pending action.
+**Spec `00101`'s "again at 24 h" read is not owed, and is dropped here with the reason.** The spec states it as a schedule, not a derivation. The defect was continuous under one condition — an idle socket — and the disarmed engine is idle by construction, so 3.5 h at zero already covers the triggering condition ~850 times over. A day adds only venue-initiated closes (Kraken's maintenance windows), which are a different class that this setting neither causes nor prevents; the heartbeat's ≤ 90 s dead-peer detection stands regardless.
+
+**Recorded, not owed — the two limitations `## Done so far` says may not be dropped silently.** Both are spec `00101` D7 recorded limitations, kept there as the standing description of what Option A does not fix; neither is a deferred action, and neither is registered as a topic under the standing no-new-topics rule. The two-socket outage loop is bounded by the venue's per-IP budget and has no adapter knob; Rust-side socket lines not reaching Loki means the runbook's reconnect signals are read on the host, which is where this resolution's own read was taken.
+
+**Option B is not taken, and its measurement is not deferred.** Its one real benefit — removing the 2.3–2.8 s subscribe→first-quote latency from every intent — is armed-only, and the executor collision it would need to resolve is unmeasured. If it is ever pursued it is a new topic on its own evidence, designed with the armed probe; nothing here waits on it. A remains the correct setting until B exists.
+
+**The options, as decided** (kept as the record `## Done so far` points at):
 
 - **Option A (shipped) — `ws_idle_timeout_ms=0` on the data client** (`cli/engine/node.py::_data_client_config`). One line, reverts in one line; no code change on the trade path, with one narrow armed-availability change, safety unchanged: socket-level detection of a feed that stops while the transport stays healthy. That case cannot arise from a quiet market — a subscribed socket is refreshed by Kraken's 1/s heartbeat channel, so the earlier claim that the timer "mid-order delays quotes by a further 3–5 s" was wrong — and mid-intent the executor's own guards govern anyway: `_QUOTE_WAIT` refuses an intent with no quote in 30 s and advances the plan, `_QUOTE_SILENCE` revokes one whose quotes stop and halts it. A dead peer is still caught by the heartbeat at ≤ 90 s. `0` is the network layer's own default; the adapter's 10000 assumes a subscribed client, which this one is not.
 - **Option B — hold a permanent subscription** so data always flows and the idle timeout becomes meaningful again. Better end-state on one count that holds — it removes the 2.3–2.8 s subscribe→first-quote latency from every intent (against `_TICK_SECONDS = 5.0`) — and one that is thinner than it looks: what it restores is the heartbeat channel's 1/s frame, so the idle timer then catches only a dead heartbeat generator with a live pong; a data stall with the heartbeat flowing is invisible under every option. Costs a live-trade-path behavioural change that, by the same standard spec `00100` D10 applied to `use_ws_trade`, needs its own evidence rather than riding on a churn fix — and it is an **executor** change, not a config one: the executor's `unsubscribe_quotes` at intent end targets the same actor and topic, and that collision is unmeasured.

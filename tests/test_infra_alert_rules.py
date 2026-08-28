@@ -899,8 +899,11 @@ ANSIBLE = REPO / "infra/ansible"
 
 
 def _compose_alloy_limit_bytes(path: Path) -> int:
-    """The `memory:` limit under the grafana-alloy service in a compose file -- a literal, not a var,
-    in all three templates, which is exactly why the rule's constant must be read back from it."""
+    """The `memory:` limit under the grafana-alloy service in a compose file -- a literal in the three
+    shared-cap legs this helper is actually called for (zcrypto and zcrypto-red, both the capture
+    role's template, and nas, its own compose file). ops is deliberately excluded: its cap is the
+    `ops_alloy_memory_limit` var, not a literal, so passing its template through here would trip the
+    `assert m` below."""
     text = path.read_text()
     start = text.index("container_name: grafana-alloy")
     m = re.search(r"memory:\s*\"?(\d+)([gGmM])\"?", text[start:])
@@ -915,6 +918,30 @@ def _ansible_memory_limit_bytes(path: Path, key: str) -> int:
     return int(value[:-1]) * units[value[-1].lower()]
 
 
+_GOMEMLIMIT_UNITS = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
+
+
+def _parse_size_bytes(value: str) -> int:
+    """`"920MiB"`, as Alloy's GOMEMLIMIT -- Go's own suffixes only (`B`/`KiB`/`MiB`/`GiB`/`TiB`).
+    Docker's `m`/`g` (the `_ansible_memory_limit_bytes`/`_compose_alloy_limit_bytes` side) parse to
+    the same bytes at the SAME value but are invalid GOMEMLIMIT syntax -- Go rejects them and Alloy
+    crash-loops at startup, so accepting them here would let that defect read as a passing ratio."""
+    m = re.match(r"(\d+)(TiB|GiB|MiB|KiB|B)$", value.strip())
+    assert m, f"not a valid Go GOMEMLIMIT suffix: {value!r}"
+    return int(m.group(1)) * _GOMEMLIMIT_UNITS[m.group(2).lower()]
+
+
+def _compose_alloy_gomemlimit_bytes(path: Path) -> int:
+    """The `GOMEMLIMIT:` literal under the grafana-alloy service -- sibling of
+    `_compose_alloy_limit_bytes`, same container_name-scoped search, reading the Go soft limit
+    instead of the container cap."""
+    text = path.read_text()
+    start = text.index("container_name: grafana-alloy")
+    m = re.search(r'GOMEMLIMIT:\s*"?(\d+(?:TiB|GiB|MiB|KiB|B))"?', text[start:])
+    assert m, f"no GOMEMLIMIT under grafana-alloy in {path}"
+    return _parse_size_bytes(m.group(1))
+
+
 def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
     """The ratio's denominators are literal bytes in the expr, because no metric carries the container
     limit (no cadvisor on the capture hosts). A literal drifts silently when the ansible var moves --
@@ -925,14 +952,7 @@ def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
     primary = _ansible_memory_limit_bytes(ANSIBLE / "roles/capture/defaults/main.yml", "capture_memory_limit")
     secondary = _ansible_memory_limit_bytes(ANSIBLE / "host_vars/zcrypto-red/vars.yml", "capture_memory_limit")
     engine = _ansible_memory_limit_bytes(ANSIBLE / "roles/engine/defaults/main.yml", "engine_memory_limit")
-    alloy = {
-        "zcrypto": _compose_alloy_limit_bytes(ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
-        "zcrypto-red": _compose_alloy_limit_bytes(ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
-        "ops": _compose_alloy_limit_bytes(ANSIBLE / "roles/ops/templates/alloy-compose.yaml.j2"),
-        "nas": _compose_alloy_limit_bytes(REPO / "infra/nas/compose.yaml"),
-    }
     legs = [("zcrypto", "capture_app", primary), ("zcrypto-red", "capture_app", secondary), ("zcrypto", "engine_app", engine)]
-    legs += [(host, "integrations/self", limit) for host, limit in alloy.items()]
     for host, job, limit in legs:
         leg = re.search(
             rf'process_resident_memory_bytes\{{[^}}]*host="{host}"[^}}]*job="{job}"[^}}]*\}}\s*/\s*(\d+)', expr
@@ -975,18 +995,104 @@ def test_the_restart_rule_is_the_only_restart_signal_and_absorbs_a_datasource_hi
     assert rule["noDataState"] == "OK" and rule["execErrState"] == "Alerting"
 
 
+_ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
+
+
+def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
+    """Measured 2026-08-28 over 24 h as a fraction of the 512 MiB each Alloy compose sets: ops
+    0.7525-0.7795, zcrypto 0.5237-0.5708, zcrypto-red 0.2636, nas 0.1441. The app daemons sit at
+    0.08-0.37. A shared 0.7 bar therefore pages ops on a healthy fleet every evaluation -- which is
+    exactly what it did, on the rollout that first pushed it. The bar here clears steady state; the
+    OOM it warns about is owned separately by `Fleet · Alloy dark`."""
+    rule = _rule(_ALLOY_HEADROOM)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    # ops divides by its OWN cap. 399.1 MiB peak against a 117 MiB swing left only 113 MiB under the
+    # 512m every other Alloy carries, and ops is the one host where margin is free (62.5 GiB, 47
+    # available) -- the capture hosts hold 3.83 and 1.93 GiB and already commit 3.5 g / 1.5 g of caps.
+    # Read the number back from the ansible var so raising the cap without the rule fails here.
+    ops_cap = _ansible_memory_limit_bytes(ANSIBLE / "roles/ops/defaults/main.yml", "ops_alloy_memory_limit")
+    assert re.search(rf'host="ops", job="integrations/self"\}}\s*/\s*{ops_cap}\b', expr), (
+        f"the ops leg must divide by ops_alloy_memory_limit ({ops_cap}); a cap raised without this ratio lies: {expr!r}"
+    )
+    # The other three are LITERALS in their own compose sources, so read each back the same way --
+    # asserting the rule merely contains 536870912 would let `memory: 512m` move in a template while
+    # the ratio kept dividing by the old cap, which is the silent lie the ops pin above exists to stop.
+    others = {
+        "zcrypto": ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2",
+        "zcrypto-red": ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2",
+        "nas": REPO / "infra/nas/compose.yaml",
+    }
+    caps = {h: _compose_alloy_limit_bytes(p) for h, p in others.items()}
+    assert len(set(caps.values())) == 1, f"the three shared-cap hosts no longer share a cap: {caps} -- split the leg"
+    shared = next(iter(caps.values()))
+    assert re.search(rf'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}}\s*/\s*{shared}\b', expr), (
+        f"the shared leg must divide by the compose literal ({shared}); found: {expr!r}"
+    )
+    assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
+    assert rule["for"] != "0s" and rule["noDataState"] == "OK"
+
+
+def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
+    """`test_alloy_has_its_own_headroom_bar...` reads `ops_alloy_memory_limit` from
+    `roles/ops/defaults/main.yml` only -- a `host_vars/zcrypto-ops/vars.yml` or `group_vars/*` entry
+    would pass that test while the deployed cap diverged from the ratio's denominator, unseen. The
+    sibling `capture_memory_limit` uses exactly that override shape for real, in
+    `host_vars/zcrypto-red/vars.yml` -- so it is asserted absent here rather than assumed. This walks
+    every `*.yml` under `host_vars/` and `group_vars/`, vault files included: this repo vaults
+    per-VALUE, so a key's NAME stays plaintext even in a `vault.yml` (each such file's own header
+    says so), and the substring search below reads it. Only a key hidden inside an already-encrypted
+    value would be missed, which is not how ansible variables work."""
+    hits = [
+        path
+        for base in (ANSIBLE / "host_vars", ANSIBLE / "group_vars")
+        for path in base.rglob("*.yml")
+        if "ops_alloy_memory_limit" in path.read_text()
+    ]
+    assert not hits, f"ops_alloy_memory_limit overridden outside roles/ops/defaults/main.yml: {hits}"
+
+
+def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
+    """The 0.9 headroom bar means "the runtime lost its soft limit" only if GOMEMLIMIT sits at the
+    same fraction of the container cap on every host -- ops's 920MiB/1g and the other three's
+    460MiB/512m both land at 0.898. [0.88, 0.92] tolerates the MiB-vs-binary-GiB rounding without
+    tolerating a cap raised (or a GOMEMLIMIT left behind) without its ratio partner."""
+    ops_defaults = ANSIBLE / "roles/ops/defaults/main.yml"
+    ops_soft = _parse_size_bytes(yaml.safe_load(ops_defaults.read_text())["ops_alloy_gomemlimit"])
+    ops_cap = _ansible_memory_limit_bytes(ops_defaults, "ops_alloy_memory_limit")
+    ops_template = ANSIBLE / "roles/ops/templates/alloy-compose.yaml.j2"
+    assert 'GOMEMLIMIT: "{{ ops_alloy_gomemlimit }}"' in ops_template.read_text(), (
+        "the ops template does not read GOMEMLIMIT from the var above -- the ratio this test proves "
+        "would hold on paper while a literal left in the template ships something else entirely"
+    )
+    ratios = {"ops": ops_soft / ops_cap}
+    for host, compose_path in (
+        ("zcrypto", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
+        ("zcrypto-red", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
+        ("nas", REPO / "infra/nas/compose.yaml"),
+    ):
+        ratios[host] = _compose_alloy_gomemlimit_bytes(compose_path) / _compose_alloy_limit_bytes(compose_path)
+    for host, ratio in ratios.items():
+        assert 0.88 <= ratio <= 0.92, f"{host}: GOMEMLIMIT/cap = {ratio:.3f}, outside [0.88, 0.92]"
+
+
 @pytest.mark.parametrize("uid", [_MEM_HEADROOM, _MEM_LEAK, _DAEMON_RESTARTED])
 def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
-    """The routine is fleet-wide: both capture daemons, the engine (primary only -- nothing listens on
+    """All three rules cover both capture daemons and the engine (primary only -- nothing listens on
     9102 on the secondary, so `up{job="engine_app",host="zcrypto-red"}` has read 0 for every sample of
-    its life), the ops liquidations poller, and Alloy itself on all four hosts under the
-    `integrations/self` job its exporter.self metrics carry (measured 2026-08-28). A selector that names
-    a series that never exists is not coverage."""
+    its life). The leak and restart rules additionally cover the ops liquidations poller and Alloy
+    itself on all four hosts under the `integrations/self` job its exporter.self metrics carry
+    (measured 2026-08-28) -- the headroom rule excludes both, Alloy to its own bar below, the poller
+    for want of a limit to measure against. A selector that names a series that never exists is not
+    coverage."""
     rule = _rule(uid)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
-    for token in ("capture_app", "engine_app", "integrations/self", '"nas"' if uid == _MEM_HEADROOM else "|nas"):
-        assert token in expr, f"{uid} does not cover {token}: {expr!r}"
-    if uid != _MEM_HEADROOM:  # the poller has no memory limit, so no headroom leg -- leak and restart cover it
-        assert "liquidations_app" in expr, expr
+    if uid == _MEM_HEADROOM:  # the app daemons only: Alloy has its own bar, the poller has no limit
+        for token in ("capture_app", "engine_app"):
+            assert token in expr, f"{uid} does not cover {token}: {expr!r}"
+        assert "integrations/self" not in expr, "Alloy runs near its ceiling; a shared bar pages it on a healthy fleet"
+        assert "liquidations_app" not in expr, "the poller has no limit to measure against"
+    else:
+        for token in ("capture_app", "engine_app", "integrations/self", "liquidations_app", "|nas"):
+            assert token in expr, f"{uid} does not cover {token}: {expr!r}"
     assert not re.search(r'job="engine_app"[^}]*host=~"zcrypto\|zcrypto-red"', expr), "engine_app must not select zcrypto-red"
     assert not re.search(r'host=~"zcrypto\|zcrypto-red"[^}]*job="engine_app"', expr), "engine_app must not select zcrypto-red"

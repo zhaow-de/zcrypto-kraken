@@ -163,7 +163,18 @@ def test_wrong_confirmation_aborts(tmp_path):
     assert len(invocations(tmp_path)) == 1
 
 
-def test_typed_limit_runs_the_real_pass(tmp_path):
+def _clear_deploy_env(monkeypatch):
+    """`ZCRYPTO_DEPLOY_LOG` / `ZCRYPTO_ANSIBLE_DIR`, cleared before every converge.sh exec in this
+    file that does not set them itself -- pty.fork() inherits pytest's os.environ verbatim, so a
+    developer shell exporting either would make the script under test write outside the fixture path
+    the assertions read. `run_recording` sets both on `os.environ` on purpose, for its own tests, and
+    must never be routed through this helper."""
+    monkeypatch.delenv("ZCRYPTO_DEPLOY_LOG", raising=False)
+    monkeypatch.delenv("ZCRYPTO_ANSIBLE_DIR", raising=False)
+
+
+def test_typed_limit_runs_the_real_pass(tmp_path, monkeypatch):
+    _clear_deploy_env(monkeypatch)
     script = make_harness(tmp_path)
     rc, _out = run_with_tty(script, ["site.yml", "--limit", "zcrypto-red"], "zcrypto-red")
     assert rc == 0
@@ -173,7 +184,8 @@ def test_typed_limit_runs_the_real_pass(tmp_path):
     assert "--check" not in inv[1] and "--limit zcrypto-red" in inv[1]
 
 
-def test_limit_equals_form_is_parsed(tmp_path):
+def test_limit_equals_form_is_parsed(tmp_path, monkeypatch):
+    _clear_deploy_env(monkeypatch)
     script = make_harness(tmp_path)
     rc, out = run_with_tty(script, ["site.yml", "--limit=zcrypto-ops"], "zcrypto-ops")
     assert rc == 0
@@ -272,3 +284,113 @@ def test_an_aborted_confirm_records_nothing(tmp_path):
     rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red"], reply="wrong")
     assert rc == 3
     assert not log.exists()
+
+
+# --- the committed pins: a tier whose digest is a FILE must still name it in the record -------------
+# The NAS pin is `nas_capture_image` in host_vars, not an `-e` flag, so its machine line recorded
+# `nas_apply_compose` and no digest at all -- on the one tier whose pin lives in git. The rollback
+# operand was recoverable (revision + the committed file) but not READABLE, which defeats the point
+# of writing the line from the pass that set it. Read from the plaintext vars file, never through
+# `ansible-inventory --host`, which decrypts the vault.
+
+
+def write_host_vars(tmp_path, host, body):
+    d = tmp_path / "ansible" / "host_vars" / host
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "vars.yml").write_text(body)
+    return tmp_path / "ansible"
+
+
+def test_a_committed_image_pin_is_recorded_even_though_no_dash_e_carries_it(tmp_path):
+    ansible_dir = write_host_vars(
+        tmp_path,
+        "nas",
+        "# a comment\n"
+        "nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "9f" * 32 + "\n"
+        "nas_alloy_image: grafana/alloy@sha256:" + "49" * 32 + "\n"
+        "nas_stack_dir: /volume1/docker/zcrypto-archive\n",
+    )
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "nas", "--tags", "nas", "-e", "nas_apply_compose=true"],
+        reply="nas",
+        env={"ZCRYPTO_ANSIBLE_DIR": str(ansible_dir)},
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["committed_pins"] == {
+        "nas_capture_image": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "9f" * 32,
+        "nas_alloy_image": "grafana/alloy@sha256:" + "49" * 32,
+    }, rec["committed_pins"]
+    assert "nas_stack_dir" not in rec["committed_pins"], "only digest-pinned image refs, not every var"
+
+
+def test_a_limit_with_no_host_vars_records_an_empty_pin_map_not_a_missing_key(tmp_path):
+    """A group limit, or a host whose pins are all extra-vars, must still produce the key -- a reader
+    that has to distinguish 'absent' from 'none' cannot tell a new script from an old one."""
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red"],
+        env={"ZCRYPTO_ANSIBLE_DIR": str(tmp_path / "ansible")},
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["committed_pins"] == {}
+
+
+# --- `dirty` must describe the TREE ANSIBLE RENDERS, not the log this script just wrote ------------
+# Measured on the first live rollout: the 13:18:16Z converge recorded dirty=false, appended its own
+# line, and the 13:20:28Z converge two minutes later recorded dirty=true against the same revision --
+# dirtied by nothing but the recorder. The flag means "revision does not fully describe what was
+# deployed", which is real (ansible renders from the working tree); the log cannot affect that.
+
+
+def make_repo_harness(tmp_path, monkeypatch):
+    """A real git repo laid out as the script expects: <repo>/infra/ansible/scripts/converge.sh.
+
+    _clear_deploy_env: the asserts below read the fixture's own deploy-log path, and run_with_tty's
+    exec would otherwise inherit a developer shell's ZCRYPTO_DEPLOY_LOG / ZCRYPTO_ANSIBLE_DIR.
+    """
+    _clear_deploy_env(monkeypatch)
+    repo = tmp_path / "repo"
+    scripts = repo / "infra" / "ansible" / "scripts"
+    scripts.mkdir(parents=True)
+    (repo / "docs" / "reference").mkdir(parents=True)
+    shutil.copy(SCRIPT, scripts / "converge.sh")
+    (scripts / "run.sh").write_text(FAKE_RUN_SH)
+    for name in ("converge.sh", "run.sh"):
+        p = scripts / name
+        p.chmod(p.stat().st_mode | stat.S_IXUSR)
+    (repo / "docs" / "reference" / "deploy-log.jsonl").write_text("")
+    # The fake run.sh writes invocations.log INSIDE the fixture repo, so without this the harness
+    # dirties the very tree these tests measure -- and the script would look broken while being right.
+    (repo / ".gitignore").write_text("invocations.log\n")
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    for cmd in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "base"]):
+        subprocess.run(["git", "-C", str(repo), *cmd], check=True, env=env, capture_output=True)
+    return repo, scripts / "converge.sh"
+
+
+def _dirty_of_last_record(repo):
+    log = repo / "docs" / "reference" / "deploy-log.jsonl"
+    return json.loads(log.read_text().splitlines()[-1])["dirty"]
+
+
+def test_the_logs_own_append_does_not_make_the_next_converge_read_dirty(tmp_path, monkeypatch):
+    repo, script = make_repo_harness(tmp_path, monkeypatch)
+    rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
+    assert rc == 0 and _dirty_of_last_record(repo) is False, "clean tree, first converge"
+    # the line just written is now uncommitted -- the exact state that produced the false positive
+    rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
+    assert rc == 0
+    assert _dirty_of_last_record(repo) is False, "the recorder's own line is not a dirty working tree"
+
+
+def test_a_real_uncommitted_change_still_reads_dirty(tmp_path, monkeypatch):
+    """The signal that matters must survive the fix -- ansible renders from the working tree, so a
+    modified role really does mean `revision` understates what was deployed."""
+    repo, script = make_repo_harness(tmp_path, monkeypatch)
+    (repo / "infra" / "ansible" / "somerole.yml").write_text("- name: a task\n")
+    rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
+    assert rc == 0
+    assert _dirty_of_last_record(repo) is True, "an uncommitted role change must still read dirty"

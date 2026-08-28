@@ -26,6 +26,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 ### [`fleet.md`](fleet.md) — every long-lived daemon's memory and restarts
 
 - [`zcrypto-fleet-memory-headroom`](fleet.md#zcrypto-fleet-memory-headroom) — ALERT: a daemon is above 70 % of its container memory limit — the slow-leak alarm, watched as a routine and never as a rollout read.
+- [`zcrypto-fleet-alloy-memory-headroom`](fleet.md#zcrypto-fleet-alloy-memory-headroom) — ALERT: Alloy is above 90 % of its container limit (1 GiB on ops, 512 MiB elsewhere) — it runs nearer its ceiling than the app daemons by design, so it has its own bar.
 - [`zcrypto-fleet-memory-leak`](fleet.md#zcrypto-fleet-memory-leak) — ALERT: a daemon's hourly memory floor rose 64 MiB over a day — the early notice, a week ahead of the limit page.
 - [`zcrypto-fleet-daemon-restarted`](fleet.md#zcrypto-fleet-daemon-restarted) — ALERT: a daemon restarted — a converge's or Alloy bump's own record when one just ran, the only OOM-kill/crash signal otherwise.
 

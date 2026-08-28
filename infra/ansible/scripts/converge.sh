@@ -55,6 +55,9 @@ fi
 # tree it ran from, and how it ended. The digest and the timestamp a rollback needs are then written
 # by the pass that set them, never re-typed from memory into fleet-pins.md afterwards. Preview-only
 # runs and aborted confirms never reach this point, so they leave no line.
+# The line is written by THIS process after the pass returns: a wrapper killed mid-pass (terminal
+# death, a timeout) leaves an orphaned ansible child that converges with NO record -- the host's
+# container .State.StartedAt is the evidence then; append the line by hand from it.
 set +e
 "$SD/run.sh" "$PLAYBOOK" "$@"
 rc=$?
@@ -70,22 +73,57 @@ for a in "$@"; do
   esac
   prev="$a"
 done
+ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 REV="$(git -C "$SD" rev-parse HEAD 2>/dev/null || echo unknown)"
-DIRTY=false; [ -n "$(git -C "$SD" status --porcelain 2>/dev/null)" ] && DIRTY=true
+# `dirty` answers "does REV fully describe what was deployed?" -- ansible renders from the working
+# tree, so a modified role means it does not. The deploy log is excluded because THIS SCRIPT writes
+# it: measured on the first live rollout, a converge recorded dirty=false, appended its line, and
+# the next converge two minutes later read dirty=true at the same revision, dirtied by nothing but
+# the recorder. A flag that cannot separate that from a modified role reports neither.
+TOP="$(git -C "$SD" rev-parse --show-toplevel 2>/dev/null || true)"
+DIRTY=false
+if [ -n "$TOP" ]; then
+  # Both sides resolved before comparing: $LOG carries `../../..` from $SD, so an unresolved
+  # prefix test yields a pathspec git cannot match and the exclusion silently does nothing.
+  LOGABS="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LOG" 2>/dev/null || echo "$LOG")"
+  TOPABS="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TOP" 2>/dev/null || echo "$TOP")"
+  LOGREL=""
+  case "$LOGABS" in "$TOPABS"/*) LOGREL="${LOGABS#"$TOPABS"/}" ;; esac
+  if [ -n "$LOGREL" ]; then
+    STATUS="$(git -C "$TOP" status --porcelain -- ':(top)' ":(top,exclude)$LOGREL" 2>/dev/null || true)"
+  else
+    STATUS="$(git -C "$TOP" status --porcelain 2>/dev/null || true)"
+  fi
+  [ -n "$STATUS" ] && DIRTY=true
+fi
 # Best-effort and LOUD, never fatal: the pass has already run, so its rc is the truth this script
 # returns; a record that cannot be written is printed for the operator to append by hand instead of
 # being turned into a converge failure that did not happen.
-python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
-import json, sys, datetime as dt
-log, playbook, limit, tags, rev, dirty, rc, ev = sys.argv[1:9]
+python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
+import json, pathlib, sys, datetime as dt
+log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
 extra = {}
 for line in ev.splitlines():
     if "=" in line:
         k, v = line.split("=", 1)
         extra[k.strip()] = v.strip()
+# The pins this converge deployed that NO -e carries: the NAS's image lives in a committed
+# host_vars file, so its line named an apply flag and no digest at all -- on the one tier whose
+# rollback operand is in git. Read from the PLAINTEXT vars.yml with a regex, never through
+# `ansible-inventory --host`, which decrypts the vault and prints every secret (CLAUDE.md).
+# Only `@sha256:`-pinned image refs: a path or a port is not a rollback operand.
+# The value must be bare -- unquoted, no trailing YAML comment -- or this regex silently drops it
+# and the pin goes unrecorded.
+import re as _re
+committed = {}
+_vars = pathlib.Path(adir) / "host_vars" / limit / "vars.yml"
+if _vars.is_file():
+    for m in _re.finditer(r"^(\w+_image):\s*(\S+@sha256:[0-9a-f]{64})\s*$", _vars.read_text(), _re.M):
+        committed[m.group(1)] = m.group(2)
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
+    "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }
 line = json.dumps(rec, sort_keys=True)

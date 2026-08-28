@@ -93,6 +93,13 @@ ops_panel_healthcheck_url: ""
 # (plan 00054 Task 3 gates Task 7). Without it the node's four textfiles reach nobody, and moving
 # the writer onto an unobservable host would be T0052's defect one level up.
 ops_alloy_dir: /etc/zcrypto-ops/alloy
+# Alloy's container memory cap on THIS host. 1g, not the 512m the other three run: measured
+# 2026-08-28, ops Alloy peaks at 399.1 MiB over 14 d against a 117 MiB swing.
+# `zcrypto-fleet-alloy-memory-headroom` divides by this same number, so the two move together.
+ops_alloy_memory_limit: 1g
+# The Go runtime's soft limit -- 0.9 x ops_alloy_memory_limit on every Alloy host, so the headroom
+# rule's 0.9 bar means the runtime lost its soft limit. The two move together; a test pins the ratio.
+ops_alloy_gomemlimit: 920MiB
 ops_alloy_image: grafana/alloy
 # The secrets file (GRAFANA_PROM_URL/USERNAME/PASSWORD + GRAFANA_LOKI_URL/USERNAME/PASSWORD) has no
 # role var: alloy-compose.yaml.j2 hardcodes its relative `env_file: ./alloy-secrets.env` (nothing
