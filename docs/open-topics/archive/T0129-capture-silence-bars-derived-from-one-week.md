@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: "ripe NOW — the 30 d base is unreachable, so nothing is being waited for. Decide: re-derive against the 14 d maximum the platform retains, or keep the bars and record the base they rest on."
+status: resolved
 ---
 
 # Both capture silence bars are derived from one week of data, not thirty days
@@ -29,8 +28,22 @@ The rules sit on the unbackfillable capture path, where both error directions co
 - **The 42,000-sample threshold was unreachable from the start, and the series had already plateaued when this topic read it as progress.** A full 30 d is 43,200 samples at one per 60 s. The readings: 10,435 / 10,838 at the 2026-08-05 derivation, 20,188 on 2026-08-23 — recorded here as "tracking as designed" — and **20,169 on 2026-08-26, which is LOWER**. It was not tracking; it had hit a ceiling and the window was sliding. Measured the same day: `[14d]` = **20,160**, an exactly complete 14 days, while `[21d]` and `[30d]` both return 20,169 — the same ~14 days plus 9 stragglers at the boundary.
 - **The cause is the plan, not the fleet: Grafana Cloud's free tier retains a maximum of 14 days.** No `[30d]` selector can ever return more than ~20,160 samples here, so `>= 42000` could never fire and the "genuinely full 30 d window" this topic was waiting for does not exist. The alert rule's own comment came close — "THE BASE IS ONE WEEK, NOT A MONTH, which the `[30d]` selector hides" — but assumed the window would fill in time. It cannot.
 
-## Suggested next steps
+## Resolution
 
-- *(needs a ruling first: re-derive on 14 d, or keep the bars and record the base)* If re-deriving, run it against `[14d]` — the maximum retained — and record both outcomes, including "unchanged". Confirm the window is complete with `count_over_time(zcrypto_capture_seconds_since_last_book_message[14d])` (≈20,160 is full), then `max_over_time(zcrypto_capture_seconds_since_last_book_message[14d])` per pair per host and `max_over_time(min by (host) (zcrypto_capture_seconds_since_last_book_message)[14d:1m])`. Exclude any interval containing a known fleet-wide event before reading the *natural* per-pair maximum — the 2026-07-29 event is the reason the raw per-pair maxima were misread once already.
-- *(autonomous, same pass)* If either bar moves, move every surface that carries it in the same commit: the evaluator in `infra/grafana/alerts.yaml`, that rule's `for`, its summary's stated notice period, the D11 row in `docs/specs/00084-dashboards-and-notifications-design.md`, and `data-integrity-dashboard.json` panel 102 (both its threshold step and its description). The per-pair number lives on four surfaces and the panel is the one previously missed.
-- *(autonomous, same pass)* Re-check whether the 2026-07-29 fleet-wide silence has a sibling. A second instance turns an unexplained one-off into a distribution with a shape, which is what the 4× margin is currently standing in for; a full month with no repeat is itself the evidence that the margin can be reasoned about rather than guessed.
+**Resolved 2026-08-28.** The bars were re-derived against the full 14 d the platform retains, and **neither moves**. The value of the exercise turned out not to be the re-derivation.
+
+**The window is complete and the ceiling is confirmed a second time.** `count_over_time(...[14d])` = **20159 / 20158** of a possible 20160; `[30d]` returns **20202** — the same ~14 days plus 42 boundary stragglers. The 2026-08-26 reading reproduces.
+
+**Both bars stand, and the margin is larger than the topic feared, not thinner.** Over the 13 retained days containing no venue window the fleet-wide minimum peaked at **6.134482 s** and the binding per-pair reading at **14.160757 s** (`zcrypto-red` SOL/BTC, with no capture restart within 26 h — checked, because four secondary restarts fall inside the window). So 120 is ~20× its natural envelope and 300 is ~20× its own.
+
+**This topic's central premise was wrong, and correcting it is the durable outcome.** "The platform retains 14 days, so a fuller base never arrives" is true of **this gauge** and false of **the phenomenon**. The parquet archive holds the whole capture era at full resolution and `infra/scripts/gap_distribution.py` measures book silence from it — the instrument that produced the repo's own **14.78 s** single-host natural maximum (AVAX, 7,847,932 messages, 2026-07-14, [[T0039]]). The gauge and the archive **agree**, which is what makes these bars trustworthy; the window length never was the thing to wait for. A future re-derivation starts at the archive, and prefers it: a 60 s scrape censors short silences and is biased low.
+
+**The claim "the tail grew" is withdrawn.** 14.160757 s < 14.78 s: the envelope has been ~15 s since July. The earlier comparison was against 12.068981 s, a different and smaller quantity, which is also why the per-pair margin was recorded as ~25× when it is ~20×.
+
+**What was actually broken was the prose, on four surfaces.** [[T0145]] identified the fleet-dark class as published Kraken maintenance on 2026-08-21, but "no natural cause produces it" / "cause unexplained" went on being read in `infra/grafana/alerts.yaml`, `docs/specs/00084-...`, the data-integrity board's panel 102 and the operator-visible alert summary. All four are corrected, and the correspondence is now measured rather than asserted: **every firing in either rule's operational life — 2026-08-06 and 2026-08-20, both hosts — fell inside an announced "Kraken Website and API Maintenance" window, and no unexplained crossing has ever been observed.**
+
+**Both rules gained the runbook sections they never had**, opening with "read the venue calendar first"; and `infra/runbooks/capture.md`'s venue-halt step 4, which told the operator these firings were "not something to respond to separately", no longer does.
+
+**A finding this work surfaced, fixed in the same branch on the owner's ruling:** `execErrState: Alerting` was uniform across all 75 rules and undiscussed. On these two it produced **264 execution-error instances against 52 genuine ones (83.5 %)** between 2026-08-05 and 08-28 — Grafana Cloud failing to reach its own Prometheus — and the page was not merely noisy but **false**, asserting a total capture blackout the query never ran to observe. These two rules now carry `execErrState: OK`, pinned by tests with a guard refusing a third rule to join; the other 73 keep `Alerting`, so datasource trouble is still reported.
+
+**Nothing is deferred.** The one improvement consciously NOT made — a single dedicated owner for "the alerting datasource is unreadable", which would make the other 73 rules' `Alerting` redundant rather than merely loud — is recorded in the runbook's own `### Retire when`, and leaves nothing unwatched in the meantime.
