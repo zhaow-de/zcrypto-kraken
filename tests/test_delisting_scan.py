@@ -67,3 +67,31 @@ def test_a_completed_window_in_the_past_is_still_reported():
 def test_non_delisting_maintenance_is_ignored():
     """The feed is mostly maintenance windows; only the delisting class concerns identity."""
     assert scan_delistings(_feed(_entry("Kraken Website and API Maintenance", components=("WebSocket",))), SELECTED) == []
+
+
+def _entry_with_body(name, body, when="2026-12-01T00:00:00.000Z"):
+    e = _entry(name, when=when)
+    e["incident_updates"] = [{"body": body}]
+    return e
+
+
+def test_an_asset_named_only_in_the_announcement_body_is_a_hit():
+    """The shape the live feed actually contains: "Delisting assets for UAE clients" (2026-09-25)
+    names its seven assets only in `incident_updates[].body` -- no ticker in the title, no
+    components. A name+components scan is silent on it, which is the whole notice lost."""
+    feed = _feed(
+        _entry_with_body(
+            "Delisting assets for UAE clients", "…delisting cycle for the following assets…: XMR, ZEC, DASH, ETH, and USDE."
+        )
+    )
+    hits = scan_delistings(feed, SELECTED)
+    assert len(hits) == 1 and hits[0]["asset"] == "ETH", hits
+
+
+def test_body_matching_is_case_sensitive_so_prose_cannot_fire_a_ticker():
+    """Bodies are English. `LINK` matches "the link below" under IGNORECASE -- measured. Kraken
+    writes tickers uppercase, so case-sensitivity over prose keeps the notice and drops the noise."""
+    feed = _feed(_entry_with_body("Some Delisting", "Please check the link below and the dot point."))
+    assert scan_delistings(feed, ("LINK", "DOT")) == []
+    feed_real = _feed(_entry_with_body("Some Delisting", "Delisting LINK and DOT."))
+    assert {h["asset"] for h in scan_delistings(feed_real, ("LINK", "DOT"))} == {"LINK", "DOT"}

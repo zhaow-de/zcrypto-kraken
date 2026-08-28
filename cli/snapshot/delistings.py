@@ -20,10 +20,17 @@ import re
 _DELISTING_WORDS = ("delist", "discontinu")
 
 
-def _mentions(text: str, asset: str) -> bool:
+def _mentions(text: str, asset: str, *, ignore_case: bool = True) -> bool:
     """Word-boundary match: `DOT` must not fire on `POLKADOT`, and a false alarm on the routine that
-    gates the go/no-go costs more than the substring convenience is worth."""
-    return re.search(rf"(?<![A-Za-z0-9]){re.escape(asset)}(?![A-Za-z0-9])", text, re.IGNORECASE) is not None
+    gates the go/no-go costs more than the substring convenience is worth.
+
+    `ignore_case` is False over announcement PROSE. Titles and component names are ticker-shaped, so
+    folding case there is free; bodies are English sentences, where `LINK` matches "the link below"
+    (measured on the 2026-09-25 UAE entry's own wording). Kraken writes tickers uppercase in bodies,
+    so a case-sensitive pass keeps the notice without importing that false positive.
+    """
+    flags = re.IGNORECASE if ignore_case else 0
+    return re.search(rf"(?<![A-Za-z0-9]){re.escape(asset)}(?![A-Za-z0-9])", text, flags) is not None
 
 
 def scan_delistings(feed: dict, selected_assets: tuple[str, ...] | list[str]) -> list[dict]:
@@ -37,9 +44,15 @@ def scan_delistings(feed: dict, selected_assets: tuple[str, ...] | list[str]) ->
         name = entry.get("name") or ""
         if not any(word in name.lower() for word in _DELISTING_WORDS):
             continue
-        haystack = name + " " + " ".join(c.get("name", "") for c in entry.get("components", []))
+        # THREE places an asset can be named, and the third is why this is not just name+components:
+        # the 2026-09-25 "Delisting assets for UAE clients" entry names its seven assets ONLY in
+        # `incident_updates[].body` -- no ticker in the title, no components at all. The argument for
+        # reading components applies one level further down, and a name+components scan is silent on
+        # that shape. Bodies are matched case-SENSITIVELY (see `_mentions`).
+        tickerish = name + " " + " ".join(c.get("name", "") for c in entry.get("components", []))
+        prose = " ".join(u.get("body", "") for u in entry.get("incident_updates", []))
         for asset in selected_assets:
-            if _mentions(haystack, asset):
+            if _mentions(tickerish, asset) or _mentions(prose, asset, ignore_case=False):
                 hits.append(
                     {
                         "asset": asset,
