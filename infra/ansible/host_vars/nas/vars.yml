@@ -41,8 +41,15 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # publishes cache.rejected, so 0 is what an
 # absent cache must read -- it is not a missed invalidation. Read `cache_hits` instead.
 # Gate metrics describe the PREVIOUS image for ~1 h after a roll — check the textfile's mtime first.
-# Previous pin: 5f890c26237a, verified resident at the re-pin.
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ec71ecac77566483acca711131459701f16e7fac8d9c60790b6bec126251ce7c
+# Previous pin: ec71ecac7756 (revision 3671b239), verified resident at the re-pin.
+# This pin INVALIDATES the gate-export fingerprint and replays it cold -- measured, not assumed:
+# `replay_fingerprint()` run inside both images reads 079691430ff3c5fd on the old and
+# 9e923611243c7565 on the new, over the same 79-file closure, because five covered modules moved
+# (alpha/a1.py, engine/{command,node,probeplan,venuestate}.py) and the fingerprint is deliberately
+# over-sensitive to a comment-only edit. Budget ~1 h: 3363 s measured 2026-08-26 against a journal
+# that has since grown 5.8% (292 cycle records, 618 MB), so scale it rather than reuse it, and read
+# the real figure back from this run.
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:9f814848fce16c76c8061522ab011f925077f31be4f818cbd13636dde53045c5
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the trap the
 # committed pin kills. Alloy v1.18.0 (2026-07-20); previous pin 4f6ddc56ffdc (v1.17.1).
 nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
