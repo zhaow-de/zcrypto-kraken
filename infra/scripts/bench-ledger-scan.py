@@ -26,10 +26,13 @@ short-circuits nearly every mint-family record at `if key in measured: continue`
 the time and the memory. Hours therefore advance monotonically here, with pair x kind cycling inside
 each hour, exactly as the writer does.
 
-Timing AND memory are measured in a child process that has held no other ledger, because `ru_maxrss`
-is a high-water mark and a forked child inherits the parent's. Measuring sizes in one loop inflates
-every reading after the first; spawning a child from a parent that just did the timing inflates it
-identically, while looking rigorous.
+Timing AND memory are measured in a CHILD PROCESS PER SIZE, and the reason is VmHWM: it is a
+per-process high-water that never falls, so one process looping over several sizes reports the
+largest so far for every size after the first. One child per size is what makes each row its own
+measurement. (`ru_maxrss` is not read here, and must not be: it is inherited verbatim across
+fork+exec, so a child of a heavy parent reports the PARENT's peak -- measured, a child allocating
+nothing reports 1215 MiB from a 1215 MiB parent while its own VmHWM is 15 MiB. Two figures published
+from this branch were wrong that way before the metric was changed.)
 
 Run: `uv run python infra/scripts/bench-ledger-scan.py [--sizes 1000,10000,...]`
 """
@@ -101,7 +104,7 @@ def _write(root: Path, count: int, seed: int = 0) -> int:
 
 def _vmhwm() -> float:
     """This process's own peak resident set, in MiB. Not inherited across fork, unlike ru_maxrss."""
-    for line in pathlib.Path("/proc/self/status").read_text().splitlines():
+    for line in Path("/proc/self/status").read_text().splitlines():
         if line.startswith("VmHWM"):
             return int(line.split()[1]) / 1024
     return float("nan")
@@ -110,17 +113,11 @@ def _vmhwm() -> float:
 def _child(root: Path, repeats: int) -> None:
     """Time and measure one ledger in a process that has held no other.
 
-    Everything happens HERE, not in the parent, and that is the whole point. `ru_maxrss` is a
-    high-water mark, and a forked child INHERITS the parent's -- a child that allocates nothing
-    reports ~13 MiB from a small parent and ~1820 MiB from a 1.8 GiB one. So a parent that ran the
-    timing itself would hand every subsequent size its own peak, which is the same artifact as
-    measuring several sizes in one loop, only harder to see.
+    Everything happens HERE, not in the parent, because the peak this prints is VmHWM -- a
+    per-process high-water that never falls. A single process walking the sizes would report its
+    largest ledger so far for every row after the first, so one child per size is what makes each row
+    a measurement of that size rather than of the run.
     """
-    import resource
-
-    # VmHWM is this process's own high-water; ru_maxrss is inherited across fork+exec and would
-    # report the parent's peak as a floor the moment main() stops being lean.
-    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
     best_load = best_totals = float("inf")
     for _ in range(repeats):
         t0 = time.perf_counter()
@@ -132,8 +129,7 @@ def _child(root: Path, repeats: int) -> None:
         best_totals = min(best_totals, t2 - t1)
         n = len(records)
         del records
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-    print(f"{best_load} {best_totals} {_vmhwm()} {peak - before} {n}")
+    print(f"{best_load} {best_totals} {_vmhwm()} {n}")
 
 
 def main() -> None:
@@ -148,7 +144,7 @@ def main() -> None:
     if args.repeats < 1:
         ap.error("--repeats must be >= 1")
 
-    if args.child:  # re-entry: this process holds nothing else, so its ru_maxrss is this ledger's
+    if args.child:  # re-entry: one size, one process, so the VmHWM it reports is this ledger's
         _child(Path(args.child), args.repeats)
         return
 
@@ -163,7 +159,7 @@ def main() -> None:
                 text=True,
                 check=True,
             ).stdout.split()
-            best_load, best_totals, peak, _delta, n = float(out[0]), float(out[1]), float(out[2]), float(out[3]), int(out[4])
+            best_load, best_totals, peak, n = float(out[0]), float(out[1]), float(out[2]), int(out[3])
             assert n == size, f"child loaded {n} of {size}"
             total = best_load + best_totals
             print(
