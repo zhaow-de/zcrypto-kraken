@@ -918,15 +918,17 @@ def _ansible_memory_limit_bytes(path: Path, key: str) -> int:
     return int(value[:-1]) * units[value[-1].lower()]
 
 
-_SIZE_UNITS = {"gib": 1024**3, "g": 1024**3, "mib": 1024**2, "m": 1024**2}
+_GOMEMLIMIT_UNITS = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
 
 
 def _parse_size_bytes(value: str) -> int:
-    """`"920MiB"` (Alloy's GOMEMLIMIT) or `"1g"` (docker's `memory:` cap) -- MiB/GiB/m/g, the only
-    suffixes either config surface uses."""
-    m = re.match(r"(\d+)(GiB|MiB|[gGmM])$", value.strip())
-    assert m, f"unparseable size: {value!r}"
-    return int(m.group(1)) * _SIZE_UNITS[m.group(2).lower()]
+    """`"920MiB"`, as Alloy's GOMEMLIMIT -- Go's own suffixes only (`B`/`KiB`/`MiB`/`GiB`/`TiB`).
+    Docker's `m`/`g` (the `_ansible_memory_limit_bytes`/`_compose_alloy_limit_bytes` side) parse to
+    the same bytes at the SAME value but are invalid GOMEMLIMIT syntax -- Go rejects them and Alloy
+    crash-loops at startup, so accepting them here would let that defect read as a passing ratio."""
+    m = re.match(r"(\d+)(TiB|GiB|MiB|KiB|B)$", value.strip())
+    assert m, f"not a valid Go GOMEMLIMIT suffix: {value!r}"
+    return int(m.group(1)) * _GOMEMLIMIT_UNITS[m.group(2).lower()]
 
 
 def _compose_alloy_gomemlimit_bytes(path: Path) -> int:
@@ -935,7 +937,7 @@ def _compose_alloy_gomemlimit_bytes(path: Path) -> int:
     instead of the container cap."""
     text = path.read_text()
     start = text.index("container_name: grafana-alloy")
-    m = re.search(r'GOMEMLIMIT:\s*"?(\d+(?:GiB|MiB|[gGmM]))"?', text[start:])
+    m = re.search(r'GOMEMLIMIT:\s*"?(\d+(?:TiB|GiB|MiB|KiB|B))"?', text[start:])
     assert m, f"no GOMEMLIMIT under grafana-alloy in {path}"
     return _parse_size_bytes(m.group(1))
 
@@ -1036,9 +1038,10 @@ def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
     would pass that test while the deployed cap diverged from the ratio's denominator, unseen. The
     sibling `capture_memory_limit` uses exactly that override shape for real, in
     `host_vars/zcrypto-red/vars.yml` -- so it is asserted absent here rather than assumed. This walks
-    PLAINTEXT `*.yml` files only: 7 of the 15 it reads are ansible-vault ciphertext, where a substring
-    can never match, so an override placed in a `vault.yml` is outside this test's reach by
-    construction."""
+    every `*.yml` under `host_vars/` and `group_vars/`, vault files included: this repo vaults
+    per-VALUE, so a key's NAME stays plaintext even in a `vault.yml` (each such file's own header
+    says so), and the substring search below reads it. Only a key hidden inside an already-encrypted
+    value would be missed, which is not how ansible variables work."""
     hits = [
         path
         for base in (ANSIBLE / "host_vars", ANSIBLE / "group_vars")
@@ -1056,6 +1059,11 @@ def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
     ops_defaults = ANSIBLE / "roles/ops/defaults/main.yml"
     ops_soft = _parse_size_bytes(yaml.safe_load(ops_defaults.read_text())["ops_alloy_gomemlimit"])
     ops_cap = _ansible_memory_limit_bytes(ops_defaults, "ops_alloy_memory_limit")
+    ops_template = ANSIBLE / "roles/ops/templates/alloy-compose.yaml.j2"
+    assert 'GOMEMLIMIT: "{{ ops_alloy_gomemlimit }}"' in ops_template.read_text(), (
+        "the ops template does not read GOMEMLIMIT from the var above -- the ratio this test proves "
+        "would hold on paper while a literal left in the template ships something else entirely"
+    )
     ratios = {"ops": ops_soft / ops_cap}
     for host, compose_path in (
         ("zcrypto", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),

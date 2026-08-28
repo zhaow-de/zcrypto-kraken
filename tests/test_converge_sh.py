@@ -165,9 +165,10 @@ def test_wrong_confirmation_aborts(tmp_path):
 
 def _clear_deploy_env(monkeypatch):
     """`ZCRYPTO_DEPLOY_LOG` / `ZCRYPTO_ANSIBLE_DIR`, cleared before every converge.sh exec in this
-    file that does not set them itself (run_recording does, deliberately, after this runs) -- pty.fork()
-    inherits pytest's os.environ verbatim, so a developer shell exporting either would make the
-    script under test write outside the fixture path the assertions read."""
+    file that does not set them itself -- pty.fork() inherits pytest's os.environ verbatim, so a
+    developer shell exporting either would make the script under test write outside the fixture path
+    the assertions read. `run_recording` sets both on `os.environ` on purpose, for its own tests, and
+    must never be routed through this helper."""
     monkeypatch.delenv("ZCRYPTO_DEPLOY_LOG", raising=False)
     monkeypatch.delenv("ZCRYPTO_ANSIBLE_DIR", raising=False)
 
