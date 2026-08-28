@@ -43,7 +43,7 @@ A **warning** Grafana alert, one instance per host: Grafana Alloy there has been
 
 ### What it means
 
-**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Measured 2026-08-28 over 24 h as a fraction of the limit: **ops 0.75–0.78** (highest, because it reads the most journal — reconcile, panel, verify-replay, tape-bars, liquidations), **zcrypto 0.52–0.57**, **zcrypto-red 0.26**, **nas 0.14**. The app daemons sit at 0.08–0.37, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
+**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Ordered by proximity to its bar: ops highest (it reads the most journal — reconcile, panel, verify-replay, tape-bars, liquidations), then zcrypto, zcrypto-red, nas. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
 
 If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark` reports it within ~10 min. **This is the warning before that**, not the detector for it.
 
@@ -55,7 +55,7 @@ If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark
 
 ### Retire when
 
-`zcrypto-fleet-alloy-memory-headroom` is absent from `infra/grafana/alerts.yaml`, or Alloy's limit is raised such that the bar no longer reflects the measured steady state — in which case re-derive it from the per-host floors rather than carrying this number forward.
+`zcrypto-fleet-alloy-memory-headroom` is absent from `infra/grafana/alerts.yaml`, or a host's GOMEMLIMIT stops being 0.9 of its cap — the ratio this bar is, pinned by `test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host`.
 
 ______________________________________________________________________
 

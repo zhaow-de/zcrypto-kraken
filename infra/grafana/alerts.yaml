@@ -3916,7 +3916,7 @@ rules:
     condition: C
     data:
       # Alloy gets its OWN bar because it genuinely runs near its ceiling and the app daemons do not.
-      # Measured 2026-08-28 over 24 h, as a fraction of the `memory: 512m` each Alloy compose sets:
+      # Measured 2026-08-28 over 24 h, as a fraction of the `memory: 512m` every Alloy compose set at the time:
       # ops 0.7525-0.7795 (it reads the most journal -- reconcile, panel, verify-replay, tape-bars,
       # liquidations), zcrypto 0.5237-0.5708, zcrypto-red 0.2636-0.2726, nas 0.1441-0.1561. A shared
       # 0.7 bar with the app daemons therefore paged ops on a HEALTHY fleet, every evaluation,
@@ -3945,8 +3945,8 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means the Go runtime lost
-            # its soft limit and RSS is heading for the cgroup limit. The consequence of the ceiling
+            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means RSS has passed the Go
+            # soft limit and is heading for the cgroup limit. The consequence of the ceiling
             # is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already owns at 10 m --
             # so this is the EARLY warning for that fault, not its detector.
             - evaluator: {type: gt, params: [0.9]}
