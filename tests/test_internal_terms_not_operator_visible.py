@@ -55,7 +55,7 @@ README = REPO / "README.md"
 ALERTS = REPO / "infra/grafana/alerts.yaml"
 
 # Packages whose string literals reach an operator. `infra/scripts/` holds the instruments
-# `capture-deploys.md` tells an operator to run, so its output is as user-facing as the CLI's.
+# `fleet-deploys.md` tells an operator to run, so its output is as user-facing as the CLI's.
 SCANNED_PACKAGES = [REPO / "cli", REPO / "infra/scripts"]
 
 VOCABULARY = re.compile(

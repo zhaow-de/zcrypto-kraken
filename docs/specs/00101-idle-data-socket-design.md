@@ -75,9 +75,9 @@ Three things survive A and are recorded in T0155's body and this spec rather tha
 
 ## Deploy
 
-A is an engine re-pin and follows `capture-deploys.md` in full: attended, inside the 4-hourly inter-cycle gap, verified at the next boundary. The form is the engine-only one `site.yml` documents — `--limit zcrypto --tags engine -e converge_primary=true -e engine_image_digest=sha256:<new>` — and `engine_image_digest` is the operand that moves. The combined `--tags capture,engine` form is not owed here: it belongs to a revision touching `roles/capture/files/config.alloy`, and this one does not.
+A is an engine re-pin and follows `fleet-deploys.md` in full: attended, inside the 4-hourly inter-cycle gap, verified at the next boundary. The form is the engine-only one `site.yml` documents — `--limit zcrypto --tags engine -e converge_primary=true -e engine_image_digest=sha256:<new>` — and `engine_image_digest` is the operand that moves. The combined `--tags capture,engine` form is not owed here: it belongs to a revision touching `roles/capture/files/config.alloy`, and this one does not.
 
-**The one-line change entails a capture rollout first.** The engine role's canary assert refuses a re-pin whose digest the secondary is not running *as capture* — there is no engine secondary, so that bake IS the engine's gate. Shipping this therefore means: build the image, re-pin the secondary's capture to it, let the bake gate pass, let the primary follow, and only then converge the engine onto it. That is `capture-deploys.md`'s ordinary rollout, and it is the real cost of a one-line config change on this fleet.
+**The one-line change entails a capture rollout first.** The engine role's canary assert refuses a re-pin whose digest the secondary is not running *as capture* — there is no engine secondary, so that bake IS the engine's gate. Shipping this therefore means: build the image, re-pin the secondary's capture to it, let the bake gate pass, let the primary follow, and only then converge the engine onto it. That is `fleet-deploys.md`'s ordinary rollout, and it is the real cost of a one-line config change on this fleet.
 
 It ships **before** the first armed probe pass, never during it — the change is disarmed-only in effect, and the arming record (00100 D11) is reconciled against the moving pin.
 

@@ -1216,7 +1216,7 @@ def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path
 
 def test_run_seeds_the_venue_timestamp_from_the_newest_on_disk_record(tmp_path, monkeypatch):
     # Cold-review MAJOR 1: without this seed, a routine restart (which always lands inside the
-    # inter-cycle gap, capture-deploys.md) would leave zcrypto_venue_snapshot_timestamp_seconds at
+    # inter-cycle gap, fleet-deploys.md) would leave zcrypto_venue_snapshot_timestamp_seconds at
     # its eager 0.0 default -- read as `time() - 0` ~= 1.77e9 -- and zcrypto-venue-snapshot-stale
     # would false-page "the writer has stopped" against an engine that merely restarted.
     journal_dir = tmp_path / "journal"

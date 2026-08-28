@@ -48,6 +48,6 @@ The blindness was structural, not a tuning error. `start_gap` had one production
 - [[T0104]] — the panel emits a frozen book across a canonical gap; measured 212 rows with 2 distinct `mid` values against 8 across the hour's other zero-update seconds, already materialized.
 - [[T0105]] — the deliberately deferred second half: paging on silence, and reacting to the venue's status.
 
-**Not deployed by this topic.** Capture-daemon code on the unbackfillable path reaches the fleet only via an image build → ≥24 h secondary canary bake → primary re-pin (`capture-deploys.md`); the same image carries [[T0008]]'s recovery ladder. Merged and unrolled is the intended state, and [[T0105]]'s paging trigger starts counting at that re-pin, not at merge.
+**Not deployed by this topic.** Capture-daemon code on the unbackfillable path reaches the fleet only via an image build → ≥24 h secondary canary bake → primary re-pin (`fleet-deploys.md`); the same image carries [[T0008]]'s recovery ladder. Merged and unrolled is the intended state, and [[T0105]]'s paging trigger starts counting at that re-pin, not at merge.
 
 **Consequence stated plainly**: after this change a repeat of 2026-07-27 is correctly counted and still pages nobody. That is [[T0105]], sequenced second on purpose — an unfitted threshold wired into `is_healthy()` would darken the dead-man fleet-wide on both hosts, which is strictly worse than the metric gap it closes.

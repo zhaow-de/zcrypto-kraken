@@ -886,7 +886,7 @@ No code changes; the numbers land in the closeout (Task 7). If Step 3 revealed a
 **Files:**
 - Modify: `docs/open-topics/T0097-archive-verification-instruments-have-measurement-defects.md`
 - Modify: `docs/open-topics/README.md`
-- Modify: `.claude/rules/capture-deploys.md` (**protected — the owner signs off on this edit at closeout**)
+- Modify: `.claude/rules/fleet-deploys.md` (**protected — the owner signs off on this edit at closeout**)
 - Modify: `docs/iterations-history-phase6.md`
 - Modify: `docs/memo.local.md` (Edit/Write tools only, read before and read back after — never a shell heredoc)
 
@@ -898,7 +898,7 @@ All three legs are now addressed: the threshold is fitted (Task 3), the head/tai
 
 In `docs/open-topics/README.md`, move the T0097 bullet from `### Partially done` to the end of the same category's `### Resolved`, and repoint the link at `archive/`.
 
-- [ ] **Step 3: Retire the genesis carve-out from `capture-deploys.md`** *(protected — present the exact diff and take the owner's word before writing)*
+- [ ] **Step 3: Retire the genesis carve-out from `fleet-deploys.md`** *(protected — present the exact diff and take the owner's word before writing)*
 
 The verify-by-outcome bullet's genesis exception exists because the instrument had no carve-out. It now does. Replace the `**Exception — a NEW stream's genesis hour** …` sentence with: `a new stream's genesis hour is annotated and not booked, so it no longer reads as a truncation.`
 
@@ -916,7 +916,7 @@ Move the T0097 queue item to `DONE ITEMS` with citations (PR, commits, the accep
 uv run pre-commit run -a
 git add docs/open-topics/... docs/iterations-history-phase6.md
 git commit   # docs(ops): iter closeout -- the verification instruments, re-fitted (T0097 resolved)
-git add .claude/rules/capture-deploys.md
+git add .claude/rules/fleet-deploys.md
 git commit   # claude(rules): the genesis carve-out is retired -- the instrument annotates it now
 ```
 

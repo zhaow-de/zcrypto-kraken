@@ -68,7 +68,7 @@ Headroom was never the concern and is not now: red sits at ~146 MiB against 1 Gi
 
 The first bullet is discharged — both windows were read, and the Resolution above is what they said. The last is discharged as the confirmed hypothesis.
 
-**The middle two were method, not backlog, and they now live where a bake actually reads them** — folded into the `zcrypto-captures-rollout` skill (Phase 2, the bake gate) rather than left here, because a prescription for the NEXT bake dies if its only home is an archived topic. The skill also gained the discriminator this resolution turned on, which it did not carry before.
+**The middle two were method, not backlog, and they now live where a bake actually reads them** — folded into the `zcrypto-rollout-image` skill (Phase 2, the bake gate) rather than left here, because a prescription for the NEXT bake dies if its only home is an archived topic. The skill also gained the discriminator this resolution turned on, which it did not carry before.
 
 
 - **Two windows on the CURRENT image are still reachable and are the cheapest resolution available** — they need no new rollout, only that the host has not restarted: `zcrypto-red`'s second anniversary at **2026-08-24 12:00-16:00Z** (~T+38-42 h), and `zcrypto`'s own first band at **2026-08-24 02:25-10:25Z** (its T+17-25 h). (Both windows are in the past and were taken — the Resolution above is what they yielded.)

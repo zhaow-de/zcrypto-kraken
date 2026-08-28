@@ -95,4 +95,4 @@ So: when the close carried code `1012`, floor the first delay at 5 s. Ordinary d
 
 ## Deployment note
 
-Capture-daemon code on the unbackfillable path: image build → ≥24 h secondary canary bake → primary re-pin (`capture-deploys.md`). Merged and unrolled is the correct end state for this PR.
+Capture-daemon code on the unbackfillable path: image build → ≥24 h secondary canary bake → primary re-pin (`fleet-deploys.md`). Merged and unrolled is the correct end state for this PR.

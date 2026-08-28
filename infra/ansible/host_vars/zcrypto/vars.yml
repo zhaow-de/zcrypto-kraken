@@ -4,7 +4,7 @@
 # (roles/base/tasks/main.yml) reads every host's slot out of `hostvars`, which sees inventory vars
 # but NOT role defaults — so a per-host declaration is what lets the assert see the whole fleet even
 # under `--limit <one-host>`. 21:25 UTC is the book-row trough (20:00-21:00); the secondary sits
-# +1 h at 22:25. Derivation: spec 00050; slot policy: .claude/rules/capture-deploys.md.
+# +1 h at 22:25. Derivation: spec 00050; slot policy: .claude/rules/fleet-deploys.md.
 base_unattended_upgrades_reboot_time: "21:25"
 
 # This machine's OWN deploy pubkey: rotation edits files/ once.

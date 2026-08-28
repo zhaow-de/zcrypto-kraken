@@ -23,7 +23,7 @@ The failure this file prevents is the one that already nearly happened: two park
 
 - The 2026-07-28 capture image (`sha256:828128f8…4224`) was built from `3b9c1d12` and carries [[T0008]]'s ladder + [[T0101]]'s staleness window. T0102's correlation is **correctly absent** from it — that rollout predates the merge.
 - T0102's counters were exported and given an alert rule on the same branch as this registration, so the payload now also carries `zcrypto_capture_resubscribe_errors_total` / `_ack_timeouts_total` and the `zcrypto-capture-resubscribe-failing` rule. **The rule will read no series until this image ships** — Grafana shows it `inactive` on absent data, which is indistinguishable from healthy.
-- Rollout mechanics are the `zcrypto-captures-rollout` skill; nothing here changes them.
+- Rollout mechanics are the `zcrypto-rollout-image` skill; nothing here changes them.
 
 ## Resolution
 

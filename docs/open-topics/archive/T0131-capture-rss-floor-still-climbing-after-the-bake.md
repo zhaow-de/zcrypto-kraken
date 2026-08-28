@@ -6,7 +6,7 @@ status: resolved
 
 ## Context — what
 
-The `zcrypto-captures-rollout` skill names a residual the bake window cannot catch: a memory leak slower than three rotation hours still passes the slope row, so both daemons are re-read against their **own** earlier samples at ~T+24 h.
+The `zcrypto-rollout-image` skill names a residual the bake window cannot catch: a memory leak slower than three rotation hours still passes the slope row, so both daemons are re-read against their **own** earlier samples at ~T+24 h.
 
 That re-read was taken 2026-08-08 03:08Z for the 2026-08-05 `ccedc9dd6bf4` capture re-pin on `zcrypto-red` (T+61.6 h). It was first written up as **"no leak; residual closed"**. A pre-push review refuted that verdict, and the refutation was reproduced independently before being accepted.
 

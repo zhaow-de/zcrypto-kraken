@@ -114,4 +114,4 @@ Hence the knob's unit is a **duration**: a pair is stuck for a length of time, a
 
 ## Deployment note
 
-This is capture-daemon code on the unbackfillable path, so it reaches the fleet only through an image build, the ≥24 h secondary canary bake, then the primary re-pin — `capture-deploys.md`'s canary rule applies in full. The build and its drill validation are independent of that tail and land first.
+This is capture-daemon code on the unbackfillable path, so it reaches the fleet only through an image build, the ≥24 h secondary canary bake, then the primary re-pin — `fleet-deploys.md`'s canary rule applies in full. The build and its drill validation are independent of that tail and land first.

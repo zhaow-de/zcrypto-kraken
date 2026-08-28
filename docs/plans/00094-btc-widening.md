@@ -166,7 +166,7 @@ def test_btc_legs_are_exactly_zero_and_emit_no_orders(...):
 - [ ] **Step 3:** **T0137 → `resolved` + archived**, both halves cited, `ripe_when` absent, index bullet moved and repointed.
 - [ ] **Step 4: THE FULL SUITE, in this task, foreground** — `uv run pytest -q`, the `00089` lesson as standing practice. Green before the closeout commit.
 - [ ] **Step 5:** Refresh the memo's queue via the ad-hoc procedure (`memo-protocol.md`): the `00094` item in T0018's queue group records this iteration's completion state, so a session dying between merge and deploy leaves the pick-time view true.
-- [ ] **Step 6:** Deploy notes into the closeout entry: this payload stacks with `00089`'s still-owed converge — one converge may carry both or two may run; decided at deploy time under `capture-deploys.md`, with D3's specific by-value check (the gate streak after the first schema-2 cycle equals the streak before it plus one).
+- [ ] **Step 6:** Deploy notes into the closeout entry: this payload stacks with `00089`'s still-owed converge — one converge may carry both or two may run; decided at deploy time under `fleet-deploys.md`, with D3's specific by-value check (the gate streak after the first schema-2 cycle equals the streak before it plus one).
 - [ ] **Step 7: Gate, stage by explicit path, commit** `docs(engine): iter-<N> closeout -- the /BTC widening lands; T0137 resolves`.
 
 ---
@@ -177,6 +177,6 @@ def test_btc_legs_are_exactly_zero_and_emit_no_orders(...):
 
 1. **NAS and ops images first.** The gate is scored on the NAS (`gate-export` under the NAS image pin, after every journal pull) and re-verified on ops (`verified-replay` under the ops pin). Old code on either raises `unsupported schema_version 2` → the day classifies unclean → **the ratified streak zeroes on the scoring surface** with the engine deploy fully correct. Converging them first is safe in advance: every existing record is v1, and the widened code loads `{1, 2}`.
 2. **The engine last**, standard discipline: canary via the secondary's capture bake, inter-cycle window, `fleet-pins.md` first, attended converge — **and inside the converge window, before the first boundary: stage the two `/BTC` canonical parquets to the host and run the store seed.** The engine host mounts no data root, and `refresh_store` over a missing file kills the first post-converge cycle outright.
-3. Stacking with `00089`'s still-owed engine payload: an operational call at deploy time under `capture-deploys.md`.
+3. Stacking with `00089`'s still-owed engine payload: an operational call at deploy time under `fleet-deploys.md`.
 
 **Verify by value:** the first schema-2 `cycle-HH.json` carries twelve symbol-keyed targets with both `/BTC` legs at exactly `0.0`; **`orders.jsonl` shows no phantom rebalance** (the v1-predecessor normalization working — a full-book order set here is the B3 failure and rolls back); `venue-HH.json` reads twelve instruments; on the NAS/ops replay surfaces `validation_failures` and `mismatches` are **unchanged** and `replayed_ok` advances. **The streak moves only at the deploy day's 20:30 UTC evaluation** — it is a complete-days counter, so expecting +1 immediately after the first cycle is wrong arithmetic; at 20:30, streak = pre-deploy + 1 or the deploy rolls back.

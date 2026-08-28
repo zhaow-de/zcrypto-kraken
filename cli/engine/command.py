@@ -682,7 +682,7 @@ class _VenueGauges:
     at startup from the newest on-disk `venue-<HH>.json` (`_seed_venue_state`, mirroring
     `_seed_cycle_state`'s reasoning for `zcrypto_engine_cycle_completed_at_seconds`). Without that
     seed, a routine engine restart -- which always lands inside the inter-cycle gap
-    (`capture-deploys.md`) -- would leave every gauge at its eager default until the NEXT boundary
+    (`fleet-deploys.md`) -- would leave every gauge at its eager default until the NEXT boundary
     cycle, and `zcrypto-venue-snapshot-stale` would false-page "the writer has stopped" against an
     engine that merely restarted (cold-review MAJOR 1).
 
@@ -905,7 +905,7 @@ def run() -> None:
         except Exception:
             logger.exception("engine metrics setup failed -- continuing with process metrics only")
         # Its own guard, isolated from the cycle seed above (00089 D6, cold-review MAJOR 1): without
-        # this, a routine restart (always inside the inter-cycle gap, capture-deploys.md) would leave
+        # this, a routine restart (always inside the inter-cycle gap, fleet-deploys.md) would leave
         # `zcrypto_venue_snapshot_timestamp_seconds` at its eager 0.0 default until the NEXT boundary
         # cycle, and `zcrypto-venue-snapshot-stale` would false-page "the writer has stopped" for up
         # to ~4h against an engine that merely restarted. An unreadable/absent venue-<HH>.json must

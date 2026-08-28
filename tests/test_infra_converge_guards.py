@@ -1400,7 +1400,7 @@ def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice(
 
     The trap the task's own comment names is repointing the running reader at the unit file — then
     both sides read the same bytes, the gate passes on every converge, and the relay drifts unbounded.
-    That is the Alloy drift failure `capture-deploys.md` records, where the assert compared the
+    That is the Alloy drift failure `fleet-deploys.md` records, where the assert compared the
     deployed FILE rather than what the process had loaded. Pinned as data so the readers cannot
     quietly become the same read.
     """

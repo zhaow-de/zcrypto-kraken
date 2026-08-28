@@ -47,7 +47,7 @@ The engine host carries **no refdata snapshot** (its container mounts are `/var/
 
 - TDD throughout; every load-bearing guard proven by constructing the defect it names (`infra/scripts/mutate-probe.sh`): the repo-side concordance test goes red on a selection shift *and* on a baseline edit that drops a ruled exception; the gate-glob immunity of `venue-HH.json` proven the way `exec-HH.json`'s was; the sizing function's `ordermin`/`costmin`/lot/tick handling pinned against constructed boundary cases (a target one lot below `ordermin`, a cost a cent below `costmin`, a tick-misaligned price).
 - The seam: `run_cycle` with `venue_state=None` completes and journals the error-status artifact; with a constructed `VenueState` it journals it verbatim. No test imports Nautilus except `venuestate.py`'s own construction tests.
-- Deploy verification by value, per `capture-deploys.md`: first `venue-HH.json` on the host read and its `code_version` ≠ `0.0.0` (D8's acceptance), `zcrypto_venue_*` families in Grafana Cloud with `concordance_failures` read as a **number equal to 0**, never `(no series)`.
+- Deploy verification by value, per `fleet-deploys.md`: first `venue-HH.json` on the host read and its `code_version` ≠ `0.0.0` (D8's acceptance), `zcrypto_venue_*` families in Grafana Cloud with `concordance_failures` read as a **number equal to 0**, never `(no series)`.
 
 ## What this does NOT do — bounded claims
 

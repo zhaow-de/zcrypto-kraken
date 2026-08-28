@@ -63,4 +63,4 @@ Every guard proven by constructing its defect — the previous two iterations sh
 
 - **A future legitimately-steep stream** (a venue that batches at exactly one scale) could exceed 10× per decade and be refused. Acceptable: the refusal is loud, names the ratio, and `UNMEASURED` fails the bar — an operator investigates instead of trusting a possibly-poisoned threshold. The margin today is 5× on real streams.
 - The ratio depends on polars' nearest interpolation (same dependency the existing bound has); the tests measure polars rather than trusting comments, as `MIN_POOL`'s already do.
-- `continuity.py` is consumed by capture-verification runbooks; output gains one column and one refusal note — `capture-deploys.md`'s reference to the script names no column layout, so no rule edit is owed.
+- `continuity.py` is consumed by capture-verification runbooks; output gains one column and one refusal note — `fleet-deploys.md`'s reference to the script names no column layout, so no rule edit is owed.

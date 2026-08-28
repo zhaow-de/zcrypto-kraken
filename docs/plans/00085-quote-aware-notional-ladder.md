@@ -624,7 +624,7 @@ Then the NAS question. Run the checklist's measure-first commands and read what 
 
 - [ ] **Step 7: Verify by outcome — through the mandated command**
 
-Run `infra/scripts/ops-postverify.sh`. `capture-deploys.md` names it as *the* ops-converge outcome check: six checks in one command, and `(no series)` reads FAIL, never a zero. Hand-picking two metrics instead is how a converge gets declared good on a subset.
+Run `infra/scripts/ops-postverify.sh`. `fleet-deploys.md` names it as *the* ops-converge outcome check: six checks in one command, and `(no series)` reads FAIL, never a zero. Hand-picking two metrics instead is how a converge gets declared good on a subset.
 
 Then, specific to this iteration: `ETH/BTC` and `SOL/BTC` subtrees exist with **non-null** `fill_bps_*` in a spot-checked hour — the whole point of the ladder change.
 

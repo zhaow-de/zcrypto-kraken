@@ -23,7 +23,7 @@ It is not urgent: nothing today suggests those legs are untradeable, they are re
 - Capture coverage measured 2026-07-22: 10 bases × `EUR` only. Both BTC-quoted legs absent.
 - Both legs are genuinely selected members, not candidates: `ETH/BTC` (579,964 EUR/day, max leverage 5) and `SOL/BTC` (233,595 EUR/day, max leverage 4).
 - The cost model has the same blind spot for the same reason — `cli/costs/spread.py`'s table is keyed by base and calibrated from EUR pairs, so a BTC-quoted notional resolves to the **EUR** leg's number rather than erroring: `effective_spread_bps("ETH", 1400)` returns ETH/EUR's 0.524, and only the full-symbol form raises. A BTC-quoted leg would get a silently wrong value, not a loud failure; the only thing preventing that today is `_refresh_universe`'s `quote == "EUR"` filter. `round_trip_cost` is a second, unguarded public entry point with no caller yet — any future cost accounting on those legs inherits this gap.
-- Adding two subscriptions is not free: it touches a **live, unbackfillable** capture pipeline (the canary rule in `capture-deploys.md` applies), adds two more streams to the reconciler and the panel, and grows the archive. The cost is operational, not analytical.
+- Adding two subscriptions is not free: it touches a **live, unbackfillable** capture pipeline (the canary rule in `fleet-deploys.md` applies), adds two more streams to the reconciler and the panel, and grows the archive. The cost is operational, not analytical.
 
 ## Done so far
 

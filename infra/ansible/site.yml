@@ -35,7 +35,7 @@
           secondary has joined, so a bare run would restart the primary's capture daemon as a side
           effect of converging the secondary. Pass `-e converge_primary=true` if you mean it (this
           gates the engine play too — `--tags engine` needs it as well), and re-read
-          .claude/rules/capture-deploys.md first. To converge ONLY the secondary: `--limit zcrypto-red`.
+          .claude/rules/fleet-deploys.md first. To converge ONLY the secondary: `--limit zcrypto-red`.
         success_msg: "converge_primary=true — this run WILL restart the primary's live capture and/or engine."
       when: inventory_hostname in groups['engine_host'] | default([])
       tags: [always]

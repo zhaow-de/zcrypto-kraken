@@ -179,3 +179,96 @@ def test_limit_equals_form_is_parsed(tmp_path):
     assert rc == 0
     assert "zcrypto-ops" in out
     assert len(invocations(tmp_path)) == 2
+
+
+# --- the machine line: every real pass leaves one JSON record, the operator types none of it ----------
+# The digest, the timestamp and the target of every converge used to be hand-typed into
+# docs/reference/fleet-pins.md afterwards -- 15 commits on one rollout branch, and a digest written
+# from memory is the one operand a rollback cannot afford to have wrong. The script knows all three
+# at the moment the pass returns, so it writes them.
+
+import json  # noqa: E402 -- the block above is the file's own section header
+
+
+def run_recording(tmp_path, args, reply="zcrypto-red", env=None, run_sh=None):
+    script = make_harness(tmp_path)
+    if run_sh is not None:  # make_harness rewrites run.sh, so a custom fake must land AFTER it
+        (tmp_path / "run.sh").write_text(run_sh)
+    log = tmp_path / "deploy-log.jsonl"
+    full_env = {"ZCRYPTO_DEPLOY_LOG": str(log), **(env or {})}
+    for k, v in full_env.items():
+        os.environ[k] = v
+    try:
+        rc, out = run_with_tty(script, args, reply)
+    finally:
+        for k in full_env:
+            os.environ.pop(k, None)
+    return rc, out, log
+
+
+def test_a_real_pass_appends_one_machine_line(tmp_path):
+    rc, _out, log = run_recording(
+        tmp_path,
+        [
+            "site.yml",
+            "--limit",
+            "zcrypto-red",
+            "--tags",
+            "capture",
+            "-e",
+            "capture_image_digest=sha256:abc123",
+            "-e",
+            "converge_primary=true",
+        ],
+    )
+    assert rc == 0
+    lines = log.read_text().splitlines()
+    assert len(lines) == 1, lines
+    rec = json.loads(lines[0])
+    assert rec["limit"] == "zcrypto-red" and rec["playbook"] == "site.yml" and rec["rc"] == 0
+    assert rec["tags"] == "capture"
+    assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123", "converge_primary": "true"}
+    assert rec["ts"].endswith("Z") and "T" in rec["ts"]
+    assert set(rec) >= {"ts", "playbook", "limit", "tags", "extra_vars", "revision", "dirty", "rc"}
+
+
+def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):
+    """A failed converge may have half-applied; the record says it happened and how it ended."""
+    rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red"])
+    assert rc == 0
+    # The preview must succeed for the real pass to run at all, so the failure is injected on the
+    # real invocation only -- the one whose args carry no --check.
+    failing_real_pass = (
+        '#!/usr/bin/env bash\necho "$@" >> "$(dirname "$0")/invocations.log"\n'
+        'case " $* " in *" --check "*) exit 0 ;; esac\nexit 7\n'
+    )
+    rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red"], run_sh=failing_real_pass)
+    assert rc == 7
+    recs = [json.loads(ln) for ln in log.read_text().splitlines()]
+    assert [r["rc"] for r in recs] == [0, 7]
+
+
+def test_an_unwritable_log_is_loud_and_never_changes_the_pass_rc(tmp_path):
+    """The pass already ran; its rc is the truth. A record that cannot land is printed for the
+    operator to append by hand -- never a converge failure that did not happen, never silent."""
+    rc, out, _log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red"],
+        env={"ZCRYPTO_DEPLOY_LOG": str(tmp_path / "no-such-dir" / "deploy-log.jsonl")},
+    )
+    assert rc == 0
+    assert "RECORD FAILED" in out and '"limit": "zcrypto-red"' in out
+
+
+def test_a_preview_only_run_records_nothing(tmp_path):
+    script = make_harness(tmp_path)
+    log = tmp_path / "deploy-log.jsonl"
+    rc = run_no_tty(script, ["site.yml", "--limit", "zcrypto-red", "--check"], env={"ZCRYPTO_DEPLOY_LOG": str(log)})
+    assert rc.returncode == 0
+    assert not log.exists()
+
+
+def test_an_aborted_confirm_records_nothing(tmp_path):
+    rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red"], reply="wrong")
+    assert rc == 3
+    assert not log.exists()

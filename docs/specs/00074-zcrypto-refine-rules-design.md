@@ -2,7 +2,7 @@
 
 **Goal.** A user-invoked skill that keeps the guidance corpus (CLAUDE.md, `.claude/rules/`, `.claude/skills/`, the local memory) truthful, minimal, and placed where it is cheapest to load — plus one process addition: a cold spec+plan review before execution on substantive iterations.
 
-**Scope.** The skill, its `references/principles.md`, and the `spec-plan-locations.md` cold-review addition. The skill's first real run is this branch's validation and lands here too. **Not in scope:** T0084 (own branch/PR), any `capture-deploys.md` shrink (gated on T0084's first real rollout), memo-protocol changes — and any pre-decided graduation of specific memory items (D4: dispositions belong to the run's joint review, never to this spec).
+**Scope.** The skill, its `references/principles.md`, and the `spec-plan-locations.md` cold-review addition. The skill's first real run is this branch's validation and lands here too. **Not in scope:** T0084 (own branch/PR), any `fleet-deploys.md` shrink (gated on T0084's first real rollout), memo-protocol changes — and any pre-decided graduation of specific memory items (D4: dispositions belong to the run's joint review, never to this spec).
 
 ## The economics that drive every decision
 
@@ -15,7 +15,7 @@ CLAUDE.md + rules are **always-loaded: 33.6 KB ≈ 8.5 k tokens paid by every se
 **Invariants** (the skill's own section, in this order):
 
 - Joint dispositions close items; **undecided is the default**, exactly as in grooming.
-- **Protected set**: CLAUDE.md's `## Secrets` section, `capture-deploys.md`, `commit-messages.md`'s different-agent-reviewer rule, and `open-topics.md`'s registration rule. Every edit to these requires the user's **explicit per-edit sign-off** during the round — P7 classification alone is not sufficient. The round must not be able to quietly weaken the rules that police it.
+- **Protected set**: CLAUDE.md's `## Secrets` section, `fleet-deploys.md`, `commit-messages.md`'s different-agent-reviewer rule, and `open-topics.md`'s registration rule. Every edit to these requires the user's **explicit per-edit sign-off** during the round — P7 classification alone is not sufficient. The round must not be able to quietly weaken the rules that police it.
 - **Any "later" outcome registers a topic in the same step** — a deferred hook, a parked sweep finding, a graduation postponed: `T<NNNN>` via `topic-ops`, never only the round's report. The round must not reproduce its own case study's defect.
 - **Net always-loaded growth needs the user's explicit OK** — graduation adds weight, condensing removes it; the round reports the measured delta, never assumes the sign.
 - Hooks: proposed **case-by-case, each shown to the user before it lands** (owner ruling, this round). Precedent: memo-guard.

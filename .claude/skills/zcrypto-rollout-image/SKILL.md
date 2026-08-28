@@ -1,12 +1,12 @@
 ---
-name: zcrypto-captures-rollout
-description: Attended canary rollout of a capture-image digest across the capture fleet — preflight, secondary converge, event-driven bake with abort signals, primary re-pin, rollback, verify-by-outcome. User-invoked only.
+name: zcrypto-rollout-image
+description: Attended canary rollout of the app-image digest — capture secondary, event-sized bake with abort signals, then capture primary and engine in one shot — with preflight, rollback and verify-by-outcome. User-invoked only.
 disable-model-invocation: true
 ---
 
-# zcrypto-captures-rollout
+# zcrypto-rollout-image
 
-The executable form of the capture-image canary rollout. L2 capture is unbackfillable — a mistake on either host is permanent data loss. Scope: **digest re-pins only**; a pair-list change is config (primary-first, no bake — `capture-deploys.md`), and engine converges are their own section there.
+The executable form of the app-image canary rollout: the one image serves capture, engine, ops and the NAS, and this is how a new digest reaches the capture hosts and the engine. L2 capture is unbackfillable — a mistake on either host is permanent data loss. Scope: **digest re-pins only**; a pair-list change is config (primary-first, no bake — `fleet-deploys.md`), and engine converges are their own section there.
 
 ## Ground rules
 
@@ -14,7 +14,7 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 - **Every irreversible action** — converge, re-pin, restart — takes the user's explicit word at that step, with the blocker sweep (open-topics index + memo) presented alongside (`agent-ops.md`).
 - Rollout order: **secondary first, primary last.**
 - Digest identity is always `{{.Config.Image}}` — `{{.Image}}` is host-dependent and lies under classic storage.
-- Converges via `infra/ansible/scripts/converge.sh` — it requires `--limit`, shows the `--check --diff` preview, and takes a typed confirm before the real pass (preview-only: pass `--check`); never wrap it in `timeout` (attended by design; the orphaned child would converge unsupervised); never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `capture-deploys.md` and CLAUDE.md `## Secrets`.
+- Converges via `infra/ansible/scripts/converge.sh` — it requires `--limit`, shows the `--check --diff` preview, and takes a typed confirm before the real pass (preview-only: pass `--check`); never wrap it in `timeout` (attended by design; the orphaned child would converge unsupervised); never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `fleet-deploys.md` and CLAUDE.md `## Secrets`.
 
 ## Phase 0 — Preflight
 
@@ -36,17 +36,9 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 2. **≥3 full segment-rotation hours** — the first hour's every book `<HH>.parquet` beginning at `:00:00.0x` proves the boundary write; three full hours separate a real trend from the rotation sawtooth. **FULL hours only — hours that BEGIN after the re-pin; the converge's own partial hour never counts** (re-pin at 14:07 → hours 15/16/17 → gate 18:00Z). Counting boundaries instead of full hours reads the gate an hour early.
 3. **Every abort signal clear throughout** (table below).
 
-**The residual, named:** a leak slower than the window can still pass the slope row — re-read both hosts' `process_resident_memory_bytes` against their own earlier samples at ~T+24 h from the secondary converge; a material rise trips Phase 4 on the affected host. **Read the residual as a CURVE, never an endpoint pair** — two points cannot tell a leak from a step, and steps arrive as ~4 h RAMPS: sample THROUGH any step's anniversary band at 4–6 h resolution, and let no deciding read straddle the band. A step the CONTROL host takes in the same window on the OLD image is environmental, not the build.
+**Gate-close is PASSED.** The three events met with nothing tripped → the primary follows. The gate is hard-capped at the window the events define; nothing after gate-close is owed to the rollout.
 
-- **Read the FLOOR, never an instantaneous sample** — `min_over_time(...[1h])` at named hours. The rotation sawtooth spans several MiB and swamps the signal.
-- **Compare against the WARM floor, not the converge-time number** — RSS climbs for ~1 h after a restart as buffers fill; the cold sample manufactures a rise that means nothing.
-- **Schedule the read against the EVENT BAND, not the clock, and let the band close first.** A leak arrives as a ramp of some width, and its repeat lands ~24 h later at the same clock offset. Measure step 1's width, then take the read entirely PAST that band plus jitter — a read taken inside it sees a trough and reports a plateau, so flat hours inside a band are not evidence of anything.
-- **Compare against the host's own predecessor AT THE SAME PROCESS AGE** — same host, same workload, old image. Read the predecessor's floor at the new process's current age, never its terminal plateau: a 3-day-old process has filled what a 1-day-old one has not, so the terminal number flatters every young process and clears a leak by construction. Below its predecessor at equal age is a smaller working set; above it, keep the residual open and re-read at the next age the predecessor was measured.
-- **Take that age-matched read at the FIRST band, never only at gate-close** — the next converge restarts the process and voids the observation, so a residual still open when it lands can never be settled.
-- **Then compare the two hosts at COMMON WALL-CLOCK times, never at each host's own T+.** Both stepping in one wall-clock window while their process ages differ is environmental — an age-driven cause cannot synchronise across daemons of different ages. Steps that do NOT align exculpate nothing either way.
-- **A flat stretch alone discharges nothing** — the shape does. Two steps of decaying amplitude, each with a flat trough, is a converging allocation; equal-or-growing steps are a real leak. One step and a quiet stretch cannot tell them apart, so hold the topic open rather than closing on it. **Amplitudes are the last resort — never escalate on them while an age-matched or wall-clock comparison is still available**, since the affected host reads equal-or-growing in exactly the case a control exculpates.
-- **Sample the secondary THROUGH its T+17–25 h band at 2 h resolution, and read the PRIMARY in its own T+17–25 h band too**, not only at the secondary's anniversary — converges far apart leave the primary's band unopened at gate-close, which is how a bake ends with no control.
-- **A restart voids the observation** — the counter is process-lifetime. Re-check `RestartCount` at every read and restart the clock if it moved.
+**Memory is not a gate event.** `zcrypto-capture-memory-headroom`, `zcrypto-capture-memory-leak` and `zcrypto-capture-daemon-restarted` watch every daemon continuously — before, during and after any rollout — so a bake owes no RSS read at T+anything, and no read is ever "voided" by the next converge. During the bake, the headroom rule firing on the just-converged host is an abort signal (table below). A leak page days later names the image through `docs/reference/fleet-pins.md`'s `since` column and `docs/reference/deploy-log.jsonl`, and the rollback operand is in the same row.
 
 Schedule the Slack reminder (`slack_schedule_message` — survives the session) at the **computed gate-open time**, carrying the Phase-3 checklist. The checklist opens the gate, never the reminder itself. **Skipping or degrading the gate — any of the three events unmet, or the prune only in weak form (`deleted=0`) — requires the user's explicit approval — never silently.**
 
@@ -60,7 +52,7 @@ Schedule the Slack reminder (`slack_schedule_message` — survives the session) 
 | `RestartCount` | > 0 on `zcrypto-capture` or `grafana-alloy` | `docker inspect --format '{{.RestartCount}}'` |
 | capture stdout | any `quarantined` / `ambiguous` / `merge failed` | `docker logs` |
 | newest parquet | `find <data-dir> -name '*.parquet' -mmin -3` returns 0 | host shell |
-| RSS slope | materially positive vs the daemon's **own** earlier samples — never cross-host (mem limits differ: primary 2 GiB, secondary 1 GiB) | `/metrics` `process_resident_memory_bytes` |
+| `zcrypto-capture-memory-headroom` | any instance on the just-converged host | the rule's state in Grafana / Slack — the RSS row used to be a hand-read slope; the rule reads it against the container limit |
 | prune unit | anything but `Result=success` — read only AFTER the unit has run this bake (event 1 fires it): a never-run oneshot reports `Result=success` by default | `systemctl show -p Result zcrypto-capture-prune.service` |
 
 ## Phase 3 — Primary re-pin
@@ -77,7 +69,7 @@ Read all eight from the hosts and quote them before asking the user's word:
 7. `continuity.py` on a **pulled** copy (never the live dir) shows no new truncated hours — genesis hours of new streams excepted. The capture hosts carry **no parquet reader** (no `pyarrow`, no repo CLI), so a book final cannot be opened on the host at all.
 8. The bake's prune form quoted (`deleted=N`) — the weak form (`deleted=0`) needs the user's explicit acceptance here, not a Phase-5 footnote.
 
-Then, on the user's word: converge the primary with `-e converge_primary=true -e capture_image_digest=sha256:<candidate>` and the capture tag discipline per `capture-deploys.md`.
+Then, on the user's word: converge the primary with `-e converge_primary=true -e capture_image_digest=sha256:<candidate>` and the capture tag discipline per `fleet-deploys.md`.
 
 ## Phase 4 — Rollback (any abort signal, either host)
 
@@ -87,10 +79,10 @@ The previous-good digest is retained locally (verified in Phase 0), so rollback 
 
 **Runs after EVERY converge, secondary included — not once at the end**, so `docs/reference/fleet-pins.md` never disagrees with a live host for the length of the bake.
 
-After the next hour boundary: every book stream's `<HH>.parquet` begins `:00:00.0x` — read from the **pulled** copy, since the hosts have no parquet reader; the NAS archive-pull's next cycle reports `failed=0` (that IS the manifest verification); `continuity.py` on a pulled copy shows no new truncated hours (read past a new stream's genesis hour). Update `docs/reference/fleet-pins.md` in the same change — **the file is a STATE record, not a changelog**: re-true the row (digest, since, operand verified resident) and any standing constraint the converge produced, and put the converge's evidence — every check read, the values quoted, the bake form (`deleted=N`) — in that update's **COMMIT MESSAGE**, never in the file. `git log --follow` on the file is the deploy chronicle; a narrative row goes stale the moment later work lands beside it.
+After the next hour boundary: every book stream's `<HH>.parquet` begins `:00:00.0x` — read from the **pulled** copy, since the hosts have no parquet reader; the NAS archive-pull's next cycle reports `failed=0` (that IS the manifest verification); `continuity.py` on a pulled copy shows no new truncated hours (read past a new stream's genesis hour). The converge's machine line is already in `docs/reference/deploy-log.jsonl` — `converge.sh` appends it — so the pins row is re-trued **from that line**, never re-typed. Update `docs/reference/fleet-pins.md` in the same change — **the file is a STATE record, not a changelog**: re-true the row (digest, since, operand verified resident) and any standing constraint the converge produced, and put the converge's evidence — every check read, the values quoted, the bake form (`deleted=N`) — in that update's **COMMIT MESSAGE**, never in the file. `git log --follow` on the file is the deploy chronicle; a narrative row goes stale the moment later work lands beside it.
 
 Then prune that host's stale images — `uv run python infra/scripts/prune-host-images.py <host>`, then `--apply` — **after** its row is written, never before, and only for the host that just converged; `--keep <digest12>` for anything pre-staged for the leg still to come.
 
 Read the pull result with `sudo /usr/local/bin/docker logs --since <ts> zcrypto-archive-pull` on the NAS (a container, not a systemd unit; full path — `docker` is off the non-interactive ssh `PATH` there). Allow ~35 min after the hour boundary before the finals appear.
 
-**The rollout record is not complete while the two capture hosts differ**: either the primary's leg is done, or the hold and its bound are in the pins row. A gate passed with no primary leg and no bounded hold is an open rollout that reads as finished.
+**One PR per rollout, two commits** — the secondary's row, then the primary's and the engine's — merged within the day, and **never branch other work from it**: a recording branch that lives for days collects everyone else's commits. **The rollout record is not complete while the two capture hosts differ**: either the primary's leg is done, or the hold and its bound are in the pins row. A gate passed with no primary leg and no bounded hold is an open rollout that reads as finished.

@@ -54,3 +54,18 @@ def test_an_archived_topic_carries_no_ripe_when(path: Path):
         f"{path.name}: an archived topic still carries a ripe_when -- either it is not really "
         f"resolved, or the trigger should have been deleted at close"
     )
+
+
+# --- every link in the index lands on a file that exists ------------------------------------------
+# The index is the surface every review consults; a link target that drifts from the file on disk
+# is a dead pointer nothing else catches. It happened by mechanical rename (2026-08-28): a sed over
+# the repo rewrote two ARCHIVE link targets whose files rightly kept their names -- a topic's
+# filename is its identity -- and no test noticed.
+
+_INDEX_LINK = re.compile(r"\]\(((?:archive/)?T\d{4}-[A-Za-z0-9._-]+\.md)\)")
+
+
+def test_every_topic_link_in_the_index_resolves():
+    index = TOPICS / "README.md"
+    dead = [target for target in _INDEX_LINK.findall(index.read_text()) if not (index.parent / target).is_file()]
+    assert not dead, f"index links to files that do not exist: {dead}"

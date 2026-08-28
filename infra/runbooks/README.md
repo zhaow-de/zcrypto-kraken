@@ -23,6 +23,12 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`cross-hour-straddle`](capture.md#cross-hour-straddle) — KNOWN LIMITATION: silence that began before an hour boundary is measured from the boundary, not from its true start.
 - [`capture-silence-rules-and-datasource-errors`](capture.md#capture-silence-rules-and-datasource-errors) — KNOWN LIMITATION: the two silence rules stay silent on a Grafana query failure rather than raising a blackout page the system never observed.
 
+### [`fleet.md`](fleet.md) — every long-lived daemon's memory and restarts
+
+- [`zcrypto-fleet-memory-headroom`](fleet.md#zcrypto-fleet-memory-headroom) — ALERT: a daemon is above 70 % of its container memory limit — the slow-leak alarm, watched as a routine and never as a rollout read.
+- [`zcrypto-fleet-memory-leak`](fleet.md#zcrypto-fleet-memory-leak) — ALERT: a daemon's hourly memory floor rose 64 MiB over a day — the early notice, a week ahead of the limit page.
+- [`zcrypto-fleet-daemon-restarted`](fleet.md#zcrypto-fleet-daemon-restarted) — ALERT: a daemon restarted — a converge's or Alloy bump's own record when one just ran, the only OOM-kill/crash signal otherwise.
+
 ### [`zaccess.md`](zaccess.md) — the internet access host
 
 - [`zaccess-bridgehead-dark`](zaccess.md#zaccess-bridgehead-dark) — ALERT: the bridgehead's Alloy stopped shipping, and every rule scoped to that host went blind with it.

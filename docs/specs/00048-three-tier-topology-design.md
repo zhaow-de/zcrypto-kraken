@@ -11,7 +11,7 @@
 >   second DC gives a failure domain uncorrelated with the primary *and* datacenter-grade uptime (the home
 >   tier has residential-ISP, power, and backup/upgrade windows). Its reboot window is **22:25 UTC**, never
 >   overlapping the primary's 21:25 (both re-decided 2026-07-14 from measured book traffic — see
->   `.claude/rules/capture-deploys.md`; the 02:00/06:00 figures in the original amendment are superseded). **Accepted residual:** both capture hosts are on Linode, so a
+>   `.claude/rules/fleet-deploys.md`; the 02:00/06:00 figures in the original amendment are superseded). **Accepted residual:** both capture hosts are on Linode, so a
 >   provider-wide outage remains a common-mode failure (consciously accepted).
 > - **§ Role C — "No attempt to merge two overlapping book streams update-for-update (their checksum
 >   chains are independent)" is FALSE and is superseded by 00050's D4.** The chains are *not* independent:
