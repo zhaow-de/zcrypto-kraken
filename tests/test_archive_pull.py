@@ -379,7 +379,7 @@ def test_a_narrowed_scope_without_a_slice_is_refused(tmp_path: Path) -> None:
         verify_tree(tmp_path, now=NOW, hash_only=frozenset())
 
 
-# --- Task 3: the `pull` command -- scope, cost, and the gauge file -----------------------------
+# --- spec 00102 Task 3: the `pull` command -- scope, cost, and the gauge file ----
 
 
 def _pull(args: list[str], monkeypatch, *, transferred: frozenset[str] = frozenset(), now: datetime, lines: list[str]):
