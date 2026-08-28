@@ -1,12 +1,12 @@
 ---
 name: zcrypto-rollout-image
-description: Attended canary rollout of the app-image digest — capture secondary, event-sized bake with abort signals, then capture primary and engine in one shot — with preflight, rollback and verify-by-outcome. User-invoked only.
+description: Attended canary rollout of the app-image digest — capture secondary, event-sized bake with abort signals, then capture primary and engine in one shot — with preflight, rollback and verify-by-outcome; plus every tier's image-converge mechanics (engine window, ops, panel regeneration, NAS). User-invoked only.
 disable-model-invocation: true
 ---
 
 # zcrypto-rollout-image
 
-The executable form of the app-image canary rollout: the one image serves capture, engine, ops and the NAS, and this is how a new digest reaches the capture hosts and the engine. L2 capture is unbackfillable — a mistake on either host is permanent data loss. Scope: **digest re-pins only**; a pair-list change is config (primary-first, no bake — `fleet-deploys.md`), and engine converges are their own section there.
+The executable form of the app-image canary rollout: the one image serves capture, engine, ops and the NAS, and this is how a new digest reaches the capture hosts and the engine. L2 capture is unbackfillable — a mistake on either host is permanent data loss. The canary phases are for capture-image digest re-pins; the sections after Phase 5 carry every other image converge on the fleet. A pair-list change is config (primary-first, no bake — below).
 
 ## Ground rules
 
@@ -30,13 +30,13 @@ The executable form of the app-image canary rollout: the one image serves captur
 
 ## Phase 2 — The bake gate: the smallest window that covers the events
 
-**The gate is event-coverage: the smallest window between the two re-pins that satisfies all three.** Compute the window, state it for the user's word, then start it:
+**The gate is event-coverage — never a fixed duration: the smallest window between the two re-pins that satisfies all three.** Compute the window, state it for the user's word, then start it:
 
 1. **A clean prune under the new image** — the one recurring writer that mutates the capture dir concurrently with the daemon. Do not wait for 03:17: `sudo systemctl start zcrypto-capture-prune.service` on the just-converged host fires it now. **Read `deleted=N` in the result**: `deleted=0` exercises the scan but never the deletion path (the weak form) — note which form the bake got, and prefer a host/day where the archive age yields a deleting prune.
 2. **≥3 full segment-rotation hours** — the first hour's every book `<HH>.parquet` beginning at `:00:00.0x` proves the boundary write; three full hours separate a real trend from the rotation sawtooth. **FULL hours only — hours that BEGIN after the re-pin; the converge's own partial hour never counts** (re-pin at 14:07 → hours 15/16/17 → gate 18:00Z). Counting boundaries instead of full hours reads the gate an hour early.
 3. **Every abort signal clear throughout** (table below).
 
-**Gate-close is PASSED.** The three events met with nothing tripped → the primary follows. The gate is hard-capped at the window the events define; nothing after gate-close is owed to the rollout.
+**Gate-close is PASSED.** The three events met with nothing tripped → the primary follows. The gate is hard-capped at the window the events define; nothing after gate-close is owed to the rollout. **The bake qualifies the IMAGE as a runtime** (deps, base layers, entrypoint, memory, shipping) — always — and the capture code when it changed; an engine payload's own proof is its next disarmed boundary cycles, never the bake.
 
 **Memory is not a gate event.** `zcrypto-fleet-memory-headroom`, `zcrypto-fleet-memory-leak` and `zcrypto-fleet-daemon-restarted` watch every daemon continuously and fleet-wide — before, during and after any rollout — so a bake owes no RSS read at T+anything, and no read is ever "voided" by the next converge. During the bake, the headroom rule firing on the just-converged host is an abort signal (table below). A leak page days later names the image through `docs/reference/fleet-pins.md`'s `since` column and `docs/reference/deploy-log.jsonl`, and the rollback operand is in the same row.
 
@@ -86,3 +86,51 @@ Then prune that host's stale images — `uv run python infra/scripts/prune-host-
 Read the pull result with `sudo /usr/local/bin/docker logs --since <ts> zcrypto-archive-pull` on the NAS (a container, not a systemd unit; full path — `docker` is off the non-interactive ssh `PATH` there). Allow ~35 min after the hour boundary before the finals appear.
 
 **One PR per rollout, two commits** — the secondary's row, then the primary's and the engine's — merged within the day, and **never branch other work from it**: a recording branch that lives for days collects everyone else's commits. **The rollout record is not complete while the two capture hosts differ**: either the primary's leg is done, or the hold and its bound are in the pins row. A gate passed with no primary leg and no bounded hold is an open rollout that reads as finished.
+
+______________________________________________________________________
+
+# The other converges
+
+The canary phases above are for capture-image digest re-pins. The rest of the fleet's image-converge procedure follows — the invariants that must hold before this file is open, and everything an Alloy bump shares with an image rollout, are in `fleet-deploys.md`.
+
+## Every image converge
+
+- `site.yml` and `bootstrap.yml` target **both** capture hosts. `-e converge_primary=true` also gates `--tags engine` — a failed assert drops the host from later plays, so the engine play silently skips. Secondary only: `--limit zcrypto-red`. Converges need `-e capture_image_digest=sha256:<...>` (no default).
+- `bootstrap.yml` is first-provision only; it refuses an already-provisioned host without `-e rebootstrap=true`. `site.yml` refuses an un-tagged run on the live primary — only `--tags` naming plays or `--skip-tags engine` satisfy it.
+- **Adding a capture pair** (`capture_pairs` in `group_vars/capture_host/vars.yml`): the capture role reads the primary's deployed pairs and refuses a secondary-first add, fail-closed when the primary is unreachable — secondary-first floods the append-only ledger with false heals, silently on the trades half. Pass the currently-running digest; no bake owed.
+- A new stream's genesis hour is annotated and not booked, so it does not read as a truncation in `continuity.py`.
+
+## Engine converges
+
+The engine runs on the capture primary — the canary phases apply (the gate is the digest running as *capture* on the secondary; there is no engine secondary, and the engine role enforces that gate mechanically), plus:
+
+- **The inter-cycle gap** (boundaries 00/04/08/12/16/20 UTC): once the boundary cycle has journaled its completion, the floor is 5 min past that completion — usually earlier than B+30, later only when the cycle ran long. A boundary with no journal artifact, or `completed_at` outside `[B, B+30 min]`, zeroes the gate streak; a restart re-runs a missed boundary only within `[B, B+25 min]` **and only while that boundary has NO journal artifact** — a `cycle-<HH>.json` *or* a `failed-cycle-<HH>.json` makes the re-run impossible at any time, which is why a failed boundary is never retried.
+- **Converge only from a tree whose rendered engine config matches the fleet** — verify with `--check --diff`; an exit code cannot catch converging to the wrong state.
+- **An engine re-pin whose revision also touches `roles/capture/files/config.alloy` never converges `--tags engine` alone** — the keep-list and its drift assert live in the *capture* role, so the new families publish unadmitted and silently; run `--tags capture,engine` with `-e capture_image_digest=<currently-running> -e capture_alloy_digest=<currently-running>`, then verify the new family by VALUE at the next scrape (`uv run python infra/scripts/grafana-query.py '<family>{host="zcrypto"}'`). The drift assert compares the deployed file, not what the running container loaded, so a converge that never recreates the container passes every assert while the family stays dark.
+- Same-day `--tags capture,engine` on the primary once the secondary's gate closes is the default shape.
+- Pre-flight is mechanized: the engine role refuses a restart without `/opt/zcrypto-capture/logship-secrets.env` (absence crash-loops the engine) and records the `:9102` holder in the play log.
+- **A basket widening must hand-stage the new legs BEFORE the engine converge — no converge does it.** The store delivery is only-when-absent, guarded on `store/BTC` existing, so it silently SKIPS on a live host and the start guard (which tests every `BASKET` symbol × grid) then refuses to start the engine. `zcrypto engine seed` is workstation-only — the image carries no canonical dataset. Seed on the workstation, copy the new legs to `<engine_state_dir>/store` as `zcrypto-engine:zcrypto-engine` `0640`, and read one back **as the engine's own uid** (`docker inspect --format '{{.Config.User}}' zcrypto-engine`): the guard tests existence only, so a truncated or wrong-owner file passes it.
+- **Canonical cannot always seed a new leg** — `data/ohlc-full` is frozen at its last quarterly dump, and a leg whose canonical tail predates Kraken's REST window by more than the overlap cannot be bridged. Seed such a leg REST-only and say so in the pins row; check the gap before planning the window, not at the seam-QA failure.
+- Verify by outcome: the next `cycle-HH.json` lands with `completed_at` inside `[B, B+30 min]`. The restart marker is the container's `.State.StartedAt` — never the converge command's return time.
+
+## Ops converges (`zcrypto-ops`)
+
+Compute tier (reconcile/backfill, panel, verify-replay, liquidations) — no canary bake owed.
+
+- **Record the running digest in `fleet-pins.md` before converging** — the pins assert refuses otherwise; that row is the only rollback operand (`ops_image_digest` has no repo default).
+- **`ops_image_digest` also repins the liquidations compose, which the role never restarts** — the role refuses the repin without `-e liquidations_decision=roll-after|defer`. Prefer `roll-after`: the poller re-fetches a **30 h** window every cycle, so a converge-length restart self-heals; a container down longer than that window loses data.
+- Rollback = re-converge to the recorded digest. Expect `zcrypto_reconcile_healable_gap_seconds_total` to fall, which suppresses the degrading-primary rule for 24 h via its own `resets()` guard.
+
+### Panel generation changes
+
+A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regenerated; regeneration is delete-and-rebuild, never part of a converge.
+
+- **Regenerate only through `zcrypto-panel-regenerate`** (on the ops host) and follow its printed checklist — the script documents its own mechanics. Two decisions it leaves to you: the NAS delete is owed only on a path-changing rebuild (a schema/ladder bump rewrites identical paths and orphans nothing), and a NAS-only file can be an unanchored hour's last copy, so never delete unmeasured.
+- A converge during a regeneration window still needs `-e ops_panel_timer_hold=true` — the role's enable-and-start task re-arms the timer otherwise; the flag does not *stop* an already-armed timer, so time the converge just after a clean `:22` tick.
+- The previous image cannot read the new generation — take the user's word at the regeneration, not at the converge.
+
+## NAS converges (`nas`)
+
+The archive-pull tier — outside the canary regime (no secondary, no bake owed); converges are `--limit nas`, and the pin is `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml`, the one committed capture-image pin.
+
+- **A fingerprint-invalidating pin (any change inside the transitive `cli.*` replay closure that `gate_cache.py` digests — e.g. `journal.py`) replays the whole gate-export cold** — the better part of an hour, and it grows with the journal: run `replay_fingerprint()` inside both images before planning the window (the command is beside the pin in `vars.yml`), and size the window from the current figure in `docs/reference/fleet-pins.md`'s standing constraint, re-measured — never a remembered or older figure.
