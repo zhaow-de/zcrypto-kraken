@@ -72,7 +72,27 @@ for a in "$@"; do
 done
 ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 REV="$(git -C "$SD" rev-parse HEAD 2>/dev/null || echo unknown)"
-DIRTY=false; [ -n "$(git -C "$SD" status --porcelain 2>/dev/null)" ] && DIRTY=true
+# `dirty` answers "does REV fully describe what was deployed?" -- ansible renders from the working
+# tree, so a modified role means it does not. The deploy log is excluded because THIS SCRIPT writes
+# it: measured on the first live rollout, a converge recorded dirty=false, appended its line, and
+# the next converge two minutes later read dirty=true at the same revision, dirtied by nothing but
+# the recorder. A flag that cannot separate that from a modified role reports neither.
+TOP="$(git -C "$SD" rev-parse --show-toplevel 2>/dev/null || true)"
+DIRTY=false
+if [ -n "$TOP" ]; then
+  # Both sides resolved before comparing: $LOG carries `../../..` from $SD, so an unresolved
+  # prefix test yields a pathspec git cannot match and the exclusion silently does nothing.
+  LOGABS="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LOG" 2>/dev/null || echo "$LOG")"
+  TOPABS="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TOP" 2>/dev/null || echo "$TOP")"
+  LOGREL=""
+  case "$LOGABS" in "$TOPABS"/*) LOGREL="${LOGABS#"$TOPABS"/}" ;; esac
+  if [ -n "$LOGREL" ]; then
+    STATUS="$(git -C "$TOP" status --porcelain -- ':(top)' ":(top,exclude)$LOGREL" 2>/dev/null || true)"
+  else
+    STATUS="$(git -C "$TOP" status --porcelain 2>/dev/null || true)"
+  fi
+  [ -n "$STATUS" ] && DIRTY=true
+fi
 # Best-effort and LOUD, never fatal: the pass has already run, so its rc is the truth this script
 # returns; a record that cannot be written is printed for the operator to append by hand instead of
 # being turned into a converge failure that did not happen.

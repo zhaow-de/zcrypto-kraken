@@ -324,3 +324,56 @@ def test_a_limit_with_no_host_vars_records_an_empty_pin_map_not_a_missing_key(tm
     assert rc == 0
     rec = json.loads(log.read_text().splitlines()[-1])
     assert rec["committed_pins"] == {}
+
+
+# --- `dirty` must describe the TREE ANSIBLE RENDERS, not the log this script just wrote ------------
+# Measured on the first live rollout: the 13:18:16Z converge recorded dirty=false, appended its own
+# line, and the 13:20:28Z converge two minutes later recorded dirty=true against the same revision --
+# dirtied by nothing but the recorder. The flag means "revision does not fully describe what was
+# deployed", which is real (ansible renders from the working tree); the log cannot affect that.
+
+
+def make_repo_harness(tmp_path):
+    """A real git repo laid out as the script expects: <repo>/infra/ansible/scripts/converge.sh."""
+    repo = tmp_path / "repo"
+    scripts = repo / "infra" / "ansible" / "scripts"
+    scripts.mkdir(parents=True)
+    (repo / "docs" / "reference").mkdir(parents=True)
+    shutil.copy(SCRIPT, scripts / "converge.sh")
+    (scripts / "run.sh").write_text(FAKE_RUN_SH)
+    for name in ("converge.sh", "run.sh"):
+        p = scripts / name
+        p.chmod(p.stat().st_mode | stat.S_IXUSR)
+    (repo / "docs" / "reference" / "deploy-log.jsonl").write_text("")
+    # The fake run.sh writes invocations.log INSIDE the fixture repo, so without this the harness
+    # dirties the very tree these tests measure -- and the script would look broken while being right.
+    (repo / ".gitignore").write_text("invocations.log\n")
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    for cmd in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "base"]):
+        subprocess.run(["git", "-C", str(repo), *cmd], check=True, env=env, capture_output=True)
+    return repo, scripts / "converge.sh"
+
+
+def _dirty_of_last_record(repo):
+    log = repo / "docs" / "reference" / "deploy-log.jsonl"
+    return json.loads(log.read_text().splitlines()[-1])["dirty"]
+
+
+def test_the_logs_own_append_does_not_make_the_next_converge_read_dirty(tmp_path):
+    repo, script = make_repo_harness(tmp_path)
+    rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
+    assert rc == 0 and _dirty_of_last_record(repo) is False, "clean tree, first converge"
+    # the line just written is now uncommitted -- the exact state that produced the false positive
+    rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
+    assert rc == 0
+    assert _dirty_of_last_record(repo) is False, "the recorder's own line is not a dirty working tree"
+
+
+def test_a_real_uncommitted_change_still_reads_dirty(tmp_path):
+    """The signal that matters must survive the fix -- ansible renders from the working tree, so a
+    modified role really does mean `revision` understates what was deployed."""
+    repo, script = make_repo_harness(tmp_path)
+    (repo / "infra" / "ansible" / "somerole.yml").write_text("- name: a task\n")
+    rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
+    assert rc == 0
+    assert _dirty_of_last_record(repo) is True, "an uncommitted role change must still read dirty"
