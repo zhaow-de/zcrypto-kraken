@@ -23,7 +23,7 @@
 - No new `T<NNNN>` topics. Residuals go to [[T0028]]'s body.
 - Model ceiling for implementers and task reviewers: **Opus**. **Fable** for the cold spec+plan review and the final whole-branch review — the NAS mirror is the durable copy of the unbackfillable capture path.
 - Every commit carries `Co-Authored-By:` and, after its review, `Reviewed-by:` — `commit-messages.md`. Stage by explicit path.
-- Branch: `feat/t0028-nas-pull-incremental-verify`, cut from `e2a6e2f9` on `deploy/rollout-eb6a503a`. It stays local until that rollout closes, then rebases onto `develop` and opens its PR there.
+- Branch: `feat/t0028-nas-pull-incremental-verify`, cut from `e2a6e2f9` on `deploy/rollout-eb6a503a`. It stays local until that rollout closes, then rebases onto `develop`. **Its PR opens only after both converges have run** (Tasks 6-9), so the PR carries T0028's resolution and the measured drop rather than a promise of them.
 
 ### The rsync itemize lines this plan parses, verbatim
 
@@ -661,14 +661,34 @@ Then the final whole-branch review at the **Fable** floor, trailers, and the bra
 
 ---
 
-### Task 6: Leg A — the baseline (ATTENDED, main loop, after the PR merges)
+## Tasks 6-9 — the interim-image deploy
 
-**Not a subagent task.** Every step here touches a host; the permission gate blocks ssh/sudo in a dispatched agent. Each irreversible step takes the user's word with the blocker sweep beside it (`agent-ops.md`). Skill: `fleet-deploys.md` § NAS converges.
+**This sequence is EXCEPTIONAL and is not a template.** The fleet's norm is: merge to `develop`, let CI build, converge the digest CI produced. Here the NAS is instead pinned to an image built from an **unmerged feature branch**, so that the measurement T0028 exists to obtain is taken before the PR opens — the topic then resolves in the PR that completes it, instead of merging as `partial` against a promise. The trade is worth making for this component because its whole deliverable IS a measurement, and because a defect found at leg B can be fixed on the branch without ever having touched `develop`.
 
-- [ ] **Step 1:** After the PR merges into `develop`, take the `-compat` digest from `capture-image.yml`'s run. On the NAS: pull it, and prove `runtime=compat` by **running** polars in the pulled image (`docker run --rm --entrypoint python <image> -c 'import polars; print(polars.__version__)'`) — never by reading the label.
-- [ ] **Step 2:** Re-pin `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml` (committed); `nas_archive_pull_hash_scope` stays `full`. Confirm the previous digest is still resident on the NAS (`docker image ls --digests`) — it is the rollback operand.
-- [ ] **Step 3:** `infra/ansible/scripts/converge.sh site.yml --limit nas -e nas_apply_compose=true` — preview, then the user's typed confirm. **The apply flag is not optional**: without it the nas role renders files and restarts nothing, and Step 4 then reads the old image's silence. This pass lands the image pin AND the new entrypoint together — a render-only converge of this entrypoint against the old image is never run (the old image rejects `--hash-scope` with exit 2, which the ops gate books as a not-clean capture pull). `converge.sh` appends the machine line to `docs/reference/deploy-log.jsonl`.
-- [ ] **Step 4:** Wait one full pull cycle (the entrypoint's `ARCHIVE_PULL_INTERVAL`, 3600 s, plus the cycle's own work). Then, by value:
+It is not worth making anywhere else. A future rollout that finds a NAS pins row built from a feature branch is reading a **recorded exception, not a precedent** — `agent-ops.md`: *observed drift is not license*. Nothing in `fleet-deploys.md` is relaxed by this plan, and nothing here is added to it.
+
+**The one hard constraint: rebase BEFORE the build, never rewrite after.** The image bakes `org.opencontainers.image.revision=<sha>` as a label, and that label is the pin's provenance — it is what lets an auditor resolve a running digest to code without scanning registry tags. Rebasing after the build orphans that sha, and `fleet-pins.md` would name a commit `git log` cannot find.
+
+**Why there is no third converge.** This repo merges with `--merge`, so the branch's commits keep their SHAs and become reachable from `develop`; the interim digest's `revision` label stays resolvable permanently. `docs/` and `tests/` are in `.dockerignore`, and the sibling T0025 branch touches no file under `cli/archive/`, so the merged `develop`'s `cli/` tree is byte-identical to the branch's — a post-merge rebuild would produce a different digest over identical code. The official re-pin is therefore **optional**; take it only to preserve an "every fleet digest is develop-head-built" invariant, and record which you chose.
+
+---
+
+### Task 6: the interim image (ATTENDED, main loop)
+
+**Not a subagent task** — it pushes a branch and dispatches CI. Precondition: the 2026-08-28 capture/engine rollout is **closed** (its PR merged, both capture hosts on one digest).
+
+- [ ] **Step 1:** Rebase onto `develop`. Expect one conflict in `docs/iterations-history-phase1.md` — this branch and T0025 both append to its tail; resolve by keeping **both** entries in iteration-number order. Then re-run `uv run pre-commit run -a` and the reachable set (`tests/test_archive_pull.py tests/test_infra_alloy_series.py tests/test_dashboards_cover_metrics.py tests/test_infra_converge_guards.py tests/test_error_paths_are_logged.py tests/test_internal_terms_not_operator_visible.py tests/test_infra_compose_templates.py tests/test_code_prose_citations.py`) — a rebase can break what it silently re-orders.
+- [ ] **Step 2:** Push the branch. **From here the branch is immutable** — no rebase, no amend, no `filter-branch`. Anything that must change afterwards lands as a NEW commit, and Task 6 restarts at Step 3.
+- [ ] **Step 3:** `timeout 60 gh workflow run capture-image.yml --ref feat/t0028-nas-pull-incremental-verify`, then poll with per-call timeouts until both matrix legs finish. Read the **`-compat`** leg's digest from its job summary — that is the pin. (The dispatch also moves the mutable `:latest` and `:latest-compat` tags onto unmerged code; verified 2026-08-28 that nothing in this repo pins either, so it is inert — do not assume that stays true.)
+- [ ] **Step 4:** On the NAS, pull that digest and prove two things by RUNNING the image, never by reading a label or a tag: `runtime=compat` (import polars and print its version — an AVX build is a silent `Illegal instruction` on the Atom), and that the CLI is the new one (`zcrypto archive pull --help` contains `--hash-scope`). Confirm the rollback operand `9f814848fce1` is still resident (`docker image ls --digests`).
+
+---
+
+### Task 7: Leg A — the baseline (ATTENDED, main loop)
+
+- [ ] **Step 1:** Re-pin `nas_capture_image` to the interim digest in `infra/ansible/host_vars/nas/vars.yml`; leave `nas_archive_pull_hash_scope: full`. Commit on the branch.
+- [ ] **Step 2:** `infra/ansible/scripts/converge.sh site.yml --limit nas -e nas_apply_compose=true` — preview, then the typed confirm. **The apply flag is not optional**: without it the role renders files and restarts nothing, and Step 3 would read the old image's silence. This pass lands the image pin AND the new entrypoint together, which is required — the entrypoint is bind-mounted, and an image predating this branch answers `--hash-scope` with exit 2, which the loop books as `capture_ok=0` and the ops writer reads as a not-clean capture pull.
+- [ ] **Step 3:** Wait one full pull cycle (`ARCHIVE_PULL_INTERVAL`, 3600 s, plus the cycle's own work — the loop is `work; sleep`, so the period exceeds an hour). Then, by value:
 
 ```bash
 uv run python infra/scripts/grafana-query.py \
@@ -677,17 +697,30 @@ uv run python infra/scripts/grafana-query.py \
   'zcrypto_archive_pull_files_walked{host="nas"}'
 ```
 
-Expected: five `channel` instances per family, `files_hashed == files_walked` on every channel (the scope is `full`). `(no series)` is FAIL — the keep regex or the Alloy restart did not take; do not proceed to leg B.
+Expected: five `channel` instances per family, and `files_hashed == files_walked` on every channel (the scope is `full`). **`(no series)` is FAIL** — the keep-regex edit or the Alloy restart did not take; do not proceed to leg B.
 
-- [ ] **Step 5:** Re-true the NAS row in `docs/reference/fleet-pins.md` from the deploy-log line. The commit message carries every value read in Step 4, per channel, and the literal token `archive_pull baseline` — leg B's gate greps for it AND reads those values back.
+- [ ] **Step 4:** Re-true the NAS row in `docs/reference/fleet-pins.md` from the deploy-log line. The commit message carries every value read in Step 3 **per channel** and the literal token `archive_pull baseline`, which leg B's gate greps for. The row itself gains the standing constraint — that this digest was built from an unmerged feature branch, exceptionally, and why — so anyone reading live state meets a recorded exception rather than a precedent.
 
 ---
 
-### Task 7: Leg B — the cut (ATTENDED, main loop)
+### Task 8: Leg B — the cut (ATTENDED, main loop)
 
-- [ ] **Step 1 — the gate:** on the rollout branch, `git log HEAD --grep='archive_pull baseline' --format=%h -- docs/reference/fleet-pins.md` must print a commit (it cannot be on `develop` yet — the rollout PR merges after this leg). Empty → leg A's baseline was never recorded on the pins row; stop. Then `git show -s <hash>` and copy A's per-channel `verify_seconds` / `files_hashed` / `files_walked` into this session — Step 4 compares against THOSE, not against memory.
-- [ ] **Step 2:** Flip `nas_archive_pull_hash_scope: incremental` in `host_vars/nas/vars.yml` (committed). `nas_capture_image` unchanged.
-- [ ] **Step 3:** `infra/ansible/scripts/converge.sh site.yml --limit nas -e nas_apply_compose=true` — config-only, the running digest; the apply flag is what recreates the container with the new `.env` value. Without it the file is rendered and the running container never re-reads it.
-- [ ] **Step 4:** Wait one full pull cycle, run the same three-family query. Against the values copied in Step 1: `files_walked` unchanged from leg A within the hour's growth; `files_hashed` ≈ transfers + `files_walked / 24`; `verify_seconds` down by the same ratio. Quote every value.
-- [ ] **Step 5:** Pins row re-trued; the commit message carries the before/after per channel. **Resolve [[T0028]]** (`topic-ops`: `status: resolved`, `## Resolution` with the measured drop and the measured horizon the new curve implies, `git mv` to `archive/`, index bullet to `### Resolved`). Then prune the NAS's superseded image — `uv run python infra/scripts/prune-host-images.py nas`, then `--apply` — after the row is written, never before.
-- [ ] **Step 6 — rollback, if `files_hashed` did not drop or any channel's `failed` went non-zero on a clean tree:** flip the variable back to `full` and converge again; no image changes hands. Then stop and report — a rollback is a finding, not a retry license.
+- [ ] **Step 1 — the gate:** `git log HEAD --grep='archive_pull baseline' --format=%h -- docs/reference/fleet-pins.md` must print a commit. Empty → leg A's baseline was never recorded on the pins row; stop. Then `git show -s <hash>` and copy leg A's per-channel numbers into this session — Step 4 compares against THOSE, never against memory.
+- [ ] **Step 2:** Flip `nas_archive_pull_hash_scope` to `incremental`; `nas_capture_image` unchanged. Commit on the branch.
+- [ ] **Step 3:** `infra/ansible/scripts/converge.sh site.yml --limit nas -e nas_apply_compose=true` — config-only on the running digest; the apply flag is what recreates the container with the new `.env` value.
+- [ ] **Step 4:** Wait one full pull cycle, run the same three-family query. Against leg A's copied values: `files_walked` unchanged within the hour's growth; `files_hashed` ≈ this cycle's transfers + `files_walked / 24`; `verify_seconds` down by roughly that ratio. Quote every value per channel.
+
+**What this reading does and does not prove.** It proves the per-cycle **cost** fell, which is what T0028 exists to fix. It does not prove whole-archive **coverage**, which completes only after 24 cycles (~26-30 h at the expected period) — coverage rests on the slice arithmetic and the guard tests (`test_the_rotation_slice_catches_a_corrupt_final_nothing_transferred`, plus the two mutation probes), not on waiting out a wrap. Do not claim a coverage measurement that was not taken.
+
+- [ ] **Step 5 — rollback**, if `files_hashed` did not fall or any channel's `failed` went non-zero on a clean tree: flip the variable back to `full` and converge again. No image changes hands and no data gap opens. Then stop and report — a rollback is a finding, not a retry license.
+
+---
+
+### Task 9: closeout and the PR (ATTENDED, main loop)
+
+- [ ] **Step 1:** Re-true the pins row from leg B's deploy-log line; the commit message carries the before/after per channel.
+- [ ] **Step 2 — resolve [[T0028]]** (load `topic-ops`): `status: resolved`, a `## Resolution` naming spec `00102`, the measured drop per channel, and **the measured horizon the new curve implies** — replacing every estimate the topic carried, which it explicitly told its reader not to trust. `git mv` to `archive/`, index bullet to that category's `### Resolved`.
+- [ ] **Step 3 — rewrite the iter-152 entry** (load `iteration-closeout`): its "unmeasured until the converges" framing is now false. Replace it with the measured before/after, and record that the deploy used an interim branch-built image, exceptionally, with the reason.
+- [ ] **Step 4:** Prune the NAS's superseded image — `uv run python infra/scripts/prune-host-images.py nas`, then `--apply` — **after** the row is written, never before, keeping the rollback operand.
+- [ ] **Step 5:** Open the PR into `develop` (load `open-pr`; run `infra/scripts/review-trailer-audit.sh` first). It carries the code, both converges' pins rows, and T0028's full resolution.
+- [ ] **Step 6 — post-merge, optional:** decide whether to re-pin to a `develop`-built digest. It changes no behaviour (identical `cli/` tree); take it only to preserve an "every fleet digest is develop-head-built" invariant. Whichever you choose, record the choice in the pins row and keep or remove the exceptional-image constraint accordingly.
