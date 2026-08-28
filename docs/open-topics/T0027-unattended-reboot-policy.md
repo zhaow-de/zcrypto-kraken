@@ -7,7 +7,7 @@ ripe_when: a live 6b order round-trip exists, so a reboot can be staged mid-orde
 
 ## Context — what
 
-The capture/engine VPS runs `unattended-upgrades` configured to **auto-reboot at 21:25 UTC (re-decided 2026-07-14 from measured traffic — was 04:00, then 02:00; see `.claude/rules/capture-deploys.md`)** whenever an update sets `/var/run/reboot-required` (typically a kernel upgrade). On **2026-07-11 04:00 UTC** it rebooted for kernel `6.12.88 → 6.12.95`; both containers auto-restarted cleanly (`restart: unless-stopped` + the `zcrypto-capture`/`zcrypto-engine` systemd units), capture gap ~83 s, engine `ExitCode 0`. This will recur on every future kernel/critical update.
+The capture/engine VPS runs `unattended-upgrades` configured to **auto-reboot at 21:25 UTC (re-decided 2026-07-14 from measured traffic — was 04:00, then 02:00; see `.claude/rules/fleet-deploys.md`)** whenever an update sets `/var/run/reboot-required` (typically a kernel upgrade). On **2026-07-11 04:00 UTC** it rebooted for kernel `6.12.88 → 6.12.95`; both containers auto-restarted cleanly (`restart: unless-stopped` + the `zcrypto-capture`/`zcrypto-engine` systemd units), capture gap ~83 s, engine `ExitCode 0`. This will recur on every future kernel/critical update.
 
 ## Why this matters
 
@@ -39,7 +39,7 @@ The process the flip must come with (attended mode creates a new gap — a reboo
 
 ## Done so far — the flip and its detector (2026-07-26)
 
-**The attended-reboot guidance shipped as operating-surface text, not as a skill (decided 2026-08-22, owner-approved).** This topic had asked for it as a sibling of [[T0081]]/[[T0084]]; both of those resolved and both skills exist, so that precondition fired. The work landed in a different shape: `docs/reference/fleet.md` § Reboots carries the whole discipline — secondary-before-primary canary order, the schedule constraints (≥1 h from any 4h bar boundary, off the hour, primary in the measured book-traffic trough, ≥1 h host separation, right after a completed engine cycle), the expected ~83 s capture gap, the alert that pages until the reboot happens, and — added in the same change, because this sub-item explicitly asked for it and § Reboots did not yet carry it — the verify-by-outcome checks a reboot owes. A skill was the wrong shape: `zcrypto-bump-alloy` and `zcrypto-captures-rollout` wrap multi-host rollouts with canary ordering and verification, whereas a reboot is a single attended act with no staging, no digest and no bake — its whole procedure is when to go and what to read afterwards, which is five bullets of reference text, not a skill. Same disposition the iter-140 probe-checklist items took: operating-surface text, not a registration.
+**The attended-reboot guidance shipped as operating-surface text, not as a skill (decided 2026-08-22, owner-approved).** This topic had asked for it as a sibling of [[T0081]]/[[T0084]]; both of those resolved and both skills exist, so that precondition fired. The work landed in a different shape: `docs/reference/fleet.md` § Reboots carries the whole discipline — secondary-before-primary canary order, the schedule constraints (≥1 h from any 4h bar boundary, off the hour, primary in the measured book-traffic trough, ≥1 h host separation, right after a completed engine cycle), the expected ~83 s capture gap, the alert that pages until the reboot happens, and — added in the same change, because this sub-item explicitly asked for it and § Reboots did not yet carry it — the verify-by-outcome checks a reboot owes. A skill was the wrong shape: `zcrypto-bump-alloy` and `zcrypto-rollout-image` wrap multi-host rollouts with canary ordering and verification, whereas a reboot is a single attended act with no staging, no digest and no bake — its whole procedure is when to go and what to read afterwards, which is five bullets of reference text, not a skill. Same disposition the iter-140 probe-checklist items took: operating-surface text, not a registration.
 
 **The flip is live on both capture VPSes.** `Automatic-Reboot "false"`, verified on-host; `zcrypto-ops` still reads `"true"` at 02:25, untouched, because the role default preserves today's behaviour and only `group_vars/capture_host` overrides it. Patches still auto-install. Delivered by spec `00071`.
 
@@ -49,7 +49,7 @@ The process the flip must come with (attended mode creates a new gap — a reboo
 
 **Ordering hazard, found before it fired:** this topic's own verification step — "touch and remove the flag file" — would have rebooted the live capture + engine primary had it run while `Automatic-Reboot` was still `"true"`, because a present `/run/reboot-required` is exactly what unattended-upgrades acts on. The flip was landed and verified first; the precondition was re-checked on-host in the same command that touched the flag.
 
-**Reboot order is settled and recorded in `capture-deploys.md`:** secondary first, then primary — the reverse of the image-rollout order, because if the kernel bricks the secondary the primary is never touched.
+**Reboot order is settled and recorded in `fleet-deploys.md`:** secondary first, then primary — the reverse of the image-rollout order, because if the kernel bricks the secondary the primary is never touched.
 
 ## Suggested next steps
 

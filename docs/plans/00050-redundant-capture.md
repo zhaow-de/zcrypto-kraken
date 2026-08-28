@@ -19,7 +19,7 @@ Copied verbatim from spec `00050`. Every task's requirements implicitly include 
 - **Exit-bar isolation:** the T0003 gap measurement runs on the **raw primary mirror only**. The overlay gets a *separate* report and is **never** an input to the Phase-1 exit bar (an overlay heals gaps by design, so measuring the bar on it would let a raw-capture regression bank a clean run).
 - **`--min-gap-seconds` default is 30** — 2× the measured 14.78 s maximum natural quiescence. It is **not yet validated**; the reconciler runs **detect-only** through the soak and the final value is pinned from cross-host data (T0039). Never mint before that soak.
 - **Never delete data to resolve an ambiguity** — quarantine, never unlink.
-- Deploy embargo: no primary capture-image re-pin until the ≥7-day clean-run gate banks. All future re-pins follow the canary rule (`.claude/rules/capture-deploys.md`).
+- Deploy embargo: no primary capture-image re-pin until the ≥7-day clean-run gate banks. All future re-pins follow the canary rule (`.claude/rules/fleet-deploys.md`).
 
 ## Facts the implementer needs (verified against the tree, 2026-07-14)
 

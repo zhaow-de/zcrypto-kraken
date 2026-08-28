@@ -26,7 +26,7 @@ The material simplification: Alloy already bind-mounts the host root read-only (
 
 Rejected alternatives, with the reason each fails rather than a preference:
 
-- **Publish from the capture daemon's `/metrics`.** The capture container mounts only `capture_data_dir`; it cannot see `/run/reboot-required`. Adding a mount means recreating the container carrying the unbackfillable L2 stream, for a housekeeping boolean — the exact hazard `capture-deploys.md` exists to prevent. It also cannot cover `zcrypto-red` via the engine, which is primary-only.
+- **Publish from the capture daemon's `/metrics`.** The capture container mounts only `capture_data_dir`; it cannot see `/run/reboot-required`. Adding a mount means recreating the container carrying the unbackfillable L2 stream, for a housekeeping boolean — the exact hazard `fleet-deploys.md` exists to prevent. It also cannot cover `zcrypto-red` via the engine, which is primary-only.
 - **A Loki log-line alert.** Viable, and genuinely cheaper. Rejected because the level signal (a gauge you can look at, and alert on staleness) is worth the difference, and because the same converge has to touch the journal keep-regex anyway.
 - **Probe from `zcrypto-ops`, which already has the transport.** There is no ops→capture path by construction: ops reads the NAS over `ro,soft` NFS, and the only capture-outbound channel is the NAS's `rrsync -ro` forced command. Building one means new credentials into the trade-adjacent host.
 

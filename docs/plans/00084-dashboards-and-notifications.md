@@ -704,7 +704,7 @@ If either fails, the drop-in replacement drops both unproven constructs and keep
 
 - [ ] **Step 6b: Build the engine image and mature its canary bake — START THIS RIGHT AFTER TASKS 1/1b MERGE, not here.**
 
-Step 7 cannot run without this, and the engine role will refuse mechanically if it is skipped. Sequenced first because the bake takes hours-to-days and should mature while Tasks 2–12 proceed. **Load the `zcrypto-captures-rollout` skill and follow it** — this is a capture-image re-pin with its own discipline, not an engine step:
+Step 7 cannot run without this, and the engine role will refuse mechanically if it is skipped. Sequenced first because the bake takes hours-to-days and should mature while Tasks 2–12 proceed. **Load the `zcrypto-rollout-image` skill and follow it** — this is a capture-image re-pin with its own discipline, not an engine step:
 
 1. Build and push an image carrying Tasks 1 and 1b. Record its digest.
 2. Pull it on `zcrypto-red` and **verify the change is in the pulled image** — run the image's own version surface; never infer from the tag.
@@ -728,7 +728,7 @@ No canary bake is owed here — the compute tier carries no trade key and no unb
 5. **Omit `ops_alloy_digest`** — Alloy is not the subject here, and passing it the value of `ops_image_digest` is a live footgun this fleet has already armed once.
 6. **Verify by outcome**: `infra/scripts/ops-postverify.sh`, then read the gauge itself — `zcrypto_reconcile_ledger_records` must return a value, and `(no series)` is a FAIL, never a zero.
 
-- [ ] **Step 7: Converge the engine — the live trade host.** Full `capture-deploys.md` discipline: inside a 4-hourly inter-cycle gap (00/04/08/12/16/20 UTC), digest recorded in `docs/reference/fleet-pins.md` first, the secondary's capture bake as the canary gate, `--check --diff` preview from a tree whose rendered config matches the fleet. Verify by outcome: the next `cycle-HH.json` lands with `completed_at` inside `[B, B+30 min]`, and `zcrypto_engine_cycle_duration_seconds` is **absent** until that cycle completes, then correct.
+- [ ] **Step 7: Converge the engine — the live trade host.** Full `fleet-deploys.md` discipline: inside a 4-hourly inter-cycle gap (00/04/08/12/16/20 UTC), digest recorded in `docs/reference/fleet-pins.md` first, the secondary's capture bake as the canary gate, `--check --diff` preview from a tree whose rendered config matches the fleet. Verify by outcome: the next `cycle-HH.json` lands with `completed_at` inside `[B, B+30 min]`, and `zcrypto_engine_cycle_duration_seconds` is **absent** until that cycle completes, then correct.
 
 - [ ] **Step 8: Owner steps** — delete the deprecated `zcrypto-main` board in the Grafana UI; confirm no saved silence was keyed on a retitled rule.
 
@@ -738,7 +738,7 @@ No canary bake is owed here — the compute tier carries no trade key and no unb
 
 - [ ] **Step 1: Record measured facts** — per-host series counts after the `zaccess` widening, against `00043`'s <1k target and `00069`'s baseline (nas 144, ops 308, zcrypto 134, zcrypto-red 108). Measured, never assumed.
 
-- [x] **Step 2: Update `docs/reference/fleet.md`** — the access tier's converge shape: native deb Alloy pinned by `access_alloy_version`, config copied ungated every converge, no `access_alloy_digest` and no drift-assert, so a config change converges with a plain limited `site.yml`. `capture-deploys.md` does not cover this case.
+- [x] **Step 2: Update `docs/reference/fleet.md`** — the access tier's converge shape: native deb Alloy pinned by `access_alloy_version`, config copied ungated every converge, no `access_alloy_digest` and no drift-assert, so a config change converges with a plain limited `site.yml`. `fleet-deploys.md` does not cover this case.
 
 - [ ] **Step 3: Update `docs/reference/fleet-pins.md`** with the engine digest.
 

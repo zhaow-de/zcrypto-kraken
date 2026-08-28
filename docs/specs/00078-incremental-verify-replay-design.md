@@ -98,7 +98,7 @@ Every guard below is proven by constructing its defect — reading the assertion
 
 ## Deploy (attended tail — the branch documents it, the owner runs it)
 
-`cli/` changes ⇒ image rebuild + ops re-pin; the runner template gains the `:rw` state mount and new metric emission; one alert rule is **added** (nothing retired — no prune this time). Order per `capture-deploys.md`: record the pin → converge `--limit zcrypto-ops` (no `ops_alloy_digest` — `config.alloy` untouched; liquidations roll-or-defer decided explicitly, prefer rolling) → push rules → verify by value at the first tick. First converge also creates the state dir via the role.
+`cli/` changes ⇒ image rebuild + ops re-pin; the runner template gains the `:rw` state mount and new metric emission; one alert rule is **added** (nothing retired — no prune this time). Order per `fleet-deploys.md`: record the pin → converge `--limit zcrypto-ops` (no `ops_alloy_digest` — `config.alloy` untouched; liquidations roll-or-defer decided explicitly, prefer rolling) → push rules → verify by value at the first tick. First converge also creates the state dir via the role.
 
 ## Rollback
 

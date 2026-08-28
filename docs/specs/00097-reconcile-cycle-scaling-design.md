@@ -26,7 +26,7 @@ HELP text for the new gauge carries no internal tokens (`operator-facing-text.md
 
 ### D2 — one warning rule on the new gauge, pushed after its first live sample
 
-`zcrypto-reconcile-cycle-duration`, **warning**, fires when the instant read of `zcrypto_reconcile_cycle_duration_seconds` is over 1,500 s (a strict `gt` evaluator, matching the file's house idiom; 83 % of the 1,800 s tick). `noDataState: OK` — metric absence is `zcrypto-reconcile-exporter-stale`'s page, and double-paging one failure is the [[T0135]] shape. Consequence at breach is degraded cadence, not loss, which is why warning and not critical. Lifecycle per `capture-deploys.md`: the rule is pushed **after** the first post-converge sample exists, and that first sample is read by **value** (a first cycle at cache-build cost is expected — see D6). A new `infra/runbooks/ops.md` section owns the uid.
+`zcrypto-reconcile-cycle-duration`, **warning**, fires when the instant read of `zcrypto_reconcile_cycle_duration_seconds` is over 1,500 s (a strict `gt` evaluator, matching the file's house idiom; 83 % of the 1,800 s tick). `noDataState: OK` — metric absence is `zcrypto-reconcile-exporter-stale`'s page, and double-paging one failure is the [[T0135]] shape. Consequence at breach is degraded cadence, not loss, which is why warning and not critical. Lifecycle per `fleet-deploys.md`: the rule is pushed **after** the first post-converge sample exists, and that first sample is read by **value** (a first cycle at cache-build cost is expected — see D6). A new `infra/runbooks/ops.md` section owns the uid.
 
 ### D3 — vectorize the gap arithmetic on int64 microseconds; the API and every artifact stay identical
 

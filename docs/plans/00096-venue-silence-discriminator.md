@@ -688,7 +688,7 @@ Replace the `summary:` value of the `zcrypto-reconcile-residual-gap` rule with:
       summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this. TRIAGE FIRST: a both_streams_silent record carries a verdict field, also exported as zcrypto_reconcile_dark_episode_seconds_total by verdict. venue_silent means both capture hosts recorded the same venue message timestamps inside the window, so the silence was upstream of both hosts -- weigh it as a venue event, and treat it sceptically if a fleet-wide image change just landed. capture_divergent means one host missed what the other received: investigate the fleet. undetermined means no evidence either way -- treat it as loss, and check zcrypto_capture_venue_status_total for that hour, where a series for anything other than online is itself a venue signal this check cannot see."
 ```
 
-`expr`, `condition`, `for`, `noDataState`, `execErrState`, `labels.severity`, `uid`, and the `__dashboardUid__`/`__panelId__`/`unit` annotations are unchanged. This is an **upsert of annotation text**: no uid is superseded, so **no prune is owed** (`capture-deploys.md`).
+`expr`, `condition`, `for`, `noDataState`, `execErrState`, `labels.severity`, `uid`, and the `__dashboardUid__`/`__panelId__`/`unit` annotations are unchanged. This is an **upsert of annotation text**: no uid is superseded, so **no prune is owed** (`fleet-deploys.md`).
 
 - [ ] **Step 2: Verify the operator-facing ban still holds**
 
@@ -751,7 +751,7 @@ git commit
 
 Message: `feat(archive): give the residual-gap page its triage line and runbook`
 
-**Do not push the rule to Grafana here.** Per `capture-deploys.md`'s alert-rule lifecycle the push happens after the converge, and is verified evaluating *by value*. That is Task 5.
+**Do not push the rule to Grafana here.** Per `fleet-deploys.md`'s alert-rule lifecycle the push happens after the converge, and is verified evaluating *by value*. That is Task 5.
 
 ---
 
@@ -841,7 +841,7 @@ Load the `open-pr` skill. Title: `feat(archive): iter-141 — a venue-silence di
 
 - [ ] **Step 1: Record the digest, then converge ops**
 
-`zcrypto-ops` is the compute tier — no canary bake owed — but four operands are mechanically required and a converge missing any of them bounces (`capture-deploys.md`):
+`zcrypto-ops` is the compute tier — no canary bake owed — but four operands are mechanically required and a converge missing any of them bounces (`fleet-deploys.md`):
 
 1. **Record the running digest in `docs/reference/fleet-pins.md` FIRST** — the pins assert refuses otherwise, and that row is the only rollback operand (`ops_image_digest` has no repo default).
 2. **Pull the digest on the host first** — every runner is `--pull never`, and the ops role's digest preflight refuses a digest the host has not pulled.

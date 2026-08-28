@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refuses to hand the vault password to `ansible-inventory --host/--list` — both silently decrypt
-# the WHOLE vault to stdout (capture-deploys.md "Ansible secrets"). Walks /proc ancestry so the
+# the WHOLE vault to stdout (fleet-deploys.md "Ansible secrets"). Walks /proc ancestry so the
 # refusal fires wherever ansible-inventory sits in the process chain. Traceability: spec 00083 D4.
 pid=$$
 while [ "$pid" -gt 1 ] 2>/dev/null; do

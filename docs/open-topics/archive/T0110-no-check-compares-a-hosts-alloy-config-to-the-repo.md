@@ -14,7 +14,7 @@ Split out of [[T0109]] on 2026-07-29, which fixed two layers of this and left th
 when: <tier>_alloy_digest is defined
 ```
 
-An ordinary converge still omits that variable by design, still skips the config copy, and still exits 0. The only thing standing between that and a silently stale keep-regex is prose in `.claude/rules/capture-deploys.md`.
+An ordinary converge still omits that variable by design, still skips the config copy, and still exits 0. The only thing standing between that and a silently stale keep-regex is prose in `.claude/rules/fleet-deploys.md`.
 
 ## Why this matters
 
@@ -66,4 +66,4 @@ The assert runs only when a config is already deployed, so a host that has never
 
 - ~~Decide where the check lives~~ — the converge, for the reason recorded above.
 - ~~Implement it, and give it an alert rule if it produces a series~~ — implemented as a converge-time assert; it produces no series, so no rule is owed.
-- ~~Record it in `capture-deploys.md`~~ — the digest-gate line there already states the requirement; the assert now enforces it rather than relying on the reader.
+- ~~Record it in `fleet-deploys.md`~~ — the digest-gate line there already states the requirement; the assert now enforces it rather than relying on the reader.

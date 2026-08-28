@@ -119,4 +119,4 @@ The alert shipped 2026-07-26 but had never fired, so nothing established it *wou
 
 **The alert leg**, shipped 2026-07-26 and drill-validated the same morning, remains the escalation path once the ladder gives up — it is what carries a pair the ladder cannot fix.
 
-**Not deployed by this topic.** Capture-daemon code on the unbackfillable path reaches the fleet only via an image build, the ≥24 h secondary canary bake, then the primary re-pin (`capture-deploys.md`). Merged and unrolled is the intended state here; the deploy is its own attended step.
+**Not deployed by this topic.** Capture-daemon code on the unbackfillable path reaches the fleet only via an image build, the ≥24 h secondary canary bake, then the primary re-pin (`fleet-deploys.md`). Merged and unrolled is the intended state here; the deploy is its own attended step.

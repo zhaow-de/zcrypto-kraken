@@ -8,11 +8,11 @@ status: resolved
 
 Registered 2026-07-23, split out of [[T0092]]'s 15-agent pre-flight audit. The audit set out to check whether adding BTC-quoted capture would break any consumer; what it actually found is that two of the instruments we *verify rollouts with* have defects of their own — independent of T0092, and pre-existing.
 
-Both live in `infra/scripts/continuity.py`, the script `.claude/rules/capture-deploys.md` names as the post-converge outcome check, plus one in the daily `archive verify-replay` run.
+Both live in `infra/scripts/continuity.py`, the script `.claude/rules/fleet-deploys.md` names as the post-converge outcome check, plus one in the daily `archive verify-replay` run.
 
 ## Why this matters
 
-An instrument that reports green while data is missing is the failure class this project has been bitten by repeatedly — and `capture-deploys.md` currently instructs an operator to trust exactly this script after touching an unbackfillable pipeline. The T0092 rollout had to be verified by direct inspection instead, which is fine once but is not a standing answer.
+An instrument that reports green while data is missing is the failure class this project has been bitten by repeatedly — and `fleet-deploys.md` currently instructs an operator to trust exactly this script after touching an unbackfillable pipeline. The T0092 rollout had to be verified by direct inspection instead, which is fine once but is not a standing answer.
 
 ## Findings so far
 
@@ -44,4 +44,4 @@ All measured by the audit's verifier agents, each reproduced rather than argued.
 
 **One residual split out before archiving, so no live deferred sub-item remains: [[T0112]]** (registered at the cold review) — `MIN_POOL` protects against exactly ONE outage-scale interval (`n ≥ 10000k − 5000` for k of them); no production stream is within three orders of magnitude of the k=2 regime (BTC/EUR 20,491 intervals of margin, LINK/EUR 10,508, ETH/BTC 2,197, SOL/BTC 898).
 
-The genesis-carve-out sentence this topic's own findings put into `.claude/rules/capture-deploys.md` is retired on this same branch (protected-file edit, owner sign-off) now that the instrument annotates the genesis hour itself instead of needing an operator-read exception.
+The genesis-carve-out sentence this topic's own findings put into `.claude/rules/fleet-deploys.md` is retired on this same branch (protected-file edit, owner sign-off) now that the instrument annotates the genesis hour itself instead of needing an operator-read exception.

@@ -309,7 +309,7 @@ Reading `_CycleGauges` closely enough to design these panels turned up two gauge
 
 Both are TDD-able against a fake registry with no live engine: assert a dropped asset's series is **gone** after the next cycle, and assert `cycle_duration` is **absent** rather than 0 before the first cycle of a fresh process. Neither can false-fire an existing rule — nothing reads either family today — so the change is safe to land ahead of the rules push.
 
-**Operational cost, named:** this makes the iteration touch the **live trade host**. The engine converge follows `capture-deploys.md` in full — inside a 4-hourly inter-cycle gap, digest recorded in `fleet-pins.md` first, the secondary's capture bake standing as the canary gate — and the panel descriptions ship **without** the two caveat sentences, because the defects will be gone.
+**Operational cost, named:** this makes the iteration touch the **live trade host**. The engine converge follows `fleet-deploys.md` in full — inside a 4-hourly inter-cycle gap, digest recorded in `fleet-pins.md` first, the secondary's capture bake standing as the canary gate — and the panel descriptions ship **without** the two caveat sentences, because the defects will be gone.
 
 **Corrections applied from review:**
 
@@ -374,7 +374,7 @@ Two goals, the owner's: **(1)** a Linux hostname is never visible on an operator
 
 **What is actually a hostname.** Only two label values are: `zcrypto` and `zcrypto-red` (the journal shows `zcrypto-ops systemd[1]`, so even the ops box's *label* `ops` is already an abstraction over its hostname). `nas` and `ops` are role words that happen to be short. `zaccess` is a project-coined role name that doubles as a hostname. **So goal (1) bites on exactly two values**, and a fleet-wide renaming would be solving four-fifths of a problem that does not exist.
 
-**The vocabulary is adopted, not invented.** `capture-deploys.md` already says primary/secondary throughout, and four alert titles already read *"— primary (zcrypto)"* / *"— secondary (zcrypto-red)"* (six carry a host token in total) — the parenthetical is redundant decoration next to a name that is already the operational one. Dropping it loses no information and closes goal (1) for both values.
+**The vocabulary is adopted, not invented.** `fleet-deploys.md` already says primary/secondary throughout, and four alert titles already read *"— primary (zcrypto)"* / *"— secondary (zcrypto-red)"* (six carry a host token in total) — the parenthetical is redundant decoration next to a name that is already the operational one. Dropping it loses no information and closes goal (1) for both values.
 
 | `host` label (**unchanged**) | display name | why |
 | --- | --- | --- |
@@ -452,7 +452,7 @@ Rules whose signal is genuinely not panel-shaped (a pure log-content rule) carry
 
 Scope discipline: the access regex also omits `node_memory_MemFree_bytes`, `node_filesystem_free_bytes`, `node_filesystem_files`, `node_filesystem_files_free`, and `node_scrape_collector_duration_seconds` relative to its siblings. **Only `node_scrape_collector_success` is added** — it is the one whose absence disables an existing alert. The others are a series-budget question with no rule behind them, and widening on aesthetics spends budget for nothing.
 
-**Converge shape — and it differs from every other host.** Alloy on `zaccess` is a **native deb**, not a container: installed as `alloy={{ access_alloy_version }}`, held via `dpkg_selections`, and its `config.alloy` is an **ungated copy** — the task comment records that every converge ships it so a hand edit cannot outlive the next run. There is **no `access_alloy_digest`** and no drift-assert, unlike capture (`capture_alloy_digest`) and ops (`ops_alloy_digest`). So this converges with a plain `site.yml --limit` on that host: no digest operand, no bake owed, no canary gate. `capture-deploys.md` does not cover this case — the finding lands in `docs/reference/fleet.md` in this same change, per `agent-ops.md`.
+**Converge shape — and it differs from every other host.** Alloy on `zaccess` is a **native deb**, not a container: installed as `alloy={{ access_alloy_version }}`, held via `dpkg_selections`, and its `config.alloy` is an **ungated copy** — the task comment records that every converge ships it so a hand edit cannot outlive the next run. There is **no `access_alloy_digest`** and no drift-assert, unlike capture (`capture_alloy_digest`) and ops (`ops_alloy_digest`). So this converges with a plain `site.yml --limit` on that host: no digest operand, no bake owed, no canary gate. `fleet-deploys.md` does not cover this case — the finding lands in `docs/reference/fleet.md` in this same change, per `agent-ops.md`.
 
 **(b) The capture staleness watchdog watches nothing.** `zcrypto_capture_seconds_since_last_book_message{pair}` is neither charted nor alerted, though its docstring names it the watchdog's proof-of-life signal. A new rule covers it. It is published and keep-list admitted already, so this is an `alerts.yaml` push with **no converge**.
 

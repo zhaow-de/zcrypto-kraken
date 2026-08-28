@@ -944,7 +944,7 @@ A `None` last value FAILS THE CYCLE, matching `replay_stages`' existing refusal 
 
 **Journal the INPUT, not the derivative.** A journaled drift number would rot against the code that derived it; journaled closes stay true.
 
-**Readers before writer** (`capture-deploys.md`). Tasks 1–5 never read `closes`, and the absence-tolerant `from_json` arm below is what keeps the 258 existing artifacts loadable.
+**Readers before writer** (`fleet-deploys.md`). Tasks 1–5 never read `closes`, and the absence-tolerant `from_json` arm below is what keeps the 258 existing artifacts loadable.
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_engine_journal.py`, built the way that module already builds records (there are no `journal_dir` / `one_cycle` / `legacy_artifact` fixtures — `tests/test_engine_cycle.py` works from `tmp_path, monkeypatch` plus `_env(...)` / `_success_record_json(...)`; follow those).
 

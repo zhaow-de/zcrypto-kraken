@@ -16,7 +16,7 @@ It bounds what archive self-attestation can prove. OPS-3's continuity-replay ver
 
 - The blocker is the Float64 storage of `price`/`qty` in `BOOK_SCHEMA` (`cli/capture/segment_writer.py:16-24`; written as floats at `cli/capture/command.py:146-158`). The CRC needs the exact wire strings.
 - OPS-3 (spec 00051, `cli/archive/replay.py`) delivers the achievable-now check: structural continuity + desync replay, stored-checksum-as-ground-truth. It explicitly does **not** compare a re-derived CRC.
-- A fix would add raw-string `price_str`/`qty_str` columns (or replace the floats) to the captured book schema — a **capture-daemon change on the unbackfillable live stream**, so it is gated behind a capture image re-pin (canary rule + primary clean-run embargo, [[T0032]] / `.claude/rules/capture-deploys.md`) and only ever attests data captured *after* the change (pre-change history stays float-only forever).
+- A fix would add raw-string `price_str`/`qty_str` columns (or replace the floats) to the captured book schema — a **capture-daemon change on the unbackfillable live stream**, so it is gated behind a capture image re-pin (canary rule + primary clean-run embargo, [[T0032]] / `.claude/rules/fleet-deploys.md`) and only ever attests data captured *after* the change (pre-change history stays float-only forever).
 
 ## OPS-3 decision (2026-07-15)
 

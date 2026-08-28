@@ -724,7 +724,7 @@ def test_run_aborts_when_the_store_holds_every_eur_leg_but_neither_btc_leg(tmp_p
     pre-widening build and the two `/BTC` parquets were never staged. A `*/EUR/*.parquet` glob
     passes on exactly this store, so the node starts and looks healthy; the first boundary's
     `refresh_store` then dies on a missing `ETH/BTC/240.parquet`, and the failed-cycle sidecar makes
-    that boundary unretryable at any time (capture-deploys.md), costing the ratified gate streak."""
+    that boundary unretryable at any time (fleet-deploys.md), costing the ratified gate streak."""
     _run_env(monkeypatch, tmp_path, symbols=[s for s in BASKET if s.endswith("/EUR")])
 
     result = runner.invoke(app, ["engine", "run"])

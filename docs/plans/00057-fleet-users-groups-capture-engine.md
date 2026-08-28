@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Canary discipline (`capture-deploys.md`).** Migrate `zcrypto-red` (secondary) fully, **bake it**, and only then touch `zcrypto` (primary). The primary converge restarts live capture **and** the engine — it **refuses without `-e converge_primary=true`** (`site.yml:29-41` assert, `tags:[always]`, keyed on `engine_host` membership) and needs `-e capture_image_digest=sha256:<...>` (+ `-e engine_image_digest=sha256:<...>` for the engine play; both have no default and are role-asserted). Secondary converges with just `--limit zcrypto-red -e capture_image_digest=<...>`.
+- **Canary discipline (`fleet-deploys.md`).** Migrate `zcrypto-red` (secondary) fully, **bake it**, and only then touch `zcrypto` (primary). The primary converge restarts live capture **and** the engine — it **refuses without `-e converge_primary=true`** (`site.yml:29-41` assert, `tags:[always]`, keyed on `engine_host` membership) and needs `-e capture_image_digest=sha256:<...>` (+ `-e engine_image_digest=sha256:<...>` for the engine play; both have no default and are role-asserted). Secondary converges with just `--limit zcrypto-red -e capture_image_digest=<...>`.
 - **Maintenance windows:** secondary `zcrypto-red` **22:25 UTC**, primary `zcrypto` **21:25 UTC** (`host_vars/<host>/vars.yml` reboot slots — measured troughs). Do each host's whole cutover inside its window.
 - **uid/gid preservation is mandatory and is NOT expressible by the Ansible `user:` module** (no `uid:` is pinned anywhere today; `system: true` auto-allocated 999/997). Every rename is a one-time attended `usermod -l <new> <old>` + `groupmod -n <new> <old>` on the host, done **before** the converge that references the new name. A bare `base_capture_user: zcrypto-data` change WITHOUT the prior `usermod` would create a new uid and orphan `/var/lib/zcrypto-capture`.
 - **L2 capture is unbackfillable.** A container *restart* (resubscribe-with-replay; `dropping late event` lines are healthy) is fine; a *gap* is permanent loss. Verify after every primary/secondary converge by outcome: each book stream's `<HH>.parquet` begins at `:00:00.0x`, manifests verify, `infra/scripts/continuity.py` (on a pulled copy) shows no new truncated hours.
@@ -268,8 +268,8 @@ git commit -m "feat(infra): zcrypto-red on zcrypto-* identities; NAS pulls captu
 
 **Files:** none (verification-only hold before the primary).
 
-- [ ] **Step 1:** Hold ≥ the agreed bake (per `capture-deploys.md`, ≥ 24 h for an image re-pin; for this identity-only change a shorter owner-approved bake is acceptable — record the chosen duration). During the bake, confirm `zcrypto-red`: capture green (no `quarantined`/`ambiguous`/`merge failed`; `:00:00.0x` boundaries; continuity clean), the NAS capture-red pull flowing as `zcrypto-data@` each cycle, Alloy still shipping, `RestartCount` 0 on capture + Alloy.
-- [ ] **Step 2:** Only on a clean bake, proceed to Task 7. A regression on the secondary is a **stop** — diagnose before touching the primary. (No primary touch on a red canary — `capture-deploys.md`.)
+- [ ] **Step 1:** Hold ≥ the agreed bake (per `fleet-deploys.md`, ≥ 24 h for an image re-pin; for this identity-only change a shorter owner-approved bake is acceptable — record the chosen duration). During the bake, confirm `zcrypto-red`: capture green (no `quarantined`/`ambiguous`/`merge failed`; `:00:00.0x` boundaries; continuity clean), the NAS capture-red pull flowing as `zcrypto-data@` each cycle, Alloy still shipping, `RestartCount` 0 on capture + Alloy.
+- [ ] **Step 2:** Only on a clean bake, proceed to Task 7. A regression on the secondary is a **stop** — diagnose before touching the primary. (No primary touch on a red canary — `fleet-deploys.md`.)
 
 ---
 

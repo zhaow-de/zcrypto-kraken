@@ -320,7 +320,7 @@ def test_allows_ansible_inventory_graph(tmp_path):
 ```bash
 #!/usr/bin/env bash
 # Refuses to hand the vault password to `ansible-inventory --host/--list` — both silently decrypt
-# the WHOLE vault to stdout (capture-deploys.md "Ansible secrets"). Walks /proc ancestry so the
+# the WHOLE vault to stdout (fleet-deploys.md "Ansible secrets"). Walks /proc ancestry so the
 # refusal fires wherever ansible-inventory sits in the process chain. Traceability: spec 00083 D4.
 pid=$$
 while [ "$pid" -gt 1 ] 2>/dev/null; do
@@ -1614,7 +1614,7 @@ git commit -m "test(config): prove the guard judges the named repo and notes unr
 
 ### Task 12: Closeout (orchestrator-owned — recorded here as tasks, not pre-written)
 
-- [ ] The `capture-deploys.md` shrink list (protected set — per-edit owner sign-offs): the `--limit`/preview lines → `converge.sh` pointer; the panel-generation section's mechanized steps → `zcrypto-panel-regenerate` pointer (judgment sentences stay); the ops verify-by-outcome bullet → `ops-postverify.sh` pointer; the Ansible-secrets line gains the vault-pass refusal pointer; the engine-parity "no assert enforces engine parity yet" qualifiers come OUT (D5 landed).
+- [ ] The `fleet-deploys.md` shrink list (protected set — per-edit owner sign-offs): the `--limit`/preview lines → `converge.sh` pointer; the panel-generation section's mechanized steps → `zcrypto-panel-regenerate` pointer (judgment sentences stay); the ops verify-by-outcome bullet → `ops-postverify.sh` pointer; the Ansible-secrets line gains the vault-pass refusal pointer; the engine-parity "no assert enforces engine parity yet" qualifiers come OUT (D5 landed).
 - [ ] T0111: wave-2 items → `## Done so far` (the genesis item recorded as already-landed, measured); status stays `partial`; remainder = the attended ops-host drills for `converge.sh` + `zcrypto-panel-regenerate`, with `ripe_when:` a maintenance window; index sync.
 - [ ] `agent-ops.md`: offer the owner the grafana-query bullet gaining an `ops-postverify.sh` pointer (spec D12) — an explicit sign-off item beside the capture-deploys list.
 - [ ] Decisions log (phase 6): the three scope/confirm/shrink rulings.

@@ -6,7 +6,7 @@ status: resolved
 
 ## Context — what
 
-Found 2026-07-28 while gathering the read-only bake evidence for the capture secondary (`zcrypto-red`, converged 23:58:41Z). The `zcrypto-captures-rollout` skill's abort-signal table lists:
+Found 2026-07-28 while gathering the read-only bake evidence for the capture secondary (`zcrypto-red`, converged 23:58:41Z). The `zcrypto-rollout-image` skill's abort-signal table lists:
 
 | Signal | Threshold | Where |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ The same series is scraped into Grafana Cloud (it is in both capture and ops All
 - `shipped_lines_total` freezing alongside it is the corroboration, not a second symptom: both stop advancing for the same reason.
 - The gauge is **absent** until the first successful ship (`if last_success is not None`), so a freshly started daemon publishes no series at all rather than a stale one — a third state the table does not mention.
 - Not image-specific, so it says nothing about the candidate digest and is not evidence against the current bake.
-- Deliberately not fixed in-place during the bake it was found in: editing an abort threshold mid-rollout is the guardrail-weakening the unattended rules forbid, and `capture-deploys.md` is in the refine-round protected set requiring per-edit sign-off.
+- Deliberately not fixed in-place during the bake it was found in: editing an abort threshold mid-rollout is the guardrail-weakening the unattended rules forbid, and `fleet-deploys.md` is in the refine-round protected set requiring per-edit sign-off.
 
 ## Done so far
 

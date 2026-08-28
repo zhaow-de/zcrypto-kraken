@@ -52,7 +52,7 @@ The control (`zcrypto`, image unchanged) read 126.77 MiB at the close, against 1
 
 **No Phase 4 rollback.** Converging allocation at 13.8% of limit is not a trip, and a rollback would restart live capture on the unbackfillable path to buy nothing.
 
-**The rule that made this correctable now has an operating home**: `zcrypto-captures-rollout`'s Phase 2 residual carries the band-clearing requirement, so the next RSS re-read is scheduled against the event band rather than a clock. A ruling recorded only in an archived topic is invisible at execution time — this session broke the same rule twice in one day to prove it.
+**The rule that made this correctable now has an operating home**: `zcrypto-rollout-image`'s Phase 2 residual carries the band-clearing requirement, so the next RSS re-read is scheduled against the event band rather than a clock. A ruling recorded only in an archived topic is invisible at execution time — this session broke the same rule twice in one day to prove it.
 
 ## Suggested next steps
 

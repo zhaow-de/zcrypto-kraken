@@ -757,7 +757,7 @@ ______________________________________________________________________
 
 ### Task 10: Closeout (orchestrator-owned — recorded here as tasks, not pre-written)
 
-- [ ] The `capture-deploys.md` shrink list: one line per landed guard → pointer to its refusing mechanism, presented to the owner as per-edit sign-offs (protected set).
+- [ ] The `fleet-deploys.md` shrink list: one line per landed guard → pointer to its refusing mechanism, presented to the owner as per-edit sign-offs (protected set).
 - [ ] `agent-ops.md`: the four mutation-probe bullets collapse to one pointer at `infra/scripts/mutate-probe.sh`.
 - [ ] T0111 → `partial` (wave 1 + M-pair + fold-in landed; wave 2 the remainder); index sync.
 - [ ] Decisions log (phase 6): override-semantics rulings (D1, the two acks), the hook take/drop.

@@ -1,4 +1,4 @@
-# Fleet policy, pinned in config (spec 00050; spec 00051; .claude/rules/capture-deploys.md): no two
+# Fleet policy, pinned in config (spec 00050; spec 00051; .claude/rules/fleet-deploys.md): no two
 # hosts in the capture + ops fleet may ever share an unattended-upgrades reboot slot — a same-night
 # kernel reboot would take multiple hosts down at once, and a book gap with no surviving witness is
 # permanent.
@@ -17,7 +17,7 @@
       fleet hosts {{ base_fleet_hosts }} have colliding or undeclared reboot windows
       ({{ base_fleet_reboot_times }}). Give each host its own slot in host_vars via
       base_unattended_upgrades_reboot_time (>= 1 h apart, off the hour boundary, >= 1 h from a 4h
-      bar boundary — measure from the archive, see .claude/rules/capture-deploys.md).
+      bar boundary — measure from the archive, see .claude/rules/fleet-deploys.md).
     success_msg: "fleet maintenance windows are distinct: {{ base_fleet_reboot_times }}"
   vars:
     base_fleet_hosts: "{{ (groups['capture_host'] | default([])) + (groups['ops_host'] | default([])) }}"

@@ -5,7 +5,7 @@
 #
 # Its OWN compose project (this file, not /opt/zcrypto-capture/compose.yaml's capture project): an
 # Alloy redeploy (image bump, config change) must never restart the capture daemon, whose L2 stream
-# is UNBACKFILLABLE -- the exact isolation the capture-deploys discipline exists to protect. Separate
+# is UNBACKFILLABLE -- the exact isolation the fleet-deploys discipline exists to protect. Separate
 # projects, so `docker compose` on one never touches the other.
 #
 # Modeled on infra/ansible/roles/ops/templates/alloy-compose.yaml.j2; see config.alloy for the
