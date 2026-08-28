@@ -22,10 +22,10 @@ This is the slow-leak alarm, and it is the only one that matters: a leak's one r
 
 ### What to do
 
-1. **Read how long it has been climbing** — the fleet board's *Capture RSS growth per day* panel (602). A steady positive rate over days is a leak; a single step that then plateaued is an allocation that converged and is not going to reach the limit on its own.
+1. **Read how long it has been climbing** — the fleet board's *Daemon RSS growth per day — fleet* panel (602). A steady positive rate over days is a leak; a single step that then plateaued is an allocation that converged and is not going to reach the limit on its own.
 2. **Read what it has been running since** — `docs/reference/fleet-pins.md`'s `since` column names the image and the date; `docs/reference/deploy-log.jsonl` has every converge as a machine line. The suspect is the image; the rollback operand is in the same row.
 3. **A leaking capture daemon is restarted, not rolled back, first** — `sudo systemctl restart zcrypto-capture` on the affected host, one host at a time, never both in one window. The restart costs a resubscribe (seconds) and buys the full limit back; the peer host keeps capturing. Then decide on the image with the growth rate in hand.
-4. **If it is the engine**, the restart must land inside the 4-hourly inter-cycle gap like any engine restart (`.claude/rules/fleet-deploys.md`, engine converges). **If it is Alloy** (`integrations/self`), `sudo docker compose restart` in that host's Alloy project dir — telemetry-only, it touches no daemon; the `/zcrypto-bump-alloy` skill's per-host map names the dirs. **If it is the liquidations poller**, it will not be this rule (no limit) — see the leak rule.
+4. **If it is the engine**, the restart must land inside the 4-hourly inter-cycle gap like any engine restart (`.claude/rules/fleet-deploys.md`, engine converges). **If it is Alloy** (`integrations/self`), `sudo docker restart grafana-alloy` — the container name is identical on all four hosts, and restarting the container alone touches no other service (a `compose restart` would: on the NAS, Alloy and `archive-pull` share one compose project). On the NAS the binary is `sudo /usr/local/bin/docker restart grafana-alloy`. **If it is the liquidations poller**, it will not be this rule (no limit) — see the leak rule.
 
 ### Retire when
 
@@ -74,7 +74,7 @@ A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's 
 ### What to do
 
 1. **Check the deploy log first** — `docs/reference/deploy-log.jsonl`'s last line, or the channel: a converge in the last 15 minutes explains it completely.
-2. **Otherwise read the container**: `sudo docker inspect --format '{{.RestartCount}} {{.State.OOMKilled}}' <name>` — `zcrypto-capture`, `zcrypto-engine`, `grafana-alloy`, or the ops poller (`ssh hp`, container name per `docs/reference/fleet.md`); on the NAS docker is `/usr/local/bin/docker`. `OOMKilled=true` names the cause; read the memory panels for how it got there and treat it as the headroom page that did not get a chance to fire.
+2. **Otherwise read the container**: `sudo docker inspect --format '{{.RestartCount}} {{.State.OOMKilled}}' <name>` — `zcrypto-capture`, `zcrypto-engine`, `grafana-alloy`, or the ops poller `zcrypto-ops-liquidations` (`ssh hp`); on the NAS docker is `/usr/local/bin/docker`. `OOMKilled=true` names the cause; read the memory panels for how it got there and treat it as the headroom page that did not get a chance to fire.
 3. **For a capture daemon, confirm capture recovered**: `sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | head` shows files advancing. A single-host restart costs seconds and the peer's copy heals it; the reconciler will book whatever was not.
 4. **A repeating restart** — this rule firing again within the hour with no converge — is a crash loop; read `sudo docker logs --since 20m zcrypto-capture` before anything else.
 
