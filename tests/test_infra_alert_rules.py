@@ -702,6 +702,49 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
     )
 
 
+_STREAM_SILENT = "zcrypto-capture-stream-silent"
+
+
+@pytest.mark.parametrize("uid", [_ALL_STREAMS_SILENT, _STREAM_SILENT])
+def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(uid):
+    """`execErrState: OK` on these two ALONE, and it is the same blindness class as their
+    `noDataState: OK` rather than a relaxation of it.
+
+    When Grafana cannot execute the query, the query did not run -- so `Alerting` cannot report a
+    blackout, it ASSERTS one, in a summary that names a host and says every stream on it has been
+    silent for minutes. Measured 2026-08-05..08-28 from Grafana's alert state history (NOT from
+    metrics -- a different store, which is how the window outruns the 14 d metric retention; the
+    runbook section names the endpoint and the truncation trap), these two rules raised 264
+    execution-error instances against 52 genuine ones, every one of them Grafana Cloud failing to
+    reach its own Prometheus. `for: 0s` is load-bearing for their detection arithmetic and is what
+    made a one-minute platform hiccup page instantly.
+
+    Two qualifications the choice rests on, both measured. It is NOT the guarded-summary form used
+    on `zcrypto-capture-venue-state-recurrence` (2a899adb), which removes the same falseness but not
+    the volume -- and here the per-pair rule mints 24 instances per error where that one mints one
+    or two. And "nothing goes unwatched" holds for a CORRELATED outage only: six of the 22 rules in
+    `zcrypto-capture` carry `for: 0s` and can fire on a hiccup that short, four of which keep
+    `Alerting`. A RULE-SCOPED error on these two alone now pages nothing -- an accepted residual,
+    named in the runbook rather than left to be discovered."""
+    rule = _rule(uid)
+    assert rule["execErrState"] == "OK", "a Grafana query failure would page a total-capture-blackout that nothing observed"
+    assert rule["noDataState"] == "OK", "the sibling blindness state moved without its reason"
+    assert rule["for"] == "0s", (
+        "the execErrState reasoning above rests on `for: 0s` -- a pending period would already "
+        "have absorbed the one-minute transients, and this pin should be re-derived"
+    )
+
+
+def test_no_other_rule_quietly_joins_the_execerrstate_exemption():
+    """The exemption is justified by measurement on exactly two rules. A third arriving without its
+    own evidence is how a deliberate, narrow choice becomes a silent default -- which is how all 75
+    rules came to carry `Alerting` unexamined in the first place."""
+    exempt = {r["uid"] for r in _rules() if r["execErrState"] == "OK"}
+    assert exempt == {_ALL_STREAMS_SILENT, _STREAM_SILENT}, (
+        f"execErrState: OK is measured-and-argued for the two capture silence rules only; found {sorted(exempt)}"
+    )
+
+
 # --- a self-declared provisional threshold must be registered here, not only in a comment ---------
 # `grafana-push.sh` upserts unconditionally, so a bar whose own comment says "it must not reach a
 # push in this state" is held back by plan prose alone unless something in the repo names it. Each
@@ -712,8 +755,9 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
 # An entry here declares a threshold this file ships knowing it is provisional; the paired staleness
 # test refuses an entry whose rule no longer carries the marker, so a bar that has been derived
 # cannot leave its excuse behind. A previous occupant, `zcrypto-capture-stream-silent`, was derived
-# 2026-08-05; its bar is not provisional -- its base is just younger than the `[30d]` selector
-# suggests, and T0129 carries the re-derivation with the measured sample counts.
+# 2026-08-05 on a base one week deep rather than the month its `[30d]` selector implied; T0129
+# re-derived it 2026-08-28 on the full 14 d retained and left the bar unchanged, so it is not
+# provisional and does not belong here.
 PROVISIONAL_THRESHOLDS: set[str] = {
     # Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` -- ~3 microseconds and
     # ~1.2 KiB of resident memory per record, measured at 1,000,000 synthetic records -- not from a

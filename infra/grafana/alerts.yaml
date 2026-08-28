@@ -2980,9 +2980,15 @@ rules:
       # the gap counter all sat green through a total blackout.
       #
       # The MINIMUM across pairs is the discriminator, and that is the whole design: one thin leg
-      # being quiet is normal at any hour, all twelve simultaneously is not, and no natural cause
-      # produces it -- so the bar can be tight here where a per-pair bar cannot be. The gauge reads
-      # 0 for every pair at process start, so a restart cannot false-fire it either.
+      # being quiet is normal at any hour, all twelve simultaneously is not, and nothing in the
+      # capture path produces it -- so the bar can be tight here where a per-pair bar cannot be. The
+      # gauge reads 0 for every pair at process start, so a restart cannot false-fire it either.
+      # What DOES produce it is the venue, on a published calendar: every firing in this rule's life
+      # -- 2026-08-06 and 2026-08-20, both hosts each time -- fell inside a "Kraken Website and API
+      # Maintenance" window announced 48-145 h ahead, and no unexplained crossing has been observed.
+      # They are true positives (L2 is genuinely gone: ~882 s and ~521 s of booked both_streams_silent
+      # per stream), which is why
+      # the answer is a runbook that says "read the venue calendar first" rather than a wider bar.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -3008,18 +3014,26 @@ rules:
             # the pending period + the group's eval interval. That is why `for` is 0s below.
             # Why 120 and not 60: `max_over_time(min by (host) (...)[30d:1m])` measured a fleet-wide
             # silence of 30.261266 s on the primary -- all twelve pairs quiet at once.
-            # THE BASE IS ONE WEEK, NOT A MONTH, and the `[30d]` selector hides it: this gauge only
-            # started reaching Cloud with the 2026-07-29 converges, so
-            # `count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` returns 10435
-            # (primary) / 10838 (secondary) samples at 60 s each = 7.2 d / 7.5 d. So 120 is 4x the
-            # worst event in the series' whole LIFE so far -- materially thinner than 4x a month's
-            # worst, which is why the base this rests on is registered as T0129 -- and that base is capped:
-            # the platform retains 14 days, so a fuller window never arrives and T0129 is a decision, not a wait.
+            # RE-DERIVED 2026-08-28 against the full 14 d the platform retains (T0129, resolved).
+            # `count_over_time(...[14d])` = 20159/20158 of a possible 20160, so the window is
+            # complete; `[30d]` returns 20202 on BOTH hosts -- the same ~14 days plus a few dozen
+            # boundary samples, never a fuller window -- which is the ceiling, restated.
+            # Over the 13 days of it that contain no venue window the fleet-wide minimum peaked at
+            # 6.134482 s, so 120 is ~20x the natural envelope rather than the 4x a single event
+            # suggested. The retention ceiling caps THIS GAUGE, never the phenomenon: the parquet
+            # archive holds the whole capture era at full resolution and `gap_distribution.py`
+            # measures book silence from it -- which is where a future re-derivation should start.
+            # Neither instrument is a basket-wide maximum for today's 12 pairs: T0039's 14.78 s
+            # covers BTC/DOT/AVAX over 136 h ending 2026-07-14, before the /BTC legs existed, and
+            # the gauge's binding pair is now SOL/BTC. They BRACKET the envelope at ~14-15 s; a
+            # basket-wide `gap_distribution.py` run is what would pin it, and none is owed.
             # NOT a converge artefact, and better localized than "hours after": a 6 h bisection puts
             # the event inside 2026-07-29 19:14-01:14 UTC, >=11.6 h after the primary's 07:36:13Z
-            # converge, with the adjacent 6 h windows maxing 0.12 / 0.20 / 0.14 s. Cause
-            # unexplained, which is the point: an unexplained 30 s event cannot be bounded, so 60
-            # left only a 2x margin on the fleet's highest-severity capture signal. 120 is 4x it and
+            # converge, with the adjacent 6 h windows maxing 0.12 / 0.20 / 0.14 s. The GAUGE
+            # reading of it has since aged out of the 14 d retention; the event itself remains
+            # measurable from the parquet archive, which is the whole point of the paragraph above.
+            # It is why 60 left only a 2x
+            # margin on the fleet's highest-severity capture signal. 120 is 4x it and
             # the 209 s motivating event is still caught -- but the slack is ~29 s, not the 89 s a
             # bar-only subtraction suggests: with a 60 s scrape the guaranteed detection floor is
             # ~180 s of silence, not 120. Every other day of the series' life maxed between 0.18 s
@@ -3028,7 +3042,33 @@ rules:
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
-    execErrState: Alerting
+    # OK, and it is the SAME blindness class as noDataState above rather than a relaxation. When the
+    # datasource errors the query never ran, so `Alerting` cannot report a blackout -- it asserts
+    # one, in this rule's own words ("EVERY book stream ... silent for minutes"), about a fleet
+    # nothing observed. Measured 2026-08-05..08-28 from Grafana's ALERT STATE HISTORY (a different
+    # store from the 14 d metric retention; `GET /api/v1/rules/history?ruleUID=<uid>&from=&to=`,
+    # read in chunks and checked against the page limit): 24 execution-error firings here and 240 on
+    # the per-pair rule, against 4 and 48 genuine ones -- 264 of 316, every one of them Grafana
+    # Cloud failing to reach its own Prometheus. `for: 0s`, load-bearing below, is what made a
+    # one-minute hiccup page instantly.
+    #
+    # Why not the guarded-summary form used on `zcrypto-capture-venue-state-recurrence` (2a899adb),
+    # which fixes the same falseness with a `{{ if $labels.<x> }}...{{ else }}...{{ end }}` branch:
+    # it removes the false CLAIM but not the volume, and here volume is the dominant term -- the
+    # per-pair rule mints 24 instances (12 pairs x 2 hosts) on every error where that rule mints one
+    # or two. Both halves matter, so the stronger instrument wins on these two specifically.
+    #
+    # What still covers a correlated datasource outage, measured rather than assumed: of the 22
+    # rules in `zcrypto-capture`, only SIX carry `for: 0s` and can therefore fire on a ~1 min error
+    # at all -- the other 16 absorb it, which is why `zcrypto-capture-venue-not-online` (for: 5m)
+    # logged zero error firings over the same window. Four of those six keep `Alerting`, so an
+    # outage is still reported; what is removed is a fabricated blackout claim inside that report.
+    #
+    # THE RESIDUAL, stated rather than implied: a RULE-SCOPED evaluation error -- an expression
+    # broken by a later edit, a permission or cardinality failure on this query alone -- now pages
+    # nothing, because the siblings above are only correlated cover. Nothing in the repo watches
+    # for that, deliberately; the runbook section names the shape so it is recognizable.
+    execErrState: OK
     # 0s, and it is arithmetic rather than impatience. `for: 2m` shipped first and put the GUARANTEED
     # detection floor at 300 s against a 209 s motivating event: a phase sweep over scrape x eval
     # alignments caught that event in only 12.1% of them, and a 180 s blackout in 0%. `for: 1m` is not
@@ -3045,8 +3085,9 @@ rules:
         any pair, so this is the whole feed rather than one quiet leg. The last time this happened the
         socket still reported connected, the keepalive kept completing round trips, and the cumulative
         gap counter stayed at 0.0, so nothing else saw it. L2 is unbackfillable and every second here is
-        permanent loss: check the capture container on the named host and restart the daemon if the
-        streams do not resume on their own.
+        permanent loss. Check the venue's published maintenance calendar FIRST — every firing of this
+        rule so far has been one — then the capture container on the named host.
+        Runbook: infra/runbooks/capture.md#zcrypto-capture-all-streams-silent
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "102"
       unit: "seconds since ANY book stream on that machine last delivered"
@@ -3090,21 +3131,28 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # DERIVED 2026-08-05, replacing a provisional 900. Measured
-            # `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per
-            # host -- and THE BASE IS ONE WEEK, NOT A MONTH, which the `[30d]` selector hides: this
-            # gauge only started reaching Cloud with the 2026-07-29 converges, so
-            # `count_over_time(...[30d])` returns 10435 (primary) / 10838 (secondary) samples at
-            # 60 s each = 7.2 d / 7.5 d. The window is the series' whole life, and re-derivation on
-            # a fuller window is registered as T0129 -- which is a decision now, not a wait: retention caps the base at 14 d.
+            # DERIVED 2026-08-05, replacing a provisional 900; RE-DERIVED 2026-08-28 on the full
+            # 14 d the platform retains (T0129, resolved, records the whole exercise) and LEFT
+            # UNCHANGED at 300. The 2026-08-05 base was one week, not the month its `[30d]` selector
+            # implied -- the gauge only started reaching Cloud with the 2026-07-29 converges. The
+            # re-derivation's value is not the newer window but that two INDEPENDENT instruments now
+            # bracket the same envelope: this 60 s-sampled gauge peaks at 14.160757 s (zcrypto-red
+            # SOL/BTC, no capture restart within 26 h), and the full-resolution parquet archive put
+            # single-host natural quiescence at 14.78 s over 7,847,932 messages (T0039,
+            # `infra/scripts/gap_distribution.py`) -- a THREE-pair run over 136 h ending 2026-07-14,
+            # before the two `/BTC` legs existed, so it brackets rather than pins today's basket. The retention ceiling caps THIS GAUGE, never the
+            # phenomenon -- the archive holds the whole capture era -- so a future re-derivation
+            # starts there and not here: a 60 s scrape censors short silences and is biased low.
             # All twelve primary maxima (30.26-31.59 s) are ONE simultaneous fleet-wide event, not
             # per-pair spacing, and the proof is exact rather than inferred: the min-by-host maximum
             # is 30.261266, which equals AVAX/EUR's per-pair maximum to the digit, so at that
             # instant every pair was silent. Excluding it, the BINDING natural per-pair maximum is
             # the primary's 12.068981 s (AVAX/EUR) -- above the secondary's worst of 11.125801 s
             # (ETH/BTC), and matching the 12.196 s worst NATURAL spacing the daemon's own
-            # BOOK_STALENESS_SECONDS comment records. 300 is ~25x that natural maximum and ~10x the
-            # daemon's own 30 s mark. It deliberately SUPERSEDES the ~2.4x margin the design
+            # BOOK_STALENESS_SECONDS comment records. That reading understated the envelope: the
+            # binding figure is the archive's full-resolution 14.78 s, so 300 is ~20x the natural
+            # maximum, not the ~25x recorded here until 2026-08-28. It remains ~10x the daemon's
+            # own 30 s mark. It deliberately SUPERSEDES the ~2.4x margin the design
             # prescribed, which would have put this page bar at ~29 s: at the daemon's own
             # gap-booking threshold, and BELOW the 30.26 s event above -- twelve false warning
             # instances on 07-29 alone.
@@ -3126,7 +3174,13 @@ rules:
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
-    execErrState: Alerting
+    # OK, for the reason given in full on the all-streams rule above -- including why the guarded
+    # summary form was not used, what still covers a correlated outage, and the rule-scoped residual
+    # that is now unwatched. This rule is the volume: an execution error means the query never ran,
+    # yet `Alerting` here minted 240 instances over 2026-08-05..08-28 -- one per pair per host on
+    # every affected evaluation -- each naming a stuck stream that nothing had observed, against 48
+    # genuine ones on the two published venue windows.
+    execErrState: OK
     for: 0s
     annotations:
       summary: >-
@@ -3134,7 +3188,9 @@ rules:
         flowing — the single-stuck-stream shape, which no other rule catches: the dead-man still pings,
         the desync rule sees no checksum failure, and a fleet-wide silence rule reads its minimum off a
         healthy pair. The `pair` label names the stuck stream. Check whether that pair's resubscribe went
-        through; restarting the capture daemon re-establishes every stream.
+        through; restarting the capture daemon re-establishes every stream. If every pair on both hosts
+        raised this at once it is a whole-feed halt, not many stuck streams.
+        Runbook: infra/runbooks/capture.md#zcrypto-capture-stream-silent
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "102"
       unit: "seconds since that stream last delivered a book message"
