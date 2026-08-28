@@ -226,8 +226,9 @@
   ansible.builtin.meta: flush_handlers
 
 # Read the RUNNING process's argv, never `systemctl show`: after a daemon-reload that reports the NEW
-# value while the process keeps the old one -- the same trap fleet-deploys.md records for the Alloy
-# drift assert, which compares the deployed FILE and not what the process loaded.
+# value while the process keeps the old one -- the same trap the deploy skills'
+# shared converge mechanics record for the Alloy drift assert, which compares the deployed FILE
+# and not what the process loaded.
 - name: read the ssh relay's running target
   ansible.builtin.shell:
     cmd: |
