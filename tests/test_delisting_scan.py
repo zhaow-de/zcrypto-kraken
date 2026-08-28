@@ -1,8 +1,9 @@
-"""Kraken announces delistings 92-115 days ahead on its status page, and nothing read that feed.
+"""Kraken announces an asset delisting 93-116 days ahead on its status page, and nothing read it.
 
 T0025's trigger is a selected pair changing identity underneath us. `sweep_refusals` catches the
 change once `AssetPairs` reflects it -- which is the day it happens. This reads the announcement
-instead, which is the same finding with three months of notice. The same feed already governs
+instead, which is the same finding with a quarter's notice -- for the asset-delisting class; the
+funding-rail shape the same filter catches can be published after it takes effect. The feed already governs
 converge scheduling (`fleet-deploys.md`); this is a second filter over one fetch.
 
 The scan takes the FEED as an argument rather than fetching: a test that reaches the network is a
@@ -89,8 +90,9 @@ def test_an_asset_named_only_in_the_announcement_body_is_a_hit():
 
 
 def test_body_matching_is_case_sensitive_so_prose_cannot_fire_a_ticker():
-    """Bodies are English. `LINK` matches "the link below" under IGNORECASE -- measured. Kraken
-    writes tickers uppercase, so case-sensitivity over prose keeps the notice and drops the noise."""
+    """Bodies are English. `LINK` matches "the link below" under IGNORECASE -- constructed below, not
+    taken from a live entry. Kraken writes tickers uppercase, so case-sensitivity over prose keeps
+    the notice and drops the noise."""
     feed = _feed(_entry_with_body("Some Delisting", "Please check the link below and the dot point."))
     assert scan_delistings(feed, ("LINK", "DOT")) == []
     feed_real = _feed(_entry_with_body("Some Delisting", "Delisting LINK and DOT."))

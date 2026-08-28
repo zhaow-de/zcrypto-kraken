@@ -26,7 +26,7 @@ The alias ledger (XBT=BTC, XDG=DOGE) covers the known cases for the current univ
 
 **Two of the three trigger legs are watched, twice over.**
 
-- **Delisting** — `sweep_refusals` refuses when a selected pair is absent from `AssetPairs` (the day it happens), and `scan_delistings` reads the venue's own announcements, published **92–115 days ahead**. Both run at step 3 of the sweep, which now *refuses* rather than rendering a table for someone to diff by eye.
+- **Delisting** — `sweep_refusals` refuses when a selected pair is absent from `AssetPairs` (the day it happens), and `scan_delistings` reads the venue's own announcements, published **93–116 days ahead** for an asset delisting — a funding-rail discontinuation can arrive after it takes effect, so a hit's own dates decide whether it is a planning input. Both run at step 3 of the sweep, which now *refuses* rather than rendering a table for someone to diff by eye.
 - **Redenomination** — reaches us as an altname drift, and `sweep_refusals` compares every selected asset against `_COMMON_TO_KRAKEN`, the same constant the wsname lookup tolerates spellings from, so the check and the parser cannot disagree about what the alias is.
 
 **The third leg is NOT watched, and that is a decision rather than an oversight.** A quote-book migration is reported by no endpoint, so there is nothing to compare; it is named as an accepted gap in `cli/snapshot/register.py`, in the sweep's step 3, and here. If a source ever appears, this is the paragraph that says why there wasn't one.

@@ -47,7 +47,7 @@ Per-pair first and last bar from the canonical daily dump `data/ohlc-full/<BASE>
 | SOL/EUR | 1749 | 2021-06-17 | 2026-03-31 |
 | XRP/EUR | 3239 | 2017-05-18 | 2026-03-31 |
 
-**Survivorship**: every pair here is currently selected and currently listed, so this table cannot show the failure it exists to guard — a delisted pair leaves the dump. Detection is `sweep_refusals` (a selected pair absent from `AssetPairs`) and `scan_delistings` (the venue's own announcement, 92–115 days ahead), both run by `/zcrypto-refdata-sweep`. When one fires, the pair's row is frozen here with its delisting date.
+**Survivorship**: every pair here is currently selected and currently listed, so this table cannot show the failure it exists to guard — a delisted pair leaves the dump. Detection is `sweep_refusals` (a selected pair absent from `AssetPairs`) and `scan_delistings` (the venue's own announcement — 93–116 days ahead for an asset delisting, though a funding-rail discontinuation can be published after it takes effect), both run by `/zcrypto-refdata-sweep`. When one fires, the pair's row is frozen here with its delisting date.
 
 ## Discontinuity audit (distrust-the-instrument)
 
