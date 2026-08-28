@@ -44,9 +44,16 @@ trap on_term TERM INT
 # interval+work, which drifts past the nominal interval, so a slice keyed on now.hour skips clock
 # hours and can starve a fixed subset of slices forever whenever the drifted period divides 24h.
 cycle=0
+# Read once, before the loop -- the fallback is still load-bearing here (this entrypoint is
+# bind-mounted and can outrun a compose file that predates ARCHIVE_PULL_HASH_SCOPE). Five call
+# sites shared one literal each before; a typo at one of them would have silently left that one
+# channel on `full` while the other four went incremental, with no test, alert or panel to catch
+# it (the hashed/walked panel sums across channels).
+hash_scope="${ARCHIVE_PULL_HASH_SCOPE:-full}"
 
 while true; do
 	cycle=$((cycle + 1))
+	slice=$((cycle % 24))
 
 	# capture pull uses the capture channel's own least-privilege key
 	# Spec 00102: the verify cost is published per channel (one .prom each -- five pulls share
@@ -56,7 +63,7 @@ while true; do
 	# image -- and the rollback is the same flip.
 	capture_ok=1
 	if ! ARCHIVE_SSH_KEY="$CAPTURE_SSH_KEY" zcrypto archive pull \
-			--hash-scope "${ARCHIVE_PULL_HASH_SCOPE:-full}" --slice $((cycle % 24)) \
+			--hash-scope "$hash_scope" --slice "$slice" \
 			--textfile /textfile/archive-pull-capture.prom --channel capture \
 			"$CAPTURE_SOURCE" "$CAPTURE_DEST"; then
 		log ERROR "capture pull failed (source=$CAPTURE_SOURCE dest=$CAPTURE_DEST), continuing"
@@ -70,7 +77,7 @@ while true; do
 	secondary_ok=1
 	if [ -n "${CAPTURE_RED_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$CAPTURE_RED_SSH_KEY" zcrypto archive pull \
-				--hash-scope "${ARCHIVE_PULL_HASH_SCOPE:-full}" --slice $((cycle % 24)) \
+				--hash-scope "$hash_scope" --slice "$slice" \
 				--textfile /textfile/archive-pull-capture_red.prom --channel capture_red \
 				"$CAPTURE_RED_SOURCE" "$CAPTURE_RED_DEST"; then
 			log ERROR "secondary capture pull failed (source=$CAPTURE_RED_SOURCE dest=$CAPTURE_RED_DEST), continuing"
@@ -151,7 +158,7 @@ while true; do
 	if [ -n "${LIQUIDATIONS_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$LIQUIDATIONS_SSH_KEY" ARCHIVE_SSH_PORT="${LIQUIDATIONS_SSH_PORT:-22}" \
 				zcrypto archive pull \
-				--hash-scope "${ARCHIVE_PULL_HASH_SCOPE:-full}" --slice $((cycle % 24)) \
+				--hash-scope "$hash_scope" --slice "$slice" \
 				--textfile /textfile/archive-pull-liquidations.prom --channel liquidations \
 				"$LIQUIDATIONS_SOURCE" "$LIQUIDATIONS_DEST"; then
 			log ERROR "liquidations pull failed (source=$LIQUIDATIONS_SOURCE dest=$LIQUIDATIONS_DEST), continuing"
@@ -168,7 +175,7 @@ while true; do
 	if [ -n "${PANEL_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$PANEL_SSH_KEY" ARCHIVE_SSH_PORT="${PANEL_SSH_PORT:-22}" \
 				zcrypto archive pull \
-				--hash-scope "${ARCHIVE_PULL_HASH_SCOPE:-full}" --slice $((cycle % 24)) \
+				--hash-scope "$hash_scope" --slice "$slice" \
 				--textfile /textfile/archive-pull-panel.prom --channel panel \
 				"$PANEL_SOURCE" "$PANEL_DEST"; then
 			log ERROR "panel pull failed (source=$PANEL_SOURCE dest=$PANEL_DEST), continuing"
@@ -185,7 +192,7 @@ while true; do
 	if [ -n "${RECONCILED_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$RECONCILED_SSH_KEY" ARCHIVE_SSH_PORT="${RECONCILED_SSH_PORT:-22}" \
 				zcrypto archive pull \
-				--hash-scope "${ARCHIVE_PULL_HASH_SCOPE:-full}" --slice $((cycle % 24)) \
+				--hash-scope "$hash_scope" --slice "$slice" \
 				--textfile /textfile/archive-pull-reconciled.prom --channel reconciled \
 				"$RECONCILED_SOURCE" "$RECONCILED_DEST"; then
 			log ERROR "reconciled pull failed (source=$RECONCILED_SOURCE dest=$RECONCILED_DEST), continuing"

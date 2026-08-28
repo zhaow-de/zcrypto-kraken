@@ -36,7 +36,9 @@ def _hour_ts(path: Path) -> datetime | None:
 # Spec 00102 D3. A final is re-hashed in the cycle whose rotation index equals its slice, so every
 # final is re-hashed every 24 cycles with no state -- a pure function of the name and the CALLER'S
 # counter, never the clock: the NAS loop's period is 3600 + work, so `now.hour` drifts every cycle
-# and, when the period divides 24 h, fixed slices are never visited at all (measured in the spec).
+# and, when the period divides 24 h, fixed slices are never visited at all (measured in the spec) --
+# and the 24-cycle guarantee itself holds only across an uninterrupted run, since the counter lives
+# in the caller's memory and resets to 0 on restart.
 # The assert is spec 00062's: a counter modulo 24 can only produce [0, 23], so a larger modulus would
 # leave high slices permanently unreachable and their finals silently never re-hashed.
 _ROTATION_SLICES = 24
