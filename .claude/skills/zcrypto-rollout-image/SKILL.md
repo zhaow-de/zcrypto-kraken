@@ -147,4 +147,6 @@ A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regen
 
 The archive-pull tier — outside the canary regime (no secondary, no bake owed); converges are `--limit nas`, and the pin is `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml`, the one committed capture-image pin.
 
+- **There is no `nas_alloy_digest`** — the Alloy pin here is `nas_alloy_image`, and the role deploys `infra/nas/config.alloy` and restarts Alloy in the same converge under the apply flag; the capture/ops currently-running-digest discipline does not transfer, and passing it is silently accepted as an unused extra var.
+
 - **A fingerprint-invalidating pin (any change inside the transitive `cli.*` replay closure that `gate_cache.py` digests — e.g. `journal.py`) replays the whole gate-export cold** — the better part of an hour, and it grows with the journal: run `replay_fingerprint()` inside both images before planning the window (the command is beside the pin in `vars.yml`), and size the window from the current figure in `docs/reference/fleet-pins.md`'s standing constraint, re-measured — never a remembered or older figure.
