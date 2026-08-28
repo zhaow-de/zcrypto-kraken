@@ -206,7 +206,15 @@ def pull(
         pruned_hours,
     )
     if textfile is not None:
-        _write_pull_textfile(textfile, channel=channel, result=result, verify_seconds=verify_seconds)
+        # The verify cost is best-effort: an unwritable textfile must never preempt the Exit(1)
+        # below, which reports a hash failure -- the more important verdict of the two. Loud and
+        # continue, the same shape pull-entrypoint.sh uses for its own status write; never mkdir the
+        # parent, which on the NAS is a bind mount whose absence means the mount is broken, and
+        # creating it would publish into a phantom directory while every check reported success.
+        try:
+            _write_pull_textfile(textfile, channel=channel, result=result, verify_seconds=verify_seconds)
+        except OSError as exc:
+            logger.error("archive pull: publishing the verify cost failed path=%s: %s", textfile, exc)
     if result.failed:
         for path in result.failed:
             logger.error("archive pull: verify failed path=%s", path)

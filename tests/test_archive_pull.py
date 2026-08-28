@@ -454,3 +454,22 @@ def test_pull_without_textfile_writes_no_prom_file(tmp_path: Path, monkeypatch) 
     _seg(tmp_path, "BTC", "book", "00")
     r = _pull([str(tmp_path)], monkeypatch, now=datetime(2026, 7, 12, 0, tzinfo=UTC), lines=[])
     assert r.exit_code == 0 and list(tmp_path.rglob("*.prom")) == []
+
+
+def test_pull_unwritable_textfile_does_not_swallow_the_hash_failure_verdict(tmp_path: Path, monkeypatch) -> None:
+    """The verify cost is best-effort: a write failure (here, a missing parent -- on the NAS the
+    textfile directory is a bind mount, and `mkdir`ing it would publish into a phantom directory while
+    every check reported success) must never preempt the Exit(1) that reports the more important
+    verdict, a real hash failure -- it must be logged loud instead, and no partial file left behind."""
+    dest = tmp_path / "dest"
+    _seg(dest, "BTC", "book", "00", corrupt=True)
+    prom = tmp_path / "absent" / "p.prom"  # parent does not exist -> the write raises OSError
+    errors: list[str] = []
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, frozenset()))
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 12, 0, tzinfo=UTC))
+    monkeypatch.setattr(command.logger, "error", lambda msg, *a: errors.append(msg % a))
+    r = CliRunner().invoke(app, ["archive", "pull", "src", str(dest), "--textfile", str(prom), "--channel", "capture"])
+    assert r.exit_code == 1, r.output
+    assert any(str(prom) in e for e in errors), errors
+    assert not prom.exists()
+    assert not prom.with_suffix(prom.suffix + ".tmp").exists()
