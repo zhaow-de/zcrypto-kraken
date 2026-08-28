@@ -1,4 +1,5 @@
 import hashlib
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -376,3 +377,80 @@ def test_a_narrowed_scope_without_a_slice_is_refused(tmp_path: Path) -> None:
     _seg(tmp_path, "BTC", "book", "00")
     with pytest.raises(ValueError, match="rotation slice"):
         verify_tree(tmp_path, now=NOW, hash_only=frozenset())
+
+
+# --- Task 3: the `pull` command -- scope, cost, and the gauge file -----------------------------
+
+
+def _pull(args: list[str], monkeypatch, *, transferred: frozenset[str] = frozenset(), now: datetime, lines: list[str]):
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, transferred))
+    monkeypatch.setattr(command, "_utc_now", lambda: now)
+    monkeypatch.setattr(command.logger, "info", lambda msg, *a: lines.append(msg % a))
+    return CliRunner().invoke(app, ["archive", "pull", "src", *args])
+
+
+def test_pull_default_scope_is_full_and_the_line_keeps_the_dead_mans_token(tmp_path: Path, monkeypatch) -> None:
+    """`failed=0` is what `NAS · archive-pull stalled (dead-man)` matches -- the rule lives in Grafana, so
+    the suite carries the claim. `hashed == checked` with nothing transferred proves the default is full."""
+    _seg(tmp_path, "BTC", "book", "00")
+    _seg(tmp_path, "BTC", "book", "01")
+    lines: list[str] = []
+    r = _pull([str(tmp_path)], monkeypatch, now=NOW, lines=lines)
+    assert r.exit_code == 0, r.output
+    line = next(m for m in lines if m.startswith("pull complete"))
+    assert " checked=2 hashed=2 ok=2 failed=0 verify_s=" in line
+
+
+def test_pull_textfile_publishes_three_gauges_labelled_by_channel(tmp_path: Path, monkeypatch) -> None:
+    dest = tmp_path / "dest"
+    _seg(dest, "BTC", "book", "00")
+    _seg(dest, "BTC", "book", "01")
+    prom = tmp_path / "textfile" / "archive-pull-capture.prom"
+    prom.parent.mkdir()
+    off = str(_off_slice(_rel("BTC", "book", "00"), _rel("BTC", "book", "01")))
+    r = _pull(
+        [str(dest), "--hash-scope", "incremental", "--slice", off, "--textfile", str(prom), "--channel", "capture"],
+        monkeypatch,
+        transferred=frozenset({_rel("BTC", "book", "01")}),
+        now=NOW,
+        lines=[],
+    )
+    assert r.exit_code == 0, r.output
+    body = prom.read_text()
+    assert 'zcrypto_archive_pull_files_walked{channel="capture"} 2\n' in body
+    assert 'zcrypto_archive_pull_files_hashed{channel="capture"} 1\n' in body
+    assert re.search(r'^zcrypto_archive_pull_verify_seconds\{channel="capture"\} \d+\.\d+$', body, re.M)
+    assert body.count("# HELP zcrypto_archive_pull_") == 3
+    assert not prom.with_name(prom.name + ".tmp").exists()
+
+
+def test_pull_publishes_the_cost_even_when_a_hash_fails(tmp_path: Path, monkeypatch) -> None:
+    dest = tmp_path / "dest"
+    _seg(dest, "BTC", "book", "00", corrupt=True)
+    prom = tmp_path / "p.prom"
+    r = _pull(
+        [str(dest), "--textfile", str(prom), "--channel", "capture"],
+        monkeypatch,
+        now=datetime(2026, 7, 12, 0, tzinfo=UTC),
+        lines=[],
+    )
+    assert r.exit_code == 1
+    assert 'zcrypto_archive_pull_files_hashed{channel="capture"} 1\n' in prom.read_text()
+
+
+def test_pull_textfile_without_channel_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
+    r = _pull(
+        [str(tmp_path), "--textfile", str(tmp_path / "p.prom")], monkeypatch, now=datetime(2026, 7, 12, 0, tzinfo=UTC), lines=[]
+    )
+    assert r.exit_code == 2 and "--channel" in r.output
+
+
+def test_pull_incremental_without_slice_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
+    r = _pull([str(tmp_path), "--hash-scope", "incremental"], monkeypatch, now=NOW, lines=[])
+    assert r.exit_code == 2 and "--slice" in r.output
+
+
+def test_pull_without_textfile_writes_no_prom_file(tmp_path: Path, monkeypatch) -> None:
+    _seg(tmp_path, "BTC", "book", "00")
+    r = _pull([str(tmp_path)], monkeypatch, now=datetime(2026, 7, 12, 0, tzinfo=UTC), lines=[])
+    assert r.exit_code == 0 and list(tmp_path.rglob("*.prom")) == []
