@@ -56,6 +56,13 @@ nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:9f814848fce16c76c8061
 # committed pin kills. Alloy v1.18.0 (2026-07-20); previous pin 4f6ddc56ffdc (v1.17.1).
 nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
 
+# Spec 00102 D7: `full` re-hashes every segment each cycle; `incremental` hashes rsync's transfers plus
+# a rotating 1/24 slice. Flipping this is a config-only converge on the running digest (under
+# -e nas_apply_compose=true), and so is the rollback. Leg A converges at `full` for the baseline; leg B
+# flips it. The entrypoint that reads this needs an image that knows --hash-scope: it lands with that
+# image pin in one applied converge, never render-only against an older image.
+nas_archive_pull_hash_scope: full
+
 # Pull sources + per-channel SSH ports, rendered into {{ nas_stack_dir }}/.env by the nas role
 # (roles/nas/templates/env.j2; the env-var contract is in infra/nas/README.md). GATE_HEALTHCHECK_URL
 # is deliberately absent — it is a secret, vaulted as nas_gate_healthcheck_url in vault.yml.

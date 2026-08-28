@@ -75,6 +75,14 @@
     mode: "0644"
   register: nas_deploy_alloy_config
 
+# A value the CLI's --hash-scope would reject stops all five verified pulls with the same exit
+# code the ops reconcile gate books as a not-clean capture pull (spec 00102 Deploy sequence) --
+# refuse it here instead, before it ever reaches a running container.
+- name: refuse an archive-pull hash scope the CLI would reject
+  ansible.builtin.assert:
+    that: nas_archive_pull_hash_scope in ['full', 'incremental']
+    fail_msg: "nas_archive_pull_hash_scope must be full or incremental, got '{{ nas_archive_pull_hash_scope }}'"
+
 # The deploy-time env: the image pins compose.yaml refuses to start without (the ${...:?} trap
 # that kills T0056's `:latest` placeholder class), the pull sources/ports, and the vaulted gate
 # dead-man URL. no_log + diff: false — GATE_HEALTHCHECK_URL is a credential (a healthchecks.io

@@ -141,6 +141,7 @@ NAS_REQUIRED = [
     "node_load1",
     "node_filesystem_avail_bytes",
     "zcrypto_gate_streak_days",
+    "zcrypto_archive_pull_files_walked",
     *PROCESS_FAMILIES,
 ]
 # ADMITTED by the NAS keep-regex but NOT published there any more: the overlay writer moved to the

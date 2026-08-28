@@ -3660,6 +3660,131 @@
       }
     },
     {
+      "id": 604,
+      "type": "timeseries",
+      "title": "NAS pull · verify seconds per channel",
+      "description": "Per-channel wall time the pull spent re-hashing pulled segments against their sidecars this cycle. `full` scope re-hashes everything every cycle; `incremental` hashes only rsync's transfers plus a rotating slice, so a channel's line should be flat and low except on its slice cycle. Published only by the NAS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 114
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_archive_pull_verify_seconds{host=\"nas\"}",
+          "refId": "A",
+          "legendFormat": "{{channel}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 605,
+      "type": "timeseries",
+      "title": "NAS pull · segments hashed vs walked",
+      "description": "How many segments existed in the destination tree this cycle versus how many were actually re-hashed. Under `incremental` scope the hashed count should sit well below walked; under `full` scope the two track each other. A hashed count stuck at walked after switching to incremental means the scope setting did not take. Published only by the NAS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 114
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum(zcrypto_archive_pull_files_hashed{host=\"nas\"})",
+          "refId": "A",
+          "legendFormat": "hashed"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum(zcrypto_archive_pull_files_walked{host=\"nas\"})",
+          "refId": "B",
+          "legendFormat": "walked"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
       "id": 600,
       "type": "row",
       "title": "Telemetry integrity",
@@ -3669,7 +3794,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 114
+        "y": 121
       }
     },
     {
@@ -3685,7 +3810,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 115
+        "y": 122
       },
       "targets": [
         {
@@ -3810,7 +3935,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 115
+        "y": 122
       },
       "targets": [
         {
@@ -3940,7 +4065,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 115
+        "y": 122
       },
       "targets": [
         {
