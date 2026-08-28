@@ -37,6 +37,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-reconcile-healable-gap-rate`](ops.md#zcrypto-reconcile-healable-gap-rate) — ALERT: the primary needed heavy covering by the secondary. Nothing was lost; a host needing this much repair is degrading. Its threshold is per-pair, not a total — read it wrong and you mis-triage.
 - [`healable-threshold-rederivation-due`](ops.md#healable-threshold-rederivation-due) — SCHEDULED REMINDER: the healable-gap-rate threshold is provisional and its fit is still owed. Nothing is wrong. Count qualifying days from the ops ledger, never from Grafana Cloud.
 - [`zcrypto-reconcile-cycle-duration`](ops.md#zcrypto-reconcile-cycle-duration) — ALERT: the overlay-writer cycle is approaching the interval between its own ticks, past which the next trigger is dropped and the booking cadence halves.
+- [`reconcile-ledger-scan-cost`](ops.md#reconcile-ledger-scan-cost) — ALERT: the append-only reconcile ledger has grown into the cost driver of every cycle; warning at 10 s says re-measure, critical at 30 s says the constraint is memory rather than time and the cadence alert structurally cannot see it.
 
 ### [`engine.md`](engine.md) — the trading engine and its order path
 

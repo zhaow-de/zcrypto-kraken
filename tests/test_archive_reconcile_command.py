@@ -351,9 +351,15 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
 
     assert result.exit_code == 0
     series = _series(out)
+    # Name-only admission below would stay green on a gauge wired to nothing, and a zero here reads as
+    # a healthy scan rather than a broken one. This pins that it carries a real measurement. It does
+    # NOT prove both halves are summed -- the load half alone is also > 0 -- and no cheap assertion
+    # does; what guards that is the single production call site passing one accumulated variable.
+    assert float(series["zcrypto_reconcile_ledger_scan_seconds"]) > 0.0, series["zcrypto_reconcile_ledger_scan_seconds"]
     assert set(series) == {
         "zcrypto_reconcile_last_success_timestamp_seconds",
         "zcrypto_reconcile_cycle_duration_seconds",
+        "zcrypto_reconcile_ledger_scan_seconds",
         'zcrypto_reconcile_source_lag_seconds{source="primary"}',
         'zcrypto_reconcile_source_lag_seconds{source="secondary"}',
         "zcrypto_reconcile_spliced_hours_total",
@@ -389,7 +395,9 @@ def test_textfile_reports_cycle_duration_and_stamps_completion(tmp_path):
     start = datetime(2026, 8, 21, 8, 12, 15, tzinfo=UTC)
     ended = datetime(2026, 8, 21, 8, 35, 6, tzinfo=UTC)
     out = tmp_path / "reconcile.prom"
-    command._write_textfile(out, now=start, ended=ended, totals=command._totals([]), lags={}, hours_skipped=0)
+    command._write_textfile(
+        out, now=start, ended=ended, totals=command._totals([]), lags={}, hours_skipped=0, ledger_scan_seconds=0.0
+    )
     text = out.read_text()
     assert "# TYPE zcrypto_reconcile_cycle_duration_seconds gauge" in text
     assert "zcrypto_reconcile_cycle_duration_seconds 1371.0" in text
@@ -616,6 +624,7 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
         ),
         lags={"primary": math.inf, "secondary": 100.0},
         hours_skipped=0,
+        ledger_scan_seconds=0.0,
     )
     text = out.read_text()
 
@@ -648,7 +657,15 @@ def test_textfile_publishes_the_ledger_record_count(tmp_path):
         0.0,
     )
     totals["ledger_records"] = 4211
-    _write_textfile(out, now=SETTLED, ended=SETTLED, totals=totals, lags={"primary": 0.0, "secondary": 0.0}, hours_skipped=0)
+    _write_textfile(
+        out,
+        now=SETTLED,
+        ended=SETTLED,
+        totals=totals,
+        lags={"primary": 0.0, "secondary": 0.0},
+        hours_skipped=0,
+        ledger_scan_seconds=0.0,
+    )
     body = out.read_text()
 
     assert "# TYPE zcrypto_reconcile_ledger_records gauge" in body
