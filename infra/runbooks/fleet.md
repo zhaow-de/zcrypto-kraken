@@ -14,7 +14,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's resident memory has been above **70 % of its container limit** for five minutes. The limits: `2g` for capture on `zcrypto`, `1g` for capture on `zcrypto-red`, `1g` for the engine — the ansible vars that render each compose file — and `512m` for Alloy (`job="integrations/self"`) on all four hosts, the literal in each Alloy compose template. **Not covered by this rule**: the ops liquidations poller, whose compose sets no memory limit, so there is no ceiling to measure against — the leak and restart rules below do cover it; and the NAS `archive-pull` container, which exposes no metrics at all.
+A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's resident memory has been above **70 % of its container limit** for five minutes. The limits: `2g` for capture on `zcrypto`, `1g` for capture on `zcrypto-red`, and `1g` for the engine — the ansible vars that render each compose file. **Not covered by this rule**: Alloy, which has its own rule and its own bar (see the `zcrypto-fleet-alloy-memory-headroom` section below); the ops liquidations poller, whose compose sets no memory limit, so there is no ceiling to measure against — the leak and restart rules below do cover it; and the NAS `archive-pull` container, which exposes no metrics at all.
 
 ### What it means
 

@@ -902,8 +902,11 @@ ANSIBLE = REPO / "infra/ansible"
 
 
 def _compose_alloy_limit_bytes(path: Path) -> int:
-    """The `memory:` limit under the grafana-alloy service in a compose file -- a literal, not a var,
-    in all three templates, which is exactly why the rule's constant must be read back from it."""
+    """The `memory:` limit under the grafana-alloy service in a compose file -- a literal in the three
+    shared-cap legs this helper is actually called for (zcrypto and zcrypto-red, both the capture
+    role's template, and nas, its own compose file). ops is deliberately excluded: its cap is the
+    `ops_alloy_memory_limit` var, not a literal, so passing its template through here would trip the
+    `assert m` below."""
     text = path.read_text()
     start = text.index("container_name: grafana-alloy")
     m = re.search(r"memory:\s*\"?(\d+)([gGmM])\"?", text[start:])
@@ -1008,13 +1011,30 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
 
 
+def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
+    """`test_alloy_has_its_own_headroom_bar...` reads `ops_alloy_memory_limit` from
+    `roles/ops/defaults/main.yml` only -- a `host_vars/zcrypto-ops/vars.yml` or `group_vars/*` entry
+    would pass that test while the deployed cap diverged from the ratio's denominator, unseen. The
+    sibling `capture_memory_limit` uses exactly that override shape for real, in
+    `host_vars/zcrypto-red/vars.yml` -- so it is asserted absent here rather than assumed."""
+    hits = [
+        path
+        for base in (ANSIBLE / "host_vars", ANSIBLE / "group_vars")
+        for path in base.rglob("*.yml")
+        if "ops_alloy_memory_limit" in path.read_text()
+    ]
+    assert not hits, f"ops_alloy_memory_limit overridden outside roles/ops/defaults/main.yml: {hits}"
+
+
 @pytest.mark.parametrize("uid", [_MEM_HEADROOM, _MEM_LEAK, _DAEMON_RESTARTED])
 def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
-    """The routine is fleet-wide: both capture daemons, the engine (primary only -- nothing listens on
+    """All three rules cover both capture daemons and the engine (primary only -- nothing listens on
     9102 on the secondary, so `up{job="engine_app",host="zcrypto-red"}` has read 0 for every sample of
-    its life), the ops liquidations poller, and Alloy itself on all four hosts under the
-    `integrations/self` job its exporter.self metrics carry (measured 2026-08-28). A selector that names
-    a series that never exists is not coverage."""
+    its life). The leak and restart rules additionally cover the ops liquidations poller and Alloy
+    itself on all four hosts under the `integrations/self` job its exporter.self metrics carry
+    (measured 2026-08-28) -- the headroom rule excludes both, Alloy to its own bar below, the poller
+    for want of a limit to measure against. A selector that names a series that never exists is not
+    coverage."""
     rule = _rule(uid)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
     if uid == _MEM_HEADROOM:  # the app daemons only: Alloy has its own bar, the poller has no limit

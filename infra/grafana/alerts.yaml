@@ -3840,9 +3840,10 @@ rules:
   # host's own predecessor at equal process age -- and the next converge voided every open read, so
   # the reads became a lock on the fleet: 88 commits on fleet-pins.md in a month, and not one real
   # leak ever found (T0151: environmental; 2026-08-02: a cold-baseline read that nearly rolled back a
-  # healthy image). The three rules below are that routine as telemetry, running regardless of
-  # converges, and across the FLEET: both capture daemons, the engine, the ops liquidations poller,
-  # and the four Alloy containers. A bake owes no memory read; a rollout is closed at gate-close.
+  # healthy image). The four rules below are that routine as telemetry, running regardless of
+  # converges, and across the FLEET: both capture daemons, the engine, and the ops liquidations
+  # poller -- the app-daemon headroom rule below excludes Alloy, which gets its own rule covering the
+  # four Alloy containers. A bake owes no memory read; a rollout is closed at gate-close.
   - uid: zcrypto-fleet-memory-headroom
     title: "Fleet · a daemon is near its memory limit"
     ruleGroup: zcrypto-fleet
@@ -3855,7 +3856,7 @@ rules:
       # config.alloy says why), so the denominators are literal bytes, one leg per (host, job),
       # unioned with `or`; tests/test_infra_alert_rules.py pins each literal to the ansible var that
       # renders the compose file (capture_memory_limit 2g / 1g, engine_memory_limit 1g), so a limit
-      # moved in ansible fails the test rather than silently re-scaling this ratio. The four Alloy
+      # moved in ansible fails the test rather than silently re-scaling this ratio.
       # Alloy is NOT here -- it has its own rule below, at its own bar, because it genuinely runs
       # near its ceiling where these three do not (measured: capture 0.08/0.14, engine 0.37).
       # DELIBERATELY ABSENT: the ops liquidations poller (`liquidations_app`) -- its compose sets no
