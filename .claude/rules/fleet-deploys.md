@@ -64,7 +64,7 @@ A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regen
 The archive-pull tier — outside the canary regime (no secondary, no bake owed); converges are `--limit nas`, and the pin is `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml`, the one committed capture-image pin.
 
 - **The NAS runs only `-compat` builds** — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by RUNNING polars in the pulled image, never by reading the label.
-- **A fingerprint-invalidating pin (any change inside the transitive `cli.*` replay closure that `gate_cache.py` digests — e.g. `journal.py`) replays the whole gate-export cold** — 3363 s when last measured (2026-08-26), and it grows with the journal, so re-measure rather than reusing the figure — the trap that has bitten twice is an OLD COLD number from a smaller journal, not a warm one.
+- **A fingerprint-invalidating pin (any change inside the transitive `cli.*` replay closure that `gate_cache.py` digests — e.g. `journal.py`) replays the whole gate-export cold** — the better part of an hour, and it grows with the journal: size the window from the current figure in `docs/reference/fleet-pins.md`'s standing constraint and re-measure it, never from a remembered number — the trap that has bitten twice is an OLD COLD number from a smaller journal, not a warm one.
 
 ## Alert-rule lifecycle
 
