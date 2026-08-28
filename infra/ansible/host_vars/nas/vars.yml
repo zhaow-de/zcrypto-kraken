@@ -33,8 +33,9 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # `--check --diff` reports .env changed with the digest invisible.
 # The NAS converges BEFORE the engine: gate-export scores the ratified streak here, and a reader
 # meeting a record it cannot parse zeroes that streak with the engine deploy fully correct.
-# A fingerprint-invalidating re-pin replays the whole journal cold — 3363 s over 280 cycles
-# (2026-08-26). It grows with the journal, so size the window against the newest measurement.
+# A fingerprint-invalidating re-pin replays the whole journal cold -- a cold replay takes the
+# better part of an hour and grows with the journal; see docs/reference/fleet-pins.md's standing
+# constraint for the current figure.
 # `cache_invalidated` reads 0 across such a re-pin and that is CORRECT: /tmp is unmounted, so a
 # recreate leaves NO cache file, and `load_cache` returns rejected=False for an absent path (True
 # only when a file existed and was discarded). zcrypto_gate_cache_invalidated (spec 00060 D8)
