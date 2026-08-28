@@ -3920,12 +3920,18 @@ rules:
       # liquidations), zcrypto 0.5237-0.5708, zcrypto-red 0.2636-0.2726, nas 0.1441-0.1561. A shared
       # 0.7 bar with the app daemons therefore paged ops on a HEALTHY fleet, every evaluation,
       # forever -- caught by the rollout that first pushed it, before it had ever run.
+      # ops then took a LARGER CAP rather than a looser bar: 399.1 MiB peak against a 117 MiB swing
+      # left it 113 MiB from the ceiling, so `ops_alloy_memory_limit` is 1g and this leg divides by
+      # it. The other three stay at 512m -- the capture hosts hold 3.83 and 1.93 GiB total and
+      # already commit 3.5 g and 1.5 g of caps, so headroom there is not free the way it is on ops.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'process_resident_memory_bytes{host=~"zcrypto|zcrypto-red|ops|nas", job="integrations/self"} / 536870912'
+          expr: >-
+            (process_resident_memory_bytes{host="ops", job="integrations/self"} / 1073741824)
+            or (process_resident_memory_bytes{host=~"zcrypto|zcrypto-red|nas", job="integrations/self"} / 536870912)
           instant: true
           refId: A
       - refId: C
@@ -3949,7 +3955,7 @@ rules:
     for: 15m
     annotations:
       summary: >-
-        Grafana Alloy on a fleet host is using more than 90% of its 512 MiB container limit. Alloy runs
+        Grafana Alloy on a fleet host is using more than 90% of its container memory limit — 1 GiB on ops, 512 MiB elsewhere. Alloy runs
         closer to its ceiling than the app daemons do by design — the `host` label says which machine, and
         ops sits highest because it reads the most journal. If it is OOM-killed that host's telemetry goes
         dark, which `Fleet · Alloy dark` reports separately; this is the warning before that.

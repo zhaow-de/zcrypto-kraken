@@ -90,7 +90,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          # Sized from measurement, not from the 512m every other Alloy carries: over the 14 d the
+          # platform retains, THIS Alloy ran 282.4-399.1 MiB (it reads the most journal -- reconcile,
+          # panel, verify-replay, tape-bars, liquidations), so 512m left 113 MiB of margin against a
+          # process whose own min-to-max swing is 117 MiB. One ordinary excursion reached the cap.
+          # The host carries 62.5 GiB with 47 GiB available, so the margin is free here; the capture
+          # hosts (3.83 and 1.93 GiB, already 3.5 g and 1.5 g of caps) are why this is NOT fleet-wide.
+          memory: "{{ ops_alloy_memory_limit }}"
           # Unlike the NAS (no CPU cgroup on DSM), Debian has a real CPU cgroup, so a `cpus:` limit
           # actually holds here -- and it must: this box exists to run the overlay writer fast
           # and Alloy must never contend with it for CPU. 2.0 of the box's 24

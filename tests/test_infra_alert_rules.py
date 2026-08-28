@@ -982,7 +982,15 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     OOM it warns about is owned separately by `Fleet · Alloy dark`."""
     rule = _rule(_ALLOY_HEADROOM)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
-    assert 'job="integrations/self"' in expr and "536870912" in expr, expr
+    # ops divides by its OWN cap. 399.1 MiB peak against a 117 MiB swing left only 113 MiB under the
+    # 512m every other Alloy carries, and ops is the one host where margin is free (62.5 GiB, 47
+    # available) -- the capture hosts hold 3.83 and 1.93 GiB and already commit 3.5 g / 1.5 g of caps.
+    # Read the number back from the ansible var so raising the cap without the rule fails here.
+    ops_cap = _ansible_memory_limit_bytes(ANSIBLE / "roles/ops/defaults/main.yml", "ops_alloy_memory_limit")
+    assert re.search(rf'host="ops", job="integrations/self"\}}\s*/\s*{ops_cap}\b', expr), (
+        f"the ops leg must divide by ops_alloy_memory_limit ({ops_cap}); a cap raised without this ratio lies: {expr!r}"
+    )
+    assert re.search(r'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}\s*/\s*536870912\b', expr), expr
     assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
 
