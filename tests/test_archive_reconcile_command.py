@@ -1275,7 +1275,8 @@ def test_an_unrecognized_verdict_string_counts_as_undetermined_not_a_crash(tmp_p
     """D4a's sibling gap: the neighbouring test covers a MISSING verdict (a pre-discriminator
     record); this covers an UNRECOGNIZED one. The ledger is append-only and outlives any single
     image version -- widen the verdict vocabulary later, then roll back to this code (a normal
-    operation, per fleet-deploys.md), and it must not crash-loop indexing a `dark_<verdict>` key
+    operation -- `.claude/skills/zcrypto-rollout-image/SKILL.md`'s `Ops converges` makes it a
+    re-converge to the recorded digest), and it must not crash-loop indexing a `dark_<verdict>` key
     that does not exist. An unknown verdict is bucketed as `undetermined`, same as no verdict at
     all -- not silently dropped, which would break the three-label partition of the booked seconds.
     """

@@ -273,7 +273,7 @@ def test_two_tags_of_one_digest_are_removed_once():
 
 # --------------------------------------------------------------------------------------------
 # Pre-staged digests: resident, unrecorded, attached to no container — indistinguishable from
-# stale, and `fleet-deploys.md` MANDATES pre-staging before a converge.
+# stale, and the deploy skills' shared converge mechanics MANDATE pre-staging before a converge.
 # --------------------------------------------------------------------------------------------
 
 
