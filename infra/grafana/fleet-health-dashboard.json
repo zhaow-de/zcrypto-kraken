@@ -1874,8 +1874,8 @@
     {
       "id": 602,
       "type": "timeseries",
-      "title": "Capture RSS growth per day",
-      "description": "Is the capture daemon's memory actually trending up? A growth **rate** is the one leak measure that is legitimately comparable across two machines with different ceilings, which is why this panel puts both on one axis where the panel above deliberately does not. The value is bytes per day, derived over a six-hour window; a flat line near zero is healthy and a persistent positive slope is the leak signal. Nothing pages on this.",
+      "title": "Daemon RSS growth per day — fleet",
+      "description": "Is any daemon's memory actually trending up? Every long-lived process the fleet scrapes — both capture daemons, the engine, the ops liquidations poller, and Alloy on all four hosts. A growth **rate** is the one leak measure that is legitimately comparable across two machines with different ceilings, which is why this panel puts both on one axis where the panel above deliberately does not. The value is bytes per day, derived over a six-hour window; a flat line near zero is healthy and a persistent positive slope is the leak signal. Nothing pages on this.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1892,9 +1892,9 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "deriv(process_resident_memory_bytes{host=~\"zcrypto|zcrypto-red\", job=\"capture_app\"}[6h]) * 86400",
+          "expr": "deriv(process_resident_memory_bytes{host=~\"zcrypto|zcrypto-red|ops|nas\", job=~\"capture_app|engine_app|liquidations_app|integrations/self\"}[6h]) * 86400",
           "refId": "A",
-          "legendFormat": "{{host}}/{{job}}"
+          "legendFormat": "{{host}} {{job}}"
         }
       ],
       "fieldConfig": {

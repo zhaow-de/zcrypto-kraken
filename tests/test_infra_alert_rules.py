@@ -720,7 +720,7 @@ def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(u
     Two qualifications the choice rests on, both measured. It is NOT the guarded-summary form used
     on `zcrypto-capture-venue-state-recurrence` (2a899adb), which removes the same falseness but not
     the volume -- and here the per-pair rule mints 24 instances per error where that one mints one
-    or two. And "nothing goes unwatched" holds for a CORRELATED outage only: six of the 25 rules in
+    or two. And "nothing goes unwatched" holds for a CORRELATED outage only: six of the 22 rules in
     `zcrypto-capture` carry `for: 0s` and can fire on a hiccup that short, four of which keep
     `Alerting`. A RULE-SCOPED error on these two alone now pages nothing -- an accepted residual,
     named in the runbook rather than left to be discovered."""
@@ -770,7 +770,7 @@ PROVISIONAL_THRESHOLDS: set[str] = {
     # bar is sized for notice -- a week ahead of the headroom page from a ~150 MiB start -- not fitted
     # to a distribution. What derives the real value: the first leak it fires on, or thirty days of
     # floor deltas read from the fleet board's growth-per-day panel.
-    "zcrypto-capture-memory-leak",
+    "zcrypto-fleet-memory-leak",
 }
 
 _PROVISIONAL = "PROVISIONAL"
@@ -892,10 +892,20 @@ def test_both_venue_rules_group_by_the_label_the_responder_acts_on():
 # converge voided it -- so the reads became a lock on the fleet. These three rules are that routine
 # as telemetry: they run regardless of converges, and a bake owes no memory read at all.
 
-_MEM_HEADROOM = "zcrypto-capture-memory-headroom"
-_MEM_LEAK = "zcrypto-capture-memory-leak"
-_DAEMON_RESTARTED = "zcrypto-capture-daemon-restarted"
+_MEM_HEADROOM = "zcrypto-fleet-memory-headroom"
+_MEM_LEAK = "zcrypto-fleet-memory-leak"
+_DAEMON_RESTARTED = "zcrypto-fleet-daemon-restarted"
 ANSIBLE = REPO / "infra/ansible"
+
+
+def _compose_alloy_limit_bytes(path: Path) -> int:
+    """The `memory:` limit under the grafana-alloy service in a compose file -- a literal, not a var,
+    in all three templates, which is exactly why the rule's constant must be read back from it."""
+    text = path.read_text()
+    start = text.index("container_name: grafana-alloy")
+    m = re.search(r"memory:\s*\"?(\d+)([gGmM])\"?", text[start:])
+    assert m, f"no memory limit under grafana-alloy in {path}"
+    return int(m.group(1)) * {"g": 1024**3, "m": 1024**2}[m.group(2).lower()]
 
 
 def _ansible_memory_limit_bytes(path: Path, key: str) -> int:
@@ -915,11 +925,15 @@ def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
     primary = _ansible_memory_limit_bytes(ANSIBLE / "roles/capture/defaults/main.yml", "capture_memory_limit")
     secondary = _ansible_memory_limit_bytes(ANSIBLE / "host_vars/zcrypto-red/vars.yml", "capture_memory_limit")
     engine = _ansible_memory_limit_bytes(ANSIBLE / "roles/engine/defaults/main.yml", "engine_memory_limit")
-    for host, job, limit in (
-        ("zcrypto", "capture_app", primary),
-        ("zcrypto-red", "capture_app", secondary),
-        ("zcrypto", "engine_app", engine),
-    ):
+    alloy = {
+        "zcrypto": _compose_alloy_limit_bytes(ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
+        "zcrypto-red": _compose_alloy_limit_bytes(ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
+        "ops": _compose_alloy_limit_bytes(ANSIBLE / "roles/ops/templates/alloy-compose.yaml.j2"),
+        "nas": _compose_alloy_limit_bytes(REPO / "infra/nas/compose.yaml"),
+    }
+    legs = [("zcrypto", "capture_app", primary), ("zcrypto-red", "capture_app", secondary), ("zcrypto", "engine_app", engine)]
+    legs += [(host, "integrations/self", limit) for host, limit in alloy.items()]
+    for host, job, limit in legs:
         leg = re.search(
             rf'process_resident_memory_bytes\{{[^}}]*host="{host}"[^}}]*job="{job}"[^}}]*\}}\s*/\s*(\d+)', expr
         ) or re.search(rf'process_resident_memory_bytes\{{[^}}]*job="{job}"[^}}]*host="{host}"[^}}]*\}}\s*/\s*(\d+)', expr)
@@ -963,11 +977,16 @@ def test_the_restart_rule_is_the_only_restart_signal_and_absorbs_a_datasource_hi
 
 @pytest.mark.parametrize("uid", [_MEM_HEADROOM, _MEM_LEAK, _DAEMON_RESTARTED])
 def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
-    """`capture_app` on both hosts, `engine_app` on the primary only: `up{job="engine_app",host="zcrypto-red"}`
-    has read 0 for every sample of its life (nothing listens on 9102 there), so an unscoped engine
-    selector is a series that never exists, and a rule that cannot fire is not coverage."""
+    """The routine is fleet-wide: both capture daemons, the engine (primary only -- nothing listens on
+    9102 on the secondary, so `up{job="engine_app",host="zcrypto-red"}` has read 0 for every sample of
+    its life), the ops liquidations poller, and Alloy itself on all four hosts under the
+    `integrations/self` job its exporter.self metrics carry (measured 2026-08-28). A selector that names
+    a series that never exists is not coverage."""
     rule = _rule(uid)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
-    assert "capture_app" in expr and "engine_app" in expr, expr
+    for token in ("capture_app", "engine_app", "integrations/self", '"nas"' if uid == _MEM_HEADROOM else "|nas"):
+        assert token in expr, f"{uid} does not cover {token}: {expr!r}"
+    if uid != _MEM_HEADROOM:  # the poller has no memory limit, so no headroom leg -- leak and restart cover it
+        assert "liquidations_app" in expr, expr
     assert not re.search(r'job="engine_app"[^}]*host=~"zcrypto\|zcrypto-red"', expr), "engine_app must not select zcrypto-red"
     assert not re.search(r'host=~"zcrypto\|zcrypto-red"[^}]*job="engine_app"', expr), "engine_app must not select zcrypto-red"

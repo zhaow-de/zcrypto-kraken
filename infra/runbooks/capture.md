@@ -167,7 +167,7 @@ The page was not merely noisy, it was **false**: its summary asserts that every 
 
 ### How to recognise it
 
-**Several `zcrypto-capture-*` rules firing and auto-resolving within about a minute, with no host-side symptom, is a datasource error rather than a fleet event** — and these two rules are deliberately absent from that storm. Only six rules in the `zcrypto-capture` group carry `for: 0s` and can fire on a hiccup that short; the other nineteen absorb it in their pending period, which is why `zcrypto-capture-venue-not-online` has never once fired this way. Four of those six still carry `execErrState: Alerting`, so the storm still happens — it just no longer contains a claim that capture went dark.
+**Several `zcrypto-capture-*` rules firing and auto-resolving within about a minute, with no host-side symptom, is a datasource error rather than a fleet event** — and these two rules are deliberately absent from that storm. Only six rules in the `zcrypto-capture` group carry `for: 0s` and can fire on a hiccup that short; the other sixteen absorb it in their pending period, which is why `zcrypto-capture-venue-not-online` has never once fired this way. Four of those six still carry `execErrState: Alerting`, so the storm still happens — it just no longer contains a claim that capture went dark.
 
 ### What to do
 
@@ -184,79 +184,3 @@ The 264-against-52 measurement is read from Grafana's **alert state history**, n
 ### Retire when
 
 Either rule's `execErrState` is no longer `OK`, or a dedicated rule is introduced that owns "the alerting datasource is unreadable" — at which point the other rules' `Alerting` becomes redundant rather than merely loud.
-
-______________________________________________________________________
-
-<a name="zcrypto-capture-memory-headroom"></a>
-
-## zcrypto-capture-memory-headroom — ALERT
-
-### What you are seeing
-
-A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's resident memory has been above **70 % of its container limit** for five minutes. The limits are `2g` for capture on `zcrypto`, `1g` for capture on `zcrypto-red`, `1g` for the engine — from the ansible vars that render each compose file.
-
-### What it means
-
-This is the slow-leak alarm, and it is the only one that matters: a leak's one real harm is the OOM-kill, and this says so before it happens, on any image, at any process age. The capture daemons sit near 7 % of their limit on a healthy day, so being here means a long climb. **Memory is watched as a routine, not as part of a rollout** — no bake owes a memory read, and this rule is what replaced those reads.
-
-### What to do
-
-1. **Read how long it has been climbing** — the fleet board's *Capture RSS growth per day* panel (602). A steady positive rate over days is a leak; a single step that then plateaued is an allocation that converged and is not going to reach the limit on its own.
-2. **Read what it has been running since** — `docs/reference/fleet-pins.md`'s `since` column names the image and the date; `docs/reference/deploy-log.jsonl` has every converge as a machine line. The suspect is the image; the rollback operand is in the same row.
-3. **A leaking capture daemon is restarted, not rolled back, first** — `sudo systemctl restart zcrypto-capture` on the affected host, one host at a time, never both in one window. The restart costs a resubscribe (seconds) and buys the full limit back; the peer host keeps capturing. Then decide on the image with the growth rate in hand.
-4. **If it is the engine**, the restart must land inside the 4-hourly inter-cycle gap like any engine restart (`.claude/rules/capture-deploys.md`, engine converges).
-
-### Retire when
-
-`zcrypto-capture-memory-headroom` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
-
-______________________________________________________________________
-
-<a name="zcrypto-capture-memory-leak"></a>
-
-## zcrypto-capture-memory-leak — ALERT
-
-### What you are seeing
-
-A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's **hourly memory floor** is at least 64 MiB above where it was 24 hours earlier, and has been for six hours.
-
-### What it means
-
-The early warning, a week or more ahead of the memory-limit page from a normal starting size. It reads floors so the hour-boundary sawtooth cannot cause it, compares a day apart so a ~4 h step and its trough are both inside the window, and is switched off for the first 30 hours after a restart — so a new image's larger working set never pages as a leak during a bake, and the day-one warm-up ramp is never compared against a converge-time cold floor.
-
-The bar is provisional: no real leak has ever been measured on this fleet. Healthy day-scale drift measured 2026-08-23/24 was 2.7–3.6 MiB per 8 h, an order below it.
-
-### What to do
-
-1. **Look at the shape on panel 602**, not the number. Two steps of decaying size with flat troughs between them is a converging allocation and will stop; equal or growing steps are a leak.
-2. **Note the image and the date from `docs/reference/fleet-pins.md`**, and whether a converge happened in the last day (`docs/reference/deploy-log.jsonl`) — a new image is the first suspect, and the leak page a day after a converge is the one this rule exists for.
-3. **Do nothing else yet.** This is notice, not a fault. The headroom rule owns the decision point; until it fires the only action is to keep the two numbers (rate, image) where the next reader finds them.
-
-### Retire when
-
-`zcrypto-capture-memory-leak` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
-
-______________________________________________________________________
-
-<a name="zcrypto-capture-daemon-restarted"></a>
-
-## zcrypto-capture-daemon-restarted — ALERT
-
-### What you are seeing
-
-A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's process start time moved in the last 15 minutes — it restarted.
-
-### What it means
-
-**If a converge just ran on that host, this is that converge.** It is the converge's own record in the channel and needs nothing. **If nothing was converged, the daemon was OOM-killed or crashed and came back on its own** — and this is the only signal for that: the container is back in seconds, the dead-man keeps pinging, and the log-dead rules never see a gap that short. There is no container-restart metric on these hosts, so this rule reads the same fact from inside the process.
-
-### What to do
-
-1. **Check the deploy log first** — `docs/reference/deploy-log.jsonl`'s last line, or the channel: a converge in the last 15 minutes explains it completely.
-2. **Otherwise read the container**: `sudo docker inspect --format '{{.RestartCount}} {{.State.OOMKilled}}' zcrypto-capture` (or `zcrypto-engine`). `OOMKilled=true` names the cause; read the memory panels for how it got there and treat it as the headroom page that did not get a chance to fire.
-3. **Confirm capture recovered**: `sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | head` shows files advancing. A single-host restart costs seconds and the peer's copy heals it; the reconciler will book whatever was not.
-4. **A repeating restart** — this rule firing again within the hour with no converge — is a crash loop; read `sudo docker logs --since 20m zcrypto-capture` before anything else.
-
-### Retire when
-
-`zcrypto-capture-daemon-restarted` is absent from `infra/grafana/alerts.yaml`, or a container-restart metric reaches Grafana from these hosts and a rule reads it instead.
