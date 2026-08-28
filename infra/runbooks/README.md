@@ -20,6 +20,9 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-capture-venue-state-recurrence`](capture.md#zcrypto-capture-venue-state-recurrence) — ALERT: the same, but inside the last 15 minutes — the one that means it is happening now.
 - [`zcrypto-capture-all-streams-silent`](capture.md#zcrypto-capture-all-streams-silent) — ALERT: every book stream on one host went quiet at once. Check the venue's published maintenance calendar first — every firing so far has been one.
 - [`zcrypto-capture-stream-silent`](capture.md#zcrypto-capture-stream-silent) — ALERT: one book stream stopped delivering while its siblings kept flowing; the daemon does not self-heal this.
+- [`zcrypto-capture-memory-headroom`](capture.md#zcrypto-capture-memory-headroom) — ALERT: a daemon is above 70 % of its container memory limit — the slow-leak alarm, watched as a routine and never as a rollout read.
+- [`zcrypto-capture-memory-leak`](capture.md#zcrypto-capture-memory-leak) — ALERT: a daemon's hourly memory floor rose 64 MiB over a day — the early notice, a week ahead of the limit page.
+- [`zcrypto-capture-daemon-restarted`](capture.md#zcrypto-capture-daemon-restarted) — ALERT: a daemon restarted — a converge's own record when one just ran, the only OOM-kill/crash signal otherwise.
 - [`cross-hour-straddle`](capture.md#cross-hour-straddle) — KNOWN LIMITATION: silence that began before an hour boundary is measured from the boundary, not from its true start.
 - [`capture-silence-rules-and-datasource-errors`](capture.md#capture-silence-rules-and-datasource-errors) — KNOWN LIMITATION: the two silence rules stay silent on a Grafana query failure rather than raising a blackout page the system never observed.
 

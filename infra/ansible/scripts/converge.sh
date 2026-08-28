@@ -50,4 +50,50 @@ if [ "$reply" != "$LIMIT" ]; then
   echo "converge.sh: aborted — confirmation did not match the --limit value; nothing executed" >&2
   exit 3
 fi
-exec "$SD/run.sh" "$PLAYBOOK" "$@"
+# The real pass, RECORDED. Every converge appends one JSON line -- the target, the tags, every -e
+# operand (digests, flags, override reasons; never a secret, none travels on the command line), the
+# tree it ran from, and how it ended. The digest and the timestamp a rollback needs are then written
+# by the pass that set them, never re-typed from memory into fleet-pins.md afterwards. Preview-only
+# runs and aborted confirms never reach this point, so they leave no line.
+set +e
+"$SD/run.sh" "$PLAYBOOK" "$@"
+rc=$?
+set -e
+LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
+TAGS=""; EV=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "--tags" ] && TAGS="$a"
+  [ "$prev" = "-e" ] && EV="$EV$a"$'\n'
+  case "$a" in
+    --tags=*) TAGS="${a#--tags=}" ;;
+    --extra-vars=*) EV="$EV${a#--extra-vars=}"$'\n' ;;
+  esac
+  prev="$a"
+done
+REV="$(git -C "$SD" rev-parse HEAD 2>/dev/null || echo unknown)"
+DIRTY=false; [ -n "$(git -C "$SD" status --porcelain 2>/dev/null)" ] && DIRTY=true
+# Best-effort and LOUD, never fatal: the pass has already run, so its rc is the truth this script
+# returns; a record that cannot be written is printed for the operator to append by hand instead of
+# being turned into a converge failure that did not happen.
+python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
+import json, sys, datetime as dt
+log, playbook, limit, tags, rev, dirty, rc, ev = sys.argv[1:9]
+extra = {}
+for line in ev.splitlines():
+    if "=" in line:
+        k, v = line.split("=", 1)
+        extra[k.strip()] = v.strip()
+rec = {
+    "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
+    "revision": rev, "dirty": dirty == "true", "rc": int(rc),
+}
+line = json.dumps(rec, sort_keys=True)
+try:
+    with open(log, "a") as f:
+        f.write(line + "\n")
+except OSError as exc:
+    print(f"converge.sh: could not append to {log}: {exc}\n{line}", file=sys.stderr)
+    raise SystemExit(1)
+PYREC
+exit "$rc"

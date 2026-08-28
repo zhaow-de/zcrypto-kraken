@@ -3058,9 +3058,9 @@ rules:
     # per-pair rule mints 24 instances (12 pairs x 2 hosts) on every error where that rule mints one
     # or two. Both halves matter, so the stronger instrument wins on these two specifically.
     #
-    # What still covers a correlated datasource outage, measured rather than assumed: of the 22
+    # What still covers a correlated datasource outage, measured rather than assumed: of the 25
     # rules in `zcrypto-capture`, only SIX carry `for: 0s` and can therefore fire on a ~1 min error
-    # at all -- the other 16 absorb it, which is why `zcrypto-capture-venue-not-online` (for: 5m)
+    # at all -- the other 19 absorb it, which is why `zcrypto-capture-venue-not-online` (for: 5m)
     # logged zero error firings over the same window. Four of those six keep `Alerting`, so an
     # outage is still reported; what is removed is a fabricated blackout claim inside that report.
     #
@@ -3569,6 +3569,184 @@ rules:
       summary: "A node-exporter collector is failing on this host, so its entire metric family is absent -- and rules keyed on those series evaluate NoData, which this fleet maps to OK. Any alert depending on them is silently disarmed right now. Check Alloy's logs on the named host for the failing collector."
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "402"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  # --- memory, watched as a ROUTINE and never as a rollout read --------------------------------------
+  # The capture-image bake used to carry an RSS row read by hand -- T+24 h, T+50 h, against the
+  # host's own predecessor at equal process age -- and the next converge voided every open read, so
+  # the reads became a lock on the fleet: 88 commits on fleet-pins.md in a month, and not one real
+  # leak ever found (T0151: environmental; 2026-08-02: a cold-baseline read that nearly rolled back a
+  # healthy image). The three rules below are that routine as telemetry, running regardless of
+  # converges. A bake owes no memory read; a rollout is closed at gate-close.
+  - uid: zcrypto-capture-memory-headroom
+    title: "Capture · a daemon is near its memory limit"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # RSS as a fraction of the CONTAINER limit -- the only number that says "how long until the
+      # OOM-kill", which is a leak's one real harm. No metric carries the limit (no cadvisor here:
+      # config.alloy says why), so the denominators are literal bytes, one leg per (host, job),
+      # unioned with `or`; tests/test_infra_alert_rules.py pins each literal to the ansible var that
+      # renders the compose file (capture_memory_limit 2g / 1g, engine_memory_limit 1g), so a limit
+      # moved in ansible fails the test rather than silently re-scaling this ratio.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            (process_resident_memory_bytes{host="zcrypto", job="capture_app"} / 2147483648)
+            or (process_resident_memory_bytes{host="zcrypto-red", job="capture_app"} / 1073741824)
+            or (process_resident_memory_bytes{host="zcrypto", job="engine_app"} / 1073741824)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 0.7 of the limit is the owner's bar (2026-08-28). The capture daemons sit at ~0.07 of it
+            # today, so this fires only on a process that has been growing for a long time -- which
+            # is exactly the case the hand-read bands were trying to catch, on any image at any age.
+            - evaluator: {type: gt, params: [0.7]}
+    # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
+    # capture rule here.
+    noDataState: OK
+    execErrState: Alerting
+    # A ratio over 0.7 persists; five minutes costs no detection and keeps this rule out of the
+    # `for: 0s` set a one-minute datasource error can fire.
+    for: 5m
+    annotations:
+      summary: >-
+        A daemon on a capture host is using more than 70% of its container memory limit and will be
+        OOM-killed if that keeps climbing. The `job` label says which daemon, `host` which machine. This is
+        the slow-leak alarm: read the growth-per-day panel to see how long it has been climbing, and read
+        the pins file for what image it has been running since. Runbook: infra/runbooks/capture.md#zcrypto-capture-memory-headroom
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "601"
+      unit: "fraction of the container memory limit"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-memory-leak
+    title: "Capture · a daemon's memory floor rose a day on"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The bake's own hard-won reading method, as PromQL. Read the hourly FLOOR, never a sample --
+      # the segment-rotation sawtooth spans several MiB and swamps a point read. Compare across a
+      # 24 h band -- steps arrive as ~4 h ramps and their repeat lands a day later at the same clock
+      # offset, so a shorter window reads a trough as a plateau. And let a young process be invisible
+      # by construction: for the first 24 h after a restart there is no floor to subtract, the
+      # expression yields no series, and `noDataState: OK` swallows it -- the warm-up ramp that once
+      # nearly rolled back a healthy image cannot fire this.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            min_over_time(process_resident_memory_bytes{host=~"zcrypto|zcrypto-red", job=~"capture_app|engine_app"}[1h])
+            - min_over_time(process_resident_memory_bytes{host=~"zcrypto|zcrypto-red", job=~"capture_app|engine_app"}[1h] offset 24h)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # PROVISIONAL: 64 MiB of floor growth in a day. No real leak has ever been measured on
+            # this fleet, so there is no distribution to derive from; the number is sized so that a
+            # daemon starting at ~150 MiB would take over a week to reach the headroom bar above,
+            # giving this rule a week of notice ahead of that one. Healthy day-scale drift measured
+            # 2026-08-23/24 was 2.7-3.6 MiB per 8 h (T0151), an order below. What derives the real
+            # value: the first leak this fires on, or thirty days of floor deltas read from panel 602.
+            - evaluator: {type: gt, params: [67108864]}
+    noDataState: OK
+    execErrState: Alerting
+    # Six hours sustained: a single step that then plateaus stays over the bar for up to a day and
+    # is worth one look; a step that reverts within the pending period was the sawtooth.
+    for: 6h
+    annotations:
+      summary: >-
+        A daemon on a capture host has been using at least 64 MiB more memory than it was a day ago, for
+        six hours running, measured on hourly floors so the normal hour-boundary sawtooth cannot cause
+        this. Nothing is broken yet: this is the early warning for a slow leak, well ahead of the memory-limit
+        page. Read the growth-per-day panel and the pins file for which image the daemon has been running
+        since. Runbook: infra/runbooks/capture.md#zcrypto-capture-memory-leak
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "602"
+      unit: "bytes of hourly-floor growth over 24 hours"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-daemon-restarted
+    title: "Capture · a daemon restarted"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # `RestartCount` was a bake abort signal read by hand on the host; it has no metric (no
+      # cadvisor). `process_start_time_seconds` is kept and moves on every restart, which is the same
+      # fact from inside the process. A converge restarts on purpose and this pages once for it --
+      # an attended converge's own record in the channel. Any other firing is the OOM-kill or a
+      # crash, and nothing else reports either: the container is back in seconds, the dead-man
+      # keeps pinging, and the log-dead rules never see a gap that short.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'changes(process_start_time_seconds{host=~"zcrypto|zcrypto-red", job=~"capture_app|engine_app"}[15m])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    # `changes(...[15m])` stays above 0 for fifteen minutes after the restart, so two minutes of
+    # pending period costs no detection and keeps this out of the `for: 0s` set.
+    for: 2m
+    annotations:
+      summary: >-
+        A daemon on a capture host restarted in the last 15 minutes. If a converge just ran, this is that
+        converge and needs nothing. If nothing was converged, the daemon was OOM-killed or crashed and came
+        back on its own — read `RestartCount` on the container and the memory panels, and check whether
+        parquet is advancing. Runbook: infra/runbooks/capture.md#zcrypto-capture-daemon-restarted
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "601"
+      unit: "daemon process starts in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:

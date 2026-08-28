@@ -161,8 +161,6 @@ NOT_A_FAULT_SIGNAL = {
     "process_cpu_seconds_total",
     "process_max_fds",
     "process_open_fds",
-    "process_resident_memory_bytes",
-    "process_start_time_seconds",
     "process_virtual_memory_bytes",
     # Prune bookkeeping -- the fault is the timer STOPPING, which the staleness rules own.
     "zcrypto_engine_journal_prune_deleted_days",
@@ -722,7 +720,7 @@ def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(u
     Two qualifications the choice rests on, both measured. It is NOT the guarded-summary form used
     on `zcrypto-capture-venue-state-recurrence` (2a899adb), which removes the same falseness but not
     the volume -- and here the per-pair rule mints 24 instances per error where that one mints one
-    or two. And "nothing goes unwatched" holds for a CORRELATED outage only: six of the 22 rules in
+    or two. And "nothing goes unwatched" holds for a CORRELATED outage only: six of the 25 rules in
     `zcrypto-capture` carry `for: 0s` and can fire on a hiccup that short, four of which keep
     `Alerting`. A RULE-SCOPED error on these two alone now pages nothing -- an accepted residual,
     named in the runbook rather than left to be discovered."""
@@ -768,6 +766,11 @@ PROVISIONAL_THRESHOLDS: set[str] = {
     # node_memory_MemAvailable_bytes{host="ops"} -- never MemFree, which is ~10x smaller.
     "zcrypto-reconcile-ledger-scan-slow",
     "zcrypto-reconcile-ledger-scan-critical",
+    # 64 MiB of hourly-floor growth over 24 h. No leak has ever been measured on this fleet, so the
+    # bar is sized for notice -- a week ahead of the headroom page from a ~150 MiB start -- not fitted
+    # to a distribution. What derives the real value: the first leak it fires on, or thirty days of
+    # floor deltas read from the fleet board's growth-per-day panel.
+    "zcrypto-capture-memory-leak",
 }
 
 _PROVISIONAL = "PROVISIONAL"
@@ -881,3 +884,84 @@ def test_both_venue_rules_group_by_the_label_the_responder_acts_on():
         expr = " ".join(n.get("model", {}).get("expr", "") for n in _rule(uid)["data"])
         assert "by (host, system)" in expr, f"{uid} collapsed the label the responder acts on"
         assert "or on() vector(0)" in expr, f"{uid} lost the labelled-arm-safe NoData fallback"
+
+
+# --- memory is watched as a routine, never as a rollout read ---------------------------------------
+# The bake used to carry an RSS row read by hand at T+24 h, T+50 h ... against the host's own
+# predecessor at equal process age. Every such read was a human scheduling a query, and the next
+# converge voided it -- so the reads became a lock on the fleet. These three rules are that routine
+# as telemetry: they run regardless of converges, and a bake owes no memory read at all.
+
+_MEM_HEADROOM = "zcrypto-capture-memory-headroom"
+_MEM_LEAK = "zcrypto-capture-memory-leak"
+_DAEMON_RESTARTED = "zcrypto-capture-daemon-restarted"
+ANSIBLE = REPO / "infra/ansible"
+
+
+def _ansible_memory_limit_bytes(path: Path, key: str) -> int:
+    """`"2g"` / `"1g"` as docker reads them -- binary units, the only ones compose accepts here."""
+    value = yaml.safe_load(path.read_text())[key]
+    units = {"g": 1024**3, "m": 1024**2}
+    return int(value[:-1]) * units[value[-1].lower()]
+
+
+def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
+    """The ratio's denominators are literal bytes in the expr, because no metric carries the container
+    limit (no cadvisor on the capture hosts). A literal drifts silently when the ansible var moves --
+    the rule would then measure headroom against a ceiling the host no longer has. So the three
+    constants are read from the vars that render the compose files, never from this test's memory."""
+    rule = _rule(_MEM_HEADROOM)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    primary = _ansible_memory_limit_bytes(ANSIBLE / "roles/capture/defaults/main.yml", "capture_memory_limit")
+    secondary = _ansible_memory_limit_bytes(ANSIBLE / "host_vars/zcrypto-red/vars.yml", "capture_memory_limit")
+    engine = _ansible_memory_limit_bytes(ANSIBLE / "roles/engine/defaults/main.yml", "engine_memory_limit")
+    for host, job, limit in (
+        ("zcrypto", "capture_app", primary),
+        ("zcrypto-red", "capture_app", secondary),
+        ("zcrypto", "engine_app", engine),
+    ):
+        leg = re.search(
+            rf'process_resident_memory_bytes\{{[^}}]*host="{host}"[^}}]*job="{job}"[^}}]*\}}\s*/\s*(\d+)', expr
+        ) or re.search(rf'process_resident_memory_bytes\{{[^}}]*job="{job}"[^}}]*host="{host}"[^}}]*\}}\s*/\s*(\d+)', expr)
+        assert leg, f"no headroom leg for host={host} job={job} in {expr!r}"
+        assert int(leg.group(1)) == limit, f"{host}/{job}: expr divides by {leg.group(1)}, ansible deploys {limit}"
+    cond = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
+    assert cond == {"type": "gt", "params": [0.7]}, "70% of the container limit is the owner's bar (2026-08-28)"
+    assert rule["for"] == "5m" and rule["noDataState"] == "OK"
+
+
+def test_the_leak_rule_reads_hourly_floors_a_day_apart():
+    """The bake's own lessons, as PromQL: read the FLOOR not a sample (the rotation sawtooth spans MiB),
+    compare across a 24 h band (steps arrive as ~4 h ramps and repeat at the same clock offset), and
+    let a young process be invisible -- with no data 24 h back the subtraction yields no series, which
+    `noDataState: OK` swallows, so the first day's warm-up ramp can never fire it."""
+    rule = _rule(_MEM_LEAK)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    assert expr.count("min_over_time(process_resident_memory_bytes") == 2, expr
+    assert "[1h]" in expr and "offset 24h" in expr, expr
+    assert rule["for"] == "6h" and rule["noDataState"] == "OK"
+    assert rule["labels"]["severity"] == "warning"
+
+
+def test_the_restart_rule_is_the_only_restart_signal_and_absorbs_a_datasource_hiccup():
+    """No cadvisor, so `RestartCount` has no metric -- but `process_start_time_seconds` is kept and
+    moves on every restart, which is the same fact. `changes(...[15m])` stays >0 for fifteen minutes,
+    so a pending period costs no detection and keeps the rule out of the `for: 0s` set that a
+    one-minute datasource error can fire (see the execErrState reasoning on the silence rules)."""
+    rule = _rule(_DAEMON_RESTARTED)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    assert "changes(process_start_time_seconds" in expr and "[15m]" in expr, expr
+    assert rule["for"] != "0s", "a pending period is what keeps a datasource hiccup from firing this"
+    assert rule["noDataState"] == "OK" and rule["execErrState"] == "Alerting"
+
+
+@pytest.mark.parametrize("uid", [_MEM_HEADROOM, _MEM_LEAK, _DAEMON_RESTARTED])
+def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
+    """`capture_app` on both hosts, `engine_app` on the primary only: `up{job="engine_app",host="zcrypto-red"}`
+    has read 0 for every sample of its life (nothing listens on 9102 there), so an unscoped engine
+    selector is a series that never exists, and a rule that cannot fire is not coverage."""
+    rule = _rule(uid)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    assert "capture_app" in expr and "engine_app" in expr, expr
+    assert not re.search(r'job="engine_app"[^}]*host=~"zcrypto\|zcrypto-red"', expr), "engine_app must not select zcrypto-red"
+    assert not re.search(r'host=~"zcrypto\|zcrypto-red"[^}]*job="engine_app"', expr), "engine_app must not select zcrypto-red"
