@@ -1,6 +1,6 @@
 # Fleet deploys
 
-L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-red` (secondary) is permanent data loss. **Before any converge, re-pin, restart, image prune or panel regeneration, read the owning skill** — `.claude/skills/zcrypto-rollout-image/SKILL.md` for app-image digests and every tier's converge mechanics, `.claude/skills/zcrypto-bump-alloy/SKILL.md` for Alloy digests; both are readable even where skill invocation is blocked. Below is what must hold before either file is open, and what both share.
+L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-red` (secondary) is permanent data loss. **Before any converge, re-pin, restart, image prune or panel regeneration, read the owning skill** — `.claude/skills/zcrypto-rollout-image/SKILL.md` for app-image digests and every tier's converge mechanics, `.claude/skills/zcrypto-bump-alloy/SKILL.md` for Alloy digests; both carry the shared converge mechanics and are readable even where skill invocation is blocked. Below is only what must hold before either file is open.
 
 ## Invariants
 
@@ -10,20 +10,9 @@ L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-re
 - **The engine converges or restarts only inside the 4-hourly inter-cycle gap** (boundaries 00/04/08/12/16/20 UTC) — `site.yml` re-asserts the window (`-e engine_window_override="<reason>"` bypasses); a failed boundary is never retried.
 - **Adding a capture pair: PRIMARY first, secondary second** — the role refuses secondary-first. A pair-list change is config, not a re-pin.
 - **A schema-widening deploy converges every READER of the record format before the WRITER.**
-- **The NAS runs only `-compat` builds** — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by running polars in the pulled image, never by reading a label. Every apply task in the nas role is gated on `-e nas_apply_compose=true`; without it the converge is render-only.
+- **The NAS runs only `-compat` builds** — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by running polars in the pulled image, never by reading a label.
 - **Panel regeneration is the point of no return** — no old tree survives and rollback is another full rebuild; only through `zcrypto-panel-regenerate`, on the user's word.
 - **One PR per rollout, merged within the day; never branch other work from it.**
-
-## Every converge, every tier
-
-- Converge via `infra/ansible/scripts/converge.sh` — it requires `--limit`, runs and displays the `--check --diff` preview, and takes a typed confirm before the real pass (preview-only: pass `--check`). `--limit` is mandatory for ops too: a bare `site.yml` still runs the NAS play.
-- Digests come from `docs/reference/fleet-pins.md` — the roles refuse to replace a running digest the file does not record (`-e pins_override="<reason>"` bypasses). Pull the digest on the host first; every preflight refuses a digest the host has not pulled.
-- `fleet-pins.md` is a STATE record: re-true the row from `converge.sh`'s line in `docs/reference/deploy-log.jsonl` — never from memory — commit that line with the row, and put the converge's evidence in the commit message, never in the file.
-- **Read a running image's digest from the container, never from the compose file** — `docker inspect --format '{{.Config.Image}}' <name>`.
-- **A `config.alloy` edit makes Alloy the subject**: pass the currently-running Alloy digest (`capture_alloy_digest` / `ops_alloy_digest`) or the drift assert refuses; an EMPTY `-e …_digest=` still counts as defined and renders a broken image ref. A new metric family needs the host's keep-regex edit and a first scrape verified by VALUE — `(no series)` is FAIL, never a zero.
-- A `daemon.json` diff refuses to apply without `-e daemon_json_ack=true` — the docker role is shared, so the ack gates every host.
-- **Images are removed only by `infra/scripts/prune-host-images.py <host>`, after that host's new pins row is written, only for the host that just converged** — a capture host stops appending at 1 GiB free; `--keep <digest12>` anything pre-staged for a leg still to come.
-- Verify by outcome, never by exit code: ops via `infra/scripts/ops-postverify.sh`; capture via the pulled copy's hour boundaries, the NAS pull's `failed=0`, and `continuity.py`; the engine via its next `cycle-HH.json` — the skills carry each.
 
 ## Alert-rule lifecycle
 

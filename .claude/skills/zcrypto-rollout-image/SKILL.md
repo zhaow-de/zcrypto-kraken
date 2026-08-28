@@ -91,7 +91,7 @@ ______________________________________________________________________
 
 # The other converges
 
-The canary phases above are for capture-image digest re-pins. The rest of the fleet's image-converge procedure follows — the invariants that must hold before this file is open, and everything an Alloy bump shares with an image rollout, are in `fleet-deploys.md`.
+The canary phases above are for capture-image digest re-pins. The rest of the fleet's image-converge procedure follows; the invariants that must hold before this file is open are in `fleet-deploys.md`.
 
 ## Every image converge
 
@@ -99,6 +99,19 @@ The canary phases above are for capture-image digest re-pins. The rest of the fl
 - `bootstrap.yml` is first-provision only; it refuses an already-provisioned host without `-e rebootstrap=true`. `site.yml` refuses an un-tagged run on the live primary — only `--tags` naming plays or `--skip-tags engine` satisfy it.
 - **Adding a capture pair** (`capture_pairs` in `group_vars/capture_host/vars.yml`): the capture role reads the primary's deployed pairs and refuses a secondary-first add, fail-closed when the primary is unreachable — secondary-first floods the append-only ledger with false heals, silently on the trades half. Pass the currently-running digest; no bake owed.
 - A new stream's genesis hour is annotated and not booked, so it does not read as a truncation in `continuity.py`.
+
+## Shared converge mechanics
+
+This block is duplicated verbatim in `zcrypto-rollout-image` and `zcrypto-bump-alloy` — deliberately, so neither skill depends on the other being loaded. Edit both.
+
+- Converge via `infra/ansible/scripts/converge.sh` — it requires `--limit`, runs and displays the `--check --diff` preview, and takes a typed confirm of the limit value before the real pass (`run.sh` underneath loads the vaulted deploy key; preview-only: pass `--check`). `--limit` is mandatory for ops too: a bare `site.yml` still runs the NAS play; `converge.sh` refuses the bare form.
+- Digests come from `docs/reference/fleet-pins.md` — the roles refuse to replace a running digest the file does not record (`-e pins_override="<reason>"` bypasses). Pull the digest on the host first: every runner is `--pull never`, and every role's digest preflight refuses a digest the host has not pulled.
+- **Read a running image's digest from the container, never from the compose file** — `docker inspect --format '{{.Config.Image}}' <name>` (`{{.Image}}` is host-dependent and lies under classic storage): a compose file can pin the wrong image while the container runs the right one, and the mistake fires at the next `docker compose up`.
+- **A `config.alloy` edit makes Alloy the subject**: pass the currently-running Alloy digest (`capture_alloy_digest` / `ops_alloy_digest`) or the drift assert refuses the converge; omit the flag entirely otherwise — an EMPTY `-e …_digest=` still counts as defined and renders a broken image ref. The drift assert compares the deployed file, not what the running container loaded, so a converge that never recreates the container passes every assert while a new family stays dark: **a new metric family needs the host's keep-regex edit and a first scrape verified by VALUE** — `uv run python infra/scripts/grafana-query.py '<family>{host="<host>"}'`; `(no series)` is FAIL, never a zero.
+- A `daemon.json` diff refuses to apply without `-e daemon_json_ack=true` — the docker role renders to a probe path and shows the diff before asking (its handler bounces Alloy and the poller); the role is shared, so the ack gates every host.
+- **`fleet-pins.md` is a STATE record.** `converge.sh` appends every real pass to `docs/reference/deploy-log.jsonl`; re-true the row from that line — never from memory — commit the line with the row, and put the converge's evidence (every check read, the values quoted) in the commit message, never in the file. `git log --follow` on the file is the deploy chronicle.
+- **Images are removed only by `uv run python infra/scripts/prune-host-images.py <host>`, then `--apply`, after that host's new pins row is written and only for the host that just converged** — a capture host stops appending at 1 GiB free; nothing distinguishes a pre-staged image from a stale one, so `--keep <digest12>` anything staged for a leg still to come.
+- Verify by outcome, never by exit code. Ops: `infra/scripts/ops-postverify.sh`, every check in one command. Capture: on the pulled copy, every book stream's `<HH>.parquet` begins at the hour; the NAS pull's next cycle reports `failed=0` (that IS the manifest verification — fresh segments are hash-verified on arrival, and whole-archive coverage completes within 24 pull cycles under the incremental hash scope); `infra/scripts/continuity.py` on a pulled copy, never the live dir, shows no new truncated hours. Engine: the next `cycle-HH.json` lands with `completed_at` inside `[B, B+30 min]`; the restart marker is the container's `.State.StartedAt`, never the converge command's return time.
 
 ## Engine converges
 
