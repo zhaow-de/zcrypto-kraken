@@ -134,7 +134,7 @@ The single-stuck-stream shape, which nothing else catches: the dead-man still pi
 
 **If all 12 pairs on both hosts fire at once, this is not 24 stuck streams** — it is the fleet-wide event, and the critical rule above is the one to read. That is what both known firings were.
 
-The bar is ~20× the measured natural maximum. The thinnest pairs really do go quiet: full-resolution archive measurement puts single-host natural quiescence at **14.78 s** (AVAX, 7.8 M messages), and the live gauge independently peaks at **14.16 s** on SOL/BTC with no restart within 26 h. Both instruments agree, so a per-pair silence in the tens of seconds is normal and this bar is not close to it.
+The bar is ~20× the measured natural maximum. The thinnest pairs really do go quiet: full-resolution archive measurement puts single-host natural quiescence at **14.78 s** (AVAX, 7.8 M messages), and the live gauge independently peaks at **14.16 s** on SOL/BTC with no restart within 26 h. Neither is a basket-wide figure — the archive run covered three pairs over 136 h ending 2026-07-14, before the two `/BTC` legs existed, and the gauge's binding pair is now SOL/BTC — so the two **bracket** the envelope at ~14–15 s rather than pinning it. A per-pair silence in the tens of seconds is normal either way, and this bar is nowhere near it.
 
 ### What to do
 
@@ -163,7 +163,7 @@ Grafana Cloud intermittently fails to reach its own Prometheus (`dial tcp …: i
 
 The page was not merely noisy, it was **false**: its summary asserts that every book stream on a named host has been silent for minutes, which the system had not observed and could not have observed, since the query never ran. A wrong critical page on the fleet's highest-severity capture signal costs more than a missed one about Grafana's own health.
 
-**Nothing goes unwatched.** Every other rule in `infra/grafana/alerts.yaml` still carries `execErrState: Alerting`, so a datasource outage is still reported — loudly, by many rules at once. What changed is only that these two no longer contribute a false blackout claim to that storm.
+**A CORRELATED datasource outage does not go unwatched** — that is the case this trades on, and the qualification matters, because a rule-scoped failure is a different story told under *What is NOT covered* below. Four of the six `for: 0s` rules in this group still carry `execErrState: Alerting`, so an outage that reaches the datasource is still reported — loudly, by several rules at once. What changed is only that these two no longer contribute a false blackout claim to that storm.
 
 ### How to recognise it
 

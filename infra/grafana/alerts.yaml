@@ -3139,7 +3139,8 @@ rules:
             # bracket the same envelope: this 60 s-sampled gauge peaks at 14.160757 s (zcrypto-red
             # SOL/BTC, no capture restart within 26 h), and the full-resolution parquet archive put
             # single-host natural quiescence at 14.78 s over 7,847,932 messages (T0039,
-            # `infra/scripts/gap_distribution.py`). The retention ceiling caps THIS GAUGE, never the
+            # `infra/scripts/gap_distribution.py`) -- a THREE-pair run over 136 h ending 2026-07-14,
+            # before the two `/BTC` legs existed, so it brackets rather than pins today's basket. The retention ceiling caps THIS GAUGE, never the
             # phenomenon -- the archive holds the whole capture era -- so a future re-derivation
             # starts there and not here: a 60 s scrape censors short silences and is biased low.
             # All twelve primary maxima (30.26-31.59 s) are ONE simultaneous fleet-wide event, not
