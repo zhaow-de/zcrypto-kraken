@@ -4,11 +4,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
+import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.archive import command
-from cli.archive.pull import RsyncOutcome, pull_lag_seconds, transferred_parquets, verify_tree
+from cli.archive.pull import (
+    _ROTATION_SLICES,
+    RsyncOutcome,
+    pull_lag_seconds,
+    slice_of,
+    transferred_parquets,
+    verify_tree,
+)
 
 
 def _seg(root: Path, pair: str, kind: str, hour: str, *, corrupt: bool = False) -> None:
@@ -309,3 +317,62 @@ def test_run_rsync_itemizes_and_returns_the_transfers(monkeypatch, tmp_path: Pat
 def test_run_rsync_without_a_key_is_a_transport_failure_with_no_transfers(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("ARCHIVE_SSH_KEY", raising=False)
     assert command._run_rsync("h:/src/", tmp_path) == RsyncOutcome(2, frozenset())
+
+
+def _rel(pair: str, kind: str, hour: str) -> str:
+    return f"{pair}/{kind}/2026/07/12/{hour}.parquet"
+
+
+NOW = datetime(2026, 7, 12, 5, tzinfo=UTC)
+
+
+def _off_slice(*names: str) -> int:
+    """A rotation index holding NONE of `names` -- so a "not hashed" assertion cannot go green because
+    a fixture path happened to land in the slice under test."""
+    taken = {slice_of(n) for n in names}
+    return next(i for i in range(24) if i not in taken)
+
+
+def test_every_rotation_slice_is_reachable_from_a_cycle_counter() -> None:
+    assert _ROTATION_SLICES == 24
+    assert {slice_of(f"x/y/2026/07/12/{i}.parquet") for i in range(2000)} == set(range(24))
+
+
+def test_full_scope_hashes_every_final(tmp_path: Path) -> None:
+    _seg(tmp_path, "BTC", "book", "00")
+    _seg(tmp_path, "BTC", "book", "01")
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 5, tzinfo=UTC))
+    assert (r.checked, r.hashed, r.ok) == (2, 2, 2)
+
+
+def test_incremental_scope_hashes_the_transfer_but_walks_the_whole_tree(tmp_path: Path) -> None:
+    """The defect this guards: narrowing the WALK. Then `checked` would read 1 and `newest_ts` would be
+    the transferred hour (01) instead of the tree's newest (03), and the pull-lag figure the entrypoint
+    calls its dead-man signal would go blank on a quiet cycle (spec 00102 D1)."""
+    for h in ("00", "01", "02", "03"):
+        _seg(tmp_path, "BTC", "book", h)
+    names = [_rel("BTC", "book", h) for h in ("00", "01", "02", "03")]
+    r = verify_tree(tmp_path, now=NOW, hash_only=frozenset({_rel("BTC", "book", "01")}), rotation_slice=_off_slice(*names))
+    assert (r.checked, r.hashed, r.ok, r.failed) == (4, 1, 1, ())
+    assert r.newest_ts == datetime(2026, 7, 12, 3, tzinfo=UTC)
+    assert r.verified == (str(tmp_path / "BTC/book/2026/07/12/01.parquet"),)
+
+
+def test_the_rotation_slice_catches_a_corrupt_final_nothing_transferred(tmp_path: Path) -> None:
+    """Both halves on one fixture: in its slice the corrupt final is hashed and fails; off-slice with
+    nothing transferred, nothing is hashed, nothing fails, and the walk still reports the newest hour."""
+    _seg(tmp_path, "BTC", "book", "00")
+    _seg(tmp_path, "BTC", "book", "01", corrupt=True)
+    bad = _rel("BTC", "book", "01")
+    r = verify_tree(tmp_path, now=NOW, hash_only=frozenset(), rotation_slice=slice_of(bad))
+    assert r.hashed >= 1 and r.failed == (str(tmp_path / "BTC/book/2026/07/12/01.parquet"),)
+    r2 = verify_tree(tmp_path, now=NOW, hash_only=frozenset(), rotation_slice=_off_slice(_rel("BTC", "book", "00"), bad))
+    assert (r2.hashed, r2.failed, r2.checked) == (0, (), 2)
+    assert r2.newest_ts == datetime(2026, 7, 12, 1, tzinfo=UTC)
+
+
+def test_a_narrowed_scope_without_a_slice_is_refused(tmp_path: Path) -> None:
+    """An incremental pull with no slice is the narrowed hash with no safety net -- never a silent default."""
+    _seg(tmp_path, "BTC", "book", "00")
+    with pytest.raises(ValueError, match="rotation slice"):
+        verify_tree(tmp_path, now=NOW, hash_only=frozenset())
