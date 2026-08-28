@@ -272,3 +272,55 @@ def test_an_aborted_confirm_records_nothing(tmp_path):
     rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red"], reply="wrong")
     assert rc == 3
     assert not log.exists()
+
+
+# --- the committed pins: a tier whose digest is a FILE must still name it in the record -------------
+# The NAS pin is `nas_capture_image` in host_vars, not an `-e` flag, so its machine line recorded
+# `nas_apply_compose` and no digest at all -- on the one tier whose pin lives in git. The rollback
+# operand was recoverable (revision + the committed file) but not READABLE, which defeats the point
+# of writing the line from the pass that set it. Read from the plaintext vars file, never through
+# `ansible-inventory --host`, which decrypts the vault.
+
+
+def write_host_vars(tmp_path, host, body):
+    d = tmp_path / "ansible" / "host_vars" / host
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "vars.yml").write_text(body)
+    return tmp_path / "ansible"
+
+
+def test_a_committed_image_pin_is_recorded_even_though_no_dash_e_carries_it(tmp_path):
+    ansible_dir = write_host_vars(
+        tmp_path,
+        "nas",
+        "# a comment\n"
+        "nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "9f" * 32 + "\n"
+        "nas_alloy_image: grafana/alloy@sha256:" + "49" * 32 + "\n"
+        "nas_stack_dir: /volume1/docker/zcrypto-archive\n",
+    )
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "nas", "--tags", "nas", "-e", "nas_apply_compose=true"],
+        reply="nas",
+        env={"ZCRYPTO_ANSIBLE_DIR": str(ansible_dir)},
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["committed_pins"] == {
+        "nas_capture_image": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "9f" * 32,
+        "nas_alloy_image": "grafana/alloy@sha256:" + "49" * 32,
+    }, rec["committed_pins"]
+    assert "nas_stack_dir" not in rec["committed_pins"], "only digest-pinned image refs, not every var"
+
+
+def test_a_limit_with_no_host_vars_records_an_empty_pin_map_not_a_missing_key(tmp_path):
+    """A group limit, or a host whose pins are all extra-vars, must still produce the key -- a reader
+    that has to distinguish 'absent' from 'none' cannot tell a new script from an old one."""
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red"],
+        env={"ZCRYPTO_ANSIBLE_DIR": str(tmp_path / "ansible")},
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["committed_pins"] == {}

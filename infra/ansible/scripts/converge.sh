@@ -70,22 +70,35 @@ for a in "$@"; do
   esac
   prev="$a"
 done
+ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 REV="$(git -C "$SD" rev-parse HEAD 2>/dev/null || echo unknown)"
 DIRTY=false; [ -n "$(git -C "$SD" status --porcelain 2>/dev/null)" ] && DIRTY=true
 # Best-effort and LOUD, never fatal: the pass has already run, so its rc is the truth this script
 # returns; a record that cannot be written is printed for the operator to append by hand instead of
 # being turned into a converge failure that did not happen.
-python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
-import json, sys, datetime as dt
-log, playbook, limit, tags, rev, dirty, rc, ev = sys.argv[1:9]
+python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
+import json, pathlib, sys, datetime as dt
+log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
 extra = {}
 for line in ev.splitlines():
     if "=" in line:
         k, v = line.split("=", 1)
         extra[k.strip()] = v.strip()
+# The pins this converge deployed that NO -e carries: the NAS's image lives in a committed
+# host_vars file, so its line named an apply flag and no digest at all -- on the one tier whose
+# rollback operand is in git. Read from the PLAINTEXT vars.yml with a regex, never through
+# `ansible-inventory --host`, which decrypts the vault and prints every secret (CLAUDE.md).
+# Only `@sha256:`-pinned image refs: a path or a port is not a rollback operand.
+import re as _re
+committed = {}
+_vars = pathlib.Path(adir) / "host_vars" / limit / "vars.yml"
+if _vars.is_file():
+    for m in _re.finditer(r"^(\w+_image):\s*(\S+@sha256:[0-9a-f]{64})\s*$", _vars.read_text(), _re.M):
+        committed[m.group(1)] = m.group(2)
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
+    "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }
 line = json.dumps(rec, sort_keys=True)
