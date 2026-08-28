@@ -163,7 +163,17 @@ def test_wrong_confirmation_aborts(tmp_path):
     assert len(invocations(tmp_path)) == 1
 
 
-def test_typed_limit_runs_the_real_pass(tmp_path):
+def _clear_deploy_env(monkeypatch):
+    """`ZCRYPTO_DEPLOY_LOG` / `ZCRYPTO_ANSIBLE_DIR`, cleared before every converge.sh exec in this
+    file that does not set them itself (run_recording does, deliberately, after this runs) -- pty.fork()
+    inherits pytest's os.environ verbatim, so a developer shell exporting either would make the
+    script under test write outside the fixture path the assertions read."""
+    monkeypatch.delenv("ZCRYPTO_DEPLOY_LOG", raising=False)
+    monkeypatch.delenv("ZCRYPTO_ANSIBLE_DIR", raising=False)
+
+
+def test_typed_limit_runs_the_real_pass(tmp_path, monkeypatch):
+    _clear_deploy_env(monkeypatch)
     script = make_harness(tmp_path)
     rc, _out = run_with_tty(script, ["site.yml", "--limit", "zcrypto-red"], "zcrypto-red")
     assert rc == 0
@@ -173,7 +183,8 @@ def test_typed_limit_runs_the_real_pass(tmp_path):
     assert "--check" not in inv[1] and "--limit zcrypto-red" in inv[1]
 
 
-def test_limit_equals_form_is_parsed(tmp_path):
+def test_limit_equals_form_is_parsed(tmp_path, monkeypatch):
+    _clear_deploy_env(monkeypatch)
     script = make_harness(tmp_path)
     rc, out = run_with_tty(script, ["site.yml", "--limit=zcrypto-ops"], "zcrypto-ops")
     assert rc == 0
@@ -336,12 +347,10 @@ def test_a_limit_with_no_host_vars_records_an_empty_pin_map_not_a_missing_key(tm
 def make_repo_harness(tmp_path, monkeypatch):
     """A real git repo laid out as the script expects: <repo>/infra/ansible/scripts/converge.sh.
 
-    run_with_tty execs through pty.fork(), which inherits the calling process's environment
-    verbatim -- a developer shell exporting ZCRYPTO_DEPLOY_LOG or ZCRYPTO_ANSIBLE_DIR would make
-    the script write outside this fixture repo, and the asserts below read the fixture's own path.
+    _clear_deploy_env: the asserts below read the fixture's own deploy-log path, and run_with_tty's
+    exec would otherwise inherit a developer shell's ZCRYPTO_DEPLOY_LOG / ZCRYPTO_ANSIBLE_DIR.
     """
-    monkeypatch.delenv("ZCRYPTO_DEPLOY_LOG", raising=False)
-    monkeypatch.delenv("ZCRYPTO_ANSIBLE_DIR", raising=False)
+    _clear_deploy_env(monkeypatch)
     repo = tmp_path / "repo"
     scripts = repo / "infra" / "ansible" / "scripts"
     scripts.mkdir(parents=True)

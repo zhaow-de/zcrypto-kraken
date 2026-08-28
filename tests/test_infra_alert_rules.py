@@ -1035,7 +1035,10 @@ def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
     `roles/ops/defaults/main.yml` only -- a `host_vars/zcrypto-ops/vars.yml` or `group_vars/*` entry
     would pass that test while the deployed cap diverged from the ratio's denominator, unseen. The
     sibling `capture_memory_limit` uses exactly that override shape for real, in
-    `host_vars/zcrypto-red/vars.yml` -- so it is asserted absent here rather than assumed."""
+    `host_vars/zcrypto-red/vars.yml` -- so it is asserted absent here rather than assumed. This walks
+    PLAINTEXT `*.yml` files only: 7 of the 15 it reads are ansible-vault ciphertext, where a substring
+    can never match, so an override placed in a `vault.yml` is outside this test's reach by
+    construction."""
     hits = [
         path
         for base in (ANSIBLE / "host_vars", ANSIBLE / "group_vars")
@@ -1079,6 +1082,7 @@ def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
         for token in ("capture_app", "engine_app"):
             assert token in expr, f"{uid} does not cover {token}: {expr!r}"
         assert "integrations/self" not in expr, "Alloy runs near its ceiling; a shared bar pages it on a healthy fleet"
+        assert "liquidations_app" not in expr, "the poller has no limit to measure against"
     else:
         for token in ("capture_app", "engine_app", "integrations/self", "liquidations_app", "|nas"):
             assert token in expr, f"{uid} does not cover {token}: {expr!r}"
