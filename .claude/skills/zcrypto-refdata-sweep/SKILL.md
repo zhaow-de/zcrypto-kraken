@@ -42,12 +42,19 @@ The raw snapshot is gitignored on purpose — it is the evidence, not the artifa
 3. **Run the identity checks — they REFUSE, they are not a table to read.** A selected pair changing identity underneath us is what makes this sweep load-bearing, and both halves are mechanical:
 
 ```python
-import json, urllib.request
+import json, pathlib, urllib.request
 from cli.snapshot.assetpairs import CANDIDATE_SYMBOLS, _COMMON_TO_KRAKEN
 from cli.snapshot.register import sweep_refusals
 from cli.snapshot.delistings import scan_delistings
 
-refusals = sweep_refusals(snap)          # `snap` from step 1
+# Rehydrate the snapshot step 1 just wrote — each block is its own interpreter, so `snap` does not
+# survive from there. Pinned to the NEWEST file and its `fetched_at` printed, because the repair this
+# would otherwise invite is loading "the snapshot" by hand: a clean verdict against last month's
+# archived file is a FALSE CLEAN on the one routine that gates the go/no-go.
+snap = json.loads(max(pathlib.Path("data/snapshots").glob("kraken-refdata-*.json")).read_text())
+print("JUDGING SNAPSHOT:", snap["fetched_at"])   # must be the fetch you just took
+
+refusals = sweep_refusals(snap)
 bases = {s.split("/")[0] for s in CANDIDATE_SYMBOLS} | {s.split("/")[1] for s in CANDIDATE_SYMBOLS}
 assets = tuple(sorted(bases | {_COMMON_TO_KRAKEN[b] for b in bases if b in _COMMON_TO_KRAKEN}))
 with urllib.request.urlopen("https://status.kraken.com/api/v2/scheduled-maintenances.json", timeout=30) as r:
