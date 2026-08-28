@@ -933,12 +933,18 @@ def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
 def test_the_leak_rule_reads_hourly_floors_a_day_apart():
     """The bake's own lessons, as PromQL: read the FLOOR not a sample (the rotation sawtooth spans MiB),
     compare across a 24 h band (steps arrive as ~4 h ramps and repeat at the same clock offset), and
-    let a young process be invisible -- with no data 24 h back the subtraction yields no series, which
-    `noDataState: OK` swallows, so the first day's warm-up ramp can never fire it."""
+    gate the whole thing OFF for a process younger than 30 h. That gate is load-bearing, not
+    decoration: `offset 24h` addresses the series by labels, which a restart does not change, so an
+    ungated subtraction reads the predecessor process's floor and compares a young process against it
+    -- the cold-baseline read that once nearly rolled back a healthy image. 30 h = the 24 h band plus
+    the 6 h pending period, so no evaluation inside the pending window can straddle the restart."""
     rule = _rule(_MEM_LEAK)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
     assert expr.count("min_over_time(process_resident_memory_bytes") == 2, expr
     assert "[1h]" in expr and "offset 24h" in expr, expr
+    assert re.search(r"and on\(host, job\)\s*\(\(time\(\) - process_start_time_seconds\{[^}]*\}\) > 108000\)", expr), (
+        "the age gate is what makes the restart claim true -- without it the rule compares a young process against its predecessor"
+    )
     assert rule["for"] == "6h" and rule["noDataState"] == "OK"
     assert rule["labels"]["severity"] == "warning"
 
