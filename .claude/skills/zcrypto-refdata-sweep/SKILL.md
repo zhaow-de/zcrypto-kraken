@@ -39,20 +39,45 @@ The raw snapshot is gitignored on purpose — it is the evidence, not the artifa
 
 2. **Run the costmin drift guard** — `uv run pytest tests/test_costmin_drift.py`. This is `COSTMIN`'s only guard, and it skips wherever `data/snapshots/` is absent — which includes CI, since the data root is gitignored — so this sweep, right after Step 1 mints a fresh snapshot, is the only place the guard can actually fire. Red means Kraken moved a ratified leg's `costmin`; update the constant in `cli/engine/instruments.py` to match and record the change here alongside the rest of the sweep's findings. `COSTMIN` is symbol-keyed over all twelve legs and each entry is a `(value, quote_currency)` pair in the snapshot's own vocabulary (`"EUR"`/`"BTC"`, never the adapter aliases `ZEUR`/`XXBT`) — the two `/BTC` legs' floors are BTC-denominated, so never copy a EUR value across.
 
-3. **Diff the rendered tables** against the committed ones — the candidate basket, the fee/borrow/margin table, the alias ledger. Markdown separator styling differs harmlessly; compare cells.
+3. **Run the identity checks — they REFUSE, they are not a table to read.** A selected pair changing identity underneath us is what makes this sweep load-bearing, and both halves are mechanical:
 
-4. **Update `docs/reference/kraken-snapshot-register.md`**: header (`Fetched at:`, `Raw snapshot sha256:`, the response counts), the provenance raw-file path, the changed tables, and **append a row to the re-confirmation log** — sweep number, timestamp, counts, hash prefix, verdict. **The stamp moves even when nothing changed**; that is the whole mechanism.
+```python
+import json, pathlib, urllib.request
+from cli.snapshot.assetpairs import CANDIDATE_SYMBOLS, _COMMON_TO_KRAKEN
+from cli.snapshot.register import sweep_refusals
+from cli.snapshot.delistings import scan_delistings
 
-5. **State the consequence of any delta, do not just report it.** A delta touching **fees** or **`margin_rate`** (the borrow/rollover rate) invalidates downstream numbers — name them: `T0090`'s cost basis, the deployable's quoted band. Silence here is how a stale fee reaches a go/no-go.
+# Rehydrate the snapshot step 1 just wrote — each block is its own interpreter, so `snap` does not
+# survive from there. Pinned to the NEWEST file and its `fetched_at` printed, because the repair this
+# would otherwise invite is loading "the snapshot" by hand: a clean verdict against last month's
+# archived file is a FALSE CLEAN on the one routine that gates the go/no-go.
+snap = json.loads(max(pathlib.Path("data/snapshots").glob("kraken-refdata-*.json")).read_text())
+print("JUDGING SNAPSHOT:", snap["fetched_at"])   # must be the fetch you just took
 
-6. **The attended half — re-read the account's own fee tier.** The public endpoint cannot see it, and `docs/reference/kraken-fee-schedule.md` is authoritative precisely because it was read from the logged-in account. Ask the owner to open **Kraken Pro → Fee tab** and report two values: the **current tier** and the **30-day USD spot volume**. Then:
+refusals = sweep_refusals(snap)
+bases = {s.split("/")[0] for s in CANDIDATE_SYMBOLS} | {s.split("/")[1] for s in CANDIDATE_SYMBOLS}
+assets = tuple(sorted(bases | {_COMMON_TO_KRAKEN[b] for b in bases if b in _COMMON_TO_KRAKEN}))
+with urllib.request.urlopen("https://status.kraken.com/api/v2/scheduled-maintenances.json", timeout=30) as r:
+    announced = scan_delistings(json.load(r), assets)
+print("REFUSALS:", refusals or "none"); print("ANNOUNCED DELISTINGS:", announced or "none")
+```
+
+**Any refusal stops the sweep** — a pair gone from `AssetPairs`, a `status` that stopped saying `online`, or an altname that drifted from the committed alias. Each names the pair and the observed value; decide whether a corporate action happened before going further, and record it in `docs/reference/symbol-corporate-action-ledger.md`. **An announced delisting naming a selected asset is the same finding with a quarter's notice** — the venue publishes an asset delisting 93–116 days ahead — so it is a planning input, not an emergency. **Read every hit's own dates before treating it as one**: the same filter catches funding-rail discontinuations, which can be published after they take effect. Both cover asset codes in the Kraken spellings (`XBT`, `XDG`) as well as the common ones. Quote-book migration is covered by neither: no endpoint reports one, an accepted gap rather than an oversight.
+
+4. **Diff the rendered tables** against the committed ones — the candidate basket, the fee/borrow/margin table, the alias ledger. Markdown separator styling differs harmlessly; compare cells.
+
+5. **Update `docs/reference/kraken-snapshot-register.md`**: header (`Fetched at:`, `Raw snapshot sha256:`, the response counts), the provenance raw-file path, the changed tables, and **append a row to the re-confirmation log** — sweep number, timestamp, counts, hash prefix, verdict. **The stamp moves even when nothing changed**; that is the whole mechanism.
+
+6. **State the consequence of any delta, do not just report it.** A delta touching **fees** or **`margin_rate`** (the borrow/rollover rate) invalidates downstream numbers — name them: `T0090`'s cost basis, the deployable's quoted band. Silence here is how a stale fee reaches a go/no-go.
+
+7. **The attended half — re-read the account's own fee tier.** The public endpoint cannot see it, and `docs/reference/kraken-fee-schedule.md` is authoritative precisely because it was read from the logged-in account. Ask the owner to open **Kraken Pro → Fee tab** and report two values: the **current tier** and the **30-day USD spot volume**. Then:
    - **Unchanged** → note it in the register's log row (`account tier` column) and bump nothing else. The confirmation is the point; an unbumped stamp is indistinguishable from a skipped read.
    - **Changed** → correct `kraken-fee-schedule.md` *and* say what it invalidates: `cli/costs/fees.py` encodes that ladder verbatim, so a tier move re-prices every quoted figure that reads it — name `T0090`'s cost basis and the deployable's quoted band explicitly.
    - **Owner unavailable** → record the row as `not re-read`, never as unchanged. A blank is honest; a false confirmation is the failure this whole routine exists to prevent.
 
    At \$0 30-day volume the tier *cannot* move, so run it cheaply now; it is load-bearing once real fills flow.
 
-7. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
+8. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
 
 ## What this sweep does and does not cover
 

@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import asdict
 
-from cli.snapshot.assetpairs import derive_universe
+from cli.snapshot.assetpairs import _COMMON_TO_KRAKEN, derive_universe
 
 
 def _canonical_json(obj: dict) -> str:
@@ -26,6 +26,44 @@ def build_snapshot(assetpairs_result: dict, assets_result: dict, symbols: list[s
         "symbols": list(symbols),
         "universe": [asdict(row) for row in universe],
     }
+
+
+# The three ways a selected pair changes identity underneath us -- T0025's trigger, as a check the
+# sweep runs rather than a table someone reads. Step 3 of `/zcrypto-refdata-sweep` asks for a diff of
+# the rendered tables against the committed ones; a twelve-row table read by eye is where a
+# `NOT FOUND`, a `status` that stopped saying `online`, or a renamed altname gets scrolled past.
+#
+# What this deliberately does NOT cover: a quote-book migration (BTC/EUR moving to a different quote
+# book). No endpoint reports one, so there is nothing to compare -- named here so its absence is a
+# recorded decision rather than an oversight.
+_TRADEABLE_STATUS = "online"
+
+
+def sweep_refusals(snapshot: dict) -> list[str]:
+    """Reasons this snapshot must stop a reference-data sweep, one string each; empty means clean.
+
+    Every reason names the pair and the observed value, because the operator's next act is to decide
+    whether a corporate action happened -- and "something changed" cannot start that. ALL reasons are
+    returned, never the first: a batch delisting is announced as a batch, and a check that short-
+    circuits hides the rest until the next month's sweep.
+    """
+    reasons: list[str] = []
+    for row in snapshot["universe"]:
+        symbol = row["symbol"]
+        if not row.get("found"):
+            reasons.append(f"{symbol}: not in AssetPairs -- the pair is gone from the venue's own list (delisting?)")
+            continue
+        status = row.get("status")
+        if status != _TRADEABLE_STATUS:
+            reasons.append(f"{symbol}: status is {status!r}, not {_TRADEABLE_STATUS!r} -- listed but not normally tradeable")
+        for common, altname in ((row["base"], row.get("base_altname")), (row["quote"], row.get("quote_altname"))):
+            expected = _COMMON_TO_KRAKEN.get(common, common)
+            if altname is not None and altname != expected:
+                reasons.append(
+                    f"{symbol}: {common} spells as {altname!r} where the committed alias says {expected!r} "
+                    f"-- a redenomination reaches us this way"
+                )
+    return reasons
 
 
 def _alias_ledger(universe: list[dict]) -> list[tuple[str, str]]:
