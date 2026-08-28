@@ -33,7 +33,7 @@ from cli.archive import replay as replay_mod
 from cli.archive import scan_cache
 from cli.archive.checkpoint import CheckpointWriteError
 from cli.archive.mint import already_minted, ledger_append, mint_hour
-from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
+from cli.archive.pull import RsyncOutcome, VerifyResult, prune_stale_parts, pull_lag_seconds, transferred_parquets, verify_tree
 from cli.archive.reconcile import (
     Block,
     Gap,
@@ -79,14 +79,14 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _run_rsync(source: str, dest: Path) -> int:
+def _run_rsync(source: str, dest: Path) -> RsyncOutcome:
     ssh_key = os.environ.get("ARCHIVE_SSH_KEY")
     if not ssh_key:
         # No transport identity -> the pull can't even be attempted. Signal a transport-class
         # failure (pull() maps any non-zero to exit 2), never the bare KeyError that Click would
         # surface as exit 1 -- the contract reserves exit 1 for a hash mismatch.
         logger.error("archive pull: ARCHIVE_SSH_KEY is not set; cannot establish the ssh transport")
-        return 2
+        return RsyncOutcome(2, frozenset())
     ssh_port = os.environ.get("ARCHIVE_SSH_PORT") or "10022"  # empty-string-safe (compose may pass "")
     # StrictHostKeyChecking=yes fails closed: the VPS key must already be in the pinned known_hosts
     # (accept-new would silently trust a new key). IdentitiesOnly=yes offers only the -i key, so a
@@ -101,8 +101,13 @@ def _run_rsync(source: str, dest: Path) -> int:
     # --chmod forces the archived tree to the mandated 0775 dirs / 0664 files (spec 00048): the NAS
     # share is plain POSIX (no ACL inheritance), so without this rsync -a would preserve the VPS's
     # 0644 source perms and the tree would not be group-writable. Applied every pull -> idempotent.
-    argv = ["rsync", "-a", "--chmod=D0775,F0664", "-e", ssh_command, source, str(dest)]
-    return subprocess.run(argv).returncode
+    # --out-format lists every file rsync UPDATED (received, re-sent), one per line, and nothing else
+    # -- so this is O(changed), never O(files), and it is the whole skip test for verify_tree's
+    # incremental scope (spec 00102 D2). stderr stays attached: rsync's own errors keep reaching the
+    # container log unchanged.
+    argv = ["rsync", "-a", "--chmod=D0775,F0664", "--out-format=%i %n", "-e", ssh_command, source, str(dest)]
+    proc = subprocess.run(argv, stdout=subprocess.PIPE, text=True)
+    return RsyncOutcome(proc.returncode, transferred_parquets(proc.stdout))
 
 
 @archive_app.command()
@@ -119,9 +124,9 @@ def pull(
     """Pull `source` into `dest` via rsync-over-ssh, then hash-verify every segment against its
     manifest sidecar. Exits 2 on a transport failure (partial pull, never verified as authoritative),
     1 on a hash mismatch, 0 when every checked segment verifies."""
-    returncode = _run_rsync(source, dest)
-    if returncode != 0:
-        logger.error("archive pull: rsync failed source=%s dest=%s returncode=%s", source, dest, returncode)
+    outcome = _run_rsync(source, dest)
+    if outcome.returncode != 0:
+        logger.error("archive pull: rsync failed source=%s dest=%s returncode=%s", source, dest, outcome.returncode)
         raise typer.Exit(2)
 
     if not verify:

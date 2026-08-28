@@ -1,4 +1,5 @@
 import hashlib
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -6,7 +7,8 @@ import polars as pl
 from typer.testing import CliRunner
 
 from cli.__main__ import app
-from cli.archive.pull import pull_lag_seconds, verify_tree
+from cli.archive import command
+from cli.archive.pull import RsyncOutcome, pull_lag_seconds, transferred_parquets, verify_tree
 
 
 def _seg(root: Path, pair: str, kind: str, hour: str, *, corrupt: bool = False) -> None:
@@ -84,7 +86,7 @@ def test_pull_ok_exits_zero(tmp_path, monkeypatch):
     _seg(dest, "BTC/EUR", "book", "10")
     from cli.archive import command
 
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(dest)])
     assert res.exit_code == 0
 
@@ -95,7 +97,7 @@ def test_pull_mismatch_exits_one(tmp_path, monkeypatch):
     _seg(dest, "BTC/EUR", "book", "10", corrupt=True)
     from cli.archive import command
 
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(dest)])
     assert res.exit_code == 1
 
@@ -103,7 +105,7 @@ def test_pull_mismatch_exits_one(tmp_path, monkeypatch):
 def test_pull_transport_failure_exits_two(tmp_path, monkeypatch):
     from cli.archive import command
 
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 23)
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(23, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(tmp_path)])
     assert res.exit_code == 2
 
@@ -125,7 +127,7 @@ def test_pull_no_verify_skips_verification(tmp_path, monkeypatch):
     pl.DataFrame({"x": [1, 2, 3]}).write_parquet(d / "snapshot.parquet")  # no .sha256 sidecar
     from cli.archive import command
 
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "--no-verify", "deploy@h:/src/", str(dest)])
     assert res.exit_code == 0
 
@@ -264,3 +266,46 @@ def test_prune_survives_an_unlink_failure_without_escaping(tmp_path: Path, monke
 
     assert (hours, parts) == (0, 0), "a failed unlink is not counted as pruned"
     assert (tmp_path / "BTC/EUR/book/2026/07/12/10.part0000.parquet").exists(), "the part stays on a failed delete"
+
+
+def test_transferred_parquets_reads_only_received_segment_files() -> None:
+    """The skip test is rsync's own itemization: a received regular file begins `>f`. Attribute-only
+    touches (this pull's --chmod on every run), directories, deletions and sidecars are not transfers."""
+    itemized = "\n".join(
+        [
+            ">f+++++++++ BTC/book/2026/07/12/03.parquet",
+            ">f.st...... BTC/book/2026/07/12/02.parquet",
+            ">f+++++++++ BTC/book/2026/07/12/03.parquet.sha256",
+            ".f...p..... BTC/book/2026/07/12/01.parquet",
+            "cd+++++++++ BTC/book/2026/07/12/",
+            "*deleting   BTC/book/2026/07/01/00.parquet",
+            ">f+++++++++ BTC/book/2026/07/12/03.part0001.parquet",
+        ]
+    )
+    assert transferred_parquets(itemized) == frozenset(
+        {
+            "BTC/book/2026/07/12/03.parquet",
+            "BTC/book/2026/07/12/02.parquet",
+            "BTC/book/2026/07/12/03.part0001.parquet",  # verify_tree skips parts itself; the parser stays dumb
+        }
+    )
+    assert transferred_parquets("") == frozenset()
+
+
+def test_run_rsync_itemizes_and_returns_the_transfers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ARCHIVE_SSH_KEY", "/keys/k")
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"], seen["kwargs"] = argv, kwargs
+        return subprocess.CompletedProcess(argv, 0, stdout=">f+++++++++ BTC/book/2026/07/12/03.parquet\n")
+
+    monkeypatch.setattr(command.subprocess, "run", fake_run)
+    assert command._run_rsync("h:/src/", tmp_path) == RsyncOutcome(0, frozenset({"BTC/book/2026/07/12/03.parquet"}))
+    assert "--out-format=%i %n" in seen["argv"]
+    assert seen["kwargs"]["stdout"] is subprocess.PIPE and seen["kwargs"]["text"] is True
+
+
+def test_run_rsync_without_a_key_is_a_transport_failure_with_no_transfers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("ARCHIVE_SSH_KEY", raising=False)
+    assert command._run_rsync("h:/src/", tmp_path) == RsyncOutcome(2, frozenset())

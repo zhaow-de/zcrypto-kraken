@@ -56,6 +56,28 @@ def verify_tree(root: Path, *, now: datetime) -> VerifyResult:
     return VerifyResult(checked=checked, ok=ok, failed=tuple(failed), newest_ts=newest, verified=tuple(verified))
 
 
+@dataclass(frozen=True)
+class RsyncOutcome:
+    returncode: int
+    transferred: frozenset[str]  # dest-relative names of the *.parquet files rsync received this run
+
+
+def transferred_parquets(itemized: str) -> frozenset[str]:
+    """The dest-relative `*.parquet` names in rsync's `--out-format='%i %n'` output.
+
+    `%i` is the 11-character itemize string; a received regular file begins `>f` (`>f+++++++++` new,
+    `>f.st......` re-sent). Nothing else is a transfer: `.f...p.....` is an attribute-only touch (this
+    pull's --chmod, every run), `cd+++++++++` a directory, `*deleting` a deletion. Only `>f` files are
+    worth a hash -- an unchanged file's bytes are the bytes the last hash already covered.
+    """
+    names: set[str] = set()
+    for line in itemized.splitlines():
+        flags, _, name = line.partition(" ")
+        if flags.startswith(">f") and name.endswith(".parquet"):
+            names.add(name)
+    return frozenset(names)
+
+
 def prune_stale_parts(verified_finals: tuple[str, ...]) -> tuple[int, int]:
     """Delete the `<HH>.part####.parquet` siblings of each VERIFIED final. Returns (hours, parts_deleted).
 
