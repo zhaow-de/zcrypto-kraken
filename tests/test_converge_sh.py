@@ -333,8 +333,15 @@ def test_a_limit_with_no_host_vars_records_an_empty_pin_map_not_a_missing_key(tm
 # deployed", which is real (ansible renders from the working tree); the log cannot affect that.
 
 
-def make_repo_harness(tmp_path):
-    """A real git repo laid out as the script expects: <repo>/infra/ansible/scripts/converge.sh."""
+def make_repo_harness(tmp_path, monkeypatch):
+    """A real git repo laid out as the script expects: <repo>/infra/ansible/scripts/converge.sh.
+
+    run_with_tty execs through pty.fork(), which inherits the calling process's environment
+    verbatim -- a developer shell exporting ZCRYPTO_DEPLOY_LOG or ZCRYPTO_ANSIBLE_DIR would make
+    the script write outside this fixture repo, and the asserts below read the fixture's own path.
+    """
+    monkeypatch.delenv("ZCRYPTO_DEPLOY_LOG", raising=False)
+    monkeypatch.delenv("ZCRYPTO_ANSIBLE_DIR", raising=False)
     repo = tmp_path / "repo"
     scripts = repo / "infra" / "ansible" / "scripts"
     scripts.mkdir(parents=True)
@@ -359,8 +366,8 @@ def _dirty_of_last_record(repo):
     return json.loads(log.read_text().splitlines()[-1])["dirty"]
 
 
-def test_the_logs_own_append_does_not_make_the_next_converge_read_dirty(tmp_path):
-    repo, script = make_repo_harness(tmp_path)
+def test_the_logs_own_append_does_not_make_the_next_converge_read_dirty(tmp_path, monkeypatch):
+    repo, script = make_repo_harness(tmp_path, monkeypatch)
     rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
     assert rc == 0 and _dirty_of_last_record(repo) is False, "clean tree, first converge"
     # the line just written is now uncommitted -- the exact state that produced the false positive
@@ -369,10 +376,10 @@ def test_the_logs_own_append_does_not_make_the_next_converge_read_dirty(tmp_path
     assert _dirty_of_last_record(repo) is False, "the recorder's own line is not a dirty working tree"
 
 
-def test_a_real_uncommitted_change_still_reads_dirty(tmp_path):
+def test_a_real_uncommitted_change_still_reads_dirty(tmp_path, monkeypatch):
     """The signal that matters must survive the fix -- ansible renders from the working tree, so a
     modified role really does mean `revision` understates what was deployed."""
-    repo, script = make_repo_harness(tmp_path)
+    repo, script = make_repo_harness(tmp_path, monkeypatch)
     (repo / "infra" / "ansible" / "somerole.yml").write_text("- name: a task\n")
     rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
     assert rc == 0

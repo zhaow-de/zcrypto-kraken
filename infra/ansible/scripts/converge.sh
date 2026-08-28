@@ -55,6 +55,9 @@ fi
 # tree it ran from, and how it ended. The digest and the timestamp a rollback needs are then written
 # by the pass that set them, never re-typed from memory into fleet-pins.md afterwards. Preview-only
 # runs and aborted confirms never reach this point, so they leave no line.
+# The line is written by THIS process after the pass returns: a wrapper killed mid-pass (terminal
+# death, a timeout) leaves an orphaned ansible child that converges with NO record -- the host's
+# container .State.StartedAt is the evidence then; append the line by hand from it.
 set +e
 "$SD/run.sh" "$PLAYBOOK" "$@"
 rc=$?
@@ -109,6 +112,8 @@ for line in ev.splitlines():
 # rollback operand is in git. Read from the PLAINTEXT vars.yml with a regex, never through
 # `ansible-inventory --host`, which decrypts the vault and prints every secret (CLAUDE.md).
 # Only `@sha256:`-pinned image refs: a path or a port is not a rollback operand.
+# The value must be bare -- unquoted, no trailing YAML comment -- or this regex silently drops it
+# and the pin goes unrecorded.
 import re as _re
 committed = {}
 _vars = pathlib.Path(adir) / "host_vars" / limit / "vars.yml"
