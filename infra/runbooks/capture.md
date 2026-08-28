@@ -100,14 +100,14 @@ A **critical** Grafana alert, one instance per capture host. The *minimum* of `z
 
 **Check the venue's published maintenance calendar before anything else.** Every firing in this rule's life has been one: 2026-08-06 and 2026-08-20, both hosts each time, both inside a "Kraken Website and API Maintenance" window announced 48–145 h ahead. That is 2 for 2 — no unexplained crossing has ever been observed.
 
-It is nonetheless a **true positive, not noise**. The venue emitted nothing, so no host missed anything that existed, but L2 is unbackfillable and the hours are genuinely short: 2026-08-06 cost ~893 s per stream, 2026-08-20 ~551 s. Expect the reconciler's loss page about two hours later.
+It is nonetheless a **true positive, not noise**. The venue emitted nothing, so no host missed anything that existed, but L2 is unbackfillable and the hours are genuinely short. Quoting one convention throughout — **booked `both_streams_silent` seconds per stream**, which is what the reconciler pages on: 2026-08-06 cost **~882 s** per stream (10,588.382751 s over 12) and 2026-08-20 **~521 s** (6,251.349974 s over 12). The venue-status section above quotes the same two events as whole-window minutes; both are right and they are not the same number. Expect the reconciler's loss page about two hours later.
 
 Nothing natural comes near this bar. Over 13 clean retained days the fleet-wide minimum peaked at **6.13 s**; the bar is ~20× that. A restart cannot raise it either — `_run` seeds `last_seen` for every pair before the collector registers, so a fresh process reads ~0.
 
 ### What to do
 
-1. **Read the venue calendar first.** `curl -s https://status.kraken.com/api/v2/scheduled-maintenances.json` and look for an entry whose `components` carry `WebSocket` or `REST` covering now. The recurring one is "Kraken Website and API Maintenance", roughly biweekly at 07:01–07:16 UTC. A match explains the page completely — go to step 4.
-2. **No published window? Now it is a real incident.** Check both daemons: `docker inspect --format '{{.RestartCount}}' zcrypto-capture` and whether parquet is advancing (`find <data-dir> -name '*.parquet' -mmin -3`). A silent-but-synced stream never self-heals, so this will not clear on its own if the daemon is wedged.
+1. **Read the venue calendar first.** `curl -s https://status.kraken.com/api/v2/scheduled-maintenances.json` and look for an entry whose `components` carry `WebSocket` or `REST` covering the firing time. The recurring one is "Kraken Website and API Maintenance", roughly biweekly at 07:01–07:16 UTC. A match explains the page completely — go to step 4. **Use that endpoint, not `/scheduled-maintenances/upcoming.json`**, and match on the window rather than on the status: this feed keeps entries after they finish (`status: completed`), so it answers for a page you are triaging an hour or a day late — the upcoming-only variant would return nothing and read as "no window", which is the one way to get this step backwards.
+2. **No published window? Now it is a real incident.** Check both daemons: `sudo docker inspect --format '{{.RestartCount}}' zcrypto-capture` and whether parquet is advancing (`sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | head`). A silent-but-synced stream never self-heals, so this will not clear on its own if the daemon is wedged.
 3. **Check the sibling host.** Both hosts firing together is venue-side; one host alone is fleet-side and the peer's copy is the recovery path.
 4. **Expect the loss page, and do not pre-empt it.** Hour H is bookable no earlier than H+2 h, at the next `*:12`/`*:42` tick — reading the residual counter before then answers reassuringly and wrongly (step 3 of the venue-status section above has the full arithmetic).
 5. **Do not converge or restart on this signal alone.** Nothing in the capture path reacts to venue status, and a restart costs a resubscribe.
@@ -165,9 +165,21 @@ The page was not merely noisy, it was **false**: its summary asserts that every 
 
 **Nothing goes unwatched.** Every other rule in `infra/grafana/alerts.yaml` still carries `execErrState: Alerting`, so a datasource outage is still reported — loudly, by many rules at once. What changed is only that these two no longer contribute a false blackout claim to that storm.
 
+### How to recognise it
+
+**Several `zcrypto-capture-*` rules firing and auto-resolving within about a minute, with no host-side symptom, is a datasource error rather than a fleet event** — and these two rules are deliberately absent from that storm. Only six rules in the `zcrypto-capture` group carry `for: 0s` and can fire on a hiccup that short; the other sixteen absorb it in their pending period, which is why `zcrypto-capture-venue-not-online` has never once fired this way. Four of those six still carry `execErrState: Alerting`, so the storm still happens — it just no longer contains a claim that capture went dark.
+
 ### What to do
 
-If you suspect the alerting pipeline itself is blind rather than the fleet quiet, check the datasource directly — `uv run python infra/scripts/grafana-query.py 'up{job="capture_app"}'` — and the healthchecks.io dead-man switches, which are an independent failure domain and unaffected by Grafana.
+If you suspect the alerting pipeline itself is blind rather than the fleet quiet, check the datasource directly — `uv run python infra/scripts/grafana-query.py 'up{job="capture_app"}'`, which needs the repo checked out and the vaulted token, so it is a workstation step rather than a phone one — and the healthchecks.io dead-man switches, which are an independent failure domain and unaffected by Grafana.
+
+### What is NOT covered, deliberately
+
+A **rule-scoped** evaluation error on these two — an expression broken by a later edit, a permission or cardinality failure on this query alone — now pages nothing, because the four siblings above are correlated cover only. That residual is accepted rather than watched: nothing in the repo detects it today.
+
+### Where the numbers came from
+
+The 264-against-52 measurement is read from Grafana's **alert state history**, not from metrics — `GET /api/v1/rules/history?ruleUID=<uid>&from=<epoch>&to=<epoch>`, with the same service-account token `infra/scripts/grafana-query.py` resolves. It is a different store from the 14 d metric retention, which is why the window can run 2026-08-05 → 08-28. Read it in chunks and compare each chunk's row count against the `limit`: a chunk that returns exactly its limit is truncated, which understates both columns.
 
 ### Retire when
 

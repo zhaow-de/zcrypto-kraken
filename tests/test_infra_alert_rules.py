@@ -712,16 +712,20 @@ def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(u
 
     When Grafana cannot execute the query, the query did not run -- so `Alerting` cannot report a
     blackout, it ASSERTS one, in a summary that names a host and says every stream on it has been
-    silent for minutes. Measured 2026-08-05..08-28, these two rules raised 264 execution-error
-    instances against 52 genuine ones -- 83.5% of everything they had ever produced -- every one of
-    them Grafana Cloud failing to reach its own Prometheus. `for: 0s` is load-bearing for their
-    detection arithmetic and is what made a one-minute platform hiccup page instantly.
+    silent for minutes. Measured 2026-08-05..08-28 from Grafana's alert state history (NOT from
+    metrics -- a different store, which is how the window outruns the 14 d metric retention; the
+    runbook section names the endpoint and the truncation trap), these two rules raised 264
+    execution-error instances against 52 genuine ones, every one of them Grafana Cloud failing to
+    reach its own Prometheus. `for: 0s` is load-bearing for their detection arithmetic and is what
+    made a one-minute platform hiccup page instantly.
 
-    The blindness is not new and is not widened: every OTHER rule in the file still carries
-    `Alerting`, so a datasource outage is still reported. What is removed is a false claim about the
-    fleet inside that report. If that ever inverts -- these two back to `Alerting`, or the rest to
-    `OK` -- the runbook's `capture-silence-rules-and-datasource-errors` section is wrong and says so
-    in its own Retire-when."""
+    Two qualifications the choice rests on, both measured. It is NOT the guarded-summary form used
+    on `zcrypto-capture-venue-state-recurrence` (2a899adb), which removes the same falseness but not
+    the volume -- and here the per-pair rule mints 24 instances per error where that one mints one
+    or two. And "nothing goes unwatched" holds for a CORRELATED outage only: six of the 22 rules in
+    `zcrypto-capture` carry `for: 0s` and can fire on a hiccup that short, four of which keep
+    `Alerting`. A RULE-SCOPED error on these two alone now pages nothing -- an accepted residual,
+    named in the runbook rather than left to be discovered."""
     rule = _rule(uid)
     assert rule["execErrState"] == "OK", "a Grafana query failure would page a total-capture-blackout that nothing observed"
     assert rule["noDataState"] == "OK", "the sibling blindness state moved without its reason"
