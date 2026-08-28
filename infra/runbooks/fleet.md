@@ -33,6 +33,32 @@ This is the slow-leak alarm, and it is the only one that matters: a leak's one r
 
 ______________________________________________________________________
 
+<a name="zcrypto-fleet-alloy-memory-headroom"></a>
+
+## zcrypto-fleet-alloy-memory-headroom — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its 512 MiB container limit** for fifteen minutes.
+
+### What it means
+
+**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Measured 2026-08-28 over 24 h as a fraction of the limit: **ops 0.75–0.78** (highest, because it reads the most journal — reconcile, panel, verify-replay, tape-bars, liquidations), **zcrypto 0.52–0.57**, **zcrypto-red 0.26**, **nas 0.14**. The app daemons sit at 0.08–0.37, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
+
+If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark` reports it within ~10 min. **This is the warning before that**, not the detector for it.
+
+### What to do
+
+1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. ops living near 0.78 is normal; ops at 0.92 is not.
+2. **Restart Alloy if it is climbing** — `sudo docker restart grafana-alloy` (on the NAS: `sudo /usr/local/bin/docker restart grafana-alloy`). Telemetry-only, seconds, and the `alloy-data` WAL and journal cursor survive it, so no backlog is re-shipped and no log tail is lost.
+3. **Repeated firing on one host is a capacity finding, not an incident** — its Alloy needs a larger `memory:` in that host's Alloy compose, which is an ansible change and a converge, not a restart.
+
+### Retire when
+
+`zcrypto-fleet-alloy-memory-headroom` is absent from `infra/grafana/alerts.yaml`, or Alloy's limit is raised such that the bar no longer reflects the measured steady state — in which case re-derive it from the per-host floors rather than carrying this number forward.
+
+______________________________________________________________________
+
 <a name="zcrypto-fleet-memory-leak"></a>
 
 ## zcrypto-fleet-memory-leak — ALERT

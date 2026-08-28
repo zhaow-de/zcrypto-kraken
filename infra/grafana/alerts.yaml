@@ -3856,8 +3856,8 @@ rules:
       # unioned with `or`; tests/test_infra_alert_rules.py pins each literal to the ansible var that
       # renders the compose file (capture_memory_limit 2g / 1g, engine_memory_limit 1g), so a limit
       # moved in ansible fails the test rather than silently re-scaling this ratio. The four Alloy
-      # legs (job="integrations/self" -- the label exporter.self metrics carry, measured 2026-08-28)
-      # divide by the literal `memory: 512m` in each Alloy compose template, pinned the same way.
+      # Alloy is NOT here -- it has its own rule below, at its own bar, because it genuinely runs
+      # near its ceiling where these three do not (measured: capture 0.08/0.14, engine 0.37).
       # DELIBERATELY ABSENT: the ops liquidations poller (`liquidations_app`) -- its compose sets no
       # memory limit, so there is no ceiling to measure headroom against; it is covered by the leak
       # and restart rules below. The NAS archive-pull container exposes no metrics at all.
@@ -3870,10 +3870,6 @@ rules:
             (process_resident_memory_bytes{host="zcrypto", job="capture_app"} / 2147483648)
             or (process_resident_memory_bytes{host="zcrypto-red", job="capture_app"} / 1073741824)
             or (process_resident_memory_bytes{host="zcrypto", job="engine_app"} / 1073741824)
-            or (process_resident_memory_bytes{host="zcrypto", job="integrations/self"} / 536870912)
-            or (process_resident_memory_bytes{host="zcrypto-red", job="integrations/self"} / 536870912)
-            or (process_resident_memory_bytes{host="ops", job="integrations/self"} / 536870912)
-            or (process_resident_memory_bytes{host="nas", job="integrations/self"} / 536870912)
           instant: true
           refId: A
       - refId: C
@@ -3906,6 +3902,61 @@ rules:
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "601"
       unit: "fraction of the container memory limit"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-fleet-alloy-memory-headroom
+    title: "Fleet · Alloy is near its memory limit"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Alloy gets its OWN bar because it genuinely runs near its ceiling and the app daemons do not.
+      # Measured 2026-08-28 over 24 h, as a fraction of the `memory: 512m` each Alloy compose sets:
+      # ops 0.7525-0.7795 (it reads the most journal -- reconcile, panel, verify-replay, tape-bars,
+      # liquidations), zcrypto 0.5237-0.5708, zcrypto-red 0.2636-0.2726, nas 0.1441-0.1561. A shared
+      # 0.7 bar with the app daemons therefore paged ops on a HEALTHY fleet, every evaluation,
+      # forever -- caught by the rollout that first pushed it, before it had ever run.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'process_resident_memory_bytes{host=~"zcrypto|zcrypto-red|ops|nas", job="integrations/self"} / 536870912'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # PROVISIONAL: 0.9, which is ops's measured 24 h maximum plus ~12 points. The consequence
+            # of the ceiling is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already
+            # owns at 10 m -- so this is the EARLY warning for that fault, not its detector, and it
+            # is sized to clear steady state rather than to a distribution nobody has. What derives
+            # the real value: thirty days of the per-host floors, or the first time it fires.
+            - evaluator: {type: gt, params: [0.9]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: >-
+        Grafana Alloy on a fleet host is using more than 90% of its 512 MiB container limit. Alloy runs
+        closer to its ceiling than the app daemons do by design — the `host` label says which machine, and
+        ops sits highest because it reads the most journal. If it is OOM-killed that host's telemetry goes
+        dark, which `Fleet · Alloy dark` reports separately; this is the warning before that.
+        Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "601"
+      unit: "fraction of Alloy's container memory limit"
     labels:
       severity: warning
     notification_settings:

@@ -771,6 +771,9 @@ PROVISIONAL_THRESHOLDS: set[str] = {
     # to a distribution. What derives the real value: the first leak it fires on, or thirty days of
     # floor deltas read from the fleet board's growth-per-day panel.
     "zcrypto-fleet-memory-leak",
+    # 0.9 = ops's measured 24 h maximum plus ~12 points, not a distribution. What derives the real
+    # value: thirty days of per-host floors, or the first time it fires.
+    "zcrypto-fleet-alloy-memory-headroom",
 }
 
 _PROVISIONAL = "PROVISIONAL"
@@ -925,14 +928,7 @@ def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
     primary = _ansible_memory_limit_bytes(ANSIBLE / "roles/capture/defaults/main.yml", "capture_memory_limit")
     secondary = _ansible_memory_limit_bytes(ANSIBLE / "host_vars/zcrypto-red/vars.yml", "capture_memory_limit")
     engine = _ansible_memory_limit_bytes(ANSIBLE / "roles/engine/defaults/main.yml", "engine_memory_limit")
-    alloy = {
-        "zcrypto": _compose_alloy_limit_bytes(ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
-        "zcrypto-red": _compose_alloy_limit_bytes(ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
-        "ops": _compose_alloy_limit_bytes(ANSIBLE / "roles/ops/templates/alloy-compose.yaml.j2"),
-        "nas": _compose_alloy_limit_bytes(REPO / "infra/nas/compose.yaml"),
-    }
     legs = [("zcrypto", "capture_app", primary), ("zcrypto-red", "capture_app", secondary), ("zcrypto", "engine_app", engine)]
-    legs += [(host, "integrations/self", limit) for host, limit in alloy.items()]
     for host, job, limit in legs:
         leg = re.search(
             rf'process_resident_memory_bytes\{{[^}}]*host="{host}"[^}}]*job="{job}"[^}}]*\}}\s*/\s*(\d+)', expr
@@ -975,6 +971,22 @@ def test_the_restart_rule_is_the_only_restart_signal_and_absorbs_a_datasource_hi
     assert rule["noDataState"] == "OK" and rule["execErrState"] == "Alerting"
 
 
+_ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
+
+
+def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
+    """Measured 2026-08-28 over 24 h as a fraction of the 512 MiB each Alloy compose sets: ops
+    0.7525-0.7795, zcrypto 0.5237-0.5708, zcrypto-red 0.2636, nas 0.1441. The app daemons sit at
+    0.08-0.37. A shared 0.7 bar therefore pages ops on a healthy fleet every evaluation -- which is
+    exactly what it did, on the rollout that first pushed it. The bar here clears steady state; the
+    OOM it warns about is owned separately by `Fleet · Alloy dark`."""
+    rule = _rule(_ALLOY_HEADROOM)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    assert 'job="integrations/self"' in expr and "536870912" in expr, expr
+    assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
+    assert rule["for"] != "0s" and rule["noDataState"] == "OK"
+
+
 @pytest.mark.parametrize("uid", [_MEM_HEADROOM, _MEM_LEAK, _DAEMON_RESTARTED])
 def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
     """The routine is fleet-wide: both capture daemons, the engine (primary only -- nothing listens on
@@ -984,9 +996,12 @@ def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
     a series that never exists is not coverage."""
     rule = _rule(uid)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
-    for token in ("capture_app", "engine_app", "integrations/self", '"nas"' if uid == _MEM_HEADROOM else "|nas"):
-        assert token in expr, f"{uid} does not cover {token}: {expr!r}"
-    if uid != _MEM_HEADROOM:  # the poller has no memory limit, so no headroom leg -- leak and restart cover it
-        assert "liquidations_app" in expr, expr
+    if uid == _MEM_HEADROOM:  # the app daemons only: Alloy has its own bar, the poller has no limit
+        for token in ("capture_app", "engine_app"):
+            assert token in expr, f"{uid} does not cover {token}: {expr!r}"
+        assert "integrations/self" not in expr, "Alloy runs near its ceiling; a shared bar pages it on a healthy fleet"
+    else:
+        for token in ("capture_app", "engine_app", "integrations/self", "liquidations_app", "|nas"):
+            assert token in expr, f"{uid} does not cover {token}: {expr!r}"
     assert not re.search(r'job="engine_app"[^}]*host=~"zcrypto\|zcrypto-red"', expr), "engine_app must not select zcrypto-red"
     assert not re.search(r'host=~"zcrypto\|zcrypto-red"[^}]*job="engine_app"', expr), "engine_app must not select zcrypto-red"
