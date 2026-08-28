@@ -702,6 +702,45 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
     )
 
 
+_STREAM_SILENT = "zcrypto-capture-stream-silent"
+
+
+@pytest.mark.parametrize("uid", [_ALL_STREAMS_SILENT, _STREAM_SILENT])
+def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(uid):
+    """`execErrState: OK` on these two ALONE, and it is the same blindness class as their
+    `noDataState: OK` rather than a relaxation of it.
+
+    When Grafana cannot execute the query, the query did not run -- so `Alerting` cannot report a
+    blackout, it ASSERTS one, in a summary that names a host and says every stream on it has been
+    silent for minutes. Measured 2026-08-05..08-28, these two rules raised 264 execution-error
+    instances against 52 genuine ones -- 83.5% of everything they had ever produced -- every one of
+    them Grafana Cloud failing to reach its own Prometheus. `for: 0s` is load-bearing for their
+    detection arithmetic and is what made a one-minute platform hiccup page instantly.
+
+    The blindness is not new and is not widened: every OTHER rule in the file still carries
+    `Alerting`, so a datasource outage is still reported. What is removed is a false claim about the
+    fleet inside that report. If that ever inverts -- these two back to `Alerting`, or the rest to
+    `OK` -- the runbook's `capture-silence-rules-and-datasource-errors` section is wrong and says so
+    in its own Retire-when."""
+    rule = _rule(uid)
+    assert rule["execErrState"] == "OK", "a Grafana query failure would page a total-capture-blackout that nothing observed"
+    assert rule["noDataState"] == "OK", "the sibling blindness state moved without its reason"
+    assert rule["for"] == "0s", (
+        "the execErrState reasoning above rests on `for: 0s` -- a pending period would already "
+        "have absorbed the one-minute transients, and this pin should be re-derived"
+    )
+
+
+def test_no_other_rule_quietly_joins_the_execerrstate_exemption():
+    """The exemption is justified by measurement on exactly two rules. A third arriving without its
+    own evidence is how a deliberate, narrow choice becomes a silent default -- which is how all 75
+    rules came to carry `Alerting` unexamined in the first place."""
+    exempt = {r["uid"] for r in _rules() if r["execErrState"] == "OK"}
+    assert exempt == {_ALL_STREAMS_SILENT, _STREAM_SILENT}, (
+        f"execErrState: OK is measured-and-argued for the two capture silence rules only; found {sorted(exempt)}"
+    )
+
+
 # --- a self-declared provisional threshold must be registered here, not only in a comment ---------
 # `grafana-push.sh` upserts unconditionally, so a bar whose own comment says "it must not reach a
 # push in this state" is held back by plan prose alone unless something in the repo names it. Each
@@ -712,8 +751,9 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
 # An entry here declares a threshold this file ships knowing it is provisional; the paired staleness
 # test refuses an entry whose rule no longer carries the marker, so a bar that has been derived
 # cannot leave its excuse behind. A previous occupant, `zcrypto-capture-stream-silent`, was derived
-# 2026-08-05; its bar is not provisional -- its base is just younger than the `[30d]` selector
-# suggests, and T0129 carries the re-derivation with the measured sample counts.
+# 2026-08-05 on a base one week deep rather than the month its `[30d]` selector implied; T0129
+# re-derived it 2026-08-28 on the full 14 d retained and left the bar unchanged, so it is not
+# provisional and does not belong here.
 PROVISIONAL_THRESHOLDS: set[str] = {
     # Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` -- ~3 microseconds and
     # ~1.2 KiB of resident memory per record, measured at 1,000,000 synthetic records -- not from a

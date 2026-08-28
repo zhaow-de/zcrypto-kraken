@@ -2980,9 +2980,14 @@ rules:
       # the gap counter all sat green through a total blackout.
       #
       # The MINIMUM across pairs is the discriminator, and that is the whole design: one thin leg
-      # being quiet is normal at any hour, all twelve simultaneously is not, and no natural cause
-      # produces it -- so the bar can be tight here where a per-pair bar cannot be. The gauge reads
-      # 0 for every pair at process start, so a restart cannot false-fire it either.
+      # being quiet is normal at any hour, all twelve simultaneously is not, and nothing in the
+      # capture path produces it -- so the bar can be tight here where a per-pair bar cannot be. The
+      # gauge reads 0 for every pair at process start, so a restart cannot false-fire it either.
+      # What DOES produce it is the venue, on a published calendar: every firing in this rule's life
+      # -- 2026-08-06 and 2026-08-20, both hosts each time -- fell inside a "Kraken Website and API
+      # Maintenance" window announced 48-145 h ahead, and no unexplained crossing has been observed.
+      # They are true positives (L2 is genuinely gone; ~893 s and ~551 s per stream), which is why
+      # the answer is a runbook that says "read the venue calendar first" rather than a wider bar.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -3008,18 +3013,20 @@ rules:
             # the pending period + the group's eval interval. That is why `for` is 0s below.
             # Why 120 and not 60: `max_over_time(min by (host) (...)[30d:1m])` measured a fleet-wide
             # silence of 30.261266 s on the primary -- all twelve pairs quiet at once.
-            # THE BASE IS ONE WEEK, NOT A MONTH, and the `[30d]` selector hides it: this gauge only
-            # started reaching Cloud with the 2026-07-29 converges, so
-            # `count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` returns 10435
-            # (primary) / 10838 (secondary) samples at 60 s each = 7.2 d / 7.5 d. So 120 is 4x the
-            # worst event in the series' whole LIFE so far -- materially thinner than 4x a month's
-            # worst, which is why the base this rests on is registered as T0129 -- and that base is capped:
-            # the platform retains 14 days, so a fuller window never arrives and T0129 is a decision, not a wait.
+            # RE-DERIVED 2026-08-28 against the full 14 d the platform retains (T0129, resolved).
+            # `count_over_time(...[14d])` = 20159/20158 of a possible 20160, so the window is
+            # complete; `[30d]` returns the same data plus 42 stragglers, confirming the ceiling.
+            # Over the 13 days of it that contain no venue window the fleet-wide minimum peaked at
+            # 6.134482 s, so 120 is ~20x the natural envelope rather than the 4x a single event
+            # suggested. The retention ceiling caps THIS GAUGE, never the phenomenon: the parquet
+            # archive holds the whole capture era at full resolution and `gap_distribution.py`
+            # measures book silence from it -- which is where a future re-derivation should start.
             # NOT a converge artefact, and better localized than "hours after": a 6 h bisection puts
             # the event inside 2026-07-29 19:14-01:14 UTC, >=11.6 h after the primary's 07:36:13Z
-            # converge, with the adjacent 6 h windows maxing 0.12 / 0.20 / 0.14 s. Cause
-            # unexplained, which is the point: an unexplained 30 s event cannot be bounded, so 60
-            # left only a 2x margin on the fleet's highest-severity capture signal. 120 is 4x it and
+            # converge, with the adjacent 6 h windows maxing 0.12 / 0.20 / 0.14 s. That single event
+            # has since aged out of retention and can never be re-measured -- it is recorded here
+            # because it is real, not because it is still queryable. It is why 60 left only a 2x
+            # margin on the fleet's highest-severity capture signal. 120 is 4x it and
             # the 209 s motivating event is still caught -- but the slack is ~29 s, not the 89 s a
             # bar-only subtraction suggests: with a 60 s scrape the guaranteed detection floor is
             # ~180 s of silence, not 120. Every other day of the series' life maxed between 0.18 s
@@ -3028,7 +3035,15 @@ rules:
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
-    execErrState: Alerting
+    # OK, and it is the SAME blindness class as noDataState above rather than a relaxation. When the
+    # datasource errors the query never ran, so `Alerting` cannot report a blackout -- it asserts
+    # one, in this rule's own words ("EVERY book stream ... silent for minutes"), about a fleet
+    # nothing observed. Measured 2026-08-05..08-28: these two rules raised 264 execution-error
+    # instances against 52 genuine ones (83.5%), all from Grafana Cloud failing to reach its own
+    # Prometheus; `for: 0s`, load-bearing below, is what made a one-minute hiccup page instantly.
+    # Nothing goes unwatched -- every other rule in this file still carries `Alerting`, so a
+    # datasource outage is still reported, just without a false blackout claim inside it.
+    execErrState: OK
     # 0s, and it is arithmetic rather than impatience. `for: 2m` shipped first and put the GUARANTEED
     # detection floor at 300 s against a 209 s motivating event: a phase sweep over scrape x eval
     # alignments caught that event in only 12.1% of them, and a 180 s blackout in 0%. `for: 1m` is not
@@ -3045,8 +3060,9 @@ rules:
         any pair, so this is the whole feed rather than one quiet leg. The last time this happened the
         socket still reported connected, the keepalive kept completing round trips, and the cumulative
         gap counter stayed at 0.0, so nothing else saw it. L2 is unbackfillable and every second here is
-        permanent loss: check the capture container on the named host and restart the daemon if the
-        streams do not resume on their own.
+        permanent loss. Check the venue's published maintenance calendar FIRST — every firing of this
+        rule so far has been one — then the capture container on the named host.
+        Runbook: infra/runbooks/capture.md#zcrypto-capture-all-streams-silent
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "102"
       unit: "seconds since ANY book stream on that machine last delivered"
@@ -3103,8 +3119,10 @@ rules:
             # instant every pair was silent. Excluding it, the BINDING natural per-pair maximum is
             # the primary's 12.068981 s (AVAX/EUR) -- above the secondary's worst of 11.125801 s
             # (ETH/BTC), and matching the 12.196 s worst NATURAL spacing the daemon's own
-            # BOOK_STALENESS_SECONDS comment records. 300 is ~25x that natural maximum and ~10x the
-            # daemon's own 30 s mark. It deliberately SUPERSEDES the ~2.4x margin the design
+            # BOOK_STALENESS_SECONDS comment records. That reading understated the envelope: the
+            # binding figure is the archive's full-resolution 14.78 s, so 300 is ~20x the natural
+            # maximum, not the ~25x recorded here until 2026-08-28. It remains ~10x the daemon's
+            # own 30 s mark. It deliberately SUPERSEDES the ~2.4x margin the design
             # prescribed, which would have put this page bar at ~29 s: at the daemon's own
             # gap-booking threshold, and BELOW the 30.26 s event above -- twelve false warning
             # instances on 07-29 alone.
@@ -3126,7 +3144,11 @@ rules:
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
-    execErrState: Alerting
+    # OK, for the reason given in full on the all-streams rule above: an execution error means the
+    # query never ran, so `Alerting` here raised 240 instances (12 pairs x 2 hosts x 10 Grafana
+    # datasource timeouts) naming stuck streams that nothing had observed. Every other rule in this
+    # file still carries `Alerting`, so datasource trouble is still reported.
+    execErrState: OK
     for: 0s
     annotations:
       summary: >-
@@ -3134,7 +3156,9 @@ rules:
         flowing — the single-stuck-stream shape, which no other rule catches: the dead-man still pings,
         the desync rule sees no checksum failure, and a fleet-wide silence rule reads its minimum off a
         healthy pair. The `pair` label names the stuck stream. Check whether that pair's resubscribe went
-        through; restarting the capture daemon re-establishes every stream.
+        through; restarting the capture daemon re-establishes every stream. If every pair on both hosts
+        raised this at once it is a whole-feed halt, not many stuck streams.
+        Runbook: infra/runbooks/capture.md#zcrypto-capture-stream-silent
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "102"
       unit: "seconds since that stream last delivered a book message"

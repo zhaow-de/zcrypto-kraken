@@ -19,6 +19,9 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-capture-venue-not-online`](capture.md#zcrypto-capture-venue-not-online) — ALERT: Kraken reported a `system` state other than `online` at some point since the capture daemon started.
 - [`zcrypto-capture-venue-state-recurrence`](capture.md#zcrypto-capture-venue-state-recurrence) — ALERT: the same, but inside the last 15 minutes — the one that means it is happening now.
 - [`cross-hour-straddle`](capture.md#cross-hour-straddle) — KNOWN LIMITATION: silence that began before an hour boundary is measured from the boundary, not from its true start.
+- [`zcrypto-capture-all-streams-silent`](capture.md#zcrypto-capture-all-streams-silent) — ALERT: every book stream on one host went quiet at once. Check the venue's published maintenance calendar first — every firing so far has been one.
+- [`zcrypto-capture-stream-silent`](capture.md#zcrypto-capture-stream-silent) — ALERT: one book stream stopped delivering while its siblings kept flowing; the daemon does not self-heal this.
+- [`capture-silence-rules-and-datasource-errors`](capture.md#capture-silence-rules-and-datasource-errors) — KNOWN LIMITATION: the two silence rules stay silent on a Grafana query failure rather than raising a blackout page the system never observed.
 
 ### [`zaccess.md`](zaccess.md) — the internet access host
 
