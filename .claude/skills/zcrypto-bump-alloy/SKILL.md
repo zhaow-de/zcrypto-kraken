@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 The codified Alloy image bump. Four hosts run digest-pinned `grafana/alloy` containers, all named `grafana-alloy`, all serving self-metrics on loopback `127.0.0.1:12345`, all logging via the journald driver. A bump is **telemetry-only**: on ops and the capture hosts Alloy is its own compose project, so a bump can never restart the liquidations poller or the unbackfillable capture daemon; on the NAS the apply also bounces `archive-pull` (unavoidable — the role restarts it on every apply). The `./alloy-data` volume preserves the remote_write WAL + Loki positions across replacement, so a bump does not re-ship the log backlog into the ingest quota.
 
-**No canary bake is owed.** `capture-deploys.md`'s canary rule is scoped to *capture-image* digests; an Alloy digest is not one (same distinction as the codified pair-list bullet there). The bump's only hard clocks are alert windows: each host's `Fleet · Alloy dark` dead-man fires after `for: 10m` (+~5 m Prometheus staleness ≈ 15 m effective), and on **ops** the tighter clock is `zcrypto-hcio-watchdog` (~10 m total: `hc_checks_down_total` goes stale ~5 m after Alloy stops shipping, then `vector(999)` + `for: 5m`). Keep each host's dark window under ~8 minutes — normal replacement is seconds.
+**No canary bake is owed.** `fleet-deploys.md`'s canary rule is scoped to *capture-image* digests; an Alloy digest is not one (same distinction as the codified pair-list bullet there). The bump's only hard clocks are alert windows: each host's `Fleet · Alloy dark` dead-man fires after `for: 10m` (+~5 m Prometheus staleness ≈ 15 m effective), and on **ops** the tighter clock is `zcrypto-hcio-watchdog` (~10 m total: `hc_checks_down_total` goes stale ~5 m after Alloy stops shipping, then `vector(999)` + `for: 5m`). Keep each host's dark window under ~8 minutes — normal replacement is seconds.
 
 ## Prerequisite
 
@@ -20,6 +20,7 @@ The codified Alloy image bump. Four hosts run digest-pinned `grafana/alloy` cont
 
 - Converges via `infra/ansible/scripts/converge.sh` — requires `--limit`, shows the `--check --diff` preview, takes a typed confirm (preview-only: pass `--check`); **never wrap it in `timeout`** (it is attended by design, and `timeout` orphans the running `ansible-playbook` child). **Never** `ansible-inventory --host/--list` (prints the vault, incl. the live trade key).
 - Timeout-guard every network command; an empty filtered query is not an absent event — verify by positive trace.
+- `converge.sh` appends every real pass to `docs/reference/deploy-log.jsonl` — the Alloy digest you passed is on record the moment the pass returns; the `fleet-pins.md` row at closeout is re-trued from that line, never re-typed.
 - NAS docker is `/usr/local/bin/docker` (not on sudo's PATH); the NAS play refuses on a non-UTC clock (`tags: [always]` guard).
 - **Read the `--check --diff` output before every converge, and stop on any diff you did not intend.** The capture-role converge re-renders the *capture* compose too: if that render shows changes beyond your intent, the tree you are deploying from has drifted against the hosts (hosts deployed from an unmerged branch make a develop-based converge silently revert it). Reconcile first; never converge through an unexplained diff.
 
@@ -127,6 +128,8 @@ Host-specific additions:
 - **ops**: `zcrypto-hcio-watchdog` back to Normal (it races you); `up{job="liquidations_app"} == 1` (poller untouched, still scraped).
 - **NAS**: the next `archive-pull` cycle logs `pull complete … failed=0` (the apply bounced it); `zcrypto_gate_*` series still arriving (the NAS unix exporter's textfile collector scrapes `/textfile/gate.prom`).
 - **capture hosts**: `up{job="capture_app"} == 1`; capture container `RestartCount` unchanged and its newest parquet still advancing (`sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | wc -l` > 0) — proving the bump really did not touch the daemon. `up{job="engine_app"}` is a valid check **only on the primary and only after the engine flip**; on the secondary it reads 0 permanently by design.
+
+**Expect `Fleet · a daemon restarted` (`zcrypto-fleet-daemon-restarted`, `job="integrations/self"`) once per host, ~2–3 min after each recreate** — Alloy's own `process_start_time_seconds` moved, and that rule is the bump's own record in the channel; it self-clears within 15 min and needs nothing. A second firing on the same host with no bump is a crash loop.
 
 **Expect `Ops · ERROR logs` to fire on the ops bump, ~35 s after the recreate.** The OUTGOING container logs two `service=remotecfg … err="noop client"` errors as it shuts down (remote config is unused here, so there is nothing to unregister from). The rule's container enumeration includes alloy, with `for: 0s` over a 15 m window, so it fires on the old container's dying breath and self-clears ~15 min later. Confirm it is that and not something real: the lines are timestamped ~200 ms BEFORE the new container's `StartedAt`, and `docker logs grafana-alloy` on the new one shows zero errors. Only ops's ERROR rule enumerates the alloy container; the other three recreates trip nothing.
 

@@ -15,7 +15,7 @@ A joint session that keeps the guidance corpus truthful, minimal, and placed whe
 
 - **Joint dispositions close items; undecided is the default.** Nothing is decided unilaterally, exactly as in grooming.
 - **One open decision set at a time.** Fact-collection may run ahead in the background, but the next step's findings are HELD until the previous step's dispositions close — later steps depend on earlier outcomes, and presenting two open sets collides them mid-review.
-- **Protected set** — CLAUDE.md's `## Secrets`, `capture-deploys.md`, `commit-messages.md`'s different-agent-reviewer rule, `open-topics.md`'s registration rule: every edit to these needs the user's **explicit per-edit sign-off** during the round; Step 5 classification alone is not sufficient. The round must not be able to quietly weaken the rules that police it.
+- **Protected set** — CLAUDE.md's `## Secrets`, `fleet-deploys.md`, `commit-messages.md`'s different-agent-reviewer rule, `open-topics.md`'s registration rule: every edit to these needs the user's **explicit per-edit sign-off** during the round; Step 5 classification alone is not sufficient. The round must not be able to quietly weaken the rules that police it.
 - **Any "later" outcome registers a topic in the same step** — a deferred hook, a parked finding, a postponed graduation: `T<NNNN>` via `topic-ops`, never only the round's report.
 - **Net always-loaded growth needs the user's explicit OK** — graduation adds weight, condensing removes it; report the measured delta, never assume the sign.
 - **Hooks are proposed case-by-case, each shown to the user before it lands.**

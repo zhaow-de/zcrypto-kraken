@@ -1,12 +1,12 @@
 ---
-name: zcrypto-captures-rollout
-description: Attended canary rollout of a capture-image digest across the capture fleet — preflight, secondary converge, event-driven bake with abort signals, primary re-pin, rollback, verify-by-outcome. User-invoked only.
+name: zcrypto-rollout-image
+description: Attended canary rollout of the app-image digest — capture secondary, event-sized bake with abort signals, then capture primary and engine in one shot — with preflight, rollback and verify-by-outcome. User-invoked only.
 disable-model-invocation: true
 ---
 
-# zcrypto-captures-rollout
+# zcrypto-rollout-image
 
-The executable form of the capture-image canary rollout. L2 capture is unbackfillable — a mistake on either host is permanent data loss. Scope: **digest re-pins only**; a pair-list change is config (primary-first, no bake — `capture-deploys.md`), and engine converges are their own section there.
+The executable form of the app-image canary rollout: the one image serves capture, engine, ops and the NAS, and this is how a new digest reaches the capture hosts and the engine. L2 capture is unbackfillable — a mistake on either host is permanent data loss. Scope: **digest re-pins only**; a pair-list change is config (primary-first, no bake — `fleet-deploys.md`), and engine converges are their own section there.
 
 ## Ground rules
 
@@ -14,7 +14,7 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 - **Every irreversible action** — converge, re-pin, restart — takes the user's explicit word at that step, with the blocker sweep (open-topics index + memo) presented alongside (`agent-ops.md`).
 - Rollout order: **secondary first, primary last.**
 - Digest identity is always `{{.Config.Image}}` — `{{.Image}}` is host-dependent and lies under classic storage.
-- Converges via `infra/ansible/scripts/converge.sh` — it requires `--limit`, shows the `--check --diff` preview, and takes a typed confirm before the real pass (preview-only: pass `--check`); never wrap it in `timeout` (attended by design; the orphaned child would converge unsupervised); never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `capture-deploys.md` and CLAUDE.md `## Secrets`.
+- Converges via `infra/ansible/scripts/converge.sh` — it requires `--limit`, shows the `--check --diff` preview, and takes a typed confirm before the real pass (preview-only: pass `--check`); never wrap it in `timeout` (attended by design; the orphaned child would converge unsupervised); never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `fleet-deploys.md` and CLAUDE.md `## Secrets`.
 
 ## Phase 0 — Preflight
 
@@ -69,7 +69,7 @@ Read all eight from the hosts and quote them before asking the user's word:
 7. `continuity.py` on a **pulled** copy (never the live dir) shows no new truncated hours — genesis hours of new streams excepted. The capture hosts carry **no parquet reader** (no `pyarrow`, no repo CLI), so a book final cannot be opened on the host at all.
 8. The bake's prune form quoted (`deleted=N`) — the weak form (`deleted=0`) needs the user's explicit acceptance here, not a Phase-5 footnote.
 
-Then, on the user's word: converge the primary with `-e converge_primary=true -e capture_image_digest=sha256:<candidate>` and the capture tag discipline per `capture-deploys.md`.
+Then, on the user's word: converge the primary with `-e converge_primary=true -e capture_image_digest=sha256:<candidate>` and the capture tag discipline per `fleet-deploys.md`.
 
 ## Phase 4 — Rollback (any abort signal, either host)
 
