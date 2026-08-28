@@ -3956,9 +3956,8 @@ rules:
     annotations:
       summary: >-
         Grafana Alloy on a fleet host is using more than 90% of its container memory limit — 1 GiB on ops, 512 MiB elsewhere. Alloy runs
-        closer to its ceiling than the app daemons do by design — the `host` label says which machine, and
-        ops sits highest because it reads the most journal. If it is OOM-killed that host's telemetry goes
-        dark, which `Fleet · Alloy dark` reports separately; this is the warning before that.
+        closer to its ceiling than the app daemons do by design, and the `host` label says which machine. If it is OOM-killed that
+        host's telemetry goes dark, which `Fleet · Alloy dark` reports separately; this is the warning before that.
         Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "601"
