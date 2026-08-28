@@ -38,7 +38,7 @@ The executable form of the app-image canary rollout: the one image serves captur
 
 **Gate-close is PASSED.** The three events met with nothing tripped → the primary follows. The gate is hard-capped at the window the events define; nothing after gate-close is owed to the rollout.
 
-**Memory is not a gate event.** `zcrypto-capture-memory-headroom`, `zcrypto-capture-memory-leak` and `zcrypto-capture-daemon-restarted` watch every daemon continuously — before, during and after any rollout — so a bake owes no RSS read at T+anything, and no read is ever "voided" by the next converge. During the bake, the headroom rule firing on the just-converged host is an abort signal (table below). A leak page days later names the image through `docs/reference/fleet-pins.md`'s `since` column and `docs/reference/deploy-log.jsonl`, and the rollback operand is in the same row.
+**Memory is not a gate event.** `zcrypto-fleet-memory-headroom`, `zcrypto-fleet-memory-leak` and `zcrypto-fleet-daemon-restarted` watch every daemon continuously and fleet-wide — before, during and after any rollout — so a bake owes no RSS read at T+anything, and no read is ever "voided" by the next converge. During the bake, the headroom rule firing on the just-converged host is an abort signal (table below). A leak page days later names the image through `docs/reference/fleet-pins.md`'s `since` column and `docs/reference/deploy-log.jsonl`, and the rollback operand is in the same row.
 
 Schedule the Slack reminder (`slack_schedule_message` — survives the session) at the **computed gate-open time**, carrying the Phase-3 checklist. The checklist opens the gate, never the reminder itself. **Skipping or degrading the gate — any of the three events unmet, or the prune only in weak form (`deleted=0`) — requires the user's explicit approval — never silently.**
 
@@ -52,7 +52,7 @@ Schedule the Slack reminder (`slack_schedule_message` — survives the session) 
 | `RestartCount` | > 0 on `zcrypto-capture` or `grafana-alloy` | `docker inspect --format '{{.RestartCount}}'` |
 | capture stdout | any `quarantined` / `ambiguous` / `merge failed` | `docker logs` |
 | newest parquet | `find <data-dir> -name '*.parquet' -mmin -3` returns 0 | host shell |
-| `zcrypto-capture-memory-headroom` | any instance on the just-converged host | the rule's state in Grafana / Slack — the RSS row used to be a hand-read slope; the rule reads it against the container limit |
+| `zcrypto-fleet-memory-headroom` | any instance on the just-converged host | the rule's state in Grafana / Slack — the RSS row used to be a hand-read slope; the rule reads it against the container limit |
 | prune unit | anything but `Result=success` — read only AFTER the unit has run this bake (event 1 fires it): a never-run oneshot reports `Result=success` by default | `systemctl show -p Result zcrypto-capture-prune.service` |
 
 ## Phase 3 — Primary re-pin
