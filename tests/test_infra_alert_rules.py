@@ -990,7 +990,20 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     assert re.search(rf'host="ops", job="integrations/self"\}}\s*/\s*{ops_cap}\b', expr), (
         f"the ops leg must divide by ops_alloy_memory_limit ({ops_cap}); a cap raised without this ratio lies: {expr!r}"
     )
-    assert re.search(r'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}\s*/\s*536870912\b', expr), expr
+    # The other three are LITERALS in their own compose sources, so read each back the same way --
+    # asserting the rule merely contains 536870912 would let `memory: 512m` move in a template while
+    # the ratio kept dividing by the old cap, which is the silent lie the ops pin above exists to stop.
+    others = {
+        "zcrypto": ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2",
+        "zcrypto-red": ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2",
+        "nas": REPO / "infra/nas/compose.yaml",
+    }
+    caps = {h: _compose_alloy_limit_bytes(p) for h, p in others.items()}
+    assert len(set(caps.values())) == 1, f"the three shared-cap hosts no longer share a cap: {caps} -- split the leg"
+    shared = next(iter(caps.values()))
+    assert re.search(rf'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}}\s*/\s*{shared}\b', expr), (
+        f"the shared leg must divide by the compose literal ({shared}); found: {expr!r}"
+    )
     assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
 
