@@ -1787,6 +1787,77 @@ def test_t0037_lagging_clock_counts_early_by_design(tmp_path, clock):
     assert _segment_path(tmp_path, 10, pair="ETH/EUR").exists()  # the publish itself is healthy
 
 
+def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
+    # Residual (c) — the past-dated fabrication (spec 00103 D5): a process's FIRST stamp is the only
+    # event that can open an hour behind the wall clock (mid-stream `floor` is `_current_hour`, so
+    # the late-event guard drops a past-hour stamp before it reaches `_enter_hour`), and an hour
+    # opened that way can commit a final for an hour that was never captured. Hour 08 is committed
+    # first so the recovery floor is real (09:00) — the stamp lands ABOVE it, where the late-event
+    # guard cannot refuse it and only this counter sees it.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(8, 30)
+    w1.append(_book_event(8, 30, checksum=1))
+    clock.now = _ts(9, 0)
+    w1.append(_book_event(9, 0, checksum=2))  # rotates: hour 08 commits, so the recovery floor is 09:00
+    del w1  # hard crash — the buffered hour-9 row is lost, leaving no parts to sweep
+
+    clock.now = _ts(12, 30)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    w2.append(_book_event(10, 0, checksum=999))  # the first stamp opens never-captured hour 10, 2.5 h back
+    assert w2._current_hour == _ts(10, 0)  # the past hour genuinely OPENED — the late-event guard let it through
+    assert w2.ts_past_dated_hour == 1
+
+
+def test_t0037_normal_start_counts_no_past_dated_hour(tmp_path, clock):
+    # CONTROL for the ordinary case: a mid-hour start whose first stamp names the CURRENT wall hour.
+    # `hour < _hour_start(now)` is false, so nothing counts — an unconditional or sign-flipped count
+    # fires here. The open-hour assert proves the first-event branch (the only counting site) ran.
+    clock.now = _ts(10, 30)
+    w = _oracle_writer(tmp_path, HourOracle())
+    w.append(_book_event(10, 30, checksum=1))
+    assert w._current_hour == _ts(10, 0)  # admitted and opened via the first-event branch, not held
+    assert w.ts_past_dated_hour == 0
+
+
+def test_t0037_draining_held_rows_counts_no_past_dated_hour(tmp_path, clock):
+    # CONTROL with teeth: TWO held rows carrying DISTINCT timestamps, then drained. `_hold` already
+    # advanced `_max_ts` past the older row, so the drain re-admits it through `_admit` reading
+    # "backward" — the rejected regression-against-`_max_ts` design counts on every such drain,
+    # which is routine, not a defect; the first-event check must stay at 0. With ONE held row the
+    # drain re-admits nothing backward, so it stays silent even under the rejected design and
+    # proves nothing — two distinct timestamps is the minimum that bites.
+    clock.now = _ts(10, 2)
+    w = _oracle_writer(tmp_path, HourOracle())
+    w.append(_book_event(10, 0, 0, checksum=0))  # held: a lone stream, and the clock handicap reads 09:57
+    w.append(_book_event(10, 0, 30, checksum=1))  # a second held row, DISTINCT ts
+    assert w._held  # both really held — nothing admitted, nothing entered yet
+    clock.now = _ts(10, 6)  # the handicapped clock crosses 10:00 -> hour 10 confirms
+    w.append(_book_event(10, 6, checksum=2))  # drains both held rows through `_admit`, then admits itself
+    assert w._current_hour == _ts(10, 0)
+    assert not w._held  # the drain really ran — the re-admission path was exercised
+    assert w.ts_past_dated_hour == 0
+
+
+def test_t0037_lone_bogus_future_stamp_counts_no_past_dated_hour(tmp_path, clock):
+    # CONTROL with teeth: the pinned-healthy lone-in-window-bogus-stamp scenario (the shape of
+    # test_t0037_lone_in_window_bogus_stamp_never_truncates_the_live_hour). The held bogus 11:00
+    # advances `_max_ts`, so every genuine 10:57–10:59 row behind it reads "backward" — the rejected
+    # regression-counting design pages on this healthy stream; this counter must read 0.
+    w = _oracle_writer(tmp_path, HourOracle())
+    for mnt in range(0, 57):  # 10:00 .. 10:56 — the live hour so far
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+    clock.now = _ts(10, 56, 30)
+    w.append(_book_event(11, 0, checksum=999))  # the bogus stamp: 3.5 min ahead — inside the window, held
+    for mnt in (57, 58, 59):  # the genuine rest of the hour, each ts behind the neutralized stamp
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+    clock.now = _ts(11, 5)
+    w.append(_book_event(11, 5, checksum=105))  # the clock seconds hour 11 -> hour 10 finalizes whole
+    assert pl.read_parquet(_segment_path(tmp_path, 10))["checksum"].to_list() == list(range(60))  # still the pinned outcome
+    assert w.ts_past_dated_hour == 0
+
+
 # --- T0046: wall-clock hour finalization for sparse writers --------------------------------------
 #
 # `finalize_completed_hours(cutoff)` is the escape hatch for a symbol so sparse that no "next event"

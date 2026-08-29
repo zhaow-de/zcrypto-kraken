@@ -340,6 +340,7 @@ class SegmentWriter:
         self.rows_held = 0
         self.rows_quarantined = 0
         self.hour_finalized_early = 0  # hours FINALIZED before our clock said they were over (`_count_if_early`)
+        self.ts_past_dated_hour = 0  # first stamps that opened an hour behind the wall clock (`_enter_hour`)
         self._recover()
 
     def append(self, event: dict) -> None:
@@ -483,7 +484,15 @@ class SegmentWriter:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
         A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
         if self._current_hour is None:
-            self._sweep(hour)  # deferred to here: the first event's hour is exchange time
+            # Spec 00103 D5. The first event's hour is exchange time, and it is the ONLY event that can
+            # open an hour behind the wall clock: from here on `floor` is `_current_hour`, so the
+            # late-event guard refuses a past-dated stamp before it reaches us. An hour opened materially
+            # behind our clock is the past-dated residual (T0037) -- it can commit a
+            # final for an hour that was never captured, and redeem a quarantined `.held` spill on the way.
+            if hour < _hour_start(_utcnow()):
+                self.ts_past_dated_hour += 1
+                logger.warning("first stamp opened a past hour pair=%s kind=%s hour=%s", self._pair, self._kind, hour)
+            self._sweep(hour)
             self._open_hour(hour)
         elif hour > self._current_hour:
             self._finalize_hour(self._current_hour)
