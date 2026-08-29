@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "`zcrypto_engine_limit_bound_total` moves off zero, or `zcrypto engine decompose`'s rendered table is touched for any reason"
+ripe_when: "`cli/engine/feeders.py` computes the whole-book-limited book every cycle while `zcrypto engine decompose`'s table still steps `capped` straight to `final` — true since iter-119, and gated on nothing."
 ---
 
 # Three of §10's four whole-book limits have no caller
@@ -28,4 +28,4 @@ Stage 6b's rungs put real capital under the book for the first time; the ramp (2
 
 ## Suggested next steps
 
-- **(autonomous — small, and only matters once a limit can bind)** `zcrypto engine decompose`'s rendered table still labels the governor column `capped → final`. On a binding cycle it would attribute the limits' share to the governor's row, misreading the very event the counter above exists to surface. Adding a `limited` stage to `CycleStages`, the payload, and the table is a report change, not a defect fix — hence separate from the wiring that landed.
+- **(autonomous — gated on nothing)** `zcrypto engine decompose`'s rendered table still steps `capped` straight to `final`, labelling the whole transition the governor's. On a binding cycle it would attribute the limits' share to the governor's row, misreading the very event the counter above exists to surface. Adding a `limited` stage to `CycleStages`, the payload, and the table is a report change, not a defect fix — hence separate from the wiring that landed. **The value already exists**: `replay_stages` computes `limited` and hands it to `_check_stage_identity`, then discards it, so this threads a computed book through rather than recomputing one. A binding cycle is when the mislabel would MISLEAD, not when it becomes fixable.
