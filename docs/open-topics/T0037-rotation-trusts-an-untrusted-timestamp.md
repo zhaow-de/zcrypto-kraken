@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: FIRED (measured 2026-08-29) — the trigger as written ("either accepted residual is OBSERVED in production") cannot be satisfied: nothing observes either residual, so the parked items were unreachable rather than merely unlikely. Making them observable is spec `00103`.
+ripe_when: 'FIRED (measured 2026-08-29) — the trigger as written ("either accepted residual is OBSERVED in production") cannot be satisfied: nothing observes either residual, so the parked items were unreachable rather than merely unlikely. Making them observable is spec `00103`.'
 ---
 
 # Hour rotation trusts an untrusted timestamp, so one bad stamp closes the hour early
