@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "infra/ansible/roles/capture"
@@ -40,6 +41,20 @@ def _series(prom: Path) -> dict[str, float]:
         name, _, value = line.rpartition(" ")
         out[name.strip()] = float(value)
     return out
+
+
+def _installed_dests(role_tasks_yaml: str) -> set[str]:
+    """Every `dest:` the role actually installs, parsed.
+
+    A substring check against the file's text matches a comment or a fail_msg naming the path, and
+    is also blind to a SUFFIXED dest -- `.../zcrypto-reboot-check-TYPO` contains the real name.
+    """
+    return {
+        str(v).strip()
+        for task in yaml.safe_load(role_tasks_yaml) or []
+        for mod in task.values()
+        if isinstance(mod, dict) and (v := mod.get("dest"))
+    }
 
 
 def test_publishes_1_when_the_flag_is_present(tmp_path):
@@ -147,7 +162,7 @@ def test_the_unit_runs_the_installed_script_with_the_expected_arguments():
     binary, flag, out = exec_start.removeprefix("ExecStart=").split()
 
     tasks = (ROLE / "tasks/main.yml").read_text()
-    assert f"dest: {binary}" in tasks, f"the unit runs {binary}, which the role does not install"
+    assert binary in _installed_dests(tasks), f"the unit runs {binary}, which the role does not install"
     assert flag == "/run/reboot-required", f"must read /run, not the /var/run compatibility symlink — got {flag}"
     assert out.endswith(".prom"), out
 

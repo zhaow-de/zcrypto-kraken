@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
+import yaml
 
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, exec_dir
 from cli.engine.venue import VenueStatus
@@ -567,8 +568,13 @@ def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
     repo = Path(__file__).resolve().parents[1]
     assert _VERIFIED_RECORD == repo / "cli" / "engine" / "order-semantics-verified.json"
     assert not (repo / "infra" / "ansible" / "order-semantics-verified.yml").exists()
-    role = (repo / "infra" / "ansible" / "roles" / "engine" / "tasks" / "main.yml").read_text()
-    assert "cli/engine/order-semantics-verified.json" in role
+    # Assert on the PARSED set_fact, not on the file's text: the path also appears in a fail_msg,
+    # which satisfied a substring check while the real lookup() pointed anywhere it liked.
+    role = yaml.safe_load((repo / "infra" / "ansible" / "roles" / "engine" / "tasks" / "main.yml").read_text())
+    facts = next(
+        t["ansible.builtin.set_fact"] for t in role if "engine_verified_nautilus" in str(t.get("ansible.builtin.set_fact", ""))
+    )
+    assert "cli/engine/order-semantics-verified.json" in facts["engine_verified_nautilus"]
     assert _verified_nautilus_versions() == frozenset({"1.230.0", "1.231.0", "2.0.0rc4.dev20260825"}), (
         "the record changed. If an attended order-semantics pass really ran, update this "
         "deliberately alongside the new docs/reference/adapter-verification/ record -- and sweep the other "

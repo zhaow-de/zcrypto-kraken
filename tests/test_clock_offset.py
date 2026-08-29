@@ -23,6 +23,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "infra/ansible/roles/capture"
@@ -72,6 +73,20 @@ def _emit(tmp_path: Path, *, magnitude: str = "0.000012345", direction: str = "f
     result = _run(_chronyc(tmp_path, TRACKING.format(magnitude=magnitude, direction=direction, leap=leap)), prom)
     assert result.returncode == 0, result.stderr
     return _series(prom)
+
+
+def _installed_dests(role_tasks_yaml: str) -> set[str]:
+    """Every `dest:` the role actually installs, parsed.
+
+    A substring check against the file's text matches a comment or a fail_msg naming the path, and
+    is also blind to a SUFFIXED dest -- `.../zcrypto-reboot-check-TYPO` contains the real name.
+    """
+    return {
+        str(v).strip()
+        for task in yaml.safe_load(role_tasks_yaml) or []
+        for mod in task.values()
+        if isinstance(mod, dict) and (v := mod.get("dest"))
+    }
 
 
 def test_a_healthy_clock_emits_both_series_rather_than_staying_silent(tmp_path):
@@ -195,7 +210,7 @@ def _exec_start() -> list[str]:
 def test_the_unit_runs_the_installed_script_with_the_expected_arguments():
     binary, chronyc, out = _exec_start()
     tasks = (ROLE / "tasks/main.yml").read_text()
-    assert f"dest: {binary}" in tasks, f"the unit runs {binary}, which the role does not install"
+    assert binary in _installed_dests(tasks), f"the unit runs {binary}, which the role does not install"
     assert chronyc.startswith("/"), f"chronyc must be an absolute path, not a PATH lookup: {chronyc}"
     assert out.endswith(".prom"), out
 
