@@ -2805,9 +2805,9 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The clock reading on a capture host has not refreshed in over 30 min (it runs every 5 min), so the offset and synchronised gauges are frozen at their last values. The textfile collector re-serves a stale file forever, so those gauges still look healthy -- this is the only thing that says otherwise, and while it is firing the clock-skew alert is blind."
+      summary: "The clock reading on a capture host has not refreshed in over 30 min (it writes every 5 min), so the offset and synchronised gauges are frozen at their last values and still look healthy. While this fires, the clock-skew alert is BLIND -- and that is the only detector for a leading clock. Check `systemctl list-timers zcrypto-clock-offset` on the host; the runbook entry has the rest."
       __dashboardUid__: "zcrypto-fleet"
-      __panelId__: "502"
+      __panelId__: "501"
       unit: "seconds since the clock exporter last wrote its file"
     labels:
       severity: critical
@@ -3462,7 +3462,7 @@ rules:
       summary: "A capture host opened an archive hour that was ALREADY IN THE PAST when the stream's first event arrived -- a bogus, past-dated exchange timestamp. That publishes an hour marked complete and certified for a period during which nothing was actually captured, and it can pull a quarantined .held sidecar in with it. The baseline is a hard zero over the fleet's whole life and the counter can step at most once per stream per capture process, so any step at all is a real event. Do not attempt to repair the hour by hand. Runbook: infra/runbooks/capture.md#zcrypto-capture-ts-past-dated-hour"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "110"
-      unit: "streams that opened a past-dated hour in the last 6 hours"
+      unit: "first events that opened an hour already in the past, last 6 hours"
     labels:
       severity: critical
     notification_settings:

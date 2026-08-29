@@ -1495,7 +1495,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/reboot.prom\"})",
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/(reboot|clock-offset).prom\"})",
           "refId": "A",
           "legendFormat": "{{host}} reboot probe age"
         },

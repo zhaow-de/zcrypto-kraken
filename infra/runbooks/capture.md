@@ -194,6 +194,31 @@ ______________________________________________________________________
 
 <a name="zcrypto-capture-clock-skew"></a>
 
+<a name="zcrypto-capture-clock-exporter-stale"></a>
+
+## zcrypto-capture-clock-exporter-stale — ALERT
+
+### What you are seeing
+
+The clock reading on a capture host has not refreshed in over 30 minutes. The timer writes every 5 minutes, so this is roughly six missed runs.
+
+### What it means
+
+`zcrypto_clock_offset_seconds` and `zcrypto_clock_synchronised` are frozen at whatever they last held. The textfile collector re-serves the last file forever, so those gauges still look healthy — they are not. **While this is firing, `zcrypto-capture-clock-skew` is blind**, and that alert is the only detector for a leading clock, which silently truncates archive hours.
+
+### What to do
+
+1. `systemctl list-timers zcrypto-clock-offset` on the host — is the timer active and when did it last run?
+2. `systemctl status zcrypto-clock-offset.service` for the last run's exit status; the script writes one line to stderr when `chronyc` fails.
+3. `chronyc tracking` by hand. If chrony itself is down, the clock is unmanaged and the skew risk is live, not hypothetical.
+4. Until the exporter is back, treat any hour-rotation question on that host as unresolvable from metrics alone.
+
+### Retire when
+
+The clock offset is published by something whose liveness is visible without a separate staleness rule.
+
+______________________________________________________________________
+
 ## zcrypto-capture-clock-skew — ALERT
 
 ### What you are seeing
