@@ -123,13 +123,27 @@ yield CounterMetricFamily(
 
 ______________________________________________________________________
 
-### Task 4: admit the clock offset to the shipper
+### Task 4: the chrony textfile exporter, and the retired timex path
 
-`infra/ansible/roles/capture/files/config.alloy` — the keep-regex is an allowlist on `__name__`. Add `node_timex_offset_seconds` and `node_timex_sync_status`.
+Spec D4. **This task both ADDS the exporter and REMOVES what an earlier round of this branch already landed** — do both, or the tree carries two clock designs.
 
-Also admit the two new capture families if the capture-app job's keep-regex enumerates names rather than passing the `zcrypto_capture_*` prefix — **check before editing**; a new family silently dropped at the shipper is the T0051 trap, and step 4 of the deploy sequence is where it would surface as `(no series)`.
+**Remove** (all committed earlier on this branch):
 
-**Verify**: `--check --diff` renders the expected regex; the rendered file is valid Alloy syntax. The real proof is Task 8's by-value read — a keep-regex is only ever proven on the host.
+- `"timex"` from `set_collectors` in `infra/ansible/roles/capture/files/config.alloy`.
+- `node_timex_offset_seconds` / `node_timex_sync_status` from that file's keep-regex.
+- their two entries in `CAPTURE_REQUIRED` (`tests/test_infra_alloy_series.py`).
+- `test_the_timex_collector_is_enabled_on_the_capture_hosts` — it guards a coupling that no longer exists.
+
+**Add**, modelled on `zcrypto-reboot-check` (read those four files first; this is the same shape):
+
+- `infra/ansible/roles/capture/files/zcrypto-clock-offset.sh` — sources `chronyc tracking`, writes `zcrypto_clock_offset_seconds` and `zcrypto_clock_synchronised` into `capture_textfile_dir`. **Emit both on every run, including the healthy case**: an absent series is indistinguishable from a dead exporter. Write to a `mktemp` SIBLING and `mv`, so the collector never reads a torn file.
+- `zcrypto-clock-offset.service.j2` + `zcrypto-clock-offset.timer`.
+- three role tasks in `infra/ansible/roles/capture/tasks/main.yml`, following the reboot-check trio (install script, render unit, install timer).
+- both metric names in the keep-regex.
+
+**No compose change and no capability.** Alloy reads the textfile dir through the existing `/host/root` mount — `capture/defaults/main.yml` says so in as many words. If this task finds itself editing `alloy-compose.yaml.j2`, it has gone wrong.
+
+**Verify**: a test that drives the SCRIPT (as `tests/test_reboot_check.py` drives its own) over a fixture `chronyc tracking` output — a normal offset, a large offset, and an unsynchronised reading, asserting the emitted values and that the healthy case emits rather than stays silent. Plus the keep-regex assertions. The `zcrypto_*` naming means the source-derived guard picks the families up automatically; do not add hand-maintained list entries.
 
 ______________________________________________________________________
 
@@ -177,8 +191,8 @@ Converge the capture Alloy config pinned to the **currently-running** Alloy dige
 
 1. `zcrypto_capture_hour_finalized_early_total` present and zero.
 2. `zcrypto_capture_ts_past_dated_hour_total` present and zero **over a window containing at least one process restart** — its only reachable path is a process's first event, so a restart-free window never exercises it and is not a baseline. A capture converge supplies the restart.
-3. `node_timex_offset_seconds` and `node_timex_sync_status` present, offset within 10 s.
-4. `node_scrape_collector_success{collector="timex"}` reads **1** on both hosts. **Expect 0 unless the capability is granted, and grant it in the SAME converge as Task 4's config change — not as a contingency afterwards, which knowingly sequences a second Alloy restart.** Neither the capture nor the ops Alloy compose template grants `cap_add`/`security_opt`, and Docker's default seccomp profile gates `adjtimex` behind `CAP_SYS_TIME`; two reviewers disagreed on whether a READ is permitted without it, and only this reading settles it. A 0 here means residual (b) has **no detector at all** (D1b: no clock-referenced counter can see a leading clock), so the choice is `cap_add: [SYS_TIME]` on the Alloy container or re-deriving (b)'s coverage — never shipping the rule and leaving it dark. Two reviews split on whether an adjtimex READ needs the capability; the third read Docker's default profile as gating it, which makes granting-by-default the cheaper bet. The `timex` collector calls `adjtimex`, which an unprivileged container's seccomp profile may refuse; if it is blocked the two metrics simply never appear and this is the read that says so, rather than leaving a silent gap to be misread as a healthy zero.
+3. `zcrypto_clock_offset_seconds` and `zcrypto_clock_synchronised` present on both hosts, offset within 10 s, synchronised reading 1. These come from a host timer, so a missing series means the timer did not run — check `systemctl list-timers zcrypto-clock-offset` before reading it as skew.
+4. The exporter's own freshness: `node_textfile_mtime_seconds` for its `.prom` is recent. The capability question the earlier design turned on no longer exists — nothing calls `adjtimex` in a container.
 
 `(no series)` is a FAIL and stops Task 9 — it is never a zero. **If the offset reads outside 10 s, that is a finding to act on in this branch** (fix the discipline, or re-derive the threshold against measured reality and record why) — not a deferral, not a new topic.
 

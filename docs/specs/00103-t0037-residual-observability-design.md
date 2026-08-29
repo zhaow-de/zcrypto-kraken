@@ -65,13 +65,22 @@ Read with D4 alongside: counter firing **and** offset within threshold ⇒ resid
 
 Magnitude, corrected: the family sums across **24 writers**, each finalizing each hour, so a lagging clock produces up to ~576 increments/day/host — not 24. The alert must be written knowing that, or its `for:` and threshold will be wrong.
 
-### D4 — the clock offset is admitted to the shipper, and it now carries residual (b) alone
+### D4 — the clock offset comes from a HOST-side chrony exporter, never from inside the container
 
-Two edits, not one — **admitting a name is not publishing it**. `prometheus.exporter.unix`'s `set_collectors` is an EXACT override of the exporter's defaults, and the capture config's list omitted `timex`, so the metric would not have existed to keep. Enable the `timex` collector **and** add `node_timex_offset_seconds` / `node_timex_sync_status` to the keep-regex. Either edit alone yields `(no series)` — the same shape as the T0051 keep-regex trap, one layer further up, and the reason step 4 reads by value rather than trusting a converge's `changed=`.
+Residual (b)'s only detector must not require widening what can move the clock.
 
-Alert at **|offset| > 10 s**, or `sync_status` reporting unsynchronised.
+An earlier draft admitted `node_timex_offset_seconds` / `node_timex_sync_status` to the Alloy keep-regex and enabled the exporter's `timex` collector. That path needs `adjtimex` inside the Alloy container, which Docker's default seccomp profile gates behind **`CAP_SYS_TIME`** — a capability that permits **setting** the system clock, not merely reading it. Granting it to the metrics shipper on hosts whose entire correctness argument is *the clock is not trustworthy enough to gate data* (T0036) is the wrong trade: we would widen what can move the clock in order to watch the clock. Three reviews also split on whether a read needs the capability at all, and that question does not need answering — it needs avoiding.
 
-10 s is structural: orders of magnitude above a disciplined clock's steady state, and 30× below `CLOCK_WITNESS_MARGIN`, so skew is flagged long before it can either cause residual (b) or make D1's counter ambiguous. Per D1b this rule is (b)'s only detector, so it ships **critical**, not as a nicety.
+**Measured**: `zcrypto` runs **chrony** (`systemctl is-active chrony` → active; `systemd-timesyncd` inactive) and `/usr/bin/chronyc` is present, so the offset is readable on the host with no container and no capability.
+
+**The repo already has the pattern.** `zcrypto-reboot-check.sh` is a host script installed to `/usr/local/sbin`, driven by a systemd timer, writing a `.prom` into `capture_textfile_dir` — which Alloy's textfile collector reads through the **existing** `/host/root` mount, so it needs no compose change at all. This follows it exactly.
+
+- **Source**: `chronyc tracking`, on the host, as root.
+- **Emit an explicit value for the healthy state**, per the precedent: an absent series is indistinguishable from a dead exporter, which is the same defect this whole spec exists to remove. Publish the offset and a synchronisation flag on every run, including when everything is fine.
+- **Name them `zcrypto_clock_offset_seconds` and `zcrypto_clock_synchronised`**, not `node_*`. `tests/test_infra_alloy_series.py`'s source-derived guard matches `zcrypto_[a-z0-9_]{4,}`, so a `zcrypto_*` family is covered automatically — a `node_*` name is structurally invisible to it and needs a hand-maintained list entry, which is exactly the blind spot the earlier draft had to paper over.
+- Alert at **|offset| > 10 s**, or the synchronisation flag reading 0. 10 s stays chosen structurally: orders of magnitude above chrony's steady state, and 30× below `CLOCK_WITNESS_MARGIN`, so skew is flagged well before it can cause residual (b) or make D1's counter ambiguous.
+
+**What this retires**: the `timex` collector enablement, the `node_timex_*` keep-regex entries, their hand-maintained `CAPTURE_REQUIRED` pins, and the guard asserting `timex` is in `set_collectors`. All of it landed earlier in this branch and comes back out.
 
 ### D5 — the past-dated residual is a STARTUP-WINDOW fault, and that is where it is detected
 
