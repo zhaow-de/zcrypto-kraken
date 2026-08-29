@@ -7,7 +7,7 @@ ripe_when: 'the attended capture rollout of spec 00103 can run — then deploy t
 
 ## Context — what
 
-`SegmentWriter.append()` rotates the hour from the **event's own `ts`** — `entry["timestamp"]`, a field Kraken sends and `cli/capture/command.py::_parse_ts` parses straight through. A single event stamped **up to `MAX_TS_AHEAD` (1 h) in the future** therefore finalizes the hour still in progress:
+`SegmentWriter.append()` rotates the hour from the **event's own `ts`** — `entry["timestamp"]`, a field Kraken sends and `cli/capture/command.py::_parse_ts` parses straight through. A single event stamped **up to `MAX_TS_AHEAD` in the future** therefore finalizes the hour still in progress:
 
 1. the event's hour > `_current_hour`, so `_finalize_hour()` publishes the live hour as a **committed, complete** `<HH>.parquet` — with only the rows captured so far;
 2. every genuine event for the rest of that hour is then dropped by the late-event guard, because `<HH>.parquet` on disk is exactly what "this hour is closed" means;
@@ -59,6 +59,16 @@ Never observed in production. It is a hardening gap, not a live incident — but
 - Landed: `cli/capture/segment_writer.py` (`HourOracle`, `_held`, `_enter_hour`/`_admit`/`_hold`, `_write_part`), `cli/capture/command.py` (one shared `HourOracle`); hardening round: `HourOracle.observe` (wall clamp), `_hold`/`_held_seen` (held de-dup), `_redeem_held` + `.held`-marker spills (`segment_writer.py`), `verify_tree` skip (`cli/archive/pull.py`).
 - 10 executed regression tests in `tests/test_capture_segment_writer.py` (`test_t0037_*`): the lone in-window bogus stamp in the last 5 min (0 loss, bogus stored in its named hour, publishes on the second witness); the bogus-first-stamp-after-restart (cannot sweep-publish the live hour); a genuine two-stream boundary (publishes within one event, streams-only, clock lagging); a 10-min lagging clock (loss set-EQUAL to the `oracle=None` baseline — zero added); a 10-min leading clock (no early publish); three escalating in-window stamps on one stream (0 loss — the attack that beats designs A and B); a stand-down burst (future hour never published); a lone clock-paced stream (rotation ≤300 s, lone print never lost); `close()`→held-spills redeemed, merged and replay-deduped by a restart; and the drain-order bounds. The pre-fix loss was reproduced against HEAD `189a56a` (57/58/59 dropped in the core and escalating scenarios; the live hour sweep-published on a bogus first stamp). The hardening round added 7 more (`test_t0037_*` poisoned-witness, coherently-fast walk, two replay de-dup shapes, fabricated-hour, held-spill floor guard; `test_verify_tree_skips_held_spills`), each reproduced failing against the pre-hardening writer.
 - **Deploy note for ops:** finals for a quiet-market hour may now appear up to ~5 min later than before, when only the clock witness paces the rotation. Under a clock lagging by more than 5 min, confirmation (and thus finalization) is delayed by roughly the lag minus the margin — rows are held and spilled meanwhile, never dropped. No on-disk format change; no migration. `.held` files in the tree are quarantined never-confirmed rows, not corruption.
+
+**Detectors built, not yet deployed (spec `00103`).** Each accepted residual now has a signal, and none has run on a capture host:
+
+- residual (a) — `zcrypto_capture_hour_finalized_early_total`, counted at both publish paths (`_finalize_hour` and the startup sweep, which reaches `_merge_hour` directly).
+- residual (b) — a leading clock is invisible to every clock-referenced counter, because the measurement is taken with the same wrong clock. Its ONLY detector is `zcrypto_clock_offset_seconds` / `zcrypto_clock_synchronised`, published by a host-side chrony timer rather than from inside the Alloy container, so no `CAP_SYS_TIME` grant is needed. `zcrypto-capture-clock-exporter-stale` watches the exporter's own mtime, because a stale `.prom` is re-served forever and would read healthy.
+- past-dated stamps — `zcrypto_capture_ts_past_dated_hour_total`, gated on the oracle: `finalize_completed_hours` nulls `_current_hour` every poll cycle on the oracle-less liquidations writers, where opening a prior hour is the designed mode rather than a fabrication.
+
+Three alert rules and five runbook entries ship with them, including the `bogus-timestamp-hour-rotation` KNOWN LIMITATION that carries the residuals' own reasoning. `zcrypto-capture-rows-quarantined`'s comment and summary are corrected too — they described the late-arrival path while the metric measures the never-confirmed one.
+
+**Why this topic is still `partial`.** The detectors exist in the repo and have emitted nothing in production. Archiving now would delete the only written record of these residuals while their signals are unproven — strictly worse than today. It closes after the attended rollout deploys them and each family is read by value on both hosts.
 
 ## Suggested next steps
 
