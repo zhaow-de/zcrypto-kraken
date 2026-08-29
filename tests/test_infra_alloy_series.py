@@ -294,13 +294,11 @@ CAPTURE_REQUIRED = [
     "node_cpu_seconds_total",
     "node_filesystem_avail_bytes",
     "node_filesystem_size_bytes",
-    # The clock-skew pair (spec 00103 D4) is T0037 residual (b)'s ONLY detector, and it takes both
-    # halves of a coupling nothing else checks: `timex` in the capture config's `set_collectors` --
-    # an EXACT override of the exporter defaults, so a trim there stops publication -- and these two
-    # names admitted by the keep-regex. This list guards the KEEP half;
-    # `test_the_timex_collector_is_enabled_on_the_capture_hosts` guards the PUBLISH half.
-    "node_timex_offset_seconds",
-    "node_timex_sync_status",
+    # The clock-skew pair (spec 00103 D4) is deliberately absent from this hand-maintained list: it
+    # is published as zcrypto_clock_offset_seconds / zcrypto_clock_synchronised by a host timer's
+    # .prom, and the source-derived guard at the bottom of this file covers every zcrypto_* name
+    # automatically. A node_* name would have needed an entry here, which is the blind spot the
+    # naming avoids.
     *ONEOFF_TEXTFILE_SERIES,
     *CAPTURE_APP_SERIES,
     *ENGINE_APP_SERIES,
@@ -504,24 +502,6 @@ PUBLISHED_METRIC_NAMES = sorted({n for n in _tokens_in_tree() if n not in NOT_A_
 assert len(PUBLISHED_METRIC_NAMES) >= 30, (
     f"only {len(PUBLISHED_METRIC_NAMES)} metric names found -- the source globs have drifted and this guard would pass vacuously"
 )
-
-
-def test_the_timex_collector_is_enabled_on_the_capture_hosts():
-    """The keep half of the clock-skew coupling is inert without the publish half.
-
-    `set_collectors` is an EXACT override of `prometheus.exporter.unix`'s defaults, not an addition,
-    so dropping "timex" stops the two series being produced at all while CAPTURE_REQUIRED still
-    passes -- the metric is admitted by a shipper that never receives it. Same shape as the T0051
-    keep-regex trap, one layer up, and it would silently disarm residual (b)'s only detector
-    (spec 00103 D1b). Precedent: test_reboot_check.py makes the same assertion for "textfile".
-    """
-    # Match the ASSIGNMENT, not the prose: a comment above it also says "set_collectors", and a
-    # substring search picks that up and asserts against explanatory text instead of the config.
-    set_collectors = next(line for line in CAPTURE_ALLOY.read_text().splitlines() if line.strip().startswith("set_collectors"))
-    assert '"timex"' in set_collectors, (
-        f"the timex collector is not enabled, so node_timex_* is never published and the "
-        f"clock-skew alert is dead while the keep-regex still lists it: {set_collectors.strip()}"
-    )
 
 
 def test_the_not_a_published_metric_list_has_not_gone_stale():

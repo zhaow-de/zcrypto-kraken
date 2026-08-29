@@ -1,0 +1,19 @@
+# Rendered by the `capture` Ansible role at /etc/systemd/system/zcrypto-clock-offset.service — do
+# not hand-edit on the host, edit
+# infra/ansible/roles/capture/templates/zcrypto-clock-offset.service.j2 and re-converge.
+# Traceability: spec 00103 D4, T0037
+[Unit]
+Description=Publish the host clock offset as a node-exporter textfile
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-clock-offset /usr/bin/chronyc {{ capture_textfile_dir }}/clock-offset.prom
+# Same hardening as the sibling reboot-check probe, with one addition: chronyc binds its OWN reply
+# socket next to chronyd's in /run/chrony, so under ProtectSystem=strict a read-only /run makes even
+# reading the clock fail -- and the exporter would then publish an unknown offset forever. The `-`
+# prefix keeps the unit startable on a host where chrony is not installed.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ capture_textfile_dir }} -/run/chrony
