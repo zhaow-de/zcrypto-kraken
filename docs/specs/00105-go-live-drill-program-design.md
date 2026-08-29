@@ -70,5 +70,5 @@ Three enhancements the tier needs, each its own spec and PR on the live trade pa
 ## Out of scope
 
 - Running any order-path drill — rung 1's window, on the owner's word, with `00106` and the `rest-hold` mode built first.
-- The flatten command, the `rest-hold` mode, cancel-on-stop, re-cancel-on-reconnect — `00106` and further specs; queued in the memo, where the auto-exec picks from.
+- The flatten command, the `rest-hold` mode, cancel-on-stop, re-cancel-on-reconnect — `00106` and further specs, registered as build-sequence items in [[T0018]] and queued in the memo.
 - Provider-level events (S) — accepted as-is by [[T0088]]; B and C are its mitigations.
