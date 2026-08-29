@@ -111,6 +111,7 @@ The `.env` next to `compose.yaml` is **rendered in full by the `nas` role** (`ro
 | `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles. | defaults to `3600` (hourly) in `compose.yaml`; not rendered by `env.j2` — changing the cadence takes a `vars.yml` entry **plus** an `env.j2` line (see the intro above) |
 | `GATE_TEXTFILE` | Prometheus node-exporter textfile-collector path the `zcrypto engine gate-export` step (run after each journal pull) atomically writes the gate metrics to. | fixed to `/textfile/gate.prom` in `compose.yaml` (matches the textfile-dir mount, bootstrap step 5) |
 | `GATE_HEALTHCHECK_URL` | Dead-man's-switch base URL for `gate-export`: GET on a clean gate, GET `<url>/fail` otherwise. **Required** — the sole Alloy-independent paging path (bootstrap step 7); a new, dedicated healthchecks.io check, distinct from the engine's own `HEALTHCHECK_URL`. | deploy-time `.env` (vaulted: `nas_gate_healthcheck_url`) |
+| `ARCHIVE_PULL_HASH_SCOPE` | Whether each of the five verified pulls re-hashes every segment against its sidecar this cycle (`full`) or only rsync's transfers plus a rotating cycle-keyed 1/24 slice (`incremental`, spec 00102 D7). | deploy-time `.env` (`nas_archive_pull_hash_scope` in `host_vars/nas/vars.yml`) |
 
 ## The `hot/` hub push channel (spec 00056 D2)
 

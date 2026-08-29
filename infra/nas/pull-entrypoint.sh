@@ -39,10 +39,27 @@ on_term() {
 }
 trap on_term TERM INT
 
+# Spec 00102 D3: the 1/24 slice index is a COUNTER, never the clock. The loop's real period is
+# interval+work, so a slice keyed on now.hour starves a fixed subset of slices forever whenever
+# that drifted period divides 24h -- segments silently never re-verified.
+cycle=0
+# Hoisted and read once: five call sites must not carry separate literals. The `:-full` fallback
+# stays -- this entrypoint is bind-mounted and can outrun an older compose file.
+hash_scope="${ARCHIVE_PULL_HASH_SCOPE:-full}"
+
 while true; do
+	cycle=$((cycle + 1))
+	slice=$((cycle % 24))
+
 	# capture pull uses the capture channel's own least-privilege key
+	# Spec 00102: the verify cost is published per channel (one .prom each -- five pulls share
+	# /textfile). ARCHIVE_PULL_HASH_SCOPE picks full (re-hash every segment) or incremental
+	# (rsync's transfers plus this loop's 1/24 slice); compose.yaml documents flipping it.
 	capture_ok=1
-	if ! ARCHIVE_SSH_KEY="$CAPTURE_SSH_KEY" zcrypto archive pull "$CAPTURE_SOURCE" "$CAPTURE_DEST"; then
+	if ! ARCHIVE_SSH_KEY="$CAPTURE_SSH_KEY" zcrypto archive pull \
+			--hash-scope "$hash_scope" --slice "$slice" \
+			--textfile /textfile/archive-pull-capture.prom --channel capture \
+			"$CAPTURE_SOURCE" "$CAPTURE_DEST"; then
 		log ERROR "capture pull failed (source=$CAPTURE_SOURCE dest=$CAPTURE_DEST), continuing"
 		capture_ok=0
 	fi
@@ -53,7 +70,10 @@ while true; do
 	# is unset, so a NAS without the red channel runs this script unchanged.
 	secondary_ok=1
 	if [ -n "${CAPTURE_RED_SOURCE:-}" ]; then
-		if ! ARCHIVE_SSH_KEY="$CAPTURE_RED_SSH_KEY" zcrypto archive pull "$CAPTURE_RED_SOURCE" "$CAPTURE_RED_DEST"; then
+		if ! ARCHIVE_SSH_KEY="$CAPTURE_RED_SSH_KEY" zcrypto archive pull \
+				--hash-scope "$hash_scope" --slice "$slice" \
+				--textfile /textfile/archive-pull-capture_red.prom --channel capture_red \
+				"$CAPTURE_RED_SOURCE" "$CAPTURE_RED_DEST"; then
 			log ERROR "secondary capture pull failed (source=$CAPTURE_RED_SOURCE dest=$CAPTURE_RED_DEST), continuing"
 			secondary_ok=0
 		fi
@@ -131,7 +151,10 @@ while true; do
 	# below, which reasons only about the two capture mirrors.
 	if [ -n "${LIQUIDATIONS_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$LIQUIDATIONS_SSH_KEY" ARCHIVE_SSH_PORT="${LIQUIDATIONS_SSH_PORT:-22}" \
-				zcrypto archive pull "$LIQUIDATIONS_SOURCE" "$LIQUIDATIONS_DEST"; then
+				zcrypto archive pull \
+				--hash-scope "$hash_scope" --slice "$slice" \
+				--textfile /textfile/archive-pull-liquidations.prom --channel liquidations \
+				"$LIQUIDATIONS_SOURCE" "$LIQUIDATIONS_DEST"; then
 			log ERROR "liquidations pull failed (source=$LIQUIDATIONS_SOURCE dest=$LIQUIDATIONS_DEST), continuing"
 		fi
 	fi
@@ -145,7 +168,10 @@ while true; do
 	# gate below, which reasons only about the two capture mirrors.
 	if [ -n "${PANEL_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$PANEL_SSH_KEY" ARCHIVE_SSH_PORT="${PANEL_SSH_PORT:-22}" \
-				zcrypto archive pull "$PANEL_SOURCE" "$PANEL_DEST"; then
+				zcrypto archive pull \
+				--hash-scope "$hash_scope" --slice "$slice" \
+				--textfile /textfile/archive-pull-panel.prom --channel panel \
+				"$PANEL_SOURCE" "$PANEL_DEST"; then
 			log ERROR "panel pull failed (source=$PANEL_SOURCE dest=$PANEL_DEST), continuing"
 		fi
 	fi
@@ -159,7 +185,10 @@ while true; do
 	# delay, not data. Skipped entirely when RECONCILED_SOURCE is unset.
 	if [ -n "${RECONCILED_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$RECONCILED_SSH_KEY" ARCHIVE_SSH_PORT="${RECONCILED_SSH_PORT:-22}" \
-				zcrypto archive pull "$RECONCILED_SOURCE" "$RECONCILED_DEST"; then
+				zcrypto archive pull \
+				--hash-scope "$hash_scope" --slice "$slice" \
+				--textfile /textfile/archive-pull-reconciled.prom --channel reconciled \
+				"$RECONCILED_SOURCE" "$RECONCILED_DEST"; then
 			log ERROR "reconciled pull failed (source=$RECONCILED_SOURCE dest=$RECONCILED_DEST), continuing"
 		fi
 	else

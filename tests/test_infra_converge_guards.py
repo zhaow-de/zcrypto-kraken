@@ -1400,9 +1400,10 @@ def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice(
 
     The trap the task's own comment names is repointing the running reader at the unit file — then
     both sides read the same bytes, the gate passes on every converge, and the relay drifts unbounded.
-    That is the Alloy drift failure `fleet-deploys.md` records, where the assert compared the
-    deployed FILE rather than what the process had loaded. Pinned as data so the readers cannot
-    quietly become the same read.
+    That is the Alloy drift failure the `Shared converge mechanics` block records
+    (`.claude/skills/zcrypto-rollout-image/SKILL.md`; duplicated verbatim in `zcrypto-bump-alloy`),
+    where the assert compared the deployed FILE rather than what the process had loaded. Pinned as
+    data so the readers cannot quietly become the same read.
     """
     tasks = load_tasks(ACCESS_TASKS)
     running = find_task(tasks, "read the ssh relay's running target")["ansible.builtin.shell"]["cmd"]
@@ -1593,3 +1594,14 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
         assert "agentboard-linux-x64/bin/agentboard" in b, f"$bin must resolve to the platform binary: {b}"
     roots = [a for a in assigns if re.search(r"\broot=", a)]
     assert roots and all("npm root -g" in r for r in roots), f"the root must come from npm's global prefix: {roots}"
+
+
+NAS = ANSIBLE / "roles" / "nas" / "tasks" / "main.yml"
+
+
+# "" is refused as AMBIGUOUS, not as CLI-rejected: env.j2 renders it as an empty assignment and both
+# compose and the entrypoint substitute `full` for it -- a committed empty value must say what it means.
+@pytest.mark.parametrize("value, expected", [("full", True), ("incremental", True), ("bogus", False), ("", False)])
+def test_nas_hash_scope_guard_refuses_what_the_cli_would(value, expected):
+    task = find_task(load_tasks(NAS), "refuse an archive-pull hash scope the CLI would reject")
+    assert all(truthy(c, {"nas_archive_pull_hash_scope": value}) for c in assert_that(task)) is expected

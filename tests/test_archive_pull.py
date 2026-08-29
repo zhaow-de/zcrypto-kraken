@@ -1,12 +1,23 @@
 import hashlib
+import re
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
+import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
-from cli.archive.pull import pull_lag_seconds, verify_tree
+from cli.archive import command
+from cli.archive.pull import (
+    _ROTATION_SLICES,
+    RsyncOutcome,
+    pull_lag_seconds,
+    slice_of,
+    transferred_parquets,
+    verify_tree,
+)
 
 
 def _seg(root: Path, pair: str, kind: str, hour: str, *, corrupt: bool = False) -> None:
@@ -84,7 +95,7 @@ def test_pull_ok_exits_zero(tmp_path, monkeypatch):
     _seg(dest, "BTC/EUR", "book", "10")
     from cli.archive import command
 
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(dest)])
     assert res.exit_code == 0
 
@@ -95,7 +106,7 @@ def test_pull_mismatch_exits_one(tmp_path, monkeypatch):
     _seg(dest, "BTC/EUR", "book", "10", corrupt=True)
     from cli.archive import command
 
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(dest)])
     assert res.exit_code == 1
 
@@ -103,7 +114,7 @@ def test_pull_mismatch_exits_one(tmp_path, monkeypatch):
 def test_pull_transport_failure_exits_two(tmp_path, monkeypatch):
     from cli.archive import command
 
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 23)
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(23, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(tmp_path)])
     assert res.exit_code == 2
 
@@ -125,7 +136,7 @@ def test_pull_no_verify_skips_verification(tmp_path, monkeypatch):
     pl.DataFrame({"x": [1, 2, 3]}).write_parquet(d / "snapshot.parquet")  # no .sha256 sidecar
     from cli.archive import command
 
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "--no-verify", "deploy@h:/src/", str(dest)])
     assert res.exit_code == 0
 
@@ -264,3 +275,211 @@ def test_prune_survives_an_unlink_failure_without_escaping(tmp_path: Path, monke
 
     assert (hours, parts) == (0, 0), "a failed unlink is not counted as pruned"
     assert (tmp_path / "BTC/EUR/book/2026/07/12/10.part0000.parquet").exists(), "the part stays on a failed delete"
+
+
+def test_transferred_parquets_reads_only_received_segment_files() -> None:
+    """The skip test is rsync's own itemization: a received regular file begins `>f`. Attribute-only
+    touches (this pull's --chmod on every run), directories, deletions and sidecars are not transfers."""
+    itemized = "\n".join(
+        [
+            ">f+++++++++ BTC/book/2026/07/12/03.parquet",
+            ">f.st...... BTC/book/2026/07/12/02.parquet",
+            ">f+++++++++ BTC/book/2026/07/12/03.parquet.sha256",
+            ".f...p..... BTC/book/2026/07/12/01.parquet",
+            "cd+++++++++ BTC/book/2026/07/12/",
+            "*deleting   BTC/book/2026/07/01/00.parquet",
+            ">f+++++++++ BTC/book/2026/07/12/03.part0001.parquet",
+        ]
+    )
+    assert transferred_parquets(itemized) == frozenset(
+        {
+            "BTC/book/2026/07/12/03.parquet",
+            "BTC/book/2026/07/12/02.parquet",
+            "BTC/book/2026/07/12/03.part0001.parquet",  # verify_tree skips parts itself; the parser stays dumb
+        }
+    )
+    assert transferred_parquets("") == frozenset()
+
+
+def test_run_rsync_itemizes_and_returns_the_transfers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ARCHIVE_SSH_KEY", "/keys/k")
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"], seen["kwargs"] = argv, kwargs
+        return subprocess.CompletedProcess(argv, 0, stdout=">f+++++++++ BTC/book/2026/07/12/03.parquet\n")
+
+    monkeypatch.setattr(command.subprocess, "run", fake_run)
+    assert command._run_rsync("h:/src/", tmp_path) == RsyncOutcome(0, frozenset({"BTC/book/2026/07/12/03.parquet"}))
+    assert "--out-format=%i %n" in seen["argv"]
+    assert seen["kwargs"]["stdout"] is subprocess.PIPE and seen["kwargs"]["text"] is True
+
+
+def test_run_rsync_without_a_key_is_a_transport_failure_with_no_transfers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("ARCHIVE_SSH_KEY", raising=False)
+    assert command._run_rsync("h:/src/", tmp_path) == RsyncOutcome(2, frozenset())
+
+
+def _rel(pair: str, kind: str, hour: str) -> str:
+    return f"{pair}/{kind}/2026/07/12/{hour}.parquet"
+
+
+NOW = datetime(2026, 7, 12, 5, tzinfo=UTC)
+
+
+def _off_slice(*names: str) -> int:
+    """A rotation index holding NONE of `names` -- so a "not hashed" assertion cannot go green because
+    a fixture path happened to land in the slice under test."""
+    taken = {slice_of(n) for n in names}
+    return next(i for i in range(24) if i not in taken)
+
+
+def test_every_rotation_slice_is_reachable_from_a_cycle_counter() -> None:
+    assert _ROTATION_SLICES == 24
+    assert {slice_of(f"x/y/2026/07/12/{i}.parquet") for i in range(2000)} == set(range(24))
+
+
+def test_full_scope_hashes_every_final(tmp_path: Path) -> None:
+    _seg(tmp_path, "BTC", "book", "00")
+    _seg(tmp_path, "BTC", "book", "01")
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 5, tzinfo=UTC))
+    assert (r.checked, r.hashed, r.ok) == (2, 2, 2)
+
+
+def test_incremental_scope_hashes_the_transfer_but_walks_the_whole_tree(tmp_path: Path) -> None:
+    """The defect this guards: narrowing the WALK. Then `checked` would read 1 and `newest_ts` would be
+    the transferred hour (01) instead of the tree's newest (03), and the pull-lag figure the entrypoint
+    calls its dead-man signal would go blank on a quiet cycle (spec 00102 D1)."""
+    for h in ("00", "01", "02", "03"):
+        _seg(tmp_path, "BTC", "book", h)
+    names = [_rel("BTC", "book", h) for h in ("00", "01", "02", "03")]
+    r = verify_tree(tmp_path, now=NOW, hash_only=frozenset({_rel("BTC", "book", "01")}), rotation_slice=_off_slice(*names))
+    assert (r.checked, r.hashed, r.ok, r.failed) == (4, 1, 1, ())
+    assert r.newest_ts == datetime(2026, 7, 12, 3, tzinfo=UTC)
+    assert r.verified == (str(tmp_path / "BTC/book/2026/07/12/01.parquet"),)
+
+
+def test_the_rotation_slice_catches_a_corrupt_final_nothing_transferred(tmp_path: Path) -> None:
+    """Both halves on one fixture: in its slice the corrupt final is hashed and fails; off-slice with
+    nothing transferred, nothing is hashed, nothing fails, and the walk still reports the newest hour."""
+    _seg(tmp_path, "BTC", "book", "00")
+    _seg(tmp_path, "BTC", "book", "01", corrupt=True)
+    bad = _rel("BTC", "book", "01")
+    r = verify_tree(tmp_path, now=NOW, hash_only=frozenset(), rotation_slice=slice_of(bad))
+    assert r.hashed >= 1 and r.failed == (str(tmp_path / "BTC/book/2026/07/12/01.parquet"),)
+    r2 = verify_tree(tmp_path, now=NOW, hash_only=frozenset(), rotation_slice=_off_slice(_rel("BTC", "book", "00"), bad))
+    assert (r2.hashed, r2.failed, r2.checked) == (0, (), 2)
+    assert r2.newest_ts == datetime(2026, 7, 12, 1, tzinfo=UTC)
+
+
+def test_a_narrowed_scope_without_a_slice_is_refused(tmp_path: Path) -> None:
+    """An incremental pull with no slice is the narrowed hash with no safety net -- never a silent default."""
+    _seg(tmp_path, "BTC", "book", "00")
+    with pytest.raises(ValueError, match="rotation slice"):
+        verify_tree(tmp_path, now=NOW, hash_only=frozenset())
+
+
+# --- spec 00102 Task 3: the `pull` command -- scope, cost, and the gauge file ----
+
+
+def _squashed(output: str) -> str:
+    """CLI output with ANSI styling removed and whitespace collapsed.
+
+    Typer's OptionHighlighter styles each hyphen of an option separately, so a raw `r.output` holds
+    `-\x1b[0m\x1b[1;36m-channel` and never the literal; the rich panel also word-wraps at COLUMNS,
+    which can split the name across lines. Strip then squash.
+    """
+    return re.sub(r"\s+", "", re.sub(r"\x1b\[[0-9;]*m", "", output))
+
+
+def _pull(args: list[str], monkeypatch, *, transferred: frozenset[str] = frozenset(), now: datetime, lines: list[str]):
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, transferred))
+    monkeypatch.setattr(command, "_utc_now", lambda: now)
+    monkeypatch.setattr(command.logger, "info", lambda msg, *a: lines.append(msg % a))
+    return CliRunner().invoke(app, ["archive", "pull", "src", *args])
+
+
+def test_pull_default_scope_is_full_and_the_line_keeps_the_dead_mans_token(tmp_path: Path, monkeypatch) -> None:
+    """`failed=0` is what `NAS · archive-pull stalled (dead-man)` matches -- the rule lives in Grafana, so
+    the suite carries the claim. `hashed == checked` with nothing transferred proves the default is full."""
+    _seg(tmp_path, "BTC", "book", "00")
+    _seg(tmp_path, "BTC", "book", "01")
+    lines: list[str] = []
+    r = _pull([str(tmp_path)], monkeypatch, now=NOW, lines=lines)
+    assert r.exit_code == 0, r.output
+    line = next(m for m in lines if m.startswith("pull complete"))
+    assert " checked=2 hashed=2 ok=2 failed=0 verify_s=" in line
+
+
+def test_pull_textfile_publishes_three_gauges_labelled_by_channel(tmp_path: Path, monkeypatch) -> None:
+    dest = tmp_path / "dest"
+    _seg(dest, "BTC", "book", "00")
+    _seg(dest, "BTC", "book", "01")
+    prom = tmp_path / "textfile" / "archive-pull-capture.prom"
+    prom.parent.mkdir()
+    off = str(_off_slice(_rel("BTC", "book", "00"), _rel("BTC", "book", "01")))
+    r = _pull(
+        [str(dest), "--hash-scope", "incremental", "--slice", off, "--textfile", str(prom), "--channel", "capture"],
+        monkeypatch,
+        transferred=frozenset({_rel("BTC", "book", "01")}),
+        now=NOW,
+        lines=[],
+    )
+    assert r.exit_code == 0, r.output
+    body = prom.read_text()
+    assert 'zcrypto_archive_pull_files_walked{channel="capture"} 2\n' in body
+    assert 'zcrypto_archive_pull_files_hashed{channel="capture"} 1\n' in body
+    assert re.search(r'^zcrypto_archive_pull_verify_seconds\{channel="capture"\} \d+\.\d+$', body, re.M)
+    assert body.count("# HELP zcrypto_archive_pull_") == 3
+    assert not prom.with_name(prom.name + ".tmp").exists()
+
+
+def test_pull_publishes_the_cost_even_when_a_hash_fails(tmp_path: Path, monkeypatch) -> None:
+    dest = tmp_path / "dest"
+    _seg(dest, "BTC", "book", "00", corrupt=True)
+    prom = tmp_path / "p.prom"
+    r = _pull(
+        [str(dest), "--textfile", str(prom), "--channel", "capture"],
+        monkeypatch,
+        now=datetime(2026, 7, 12, 0, tzinfo=UTC),
+        lines=[],
+    )
+    assert r.exit_code == 1
+    assert 'zcrypto_archive_pull_files_hashed{channel="capture"} 1\n' in prom.read_text()
+
+
+def test_pull_textfile_without_channel_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
+    r = _pull(
+        [str(tmp_path), "--textfile", str(tmp_path / "p.prom")], monkeypatch, now=datetime(2026, 7, 12, 0, tzinfo=UTC), lines=[]
+    )
+    assert r.exit_code == 2 and "--channel" in _squashed(r.output), r.output
+
+
+def test_pull_incremental_without_slice_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
+    r = _pull([str(tmp_path), "--hash-scope", "incremental"], monkeypatch, now=NOW, lines=[])
+    assert r.exit_code == 2 and "--slice" in _squashed(r.output), r.output
+
+
+def test_pull_without_textfile_writes_no_prom_file(tmp_path: Path, monkeypatch) -> None:
+    _seg(tmp_path, "BTC", "book", "00")
+    r = _pull([str(tmp_path)], monkeypatch, now=datetime(2026, 7, 12, 0, tzinfo=UTC), lines=[])
+    assert r.exit_code == 0 and list(tmp_path.rglob("*.prom")) == []
+
+
+def test_pull_unwritable_textfile_does_not_swallow_the_hash_failure_verdict(tmp_path: Path, monkeypatch) -> None:
+    """The verify cost is best-effort: a write failure (here, a missing parent -- on the NAS the
+    textfile directory is a bind mount, and `mkdir`ing it would publish into a phantom directory while
+    every check reported success) must never preempt the Exit(1) that reports the more important
+    verdict, a real hash failure -- it must be logged loud instead, and no partial file left behind."""
+    dest = tmp_path / "dest"
+    _seg(dest, "BTC", "book", "00", corrupt=True)
+    prom = tmp_path / "absent" / "p.prom"  # parent does not exist -> the write raises OSError
+    errors: list[str] = []
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, frozenset()))
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 12, 0, tzinfo=UTC))
+    monkeypatch.setattr(command.logger, "error", lambda msg, *a: errors.append(msg % a))
+    r = CliRunner().invoke(app, ["archive", "pull", "src", str(dest), "--textfile", str(prom), "--channel", "capture"])
+    assert r.exit_code == 1, r.output
+    assert any(str(prom) in e for e in errors), errors
+    assert not prom.exists()
+    assert not prom.with_suffix(prom.suffix + ".tmp").exists()

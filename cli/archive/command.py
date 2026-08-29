@@ -21,6 +21,7 @@ import os
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
@@ -33,7 +34,7 @@ from cli.archive import replay as replay_mod
 from cli.archive import scan_cache
 from cli.archive.checkpoint import CheckpointWriteError
 from cli.archive.mint import already_minted, ledger_append, mint_hour
-from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
+from cli.archive.pull import RsyncOutcome, VerifyResult, prune_stale_parts, pull_lag_seconds, transferred_parquets, verify_tree
 from cli.archive.reconcile import (
     Block,
     Gap,
@@ -79,14 +80,14 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _run_rsync(source: str, dest: Path) -> int:
+def _run_rsync(source: str, dest: Path) -> RsyncOutcome:
     ssh_key = os.environ.get("ARCHIVE_SSH_KEY")
     if not ssh_key:
         # No transport identity -> the pull can't even be attempted. Signal a transport-class
         # failure (pull() maps any non-zero to exit 2), never the bare KeyError that Click would
         # surface as exit 1 -- the contract reserves exit 1 for a hash mismatch.
         logger.error("archive pull: ARCHIVE_SSH_KEY is not set; cannot establish the ssh transport")
-        return 2
+        return RsyncOutcome(2, frozenset())
     ssh_port = os.environ.get("ARCHIVE_SSH_PORT") or "10022"  # empty-string-safe (compose may pass "")
     # StrictHostKeyChecking=yes fails closed: the VPS key must already be in the pinned known_hosts
     # (accept-new would silently trust a new key). IdentitiesOnly=yes offers only the -i key, so a
@@ -101,8 +102,37 @@ def _run_rsync(source: str, dest: Path) -> int:
     # --chmod forces the archived tree to the mandated 0775 dirs / 0664 files (spec 00048): the NAS
     # share is plain POSIX (no ACL inheritance), so without this rsync -a would preserve the VPS's
     # 0644 source perms and the tree would not be group-writable. Applied every pull -> idempotent.
-    argv = ["rsync", "-a", "--chmod=D0775,F0664", "-e", ssh_command, source, str(dest)]
-    return subprocess.run(argv).returncode
+    # --out-format lists every file rsync UPDATED (received, re-sent), one per line, and nothing else
+    # -- so this is O(changed), never O(files), and it is the whole skip test for verify_tree's
+    # incremental scope (spec 00102 D2). stderr stays attached: rsync's own errors keep reaching the
+    # container log unchanged.
+    argv = ["rsync", "-a", "--chmod=D0775,F0664", "--out-format=%i %n", "-e", ssh_command, source, str(dest)]
+    proc = subprocess.run(argv, stdout=subprocess.PIPE, text=True)
+    return RsyncOutcome(proc.returncode, transferred_parquets(proc.stdout))
+
+
+class HashScope(str, Enum):
+    full = "full"
+    incremental = "incremental"
+
+
+def _write_pull_textfile(path: Path, *, channel: str, result: VerifyResult, verify_seconds: float) -> None:
+    """This run's verify cost as textfile-collector gauges, one FILE per channel (spec 00102 D4): five
+    pulls share the collector directory on the NAS, and a shared file would carry whichever ran last.
+    tmp + os.replace, the gate export's idiom, so a scrape never reads a partial file. `files_walked` is
+    `checked` -- the denominator that makes `files_hashed` readable, and the series that grows."""
+    label = f'{{channel="{channel}"}}'
+    lines = [
+        "# HELP zcrypto_archive_pull_verify_seconds wall time spent hashing pulled segments against their sidecars this cycle",
+        f"zcrypto_archive_pull_verify_seconds{label} {verify_seconds:.3f}",
+        "# HELP zcrypto_archive_pull_files_hashed segments whose bytes were re-hashed this cycle",
+        f"zcrypto_archive_pull_files_hashed{label} {result.hashed}",
+        "# HELP zcrypto_archive_pull_files_walked segments present in the destination tree this cycle",
+        f"zcrypto_archive_pull_files_walked{label} {result.checked}",
+    ]
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text("\n".join(lines) + "\n")
+    os.replace(tmp_path, path)
 
 
 @archive_app.command()
@@ -115,36 +145,76 @@ def pull(
         help="Hash-verify pulled segments against their .sha256 sidecars (default). Use --no-verify "
         "for archive-only sources like the engine journal, which has no sidecars.",
     ),
+    hash_scope: HashScope = typer.Option(
+        HashScope.full,
+        "--hash-scope",
+        help="full: re-hash every segment under DEST. incremental: hash only the segments rsync transferred "
+        "this run plus the rotating 1/24 slice named by --slice, so every segment is still re-hashed every 24 cycles.",
+    ),
+    textfile: Optional[Path] = typer.Option(
+        None, "--textfile", help="Write this run's verify cost as Prometheus textfile-collector gauges here. Needs --channel."
+    ),
+    channel: Optional[str] = typer.Option(None, "--channel", help="The `channel` label on the --textfile gauges, e.g. capture."),
+    slice_: Optional[int] = typer.Option(
+        None,
+        "--slice",
+        min=0,
+        max=23,
+        help="The rotation index for --hash-scope incremental: the caller's cycle counter modulo 24. Required with incremental.",
+    ),
 ) -> None:
     """Pull `source` into `dest` via rsync-over-ssh, then hash-verify every segment against its
-    manifest sidecar. Exits 2 on a transport failure (partial pull, never verified as authoritative),
-    1 on a hash mismatch, 0 when every checked segment verifies."""
-    returncode = _run_rsync(source, dest)
-    if returncode != 0:
-        logger.error("archive pull: rsync failed source=%s dest=%s returncode=%s", source, dest, returncode)
+    manifest sidecar, at the requested hash scope. Exits 2 on a transport failure (partial pull, never
+    verified as authoritative) or a bad option combination, 1 on a hash mismatch, 0 when every checked
+    segment verifies."""
+    if (textfile is None) != (channel is None):
+        raise typer.BadParameter("--textfile and --channel go together")
+    if hash_scope is HashScope.incremental and slice_ is None:
+        raise typer.BadParameter("--hash-scope incremental needs --slice")
+    outcome = _run_rsync(source, dest)
+    if outcome.returncode != 0:
+        logger.error("archive pull: rsync failed source=%s dest=%s returncode=%s", source, dest, outcome.returncode)
         raise typer.Exit(2)
 
     if not verify:
         logger.info("archive pull complete (no verify) source=%s dest=%s", source, dest)
         return
 
-    result = verify_tree(dest, now=_utc_now())
+    hash_only = outcome.transferred if hash_scope is HashScope.incremental else None
+    started = time.monotonic()
+    result = verify_tree(dest, now=_utc_now(), hash_only=hash_only, rotation_slice=slice_)
+    verify_seconds = time.monotonic() - started
     lag_s = pull_lag_seconds(result, now=_utc_now())
     # T0038: drain the parts of every VERIFIED hour on the NAS. Safe by construction (only where the
     # final verified against its manifest), independent of any failed hours, and it clears the backlog
     # on the first cycle. Not gated on `result.failed`: each verified final independently justifies
     # pruning its own parts, and a single bad hour should not keep a majority-stale mirror stale.
     pruned_hours, pruned_parts = prune_stale_parts(result.verified)
+    # `failed=%d` keeps its spelling and its place: `NAS · archive-pull stalled (dead-man)` matches
+    # `failed=0` on this line (spec 00102 D5). The cost fields are here as well as in the textfile
+    # because this line is the only record when the process is killed before it can publish.
     logger.info(
-        "pull complete source=%s checked=%d ok=%d failed=%d lag_s=%s pruned_parts=%d pruned_hours=%d",
+        "pull complete source=%s checked=%d hashed=%d ok=%d failed=%d verify_s=%.1f lag_s=%s pruned_parts=%d pruned_hours=%d",
         source,
         result.checked,
+        result.hashed,
         result.ok,
         len(result.failed),
+        verify_seconds,
         lag_s,
         pruned_parts,
         pruned_hours,
     )
+    if textfile is not None:
+        # The verify cost is best-effort: an unwritable textfile must never preempt the Exit(1)
+        # below, which reports a hash failure -- the more important verdict of the two. Loud and
+        # continue, the same shape pull-entrypoint.sh uses for its own status write; never mkdir the
+        # parent, which on the NAS is a bind mount whose absence means the mount is broken, and
+        # creating it would publish into a phantom directory while every check reported success.
+        try:
+            _write_pull_textfile(textfile, channel=channel, result=result, verify_seconds=verify_seconds)
+        except OSError as exc:
+            logger.error("archive pull: publishing the verify cost failed path=%s: %s", textfile, exc)
     if result.failed:
         for path in result.failed:
             logger.error("archive pull: verify failed path=%s", path)

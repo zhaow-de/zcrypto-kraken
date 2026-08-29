@@ -158,12 +158,18 @@ The always-on NAS pull/archive tier: pull a source tree via rsync-over-ssh, then
 zcrypto archive pull <source> <dest>
 ```
 
-| Argument | Description |
+| Argument / Option | Description |
 | -- | -- |
 | `source` | rsync source spec, e.g. `deploy@host:/var/lib/zcrypto-capture/segments/`. |
 | `dest` | Local destination directory to rsync into and verify. |
+| `--hash-scope` | `full` (default): re-hash every segment under `dest`. `incremental`: hash only the segments rsync transferred this run plus the rotating 1/24 slice named by `--slice`, so every segment is still re-hashed every 24 cycles. |
+| `--slice` | The rotation index for `--hash-scope incremental`, `0`–`23`: the caller's cycle counter modulo 24. Required with `incremental`. |
+| `--textfile` | Write this run's verify cost as Prometheus textfile-collector gauges here. Needs `--channel`. |
+| `--channel` | The `channel` label on the `--textfile` gauges, e.g. `capture`. |
 
-`pull` exits **2** on an rsync transport failure (a partial pull is never verified as authoritative — this also covers a missing `ARCHIVE_SSH_KEY`), **1** if any pulled segment fails its manifest hash check, else **0**. The rsync-over-ssh transport reads `ARCHIVE_SSH_KEY` (the private key path, required), `ARCHIVE_SSH_PORT` (default `10022`), and `ARCHIVE_SSH_KNOWN_HOSTS` (a `UserKnownHostsFile` path). Host-key checking is strict (`StrictHostKeyChecking=yes`), so `ARCHIVE_SSH_KNOWN_HOSTS` must be pre-seeded with the remote host key — an unknown or changed key fails the pull closed rather than trusting it.
+`pull` exits **2** on an rsync transport failure (a partial pull is never verified as authoritative — this also covers a missing `ARCHIVE_SSH_KEY`) or a bad option combination (`--textfile` without `--channel`, or `--hash-scope incremental` without `--slice`), **1** if any pulled segment fails its manifest hash check, else **0**. The rsync-over-ssh transport reads `ARCHIVE_SSH_KEY` (the private key path, required), `ARCHIVE_SSH_PORT` (default `10022`), and `ARCHIVE_SSH_KNOWN_HOSTS` (a `UserKnownHostsFile` path). Host-key checking is strict (`StrictHostKeyChecking=yes`), so `ARCHIVE_SSH_KNOWN_HOSTS` must be pre-seeded with the remote host key — an unknown or changed key fails the pull closed rather than trusting it.
+
+With `--textfile`, `pull` publishes this run's verify cost as three gauges labelled `{channel="<name>"}` — `zcrypto_archive_pull_verify_seconds`, `zcrypto_archive_pull_files_hashed`, and `zcrypto_archive_pull_files_walked` — written atomically (tmp + rename) before the exit-1 path, so a hash failure still publishes its cost. Omitting both options publishes nothing, unchanged from before.
 
 `reconcile` reads the two raw capture mirrors and mints healed hours into a separate overlay root, leaving both mirrors immutable and canonical-by-default.
 

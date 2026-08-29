@@ -26,7 +26,7 @@ Both were found by construction, not argument: the pruned-head case made spec `0
 
 - The widening pattern is established and cheap to repeat: `CycleRecord` in `cli/engine/journal.py` owns the shape, `to_json`/`from_json` carry explicit key lists, `validate_record` is schema-aware, and an absence-tolerant read is what keeps existing artifacts loadable. `closes` went in that way.
 - Readers converge before the writer. Old `from_json` constructs from named keys and ignores unknown ones, so an additive widening is safe in both directions — but that is a property of *additive* widenings and should not be read as licence for a non-additive one.
-- Any change here re-enters the NAS gate-export's replay closure (`cli/engine/journal.py` and `cli/engine/cycle.py` are both inside it), so the gate-export replays cold. Size that window against the latest measurement in `fleet-deploys.md`, never an older cold figure from a smaller journal.
+- Any change here re-enters the NAS gate-export's replay closure (`cli/engine/journal.py` and `cli/engine/cycle.py` are both inside it), so the gate-export replays cold. Size that window against the latest measurement in `docs/reference/fleet-pins.md`'s standing constraint, never an older cold figure from a smaller journal.
 - `evidence_fingerprint` enumerates its payload explicitly and does not read `closes`; check whether it should read either new field before assuming the same.
 
 ## Done so far
@@ -45,7 +45,7 @@ Both were found by construction, not argument: the pruned-head case made spec `0
 
 **One existing guard had to be narrowed rather than extended.** `test_targets_are_identical_with_and_without_venue_state` — the read-only pin that venue truth is journaled and never consulted — asserted the two cycle artifacts were byte-identical. The record now carries one deliberately venue-derived field, so that assertion could not survive intact. It now asserts the adversarial venue read WAS journaled, then neutralises that one field and compares the rest byte-for-byte through the real serializer: everything the venue must not touch is pinned exactly as before, plus a positive assertion that was not there.
 
-**Deploy cost, unchanged from this topic's warning**: `cli/engine/journal.py` is inside the gate-export replay closure (transitively, via `command.py` from `_REPLAY_ROOTS`), so the NAS gate-export replays cold. Size the window against the latest measurement in `fleet-deploys.md`.
+**Deploy cost, unchanged from this topic's warning**: `cli/engine/journal.py` is inside the gate-export replay closure (transitively, via `command.py` from `_REPLAY_ROOTS`), so the NAS gate-export replays cold. Size the window against the latest measurement in `docs/reference/fleet-pins.md`'s standing constraint.
 
 ## Suggested next steps
 

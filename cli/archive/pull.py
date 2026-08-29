@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ class VerifyResult:
     failed: tuple[str, ...]
     newest_ts: datetime | None
     verified: tuple[str, ...] = ()  # the final paths that verified OK -- the authority `prune_stale_parts` uses
+    hashed: int = 0  # defaulted -- command.py's reconcile path (_lag) builds a VerifyResult without it
 
 
 def _hour_ts(path: Path) -> datetime | None:
@@ -31,15 +33,54 @@ def _hour_ts(path: Path) -> datetime | None:
         return None
 
 
-def verify_tree(root: Path, *, now: datetime) -> VerifyResult:
-    checked = ok = 0
+# Spec 00102 D3. A final is re-hashed in the cycle whose rotation index equals its slice, so every
+# final is re-hashed every 24 cycles with no state -- a pure function of the name and the CALLER'S
+# counter, never the clock: the NAS loop's period is 3600 + work, so `now.hour` drifts every cycle
+# and, when the period divides 24 h, fixed slices are never visited at all (measured in the spec) --
+# and the 24-cycle guarantee itself holds only across an uninterrupted run, since the counter lives
+# in the caller's memory and resets to 0 on restart.
+# The assert is spec 00062's: a counter modulo 24 can only produce [0, 23], so a larger modulus would
+# leave high slices permanently unreachable and their finals silently never re-hashed.
+_ROTATION_SLICES = 24
+assert _ROTATION_SLICES <= 24, "_ROTATION_SLICES > 24 would leave high slices unreachable from a counter modulo 24"
+
+
+def slice_of(rel_name: str) -> int:
+    """The re-verification slice of a final, in [0, _ROTATION_SLICES), from its root-relative posix name."""
+    return int(hashlib.sha256(rel_name.encode()).hexdigest()[:8], 16) % _ROTATION_SLICES
+
+
+def verify_tree(
+    root: Path, *, now: datetime, hash_only: frozenset[str] | None = None, rotation_slice: int | None = None
+) -> VerifyResult:
+    """Walk every final under `root`; hash each against its sidecar, or only a subset.
+
+    `hash_only=None` hashes every final -- the whole-archive sweep. A set of root-relative names hashes
+    those plus the finals whose `slice_of` equals `rotation_slice` -- required with a set: the caller's
+    cycle counter modulo 24, never the clock (spec 00102 D3) -- and STILL WALKS EVERY FINAL: `checked` and
+    `newest_ts` -- and through it the pull-lag figure the NAS entrypoint reads as its dead-man signal --
+    come from the walk, not the hash, so a cycle that transferred nothing keeps reporting freshness
+    (spec 00102 D1). `verified` lists only the finals hashed AND ok, so under a narrowed scope
+    `prune_stale_parts` reaches a final's parts on its arrival cycle (a transfer in a clean cycle is always hashed) or
+    within 24 cycles (its slice), never later.
+    """
+    checked = ok = hashed = 0
     failed: list[str] = []
     verified: list[str] = []
     newest: datetime | None = None
+    if hash_only is not None and rotation_slice is None:
+        raise ValueError("a narrowed hash scope needs a rotation slice")
     for p in sorted(root.rglob("*.parquet")):
         if ".part" in p.name or ".held" in p.name:  # in-progress part / quarantined held-spill, no manifest
             continue
         checked += 1
+        ts = _hour_ts(p)
+        if ts is not None and (newest is None or ts > newest):
+            newest = ts
+        rel = p.relative_to(root).as_posix()
+        if hash_only is not None and rel not in hash_only and slice_of(rel) != rotation_slice:
+            continue
+        hashed += 1
         try:
             is_ok = verify_manifest(p)
         except CaptureError, IndexError:
@@ -50,10 +91,29 @@ def verify_tree(root: Path, *, now: datetime) -> VerifyResult:
                 verified.append(str(p))
             else:
                 failed.append(str(p))
-        ts = _hour_ts(p)
-        if ts is not None and (newest is None or ts > newest):
-            newest = ts
-    return VerifyResult(checked=checked, ok=ok, failed=tuple(failed), newest_ts=newest, verified=tuple(verified))
+    return VerifyResult(checked=checked, ok=ok, failed=tuple(failed), newest_ts=newest, verified=tuple(verified), hashed=hashed)
+
+
+@dataclass(frozen=True)
+class RsyncOutcome:
+    returncode: int
+    transferred: frozenset[str]  # dest-relative names of the *.parquet files rsync received this run
+
+
+def transferred_parquets(itemized: str) -> frozenset[str]:
+    """The dest-relative `*.parquet` names in rsync's `--out-format='%i %n'` output.
+
+    `%i` is the 11-character itemize string; a received regular file begins `>f` (`>f+++++++++` new,
+    `>f.st......` re-sent). Nothing else is a transfer: `.f...p.....` is an attribute-only touch (this
+    pull's --chmod, every run), `cd+++++++++` a directory, `*deleting` a deletion. Only `>f` files are
+    worth a hash -- an unchanged file's bytes are the bytes the last hash already covered.
+    """
+    names: set[str] = set()
+    for line in itemized.splitlines():
+        flags, _, name = line.partition(" ")
+        if flags.startswith(">f") and name.endswith(".parquet"):
+            names.add(name)
+    return frozenset(names)
 
 
 def prune_stale_parts(verified_finals: tuple[str, ...]) -> tuple[int, int]:
