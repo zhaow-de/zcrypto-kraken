@@ -16,7 +16,7 @@ Live money raises the cost of a missed, misrouted, or misread alert from "lost t
 
 ## Findings so far
 
-The inventory, read from the repo on 2026-08-29 (`develop` at `48adb42c`). Blast: **C** capture data, **O** live orders/positions, **T** telemetry only.
+The inventory, read from the repo on 2026-08-29 (merge-base `10477297`). Blast: **C** capture data, **O** live orders/positions, **T** telemetry only.
 
 | # | scenario | blast | evidence today |
 | --- | --- | --- | --- |
@@ -65,7 +65,7 @@ The drill methodology proven on 2026-07-27 — fault injection in a throwaway co
 | --- | --- |
 | the scenario matrix, every row of the original draft | spec `00105` D3 (telemetry tier, executed in its iteration) and D4 (order-path tier, run at rung 1); the `/fail` route as J′; N re-run because [[T0048]]'s fix changed its path after its proof |
 | "run each in an attended window; record time-to-alert, channels, action" | `00105` D1 (the seven-part section shape) and D2 (the ops drill log, `docs/reference/drill-log.md`) |
-| "extend `infra/runbooks/` with one section per alert and dead-man; fold in the scattered fragments" | spec `00104` D1–D3 (the guard, the 53 sections, the dead-man map with the link in each check's description); [[T0157]] |
+| "extend `infra/runbooks/` with one section per alert and dead-man; fold in the scattered fragments" | spec `00104` D1–D3 (the guard, the 51 sections, the dead-man map with the link in each check's description); [[T0157]] |
 | the runbook protocol | already durable in `infra/runbooks/README.md`; the four-part order, the four section kinds and "drills produce sections" are homed by `00104` D7 |
 | the drill methodology (throwaway container from the pinned digest; textfile `.prom` injection; the injected-series latency caveat) and the attended-window gate on inducing faults | `00104` D7 → `docs/reference/fleet.md` and `.claude/rules/fleet-deploys.md` |
 | the impact-discovery steps (2026-07-27) | `00104` D7: widening-window bounding, ledger shape, activeAt-vs-own-changes, cross-checking independent producers, measurement-not-reaction when already healed — homed; **"healable equals healed proves no loss" dropped**, recorded as circular by [[T0101]] |

@@ -10,7 +10,7 @@ Split out of [[T0049]] on 2026-08-29 (owner's word), which keeps the go-live dri
 
 ## Why this matters
 
-Measured at the merge-base `10477297`: `infra/grafana/alerts.yaml` carries **83 rules; 32 point at a resolving runbook section; 51 do not**. Every one of those 53 is read on a phone, in Slack, with nothing open — the exact situation the runbook protocol exists for. And the reactive half is all there is: nothing in the repo reads alert states or history (`grafana-query.py` is PromQL-only, and its own docstring says `ALERTS{alertstate="firing"}` is structurally empty for Grafana-managed rules), nothing reads Loki, the dead-men are readable only *through* Grafana, `ops-postverify.sh` covers the ops node alone, and there is no operations journal. A quiet day is indistinguishable from a day nobody looked.
+Measured at the merge-base `10477297`: `infra/grafana/alerts.yaml` carries **83 rules; 32 point at a resolving runbook section; 51 do not**. Every one of those 51 is read on a phone, in Slack, with nothing open — the exact situation the runbook protocol exists for. And the reactive half is all there is: nothing in the repo reads alert states or history (`grafana-query.py` is PromQL-only, and its own docstring says `ALERTS{alertstate="firing"}` is structurally empty for Grafana-managed rules), nothing reads Loki, the dead-men are readable only *through* Grafana, `ops-postverify.sh` covers the ops node alone, and there is no operations journal. A quiet day is indistinguishable from a day nobody looked.
 
 ## Findings so far
 
