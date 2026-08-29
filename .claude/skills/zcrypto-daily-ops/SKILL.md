@@ -39,6 +39,8 @@ uv run python infra/scripts/ops-daily.py classify --host <the alert's host, from
 
 Exit **0** autonomous · **3** prepared. **`prepared` means prepare the action and stop.** If the classifier itself errors, treat that as prepared too: an unclassifiable step and an unrunnable classifier both mean nobody has judged this action.
 
+**The classifier is default-deny over an enumerated table of command shapes, so `prepared` also means *not yet enumerated*** — a diagnostic a runbook gained after the table was written is refused exactly like a destructive one. That is the safe direction and never a reason to widen the table in the moment: prepare the step, then add the shape and its fixture through the normal fix branch.
+
 **The host comes from the report's `Alert.host`, never from the step.** One runbook body serves all four Alloy hosts, and the same restart is routine on ops and attended on the capture pair.
 
 **Autonomous** — everything read-only, wherever it runs; telemetry-only actions on **ops, the NAS or zaccess only** (restart Alloy, re-arm a timer); and a code fix taken the normal way — fix branch, tests, subagent review, PR, merged on CI green — **when the fix is off the protected paths**.
