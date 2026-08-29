@@ -161,9 +161,11 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
     alloy = (ROLE / "files/config.alloy").read_text()
     # The directory agreeing is necessary but NOT sufficient: dropping "textfile" from
     # set_collectors leaves the block orphaned and the collector off, with the paths still matching.
-    set_collectors = next(line for line in alloy.splitlines() if "set_collectors" in line)
+    # Match the ASSIGNMENT, not any line mentioning the key: config.alloy carries comments that name
+    # `set_collectors` and `directory`, and a substring selector picks the prose and asserts against it.
+    set_collectors = next(line for line in alloy.splitlines() if line.strip().startswith("set_collectors"))
     assert '"textfile"' in set_collectors, f"the textfile collector is not enabled, so the block is inert: {set_collectors.strip()}"
-    directory = next(line for line in alloy.splitlines() if "directory =" in line).split('"')[1]
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
     # Alloy sees the host root at /host/root; the unit writes on the host itself.
     assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory} — a .prom nobody scrapes"
 

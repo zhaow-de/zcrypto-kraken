@@ -209,7 +209,7 @@ def test_every_published_series_is_admitted_by_the_keep_regex(tmp_path):
     emitted = {line.split()[0] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
 
     alloy = (ROLE.parent / "capture/files/config.alloy").read_text()
-    regex = next(line for line in alloy.splitlines() if "regex" in line and "node_load1" in line).split('"')[1]
+    regex = next(line for line in alloy.splitlines() if line.strip().startswith("regex") and "node_load1" in line).split('"')[1]
     admitted = set(regex.split("|"))
     assert not (emitted - admitted), f"published but dropped at remote_write: {sorted(emitted - admitted)}"
 
@@ -337,7 +337,7 @@ def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
     assert host_dir == capture_dir, f"engine writes {host_dir}, capture role declares {capture_dir} — same host, must agree"
 
     alloy = (ROLE.parent / "capture/files/config.alloy").read_text()
-    directory = next(line for line in alloy.splitlines() if "directory =" in line).split('"')[1]
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
     assert directory == f"/host/root{host_dir}", f"prune writes {host_dir}, Alloy reads {directory} — a .prom nobody scrapes"
 
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
