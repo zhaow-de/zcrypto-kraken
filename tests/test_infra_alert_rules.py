@@ -586,6 +586,23 @@ def test_every_runbook_anchor_is_defined_in_exactly_one_file():
     assert not dupes, f"a runbook anchor is defined in more than one file, so a citation of it is ambiguous: {dupes}"
 
 
+def test_every_alert_rule_carries_a_resolving_runbook_link():
+    """A rule with no runbook is read on a phone, in Slack, with nothing open -- the situation the
+    runbook protocol exists for. Requiring the link on EVERY rule is what keeps a new rule from
+    shipping without a procedure; the sibling test above only checks the links that are present."""
+    anchors = _runbook_anchors()
+    unlinked = []
+    for rule in _rules():
+        summary = (rule.get("annotations") or {}).get("summary") or ""
+        links = _RUNBOOK_LINK.findall(summary)
+        if not links or any(filename not in anchors.get(anchor, ()) for filename, anchor in links):
+            unlinked.append(rule["uid"])
+    assert not unlinked, (
+        f"{len(unlinked)} rule(s) carry no resolving runbook link in their summary, so a paged "
+        f"operator has nothing to open: {sorted(unlinked)}"
+    )
+
+
 def test_every_runbook_link_in_an_alert_summary_resolves():
     anchors = _runbook_anchors()
     cited, broken = [], []
