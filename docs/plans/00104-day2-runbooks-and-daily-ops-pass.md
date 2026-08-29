@@ -16,7 +16,7 @@
 - **Operator-facing text carries no internal tokens** (`.claude/rules/operator-facing-text.md`): no `T<NNNN>`, `spec NNNNN`, `iter-<N>` in alert summaries, runbook section headings, `--help`, or metric HELP. Runbook *bodies* may cite topics and specs.
 - **Runbook section shape** (`infra/runbooks/README.md`): `<a name="<uid>"></a>` on its own line, blank line, `## <uid> — ALERT` (or `— KNOWN LIMITATION` / `— PROCEDURE` / `— SCHEDULED REMINDER`), then `### What you are seeing` · `### What it means` · `### What to do` · `### Retire when`, in that order. A section serving several uids carries one `<a name>` per uid, stacked, above one heading. Every `Retire when` names something checkable.
 - **Alert summary link line**: the summary's last line is exactly `Runbook: infra/runbooks/<file>.md#<anchor>` (see `infra/grafana/alerts.yaml` line ~340 for the shape).
-- **No host is touched by Tasks 1–18.** Task 19 is where the credentialed, fleet-touching steps live, and it runs in the main loop after the merge. `grafana-push.sh`, the healthchecks.io description writes, and the first live pass are closeout steps run by the main session on the user's word. Tasks never ssh.
+- **No host is touched by Tasks 1–18, and they never ssh.** Task 19 is where the credentialed, fleet-touching steps live, and it runs in the main loop after the merge. `grafana-push.sh`, the healthchecks.io description writes and the first live pass all live in Task 19, which runs in the main loop after the merge — and the first pass may ssh under the skill's own autonomous tier, which is why the no-ssh claim is scoped to Tasks 1–18.
 - **Never print a container's environment; never run `ansible-inventory --host/--list/--graph --vars`** (CLAUDE.md `## Secrets`, `fleet-deploys.md`). Vault variable *names* may be read; values are resolved only inside `grafana_auth.vault_var`, never printed.
 - **Secrets never reach stdout, argv or a file**: the token and the healthchecks key live in locals and request headers only.
 - **Stage by explicit path, one commit-type per commit**; every commit carries `Co-Authored-By: <actual model> <noreply@anthropic.com>`.
@@ -613,7 +613,7 @@ Frontmatter `name: zcrypto-daily-ops`, a description naming when it runs (the da
 
 1. **Read** — `uv run python infra/scripts/ops-daily.py report --since 24h`. Exit 2 means a source could not be read: that is the first finding, and the report names it.
 2. **The incident loop, per alert that fired** — open its runbook section (every rule has one), follow *What you are seeing* → *What it means* → run *What to do*, and classify: **expected** (a deploy in the window explains it — the report lists them), **transient** (self-resolved, cause identified), **needs a fix**, **needs a human**.
-3. **Classify before acting, then remediate within two tiers.** Before running any runbook *What to do* step, classify it: `uv run python -c "...classify_action(<the step's text>)"` (Task 16b). `PREPARED` means prepare the action and stop — never run it. *Autonomous*: read-only anything; telemetry-only runbook steps **on ops, the NAS or zaccess only** — restart Alloy, clear a stale cache, re-arm a timer (the capture pair's Alloy goes through `zcrypto-bump-alloy`, attended); a code fix the normal way — fix branch, tests, subagent review, PR, merged on CI green **when the fix is off the protected paths**. *Prepared, then the user's word*: any restart or converge of a capture daemon or the engine; anything touching the venue account (arm file, kill file, orders); deleting data; a fix landing on the capture write path, the live trade path, canonical data, or anything a host converges; running `grafana-push.sh` after a merged rule fix. Deploying any fix to a host is a converge — always attended. **Every ssh/sudo step runs in the main loop, never in a dispatched subagent** — the permission gate blocks it there and the step dies where nobody sees the prompt.
+3. **Classify before acting, then remediate within two tiers.** Before running any runbook *What to do* step, classify it — `uv run python infra/scripts/ops-daily.py classify "<the step's text>"` — and read the exit code: 0 autonomous, 3 prepared. **`PREPARED` means prepare the action and stop.** If the command itself errors, treat that as `PREPARED` too: an unclassifiable step and an unrunnable classifier both mean nobody has judged this action. *Autonomous*: read-only anything; telemetry-only runbook steps **on ops, the NAS or zaccess only** — restart Alloy, clear a stale cache, re-arm a timer (the capture pair's Alloy goes through `zcrypto-bump-alloy`, attended); a code fix the normal way — fix branch, tests, subagent review, PR, merged on CI green **when the fix is off the protected paths**. *Prepared, then the user's word*: any restart or converge of a capture daemon or the engine; anything touching the venue account (arm file, kill file, orders); deleting data; a fix landing on the capture write path, the live trade path, canonical data, or anything a host converges; running `grafana-push.sh` after a merged rule fix. Deploying any fix to a host is a converge — always attended. **Every ssh/sudo step runs in the main loop, never in a dispatched subagent** — the permission gate blocks it there and the step dies where nobody sees the prompt.
 4. **Read the dashboards numerically** — the verdict tiles' own PromQL, through the report; no pixels.
 5. **Evaluate the due SCHEDULED REMINDER sections** (`refdata-sweep-due`, `healable-threshold-rederivation-due`).
 6. **Append the journal entry** on the `ops-journal` branch, commit; at a month change, open the finished month's PR and merge it on CI green, then re-cut the branch from `develop`.
@@ -631,6 +631,10 @@ A closing table of failure modes in the repo's style: *the impulse* → *the rea
 Run: `uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_cli_help_hygiene.py -q 2>&1 | tail -2`
 Expected: pass — no `WP<N>`, no `T<NNNN>` on an operator surface. (A docs diff reaches this guard; it is not a `cli/`-only test.)
 
+- [ ] **Step 3b: Run the skill's own command once**
+
+The skill's step 3 names a command; run it verbatim on one real runbook line and confirm the exit code matches the printed tier. A procedure whose first instruction has never been executed is the part that fails at 03:00.
+
 - [ ] **Step 4: Commit — `claude` kind, on its own**
 
 ```bash
@@ -640,59 +644,89 @@ git commit -m "claude(config): the daily-ops pass, and the four rules its conven
 
 ---
 
-### Task 16b: the tier classifier, on real runbook text
+### Task 16b: the tier classifier — what an action DOES, then what it touches
 
-**Files:** Modify `infra/scripts/ops_daily.py`, `tests/test_ops_daily.py`
+**Files:** Modify `infra/scripts/ops_daily.py`, `infra/scripts/ops-daily.py`, `tests/test_ops_daily.py`
 
 **Interfaces:**
-- Produces: `Tier(Enum)` with `AUTONOMOUS` / `PREPARED`, and `classify_action(text: str) -> Tier`.
-- **Its production caller is the skill** (Task 16): step 3 instructs the agent to classify every runbook *What to do* step it is about to run, and to stop at `PREPARED`. The input is therefore **the runbook's own prose** — which is why the fixtures below are verbatim excerpts from real sections rather than a shape invented for the test. Discharges spec `00104`'s Verification line "D6 bounds".
+- Produces: `Tier(Enum)` with `AUTONOMOUS` / `PREPARED`; `classify_action(text: str) -> Tier`; and the CLI subcommand **`ops-daily.py classify "<text>"`**, which prints the tier and exits 0 for `AUTONOMOUS`, 3 for `PREPARED`.
+- **Its production caller is the skill** (Task 16 step 3), and the call is that subcommand — not a `python -c` incantation. `infra/scripts/` is not a package (Task 10, Task 11), so an import line in a skill would be the one part nobody verifies; a subcommand is executable, testable, and has an exit code the agent can branch on.
 
-- [ ] **Step 1: Write the failing test on real runbook text**
+**The precedence, which is the whole decision.** A step is judged by **what it does first, what it touches second**:
 
-Take the two inputs verbatim from sections that exist after Tasks 3–9 — one whose remedy touches a capture daemon, one whose remedy is Alloy on ops — so the classifier is exercised on exactly what the agent will read:
+1. A **mutating** action naming a **protected** object → `PREPARED`. ("Stop the daemon, then read its logs" is mutating and protected — it does not become autonomous because it also reads.)
+2. Otherwise, a purely **read-only** action → `AUTONOMOUS`, *whatever it names*. Most capture and engine diagnostics are read-only steps that name the protected object — `sudo docker inspect --format '{{.RestartCount}}' zcrypto-capture` — and a rule that prepared those would halt the pass at step 1 of every incident it exists for.
+3. Otherwise, a mutating action on a telemetry object on ops / the NAS / zaccess → `AUTONOMOUS`.
+4. Otherwise → **`PREPARED`**. An action this cannot recognise is one nobody anticipated, and the unattended pass must not be the first to try it. A change making this default permissive is wrong however reasonable it looks.
+
+- [ ] **Step 1: Write the failing tests — a true minimal pair, plus the cases the pair cannot reach**
+
+The pair differs in **one** dimension: same verb, same tool, different target. Both lines are real runbook text (`infra/runbooks/observability.md` step 5; `infra/runbooks/capture-daemon.md` step 4's own `docker` form):
 
 ```python
-_PROTECTED = (
-    "Stop the capture daemon on the affected host: `sudo systemctl stop zcrypto-capture`, "
-    "then start it again once the disk is below the watermark."
-)
-_TELEMETRY_ONLY = (
-    "Restart Alloy on the ops node: `sudo docker restart grafana-alloy`, "
-    "then confirm `up{host=\"ops\"}` returns 1."
-)
+_ALLOY_ON_OPS = "Restart it — safe, and the usual fix: `sudo docker restart grafana-alloy`."
+_DAEMON_ON_CAPTURE = "Restart it — the fix, and an ATTENDED action: `sudo docker restart zcrypto-capture`."
 
 
 @pytest.mark.parametrize("text,expected", [
-    (_PROTECTED, ops_daily.Tier.PREPARED),
-    (_TELEMETRY_ONLY, ops_daily.Tier.AUTONOMOUS),
+    (_ALLOY_ON_OPS, ops_daily.Tier.AUTONOMOUS),
+    (_DAEMON_ON_CAPTURE, ops_daily.Tier.PREPARED),
 ])
-def test_the_tier_is_decided_by_what_the_action_touches(text, expected):
-    # Both are runbook steps that restart something; only WHAT they restart differs, so a
-    # classifier keyed on anything else passes one and fails the other.
+def test_the_tier_turns_on_the_target_alone(text, expected):
+    # Same verb, same tool, same sentence shape -- only the named target differs, so a classifier
+    # keyed on the verb, on `docker`, or on `sudo` passes both and is caught here.
     assert ops_daily.classify_action(text) is expected
 
 
+@pytest.mark.parametrize("text", [
+    "sudo docker inspect --format '{{.RestartCount}}' zcrypto-capture",
+    "Read the engine's gate: `sudo docker exec zcrypto-engine zcrypto engine exec-status`.",
+])
+def test_a_read_only_step_is_autonomous_even_when_it_names_a_protected_object(text):
+    """Most capture and engine diagnostics name the protected thing precisely because they are
+    ABOUT it; preparing those would stop the pass at step 1 of every incident."""
+    assert ops_daily.classify_action(text) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize("text", [
+    "Stop the daemon, then read its logs: `sudo systemctl stop zcrypto-capture`, then `docker logs`.",
+    "Restart the engine container: `sudo systemctl restart zcrypto-engine`.",
+    "Clear the kill file: `sudo rm /var/lib/zcrypto-engine/exec/kill`.",
+    "Push the rules: `bash infra/scripts/grafana-push.sh`.",
+    "Converge the secondary: `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-red`.",
+])
+def test_a_mutating_step_on_a_protected_object_is_prepared(text):
+    """The dangerous half of the boundary -- engine, venue account, deletion, converge, rule push --
+    pinned by name, because a pair of fixtures cannot reach it."""
+    assert ops_daily.classify_action(text) is ops_daily.Tier.PREPARED
+
+
 def test_an_unrecognised_action_is_prepared_never_autonomous():
-    """The default decides what happens to a step nobody anticipated -- at 03:00, unattended."""
     assert ops_daily.classify_action("Frobnicate the widget.") is ops_daily.Tier.PREPARED
+
+
+def test_the_classify_subcommand_is_what_the_skill_calls(capsys):
+    """The skill branches on this exit code; an incantation nobody runs is how it silently rots."""
+    assert ops_daily.main(["classify", _ALLOY_ON_OPS]) == 0
+    assert ops_daily.main(["classify", _DAEMON_ON_CAPTURE]) == 3
+    assert "prepared" in capsys.readouterr().out
 ```
 
-- [ ] **Step 2: red** — `Tier` and `classify_action` do not exist.
+- [ ] **Step 2: red** — `Tier`, `classify_action` and the `classify` subcommand do not exist.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Implement the four-step precedence above.**
 
-`classify_action` returns `PREPARED` when the text names a capture host or daemon, the engine, the venue account (arm file, kill file, orders), a data deletion, a converge, an image re-pin, or `grafana-push.sh`; `AUTONOMOUS` only when it names a read-only action, or a telemetry-only action **and** a host among ops / NAS / zaccess. **Anything else is `PREPARED`** — an unclassifiable action is never acted on. The matching is on named tokens, not sentence shape; the docstring records that the default is the safety property, so a later "improvement" that makes the default permissive is visibly wrong.
+Three token sets, each a named list with the reason in one clause: `_READ_ONLY_VERBS` (inspect, logs, cat, grep, status, get, read, query, show, ls, journalctl without a mutating flag), `_MUTATING_VERBS` (stop, start, restart, rm, delete, prune, touch, push, converge, arm, submit, kill), `_PROTECTED_OBJECTS` (the capture hosts and daemon, the engine, the exec control files, the venue-account verbs, `converge.sh`/`site.yml`, `grafana-push.sh`, an image re-pin). A step counts as read-only when it contains a read-only verb and **no** mutating verb. The docstring records that step 4's default is the safety property.
 
-- [ ] **Step 4: green, then prove it bites**
+- [ ] **Step 4: green, then prove the pair bites**
 
-Run the two tests. Then change `_TELEMETRY_ONLY`'s host from `ops` to `zcrypto` and confirm the parametrised case fails — the pair differs in exactly the dimension the classifier reads, so a degenerate fixture cannot pass both.
+Run the suite. Then change `_ALLOY_ON_OPS`'s target from `grafana-alloy` to `zcrypto-capture` and confirm the parametrised case flips to failing — the pair differs in exactly one dimension, so nothing else can be carrying the result.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add infra/scripts/ops_daily.py tests/test_ops_daily.py
-git commit -m "feat(infra): the tier is decided by what an action touches, and the default refuses"
+git add infra/scripts/ops_daily.py infra/scripts/ops-daily.py tests/test_ops_daily.py
+git commit -m "feat(infra): the tier turns on what an action does, then on what it touches"
 ```
 
 ---
