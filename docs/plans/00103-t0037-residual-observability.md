@@ -39,9 +39,9 @@ ______________________________________________________________________
 
 ```python
 def _count_if_early(self, hour: datetime) -> None:
-    """Count an hour published before our own clock said it was over (spec 00103 D1/D2).
+    """Count an hour finalized before our own clock said it was over (spec 00103 D1/D2).
 
-    This is the visible signature of T0037's residual (a) (resolved, records why). Earliness is
+    This is the visible signature of T0037's residual (a). Earliness is
     structurally bounded by MAX_TS_AHEAD -- every oracle witness is clamped at now + MAX_TS_AHEAD
     and `append()` holds anything above the confirmed hour -- so there is no second band to split.
     It does NOT see a LEADING clock's truncation: that measurement is taken with the same wrong
@@ -84,7 +84,7 @@ if self._current_hour is None:
     # Spec 00103 D5. The first event's hour is exchange time, and it is the ONLY event that can
     # open an hour behind the wall clock: from here on `floor` is `_current_hour`, so the
     # late-event guard refuses a past-dated stamp before it reaches us. An hour opened materially
-    # behind our clock is the past-dated residual (T0037, resolved, records why) -- it can commit a
+    # behind our clock is the past-dated residual (T0037) -- it can commit a
     # final for an hour that was never captured, and redeem a quarantined `.held` spill on the way.
     if hour < _hour_start(_utcnow()):
         self.ts_past_dated_hour += 1
@@ -109,7 +109,7 @@ yield CounterMetricFamily(
     # Spec 00103 D1: T0037's residual (a), made visible. Unlabelled on purpose -- earliness is
     # bounded by MAX_TS_AHEAD by construction, so there is no second band. A LEADING clock's
     # truncation is NOT here (D1b); zcrypto-capture-clock-skew is that case's only detector.
-    "Hours published before the wall clock said they were over, summed across every pair and kind.",
+    "Hours FINALIZED before the wall clock said they were over, summed across every pair and kind.",
     value=sum(w.hour_finalized_early for w in writers),
 )
 yield CounterMetricFamily(

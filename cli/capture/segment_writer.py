@@ -339,7 +339,7 @@ class SegmentWriter:
         self.segment_bytes = 0
         self.rows_held = 0
         self.rows_quarantined = 0
-        self.hour_finalized_early = 0  # hours published before our clock said they were over (`_count_if_early`)
+        self.hour_finalized_early = 0  # hours FINALIZED before our clock said they were over (`_count_if_early`)
         self._recover()
 
     def append(self, event: dict) -> None:
@@ -697,9 +697,9 @@ class SegmentWriter:
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)
 
     def _count_if_early(self, hour: datetime) -> None:
-        """Count an hour published before our own clock said it was over (spec 00103 D1/D2).
+        """Count an hour finalized before our own clock said it was over (spec 00103 D1/D2).
 
-        This is the visible signature of T0037's residual (a) (resolved, records why). Earliness is
+        This is the visible signature of T0037's residual (a). Earliness is
         structurally bounded by MAX_TS_AHEAD -- every oracle witness is clamped at now + MAX_TS_AHEAD
         and `append()` holds anything above the confirmed hour -- so there is no second band to split.
         It does NOT see a LEADING clock's truncation: that measurement is taken with the same wrong
