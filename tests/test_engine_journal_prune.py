@@ -295,7 +295,7 @@ def test_the_unit_invokes_the_script_the_role_installs_with_the_argument_order_i
         for line in (ROLE / "tasks/main.yml").read_text().splitlines()
         if line.strip().startswith("dest:") and "zcrypto-engine-journal-prune" in line
     )
-    assert binary in install_dest, f"the unit runs {binary}, the role installs {install_dest}"
+    assert install_dest.split(":", 1)[1].strip() == binary, f"the unit runs {binary}, the role installs {install_dest}"
 
     assert journal_dir == f"{_role_vars()['engine_state_dir']}/journal"
     assert days == _role_vars()["engine_journal_retention_days"]

@@ -384,6 +384,7 @@ def _bash_harness(tmp_path):
     script = _ENV.from_string(TEMPLATE.read_text()).render(**context)
     target = '"{}/ops-verify-replay.prom"'.format(CONTEXT["ops_textfile_dir"])
     # str.replace no-ops silently on a miss, and the un-substituted target is the LIVE ops path.
+    # config-selector-ok: existence check for the very string the next line str.replace()s
     assert target in script, f"the textfile path did not match {target!r} -- the harness would write to the real path"
     script = script.replace(target, f'"{prom}"')
     env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
