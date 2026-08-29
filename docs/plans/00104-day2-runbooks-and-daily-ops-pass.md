@@ -609,7 +609,7 @@ git commit -m "feat(ops): the operations journal, one entry per pass, shape-test
 **The precedence, in order:**
 
 1. A **mutating** action naming a **protected** object → `PREPARED`. ("Stop the daemon, then read its logs" does not become autonomous because it also reads.)
-2. Otherwise a purely **read-only** action → `AUTONOMOUS`, whatever it names and wherever it runs. Most capture and engine diagnostics are read-only steps that name the protected object; preparing those would halt the pass at step 1 of every incident it exists for.
+2. Otherwise a **provably read-only** action → `AUTONOMOUS`, whatever it names and wherever it runs. Most capture and engine diagnostics are read-only steps that name the protected object; preparing those would halt the pass at step 1 of every incident it exists for. **Provably** is the whole word: the step is read-only only when **every command in it** is on the read-only allowlist and carries no mutating flag. A test of the form "contains a read verb and no *known* mutating verb" is an allowlist of mutations — a denylist in disguise — and anything not enumerated reads as safe. The real line `sudo journalctl --vacuum-size=200M` (`infra/runbooks/capture-daemon.md`, the watermark section) is the proof: `journalctl` reads, `--vacuum-size` deletes the journal, and on the capture primary that is data loss authorised by an unattended pass.
 3. Otherwise a mutating action on a **telemetry object** with `host` in `{ops, nas, zaccess}` → `AUTONOMOUS`.
 4. Otherwise → **`PREPARED`** — including a mutating telemetry action with **no host given or a capture host**: not knowing where an action lands is not permission to run it. A change making this default permissive is wrong however reasonable it looks.
 
@@ -638,8 +638,8 @@ def test_the_same_step_is_routine_on_ops_and_attended_on_the_capture_pair(host, 
 @pytest.mark.parametrize("text", [
     "Read the ladder in the log: `sudo docker logs zcrypto-capture 2>&1 | grep -E \"checksum desync\"`.",
     "`uv run python infra/scripts/grafana-query.py 'zcrypto_capture_book_desynced'`",
-    "`sudo docker inspect --format '{{.RestartCount}}' zcrypto-capture`",
-    "`sudo journalctl -u zcrypto-capture --since -1h`",
+    "**Engine-side**: `sudo docker inspect --format '{{.State.Status}} {{.RestartCount}}' zcrypto-engine`",
+    "**Prove the prune ring is alive**: `systemctl list-timers 'zcrypto-*'` and `journalctl -u zcrypto-capture-prune -n 3 --no-pager`",
     "Read the engine's gate: `sudo docker exec zcrypto-engine zcrypto engine exec-status`.",
 ])
 def test_a_read_only_step_is_autonomous_on_any_host_even_naming_a_protected_object(text):
@@ -656,6 +656,8 @@ def test_a_read_only_step_is_autonomous_on_any_host_even_naming_a_protected_obje
     "Clear the kill file: `sudo rm /var/lib/zcrypto-engine/exec/kill`.",
     "Push the rules: `bash infra/scripts/grafana-push.sh`.",
     "Converge the secondary: `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-red`.",
+    # capture-daemon.md, the watermark section: `journalctl` reads, `--vacuum-size` deletes.
+    "**The systemd journal**: `sudo journalctl --vacuum-size=200M`.",
 ])
 def test_a_mutating_step_on_a_protected_object_is_prepared_on_any_host(text):
     assert ops_daily.classify_action(text, host="ops") is ops_daily.Tier.PREPARED
@@ -676,7 +678,7 @@ def test_the_classify_subcommand_is_what_the_skill_calls(capsys):
 
 - [ ] **Step 3: Implement the four rules**
 
-Four named token sets, each with its reason in one clause: `_READ_ONLY_VERBS` (logs, grep, journalctl, inspect, cat, status, exec-status, query, grafana-query, show, ls), `_MUTATING_VERBS` (stop, start, restart, rm, delete, prune, touch, push, converge, arm, submit, kill), `_PROTECTED_OBJECTS` (`zcrypto-capture`, `zcrypto-engine`, the exec control files, `converge.sh`, `site.yml`, `grafana-push.sh`, an image re-pin) and `_TELEMETRY_OBJECTS` (`grafana-alloy`, `alloy`, a `.timer`, a textfile exporter). Host matching is **exact against `{ops, nas, zaccess}`**, never a substring — `zcrypto` is a prefix of `zcrypto-ops` and a substring test would hand every ops unit to rule 3. A step is read-only when it contains a read-only verb and **no** mutating verb. The docstring records that rule 4 is the safety property.
+**Classify the commands, not the prose.** Extract every backtick-quoted command in the step; a step with no command is `PREPARED` (nothing to judge). A command is read-only when its `(binary, subcommand)` pair is on `_READ_ONLY_COMMANDS` — `docker logs`, `docker inspect`, `docker ps`, `journalctl`, `systemctl status`, `systemctl list-timers`, `cat`, `grep`, `ls`, `zcrypto engine exec-status`, `grafana-query.py` — **and** it carries no flag on `_MUTATING_FLAGS` (`--vacuum*`, `--force`, `-f`, `--apply`, `--delete`, `--prune`, `--rm`). A step is read-only only when **every** extracted command is read-only; one unrecognised binary and it is not. `_PROTECTED_OBJECTS` (`zcrypto-capture`, `zcrypto-engine`, the exec control files, `converge.sh`, `site.yml`, `grafana-push.sh`, an image re-pin) and `_TELEMETRY_OBJECTS` (`grafana-alloy`, `alloy`, a `.timer`, a textfile exporter) carry rules 1 and 3. Host matching is **exact against `{ops, nas, zaccess}`**, never a substring, so a host the map does not know can never satisfy rule 3. The docstring records that rules 2 and 4 are both default-deny, and that a change making either permissive is wrong however reasonable it looks.
 
 - [ ] **Step 4: green, then prove the pair bites**
 
