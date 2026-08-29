@@ -293,7 +293,7 @@ def test_the_unit_invokes_the_script_the_role_installs_with_the_argument_order_i
     install_dest = next(
         line.strip()
         for line in (ROLE / "tasks/main.yml").read_text().splitlines()
-        if "zcrypto-engine-journal-prune" in line and "dest:" in line
+        if line.strip().startswith("dest:") and "zcrypto-engine-journal-prune" in line
     )
     assert binary in install_dest, f"the unit runs {binary}, the role installs {install_dest}"
 
