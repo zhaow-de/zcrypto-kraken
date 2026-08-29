@@ -49,7 +49,7 @@ The drill methodology proven on 2026-07-27 — fault injection in a throwaway co
 - **The monthly reference-data routine is DELIVERED as a runbook section — 2026-08-04, [[T0113]] resolved**: `refdata-sweep-due` in `infra/runbooks/reference-data.md`, driven by a scheduled `#zcrypto` reminder, procedure `/zcrypto-refdata-sweep`. The pre-go/no-go run is an input to the decision and lives in [[T0085]].
 - **The day-2 runbook half is split out as [[T0157]]** (2026-08-29): runbook coverage of every alert, the daily pass, and the homing of this topic's principles all belong there.
 
-## Suggested next steps
+## Suggested next steps (superseded — every item is mapped in `## Resolution` below)
 
 - **Define the program** — spec `00105`, written 2026-08-29: the scenario tiers — order-path drills that ride rung 1 (A, B, D, E, F2, G), telemetry drills runnable now in attended windows (C, I, K, O, P, Q, R), and incident-proven scenarios re-verified only when their code changes (F, H, J, L, M, N, T); per scenario the induction instrument, what must fire and within what bound, what the operator does, and what is recorded.
 - **The red button is its own spec and PR** (owner ruling 2026-08-29, recorded in `00105` D4 — ruled whole-account, market orders): a `zcrypto engine flatten` primitive — kill file written first so nothing re-opens, cancel every resting order, close every position to EUR with a bounded taker leg, typed confirmation, journaled — on the live trade path, so Fable-floor review. Drill B runs against the rung-1 probe positions once it exists.

@@ -101,7 +101,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0119 — the delta formula: target − held](T0119-delta-formula-target-minus-held.md) — intended orders are computed against previously journaled intent, not venue holdings; invisible in shadow, load-bearing with fills. `target − actually held` makes unplaced deltas accumulate and self-place on crossing `ordermin` — rung 3's mechanism, and the fix for the intent-vs-holdings drift defect.
 
-- [T0157 — day-2 operations: every alert has a runbook, and a daily pass reads the fleet](T0157-day2-operations-runbooks-and-daily-pass.md) — 83 alert rules, 53 with no runbook (measured 2026-08-29), and no instrument reads alert states, Loki, or the dead-men outside Grafana. Spec `00104`: the alert-requires-runbook guard, 53 sections across new subsystem files, `ops-daily.py`, a monthly Markdown journal on a standing `ops-journal` branch, and the `/zcrypto-daily-ops` skill that follows the runbook for whatever fired. Ripe now.
+- [T0157 — day-2 operations: every alert has a runbook, and a daily pass reads the fleet](T0157-day2-operations-runbooks-and-daily-pass.md) — 83 alert rules, 51 with no runbook (measured 2026-08-29), and no instrument reads alert states, Loki, or the dead-men outside Grafana. Spec `00104`: the alert-requires-runbook guard, 51 sections across new subsystem files, `ops-daily.py`, a monthly Markdown journal on a standing `ops-journal` branch, and the `/zcrypto-daily-ops` skill that follows the runbook for whatever fired. Ripe now.
 
 ### Partially done<a name="partially-done-1"></a>
 
