@@ -106,6 +106,6 @@ The skill's dispatch text carries the host-touching rule: every ssh/sudo step ru
 
 ## Out of scope
 
-- The drill program and the drill log — [[T0049]].
+- The drill program and the drill log — spec `00105` ([[T0049]] resolved by transfer 2026-08-29).
 - The red button (`zcrypto engine flatten`) — its own spec and PR, ruled 2026-08-29.
 - Evaluating open topics' `ripe_when` triggers inside the daily pass — dropped for this spec; that sweep belongs to grooming, and a pass that also groomed would be two routines.

@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: "the engine is armed for the first time — the rung-1 probe window opening — because the order-path drills need a real resting order to act on; the telemetry-tier drills and the program's spec need no event and run now."
+status: resolved
 ---
 
 # Go-live drill program
@@ -57,3 +56,26 @@ The drill methodology proven on 2026-07-27 — fault injection in a throwaway co
 - **The ops drill log** the master plan names: one record per drill run — scenario, date, host, induction, time-to-alert, channels, operator action, verdict, follow-ups — and each drilled scenario lands as a runbook section, never as report prose.
 - **The Grafana-out-for-hours procedure** (C) needs no event: what to rely on for the duration (the dead-man domain, the daily pass's direct healthchecks.io read, `docker logs` on hosts), which rules are blind on return, and what to re-verify by value.
 - Human item, during any drill window: on the phone's Slack app, confirm a mobile push arrives for one `metrics`-receiver alert and one `logs`-receiver alert; record delivery latency for both in the drill log.
+
+## Resolution
+
+**Resolved 2026-08-29 by transfer: every item this topic carried now lives in a committed spec or a sibling topic, and the drills themselves execute as spec `00105`'s iteration, not as a topic.** The map, item by item, so nothing is lost:
+
+| what T0049 carried | where it lives now |
+| --- | --- |
+| the scenario matrix, every row of the original draft | spec `00105` D3 (telemetry tier, executed in its iteration) and D4 (order-path tier, run at rung 1); the `/fail` route as J′; N re-run because [[T0048]]'s fix changed its path after its proof |
+| "run each in an attended window; record time-to-alert, channels, action" | `00105` D1 (the seven-part section shape) and D2 (the ops drill log, `docs/reference/drill-log.md`) |
+| "extend `infra/runbooks/` with one section per alert and dead-man; fold in the scattered fragments" | spec `00104` D1–D3 (the guard, the 53 sections, the dead-man map with the link in each check's description); [[T0157]] |
+| the runbook protocol | already durable in `infra/runbooks/README.md`; the four-part order, the four section kinds and "drills produce sections" are homed by `00104` D7 |
+| the drill methodology (throwaway container from the pinned digest; textfile `.prom` injection; the injected-series latency caveat) and the attended-window gate on inducing faults | `00104` D7 → `docs/reference/fleet.md` and `.claude/rules/fleet-deploys.md` |
+| the impact-discovery steps (2026-07-27) | `00104` D7: widening-window bounding, ledger shape, activeAt-vs-own-changes, cross-checking independent producers, measurement-not-reaction when already healed — homed; **"healable equals healed proves no loss" dropped**, recorded as circular by [[T0101]] |
+| the healthcheck-skill direction (2026-07-21 grooming) | it is `00104` D6 — `/zcrypto-daily-ops` |
+| the kill criteria and revalidation routines this runbook "owes" | [[T0122]] owns them; they become sections when a signal fires (`infra/runbooks/README.md` scope) |
+| the mobile-push human item | `00105` D3, scenario Q |
+| the Grafana-out-for-hours procedure | `00105` D5 |
+| the red button | ruled 2026-08-29 (whole account, market orders); spec `00106`, its own PR — registered in the memo queue |
+| the reboot-window overlap check; drills for [[T0039]] / [[T0043]] | dropped with reasons in `00105` D1 |
+| the go/no-go clause's three named drills and its "ops drill log" artifact | `00105` D4 (E, F2, G) and D2; RUNG 3's dependency in the memo re-pointed from this topic to the drill log |
+| the refdata routine | delivered 2026-08-04 as `refdata-sweep-due` ([[T0113]]) |
+
+The one open sibling this leaves in place: [[T0027]]'s remaining step — order-state reconciliation across a mid-order reboot — is exactly `00105`'s drills A1/A2/G, and T0027 now names them as its instrument.

@@ -53,4 +53,4 @@ The process the flip must come with (attended mode creates a new gap — a reboo
 
 ## Suggested next steps
 
-- **(autonomous — a 6b requirement, still open) Confirm order-state reconciliation survives a reboot _mid-order-submission_.** The day-1 proof covers only the **shadow / data-only** cycle (exec disabled, no live orders); a reboot landing during a live 6b order round-trip is a distinct, untested path — [[T0018]].
+- **(autonomous — a 6b requirement, still open) Confirm order-state reconciliation survives a reboot _mid-order-submission_.** The day-1 proof covers only the **shadow / data-only** cycle (exec disabled, no live orders); a reboot landing during a live 6b order round-trip is a distinct, untested path — [[T0018]]. **Instrument, 2026-08-29: spec `00105`'s drills A1, A2 and G — this step passes when those drill-log entries read `pass`.**

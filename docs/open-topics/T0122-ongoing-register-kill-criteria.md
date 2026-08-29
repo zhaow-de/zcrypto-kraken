@@ -17,7 +17,7 @@ A retire-decision without pre-registered criteria is taken under drawdown stress
 
 - The revalidation cadence has natural registry mechanics already (trials in the append-only registry, DSR at true trial count) — the gap is the schedule and its trigger, not the instrumentation.
 - The kill criteria's numeric inputs exist: the DD ladder is deployed config (the governor's `((0.075, 0.5), (0.11, 0.25), (0.15, 0.0))`), and the validation CI comes from the deployable record's registered verdict. What is missing is the owner-ratified thresholds and where they live so the check is mechanical.
-- [[T0049]]'s runbook is the operating surface for recurring routines (it already carries [[T0113]]'s monthly sweep) — the register lands there, not in a new document.
+- `infra/runbooks/` ([[T0157]], spec `00104`; [[T0049]] resolved by transfer 2026-08-29) is the operating surface for recurring routines (it already carries [[T0113]]'s monthly sweep) — the register lands there, not in a new document.
 
 ## Done so far
 

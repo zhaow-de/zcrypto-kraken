@@ -1,6 +1,6 @@
 # 00105 — the go-live drill program: induce the unexpected, measure what fires, land the response
 
-Advances [[T0049]] to the point where only the rung-1 window blocks it. One branch, one PR, cut after spec `00104`'s PR ([[T0157]]) merges — the Grafana-dark procedure lands in a file that PR creates.
+Executes the program [[T0049]] defined (resolved by transfer 2026-08-29) to the point where only the rung-1 window blocks it. One branch, one PR, cut after spec `00104`'s PR ([[T0157]]) merges — the Grafana-dark procedure lands in a file that PR creates.
 
 | # | component | what it buys |
 | --- | --- | --- |
@@ -44,7 +44,7 @@ Two files, split by tier so neither crosses the README's ~12-section bar: `drill
 
 Fitted around the probe window's existing Drill A/B (`engine-procedures.md#engine-probe-window` after `00104`). Every plan is signed off by the owner, never inside the final 60 minutes before a boundary, per that procedure.
 
-- **E kill switch**: with a resting plan, `sudo touch …/exec/kill` — the 5-s poll revokes the resting order; `exec-status` reads `level=none`; then the alert-path half: `zcrypto-engine-exec-kill-tripped` on Slack within bound. Reset per the runbook (a hand-placed file carries no withdrawn-fill reason).
+- **E kill switch**: with a resting plan, `sudo touch …/exec/kill` — the 5-s poll revokes the resting order; `exec-status` reads `level=none`; then the alert-path half: `zcrypto-engine-exec-kill-tripped` on Slack within bound. Reset per the runbook (a hand-placed file carries no withdrawn-fill reason). **E′, the phone-reachable halt** the master plan §10 names: the same kill-file placement done from the phone — an ssh client on the device, the fleet's access path, `sudo touch` — timed from decision to `level=none`, with the device and client recorded; the drill establishes whether the halt is reachable at all from outside the workstation, which nothing today proves.
 - **G restart → reduce-only**: with a resting plan, `sudo systemctl stop zcrypto-engine`, then start. Establishes first what the venue did with the resting GTC order during the stop — **unverified in the repo today** — then the hold latches (`reasons=…restart_hold`) and the adopt pass cancels the opener; ledger and Kraken's open-orders page read by value.
 - **F2 engine-side WS loss**: with a resting plan, disconnect the engine container's network — quote silence > 30 s revokes within the next tick; reconnect; the data socket's reconnect lines read in `docker logs`.
 - **A1 primary reboot, no fill**: a far-from-touch order resting; attended reboot of the primary per `docs/reference/fleet.md` § Reboots. Capture gap healed by the secondary (ledger read), hold latched, opener cancelled.
