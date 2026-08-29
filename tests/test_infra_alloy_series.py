@@ -294,6 +294,12 @@ CAPTURE_REQUIRED = [
     "node_cpu_seconds_total",
     "node_filesystem_avail_bytes",
     "node_filesystem_size_bytes",
+    # The clock-skew pair (spec 00103 D4) is T0037 residual (b)'s ONLY detector, and it takes both
+    # halves of a coupling nothing else checks: `timex` in the capture config's `set_collectors` --
+    # an EXACT override of the exporter defaults, so a trim there stops publication -- and these two
+    # names admitted by the keep-regex. Pinned so losing the second half fails here.
+    "node_timex_offset_seconds",
+    "node_timex_sync_status",
     *ONEOFF_TEXTFILE_SERIES,
     *CAPTURE_APP_SERIES,
     *ENGINE_APP_SERIES,
