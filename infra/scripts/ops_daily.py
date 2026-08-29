@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 
 
@@ -367,3 +368,167 @@ def main(argv: list[str]) -> int:
     )
     print(report.journal_paragraph() if "--journal-entry" in argv else report.markdown())
     return report.exit_code
+
+
+class Tier(Enum):
+    """Which authority an action needs. `PREPARED` means prepare it and stop."""
+
+    AUTONOMOUS = "autonomous"
+    PREPARED = "prepared"
+
+
+# Seeded from the commands the runbooks actually contain, not from imagination: extract every
+# backtick span and fenced-block line across infra/runbooks/*.md and count the heads before editing
+# this. A diagnostic the pass refuses is the halt-at-step-1 failure moved rather than fixed.
+_READ_ONLY_COMMANDS = frozenset(
+    {
+        ("docker", "logs"),
+        ("docker", "inspect"),
+        ("docker", "ps"),
+        ("docker", "images"),
+        ("docker", "stats"),
+        ("journalctl", None),
+        ("systemctl", "status"),
+        ("systemctl", "list-timers"),
+        ("systemctl", "show"),
+        ("systemctl", "is-active"),
+        ("cat", None),
+        ("grep", None),
+        ("ls", None),
+        ("df", None),
+        ("du", None),
+        ("find", None),
+        ("stat", None),
+        ("head", None),
+        ("tail", None),
+        ("wc", None),
+        ("sort", None),
+        ("uniq", None),
+        ("awk", None),
+        ("date", None),
+        ("echo", None),
+        ("curl", None),
+        ("grafana-query.py", None),
+        ("continuity.py", None),
+    }
+)
+# `zcrypto engine <sub>` is three tokens, so it needs its own read-only set rather than a
+# (binary, subcommand) pair: `exec-status` reads, `cycle --replace` deletes a boundary's record.
+_READ_ONLY_ZCRYPTO_ENGINE = frozenset({"exec-status", "report", "tracking-report", "decompose", "accum-replay", "soak-check"})
+# `docker inspect` REQUIRES --format: unscoped it prints the container's environment, which on the
+# engine host is the live Kraken trade key.
+_REQUIRE_FORMAT = frozenset({("docker", "inspect")})
+# Refused inside an otherwise-read-only command, matched as exact tokens so `-fsS` is not `-f`.
+# find's primaries are single-dash, so the double-dash spellings alone would miss them.
+_MUTATING_FLAGS = frozenset(
+    {
+        "--rotate",
+        "--flush",
+        "--force",
+        "-f",
+        "--apply",
+        "--delete",
+        "-delete",
+        "-exec",
+        "--prune",
+        "--rm",
+        "--replace",
+    }
+)
+# Prefixes, because the flag carries a value: `--vacuum-size=200M` deletes the journal and would
+# never match an exact-token list. This is the round-4 Critical; keep it a prefix.
+_MUTATING_FLAG_PREFIXES = ("--vacuum",)
+_PROTECTED_OBJECTS = (
+    "zcrypto-capture",
+    "zcrypto-engine",
+    "zcrypto-red",
+    "exec/armed",
+    "exec/kill",
+    "restart-hold",
+    "converge.sh",
+    "site.yml",
+    "grafana-push.sh",
+    "@sha256:",
+)
+_TELEMETRY_OBJECTS = ("grafana-alloy", "alloy", ".timer", ".prom")
+_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
+_WRAPPERS = ("sudo", "uv", "run", "python", "python3", "bash", "sh", "-c", "time", "env")
+
+_CMD_SPAN = re.compile(r"`([^`\n]+)`")
+
+
+def _commands(text: str) -> list[str]:
+    """Every backtick span, or — when there is none — the whole text as one command.
+
+    Never refused for want of markup: the skill passes the one command it is about to run, usually
+    bare, and refusing that would prepare everything at runtime under a green suite.
+    """
+    spans = [s.strip() for s in _CMD_SPAN.findall(text) if s.strip()]
+    return spans or ([text.strip()] if text.strip() else [])
+
+
+def _strip_wrappers(tokens: list[str]) -> list[str]:
+    """`docker exec <container>` is a wrapper, never a read: its payload is the real command.
+
+    `docker exec zcrypto-engine zcrypto engine exec-status` reads; `docker exec zcrypto-archive-pull
+    rm -f /tmp/gate-cache.json` deletes. Only the payload separates them.
+    """
+    while tokens:
+        head = tokens[0].split("/")[-1]
+        if head in _WRAPPERS or head.startswith("--"):
+            tokens = tokens[1:]
+        elif head == "ssh" and len(tokens) > 1:
+            tokens = tokens[2:]
+        elif head == "docker" and len(tokens) > 2 and tokens[1] == "exec":
+            tokens = tokens[2:]
+            while tokens and (tokens[0].startswith("-") or tokens[0].startswith("zcrypto-")):
+                tokens = tokens[1:]
+        else:
+            return tokens
+    return tokens
+
+
+def _has_mutating_flag(tokens: list[str]) -> bool:
+    return any(t in _MUTATING_FLAGS or t.startswith(_MUTATING_FLAG_PREFIXES) for t in tokens)
+
+
+def _segment_is_read_only(segment: str) -> bool:
+    tokens = [t for t in segment.replace("'", " ").replace('"', " ").split() if t]
+    tokens = _strip_wrappers(tokens)
+    if not tokens:
+        return False
+    head = tokens[0].split("/")[-1]
+    sub = tokens[1] if len(tokens) > 1 and not tokens[1].startswith("-") else None
+    if head == "zcrypto":
+        if sub != "engine" or len(tokens) < 3 or tokens[2] not in _READ_ONLY_ZCRYPTO_ENGINE:
+            return False
+        return not _has_mutating_flag(tokens)
+    pair = (head, sub) if (head, sub) in _READ_ONLY_COMMANDS else (head, None)
+    if pair not in _READ_ONLY_COMMANDS:
+        return False
+    if pair in _REQUIRE_FORMAT and "--format" not in segment:
+        return False
+    return not _has_mutating_flag(tokens)
+
+
+def classify_action(text: str, *, host: str | None = None) -> Tier:
+    """Which tier a runbook step falls in: what it DOES first, what it touches second.
+
+    Rules 2 and 4 are both default-deny -- an unrecognised binary refuses rather than passes. That
+    is the property that catches the verb nobody imagined (`journalctl --vacuum-size` deletes; a
+    `docker exec` payload can be anything), and a change making either permissive is wrong however
+    reasonable it looks.
+    """
+    lowered = text.lower()
+    commands = _commands(text)
+    read_only = bool(commands) and all(
+        all(_segment_is_read_only(seg) for seg in re.split(r"\|\||\||&&", c) if seg.strip()) for c in commands
+    )
+    protected = any(obj in lowered for obj in _PROTECTED_OBJECTS)
+    if not read_only and protected:
+        return Tier.PREPARED
+    if read_only:
+        return Tier.AUTONOMOUS
+    if any(obj in lowered for obj in _TELEMETRY_OBJECTS) and host in _TELEMETRY_HOSTS:
+        return Tier.AUTONOMOUS
+    return Tier.PREPARED

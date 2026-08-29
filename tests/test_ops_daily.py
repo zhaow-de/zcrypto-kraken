@@ -13,6 +13,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import sys
 import urllib.error
 from datetime import datetime, timedelta, timezone
@@ -269,3 +270,162 @@ def test_the_journal_paragraph_carries_every_labelled_clause():
 def test_the_cli_refuses_an_unknown_subcommand():
     assert ops_daily.main([]) == 2
     assert ops_daily.main(["frobnicate"]) == 2
+
+
+# --- Task 15b: the tier classifier -------------------------------------------------------------
+
+# infra/runbooks/observability.md, the alloy-dark section -- one body serving nas, ops AND both
+# capture hosts, which is why the host is an argument and not read out of the step.
+_ALLOY_RESTART = "Restart it — safe, and the usual fix: `sudo docker restart grafana-alloy`."
+
+
+@pytest.mark.parametrize(
+    "host,expected",
+    [
+        ("ops", ops_daily.Tier.AUTONOMOUS),
+        ("nas", ops_daily.Tier.AUTONOMOUS),
+        ("zcrypto", ops_daily.Tier.PREPARED),
+        ("zcrypto-red", ops_daily.Tier.PREPARED),
+        (None, ops_daily.Tier.PREPARED),
+    ],
+)
+def test_the_same_step_is_routine_on_ops_and_attended_on_the_capture_pair(host, expected):
+    """Identical text; only the host differs. A classifier reading the text alone must get one of
+    these wrong, and the wrong one restarts Alloy on the capture primary unattended."""
+    assert ops_daily.classify_action(_ALLOY_RESTART, host=host) is expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Read the ladder: `sudo docker logs zcrypto-capture 2>&1 | grep -E "checksum desync"`.',
+        "`uv run python infra/scripts/grafana-query.py 'zcrypto_capture_book_desynced'`",
+        "**Engine-side**: `sudo docker inspect --format '{{.State.Status}} {{.RestartCount}}' zcrypto-engine`",
+        "**Prove the prune ring is alive**: `systemctl list-timers 'zcrypto-*'` and `journalctl -u zcrypto-capture-prune -n 3 --no-pager`",
+        "Read the engine's gate: `sudo docker exec zcrypto-engine zcrypto engine exec-status`.",
+        "`sudo docker logs zcrypto-capture --since 1h 2>&1 | tail -50`",
+        "`df -h /` then `sudo du -xsh /var/lib/zcrypto-capture/* | sort -h`",
+    ],
+)
+def test_a_read_only_step_is_autonomous_even_naming_a_protected_object(text):
+    """Seven read verbs: a suite exercising two lets a classifier keyed on those two prepare every
+    logs, grep and journalctl step -- the halt-at-step-1 failure in a new place."""
+    assert ops_daily.classify_action(text, host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "On the named host: `sudo systemctl restart zcrypto-capture`.",
+        "Stop the daemon, then read its logs: `sudo systemctl stop zcrypto-capture`.",
+        "Restart the engine: `sudo systemctl restart zcrypto-engine`.",
+        "Clear the kill file: `sudo rm /var/lib/zcrypto-engine/exec/kill`.",
+        "Push the rules: `bash infra/scripts/grafana-push.sh`.",
+        "Converge: `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-red`.",
+        "**The systemd journal**: `sudo journalctl --vacuum-size=200M`.",
+        "`sudo docker exec zcrypto-engine zcrypto engine cycle --at 2026-08-29T12:00:00+00:00 --replace`",
+        # ONE span, so the docker-exec payload is what decides: a two-span fixture would fail on the
+        # `ssh nas` span instead and pass for the wrong reason. Under the unsafe invention -- allowlist
+        # (docker, exec) and skip the stripping -- this is the case that comes back autonomous.
+        "`sudo /usr/local/bin/docker exec zcrypto-archive-pull rm /tmp/gate-cache.json`",
+        "`ssh nas`, then `sudo /usr/local/bin/docker exec zcrypto-archive-pull rm /tmp/gate-cache.json`",
+        "`sudo docker inspect zcrypto-engine`",
+    ],
+)
+def test_a_mutating_or_unscoped_step_is_prepared_on_any_host(text):
+    """The dangerous half, pinned by name -- a pair of fixtures cannot reach it. The last case is
+    an UNSCOPED inspect: it prints the container's environment, which on the engine host is the
+    live trade key."""
+    assert ops_daily.classify_action(text, host="ops") is ops_daily.Tier.PREPARED
+
+
+def test_a_bare_command_with_no_backticks_is_judged_as_one_command():
+    """Every other fixture carries backticks, so "no span => PREPARED" would pass the whole suite
+    and then prepare everything at runtime -- the skill passes the command bare."""
+    assert ops_daily.classify_action("sudo docker logs zcrypto-capture --since 1h", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+
+
+def test_an_unrecognised_action_is_prepared_never_autonomous():
+    assert ops_daily.classify_action("Frobnicate the widget.", host="ops") is ops_daily.Tier.PREPARED
+
+
+_RUNBOOKS = Path(__file__).resolve().parents[1] / "infra/runbooks"
+_DESTRUCTIVE = (
+    "--replace",
+    "--vacuum",
+    "--apply",
+    "--prune",
+    "--force",
+    " rm ",
+    "systemctl stop",
+    "systemctl restart",
+    "docker restart",
+    "docker stop",
+    "docker rm",
+    "converge.sh",
+)
+
+
+def _runbook_commands() -> list[str]:
+    """Every backtick span AND every fenced-block line that parses as a command.
+
+    The fenced blocks matter: engine.md's `cycle --at … --replace` lives in one, and a
+    backtick-only sweep never sees it.
+    """
+    out, starters = (
+        [],
+        (
+            "sudo ",
+            "ssh ",
+            "uv run ",
+            "bash ",
+            "docker ",
+            "systemctl ",
+            "journalctl ",
+            "df ",
+            "du ",
+            "find ",
+            "cat ",
+            "grep ",
+            "ls ",
+            "curl ",
+            "stat ",
+        ),
+    )
+    for path in sorted(_RUNBOOKS.glob("*.md")):
+        text = path.read_text()
+        out += [s.strip() for s in re.findall(r"`([^`\n]+)`", text)]
+        fenced, lines = False, text.splitlines()
+        for line in lines:
+            if line.strip().startswith("```"):
+                fenced = not fenced
+                continue
+            if fenced or line.startswith("    "):
+                out.append(line.strip())
+    return [c for c in {c for c in out if c} if c.startswith(starters)]
+
+
+def test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous():
+    """The guard against the verb nobody imagined: it does not matter WHICH allowlist entry lets a
+    command through, only that nothing destructive does. Both Criticals this classifier has already
+    had -- `journalctl --vacuum-size`, `docker exec … cycle --replace` -- fail this test."""
+    offenders = [
+        c
+        for c in _runbook_commands()
+        if any(tok in c for tok in _DESTRUCTIVE)
+        and ops_daily.classify_action(f"`{c}`", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+    ]
+    assert not offenders, f"destructive commands classified autonomous: {offenders}"
+
+
+def test_most_read_only_diagnostics_are_autonomous_on_ops():
+    """The opposite failure: an allowlist so narrow the pass refuses its own diagnostics has moved
+    halt-at-step-1 rather than fixed it. Close a red here by WIDENING the allowlist with
+    corpus-justified read heads, never by narrowing the extraction -- that games a safety floor by
+    shrinking its denominator."""
+    reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
+    autonomous = [c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops") is ops_daily.Tier.AUTONOMOUS]
+    assert len(autonomous) / len(reads) >= 0.70, (
+        f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous; "
+        f"refused sample: {sorted(c for c in reads if c not in autonomous)[:12]}"
+    )
