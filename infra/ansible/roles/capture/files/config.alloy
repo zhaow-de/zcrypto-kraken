@@ -45,6 +45,11 @@
 // "timex" from this list silently disarms zcrypto-capture-clock-skew -- the keep-regex below admits
 // node_timex_offset_seconds and node_timex_sync_status and drops the rest of the family, so the
 // cost of the collector is two series.
+// EDITING NOTE -- tests select lines in this file by prefix, deliberately. Several suites read
+// it and pick an assignment with `line.strip().startswith("<key>")`. A comment whose FIRST
+// non-space token is a config key (`set_collectors`, `directory`, `regex`) would be selected
+// instead of the assignment, and the assertion would then compare against prose. Indent or
+// reword such a comment; do not start one with a bare key name.
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile", "timex"]
 

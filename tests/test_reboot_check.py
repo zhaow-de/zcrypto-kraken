@@ -161,8 +161,8 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
     alloy = (ROLE / "files/config.alloy").read_text()
     # The directory agreeing is necessary but NOT sufficient: dropping "textfile" from
     # set_collectors leaves the block orphaned and the collector off, with the paths still matching.
-    # Match the ASSIGNMENT, not any line mentioning the key: config.alloy carries comments that name
-    # `set_collectors` and `directory`, and a substring selector picks the prose and asserts against it.
+    # Match the ASSIGNMENT, never any line mentioning the key: a comment naming it must not be
+    # selectable, or the assertion compares against prose and passes or fails on the wrong text.
     set_collectors = next(line for line in alloy.splitlines() if line.strip().startswith("set_collectors"))
     assert '"textfile"' in set_collectors, f"the textfile collector is not enabled, so the block is inert: {set_collectors.strip()}"
     directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
