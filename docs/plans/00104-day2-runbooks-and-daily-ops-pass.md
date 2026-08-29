@@ -678,6 +678,13 @@ def test_a_mutating_step_on_a_protected_object_is_prepared_on_any_host(text):
     assert ops_daily.classify_action(text, host="ops") is ops_daily.Tier.PREPARED
 
 
+def test_a_bare_command_with_no_backticks_is_judged_as_one_command():
+    """Every other fixture carries backticks, so "no span => PREPARED" would pass the whole suite
+    and then prepare everything at runtime -- the skill passes the command bare. Fails closed, and
+    silently resurrects the over-refusal the corpus floor exists to prevent."""
+    assert ops_daily.classify_action("sudo docker logs zcrypto-capture --since 1h", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+
+
 def test_an_unrecognised_action_is_prepared_never_autonomous():
     assert ops_daily.classify_action("Frobnicate the widget.", host="ops") is ops_daily.Tier.PREPARED
 
@@ -697,14 +704,15 @@ Not from imagination: the allowlist is derived from the commands the runbooks ac
 
 **Normalise, then decide, in this order:**
 
+0. **Take the commands.** Every backtick span in the text, **and if there is no span, the whole text as one command** — never refused for want of markup, because the skill passes the one command it is about to run, usually bare.
 1. **Strip wrappers**, recursively: `sudo`, `ssh <host>, then`, `/usr/local/bin/` (the NAS's full path), `sh -c '…'`, `bash -c '…'`, `uv run`, `uv run python`, and — the one that matters — **`docker exec <container>`**, whose payload is the real command. `docker exec` is never itself read-only: `sudo docker exec zcrypto-engine zcrypto engine exec-status` reads, and `sudo docker exec zcrypto-archive-pull rm -f /tmp/gate-cache.json` deletes, and only the payload separates them.
 2. **Split pipelines** on `|` and `&&`. **Every** segment must be read-only; a read head with a mutating tail is not a read. (`docker logs … | tail -50` is read-only in both segments; a `| xargs rm` would not be.)
 3. **Normalise each segment** to `(basename, subcommand)`.
 4. **Decide**: a segment is read-only when its pair is on `_READ_ONLY_COMMANDS` **and** it carries no flag on `_MUTATING_FLAGS`.
 
-`_READ_ONLY_COMMANDS`, seeded from that extraction and each entry justified by a real line: `docker logs`, `docker inspect`, `docker ps`, `docker images`, `journalctl`, `systemctl status`, `systemctl list-timers`, `systemctl show`, `systemctl is-active`, `cat`, `grep`, `ls`, `df`, `du`, `find`, `stat`, `head`, `tail`, `wc`, `sort`, `uniq`, `awk`, `sed -n`, `zcrypto engine exec-status`, `zcrypto engine report`, `zcrypto engine tracking-report`, `grafana-query.py`, `curl -fsS` against a `/metrics` or public endpoint. **`docker exec` is deliberately absent** — it is a wrapper, resolved by step 1.
+`_READ_ONLY_COMMANDS`, seeded from that extraction and each entry justified by a real line: `docker logs`, **`docker inspect --format`** — the `--format` is required, because an unscoped `docker inspect` prints the container's environment, which on the engine host is the live Kraken trade key that CLAUDE.md bans printing; every real step is already scoped — `docker ps`, `docker images`, `journalctl`, `systemctl status`, `systemctl list-timers`, `systemctl show`, `systemctl is-active`, `cat`, `grep`, `ls`, `df`, `du`, `find`, `stat`, `head`, `tail`, `wc`, `sort`, `uniq`, `awk`, `sed -n`, `zcrypto engine exec-status`, `zcrypto engine report`, `zcrypto engine tracking-report`, `grafana-query.py`, `curl -fsS` against a `/metrics` or public endpoint. **`docker exec` is deliberately absent** — it is a wrapper, resolved by step 1.
 
-`_MUTATING_FLAGS`, refused inside an otherwise-read-only command: `--vacuum*`, `--rotate`, `--flush`, `--force`, `-f` (except `docker logs -f`, which only follows), `--apply`, `--delete`, `--prune`, `--rm`, `--replace`.
+`_MUTATING_FLAGS`, refused inside an otherwise-read-only command and matched as **exact tokens**, so `-fsS` is not `-f`: `--vacuum*`, `--rotate`, `--flush`, `--force`, `-f`, `--apply`, `--delete`, **`-delete`** and **`-exec`** (find's primaries are single-dash, so the double-dash spellings alone miss them), `--prune`, `--rm`, `--replace`. `docker logs -f` is refused because it never returns — an unattended pass must not block on a follow.
 
 `_PROTECTED_OBJECTS`: `zcrypto-capture`, `zcrypto-engine`, `zcrypto-red`, the `exec/` control files, `converge.sh`, `site.yml`, `grafana-push.sh`, an image digest re-pin. `_TELEMETRY_OBJECTS`: `grafana-alloy`, `alloy`, a `.timer`, a textfile exporter. Host matching is **exact** against `{ops, nas, zaccess}`.
 
@@ -712,7 +720,7 @@ The docstring records that rules 2 and 4 are both default-deny, and that an unre
 
 - [ ] **Step 3b: The corpus test — the guard against the next unimagined verb**
 
-Fixtures cannot cover 339 commands. Extract every backtick command from `infra/runbooks/*.md` at test time and assert two properties, neither of which enumerates:
+Fixtures cannot cover 339 commands. `_runbook_commands()` is the population: every backtick span **and every line inside a fenced or indented code block** across `infra/runbooks/*.md` that parses as a command — the fenced blocks matter, because `engine.md`'s `cycle --at … --replace` lives in one and a backtick-only sweep never sees it. Assert two properties, neither of which enumerates:
 
 ```python
 _DESTRUCTIVE = ("--replace", "--vacuum", "--apply", "--prune", "--force", " rm ", "systemctl stop",
@@ -737,6 +745,9 @@ def test_most_read_only_diagnostics_are_autonomous_on_ops():
     corpus grows, never lower it to make a change pass."""
     reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
     autonomous = [c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops") is ops_daily.Tier.AUTONOMOUS]
+    # Measured at 65 % with the seed allowlist, so this starts RED. Close it by WIDENING the
+    # allowlist with corpus-justified read heads -- `date`, `docker stats`, `curl -s` public reads --
+    # never by narrowing the extraction, which games a safety floor by shrinking its denominator.
     assert len(autonomous) / len(reads) >= 0.70, (
         f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous; "
         f"refused sample: {[c for c in reads if c not in autonomous][:10]}"
