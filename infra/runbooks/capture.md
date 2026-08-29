@@ -88,6 +88,174 @@ Nothing. Do not "fix" this incidentally while working nearby without re-measurin
 
 ______________________________________________________________________
 
+<a name="bogus-timestamp-hour-rotation"></a>
+
+## bogus-timestamp-hour-rotation — KNOWN LIMITATION
+
+### What you are seeing
+
+`zcrypto-capture-hour-finalized-early` or `zcrypto-capture-ts-past-dated-hour` fired, or you are reading `HourOracle` / `_count_if_early` / `_enter_hour` in `cli/capture/segment_writer.py`, or an archive hour is short and you are asking whether the writer closed it before its time.
+
+### What it means
+
+The writer rotates the archive hour from **the event's own exchange timestamp**, a field the venue sends and we parse straight through. A single bogus stamp used to be enough to publish the live hour as a committed, complete final holding only the rows captured so far, after which every genuine row for the rest of that hour was refused by the late-event guard. That is closed: an hour is opened, and the previous one finalized, only once **two witnesses** agree time has reached it — each stream's newest plausible stamp (clamped at our clock plus five minutes) plus the wall clock itself, handicapped by five minutes so a leading clock cannot second a bogus stamp on its own. A row for an unconfirmed hour is **held**, never dropped.
+
+**Three residuals survive that, and all three are accepted design limits.** Each closing knob starves a legitimate case; the judgement is unchanged and is the reason this is a limitation section rather than a defect.
+
+| residual | what it takes | what would close it | what that starves | what SEES it |
+| -- | -- | -- | -- | -- |
+| **(a) two bogus stamps in one closing window** | two independent streams each taking a guard-passing stamp inside the same hour's last five minutes; the quorum is met early and each stamped stream's hour publishes truncated by at most that window | raise the witness quorum above two | a small `--pairs` run, which never has enough streams to reach a higher quorum | `zcrypto-capture-hour-finalized-early` — but only read together with the clock offset |
+| **(b) a clock leading more than five minutes, plus one bogus stamp** | the handicapped clock witness seconds the stamp; truncation is the lead minus five minutes, and is unbounded above | require two DISTINCT stream stamps before the clock may second an hour | a lone sparse stream, whose hour would then never rotate at all | **`zcrypto-capture-clock-skew` alone** — see the warning below |
+| **past-dated first stamp** | a stamp dated into a past, unpublished hour arriving as a process's FIRST event opens that hour and can commit a complete-looking final for a period nothing was captured, redeeming a quarantined `.held` spill on the way | refuse a first stamp whose hour is behind our clock's hour | live data, whenever our clock is the thing that is wrong — the binding finding of the clock work that preceded this is that the clock gets **no veto over live data** | `zcrypto-capture-ts-past-dated-hour` |
+
+**Residual (b) is invisible to the early-close counter, and that is arithmetic rather than an oversight.** Earliness is measured against the same clock that is wrong, so a leading clock subtracts its own lead back out of the measurement: with the clock half an hour ahead, an hour truncated by 26 real minutes computes as *negative* earliness and counts nothing. No arrangement of that counter can see it. `zcrypto-capture-clock-skew` is therefore not a disambiguator for (b) — it is (b)'s **only** detector, which is why a 10-second offset pages critical on a fleet where nothing has yet been lost. **A silent early-close counter is never a clean bill for the hour boundaries.**
+
+### What to do
+
+**The truncation is permanent by design — do not attempt to repair the hour.** A committed final is never reopened; that invariant is what stopped an earlier duplicate-row defect, and the writer cannot know a final was premature. The finals are hash-certified, so hand-writing rows into one breaks the certification and the nightly replay verification will report that hour broken from then on. The rows themselves are unrecoverable in any case: L2 is unbackfillable and the venue serves no history.
+
+**The sanctioned repair is the peer machine, and it is automatic.** A bogus stamp poisons one stream on one machine. If the other capture machine's copy of that hour is whole, the reconciler covers the hour from it and nothing is lost — that path already has its own alerts. Only when **both** machines truncated the same hour on the same pair is the loss real, and then the reconciler books it and `zcrypto-reconcile-residual-gap` pages, about two hours after the hour in question.
+
+**Naming which residual fired** — read the early-close signal against the clock offset, never either alone:
+
+1. **Early closes firing, clock offset healthy** ⇒ residual (a). A bogus stamp truncated one or more streams' hours. Real loss on those streams; go to the peer-machine paragraph above.
+2. **Early closes firing, clock BEHIND** ⇒ benign. A clock lagging by less than five minutes closes every genuine boundary that early, on every one of the 24 writers, 24 times a day — up to ~576 counts a day per machine. Fix the clock; nothing was lost. **The count itself is the tell**: order-100 over six hours means every boundary and every writer, which is the clock; a handful means specific streams, which is a stamp.
+3. **Clock skew firing with the clock AHEAD, early closes silent** ⇒ residual (b) may be live and structurally invisible. This is the one case where silence proves nothing. Compare the suspect hours' row counts against the peer machine directly rather than trusting the counter.
+4. **Past-dated firing** ⇒ the third residual, independent of the other two and with a hard-zero baseline. Its own section below.
+
+**On reading the offset's direction**: `node_timex_offset_seconds` carries the kernel's *correction*, not the error — a positive value means the local clock is **behind** the reference. If you are about to act on the direction, confirm it on the machine (`timedatectl`, or `date -u` against a clock you trust) rather than inferring it from the sign.
+
+### Retire when
+
+All three of these hold in `cli/capture/segment_writer.py`, at which point this section describes nothing: the witness quorum is above two, the wall clock can no longer second an hour on its own, and `_enter_hour`'s first-event branch refuses an hour behind our own. Closing one residual does not retire the other two, nor the alert sections below that cover them — retire each with the mechanism it describes. The decision to accept all three, and what each closing knob would starve, is recorded in \[[T0037]\].
+
+______________________________________________________________________
+
+<a name="zcrypto-capture-hour-finalized-early"></a>
+
+## zcrypto-capture-hour-finalized-early — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert, one instance per capture machine. That machine finalized at least one archive hour before its own clock said the hour was over, at some point in the last six hours.
+
+### What it means
+
+**Two causes, and this signal cannot tell them apart.** Either a bogus exchange timestamp closed an hour early and that stream's remaining rows for it were then refused as late — permanent, unbackfillable loss — or the machine's clock is running behind, which closes every genuine boundary early and costs nothing at all. That ambiguity is deliberate: the clock is not trustworthy enough to be given a veto over live data, so a lagging clock legitimately fires this and cannot be engineered out of it.
+
+**Magnitude is the cheapest discriminator you have.** The counter sums across 24 writers (12 pairs × book and trade), each closing 24 boundaries a day, so a lagging clock produces up to ~576 counts a day per machine — roughly 144 inside this rule's six-hour window. An order-100 reading is the clock. A handful is a stamp.
+
+**It does NOT see the opposite fault.** A clock running *ahead* truncates hours and hides the truncation from this measurement, because the earliness is computed with that same wrong clock and the lead cancels out exactly. `zcrypto-capture-clock-skew` is the only detector for that case. **Reading this rule's silence as coverage of the hour-rotation residuals is being misled** — the limitation section above has the full map.
+
+### What to do
+
+1. **Read `zcrypto-capture-clock-skew` first.** Firing, with the clock behind ⇒ this is benign; fix the time discipline and expect this to clear six hours after the last early close.
+2. **Read the count** on the integrity board's hour-rotation panel, and apply the magnitude test above.
+3. **Name the streams.** Every early close is logged with its pair, kind, hour and how early it was: `sudo docker logs zcrypto-capture 2>&1 | grep "hour finalized early"` on the machine the page names, or the same line via Loki.
+4. **Check the peer machine for the same hour and pair.** One machine truncated ⇒ the fleet still holds the rows and the reconciler covers the hour. Both ⇒ the loss is real and the reconciler will book it; expect `zcrypto-reconcile-residual-gap` about two hours after the hour.
+5. **Do not repair the hour by hand** — see the limitation section above for why, and for what the sanctioned path is.
+6. **Silencing is rarely warranted.** It self-resolves six hours after the last early close. If you silence it while fixing a clock, time-box it, or a genuine stamp event during the fix reports nothing.
+
+### Retire when
+
+`zcrypto-capture-hour-finalized-early` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
+<a name="zcrypto-capture-ts-past-dated-hour"></a>
+
+## zcrypto-capture-ts-past-dated-hour — ALERT
+
+### What you are seeing
+
+A **critical** Grafana alert, one instance per capture machine. A stream's **first event after a capture process started** carried a timestamp dated into an hour that had already passed, and the writer opened that hour.
+
+### What it means
+
+The plausibility guard bounds the *future* direction only, so a stamp dated backwards is anomalous but still trusted. It can only act at a process's first event: from then on the open hour is the floor and the late-event guard refuses anything behind it. Acting means opening a past hour and eventually committing a manifest-certified, complete-looking final for a period during which **nothing was actually captured** — and redeeming any quarantined `.held` spill for that hour into it on the way.
+
+**The baseline is a hard zero over the fleet's whole life** — the venue's timestamps are strictly non-decreasing across 3.15 M measured production rows — and the counter can step **at most once per stream per capture process**. So this is a step detector, not a rate: any step at all is the event, and there is no threshold to tune.
+
+**The harm is a fabricated hour, not a missing one.** The bad hour reads as complete and certified, so nothing downstream will question it.
+
+### What to do
+
+1. **Anchor it to a process start**, because that is the only place it can happen: `sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-capture` and `--format '{{.RestartCount}}'` on the machine the page names. A restart you did not expect is itself a finding.
+2. **Name the hour and the stream.** The writer logs it: `sudo docker logs zcrypto-capture 2>&1 | grep "first stamp opened a past hour"` — the line carries pair, kind and the hour that was opened.
+3. **Compare that hour against the peer machine's copy** — row counts and time coverage. That is what tells you whether the final is a fabrication or merely early.
+4. **Do not hand-edit the final.** Same reasoning as the limitation section above: the tree is hash-certified and a hand edit reports as permanent breakage thereafter.
+5. **This has never fired.** Treat the response as unrehearsed rather than routine, and record what the hour actually contained before anything else touches it.
+
+### Retire when
+
+`zcrypto-capture-ts-past-dated-hour` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
+<a name="zcrypto-capture-clock-skew"></a>
+
+## zcrypto-capture-clock-skew — ALERT
+
+### What you are seeing
+
+A **critical** Grafana alert, one instance per capture machine. That machine's clock is more than 10 seconds from true time, or the machine reports its clock unsynchronised.
+
+### What it means
+
+**Nothing has been lost. This is a precondition, and it is the reason it pages critical.** A clock running ahead lets a bogus exchange timestamp close an archive hour early *and* hides that earliness from every counter measured against the same clock, so `zcrypto-capture-hour-finalized-early` sits silent while the archive is being truncated. When the fault is the clock, only the precondition is observable — and, unusually, it is observable **before** the damage rather than after.
+
+10 seconds is a structural bar, not a fitted one: orders of magnitude above a disciplined clock's steady state, and 30× below the five-minute margin at which the clock witness can start seconding a bogus stamp. So there is room, and the correct posture is prompt rather than frantic.
+
+**No role configures a time daemon on these machines today.** That is why an unmanaged clock here can drift monotonically rather than being pulled back, and it is the thing to check first.
+
+### What to do
+
+1. **Confirm it on the machine**, not from the metric alone: `timedatectl` on the machine the page names, and `date -u` against a clock you trust.
+2. **Establish the direction.** `node_timex_offset_seconds` reports the kernel's *correction*, so a positive value means the local clock is **behind**. Direction decides everything below, so confirm it in step 1 rather than reading it off the sign.
+3. **Restore the time discipline.** Prefer a slew. A correction that **steps the clock forward** briefly hands the clock witness a lead it did not earn, which is exactly residual (b)'s precondition — so make that correction while you are watching, and read the early-close counter afterwards.
+4. **Then look backwards.** Did `zcrypto-capture-hour-finalized-early` fire while the clock was off? If the clock was **ahead**, its silence proves nothing — compare the suspect hours' row counts against the peer machine instead.
+5. **Both machines skewed at once** points at something shared — a hypervisor, a network time source, a converge — rather than at one machine.
+
+### Retire when
+
+`zcrypto-capture-clock-skew` is absent from `infra/grafana/alerts.yaml`, or the capture writer no longer takes the wall clock as a witness for opening an hour — at which point a skewed clock stops being able to truncate the archive and this becomes ordinary machine hygiene rather than a data-integrity signal.
+
+**One blind spot is deliberate and lives elsewhere.** A healthy clock produces an empty query, so the rule reads no-data as healthy — which means the two `node_timex_*` series *vanishing* also reads as healthy. That is closed at the shipper's configuration rather than here: `tests/test_infra_alloy_series.py` pins both the `timex` collector's enablement and the two names in the capture keep-regex, and dropping either fails the suite.
+
+______________________________________________________________________
+
+<a name="zcrypto-capture-rows-quarantined"></a>
+
+## zcrypto-capture-rows-quarantined — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert, one instance per capture machine. That machine spilled rows to a `.held` quarantine file in the last six hours. Baseline is zero on both machines, so any nonzero value is a real event.
+
+### What it means
+
+**Rows parked for an archive hour that nothing ever corroborated**, written to a `<HH>.held####.parquet` sidecar instead of into the canonical tree. **It is not the late-arrival path** — a row that genuinely arrives after its hour was finalized is refused by the late-event guard and counted nowhere. This alert's own text said the opposite from the day it shipped; if you remember it as a late-arrival signal, that is where the memory came from.
+
+**Holding is normal; spilling is not.** Every genuine boundary holds a few rows while the first stream across waits for a second to corroborate — roughly three rows per boundary, ~73 a day per machine, which is why the held counter beside it discriminates nothing. The spill only happens when the hour is *still* unconfirmed at a flush cap or at shutdown.
+
+**Two real causes**, and they are what to look for: an hour carrying only one live stream, so nothing ever seconds it; or a capture process stopping within five minutes of an hour boundary, before corroboration could arrive.
+
+**Nothing is lost.** Spilled rows are kept and never deleted — the prune's globs exclude them deliberately — and the sweep, the merge, the recovery floor and the archive's tree verification all skip them. They are redeemed into ordinary parts automatically when a live, corroborated stream next opens their hour.
+
+### What to do
+
+1. **Find them**: `sudo find /var/lib/zcrypto-capture -name '*.held*.parquet'` on the machine the page names. The path carries the pair, kind and hour.
+2. **Correlate with a restart** — `sudo docker inspect --format '{{.RestartCount}}' zcrypto-capture` and `--format '{{.State.StartedAt}}'`. A stop within five minutes of an hour boundary explains the event completely and needs nothing further.
+3. **No restart? Look for a sparse hour on one pair** — a stream that printed once and had no second live stream in its hour.
+4. **Do not delete the files and do not fold them in by hand.** Redemption is automatic and hand-merging puts uncorroborated rows into a certified tree, which is the exact thing quarantining them prevents.
+5. **Spills that persist across many hours are the design working**, not a stuck queue: that hour genuinely never had a second witness, and keeping its rows out of a certified final is the safe side of an unanswerable question.
+
+### Retire when
+
+`zcrypto-capture-rows-quarantined` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
 <a name="zcrypto-capture-all-streams-silent"></a>
 
 ## zcrypto-capture-all-streams-silent — ALERT
