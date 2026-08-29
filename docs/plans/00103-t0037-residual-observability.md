@@ -178,6 +178,7 @@ Converge the capture Alloy config pinned to the **currently-running** Alloy dige
 1. `zcrypto_capture_hour_finalized_early_total` present and zero.
 2. `zcrypto_capture_ts_past_dated_hour_total` present and zero **over a window containing at least one process restart** — its only reachable path is a process's first event, so a restart-free window never exercises it and is not a baseline. A capture converge supplies the restart.
 3. `node_timex_offset_seconds` and `node_timex_sync_status` present, offset within 10 s.
+4. `node_scrape_collector_success{collector="timex"}` reads **1** on both hosts. The `timex` collector calls `adjtimex`, which an unprivileged container's seccomp profile may refuse; if it is blocked the two metrics simply never appear and this is the read that says so, rather than leaving a silent gap to be misread as a healthy zero.
 
 `(no series)` is a FAIL and stops Task 9 — it is never a zero. **If the offset reads outside 10 s, that is a finding to act on in this branch** (fix the discipline, or re-derive the threshold against measured reality and record why) — not a deferral, not a new topic.
 

@@ -67,7 +67,9 @@ Magnitude, corrected: the family sums across **24 writers**, each finalizing eac
 
 ### D4 — the clock offset is admitted to the shipper, and it now carries residual (b) alone
 
-Add `node_timex_offset_seconds` and `node_timex_sync_status` to the capture Alloy keep-regex. Alert at **|offset| > 10 s**, or `sync_status` reporting unsynchronised.
+Two edits, not one — **admitting a name is not publishing it**. `prometheus.exporter.unix`'s `set_collectors` is an EXACT override of the exporter's defaults, and the capture config's list omitted `timex`, so the metric would not have existed to keep. Enable the `timex` collector **and** add `node_timex_offset_seconds` / `node_timex_sync_status` to the keep-regex. Either edit alone yields `(no series)` — the same shape as the T0051 keep-regex trap, one layer further up, and the reason step 4 reads by value rather than trusting a converge's `changed=`.
+
+Alert at **|offset| > 10 s**, or `sync_status` reporting unsynchronised.
 
 10 s is structural: orders of magnitude above a disciplined clock's steady state, and 30× below `CLOCK_WITNESS_MARGIN`, so skew is flagged long before it can either cause residual (b) or make D1's counter ambiguous. Per D1b this rule is (b)'s only detector, so it ships **critical**, not as a nicety.
 
