@@ -6,6 +6,9 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 - **Procedures** for a signal that fires at an operator, and **accepted limitations** an operator may run into while debugging. Nothing else.
 - **This is not a backlog.** If acting on a section produces work, put it where work lives: something needing a *decision* opens a `T<NNNN>` per `.claude/rules/open-topics.md`; something needing *doing* goes in the memo queue. Deferrals must not accumulate here — a runbook nobody can finish reading is a runbook nobody reads.
+- **Four parts, in this order**: *What you are seeing* · *What it means* · *What to do* · *Retire when* — for ALERT, KNOWN LIMITATION and SCHEDULED REMINDER sections. A PROCEDURE carries those four or, for a drill, the seven spec `00105` names. Same order every time, so a cold reader can skim.
+- **Four kinds, marked in the heading**: `— ALERT` (something fires), `— KNOWN LIMITATION` (something an operator meets while debugging, where the right action may be "nothing"), `— PROCEDURE` (nothing fires it; you open it deliberately), `— SCHEDULED REMINDER` (a reminder came due; nothing is wrong).
+- **A drill's output is a runbook section, never a report.** That is the difference between a drill that produced a document and one that produced a procedure someone finds at 03:00.
 - Every section carries a **Retire when** naming something checkable — a metric that stops existing, a rule absent from `infra/grafana/alerts.yaml`, a line no longer in the code. A retirement condition you have to *judge* is one nobody will act on.
 
 **This file holds no procedures — the index and this scope, nothing else.** A new section joins the subsystem file that already covers its signal, or mints a new `infra/runbooks/<subsystem>.md` and a row below. An index that also holds a few leftover sections has no rule against gaining one more, and that is how a single file reached nineteen of them.

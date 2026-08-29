@@ -59,6 +59,18 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 - Expect a ~83 s capture gap; both containers self-restart.
 - **Verify by outcome before touching the next host** — the same checks a converge owes, which is why the reboot does not carry its own: every book stream's next `<HH>.parquet` begins at `:00:00.0x`, the NAS archive-pull loop's next pull reports `failed=0`, and `infra/scripts/continuity.py` on a PULLED copy shows no new truncated hours. On the primary, additionally: the next `cycle-<HH>.json` lands with `completed_at` inside `[B, B+30 min]`, and the restart marker is the container's `.State.StartedAt`, never the reboot command's return time.
 
+## Drills — how to induce a fault without touching production
+
+Two recipes and one caveat, proven 2026-07-27 and reusable.
+
+**Fault injection in a throwaway container.** A container from the *same pinned digest* on the ops node — isolated data dir, no Loki credentials, no dead-man URL — driven against the real venue, with `docker network disconnect/connect` as the fault. That exercised the WS-reconnect handling end to end, data consistency across the fault included (the spanning hour's `.parquet` hash-verified against its manifest), while production kept running.
+
+**Alert-path injection through a textfile.** Writing a synthetic `.prom` into the node-exporter textfile directory fires a real rule through the real transport into the real Slack channel, with no daemon involved, and resolves when the file is removed.
+
+**A drill proves wiring, never timing.** A brand-new injected series fires in minutes where a real one takes the full window, because `min_over_time` aggregates only the samples present. Read a drill's latency as evidence about the path, never about the threshold.
+
+**The one log class no pipeline sees.** A compose-level failure where the container is never created writes no docker-path logs, and the owning unit's journal is filtered on the capture hosts — so no Alloy pipeline observes it. The healthchecks dead-man is the only catcher; its timeout plus grace is the detection bound.
+
 ## Telemetry labels
 
 - Loki labels: `container`, `host`, `job`, `level`, `service_name`; `host ∈ {nas, ops, zcrypto, zcrypto-red}`.
