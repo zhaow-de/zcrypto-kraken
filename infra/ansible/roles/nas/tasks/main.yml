@@ -75,9 +75,8 @@
     mode: "0644"
   register: nas_deploy_alloy_config
 
-# A value the CLI's --hash-scope would reject stops all five verified pulls with the same exit
-# code the ops reconcile gate books as a not-clean capture pull (spec 00102 Deploy sequence) --
-# refuse it here instead, before it ever reaches a running container.
+# A value --hash-scope would reject stops all five verified pulls -- refuse it here, before it
+# reaches a running container (spec 00102).
 - name: refuse an archive-pull hash scope the CLI would reject
   ansible.builtin.assert:
     that: nas_archive_pull_hash_scope in ['full', 'incremental']

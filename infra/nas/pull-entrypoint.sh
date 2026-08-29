@@ -39,16 +39,12 @@ on_term() {
 }
 trap on_term TERM INT
 
-# Spec 00102 D3: the pull loop's own rotation index for the incremental-verify 1/24 slice -- a
-# COUNTER, never the clock. `sleep $ARCHIVE_PULL_INTERVAL` makes the loop's real period
-# interval+work, which drifts past the nominal interval, so a slice keyed on now.hour skips clock
-# hours and can starve a fixed subset of slices forever whenever the drifted period divides 24h.
+# Spec 00102 D3: the 1/24 slice index is a COUNTER, never the clock. The loop's real period is
+# interval+work, so a slice keyed on now.hour starves a fixed subset of slices forever whenever
+# that drifted period divides 24h -- segments silently never re-verified.
 cycle=0
-# Read once, before the loop -- the fallback is still load-bearing here (this entrypoint is
-# bind-mounted and can outrun a compose file that predates ARCHIVE_PULL_HASH_SCOPE). Five call
-# sites shared one literal each before; a typo at one of them would have silently left that one
-# channel on `full` while the other four went incremental, with no test, alert or panel to catch
-# it (the hashed/walked panel sums across channels).
+# Hoisted and read once: five call sites must not carry separate literals. The `:-full` fallback
+# stays -- this entrypoint is bind-mounted and can outrun an older compose file.
 hash_scope="${ARCHIVE_PULL_HASH_SCOPE:-full}"
 
 while true; do
@@ -57,10 +53,8 @@ while true; do
 
 	# capture pull uses the capture channel's own least-privilege key
 	# Spec 00102: the verify cost is published per channel (one .prom each -- five pulls share
-	# /textfile), and ARCHIVE_PULL_HASH_SCOPE decides whether every segment is re-hashed (full) or
-	# only rsync's transfers plus a 1/24 slice keyed on this loop's cycle counter (incremental). The value is rendered into
-	# .env from nas_archive_pull_hash_scope, so flipping it is a config-only converge on the running
-	# image -- and the rollback is the same flip.
+	# /textfile). ARCHIVE_PULL_HASH_SCOPE picks full (re-hash every segment) or incremental
+	# (rsync's transfers plus this loop's 1/24 slice); compose.yaml documents flipping it.
 	capture_ok=1
 	if ! ARCHIVE_SSH_KEY="$CAPTURE_SSH_KEY" zcrypto archive pull \
 			--hash-scope "$hash_scope" --slice "$slice" \

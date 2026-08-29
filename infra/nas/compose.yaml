@@ -93,9 +93,8 @@ services:
       ARCHIVE_PULL_INTERVAL: ${ARCHIVE_PULL_INTERVAL:-3600}
       GATE_TEXTFILE: /textfile/gate.prom
       # Spec 00102 D7: full re-hashes every segment each cycle; incremental hashes rsync's
-      # transfers plus a rotating 1/24 slice (pull-entrypoint.sh's cycle counter). Config-only --
-      # flipping it is a re-render of the rendered .env (nas_archive_pull_hash_scope), no image
-      # re-pin, and the rollback is the same flip.
+      # transfers plus a rotating 1/24 slice. Flipping it is a config-only converge (no image
+      # re-pin) and the rollback is the same flip.
       ARCHIVE_PULL_HASH_SCOPE: ${ARCHIVE_PULL_HASH_SCOPE:-full}
       GATE_HEALTHCHECK_URL: ${GATE_HEALTHCHECK_URL:-}
     volumes:
