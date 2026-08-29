@@ -387,9 +387,7 @@ def _squashed(output: str) -> str:
 
     Typer's OptionHighlighter styles each hyphen of an option separately, so a raw `r.output` holds
     `-\x1b[0m\x1b[1;36m-channel` and never the literal; the rich panel also word-wraps at COLUMNS,
-    which can split the name across lines. Strip then squash -- same treatment as
-    `tests/test_panel_command.py`. Holds for any realistic width; below ~20 columns rich interleaves
-    the panel's box borders between fragments, which no squash recovers, and nothing runs there.
+    which can split the name across lines. Strip then squash.
     """
     return re.sub(r"\s+", "", re.sub(r"\x1b\[[0-9;]*m", "", output))
 
