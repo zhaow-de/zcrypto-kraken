@@ -41,17 +41,13 @@
 //
 // The clock-skew pair is deliberately NOT a collector here (spec 00103 D4): the two zcrypto_clock_*
 // names in the keep-regex below arrive through the textfile directory above, written by a host timer
-// reading chronyc (zcrypto-clock-offset.sh, installed by this same role). The exporter's `timex`
-// collector was the earlier route to them and came back out -- it reads the clock via adjtimex
-// inside THIS container, behind CAP_SYS_TIME, the capability that lets a process SET the clock. Do
-// not re-add it: those two names are the only detector for a clock leading the true hour and
-// truncating an archive hour, and that detector must not be bought by widening what can move the
-// clock.
-// EDITING NOTE -- several test suites pull assignments out of this file, selecting them by
-// PREFIX (`line.strip().startswith(<key>)`). Keep every config key the first non-space token
-// on exactly one line, so those selectors stay unambiguous. If a test ever selects by
-// SUBSTRING instead, a comment mentioning the key is matched and the assertion compares
-// against prose -- that is a defect in the selector, not in the comment: fix the test.
+// reading chronyc. Do NOT re-add the exporter's `timex` collector as a shortcut to them -- it reads
+// the clock via adjtimex inside THIS container, behind CAP_SYS_TIME, the capability that lets a
+// process SET the clock, and this detector must not be bought by widening what can move the clock.
+//
+// EDITING NOTE -- test suites pull assignments out of this file by PREFIX
+// (`line.strip().startswith(<key>)`). Keep every config key the first non-space token on exactly one
+// line, so those selectors stay unambiguous.
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
 

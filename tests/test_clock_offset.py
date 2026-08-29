@@ -1,17 +1,14 @@
 """The host clock-skew exporter (spec 00103 D4, T0037).
 
-A clock leading the true hour lets one bogus exchange timestamp close an archive hour early, and
-spec 00103 D1b proves no clock-referenced counter can see it — the wrong clock subtracts its own
-lead back out of the measurement. This exporter is that residual's ONLY detector, so its harness is
-part of the decision rather than an optional extra.
+A clock leading the true hour lets a bogus exchange timestamp close an archive hour early, and no
+clock-referenced counter can see it (spec 00103 D1b). This exporter is that residual's ONLY detector.
 
-As with `tests/test_reboot_check.py`, the unit under test is the **shell script the capture role
-installs**, driven with `bash` over a fixture `chronyc`, not a Python re-implementation.
-
-Three things carry the weight, and none of them is the happy path:
+The unit under test is the **shell script the capture role installs**, driven with `bash` over a
+fixture `chronyc`, not a Python re-implementation. Three things carry the weight, and none of them is
+the happy path:
 
 - Both series must be emitted on EVERY run. An absent series is indistinguishable from a dead
-  exporter, and that ambiguity is what this whole spec exists to remove.
+  exporter.
 - A chronyc that is missing, fails, or answers in an unrecognised shape must publish `NaN`, never a
   fabricated `0` — a 0 offset reads as a perfectly disciplined clock.
 - The sign says which way the clock is wrong, and only one direction destroys data. `fast` (ahead)
@@ -176,8 +173,8 @@ def test_missing_arguments_are_refused():
 
 
 # --- The systemd + ansible seam -----------------------------------------------------------------
-# Same reasoning as the reboot-check probe's seam tests: a rename or an argument-order change fails
-# in a oneshot nobody watches, and the metric it stops publishing is this residual's only detector.
+# A rename or an argument-order change fails in a oneshot nobody watches, and the metric it stops
+# publishing is this residual's only detector.
 
 
 def _rendered_unit() -> str:
@@ -220,8 +217,7 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
 def test_every_series_the_script_emits_is_admitted_by_the_capture_keep_regex(tmp_path):
     """The T0051 trap: the keep is an allow-list, so a name it does not carry is dropped at
     remote_write and the alert watching it reads no data forever — rendering identically to healthy.
-    The names come from an actual run rather than from a literal, so a rename in the script is
-    caught here instead of on the host."""
+    The names come from an actual run, not a literal, so a rename in the script is caught here."""
     prom = tmp_path / "clock-offset.prom"
     assert _run(_chronyc(tmp_path, TRACKING.format(magnitude="0.1", direction="fast", leap="Normal")), prom).returncode == 0
     alloy = (ROLE / "files/config.alloy").read_text()

@@ -606,20 +606,16 @@ class CaptureCollector:
         )
         yield CounterMetricFamily(
             "zcrypto_capture_hour_finalized_early_total",
-            # Spec 00103 D1: T0037's residual (a), made visible. Unlabelled on purpose -- earliness is
-            # bounded by MAX_TS_AHEAD by construction, so there is no second band. A LEADING clock's
-            # truncation is NOT here (D1b); zcrypto-capture-clock-skew is that case's only detector.
-            # FINALIZED, not published: `_count_if_early` runs ahead of the merge, which declines in
-            # reachable cases, so a counted hour need not have reached disk.
+            # Spec 00103 D1: T0037's residual (a). FINALIZED, not published -- `_count_if_early` runs
+            # ahead of the merge, which declines in reachable cases, so a counted hour need not have
+            # reached disk. A LEADING clock's truncation is NOT here (D1b): the skew alert sees that.
             "Hours FINALIZED before the wall clock said they were over, summed across every pair and kind.",
             value=sum(w.hour_finalized_early for w in writers),
         )
         yield CounterMetricFamily(
             "zcrypto_capture_ts_past_dated_hour_total",
-            # Spec 00103 D5: T0037's PAST-DATED residual, which carries no letter in the topic. Not
-            # residual (b) -- that one is a leading clock, and D1b proves no clock-referenced counter
-            # can see it; the skew alert is its only detector. Oracle-bearing writers only:
-            # `_enter_hour` gates the increment, so this counts fabrication rather than poll cadence.
+            # Spec 00103 D5: T0037's past-dated residual. Oracle-bearing writers only -- `_enter_hour`
+            # gates the increment, so this counts fabrication rather than poll cadence.
             "First events that opened a stream's hour already behind the wall clock.",
             value=sum(w.ts_past_dated_hour for w in writers),
         )

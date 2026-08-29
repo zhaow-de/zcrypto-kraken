@@ -484,18 +484,14 @@ class SegmentWriter:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
         A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
         if self._current_hour is None:
-            # Spec 00103 D5. On an ORACLE-BEARING writer the first event's hour is exchange time and is
-            # the only one that can open an hour behind the wall clock: from here on `floor` is
-            # `_current_hour`, so the late-event guard refuses a past-dated stamp before it reaches us.
-            # Such an hour is the past-dated residual (T0037) -- it can commit a final for an hour that
-            # was never captured, and redeem a quarantined `.held` spill on the way.
+            # Spec 00103 D5, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
+            # is the only one that can open an hour behind the wall clock -- from here on `floor` is
+            # `_current_hour`, so the late-event guard refuses a past-dated stamp before it reaches
+            # us -- and such an hour can commit a final for an hour that was never captured.
             #
             # Gated on the oracle because that premise is FALSE without one: `finalize_completed_hours`
-            # (which refuses oracle-bearing writers) nulls `_current_hour` on every poll cycle, so the
-            # liquidations pollers re-enter this branch constantly and a re-awakening sparse symbol opens
-            # a prior hour BY DESIGN. Ungated, this would count poll cadence rather than fabrication --
-            # and those writers already expose a scraped registry, so the false baseline would be one
-            # edit from a critical alert. `_implausible` and the floor still guard them.
+            # nulls `_current_hour` every poll cycle, so an oracle-less poller re-enters this branch
+            # constantly and a re-awakening sparse symbol opens a prior hour BY DESIGN.
             if self._oracle is not None and hour < _hour_start(_utcnow()):
                 self.ts_past_dated_hour += 1
                 logger.warning("first stamp opened a past hour pair=%s kind=%s hour=%s", self._pair, self._kind, hour)
@@ -713,15 +709,13 @@ class SegmentWriter:
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)
 
     def _count_if_early(self, hour: datetime) -> None:
-        """Count an hour finalized before our own clock said it was over (spec 00103 D1/D2).
+        """Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
+        visible signature of T0037's residual (a).
 
-        This is the visible signature of T0037's residual (a). Earliness is
-        structurally bounded by MAX_TS_AHEAD -- every oracle witness is clamped at now + MAX_TS_AHEAD
-        and `append()` holds anything above the confirmed hour -- so there is no second band to split.
         It does NOT see a LEADING clock's truncation: that measurement is taken with the same wrong
-        clock, which subtracts its own lead back out (D1b). The skew alert covers that case, not this.
-        A genuinely past hour yields a negative earliness, so the sweep's ordinary republishing is
-        excluded by the arithmetic rather than by a special case.
+        clock, which subtracts its own lead back out (D1b). A genuinely past hour yields a negative
+        earliness, so the sweep's ordinary republishing is excluded by the arithmetic rather than by
+        a special case.
         """
         earliness = (hour + timedelta(hours=1)) - _utcnow()
         if earliness > timedelta(0):
@@ -970,9 +964,8 @@ class SegmentWriter:
             for hh in sorted({path.name.split(".part")[0] for path in hour_dir.glob("*.part*.parquet")}):
                 hour = _hour_of(hour_dir, hh)
                 if hour is not None and hour < before:
-                    # This path publishes too — a restart-window early confirmation reaches
-                    # `_merge_hour` from HERE with `_current_hour` still None, never through
-                    # `_finalize_hour` — so it takes the same earliness count (spec 00103 D2).
+                    # A restart-window early confirmation reaches `_merge_hour` from HERE, never
+                    # through `_finalize_hour`, so it takes the same count (spec 00103 D2).
                     self._count_if_early(hour)
                     self._merge_hour(hour_dir, hh)
 

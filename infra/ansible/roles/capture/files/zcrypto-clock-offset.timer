@@ -5,10 +5,9 @@
 Description=Publish the host clock offset as a node-exporter textfile
 
 [Timer]
-# 5 min rather than the reboot check's 15: this is the only detector for an archive hour being
-# truncated by a leading clock, the damage lands at an hour boundary, and the interval bounds how
-# long a clock can be wrong before the page. OnBootSec republishes promptly after a reboot, when a
-# clock is most likely to come back wrong.
+# The interval bounds how long a clock can be wrong before the page, and this is the only detector
+# for an archive hour truncated by a leading clock. OnBootSec republishes promptly after a reboot,
+# when a clock is most likely to come back wrong.
 OnBootSec=2min
 OnUnitActiveSec=5min
 # Deliberately NO Persistent=true: this reports the CURRENT clock, so a run missed while the host

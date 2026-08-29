@@ -156,9 +156,8 @@ def test_collector_families_reflect_client_and_writer_state():
     assert families["zcrypto_capture_segment_bytes_total"].samples[0].value == 12_345
     assert families["zcrypto_capture_rows_held_total"].samples[0].value == 7
     assert families["zcrypto_capture_rows_quarantined_total"].samples[0].value == 4
-    # T0037's two residuals: counted by the writer since spec 00103 D1/D5, and worth nothing until
-    # something publishes them. Looked up by SAMPLE name, so a family renamed or labelled differently
-    # from what the alert rules query fails here rather than passing on a substring of the exposition.
+    # T0037's two residuals (spec 00103 D1/D5), looked up by SAMPLE name: a family renamed or
+    # labelled differently from what the alert rules query fails here.
     assert families["zcrypto_capture_hour_finalized_early_total"].samples[0].value == 6
     assert families["zcrypto_capture_ts_past_dated_hour_total"].samples[0].value == 1
 

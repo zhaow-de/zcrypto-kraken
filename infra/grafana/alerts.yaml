@@ -3305,17 +3305,16 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Held rows spilled to a `.held` sidecar for an hour the oracle never CONFIRMED. NOT rows that
-      # "arrived after their hour was finalized" -- that is the opposite direction in time, and it is
-      # what this comment and the summary both claimed from the day the rule shipped (spec 00103 D6).
-      # A row that genuinely arrives after finalization is dropped by the late-event guard and counted
-      # nowhere. The two real causes: a lone stream in a sparse hour, where nothing ever seconds its
-      # hour, and a capture process stopping inside CLOCK_WITNESS_MARGIN of a boundary.
+      # Held rows spilled to a `.held` sidecar for an hour the oracle never CONFIRMED (spec 00103 D6).
+      # NOT rows that "arrived after their hour was finalized" -- that is the opposite direction in
+      # time, and such a row is dropped by the late-event guard and counted nowhere. The two real
+      # causes: a lone stream in a sparse hour, where nothing ever seconds its hour, and a capture
+      # process stopping inside CLOCK_WITNESS_MARGIN of a boundary.
       #
-      # Measured baseline: ZERO on both hosts (2026-08-29), so any nonzero value is a real event, not
-      # noise. Spilled rows are kept and never deleted, but they sit OUTSIDE the canonical tree -- the
-      # sweep, the merge, the recovery floor and `verify_tree` all skip a `.held` part -- and they are
-      # redeemed only when a live, quorum-confirmed stream next opens their hour.
+      # Baseline is zero on both hosts, so any nonzero value is a real event. Spilled rows are kept
+      # and never deleted, but they sit OUTSIDE the canonical tree -- the sweep, the merge, the
+      # recovery floor and `verify_tree` all skip a `.held` part -- and they are redeemed only when a
+      # live, quorum-confirmed stream next opens their hour.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 21600, to: 0}
@@ -3351,10 +3350,8 @@ rules:
   # --- The hour-rotation residuals (T0037, spec 00103) -------------------------------------------
   # Three rules, and they do NOT partition the space evenly: the early-finalization counter sees a
   # bogus stamp truncating an hour and a merely lagging clock IDENTICALLY, and it cannot see a
-  # LEADING clock's truncation at all -- spec 00103 D1b proves the measurement subtracts the clock's
-  # own lead back out, so the skew rule below is that fault's only detector. The past-dated rule is a
-  # separate fault with a hard-zero baseline. The runbook entry `bogus-timestamp-hour-rotation`
-  # carries the whole map; each rule's own section carries its triage.
+  # LEADING clock's truncation at all (spec 00103 D1b) -- the skew rule below is that fault's only
+  # detector. The runbook entry `bogus-timestamp-hour-rotation` carries the whole map.
 
   - uid: zcrypto-capture-hour-finalized-early
     title: "Capture · an archive hour closed before the clock said it was over"
@@ -3369,18 +3366,14 @@ rules:
       # a committed final is never reopened.
       #
       # WARNING, and `gt 0` with no rate bar, both deliberate. A clock LAGGING by less than
-      # MAX_TS_AHEAD (5 min) closes every genuine boundary that early -- spec 00103 D3 rules that a
-      # true positive rather than noise to engineer away, because T0036's binding finding is that the
-      # clock gets no veto over live data. The family sums across 24 writers (12 pairs x {book,
-      # trade}) finalizing 24 boundaries a day, so a lagging clock produces up to ~576 increments per
-      # day per host -- ~144 inside this 6 h window. No threshold separates the two causes: any bar
-      # low enough to catch a two-stamp event sits far below the benign rate, and a bar above it would
-      # be blind to the residual entirely. The DISAMBIGUATOR is zcrypto-capture-clock-skew read beside
-      # this rule, which is why the summary sends the operator there instead of naming one cause.
+      # MAX_TS_AHEAD (5 min) closes every genuine boundary that early, which spec 00103 D3 rules a
+      # true positive rather than noise to engineer away. No threshold separates the two causes: any
+      # bar low enough to catch a two-stamp event sits far below the benign rate. The DISAMBIGUATOR
+      # is zcrypto-capture-clock-skew read beside this rule, which is why the summary sends the
+      # operator there instead of naming one cause.
       #
-      # Earliness is structurally bounded by MAX_TS_AHEAD (every oracle witness is clamped at
-      # now + MAX_TS_AHEAD, and `append()` holds anything above the confirmed hour), so there is no
-      # second band and no `beyond_window` sibling: that rule would sit unfirable forever.
+      # Earliness is structurally bounded by MAX_TS_AHEAD, so there is no second band and no
+      # `beyond_window` sibling: such a rule would sit unfirable forever.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 21600, to: 0}
@@ -3402,9 +3395,8 @@ rules:
             - evaluator: {type: gt, params: [0]}
     noDataState: OK
     execErrState: Alerting
-    # 15m, matching the `.held` sibling: long enough to keep this out of the `for: 0s` set a
-    # one-minute Grafana datasource hiccup can fire, and it costs no detection -- the 6 h increase()
-    # window holds the condition true long after the event itself.
+    # 15m keeps this out of the `for: 0s` set a one-minute datasource hiccup can fire, and costs no
+    # detection -- the 6 h increase() window holds the condition true long after the event itself.
     for: 15m
     annotations:
       summary: "A capture host closed at least one archive hour before its own clock said that hour was over, in the last 6h. This signal alone CANNOT tell the two causes apart: either a bogus exchange timestamp closed the hour early and that stream's remaining rows for it were dropped -- permanent, unbackfillable loss -- or the host clock is simply running behind, which closes every genuine boundary early and costs nothing. Read zcrypto-capture-clock-skew beside this one before concluding either. It is also blind to the opposite fault, a clock running AHEAD, which hides its own truncation from this measurement: silence here is never a clean bill for the archive's hour boundaries. Runbook: infra/runbooks/capture.md#zcrypto-capture-hour-finalized-early"
@@ -3433,8 +3425,8 @@ rules:
       # A STEP, not a rate. The counter can advance at most once per stream per process -- one first
       # event each -- so `increase() > 0` over a long window is the whole detection, and any rate bar
       # would be a bar on how many streams were poisoned rather than on whether one was. Kraken's ts
-      # is strictly non-decreasing across 3.15M measured production rows, so the baseline is a hard
-      # zero and CRITICAL is proportionate: the fabricated hour is already certified on disk.
+      # is measured strictly non-decreasing in production, so the baseline is a hard zero and
+      # CRITICAL is proportionate: the fabricated hour is already certified on disk.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 21600, to: 0}
@@ -3456,9 +3448,8 @@ rules:
             - evaluator: {type: gt, params: [0]}
     noDataState: OK
     execErrState: Alerting
-    # 5m: enough to absorb the one-minute datasource transients that fire the `for: 0s` rules, and no
-    # more. The damage is already permanent when this counts, so nothing is bought by waiting longer,
-    # and the counter's step is momentary -- but the 6 h window keeps the page up regardless.
+    # 5m absorbs the one-minute datasource transients and no more: the damage is already permanent
+    # when this counts, so nothing is bought by waiting longer.
     for: 5m
     annotations:
       summary: "A capture host opened an archive hour that was ALREADY IN THE PAST when the stream's first event arrived -- a bogus, past-dated exchange timestamp. That publishes an hour marked complete and certified for a period during which nothing was actually captured, and it can pull a quarantined .held sidecar in with it. The baseline is a hard zero over the fleet's whole life and the counter can step at most once per stream per capture process, so any step at all is a real event. Do not attempt to repair the hour by hand. Runbook: infra/runbooks/capture.md#zcrypto-capture-ts-past-dated-hour"
@@ -3481,27 +3472,24 @@ rules:
       # rule the SOLE detector for T0037's residual (b): a clock leading the true hour lets a bogus
       # stamp close an hour early AND subtracts its own lead back out of every clock-referenced
       # measurement, so zcrypto-capture-hour-finalized-early counts nothing while the archive is being
-      # truncated. When the fault is the clock, only the precondition is observable -- and it is
-      # observable BEFORE the damage rather than after, which is what makes this worth paging on.
+      # truncated. Only the precondition is observable -- and observable BEFORE the damage.
       #
       # 10 s is structural, not fitted: orders of magnitude above a disciplined clock's steady state,
       # and 30x below CLOCK_WITNESS_MARGIN (5 min), the lead at which the clock witness can start
-      # seconding a bogus stamp. So skew is flagged long before it can either cause residual (b) or
-      # make the earliness counter ambiguous.
+      # seconding a bogus stamp.
       #
-      # The host matcher is spelled out on BOTH legs on purpose: these families are admitted only on
-      # the capture hosts (infra/ansible/roles/capture/files/config.alloy), and an unqualified
-      # selector would claim the whole fleet and read NoData for every other host.
+      # The host matcher is spelled out on BOTH legs on purpose: an unqualified selector would claim
+      # the whole fleet and read NoData for every host that does not publish these families.
       #
-      # `== bool 0` rather than a bare `== 0` on the sync leg, and it is load-bearing: a bare filter
+      # `== bool 0` rather than a bare `== 0` on the sync leg is load-bearing: a bare filter
       # comparison returns the LEFT operand's VALUE, so an unsynchronised clock would arrive at the
-      # threshold node as the number 0, which no `gt` evaluator can ever see -- the rule would be
-      # structurally unable to fire on one of the two conditions it exists for. `== bool 0` yields 1
+      # threshold node as the number 0, which no `gt` evaluator can ever see. `== bool 0` yields 1
       # instead. The offset leg needs no such treatment: it returns `abs(...)`, already positive.
-      # Healthy on both legs is an EMPTY result, hence noDataState: OK -- which also means a vanished
+      # Healthy on both legs is an EMPTY result, hence noDataState: OK.
+      #
       # A vanished series is not covered here: the textfile collector re-serves the last file
-      # forever, so a dead exporter reads healthy. zcrypto-capture-clock-exporter-stale watches
-      # the .prom's mtime for exactly that, and this rule is blind while that one fires.
+      # forever, so a dead exporter reads healthy. zcrypto-capture-clock-exporter-stale watches the
+      # .prom's mtime for exactly that, and this rule is blind while that one fires.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -3523,9 +3511,8 @@ rules:
             - evaluator: {type: gt, params: [0]}
     noDataState: OK
     execErrState: Alerting
-    # 10m: a clock stepped once by a correction is not the fault this watches, and at 30x margin below
-    # the level where damage becomes possible there is no cost to waiting out a transient. A genuine
-    # undisciplined drift holds the condition indefinitely.
+    # 10m: a clock stepped once by a correction is not the fault this watches, and 30x below the
+    # level where damage becomes possible there is no cost to waiting a transient out.
     for: 10m
     annotations:
       summary: "A capture host's clock is more than 10 seconds away from true time, or the host reports its clock unsynchronised. Nothing is lost yet -- this is a PRECONDITION, and it is the only signal that can see the archive fault a clock running AHEAD causes: it lets a bogus exchange timestamp close an archive hour early while hiding that earliness from every counter measured against the same wrong clock, so the early-close signal stays silent through it. The bar sits 30x below the skew at which that becomes possible, so there is time. Restore the host's time discipline, then check whether any archive hour closed short while the clock was off. Runbook: infra/runbooks/capture.md#zcrypto-capture-clock-skew"

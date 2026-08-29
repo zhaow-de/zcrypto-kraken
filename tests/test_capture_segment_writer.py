@@ -1680,8 +1680,7 @@ def test_t0037_a_coherently_fast_walk_cannot_poison_the_witness(tmp_path, clock)
 def test_t0037_early_finalize_counted_on_rotation(tmp_path, clock):
     # Residual (a) — the loss the oracle ACCEPTS (spec 00103 D1): TWO streams stamped bogus inside
     # the same closing window meet quorum, and the second stamp's rotation publishes its live hour
-    # truncated. The segment is committed and verify-clean, so the counter is the only visible
-    # signature the truncation leaves.
+    # truncated. The segment is committed and verify-clean, so the counter is the only signature.
     oracle = HourOracle()
     a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")
     b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
@@ -1700,8 +1699,7 @@ def test_t0037_early_finalize_counted_on_rotation(tmp_path, clock):
 def test_t0037_early_finalize_counted_on_the_sweep_path(tmp_path, clock):
     # The SAME residual landing in a restart window (spec 00103 D2): `_current_hour is None`, so the
     # bogus-confirmed first event publishes the truncated hour through `_sweep` -> `_merge_hour`
-    # directly — `_finalize_hour` never runs. A rotation-only instrumentation leaves this count at 0,
-    # which is exactly what this test exists to catch.
+    # directly — `_finalize_hour` never runs, so a rotation-only instrumentation leaves this at 0.
     w1 = _new_writer(tmp_path, flush_rows=5)
     for i in range(20):  # cs 0..19 flushed to 4 parts, hour 10 still live
         clock.now = _ts(10, i)
@@ -1746,10 +1744,9 @@ def test_t0037_genuine_boundary_counts_no_earliness(tmp_path, clock):
 
 
 def test_t0037_swept_past_hour_counts_no_earliness(tmp_path, clock):
-    # CONTROL for the sweep site (paired with the sweep test above — vacuous until that site is
-    # instrumented): the sweep's ordinary job is republishing hours a dead process left behind, long
-    # after they ended. Negative earliness, excluded by the arithmetic (spec 00103 D2) — a count
-    # here would fire on every routine restart.
+    # CONTROL for the sweep site: the sweep's ordinary job is republishing hours a dead process left
+    # behind, long after they ended. Negative earliness, excluded by the arithmetic (spec 00103 D2)
+    # — a count here would fire on every routine restart.
     w1 = _new_writer(tmp_path, flush_rows=5)
     for i in range(20):
         clock.now = _ts(10, i)
@@ -1765,10 +1762,8 @@ def test_t0037_swept_past_hour_counts_no_earliness(tmp_path, clock):
 
 def test_t0037_lagging_clock_counts_early_by_design(tmp_path, clock):
     """A clock lagging 3 min under GENUINE two-stream traffic fires the counter — intended (spec
-    00103 D3). The earliness measurement is taken with the same lagging clock, so a genuine boundary
-    reads 3 min early; that cannot be engineered away, because any wall-clock-referenced measurement
-    inherits the clock's error, and T0036 forbids giving the clock a veto over live data.
-    Disambiguation is operational, not code: the D4 skew alert says which case fired."""
+    00103 D3): the earliness is measured with the same lagging clock, so a genuine boundary reads
+    3 min early. Disambiguation is operational, not code — the D4 skew alert says which case fired."""
     oracle = HourOracle()
     a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")
     b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
@@ -1789,11 +1784,9 @@ def test_t0037_lagging_clock_counts_early_by_design(tmp_path, clock):
 
 def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
     # Residual (c) — the past-dated fabrication (spec 00103 D5): a process's FIRST stamp is the only
-    # event that can open an hour behind the wall clock (mid-stream `floor` is `_current_hour`, so
-    # the late-event guard drops a past-hour stamp before it reaches `_enter_hour`), and an hour
-    # opened that way can commit a final for an hour that was never captured. Hour 08 is committed
-    # first so the recovery floor is real (09:00) — the stamp lands ABOVE it, where the late-event
-    # guard cannot refuse it and only this counter sees it.
+    # event that can open an hour behind the wall clock. Hour 08 is committed first so the recovery
+    # floor is real (09:00) — the stamp lands ABOVE it, where the late-event guard cannot refuse it
+    # and only this counter sees it.
     w1 = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(8, 30)
     w1.append(_book_event(8, 30, checksum=1))
@@ -1822,10 +1815,8 @@ def test_t0037_normal_start_counts_no_past_dated_hour(tmp_path, clock):
 def test_t0037_draining_held_rows_counts_no_past_dated_hour(tmp_path, clock):
     # CONTROL with teeth: TWO held rows carrying DISTINCT timestamps, then drained. `_hold` already
     # advanced `_max_ts` past the older row, so the drain re-admits it through `_admit` reading
-    # "backward" — the rejected regression-against-`_max_ts` design counts on every such drain,
-    # which is routine, not a defect; the first-event check must stay at 0. With ONE held row the
-    # drain re-admits nothing backward, so it stays silent even under the rejected design and
-    # proves nothing — two distinct timestamps is the minimum that bites.
+    # "backward" — routine, not a defect, and the counter must stay at 0. ONE held row re-admits
+    # nothing backward and would prove nothing; two distinct timestamps is the minimum that bites.
     clock.now = _ts(10, 2)
     w = _oracle_writer(tmp_path, HourOracle())
     w.append(_book_event(10, 0, 0, checksum=0))  # held: a lone stream, and the clock handicap reads 09:57
@@ -1841,8 +1832,8 @@ def test_t0037_draining_held_rows_counts_no_past_dated_hour(tmp_path, clock):
 def test_t0037_lone_bogus_future_stamp_counts_no_past_dated_hour(tmp_path, clock):
     # CONTROL with teeth: the pinned-healthy lone-in-window-bogus-stamp scenario (the shape of
     # test_t0037_lone_in_window_bogus_stamp_never_truncates_the_live_hour). The held bogus 11:00
-    # advances `_max_ts`, so every genuine 10:57–10:59 row behind it reads "backward" — the rejected
-    # regression-counting design pages on this healthy stream; this counter must read 0.
+    # advances `_max_ts`, so every genuine 10:57–10:59 row behind it reads "backward" on a healthy
+    # stream; this counter must read 0.
     w = _oracle_writer(tmp_path, HourOracle())
     for mnt in range(0, 57):  # 10:00 .. 10:56 — the live hour so far
         clock.now = _ts(10, mnt)
@@ -1859,11 +1850,10 @@ def test_t0037_lone_bogus_future_stamp_counts_no_past_dated_hour(tmp_path, clock
 
 
 def test_t0037_an_oracle_less_writer_reopening_a_prior_hour_counts_nothing(tmp_path, clock):
-    # CONTROL with teeth for the gate: `finalize_completed_hours` refuses oracle-BEARING writers and
-    # nulls `_current_hour`, so the liquidations pollers re-enter the first-event branch on every poll
-    # cycle. A sparse symbol waking up into a prior hour above the re-anchored floor is their DESIGNED
-    # write mode (T0046), not a fabricated hour -- ungated, this counter would measure poll cadence.
-    # It bites: without `self._oracle is not None` the append below reads 1.
+    # CONTROL with teeth for the gate: `finalize_completed_hours` nulls `_current_hour`, so an
+    # oracle-less poller re-enters the first-event branch every cycle, and a sparse symbol waking up
+    # into a prior hour above the re-anchored floor is its DESIGNED write mode (T0046), not a
+    # fabrication. It bites: without `self._oracle is not None` the append below reads 1.
     w = _new_writer(tmp_path, flush_rows=5000)  # oracle-less, as the poller builds them
     w.append(_book_event(10, 0))
     assert w.finalize_completed_hours(_ts(11, 0)) == 1

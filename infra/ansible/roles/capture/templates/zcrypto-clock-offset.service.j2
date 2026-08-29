@@ -8,10 +8,9 @@ Description=Publish the host clock offset as a node-exporter textfile
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/zcrypto-clock-offset /usr/bin/chronyc {{ capture_textfile_dir }}/clock-offset.prom
-# Same hardening as the sibling reboot-check probe, with one addition: chronyc binds its OWN reply
-# socket next to chronyd's in /run/chrony, so under ProtectSystem=strict a read-only /run makes even
-# reading the clock fail -- and the exporter would then publish an unknown offset forever. The `-`
-# prefix keeps the unit startable on a host where chrony is not installed.
+# chronyc binds its OWN reply socket next to chronyd's in /run/chrony, so under ProtectSystem=strict
+# a read-only /run makes even READING the clock fail, and the exporter then publishes an unknown
+# offset forever. The `-` prefix keeps the unit startable where chrony is not installed.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

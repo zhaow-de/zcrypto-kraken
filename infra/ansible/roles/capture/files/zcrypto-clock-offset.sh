@@ -4,25 +4,21 @@
 # tests/test_clock_offset.py, which drives THIS script) instead.
 #
 # Host clock-skew exporter (spec 00103 D4, T0037). A clock LEADING the true hour lets one bogus
-# exchange timestamp close an archive hour early, and every clock-referenced counter measures that
-# earliness with the same wrong clock, so the lead cancels itself out -- this reading is the ONLY
-# detector for that residual, and the loss it precedes is unbackfillable.
+# exchange timestamp close an archive hour early, and no clock-referenced counter can see it -- the
+# wrong clock subtracts its own lead back out. This reading is that residual's ONLY detector.
 #
-# It runs on the HOST rather than inside the Alloy container deliberately: the in-container route
-# reads the clock through adjtimex, gated behind CAP_SYS_TIME -- the capability that lets a process
-# SET the clock. Widening what can move the clock in order to watch the clock is the wrong trade on
-# hosts whose correctness argument is that the clock is not trusted (spec 00103 D4 records it).
+# It runs on the HOST, not inside the Alloy container: the in-container route reads the clock through
+# adjtimex, behind CAP_SYS_TIME -- the capability that lets a process SET the clock, on hosts whose
+# correctness argument is that the clock is not trusted.
 #
 # Both series are emitted on EVERY run, healthy included: an absent series is indistinguishable from
-# a dead exporter, which is the ambiguity this exporter exists to remove.
+# a dead exporter.
 #
 # When chronyc is missing, fails, or answers in a shape this parser does not recognise, the offset
-# publishes as NaN and the flag as 0. A fabricated 0 offset would read as a perfectly disciplined
-# clock, and staying silent would lose the distinction altogether; NaN keeps "unknown" apart from
-# "zero" -- PromQL comparisons against NaN are false, so the offset threshold cannot fire on it --
-# while the 0 flag still pages through the alert's synchronisation leg. The exit status stays 0: the
-# published values ARE the report, and a permanently failed oneshot beside them is a second channel
-# nothing watches.
+# publishes as NaN and the flag as 0: a fabricated 0 offset would read as a perfectly disciplined
+# clock, and PromQL comparisons against NaN are false, so the threshold cannot fire on it while the
+# 0 flag still pages through the alert's synchronisation leg. The exit status stays 0 -- the
+# published values ARE the report.
 set -euo pipefail
 
 usage="usage: zcrypto-clock-offset <chronyc-path> <output.prom>"
@@ -35,8 +31,7 @@ synced=0
 
 if tracking=$("$chronyc" tracking 2>/dev/null); then
   # The human-readable form, not `chronyc -c tracking`: the CSV column carries the offset as a bare
-  # signed number, and reading its direction backwards would report a leading clock as a lagging one
-  # -- exactly the distinction this exporter exists to make. This form spells it out in words.
+  # signed number, and reading its direction backwards reports a leading clock as a lagging one.
   #
   # "System time     : 0.000000123 seconds fast of NTP time" -- the clock's CURRENT error, where
   # "Last offset" is only its error at the most recent measurement.
