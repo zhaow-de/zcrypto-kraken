@@ -28,8 +28,8 @@
     {
       "id": 101,
       "type": "stat",
-      "title": "Alloy up — per host",
-      "description": "Is each machine's telemetry agent shipping anything at all? One target per machine, written out literally rather than driven by the Host picker — a regex selector cannot render a machine whose series have vanished entirely, which is the exact condition this panel exists to catch. A tile reads DARK when the machine has shipped nothing; the alert fires after `for: 10m` of that, so a tile can be red for a few minutes before a page arrives. Counting series presence, not the scrape value: a machine can be shipping while an individual scrape target reads 0 — that case is the scrape-targets panel below.",
+      "title": "Alloy up \u2014 per host",
+      "description": "Is each machine's telemetry agent shipping anything at all? One target per machine, written out literally rather than driven by the Host picker \u2014 a regex selector cannot render a machine whose series have vanished entirely, which is the exact condition this panel exists to catch. A tile reads DARK when the machine has shipped nothing; the alert fires after `for: 10m` of that, so a tile can be red for a few minutes before a page arrives. Counting series presence, not the scrape value: a machine can be shipping while an individual scrape target reads 0 \u2014 that case is the scrape-targets panel below.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -142,7 +142,7 @@
       "id": 102,
       "type": "table",
       "title": "Host vitals (now)",
-      "description": "Which machine is unwell right now, at a glance — one row per machine, all values instant. Deliberately carries **no** threshold colouring: load and disk each have per-machine page lines that differ by machine, and they are drawn on their own panels below. Filesystem free is the tightest of the two mountpoints any alert watches (the root filesystem, and the archive volume on the NAS).",
+      "description": "Which machine is unwell right now, at a glance \u2014 one row per machine, all values instant. Deliberately carries **no** threshold colouring: load and disk each have per-machine page lines that differ by machine, and they are drawn on their own panels below. Filesystem free is the tightest of the two mountpoints any alert watches (the root filesystem, and the archive volume on the NAS).",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -278,8 +278,8 @@
     {
       "id": 103,
       "type": "stat",
-      "title": "healthchecks.io — checks down",
-      "description": "Are any of the dead-man checks down, and is the healthchecks.io scrape itself still alive? Carries the alert's own fallback, so an unreachable endpoint reads 999 rather than going blank — 999 means the watchdog's eyes went dark, not that 999 checks are down. Published by the ops machine, which is the only scraper of this endpoint; that is why the expression carries no machine matcher. The alert fires after `for: 5m` above zero.",
+      "title": "healthchecks.io \u2014 checks down",
+      "description": "Are any of the dead-man checks down, and is the healthchecks.io scrape itself still alive? Carries the alert's own fallback, so an unreachable endpoint reads 999 rather than going blank \u2014 999 means the watchdog's eyes went dark, not that 999 checks are down. Published by the ops machine, which is the only scraper of this endpoint; that is why the expression carries no machine matcher. The alert fires after `for: 5m` above zero.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -356,8 +356,8 @@
     {
       "id": 104,
       "type": "table",
-      "title": "healthchecks.io — per check",
-      "description": "WHICH check is down. Closes the \"log in to healthchecks.io to find out which one\" gap that the aggregate above cannot answer. Rendered as an instant table with no column renaming, so every label the endpoint publishes appears as its own column. Published by the ops machine. Context panel — the page pointer sits on the aggregate beside it.",
+      "title": "healthchecks.io \u2014 per check",
+      "description": "WHICH check is down. Closes the \"log in to healthchecks.io to find out which one\" gap that the aggregate above cannot answer. Rendered as an instant table with no column renaming, so every label the endpoint publishes appears as its own column. Published by the ops machine. Context panel \u2014 the page pointer sits on the aggregate beside it.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -464,8 +464,8 @@
     {
       "id": 201,
       "type": "timeseries",
-      "title": "Node load — each host against its own bar",
-      "description": "Is a machine saturated **by the standard its own alert uses**? Three different alerts watch load with three genuinely different bars, so each is drawn as its own series with its own line: the two capture machines are normalised per core (they have different core counts) and page above 1.5 after `for: 10m`; the NAS pages above 4 after `for: 5m`; the ops machine pages above 20 after `for: 5m`. The three series are **not comparable on this axis** — one is per core and two are raw — which is exactly why a single shared ladder would be wrong here, and why the normalised cross-machine comparison is the panel beside this one.",
+      "title": "Node load \u2014 each host against its own bar",
+      "description": "Is a machine saturated **by the standard its own alert uses**? Three different alerts watch load with three genuinely different bars, so each is drawn as its own series with its own line: the two capture machines are normalised per core (they have different core counts) and page above 1.5 after `for: 10m`; the NAS pages above 4 after `for: 5m`; the ops machine pages above 20 after `for: 5m`. The three series are **not comparable on this axis** \u2014 one is per core and two are raw \u2014 which is exactly why a single shared ladder would be wrong here, and why the normalised cross-machine comparison is the panel beside this one.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -484,7 +484,7 @@
           },
           "expr": "node_load1{host=~\"zcrypto|zcrypto-red\"} / on(host) group_left() count by (host) (node_cpu_seconds_total{host=~\"zcrypto|zcrypto-red\", mode=\"idle\"})",
           "refId": "A",
-          "legendFormat": "{{host}} — per core"
+          "legendFormat": "{{host}} \u2014 per core"
         },
         {
           "datasource": {
@@ -493,7 +493,7 @@
           },
           "expr": "node_load1{host=\"nas\"}",
           "refId": "B",
-          "legendFormat": "{{host}} — load (1m)"
+          "legendFormat": "{{host}} \u2014 load (1m)"
         },
         {
           "datasource": {
@@ -502,7 +502,7 @@
           },
           "expr": "node_load1{host=\"ops\"}",
           "refId": "C",
-          "legendFormat": "{{host}} — load (1m)"
+          "legendFormat": "{{host}} \u2014 load (1m)"
         }
       ],
       "fieldConfig": {
@@ -634,7 +634,7 @@
       "id": 202,
       "type": "timeseries",
       "title": "Load per core (context)",
-      "description": "Cross-machine comparison on one normalised axis: load divided by that machine's own core count. **Deliberately carries no page line.** No alert evaluates this expression, and the true bars differ per machine by a factor of more than ten — the ops machine pages at 20 raw, which is 0.83 per core, *below* where any per-core ladder would first turn amber. Read this panel for shape and relative pressure only; read the panel beside it for whether anything is about to page.",
+      "description": "Cross-machine comparison on one normalised axis: load divided by that machine's own core count. **Deliberately carries no page line.** No alert evaluates this expression, and the true bars differ per machine by a factor of more than ten \u2014 the ops machine pages at 20 raw, which is 0.83 per core, *below* where any per-core ladder would first turn amber. Read this panel for shape and relative pressure only; read the panel beside it for whether anything is about to page.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -692,7 +692,7 @@
       "id": 203,
       "type": "timeseries",
       "title": "CPU busy / iowait / steal",
-      "description": "Is high load real CPU work, blocked IO, or hypervisor steal — three different faults with three different fixes. Read together with the load panels above: the same load number means something different depending on which of these three lines is carrying it. No alert watches this breakdown, so there is no page line here.",
+      "description": "Is high load real CPU work, blocked IO, or hypervisor steal \u2014 three different faults with three different fixes. Read together with the load panels above: the same load number means something different depending on which of these three lines is carrying it. No alert watches this breakdown, so there is no page line here.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -765,7 +765,7 @@
       "id": 204,
       "type": "timeseries",
       "title": "Memory available / free %",
-      "description": "Is any machine approaching an out-of-memory kill before it takes a capture daemon down? **No alert watches memory anywhere on the fleet — this panel is the only coverage there is**, so nothing here will ever page you and a falling line is yours to act on. The \"free\" series deliberately excludes the edge machine: that family is not collected there, and writing the exclusion into the expression makes it auditable where an empty series would not be. \"Available\" is the number that matters; \"free\" is only useful next to it.",
+      "description": "Is any machine approaching an out-of-memory kill before it takes a capture daemon down? **No alert watches memory anywhere on the fleet \u2014 this panel is the only coverage there is**, so nothing here will ever page you and a falling line is yours to act on. The \"free\" series deliberately excludes the edge machine: that family is not collected there, and writing the exclusion into the expression makes it auditable where an empty series would not be. \"Available\" is the number that matters; \"free\" is only useful next to it.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -840,7 +840,7 @@
       "id": 301,
       "type": "timeseries",
       "title": "Filesystem free % by mountpoint",
-      "description": "Which mountpoint on which machine is filling, and how fast. Three alerts watch three different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`. The ops root filesystem is drawn for context and has **no** alert behind it, so its line is deliberately unmarked. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only — that is the alert's own expression, unchanged.",
+      "description": "Which mountpoint on which machine is filling, and how fast. Three alerts watch three different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`. The ops root filesystem is drawn for context and has **no** alert behind it, so its line is deliberately unmarked. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only \u2014 that is the alert's own expression, unchanged.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1016,7 +1016,7 @@
       "id": 302,
       "type": "timeseries",
       "title": "Filesystem headroom (bytes)",
-      "description": "How many gibibytes remain before the capture daemon's own 1 GiB watermark starts discarding order-book data that cannot be backfilled. **The line drawn here is the daemon's internal watermark, not an alert bar** — nothing pages on this number, and no alert in the fleet evaluates this expression. The percentage-based alert is on the panel beside it, which is where that page points.",
+      "description": "How many gibibytes remain before the capture daemon's own 1 GiB watermark starts discarding order-book data that cannot be backfilled. **The line drawn here is the daemon's internal watermark, not an alert bar** \u2014 nothing pages on this number, and no alert in the fleet evaluates this expression. The percentage-based alert is on the panel beside it, which is where that page points.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1078,7 +1078,7 @@
       "id": 303,
       "type": "timeseries",
       "title": "NAS inode headroom",
-      "description": "Millions of small archive segments exhaust inodes long before they exhaust bytes, and a filesystem with free space and no inodes fails writes in a way the free-space panels above cannot show. These two families are collected on the NAS only, hence the literal machine matcher. Nothing pages on this — it is the early-warning line you read when writes start failing on a volume that still reports free space.",
+      "description": "Millions of small archive segments exhaust inodes long before they exhaust bytes, and a filesystem with free space and no inodes fails writes in a way the free-space panels above cannot show. These two families are collected on the NAS only, hence the literal machine matcher. Nothing pages on this \u2014 it is the early-warning line you read when writes start failing on a volume that still reports free space.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1215,7 +1215,7 @@
       "id": 401,
       "type": "timeseries",
       "title": "Scrape targets up",
-      "description": "Which individual scrape target stopped answering, before the whole machine goes dark. The `unless` clause removes one series that is **0 by design** — the trading engine's scrape target exists on both capture machines because they share one agent configuration, but only the primary runs an engine, so the secondary's copy reads 0 forever and would otherwise be a permanent false fault. Context panel: the machine-dark pages point at the glance tiles at the top of the board, which measure series presence rather than scrape value.",
+      "description": "Which individual scrape target stopped answering, before the whole machine goes dark. The `unless` clause removes one series that is **0 by design** \u2014 the trading engine's scrape target exists on both capture machines because they share one agent configuration, but only the primary runs an engine, so the secondary's copy reads 0 forever and would otherwise be a permanent false fault. Context panel: the machine-dark pages point at the glance tiles at the top of the board, which measure series presence rather than scrape value.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1277,7 +1277,7 @@
       "id": 402,
       "type": "timeseries",
       "title": "node-exporter collector success",
-      "description": "Is a collector failing, so its whole metric family goes silently absent and every alert keyed on it evaluates to no-data and quietly disarms itself? The minimum across collectors is the alert's own number and pages after `for: 15m` below the 0.5 line — i.e. as soon as any collector reports 0; the second series names the failing collector; the third counts how many collectors each machine is reporting at all. All five machines are covered — the edge machine joined on 2026-08-05, when its agent began collecting the family; before that it was excluded here and could not fail the alert that watches it, which read as four green machines and a healthy fleet. **Keep reading the counting series, not just the minimum**: a machine that disappears entirely drops out of a minimum silently, and that is the failure this panel exists to expose. The scrape-duration panel beside this one still excludes the edge machine, because only the success family is collected there.",
+      "description": "Is a collector failing, so its whole metric family goes silently absent and every alert keyed on it evaluates to no-data and quietly disarms itself? The minimum across collectors is the alert's own number and pages after `for: 15m` below the 0.5 line \u2014 i.e. as soon as any collector reports 0; the second series names the failing collector; the third counts how many collectors each machine is reporting at all. All five machines are covered \u2014 the edge machine joined on 2026-08-05, when its agent began collecting the family; before that it was excluded here and could not fail the alert that watches it, which read as four green machines and a healthy fleet. **Keep reading the counting series, not just the minimum**: a machine that disappears entirely drops out of a minimum silently, and that is the failure this panel exists to expose. The scrape-duration panel beside this one still excludes the edge machine, because only the success family is collected there.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1403,7 +1403,7 @@
       "id": 403,
       "type": "timeseries",
       "title": "Collector scrape duration",
-      "description": "Is the exporter itself becoming the problem — a filesystem walk creeping toward the 60-second scrape interval, at which point scrapes start overlapping and the collector's own cost becomes the fault. **The 60-second line is the scrape interval, not an alert bar** — nothing pages on this number. The five slowest collectors are shown per machine, not per fleet, so no machine can be crowded out of the chart. The edge machine is excluded **permanently**: this family is not collected there and will not be, and an unmarked empty series is the failure class this board exists to prevent.",
+      "description": "Is the exporter itself becoming the problem \u2014 a filesystem walk creeping toward the 60-second scrape interval, at which point scrapes start overlapping and the collector's own cost becomes the fault. **The 60-second line is the scrape interval, not an alert bar** \u2014 nothing pages on this number. The five slowest collectors are shown per machine, not per fleet, so no machine can be crowded out of the chart. The edge machine is excluded **permanently**: this family is not collected there and will not be, and an unmarked empty series is the failure class this board exists to prevent.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1477,8 +1477,8 @@
     {
       "id": 501,
       "type": "timeseries",
-      "title": "Textfile age — did the timer run (capture)",
-      "description": "Has a one-off timer stopped writing its metrics file, freezing every gauge it publishes at a healthy-looking last value? The two timers republish on completely different schedules and get completely different bars: the pending-reboot probe runs every 15 minutes and pages above 1 hour stale after `for: 10m`; the daily journal prune pages above 26 hours stale after `for: 30m`. Scoped to the two capture machines only — that is the only scope any alert gives this family. The ops machine's timers are watched by different families with different budgets and live on the data-integrity board.",
+      "title": "Textfile age \u2014 did the timer run (capture)",
+      "description": "Has a one-off timer stopped writing its metrics file, freezing every gauge it publishes at a healthy-looking last value? The three timers republish on completely different schedules and get completely different bars: the pending-reboot probe runs every 15 minutes and pages above 1 hour stale after `for: 10m`; the daily journal prune pages above 26 hours stale after `for: 30m`. Scoped to the two capture machines only \u2014 that is the only scope any alert gives this family. The ops machine's timers are watched by different families with different budgets and live on the data-integrity board. The clock exporter writes every 5 min; its own staleness rule trips at 1800 s, tighter than the others.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1495,7 +1495,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/(reboot|clock-offset).prom\"})",
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/reboot.prom\"})",
           "refId": "A",
           "legendFormat": "{{host}} reboot probe age"
         },
@@ -1507,6 +1507,15 @@
           "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/engine-journal-prune.prom\"})",
           "refId": "B",
           "legendFormat": "{{host}} journal prune age"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/clock-offset.prom\"})",
+          "refId": "C",
+          "legendFormat": "{{host}} clock exporter age"
         }
       ],
       "fieldConfig": {
@@ -1668,7 +1677,7 @@
       "id": 503,
       "type": "timeseries",
       "title": "Reboot pending & probe presence",
-      "description": "Does either capture machine need its attended reboot — **and** is the probe that answers that question still publishing on both machines? These two questions have opposite failure directions on the same signal, so they carry opposite lines: the pending flag pages when it rises to 1 (after `for: 15m`) and the publisher count pages when it *falls* below 2 (after `for: 20m`). A staleness alert cannot fire on a series that never exists, which is exactly why the count is drawn here: an absent probe reads green forever without it. A flat zero on the pending line is the healthy state, not a dead exporter — the count line is what tells the two apart.",
+      "description": "Does either capture machine need its attended reboot \u2014 **and** is the probe that answers that question still publishing on both machines? These two questions have opposite failure directions on the same signal, so they carry opposite lines: the pending flag pages when it rises to 1 (after `for: 15m`) and the publisher count pages when it *falls* below 2 (after `for: 20m`). A staleness alert cannot fire on a series that never exists, which is exactly why the count is drawn here: an absent probe reads green forever without it. A flat zero on the pending line is the healthy state, not a dead exporter \u2014 the count line is what tells the two apart.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1809,8 +1818,8 @@
     {
       "id": 601,
       "type": "timeseries",
-      "title": "Daemon memory — $daemon_host (RSS & VSZ)",
-      "description": "Is a daemon's memory climbing against **this machine's own** history? Repeated once per machine on purpose: the ceilings differ by more than an order of magnitude across the fleet, so putting them on one shared axis would make the small machines unreadable and invite a comparison that means nothing. Legends name the daemon as well as the machine — several daemons publish this family, and on the primary capture machine two of them do, so the machine name alone is ambiguous exactly where it matters most. Four tiles render; the NAS tile shows the **telemetry agent's own** process rather than an application daemon. The edge machine publishes no per-process metrics at all and therefore has no tile — that absence is by design, and it is also why the restart markers on this board are silent for that machine.",
+      "title": "Daemon memory \u2014 $daemon_host (RSS & VSZ)",
+      "description": "Is a daemon's memory climbing against **this machine's own** history? Repeated once per machine on purpose: the ceilings differ by more than an order of magnitude across the fleet, so putting them on one shared axis would make the small machines unreadable and invite a comparison that means nothing. Legends name the daemon as well as the machine \u2014 several daemons publish this family, and on the primary capture machine two of them do, so the machine name alone is ambiguous exactly where it matters most. Four tiles render; the NAS tile shows the **telemetry agent's own** process rather than an application daemon. The edge machine publishes no per-process metrics at all and therefore has no tile \u2014 that absence is by design, and it is also why the restart markers on this board are silent for that machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1874,8 +1883,8 @@
     {
       "id": 602,
       "type": "timeseries",
-      "title": "Daemon RSS growth per day — fleet",
-      "description": "Is any daemon's memory actually trending up? Every long-lived process the fleet scrapes — both capture daemons, the engine, the ops liquidations poller, and Alloy on all four hosts. A growth **rate** is the one leak measure that is legitimately comparable across two machines with different ceilings, which is why this panel puts both on one axis where the panel above deliberately does not. The value is bytes per day, derived over a six-hour window; a flat line near zero is healthy and a persistent positive slope is the leak signal. Nothing pages on this.",
+      "title": "Daemon RSS growth per day \u2014 fleet",
+      "description": "Is any daemon's memory actually trending up? Every long-lived process the fleet scrapes \u2014 both capture daemons, the engine, the ops liquidations poller, and Alloy on all four hosts. A growth **rate** is the one leak measure that is legitimately comparable across two machines with different ceilings, which is why this panel puts both on one axis where the panel above deliberately does not. The value is bytes per day, derived over a six-hour window; a flat line near zero is healthy and a persistent positive slope is the leak signal. Nothing pages on this.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2034,7 +2043,7 @@
       "id": 605,
       "type": "timeseries",
       "title": "Daemon uptime (since last restart)",
-      "description": "Did a daemon restart? A sawtooth here is the single fact that explains a counter which reset to zero somewhere else on the fleet, and it is the same signal the restart markers across this board are drawn from. Rising steadily is healthy. No alert watches this. The edge machine is excluded because it publishes no per-process metrics — which is also why no restart marker ever appears for it.",
+      "description": "Did a daemon restart? A sawtooth here is the single fact that explains a counter which reset to zero somewhere else on the fleet, and it is the same signal the restart markers across this board are drawn from. Rising steadily is healthy. No alert watches this. The edge machine is excluded because it publishes no per-process metrics \u2014 which is also why no restart marker ever appears for it.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2100,7 +2109,7 @@
       "id": 701,
       "type": "timeseries",
       "title": "WireGuard handshake age (both ends)",
-      "description": "Is the encrypted tunnel between the ops machine and the edge machine alive, and **which end** lost it? This family is published by probes at both ends, and the alert groups by end so the notification can name the one that went stale — the legend here shows the same grouping, which is what makes the expression unambiguous without a machine matcher. A healthy tunnel re-handshakes every couple of minutes (a 25-second keepalive holds it open), so the 300-second line the alert pages above after `for: 10m` is already several missed keepalives, not noise. A fully dark machine at either end is a different alert, on the glance tiles at the top of this board.",
+      "description": "Is the encrypted tunnel between the ops machine and the edge machine alive, and **which end** lost it? This family is published by probes at both ends, and the alert groups by end so the notification can name the one that went stale \u2014 the legend here shows the same grouping, which is what makes the expression unambiguous without a machine matcher. A healthy tunnel re-handshakes every couple of minutes (a 25-second keepalive holds it open), so the 300-second line the alert pages above after `for: 10m` is already several missed keepalives, not noise. A fully dark machine at either end is a different alert, on the glance tiles at the top of this board.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2161,7 +2170,7 @@
     {
       "id": 702,
       "type": "timeseries",
-      "title": "Edge TLS — time to expiry",
+      "title": "Edge TLS \u2014 time to expiry",
       "description": "How long until **each** tracked certificate expires. Three endpoints are tracked across two probes, and the alert now raises one instance per certificate, so this panel groups the same way and the legend names the endpoint the page will name. Pages below 14 days remaining, after `for: 1h`. The expression carries no machine matcher because the grouping puts both probing machines in the legend, which is what makes it unambiguous.",
       "datasource": {
         "type": "prometheus",
@@ -2241,7 +2250,7 @@
         "allValue": "",
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Which machines the panels below select. All expands to the five pinned machines joined into one matcher — the option list is the pin, so a stray label value cannot appear here. This list is a second place to edit when a machine joins the fleet.",
+        "description": "Which machines the panels below select. All expands to the five pinned machines joined into one matcher \u2014 the option list is the pin, so a stray label value cannot appear here. This list is a second place to edit when a machine joins the fleet.",
         "current": {
           "selected": true,
           "text": [
@@ -2301,7 +2310,7 @@
         "sort": 1,
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Machines that publish per-process metrics. Derived from the process family itself, not from the Host picker — the edge machine publishes no process metrics at all, so a Host-driven repeat would render an empty tile indistinguishable from a quiet daemon. Resolves to four machines; the NAS tile shows the telemetry agent's own process, not an application daemon.",
+        "description": "Machines that publish per-process metrics. Derived from the process family itself, not from the Host picker \u2014 the edge machine publishes no process metrics at all, so a Host-driven repeat would render an empty tile indistinguishable from a quiet daemon. Resolves to four machines; the NAS tile shows the telemetry agent's own process, not an application daemon.",
         "current": {
           "selected": true,
           "text": [

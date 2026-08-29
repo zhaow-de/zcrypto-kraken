@@ -2805,7 +2805,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The clock reading on a capture host has not refreshed in over 30 min (it writes every 5 min), so the offset and synchronised gauges are frozen at their last values and still look healthy. While this fires, the clock-skew alert is BLIND -- and that is the only detector for a leading clock. Check `systemctl list-timers zcrypto-clock-offset` on the host; the runbook entry has the rest."
+      summary: "The clock reading on a capture host has not refreshed in over 30 min (it writes every 5 min), so the offset and synchronised gauges are frozen at their last values and still look healthy. While this fires, the clock-skew alert is BLIND -- and that is the only detector for a leading clock. Check `systemctl list-timers zcrypto-clock-offset` on the host. Runbook: infra/runbooks/capture.md#zcrypto-capture-clock-exporter-stale"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "501"
       unit: "seconds since the clock exporter last wrote its file"
