@@ -39,7 +39,7 @@ class _FakeUsage:
 
 
 class _FakeWriter:
-    """A minimal duck-typed stand-in for `SegmentWriter`: `CaptureCollector` reads only these four
+    """A minimal duck-typed stand-in for `SegmentWriter`: `CaptureCollector` reads only these six
     plain-int attributes, never a real writer's disk-backed internals."""
 
     def __init__(self) -> None:
@@ -47,6 +47,8 @@ class _FakeWriter:
         self.segment_bytes = 0
         self.rows_held = 0
         self.rows_quarantined = 0
+        self.hour_finalized_early = 0
+        self.ts_past_dated_hour = 0
 
 
 def _families(collector: CaptureCollector) -> dict:
@@ -132,6 +134,8 @@ def test_collector_families_reflect_client_and_writer_state():
     writer.segment_bytes = 12_345
     writer.rows_held = 7
     writer.rows_quarantined = 4
+    writer.hour_finalized_early = 6
+    writer.ts_past_dated_hour = 1
     collector = CaptureCollector(
         ["BTC/EUR"],
         client,
@@ -152,12 +156,19 @@ def test_collector_families_reflect_client_and_writer_state():
     assert families["zcrypto_capture_segment_bytes_total"].samples[0].value == 12_345
     assert families["zcrypto_capture_rows_held_total"].samples[0].value == 7
     assert families["zcrypto_capture_rows_quarantined_total"].samples[0].value == 4
+    # T0037's two residuals: counted by the writer since spec 00103 D1/D5, and worth nothing until
+    # something publishes them. Looked up by SAMPLE name, so a family renamed or labelled differently
+    # from what the alert rules query fails here rather than passing on a substring of the exposition.
+    assert families["zcrypto_capture_hour_finalized_early_total"].samples[0].value == 6
+    assert families["zcrypto_capture_ts_past_dated_hour_total"].samples[0].value == 1
 
 
 def test_collector_sums_across_every_writer_book_and_trade():
     client = CaptureClient(["BTC/EUR"], 100)
     book_writer, trade_writer = _FakeWriter(), _FakeWriter()
     book_writer.segments_written, trade_writer.segments_written = 2, 3
+    book_writer.hour_finalized_early, trade_writer.hour_finalized_early = 1, 2
+    book_writer.ts_past_dated_hour, trade_writer.ts_past_dated_hour = 4, 3
     collector = CaptureCollector(
         ["BTC/EUR"],
         client,
@@ -167,7 +178,16 @@ def test_collector_sums_across_every_writer_book_and_trade():
         GapMonitor(),
         DiskWatermark(Path("/tmp")),
     )
-    assert _families(collector)["zcrypto_capture_segments_written_total"].samples[0].value == 5
+    families = _families(collector)
+    assert families["zcrypto_capture_segments_written_total"].samples[0].value == 5
+    # Both residual counters are unlabelled: one series per family carrying the fleet-wide sum, never
+    # a per-writer series. Distinct summands, so a family reading the wrong attribute cannot pass.
+    assert [(s.name, s.labels, s.value) for s in families["zcrypto_capture_hour_finalized_early_total"].samples] == [
+        ("zcrypto_capture_hour_finalized_early_total", {}, 3)
+    ]
+    assert [(s.name, s.labels, s.value) for s in families["zcrypto_capture_ts_past_dated_hour_total"].samples] == [
+        ("zcrypto_capture_ts_past_dated_hour_total", {}, 7)
+    ]
 
 
 def test_gap_seconds_family_carries_one_labeled_series_per_pair():
@@ -338,6 +358,8 @@ def test_metrics_port_set_serves_process_and_capture_series(tmp_path, monkeypatc
         "zcrypto_capture_segment_bytes_total",
         "zcrypto_capture_rows_held_total",
         "zcrypto_capture_rows_quarantined_total",
+        "zcrypto_capture_hour_finalized_early_total",
+        "zcrypto_capture_ts_past_dated_hour_total",
         "zcrypto_capture_gap_seconds_total",
         # T0101: without these two here, dropping either from the producer or from the
         # keep-regex leaves every test green while the series goes dark -- the T0051 trap.
