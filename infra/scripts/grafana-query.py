@@ -12,16 +12,8 @@ structurally EMPTY for Grafana-managed rules (which is all of ours), so its `(no
 as "nothing firing" regardless of reality. Read rule states from the API instead:
 `GET /api/prometheus/grafana/api/v1/rules` with the same bearer token.
 
-Two decrypt footguns, both of which cost a live rollout an error-and-retry, are handled here so
-nobody meets them again:
-
-  * `vault_password_file` in `ansible.cfg` names an EXECUTABLE (`scripts/vault-pass.sh`, a GPG
-    helper), not a file containing a password. Reading its bytes yields shell source, and the
-    failure surfaces as "no vault secrets were found that could decrypt" — which reads as a wrong
-    key rather than a wrong method.
-  * `group_vars/all/vault.yml` uses per-variable `!vault |` scalars, so `ansible-vault view` cannot
-    yield one key, and decrypting a scalar additionally requires an initialized
-    `VaultSecretsContext` — without it, str() on the value raises ReferenceError, not a vault error.
+The vaulted service-account token is resolved by `grafana_auth.py`, the sibling both Grafana
+scripts share.
 
 The token is resolved into a local and used only as a request header: never printed, never written,
 never placed in argv where `ps` would show it.
@@ -29,58 +21,26 @@ never placed in argv where `ps` would show it.
 
 from __future__ import annotations
 
-import configparser
+import importlib.util
 import json
-import subprocess
 import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-ANSIBLE_DIR = Path(__file__).resolve().parents[1] / "ansible"
-VAULT_FILE = "group_vars/all/vault.yml"
+_AUTH = Path(__file__).resolve().parent / "grafana_auth.py"
+_auth_spec = importlib.util.spec_from_file_location("grafana_auth", _AUTH)
+grafana_auth = importlib.util.module_from_spec(_auth_spec)
+_auth_spec.loader.exec_module(grafana_auth)
 
-# Defaults are this project's verified values, deliberately baked in rather than re-guessed: a wrong
-# datasource uid is accepted happily and still reports health=ok, so a guess fails silently.
-GRAFANA_URL = "https://zcrypto2026.grafana.net"
+# Re-exported so this module's own callers and tests keep one import site.
+ANSIBLE_DIR = grafana_auth.ANSIBLE_DIR
+GRAFANA_URL = grafana_auth.GRAFANA_URL
+vault_password_file = grafana_auth.vault_password_file
+vault_password = grafana_auth.vault_password
+vault_var = grafana_auth.vault_var
+
 PROM_DS_UID = "grafanacloud-prom"
-
-
-def vault_password_file() -> Path:
-    """The `vault_password_file` from `ansible.cfg`, resolved against the ansible directory."""
-    cfg = configparser.ConfigParser()
-    cfg.read(ANSIBLE_DIR / "ansible.cfg")
-    return ANSIBLE_DIR / cfg["defaults"]["vault_password_file"]
-
-
-def vault_password() -> bytes:
-    """EXECUTE the password helper and take its stdout. It is a script, not a password file."""
-    return subprocess.run([str(vault_password_file())], capture_output=True, check=True).stdout.strip()
-
-
-_CONTEXT_READY = False
-
-
-def vault_var(name: str) -> str:
-    """One variable's plaintext out of the per-variable-encrypted vault.
-
-    Safe to call more than once: `VaultSecretsContext.initialize` raises RuntimeError on a second
-    call ("already initialized"), which would turn reading a second credential -- `slack_webhook_url`,
-    the healthchecks admin token -- into a crash mid-gate. The flag makes that a no-op instead.
-    """
-    global _CONTEXT_READY
-    from ansible.parsing.dataloader import DataLoader
-    from ansible.parsing.vault import VaultSecret, VaultSecretsContext
-
-    secrets = [("default", VaultSecret(vault_password()))]
-    if not _CONTEXT_READY:
-        # Load-bearing, and it looks like dead setup because it returns nothing and `secrets` is
-        # passed again below: WITHOUT it, str() on a `!vault` scalar raises ReferenceError.
-        VaultSecretsContext.initialize(VaultSecretsContext(secrets=secrets))
-        _CONTEXT_READY = True
-    loader = DataLoader()
-    loader.set_vault_secrets(secrets)
-    return str(loader.load_from_file(str(ANSIBLE_DIR / VAULT_FILE))[name])
 
 
 def query(expr: str, token: str) -> list[dict]:
