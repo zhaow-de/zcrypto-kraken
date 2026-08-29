@@ -725,6 +725,15 @@ def _rule_panel_pairs():
     for r in iter_rules(rules):
         pid = (r.get("annotations") or {}).get("__panelId__")
         expr = next((q["model"]["expr"] for q in r["data"] if "expr" in q.get("model", {})), None)
+        cond = next(
+            (
+                c["evaluator"]["type"]
+                for q in r["data"]
+                for c in q.get("model", {}).get("conditions", [])
+                if c.get("evaluator", {}).get("params")
+            ),
+            None,
+        )
         ev = next(
             (
                 c["evaluator"]["params"][0]
@@ -742,7 +751,14 @@ def _rule_panel_pairs():
                     continue
                 for t in p.get("targets", []):
                     if t.get("expr", "").strip() == expr.strip():
-                        yield r["uid"], p, t, ev
+                        yield r["uid"], p, t, ev, cond
+
+
+def _first_firing_value(condition: str, evaluator: float) -> str:
+    """The smallest whole value that trips the rule -- what a mapping must colour to be a signal."""
+    if condition == "lt":
+        return str(int(evaluator) - 1 if float(evaluator).is_integer() else int(evaluator))
+    return str(int(evaluator) + 1)
 
 
 def test_a_panels_red_line_agrees_with_the_rule_it_charts():
@@ -762,10 +778,10 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     known = {"zcrypto-ops-tapebars-not-advancing"}
     pairs = list(_rule_panel_pairs())
     # Pairing is exact string equality, so reformatting one expression drops that rule from
-    # coverage with no failure anywhere. The floor makes a collapse visible; raise it, never lower.
+    # coverage with no failure anywhere. The floor makes a collapse visible. Lower it only when a rule or panel is deliberately retired.
     assert len(pairs) >= 54, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
     bad = []
-    for uid, panel, target, evaluator in pairs:
+    for uid, panel, target, evaluator, condition in pairs:
         if uid in known:
             continue
         overrides = panel.get("fieldConfig", {}).get("overrides", [])
@@ -780,7 +796,7 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
                 if s.get("value") is not None
             ]
         else:
-            # A series with no override inherits the panel default, which is a real bar. Reading an
+            # A series with no override inherits the panel default, which usually carries the bar. Reading an
             # override on ANOTHER refId as "this panel bars per series" misjudged a panel whose only
             # override REMOVES a bar, and made a healthy pairing look like a defect.
             steps = [
@@ -789,9 +805,17 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
                 if s.get("value") is not None
             ]
         if not steps:
-            # Some panels colour by value MAPPING rather than a numeric bar (a stat showing
-            # "failed"/"ok"). There is no threshold to agree with, so there is nothing to check.
-            if panel.get("fieldConfig", {}).get("defaults", {}).get("mappings"):
+            # Some panels colour by value MAPPING rather than a numeric bar (a stat reading
+            # "failed"/"ok"). That is a real signal, but only if the mapping covers the value the
+            # rule fires at -- a panel mapping 0 and 999 renders a firing 2 in the default colour,
+            # which is the same "healthy-looking failure" this test exists to stop.
+            mapped = {
+                str(k)
+                for m in panel.get("fieldConfig", {}).get("defaults", {}).get("mappings", [])
+                for k in (m.get("options") or {})
+                if k != "match"
+            }
+            if mapped and _first_firing_value(condition, evaluator) in mapped:
                 continue
             bad.append(f"{uid}: panel {panel['id']} refId {ref} has no threshold at all, per-series or default")
             continue
