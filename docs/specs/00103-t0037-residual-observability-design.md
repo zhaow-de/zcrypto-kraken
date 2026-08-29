@@ -140,7 +140,7 @@ Existing coverage that must stay green unchanged: the 16 `test_t0037_*` cases an
 1. Land A's code + tests. Cold spec+plan review at the **Fable** floor — this is the unbackfillable capture path (`spec-plan-locations.md`).
 2. Build the image; roll out under `zcrypto-rollout-image` in full: secondary → bake gate → primary. A capture-image re-pin owes the whole canary discipline; nothing here is exempt.
 3. Alloy keep-regex converge, pinned to the **currently-running** Alloy digest — config-only, no bake owed.
-4. Read all three families by VALUE on both hosts: `hour_finalized_early_total` present and zero; `ts_past_dated_hour_total` present and zero **over a window containing at least one process restart** — its only reachable path is a process's first event, so a restart-free window cannot exercise it and is not a baseline; `node_timex_offset_seconds` present and within threshold. `(no series)` is not a zero.
+4. Read all three families by VALUE on both hosts: `hour_finalized_early_total` present and zero; `ts_past_dated_hour_total` present and zero **over a window containing at least one process restart** — its only reachable path is a process's first event, so a restart-free window cannot exercise it and is not a baseline; `zcrypto_clock_offset_seconds` present and within threshold with `zcrypto_clock_synchronised` reading 1. `(no series)` is not a zero — and for the clock families it means the host timer did not run, not that the clock is fine.
 5. Push B's rules (Grafana), then confirm each evaluates.
 6. Runbook entries, topic archive, closeout, iterations-history entry.
 
