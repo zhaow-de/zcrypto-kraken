@@ -61,7 +61,7 @@ nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0d
 # -e nas_apply_compose=true), and so is the rollback. The entrypoint that reads this needs an image
 # that knows --hash-scope: it lands with that image pin in one applied converge, never render-only
 # against an older image.
-nas_archive_pull_hash_scope: full
+nas_archive_pull_hash_scope: incremental
 
 # Pull sources + per-channel SSH ports, rendered into {{ nas_stack_dir }}/.env by the nas role
 # (roles/nas/templates/env.j2; the env-var contract is in infra/nas/README.md). GATE_HEALTHCHECK_URL
