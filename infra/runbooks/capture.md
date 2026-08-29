@@ -220,7 +220,7 @@ A **critical** Grafana alert, one instance per capture machine. That machine's c
 
 `zcrypto-capture-clock-skew` is absent from `infra/grafana/alerts.yaml`, or the capture writer no longer takes the wall clock as a witness for opening an hour — at which point a skewed clock stops being able to truncate the archive and this becomes ordinary machine hygiene rather than a data-integrity signal.
 
-**One blind spot is deliberate and lives elsewhere.** A healthy clock produces an empty query, so the rule reads no-data as healthy — which means the two series *vanishing* also reads as healthy. Two things close it: the exporter publishes on EVERY run including the healthy case, and when chrony cannot be read it publishes the offset as NaN with the synchronised flag at 0, which pages. A silent series therefore means the host timer itself stopped — check `systemctl list-timers zcrypto-clock-offset` before reading silence as a good clock.
+**One blind spot is deliberate and lives elsewhere.** A healthy clock produces an empty query, so the rule reads no-data as healthy — which means the two series *vanishing* also reads as healthy. The exporter publishes on EVERY run including the healthy case, and publishes the offset as NaN with the synchronised flag at 0 when chrony cannot be read, which pages. But a dead TIMER does not produce silence: the textfile collector re-serves the last `.prom` forever, so the gauges sit frozen and healthy-looking indefinitely. `zcrypto-capture-clock-exporter-stale` is what says otherwise, on the file's mtime — **while that alert is firing, treat the clock-skew alert as blind**, not as a clean bill.
 
 ______________________________________________________________________
 

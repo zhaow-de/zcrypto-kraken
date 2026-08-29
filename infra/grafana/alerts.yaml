@@ -2768,6 +2768,45 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-capture-clock-exporter-stale
+    title: "Capture · the clock reading has stopped refreshing"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - max by (host) (node_textfile_mtime_seconds{host=~"zcrypto|zcrypto-red", file=~".*/clock-offset.prom"})'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [1800]}  # 30 min ~= 6 missed runs at the 5-min cadence
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The clock reading on a capture host has not refreshed in over 30 min (it runs every 5 min), so the offset and synchronised gauges are frozen at their last values. The textfile collector re-serves a stale file forever, so those gauges still look healthy -- this is the only thing that says otherwise, and while it is firing the clock-skew alert is blind."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "502"
+      unit: "seconds since the clock exporter last wrote its file"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-oneoff-textfile-stale
     title: "Capture · daily one-off timer stopped publishing"
     ruleGroup: zcrypto-capture
@@ -3460,8 +3499,9 @@ rules:
       # structurally unable to fire on one of the two conditions it exists for. `== bool 0` yields 1
       # instead. The offset leg needs no such treatment: it returns `abs(...)`, already positive.
       # Healthy on both legs is an EMPTY result, hence noDataState: OK -- which also means a vanished
-      # timex series reads as healthy. That blind spot is closed at the config, not here:
-      # tests/test_infra_alloy_series.py pins both the `timex` collector and the keep-regex entries.
+      # A vanished series is not covered here: the textfile collector re-serves the last file
+      # forever, so a dead exporter reads healthy. zcrypto-capture-clock-exporter-stale watches
+      # the .prom's mtime for exactly that, and this rule is blind while that one fires.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
