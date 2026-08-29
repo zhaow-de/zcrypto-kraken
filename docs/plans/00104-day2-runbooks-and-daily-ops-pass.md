@@ -214,6 +214,8 @@ Same five steps. `cycle-stale`: rule out Alloy-dark first; scoped inspect; journ
 Run: `uv run pytest tests/test_infra_alert_rules.py -v 2>&1 | tail -4`
 Expected: every test passes, the new one included — the unlinked set is empty. Diff the union of anchors added in Tasks 3–9 against `red-set.txt`: identical sets.
 
+Then discharge D1's mutation-probe sentence: run `infra/scripts/mutate-probe.sh` with a mutation that deletes one summary's `Runbook:` line (`--collect-only` first, to prove the probe actually collects the guard — a `-k` filter that deselects it proves nothing), confirm the tightened test names that uid, and restore.
+
 Commit: `docs(runbooks): engine.md -- the four engine rules get their procedures; every rule now links`.
 
 ---
@@ -222,14 +224,14 @@ Commit: `docs(runbooks): engine.md -- the four engine rules get their procedures
 
 **Files:**
 - Create: `infra/scripts/grafana_auth.py`, `tests/test_grafana_auth.py`
-- Modify: `infra/scripts/grafana-query.py` (import the sibling instead of defining the resolver), `tests/test_grafana_query.py` (the two footgun tests move)
+- Modify: `infra/scripts/grafana-query.py` (import the sibling instead of defining the resolver), `tests/test_grafana_query.py` (all four vault-resolver tests move)
 
 **Interfaces:**
 - Produces: `ANSIBLE_DIR`, `GRAFANA_URL`, `vault_password_file() -> Path`, `vault_password() -> bytes`, `vault_var(name: str, vault_file: str = "group_vars/all/vault.yml") -> str`. Tasks 11–14 import these; Task 13 reads `healthchecks_readonly_api_key` from the default file, and `00105`'s J′ reads `engine_healthcheck_url` with `vault_file="group_vars/engine_host/vault.yml"`.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/test_grafana_auth.py` — the two footguns move here verbatim in substance, plus the new parameter:
+`tests/test_grafana_auth.py` — **all four** vault-resolver tests move here (`tests/test_grafana_query.py` lines 26, 36, 55, 84: the password-file, the EXECUTE-not-read, the context-initialized-first, and the second-credential one), patching the `grafana_auth` module directly — patching `gq.*` could not reach the sibling's own globals, and the last two also touch `_CONTEXT_READY`, which no re-export can carry. Below are the first two plus the new parameter; move the context pair unchanged except for the module name:
 
 ```python
 """infra/scripts/ is not a package, so the module loads by path."""
@@ -311,12 +313,12 @@ vault_password = grafana_auth.vault_password
 vault_var = grafana_auth.vault_var
 ```
 
-Trim the moved footgun paragraphs from `grafana-query.py`'s docstring, leaving its own subject (PromQL, the alert-state caveat). In `tests/test_grafana_query.py`, delete the two footgun tests that moved and keep the query/render/token tests; they patch `gq.subprocess` and `gq.vault_password`, which the re-exports keep resolvable.
+Trim the moved footgun paragraphs from `grafana-query.py`'s docstring, leaving its own subject (PromQL, the alert-state caveat). In `tests/test_grafana_query.py`, delete the **four** vault-resolver tests that moved and keep the query/render/token/usage tests, which patch `gq.urllib` and `gq.vault_var` — both still resolvable through the re-exports.
 
 - [ ] **Step 5: Both suites green**
 
 Run: `uv run pytest tests/test_grafana_auth.py tests/test_grafana_query.py -v 2>&1 | tail -4`
-Expected: all pass. Then prove the caller still works end to end — this reads the vault, so it is the real check that the move did not break resolution:
+Expected: all pass, and `grep -c '^def test_' tests/test_grafana_auth.py` is 5 (four moved plus the new parameter test). Then prove the caller still works end to end — this reads the vault, so it is the real check that the move did not break resolution. **Run it in the main loop, never inside a subagent**: the vault helper can prompt, and a prompt inside a dispatched task dies unseen.
 Run: `uv run python infra/scripts/grafana-query.py 'vector(1)' 2>&1 | tail -2`
 Expected: the expression echoed and a value printed, not a traceback.
 
@@ -343,12 +345,12 @@ git commit -m "refactor(infra): the vault resolver moves to a sibling both Grafa
 ```python
 def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
     payload = {"data": {"groups": [{"name": "zcrypto-capture", "rules": [
-        {"name": "Capture · stream silent", "state": "firing",
-         "labels": {"__a_uid__": "zcrypto-capture-stream-silent"},
+        {"name": "Capture · stream silent", "uid": "zcrypto-capture-stream-silent", "state": "firing",
+         "labels": {"severity": "critical"},
          "annotations": {"summary": "one stream stopped. Runbook: infra/runbooks/capture.md#zcrypto-capture-stream-silent"},
          "alerts": [{"activeAt": "2026-08-29T10:00:00Z", "state": "Alerting"}]},
-        {"name": "Capture · venue not online", "state": "inactive",
-         "labels": {"__a_uid__": "zcrypto-capture-venue-not-online"}, "annotations": {}, "alerts": []},
+        {"name": "Capture · venue not online", "uid": "zcrypto-capture-venue-not-online",
+         "state": "inactive", "labels": {"severity": "warning"}, "annotations": {}, "alerts": []},
     ]}]}}
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload))
     assert [a.uid for a in read.firing_now] == ["zcrypto-capture-stream-silent"]
@@ -365,6 +367,15 @@ def test_a_history_chunk_at_the_page_limit_is_a_finding_not_a_silent_truncation(
     assert read.unreadable and "page limit" in read.unreadable
 
 
+def test_a_rule_without_a_uid_is_a_finding_never_a_silently_dropped_rule():
+    """The uid is how a fired alert reaches its runbook; a shape change that drops it must not
+    read as a quiet fleet."""
+    payload = {"data": {"groups": [{"name": "g", "rules": [
+        {"name": "no uid here", "state": "firing", "labels": {}, "annotations": {}, "alerts": []}]}]}}
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload))
+    assert read.unreadable and "uid" in read.unreadable
+
+
 def test_an_unreachable_grafana_is_reported_never_read_as_nothing_firing():
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_raises(urllib.error.URLError("down")))
     assert read.firing_now == [] and read.fired_in_window == []
@@ -377,7 +388,7 @@ Run: `uv run pytest tests/test_ops_daily.py -v 2>&1 | tail -5` — module missin
 
 - [ ] **Step 3: Implement**
 
-`read_alerts` calls `GET {GRAFANA_URL}/api/prometheus/grafana/api/v1/rules` for current state (the uid is `labels.__a_uid__`; the runbook link is parsed from the summary with the same regex the alert test uses, `infra/runbooks/([\w.-]+\.md)#([\w-]+)`), then `GET {GRAFANA_URL}/api/v1/rules/history?from=&to=&limit=` in chunks no wider than `HISTORY_CHUNK = timedelta(hours=6)`, each chunk's returned row count compared against `HISTORY_PAGE_LIMIT`; a chunk at the limit sets `unreadable`. Every request carries `Authorization: Bearer <token>` and a 30 s timeout. Any `URLError`/`HTTPError`/`KeyError` sets `unreadable` with the reason and returns empty lists — never a partial list presented as complete.
+`read_alerts` calls `GET {GRAFANA_URL}/api/prometheus/grafana/api/v1/rules` for current state (the uid is the rule object's **top-level `uid`** field, and a rule without one sets `unreadable` rather than yielding a silently empty list — **measured 2026-08-29** against the live API: a rule object's keys are `alerts, annotations, duration, evaluationTime, folderUid, health, isPaused, labels, lastEvaluation, name, notificationSettings, provenance, queriedDatasourceUIDs, query, state, totals, totalsFiltered, type, uid`, its `labels` carry only `severity`, and **no `__`-prefixed label exists**; the runbook link is parsed from the summary with the same regex the alert test uses, `infra/runbooks/([\w.-]+\.md)#([\w-]+)`), then `GET {GRAFANA_URL}/api/v1/rules/history?from=&to=&limit=` in chunks no wider than `HISTORY_CHUNK = timedelta(hours=6)`, each chunk's returned row count compared against `HISTORY_PAGE_LIMIT`; a chunk at the limit sets `unreadable`. Every request carries `Authorization: Bearer <token>` and a 30 s timeout. Any `URLError`/`HTTPError`/`KeyError` sets `unreadable` with the reason and returns empty lists — never a partial list presented as complete.
 
 - [ ] **Step 4: Green**
 
@@ -602,7 +613,7 @@ Frontmatter `name: zcrypto-daily-ops`, a description naming when it runs (the da
 
 1. **Read** — `uv run python infra/scripts/ops-daily.py report --since 24h`. Exit 2 means a source could not be read: that is the first finding, and the report names it.
 2. **The incident loop, per alert that fired** — open its runbook section (every rule has one), follow *What you are seeing* → *What it means* → run *What to do*, and classify: **expected** (a deploy in the window explains it — the report lists them), **transient** (self-resolved, cause identified), **needs a fix**, **needs a human**.
-3. **Remediate within two tiers.** *Autonomous*: read-only anything; telemetry-only runbook steps **on ops, the NAS or zaccess only** — restart Alloy, clear a stale cache, re-arm a timer (the capture pair's Alloy goes through `zcrypto-bump-alloy`, attended); a code fix the normal way — fix branch, tests, subagent review, PR, merged on CI green **when the fix is off the protected paths**. *Prepared, then the user's word*: any restart or converge of a capture daemon or the engine; anything touching the venue account (arm file, kill file, orders); deleting data; a fix landing on the capture write path, the live trade path, canonical data, or anything a host converges; running `grafana-push.sh` after a merged rule fix. Deploying any fix to a host is a converge — always attended.
+3. **Remediate within two tiers.** *Autonomous*: read-only anything; telemetry-only runbook steps **on ops, the NAS or zaccess only** — restart Alloy, clear a stale cache, re-arm a timer (the capture pair's Alloy goes through `zcrypto-bump-alloy`, attended); a code fix the normal way — fix branch, tests, subagent review, PR, merged on CI green **when the fix is off the protected paths**. *Prepared, then the user's word*: any restart or converge of a capture daemon or the engine; anything touching the venue account (arm file, kill file, orders); deleting data; a fix landing on the capture write path, the live trade path, canonical data, or anything a host converges; running `grafana-push.sh` after a merged rule fix. Deploying any fix to a host is a converge — always attended. **Every ssh/sudo step runs in the main loop, never in a dispatched subagent** — the permission gate blocks it there and the step dies where nobody sees the prompt.
 4. **Read the dashboards numerically** — the verdict tiles' own PromQL, through the report; no pixels.
 5. **Evaluate the due SCHEDULED REMINDER sections** (`refdata-sweep-due`, `healable-threshold-rederivation-due`).
 6. **Append the journal entry** on the `ops-journal` branch, commit; at a month change, open the finished month's PR and merge it on CI green, then re-cut the branch from `develop`.
@@ -625,6 +636,43 @@ Expected: pass — no `WP<N>`, no `T<NNNN>` on an operator surface. (A docs diff
 ```bash
 git add .claude/skills/zcrypto-daily-ops/SKILL.md .claude/rules/branch-workflow.md .claude/rules/commit-messages.md .claude/rules/fleet-deploys.md .claude/rules/agent-ops.md
 git commit -m "claude(config): the daily-ops pass, and the four rules its conventions need"
+```
+
+---
+
+### Task 16b: the tier bounds, proven on fixtures
+
+**Files:** Create `tests/fixtures/ops_daily/protected_path_finding.json`, `tests/fixtures/ops_daily/telemetry_only_finding.json`; modify `tests/test_ops_daily.py`
+
+**Interfaces:** Consumes `Report` (Task 14) and the skill's tier wording (Task 16). Discharges spec `00104`'s Verification line "D6 bounds".
+
+- [ ] **Step 1: Write the two fixtures and the failing test**
+
+One report whose fired alert's runbook remedy is on a protected path (a capture-daemon restart), one whose remedy is telemetry-only on ops (a stale Alloy). The test asserts on the returned tier — an enum, never prose:
+
+```python
+@pytest.mark.parametrize("fixture,expected", [
+    ("protected_path_finding.json", ops_daily.Tier.PREPARED),
+    ("telemetry_only_finding.json", ops_daily.Tier.AUTONOMOUS),
+])
+def test_the_tier_is_decided_by_what_the_remedy_touches_not_by_the_alert(fixture, expected):
+    # Both fixtures fire an alert and both name a remedy -- only what the remedy TOUCHES differs,
+    # so a classifier keyed on anything else passes one and fails the other.
+    report = ops_daily.Report.from_json(_fixture(fixture))
+    assert report.remedy_tier() is expected
+```
+
+- [ ] **Step 2: red** — `Tier` and `remedy_tier` do not exist yet.
+
+- [ ] **Step 3: Implement** `Tier(Enum)` with `AUTONOMOUS` / `PREPARED`, and `remedy_tier()` returning `PREPARED` when the remedy names a capture host, the engine, the venue account, data deletion, a converge, or `grafana-push.sh`; `AUTONOMOUS` only for read-only and telemetry-only actions on ops, the NAS or zaccess. **The default on an unrecognised remedy is `PREPARED`** — an unclassifiable action is never acted on.
+
+- [ ] **Step 4: green**, then the negative: change the protected fixture's remedy to the telemetry wording and confirm the test fails. The fixtures must differ in the one dimension the classifier reads — a pair the classifier cannot separate proves nothing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/fixtures/ops_daily/ tests/test_ops_daily.py infra/scripts/ops_daily.py
+git commit -m "test(infra): the remedy tier is decided by what the action touches"
 ```
 
 ---
@@ -671,7 +719,7 @@ Append to `docs/iterations-history-phase6.md` a `## <date> — iter-<N>: …` se
 
 - [ ] **Step 2: T0157 → `partial`, not resolved**
 
-Flip the frontmatter to `partial`; add `## Done so far` naming what landed with its commits; trim `## Suggested next steps` to the remainder — **the first real pass**, which is the spec's own acceptance test, plus the read-only key mint if step 5 skipped it. Move its index bullet to `### Partially done`. Archiving before the pass has run would record a resolution nothing proved.
+Flip the frontmatter to `partial`; add `## Done so far` naming what landed with its commits; trim `## Suggested next steps` to the remainder — **the first real pass**, which is the spec's own acceptance test, plus the read-only key mint if it was skipped — web-UI only, and registered as this topic's `(human)` step. Move its index bullet to `### Partially done`. Archiving before the pass has run would record a resolution nothing proved.
 
 - [ ] **Step 3: The audit and the PR**
 
@@ -684,3 +732,30 @@ Then the PR per `open-pr`, and merge on CI green per `merge-pr`.
 git add docs/iterations-history-phase6.md docs/open-topics/T0157-day2-operations-runbooks-and-daily-pass.md docs/open-topics/README.md
 git commit -m "docs(research): iter-<N> closeout -- every alert has a runbook, and the fleet has a daily reader"
 ```
+
+---
+
+### Task 19: post-merge — the fleet, and the first real pass
+
+**Runs in the MAIN LOOP after Task 18's PR is merged, never in a subagent** — each step touches a credentialed surface, and `grafana-push.sh` must not run from an unmerged branch.
+
+- [ ] **Step 1: Push the rules from merged `develop`**
+
+`grafana-push.sh`'s own header (lines 8–10) forbids pushing summaries that cite repo paths from a branch: a branch push ships summaries naming files `develop` does not have.
+
+**Measured 2026-08-29, so the executor need not rediscover it**: the live stack carries **79** rules against the file's **83**. The four absent ones are spec `00103`'s hour-rotation detectors — `zcrypto-capture-clock-skew`, `-clock-exporter-stale`, `-hour-finalized-early`, `-ts-past-dated-hour` — whose metric families all read `(no series)` because the capture image carrying them has not rolled out ([[T0037]] is `partial` on exactly that rollout). Pushing them is **safe and expected**: all four carry `noDataState: OK`, so absence cannot page, and `fleet-deploys.md`'s spurious-no-data hazard does not apply here. The orphan report must come back empty; a non-empty one is a finding, never something to prune past.
+
+- [ ] **Step 2: The changed expression, read by value**
+
+`zcrypto-capture-resubscribe-failing` gained `by (host)`. Per `fleet-deploys.md`'s alert-rule lifecycle, read its first sample as a VALUE before judging anything else:
+
+Run: `uv run python infra/scripts/grafana-query.py 'sum by (host) (increase(zcrypto_capture_resubscribes_failed_total[1d]))'`
+Expected: a value per host — `(no series)` is a FAIL, not a zero.
+
+- [ ] **Step 3: The ten check descriptions**
+
+With the **admin** `healthchecks_api_key` (`group_vars/capture_host/vault.yml`), set each check's description to carry `Runbook: infra/runbooks/<file>#<anchor>` per the map in `observability.md#zcrypto-hcio-watchdog`, then read each back and assert the text landed. The key is a request header only — never argv, never a file, never a log line.
+
+- [ ] **Step 4: The first real pass — the spec's acceptance test**
+
+Cut `ops-journal` from `develop`; run the `/zcrypto-daily-ops` procedure end to end. The journal entry is committed on that branch; the summary is posted to `#zcrypto`, or, if no Slack tool is reachable, the paragraph goes into the handover with the gap named rather than dropped. Correct the skill from what day one shows, and **T0157 → resolved** (archive, index, `## Resolution`) rides that same fold-in PR — after the pass has run, never before.
