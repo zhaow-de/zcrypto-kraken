@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from cli.config import (
     AppConfig,
@@ -255,9 +256,13 @@ def test_tracking_band_bps_rejects_a_non_number_non_positive_or_bool(tmp_path):
 def test_the_engine_role_template_renders_the_plan_cap_explicitly():
     """The blast-radius bound must appear in a converge diff, exactly like exec_armed."""
     text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
-    assert "exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}" in text
-    defaults = Path("infra/ansible/roles/engine/defaults/main.yml").read_text()
-    assert "engine_exec_max_plan_notional_eur: 100.0" in defaults
+    # Parsed, not substring: a commented-out line satisfies containment, and `100.01` contains
+    # `100.0`. This is the live trade path's blast-radius cap -- it must be the real setting.
+    assert any(ln.strip() == "exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}" for ln in text.splitlines()), (
+        "the cap is not rendered into the engine config"
+    )
+    defaults = yaml.safe_load(Path("infra/ansible/roles/engine/defaults/main.yml").read_text())
+    assert defaults["engine_exec_max_plan_notional_eur"] == 100.0, defaults.get("engine_exec_max_plan_notional_eur")
 
 
 def test_committed_zcrypto_toml_has_no_engine_table():

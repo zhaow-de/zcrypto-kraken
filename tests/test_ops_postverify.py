@@ -160,6 +160,6 @@ def test_counter_names_match_the_exporter():
     alloy = (repo / "infra" / "ansible" / "roles" / "ops" / "files" / "config.alloy").read_text()
     alternatives = [alt for k in re.findall(r'regex\s*=\s*"([^"]*)"', alloy) for alt in k.split("|")]
     for name in ("zcrypto_reconcile_residual_gap_seconds_total", "zcrypto_reconcile_healable_gap_seconds_total"):
-        assert name in script  # config-selector-ok: presence only; the keep-regex fullmatch on the next line is the real assertion
+        assert name in re.findall(r"increase\((\w+)\[", script), f"{name} is not a counter this script queries"
         assert any(re.fullmatch(alt, name) for alt in alternatives), f"{name} not admitted by any keep regex"
         assert name.removeprefix("zcrypto_reconcile_") in exporter  # command.py assembles prefix + leg

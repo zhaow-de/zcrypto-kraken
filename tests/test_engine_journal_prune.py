@@ -47,6 +47,16 @@ def _prune(root: Path, days: str = "14", *extra: str) -> subprocess.CompletedPro
     return subprocess.run(["bash", str(SCRIPT), str(root), days, *extra], capture_output=True, text=True, check=False)
 
 
+def _rw_paths(rw: str) -> set[str]:
+    """The paths ReadWritePaths actually grants.
+
+    Substring over the raw line is blind to a longer sibling: `/var/lib/x-backup` contains
+    `/var/lib/x`, so a typo'd unit reads as writable. The leading `-` is systemd's may-not-exist
+    marker, not part of the path.
+    """
+    return {p.lstrip("-") for p in rw.removeprefix("ReadWritePaths=").split()}
+
+
 def test_deletes_only_days_older_than_retention(tmp_path):
     old, edge, fresh = _day(tmp_path, 40), _day(tmp_path, 15), _day(tmp_path, 3)
     # 20 recent days so the keep-newest floor is satisfied and age is the only variable under test.
@@ -315,7 +325,7 @@ def test_protectsystem_strict_still_permits_writing_the_journal_dir():
     assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     journal = f"{_role_vars()['engine_state_dir']}/journal"
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
-    assert journal in rw, f"{journal} is not writable under ProtectSystem=strict: {rw}"
+    assert journal in _rw_paths(rw), f"{journal} is not writable under ProtectSystem=strict: {rw}"
 
 
 def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
@@ -341,7 +351,7 @@ def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
     assert directory == f"/host/root{host_dir}", f"prune writes {host_dir}, Alloy reads {directory} — a .prom nobody scrapes"
 
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
-    assert host_dir in rw, f"ProtectSystem=strict would block the write: {rw}"
+    assert host_dir in _rw_paths(rw), f"ProtectSystem=strict would block the write: {rw}"
 
 
 def test_the_deployed_retention_matches_the_spec():

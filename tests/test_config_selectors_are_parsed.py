@@ -52,13 +52,57 @@ def _infra_text_vars(tree: ast.Module, src: str) -> set[str]:
             continue
         if _HAZARD in seg or any(c in seg for c in consts):
             out |= {t.id for t in n.targets if isinstance(t, ast.Name)}
+    # A loop variable over `<haystack>.splitlines()` IS the haystack, one line at a time. Without
+    # this, `any("x" in line for line in text.splitlines())` slips through -- and that is precisely
+    # the form someone reaches for to satisfy this guard.
+    for n in ast.walk(tree):
+        for gen in getattr(n, "generators", []):
+            it = ast.get_source_segment(src, gen.iter) or ""
+            if ".splitlines()" in it and any(h in it for h in out):
+                out |= {t.id for t in ast.walk(gen.target) if isinstance(t, ast.Name)}
     return out
 
 
 # Pre-existing offenders, outside this branch's blast radius. The guard exists to stop the class
 # GROWING; retrofitting unrelated suites is a separate change. This list may only ever shrink -- a
 # new name here means the guard was defeated rather than satisfied.
-_GRANDFATHERED = {"test_config.py", "test_infra_converge_guards.py", "test_panel_regenerate.py"}
+_GRANDFATHERED = {"test_infra_converge_guards.py", "test_panel_regenerate.py"}
+
+
+def _root_name(node: ast.AST) -> str | None:
+    """The base identifier of an expression: `ln.strip()` and `ln` both root at `ln`."""
+    while isinstance(node, ast.Call | ast.Attribute):
+        node = (
+            node.func.value if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) else getattr(node, "value", None)
+        )
+        if node is None:
+            return None
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _prefix_anchored(tree: ast.Module, src: str) -> set[int]:
+    """Compare nodes sitting beside a `.startswith(...)` on the same name.
+
+    `startswith("regex") and "node_load1" in ln` is safe: the prefix already excludes comments, and
+    the substring only says WHICH anchored line. Flagging it would push editors toward suppressions.
+    """
+    safe: set[int] = set()
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.BoolOp):
+            continue
+        names = {
+            root
+            for v in n.values
+            if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "startswith"
+            for root in (_root_name(v.func.value),)
+            if root
+        }
+        if not names:
+            continue
+        for v in n.values:
+            if isinstance(v, ast.Compare) and _root_name(v.comparators[0]) in names:
+                safe.add(id(v))
+    return safe
 
 
 def _violations(src: str, name: str = "<src>") -> list[str]:
@@ -67,12 +111,14 @@ def _violations(src: str, name: str = "<src>") -> list[str]:
     consts = _path_consts(tree, src)
     haystacks = _infra_text_vars(tree, src)
     src_lines = src.splitlines()
+    anchored = _prefix_anchored(tree, src)
     return [
         f"{name}:{n.lineno}  {(ast.get_source_segment(src, n) or '').strip()[:110]}"
         for n in ast.walk(tree)
         if isinstance(n, ast.Compare)
         and len(n.ops) == 1
         and isinstance(n.ops[0], ast.In)
+        and id(n) not in anchored
         and not any(_MARKER in l for l in src_lines[max(0, n.lineno - 2) : (n.end_lineno or n.lineno)])
         and (
             (isinstance(n.comparators[0], ast.Name) and n.comparators[0].id in haystacks)
@@ -94,6 +140,11 @@ ROLE = REPO / "infra/x"
 def t():
     tasks = (ROLE / "m.yml").read_text()
     assert binary in tasks
+""",
+    "in inside a comprehension over splitlines": """
+def t():
+    unit = (REPO / "infra/u.service").read_text()
+    assert any("ProtectSystem=strict" in l for l in unit.splitlines())
 """,
     "f-string needle": """
 def t():

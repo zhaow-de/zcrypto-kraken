@@ -57,6 +57,16 @@ def _installed_dests(role_tasks_yaml: str) -> set[str]:
     }
 
 
+def _rw_paths(rw: str) -> set[str]:
+    """The paths ReadWritePaths actually grants.
+
+    Substring over the raw line is blind to a longer sibling: `/var/lib/x-backup` contains
+    `/var/lib/x`, so a typo'd unit reads as writable. The leading `-` is systemd's may-not-exist
+    marker, not part of the path.
+    """
+    return {p.lstrip("-") for p in rw.removeprefix("ReadWritePaths=").split()}
+
+
 def test_publishes_1_when_the_flag_is_present(tmp_path):
     flag = tmp_path / "reboot-required"
     flag.write_text("*** System restart required ***\n")
@@ -190,7 +200,7 @@ def test_protectsystem_strict_still_permits_writing_the_textfile_dir():
     assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     out = next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
-    assert str(Path(out).parent) in rw, f"{out} is not writable under ProtectSystem=strict: {rw}"
+    assert str(Path(out).parent) in _rw_paths(rw), f"{out} is not writable under ProtectSystem=strict: {rw}"
 
 
 def test_only_the_timer_is_enabled_not_the_oneshot():

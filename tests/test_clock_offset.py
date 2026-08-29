@@ -89,6 +89,16 @@ def _installed_dests(role_tasks_yaml: str) -> set[str]:
     }
 
 
+def _rw_paths(rw: str) -> set[str]:
+    """The paths ReadWritePaths actually grants.
+
+    Substring over the raw line is blind to a longer sibling: `/var/lib/x-backup` contains
+    `/var/lib/x`, so a typo'd unit reads as writable. The leading `-` is systemd's may-not-exist
+    marker, not part of the path.
+    """
+    return {p.lstrip("-") for p in rw.removeprefix("ReadWritePaths=").split()}
+
+
 def test_a_healthy_clock_emits_both_series_rather_than_staying_silent(tmp_path):
     """The load-bearing positive. Publishing nothing while all is well leaves the alert unable to
     tell "the clock is fine" from "the exporter died"."""
@@ -248,8 +258,8 @@ def test_protectsystem_strict_still_permits_the_two_writes_the_probe_needs():
     unit = _rendered_unit()
     assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
-    assert str(Path(_exec_start()[-1]).parent) in rw, f"the output directory is not writable: {rw}"
-    assert "/run/chrony" in rw, f"chronyc cannot create its client socket: {rw}"
+    assert str(Path(_exec_start()[-1]).parent) in _rw_paths(rw), f"the output directory is not writable: {rw}"
+    assert "/run/chrony" in _rw_paths(rw), f"chronyc cannot create its client socket: {rw}"
 
 
 def test_only_the_timer_is_enabled_not_the_oneshot():
