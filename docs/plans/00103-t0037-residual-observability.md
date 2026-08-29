@@ -155,9 +155,9 @@ ______________________________________________________________________
 | --- | --- | --- |
 | `zcrypto-capture-hour-finalized-early` | `increase(zcrypto_capture_hour_finalized_early_total{host=~"zcrypto\|zcrypto-red"}[6h]) > 0` | warning |
 | `zcrypto-capture-ts-past-dated-hour` | `increase(zcrypto_capture_ts_past_dated_hour_total{host=~"zcrypto\|zcrypto-red"}[6h]) > 0` | critical |
-| `zcrypto-capture-clock-skew` | `abs(node_timex_offset_seconds{host=~"zcrypto\|zcrypto-red"}) > 10 or node_timex_sync_status{host=~"zcrypto\|zcrypto-red"} == 0` | **critical** |
+| `zcrypto-capture-clock-skew` | `abs(zcrypto_clock_offset_seconds{host=~"zcrypto\|zcrypto-red"}) > 10 or (zcrypto_clock_synchronised{host=~"zcrypto\|zcrypto-red"} == bool 0) > 0` | **critical** |
 
-Three rules, not four — spec D1 retires the `beyond_window` rule as unreachable. **`zcrypto-capture-clock-skew` is critical because D1b makes it residual (b)'s only detector**, not because a drifting clock is itself an emergency. Its second leg needs the host matcher spelled out; an unqualified `node_timex_sync_status` spans every host in the fleet.
+Three rules, not four — spec D1 retires the `beyond_window` rule as unreachable. **The skew rule reads the host exporter's families (spec D4), not `node_timex_*`** — the shipped rule carries the retired names and is rewritten here with its runbook entry. Keep `== bool 0` on the synchronisation leg: a bare `==` filter returns the LEFT operand's value, so an unsynchronised host reaches the threshold as 0 and no `gt` can fire on it. **`zcrypto-capture-clock-skew` is critical because D1b makes it residual (b)'s only detector**, not because a drifting clock is itself an emergency. Its second leg needs the host matcher spelled out; an unqualified `node_timex_sync_status` spans every host in the fleet.
 
 `zcrypto-capture-hour-finalized-early` is a **warning**: D3 means a lagging clock fires it legitimately, at up to ~576/day/host summed across 24 writers. Size `for:` and any threshold against that rate, not against the ~24 an earlier draft assumed.
 
@@ -172,6 +172,7 @@ The `within_window` summary must say, in operator words, that it does **not** on
 - `## bogus-timestamp-hour-rotation — KNOWN LIMITATION`, modelled on `cross-hour-straddle`: the three residuals, the band table, which knob would close each and what it starves, **the truncation is permanent by design — do not attempt repair**, how to name the residual by reading band against clock offset, and a `Retire when` that is a structural condition, not a date. Cite the archived topic as `cross-hour-straddle` cites `T0103`.
 - One `## <uid> — ALERT` entry per new rule, headings matching the uids above. The `hour-finalized-early` entry must state that it does NOT see a leading clock's truncation (spec D1b) and that `zcrypto-capture-clock-skew` is that case's only detector — an operator who reads it as total coverage of the residuals is being misled.
 - `## zcrypto-capture-rows-quarantined — ALERT` — the entry it never had.
+- **Correct the clock-skew entry's claim that no role configures a time daemon.** No ROLE does, but chrony is active on the capture hosts, so as written it reads as "the clock is undisciplined" — misleading to someone acting on a skew page. Say what the exporter reads, and what a 0 synchronisation flag means.
 
 **Verify**: `uv run pytest tests/test_internal_terms_not_operator_visible.py` (it enforces the alert-summary surface); every new uid appears both in `alerts.yaml` and as a runbook heading — assert that by grep in both directions, since a one-way check passes on an orphan.
 
