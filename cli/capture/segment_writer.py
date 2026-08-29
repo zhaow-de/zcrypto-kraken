@@ -339,6 +339,8 @@ class SegmentWriter:
         self.segment_bytes = 0
         self.rows_held = 0
         self.rows_quarantined = 0
+        self.hour_finalized_early = 0  # hours FINALIZED before our clock said they were over (`_count_if_early`)
+        self.ts_past_dated_hour = 0  # oracle-bearing first stamps that opened an hour behind the clock (`_enter_hour`)
         self._recover()
 
     def append(self, event: dict) -> None:
@@ -482,7 +484,18 @@ class SegmentWriter:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
         A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
         if self._current_hour is None:
-            self._sweep(hour)  # deferred to here: the first event's hour is exchange time
+            # Spec 00103 D5, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
+            # is the only one that can open an hour behind the wall clock -- from here on `floor` is
+            # `_current_hour`, so the late-event guard refuses a past-dated stamp before it reaches
+            # us -- and such an hour can commit a final for an hour that was never captured.
+            #
+            # Gated on the oracle because that premise is FALSE without one: `finalize_completed_hours`
+            # nulls `_current_hour` every poll cycle, so an oracle-less poller re-enters this branch
+            # constantly and a re-awakening sparse symbol opens a prior hour BY DESIGN.
+            if self._oracle is not None and hour < _hour_start(_utcnow()):
+                self.ts_past_dated_hour += 1
+                logger.warning("first stamp opened a past hour pair=%s kind=%s hour=%s", self._pair, self._kind, hour)
+            self._sweep(hour)
             self._open_hour(hour)
         elif hour > self._current_hour:
             self._finalize_hour(self._current_hour)
@@ -695,7 +708,28 @@ class SegmentWriter:
             # normally causes this, and the traceback names the pair.
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)
 
+    def _count_if_early(self, hour: datetime) -> None:
+        """Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
+        visible signature of T0037's residual (a).
+
+        It does NOT see a LEADING clock's truncation: that measurement is taken with the same wrong
+        clock, which subtracts its own lead back out (D1b). A genuinely past hour yields a negative
+        earliness, so the sweep's ordinary republishing is excluded by the arithmetic rather than by
+        a special case.
+        """
+        earliness = (hour + timedelta(hours=1)) - _utcnow()
+        if earliness > timedelta(0):
+            self.hour_finalized_early += 1
+            logger.warning(
+                "hour finalized early pair=%s kind=%s hour=%s early_s=%.1f",
+                self._pair,
+                self._kind,
+                hour,
+                earliness.total_seconds(),
+            )
+
     def _finalize_hour(self, hour: datetime) -> None:
+        self._count_if_early(hour)
         self._flush_buffer()
         self._merge_hour(self._hour_dir(hour), f"{hour:%H}")
 
@@ -930,6 +964,9 @@ class SegmentWriter:
             for hh in sorted({path.name.split(".part")[0] for path in hour_dir.glob("*.part*.parquet")}):
                 hour = _hour_of(hour_dir, hh)
                 if hour is not None and hour < before:
+                    # A restart-window early confirmation reaches `_merge_hour` from HERE, never
+                    # through `_finalize_hour`, so it takes the same count (spec 00103 D2).
+                    self._count_if_early(hour)
                     self._merge_hour(hour_dir, hh)
 
     def _write_manifest(self, source: Path, final_path: Path) -> None:

@@ -294,6 +294,9 @@ CAPTURE_REQUIRED = [
     "node_cpu_seconds_total",
     "node_filesystem_avail_bytes",
     "node_filesystem_size_bytes",
+    # The clock-skew pair (spec 00103 D4) is deliberately absent from this hand-maintained list: the
+    # source-derived guard at the bottom of this file covers every zcrypto_* name automatically. A
+    # node_* name would have needed an entry here.
     *ONEOFF_TEXTFILE_SERIES,
     *CAPTURE_APP_SERIES,
     *ENGINE_APP_SERIES,

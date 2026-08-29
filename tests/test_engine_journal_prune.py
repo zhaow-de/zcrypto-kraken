@@ -47,6 +47,16 @@ def _prune(root: Path, days: str = "14", *extra: str) -> subprocess.CompletedPro
     return subprocess.run(["bash", str(SCRIPT), str(root), days, *extra], capture_output=True, text=True, check=False)
 
 
+def _rw_paths(rw: str) -> set[str]:
+    """The paths ReadWritePaths actually grants.
+
+    Substring over the raw line is blind to a longer sibling: `/var/lib/x-backup` contains
+    `/var/lib/x`, so a typo'd unit reads as writable. The leading `-` is systemd's may-not-exist
+    marker, not part of the path.
+    """
+    return {p.lstrip("-") for p in rw.removeprefix("ReadWritePaths=").split()}
+
+
 def test_deletes_only_days_older_than_retention(tmp_path):
     old, edge, fresh = _day(tmp_path, 40), _day(tmp_path, 15), _day(tmp_path, 3)
     # 20 recent days so the keep-newest floor is satisfied and age is the only variable under test.
@@ -209,7 +219,7 @@ def test_every_published_series_is_admitted_by_the_keep_regex(tmp_path):
     emitted = {line.split()[0] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
 
     alloy = (ROLE.parent / "capture/files/config.alloy").read_text()
-    regex = next(line for line in alloy.splitlines() if "regex" in line and "node_load1" in line).split('"')[1]
+    regex = next(line for line in alloy.splitlines() if line.strip().startswith("regex") and "node_load1" in line).split('"')[1]
     admitted = set(regex.split("|"))
     assert not (emitted - admitted), f"published but dropped at remote_write: {sorted(emitted - admitted)}"
 
@@ -293,9 +303,9 @@ def test_the_unit_invokes_the_script_the_role_installs_with_the_argument_order_i
     install_dest = next(
         line.strip()
         for line in (ROLE / "tasks/main.yml").read_text().splitlines()
-        if "zcrypto-engine-journal-prune" in line and "dest:" in line
+        if line.strip().startswith("dest:") and "zcrypto-engine-journal-prune" in line
     )
-    assert binary in install_dest, f"the unit runs {binary}, the role installs {install_dest}"
+    assert install_dest.split(":", 1)[1].strip() == binary, f"the unit runs {binary}, the role installs {install_dest}"
 
     assert journal_dir == f"{_role_vars()['engine_state_dir']}/journal"
     assert days == _role_vars()["engine_journal_retention_days"]
@@ -312,10 +322,10 @@ def test_protectsystem_strict_still_permits_writing_the_journal_dir():
     """ProtectSystem=strict mounts /usr and /var read-only; without the ReadWritePaths escape the
     prune cannot delete anything it correctly identified."""
     unit = _rendered_unit()
-    assert "ProtectSystem=strict" in unit
+    assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     journal = f"{_role_vars()['engine_state_dir']}/journal"
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
-    assert journal in rw, f"{journal} is not writable under ProtectSystem=strict: {rw}"
+    assert journal in _rw_paths(rw), f"{journal} is not writable under ProtectSystem=strict: {rw}"
 
 
 def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
@@ -328,7 +338,8 @@ def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
     """
     unit = _rendered_unit()
     exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
-    assert "--textfile" in exec_start, "the prune must publish a .prom — a oneshot has no /metrics endpoint to scrape"
+    # config-selector-ok: exact token membership in the split argv, not a substring of the line
+    assert "--textfile" in exec_start.split(), "the prune must publish a .prom — a oneshot has no /metrics endpoint to scrape"
     out = exec_start.split("--textfile", 1)[1].strip().split()[0]
     host_dir = str(Path(out).parent)
 
@@ -337,11 +348,11 @@ def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
     assert host_dir == capture_dir, f"engine writes {host_dir}, capture role declares {capture_dir} — same host, must agree"
 
     alloy = (ROLE.parent / "capture/files/config.alloy").read_text()
-    directory = next(line for line in alloy.splitlines() if "directory =" in line).split('"')[1]
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
     assert directory == f"/host/root{host_dir}", f"prune writes {host_dir}, Alloy reads {directory} — a .prom nobody scrapes"
 
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
-    assert host_dir in rw, f"ProtectSystem=strict would block the write: {rw}"
+    assert host_dir in _rw_paths(rw), f"ProtectSystem=strict would block the write: {rw}"
 
 
 def test_the_deployed_retention_matches_the_spec():

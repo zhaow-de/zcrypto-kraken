@@ -97,7 +97,7 @@ CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 
 def _admitted_series() -> list[str]:
     """Every metric name the capture hosts' keep-regex admits to remote_write."""
-    line = next(ln for ln in CAPTURE_ALLOY.read_text().splitlines() if "regex" in ln and "node_load1" in ln)
+    line = next(ln for ln in CAPTURE_ALLOY.read_text().splitlines() if ln.strip().startswith("regex") and "node_load1" in ln)
     return line.split('"')[1].split("|")
 
 
@@ -783,6 +783,7 @@ def _uids_with_a_provisional_marker() -> set[str]:
     for line in ALERTS.read_text().splitlines():
         if line.startswith("  - uid:"):
             uid = line.split("uid:", 1)[1].strip()
+        # config-selector-ok: scanning every line for a marker, not selecting a setting
         if _PROVISIONAL in line and uid is not None:
             found.add(uid)
     return found

@@ -1677,6 +1677,193 @@ def test_t0037_a_coherently_fast_walk_cannot_poison_the_witness(tmp_path, clock)
     assert 999 in set(_disk_column(tmp_path, "checksum"))
 
 
+def test_t0037_early_finalize_counted_on_rotation(tmp_path, clock):
+    # Residual (a) — the loss the oracle ACCEPTS (spec 00103 D1): TWO streams stamped bogus inside
+    # the same closing window meet quorum, and the second stamp's rotation publishes its live hour
+    # truncated. The segment is committed and verify-clean, so the counter is the only signature.
+    oracle = HourOracle()
+    a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")
+    b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
+    for mnt in range(0, 56):  # both live hours genuine so far
+        clock.now = _ts(10, mnt)
+        a.append(_book_event_for("BTC/EUR", 10, mnt, checksum=mnt))
+        b.append(_book_event_for("ETH/EUR", 10, mnt, checksum=mnt))
+    clock.now = _ts(10, 56, 30)
+    a.append(_book_event_for("BTC/EUR", 11, 0, checksum=901))  # bogus, 3.5 min ahead — held, ONE witness
+    assert a.hour_finalized_early == 0  # a lone stamp still confirms nothing
+    b.append(_book_event_for("ETH/EUR", 11, 0, checksum=902))  # the second bogus stamp meets quorum
+    assert b.hour_finalized_early == 1  # B's hour 10 published 3.5 min early — counted at the rotation
+    assert _segment_path(tmp_path, 10, pair="ETH/EUR").exists()  # ... and the truncated publish is real
+
+
+def test_t0037_early_finalize_counted_on_the_sweep_path(tmp_path, clock):
+    # The SAME residual landing in a restart window (spec 00103 D2): `_current_hour is None`, so the
+    # bogus-confirmed first event publishes the truncated hour through `_sweep` -> `_merge_hour`
+    # directly — `_finalize_hour` never runs, so a rotation-only instrumentation leaves this at 0.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    for i in range(20):  # cs 0..19 flushed to 4 parts, hour 10 still live
+        clock.now = _ts(10, i)
+        w1.append(_book_event(10, i, checksum=i))
+    del w1  # hard crash
+
+    clock.now = _ts(10, 57)
+    oracle = HourOracle()
+    a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")  # inherits the crash-leftover hour-10 parts
+    b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
+    b.append(_book_event_for("ETH/EUR", 11, 0, checksum=901))  # bogus — held, ONE witness
+    assert b.hour_finalized_early == 0
+    a.append(_book_event_for("BTC/EUR", 11, 0, checksum=902))  # the second bogus stamp meets quorum
+    assert a._current_hour == _ts(11, 0)  # entered via the `is None` branch: this WAS the sweep path
+    assert _segment_path(tmp_path, 10).exists()  # hour 10 published truncated to the crash leftovers
+    assert a.hour_finalized_early == 1  # ... 3 minutes early, and the sweep counted it
+
+
+def test_t0037_genuine_boundary_counts_no_earliness(tmp_path, clock):
+    # CONTROL for the rotation site: a genuine two-stream boundary under a healthy clock publishes
+    # hour 10 at 11:00:00 sharp — zero earliness, and the counter must stay silent (`>`, not `>=`:
+    # publishing the instant the hour ends is on time). An unconditional or sign-flipped count fires here.
+    oracle = HourOracle()
+    a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")
+    b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
+
+    def feed(w, pair, hour, minute, cs, sec=0):
+        clock.now = _ts(hour, minute, sec)  # a healthy clock: wall time == exchange time
+        w.append(_book_event_for(pair, hour, minute, sec, checksum=cs))
+
+    feed(a, "BTC/EUR", 10, 0, 0)  # held — only A witnessed, the clock's handicap lags
+    feed(b, "ETH/EUR", 10, 0, 10)  # B seconds hour 10 -> B admits
+    feed(a, "BTC/EUR", 10, 30, 1)
+    feed(b, "ETH/EUR", 10, 30, 11)
+    feed(a, "BTC/EUR", 11, 0, 2)  # A crosses first — held, hour 11 still unconfirmed
+    feed(b, "ETH/EUR", 11, 0, 12)  # B crosses: quorum -> B's hour 10 publishes at 11:00:00 exactly
+    feed(a, "BTC/EUR", 11, 0, 3, sec=30)  # A's next event finalizes A's hour 10, 30 s AFTER it ended
+    assert _segment_path(tmp_path, 10, pair="ETH/EUR").exists()  # both publishes really happened...
+    assert _segment_path(tmp_path, 10, pair="BTC/EUR").exists()
+    assert b.hour_finalized_early == 0  # ... and neither was early
+    assert a.hour_finalized_early == 0
+
+
+def test_t0037_swept_past_hour_counts_no_earliness(tmp_path, clock):
+    # CONTROL for the sweep site: the sweep's ordinary job is republishing hours a dead process left
+    # behind, long after they ended. Negative earliness, excluded by the arithmetic (spec 00103 D2)
+    # — a count here would fire on every routine restart.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    for i in range(20):
+        clock.now = _ts(10, i)
+        w1.append(_book_event(10, i, checksum=i))
+    del w1  # hard crash: hour-10 parts left behind
+
+    clock.now = _ts(12, 30)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    w2.append(_book_event(12, 30, checksum=100))  # genuine first event: sweeps and publishes hour 10
+    assert _segment_path(tmp_path, 10).exists()  # the republish really ran through the sweep
+    assert w2.hour_finalized_early == 0  # ... and a 90-minutes-gone hour is not "early"
+
+
+def test_t0037_lagging_clock_counts_early_by_design(tmp_path, clock):
+    """A clock lagging 3 min under GENUINE two-stream traffic fires the counter — intended (spec
+    00103 D3): the earliness is measured with the same lagging clock, so a genuine boundary reads
+    3 min early. Disambiguation is operational, not code — the D4 skew alert says which case fired."""
+    oracle = HourOracle()
+    a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")
+    b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
+
+    def feed(w, pair, hour, minute, cs):
+        clock.now = _ts(hour, minute) - timedelta(minutes=3)  # a steady 3-min lag
+        w.append(_book_event_for(pair, hour, minute, checksum=cs))
+
+    feed(a, "BTC/EUR", 10, 0, 0)  # held — only A witnessed, the lagging clock cannot second
+    feed(b, "ETH/EUR", 10, 0, 10)  # B seconds hour 10 -> B admits
+    feed(a, "BTC/EUR", 10, 30, 1)
+    feed(b, "ETH/EUR", 10, 30, 11)
+    feed(a, "BTC/EUR", 11, 0, 2)  # A crosses first — held
+    feed(b, "ETH/EUR", 11, 0, 12)  # B crosses: quorum, and the wall still reads 10:57
+    assert b.hour_finalized_early == 1  # a genuine boundary, counted early: the clock's error, reported
+    assert _segment_path(tmp_path, 10, pair="ETH/EUR").exists()  # the publish itself is healthy
+
+
+def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
+    # Residual (c) — the past-dated fabrication (spec 00103 D5): a process's FIRST stamp is the only
+    # event that can open an hour behind the wall clock. Hour 08 is committed first so the recovery
+    # floor is real (09:00) — the stamp lands ABOVE it, where the late-event guard cannot refuse it
+    # and only this counter sees it.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(8, 30)
+    w1.append(_book_event(8, 30, checksum=1))
+    clock.now = _ts(9, 0)
+    w1.append(_book_event(9, 0, checksum=2))  # rotates: hour 08 commits, so the recovery floor is 09:00
+    del w1  # hard crash — the buffered hour-9 row is lost, leaving no parts to sweep
+
+    clock.now = _ts(12, 30)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    w2.append(_book_event(10, 0, checksum=999))  # the first stamp opens never-captured hour 10, 2.5 h back
+    assert w2._current_hour == _ts(10, 0)  # the past hour genuinely OPENED — the late-event guard let it through
+    assert w2.ts_past_dated_hour == 1
+
+
+def test_t0037_normal_start_counts_no_past_dated_hour(tmp_path, clock):
+    # CONTROL for the ordinary case: a mid-hour start whose first stamp names the CURRENT wall hour.
+    # `hour < _hour_start(now)` is false, so nothing counts — an unconditional or sign-flipped count
+    # fires here. The open-hour assert proves the first-event branch (the only counting site) ran.
+    clock.now = _ts(10, 30)
+    w = _oracle_writer(tmp_path, HourOracle())
+    w.append(_book_event(10, 30, checksum=1))
+    assert w._current_hour == _ts(10, 0)  # admitted and opened via the first-event branch, not held
+    assert w.ts_past_dated_hour == 0
+
+
+def test_t0037_draining_held_rows_counts_no_past_dated_hour(tmp_path, clock):
+    # CONTROL with teeth: TWO held rows carrying DISTINCT timestamps, then drained. `_hold` already
+    # advanced `_max_ts` past the older row, so the drain re-admits it through `_admit` reading
+    # "backward" — routine, not a defect, and the counter must stay at 0. ONE held row re-admits
+    # nothing backward and would prove nothing; two distinct timestamps is the minimum that bites.
+    clock.now = _ts(10, 2)
+    w = _oracle_writer(tmp_path, HourOracle())
+    w.append(_book_event(10, 0, 0, checksum=0))  # held: a lone stream, and the clock handicap reads 09:57
+    w.append(_book_event(10, 0, 30, checksum=1))  # a second held row, DISTINCT ts
+    assert w._held  # both really held — nothing admitted, nothing entered yet
+    clock.now = _ts(10, 6)  # the handicapped clock crosses 10:00 -> hour 10 confirms
+    w.append(_book_event(10, 6, checksum=2))  # drains both held rows through `_admit`, then admits itself
+    assert w._current_hour == _ts(10, 0)
+    assert not w._held  # the drain really ran — the re-admission path was exercised
+    assert w.ts_past_dated_hour == 0
+
+
+def test_t0037_lone_bogus_future_stamp_counts_no_past_dated_hour(tmp_path, clock):
+    # CONTROL with teeth: the pinned-healthy lone-in-window-bogus-stamp scenario (the shape of
+    # test_t0037_lone_in_window_bogus_stamp_never_truncates_the_live_hour). The held bogus 11:00
+    # advances `_max_ts`, so every genuine 10:57–10:59 row behind it reads "backward" on a healthy
+    # stream; this counter must read 0.
+    w = _oracle_writer(tmp_path, HourOracle())
+    for mnt in range(0, 57):  # 10:00 .. 10:56 — the live hour so far
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+    clock.now = _ts(10, 56, 30)
+    w.append(_book_event(11, 0, checksum=999))  # the bogus stamp: 3.5 min ahead — inside the window, held
+    for mnt in (57, 58, 59):  # the genuine rest of the hour, each ts behind the neutralized stamp
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+    clock.now = _ts(11, 5)
+    w.append(_book_event(11, 5, checksum=105))  # the clock seconds hour 11 -> hour 10 finalizes whole
+    assert pl.read_parquet(_segment_path(tmp_path, 10))["checksum"].to_list() == list(range(60))  # still the pinned outcome
+    assert w.ts_past_dated_hour == 0
+
+
+def test_t0037_an_oracle_less_writer_reopening_a_prior_hour_counts_nothing(tmp_path, clock):
+    # CONTROL with teeth for the gate: `finalize_completed_hours` nulls `_current_hour`, so an
+    # oracle-less poller re-enters the first-event branch every cycle, and a sparse symbol waking up
+    # into a prior hour above the re-anchored floor is its DESIGNED write mode (T0046), not a
+    # fabrication. It bites: without `self._oracle is not None` the append below reads 1.
+    w = _new_writer(tmp_path, flush_rows=5000)  # oracle-less, as the poller builds them
+    w.append(_book_event(10, 0))
+    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w._current_hour is None  # the re-entry this gate exists for
+
+    w.append(_book_event(11, 30))  # at/above the floor, but behind the pinned 16:00 clock
+
+    assert w.ts_past_dated_hour == 0
+
+
 # --- T0046: wall-clock hour finalization for sparse writers --------------------------------------
 #
 # `finalize_completed_hours(cutoff)` is the escape hatch for a symbol so sparse that no "next event"

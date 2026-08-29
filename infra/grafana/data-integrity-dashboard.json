@@ -491,7 +491,7 @@
       "id": 105,
       "type": "timeseries",
       "title": "Rows held vs quarantined (6h increase)",
-      "description": "Did rows arrive after their hour was finalized and get spilled out of the canonical tree? Held rows are parked pending hour confirmation; quarantined rows were actually written to a sidecar file and are **not** in the canonical tree, so the reconciler has to fold them and nobody knows to look. The measured baseline over seven days is zero on both capture machines, so any nonzero quarantine value is a real event and pages after `for: 15m`. Both counters are unlabeled totals summed across every pair and kind at the source, so which pair cannot be shown here — no such panel can be built. Scoped by the capture-machine picker.",
+      "description": "Did rows get spilled out of the canonical tree because their archive hour was never corroborated? Held rows are parked pending hour confirmation, and holding is the NORMAL path at every boundary — roughly three rows per boundary is the structural baseline, so this series discriminates nothing on its own. Quarantined rows are the subset actually written to a sidecar file, which the sweep, the merge, the recovery floor and the archive's tree verification all skip; they are kept forever and re-enter the tree only when a live corroborated stream next opens their hour. This is NOT the late-arrival path: a row that genuinely arrives after its hour was finalized is dropped by the late-event guard and counted nowhere. The two real causes are an hour carrying only one live stream, and a capture process stopping within five minutes of an hour boundary. The measured baseline is zero on both capture machines, so any nonzero quarantine value is a real event and pages after `for: 15m`. Both counters are unlabeled totals summed across every pair and kind at the source, so which pair cannot be shown here — no such panel can be built. Runbook: infra/runbooks/capture.md#zcrypto-capture-rows-quarantined. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -948,7 +948,7 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 24,
+        "w": 12,
         "x": 0,
         "y": 24
       },
@@ -1009,6 +1009,160 @@
                 "id": "custom.thresholdsStyle",
                 "value": {
                   "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 110,
+      "type": "timeseries",
+      "title": "Hour-rotation residuals — early closes, past-dated opens & clock offset",
+      "description": "Three signals that only mean anything read together, because each of the three faults they cover is invisible to at least one of them. Early closes count archive hours the writer finalized before its own clock said the hour was over: a bogus exchange timestamp closing an hour early and a host clock running a few minutes behind produce the identical series, so this one names no cause on its own and pages only as a warning. Past-dated opens count streams whose FIRST event was stamped into an hour already gone — that publishes an hour marked complete for a period nothing was captured. It can step at most once per stream per capture process, its baseline is a hard zero over the fleet's whole life, and any step pages critical. The absolute clock offset on the right axis is the third, and it is not redundant with the first: a clock running AHEAD closes hours early and subtracts its own lead back out of the early-close measurement, so it is invisible there and this is its only evidence — which is why an offset past 10 seconds, or a machine reporting its clock unsynchronised, pages critical on its own. Read the counters against the offset: early closes with a healthy clock mean a bad timestamp and permanent loss on that stream, early closes with a lagging clock mean the clock and cost nothing. The truncation is never repairable once it has happened; the offset is the only one of the three you can act on before the damage. Runbook: infra/runbooks/capture.md#bogus-timestamp-hour-rotation. The clock series exist on the capture machines only. Scoped by the capture-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_hour_finalized_early_total{host=~\"$capture_host\"}[6h])",
+          "refId": "A",
+          "legendFormat": "{{host}} hours closed early (6h)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_ts_past_dated_hour_total{host=~\"$capture_host\"}[6h])",
+          "refId": "B",
+          "legendFormat": "{{host}} past-dated hour opens (6h)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "abs(zcrypto_clock_offset_seconds{host=~\"$capture_host\"})",
+          "refId": "C",
+          "legendFormat": "{{host}} clock offset (absolute)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_clock_synchronised{host=~\"$capture_host\"}",
+          "refId": "D",
+          "legendFormat": "{{host}} clock synchronised (1 = yes)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
                 }
               }
             ]

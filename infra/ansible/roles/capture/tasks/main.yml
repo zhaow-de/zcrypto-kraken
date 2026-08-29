@@ -318,6 +318,37 @@
     enabled: true
     state: started
 
+- name: install the clock-offset script
+  ansible.builtin.copy:
+    src: zcrypto-clock-offset.sh
+    dest: /usr/local/sbin/zcrypto-clock-offset
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the clock-offset systemd unit
+  ansible.builtin.template:
+    src: zcrypto-clock-offset.service.j2
+    dest: /etc/systemd/system/zcrypto-clock-offset.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: install the clock-offset systemd timer
+  ansible.builtin.copy:
+    src: zcrypto-clock-offset.timer
+    dest: /etc/systemd/system/zcrypto-clock-offset.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: enable + start the clock-offset timer
+  ansible.builtin.systemd_service:
+    name: zcrypto-clock-offset.timer
+    daemon_reload: true
+    enabled: true
+    state: started
+
 - name: install the segment-prune script
   ansible.builtin.copy:
     src: zcrypto-capture-prune.sh

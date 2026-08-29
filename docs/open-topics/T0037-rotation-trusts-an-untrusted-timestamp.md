@@ -1,182 +1,80 @@
 ---
 status: partial
-ripe_when: either accepted residual is OBSERVED in production — (a) two independent streams each taking a guard-passing bogus stamp inside one hour's closing `MAX_TS_AHEAD` window, or (b) a clock leading by more than 5 min AND a bogus stamp landing together
+ripe_when: 'the attended capture rollout of spec 00103 can run — then deploy the detectors, read each family by value on both hosts, push the alert rules, and close this topic.'
 ---
 
 # Hour rotation trusts an untrusted timestamp, so one bad stamp closes the hour early
 
 ## Context — what
 
-`SegmentWriter.append()` rotates the hour from the **event's own `ts`** — `entry["timestamp"]`, a
-field Kraken sends and `cli/capture/command.py::_parse_ts` parses straight through. A single event
-stamped **up to `MAX_TS_AHEAD` (1 h) in the future** therefore finalizes the hour still in progress:
+`SegmentWriter.append()` rotates the hour from the **event's own `ts`** — `entry["timestamp"]`, a field Kraken sends and `cli/capture/command.py::_parse_ts` parses straight through. A single event stamped **up to `MAX_TS_AHEAD` in the future** therefore finalizes the hour still in progress:
 
-1. the event's hour > `_current_hour`, so `_finalize_hour()` publishes the live hour as a **committed,
-   complete** `<HH>.parquet` — with only the rows captured so far;
-2. every genuine event for the rest of that hour is then dropped by the late-event guard, because
-   `<HH>.parquet` on disk is exactly what "this hour is closed" means;
+1. the event's hour > `_current_hour`, so `_finalize_hour()` publishes the live hour as a **committed, complete** `<HH>.parquet` — with only the rows captured so far;
+2. every genuine event for the rest of that hour is then dropped by the late-event guard, because `<HH>.parquet` on disk is exactly what "this hour is closed" means;
 3. and the loss **survives a restart**: the next process seeds its floor from that same final.
 
-Executed (a reviewer, against `251e064`): clock 13:05, live events 13:00–13:02, then one event stamped
-`14:00` → `13.parquet` published holding 3 rows; events at 13:20 and 13:59 dropped, before *and*
-after a restart. ~54 min × 20 streams, permanent.
+Executed (a reviewer, against `251e064`): clock 13:05, live events 13:00–13:02, then one event stamped `14:00` → `13.parquet` published holding 3 rows; events at 13:20 and 13:59 dropped, before *and* after a restart. ~54 min × 20 streams (the fleet at that time; 24 now), permanent.
 
-`_implausible()` does not catch it: it drops a stamp only when it is more than `MAX_TS_AHEAD` ahead of
-**both** our clock and the stream itself, and `+1 h` is inside that window by construction.
+`_implausible()` does not catch it: it drops a stamp only when it is more than `MAX_TS_AHEAD` ahead of **both** our clock and the stream itself, and `+1 h` is inside that window by construction.
 
-**Blast radius reduced (T0036 round 5), not removed.** `MAX_TS_AHEAD` is now **5 minutes**, so a stamp
-must be within 5 minutes of *both* witnesses to be trusted — a `14:00` stamp at 13:05 is now dropped.
-What survives is the residual: a bogus stamp **≤5 min ahead, landing in the last 5 minutes of an
-hour**, still rotates the hour early, and the truncation is still permanent. Bounded to ~5 min of one
-stream rather than ~55 min of all 20, but the mechanism is untouched, and only corroboration closes it.
+**Blast radius reduced (T0036 round 5), not removed.** `MAX_TS_AHEAD` is now **5 minutes**, so a stamp must be within 5 minutes of *both* witnesses to be trusted — a `14:00` stamp at 13:05 is now dropped. What survives is the residual: a bogus stamp **≤5 min ahead, landing in the last 5 minutes of an hour**, still rotates the hour early, and the truncation is still permanent. Bounded to ~5 min of one stream rather than ~55 min of all streams, but the mechanism is untouched, and only corroboration closes it.
 
 ## Why this matters
 
-L2 is unbackfillable, and this is the same blast radius as the T0036 clock bug it outlived
-(330/330 rows across 55 min, all pairs, both kinds) — but reachable from a **single untrusted input
-field** rather than from a mis-set clock. It is pre-existing (the same stamp truncates the hour on
-`develop` too), but T0036 changed its aftermath: the old writer's restart re-seeded the hour from the
-wall clock and healed, via the `_adopt_partial_final` path that was itself removed for duplicating
-rows. Under the T0036 invariant a committed final is never reopened, so the truncation is now
-**permanent by design** — correctly, since the writer cannot know the final was premature.
+L2 is unbackfillable, and this is the same blast radius as the T0036 clock bug it outlived (330/330 rows across 55 min, all pairs, both kinds) — but reachable from a **single untrusted input field** rather than from a mis-set clock. It is pre-existing (the same stamp truncates the hour on `develop` too), but T0036 changed its aftermath: the old writer's restart re-seeded the hour from the wall clock and healed, via the `_adopt_partial_final` path that was itself removed for duplicating rows. Under the T0036 invariant a committed final is never reopened, so the truncation is now **permanent by design** — correctly, since the writer cannot know the final was premature.
 
-Never observed in production. It is a hardening gap, not a live incident.
+Never observed in production. It is a hardening gap, not a live incident — but see the observability finding below: "never observed" is not evidence of absence here, because nothing is watching.
 
 ## Findings so far
 
-- Reproduced by a review subagent against `251e064` (`_implausible`, `segment_writer.py:42`;
-  rotation, `:173-186`; floor, `:436`).
-- **The "no safe W" finding was right about the *bare* `_max_ts` witness, and it has since been
-  dissolved.** The original argument: at W = 5 min, a clock lagging >5 min plus a >5 min gap between
-  trades on a thin pair makes both witnesses fire on live data → silent blackout (executed: a pair
-  printing every 10 min under a constant 10-min lagging clock loses **12 of 12** prints and never
-  recovers, since a dropped event never advances `_max_ts`). The flaw was in the witness, not in W:
-  comparing against `_max_ts` **raw** measures the stream against the clock's *value*. Carrying
-  `_max_ts` forward by the time elapsed since it was accepted measures it against the clock's *rate*
-  instead — and a constant offset, which is what a wrong clock is, then cancels exactly. The same
-  quiet pair under the same lagging clock now loses **nothing**. That let W drop to 5 min (T0036
-  round 5), which is what bounds this topic's blast radius; see the `_implausible` docstring.
-- A wall-clock veto on the rotation (`refuse to close hour H while our clock says H is not over`) is
-  still not available: it blacks out the stream whenever the clock lags. The clock is not trustworthy
-  enough to gate live data — that is the whole finding of T0036.
-- **The two witnesses share one blind spot, and corroboration would not close it either.** A stream
-  that is *coherently* wrong — a systematic bad stamp (a `_parse_ts` unit bug, an exchange-side clock
-  fault) — advances at the normal rate, so it satisfies the stream witness **by construction**, and an
-  AND can then never drop it whatever the clock says. Two events would also happily "agree" on the
-  same wrong hour, so T0037's corroboration rule does not help here. Executed against the pre-fix
-  writer: a coherent far-future stream poisons the archive from its **first** stamp (the hour opens in
-  2030, the late-event guard drops every genuine row behind it, and the startup sweep publishes the
-  live hour truncated). Closed in T0036 round 5 by `MAX_TS_ABSURD` (1 day) — a bound that answers to
-  no witness and is never stood down, on the grounds that a clock is wrong by minutes or hours and
-  never by days. What remains in the **band between MAX_TS_AHEAD and MAX_TS_ABSURD** is this topic:
-  a systematic stamp that is wrong by, say, an hour is still accepted, and lands in the wrong hour.
-- The only sound fix found is **corroboration**: a new hour is opened, and the old one finalized, only
-  once **two** events agree on it. A lone stamp then never rotates. Sketch: hold the first event of a
-  candidate hour in a small pending list; a second event in the same hour confirms it (flush the held
-  events into the new hour, in order); an event back in the current hour leaves the candidate pending;
-  a *later* candidate hour supersedes it, and the superseded hour — which time has demonstrably moved
-  past — is opened and flushed rather than dropped, so a lone print in a sparse hour is never lost.
-- Not attempted in the T0036 round: it is new state on `append()`'s hot path, which is where every
-  round of this fix has drawn its criticals, and it needs its own TDD cycle and its own review.
+- Reproduced by a review subagent against `251e064` (`_implausible`, `segment_writer.py:42`; rotation, `:173-186`; floor, `:436`).
+- **The "no safe W" finding was right about the *bare* `_max_ts` witness, and it has since been dissolved.** The original argument: at W = 5 min, a clock lagging >5 min plus a >5 min gap between trades on a thin pair makes both witnesses fire on live data → silent blackout (executed: a pair printing every 10 min under a constant 10-min lagging clock loses **12 of 12** prints and never recovers, since a dropped event never advances `_max_ts`). The flaw was in the witness, not in W: comparing against `_max_ts` **raw** measures the stream against the clock's *value*. Carrying `_max_ts` forward by the time elapsed since it was accepted measures it against the clock's *rate* instead — and a constant offset, which is what a wrong clock is, then cancels exactly. The same quiet pair under the same lagging clock now loses **nothing**. That let W drop to 5 min (T0036 round 5), which is what bounds this topic's blast radius; see the `_implausible` docstring.
+- A wall-clock veto on the rotation (`refuse to close hour H while our clock says H is not over`) is still not available: it blacks out the stream whenever the clock lags. The clock is not trustworthy enough to gate live data — that is the whole finding of T0036.
+- **The two witnesses share one blind spot, and corroboration would not close it either.** A stream that is *coherently* wrong — a systematic bad stamp (a `_parse_ts` unit bug, an exchange-side clock fault) — advances at the normal rate, so it satisfies the stream witness **by construction**, and an AND can then never drop it whatever the clock says. Two events would also happily "agree" on the same wrong hour, so T0037's corroboration rule does not help here. Executed against the pre-fix writer: a coherent far-future stream poisons the archive from its **first** stamp (the hour opens in 2030, the late-event guard drops every genuine row behind it, and the startup sweep publishes the live hour truncated). Closed in T0036 round 5 by `MAX_TS_ABSURD` (1 day) — a bound that answers to no witness and is never stood down, on the grounds that a clock is wrong by minutes or hours and never by days. What remains in the **band between MAX_TS_AHEAD and MAX_TS_ABSURD** is this topic: a systematic stamp that is wrong by, say, an hour is still accepted, and lands in the wrong hour.
+- The only sound fix found is **corroboration**: a new hour is opened, and the old one finalized, only once **two** events agree on it. A lone stamp then never rotates. Sketch: hold the first event of a candidate hour in a small pending list; a second event in the same hour confirms it (flush the held events into the new hour, in order); an event back in the current hour leaves the candidate pending; a *later* candidate hour supersedes it, and the superseded hour — which time has demonstrably moved past — is opened and flushed rather than dropped, so a lone print in a sparse hour is never lost.
+- Not attempted in the T0036 round: it is new state on `append()`'s hot path, which is where every round of this fix has drawn its criticals, and it needs its own TDD cycle and its own review.
+
+### The parked residuals are unobservable, so the trigger could never fire (measured 2026-08-29)
+
+- **Both residuals manifest as the same pair of events: an hour finalized EARLY, and that stream's post-stamp tail then dropped as late.** Neither half is counted. The late-event drop is a bare `logger.warning` (`cli/capture/segment_writer.py:362`) with no counter behind it — and `.claude/skills/zcrypto-rollout-image/SKILL.md` tells operators that `dropping late event` lines right after a start are healthy resubscribe replay, so the one visible trace is documented as noise.
+- **`zcrypto_capture_rows_held_total` cannot discriminate**: holding is the normal path at every genuine boundary (the first stream across holds until a second corroborates). Measured `increase(zcrypto_capture_rows_held_total[24h])` = **73.05 on both hosts** — ~3 rows per boundary, a structural baseline, not an anomaly.
+- **`zcrypto_capture_rows_quarantined_total` watches a different path.** It counts held rows *spilled* to a `.held` file at the `flush_rows` cap or at `close()` — an hour the oracle never confirmed. In residuals (a) and (b) the rows are *admitted*, not spilled, so it stays flat. Measured **0 on both hosts**, which does confirm the alert's own "baseline is zero" claim.
+- **Residual (b)'s precondition is unmeasured too.** `node_timex_offset_seconds` returns `(no series)`: the capture Alloy keep-regex (`infra/ansible/roles/capture/files/config.alloy`) is an allowlist on `__name__` and does not admit the timex family. Nothing anywhere in `infra/grafana/alerts.yaml` watches clock skew, and no role configures chrony or timesyncd — yet residual (b) *is* a leading clock.
+- **The earliness bands decide which residual fired, and one band is ambiguous without the clock offset.** A finalize is early by at most `MAX_TS_AHEAD` under residual (a), because every witness is clamped at `now + MAX_TS_AHEAD`; residual (b) is early by `lead − CLOCK_WITNESS_MARGIN`, which is unbounded above. But a clock *lagging* by L < 5 min makes **every genuine boundary** finalize L early, at 24 boundaries a day. So: earliness **> 5 min** ⇒ residual (b), unambiguous; earliness **∈ (0, 5 min]** ⇒ residual (a) *or* a benign lagging clock, separable only by reading the clock offset alongside it. The two signals are therefore a package — an earliness detector alone would page on a drifting clock and could not name residual (a) when it did fire.
+- **The `.held` quarantine survived T0028.** `verify_tree`'s rewrite for the incremental hash scope kept the skip (`cli/archive/pull.py:74`), so quarantined spills are still excluded from manifest verification.
+
+### The `.held` alert describes the wrong mechanism (operator-facing)
+
+`zcrypto-capture-rows-quarantined` in `infra/grafana/alerts.yaml` — both its inline comment and its phone-read `summary` — says the metric counts rows that *"arrived after their hour was finalized"*. It does not: it counts held rows spilled for an hour the oracle never **confirmed**, which is the opposite direction in time. Rows that genuinely arrive after finalization are dropped by the late-event guard and counted nowhere. This was never a stale-after-a-change defect — the oracle landed 2026-07-14 (`385a735f`), the metric 2026-07-22 (`7b597fe0`), the alert 2026-07-27 (`1630ca93`) — the alert described the metric backwards from the start. Its remedy line ("check for clock skew, a late-delivering stream, or a stalled writer") sends a paged operator after the wrong cause; the real one is "an hour was never corroborated" — a lone stream in a sparse hour, or a process stop inside `CLOCK_WITNESS_MARGIN` of a boundary.
 
 ## Done so far
 
-**The core residual is closed by cross-stream quorum (design C, chosen by a judge over three executed
-alternatives).** `HourOracle` (one instance shared by all 20 writers) makes a writer act on an hour
-boundary — finalize the previous hour, open the new one — only once `HOUR_QUORUM` (2) witnesses have
-seen time reach it. Witnesses are each stream's newest plausible `ts`, **clamped at the wall clock +
-`MAX_TS_AHEAD` when observed** (see the hardening round below — unclamped witnesses re-opened the
-truncation through the oracle's own state), plus the wall clock, handicapped by
-`CLOCK_WITNESS_MARGIN` (5 min) so a leading clock cannot second a bogus stamp. A row for an
-unconfirmed hour is **held**, never dropped — the live hour stays open (no genuine row behind the
-stamp is refused) and the held row is written the moment its hour is corroborated, in arrival order,
-into the hour its `ts` names (T0037's own "store it, never delete" recommendation). `close()` spills
-held rows to disk under their named hour and never finalizes, so T0036 is untouched (nothing is
-published early, so nothing is ever reopened). The plausibility guard (`_implausible`, `MAX_TS_AHEAD`,
-`MAX_CONSECUTIVE_DROPS`, `MAX_TS_ABSURD`) is UNCHANGED — the oracle sits behind it. `oracle=None`
-preserves the pre-change writer byte-for-byte (`command.py` passes one shared oracle to all writers).
+**The core residual is closed by cross-stream quorum (design C, chosen by a judge over three executed alternatives).** `HourOracle` (one instance shared by all 24 writers — 12 pairs × {book, trade}) makes a writer act on an hour boundary — finalize the previous hour, open the new one — only once `HOUR_QUORUM` (2) witnesses have seen time reach it. Witnesses are each stream's newest plausible `ts`, **clamped at the wall clock + `MAX_TS_AHEAD` when observed** (see the hardening round below — unclamped witnesses re-opened the truncation through the oracle's own state), plus the wall clock, handicapped by `CLOCK_WITNESS_MARGIN` (5 min) so a leading clock cannot second a bogus stamp. A row for an unconfirmed hour is **held**, never dropped — the live hour stays open (no genuine row behind the stamp is refused) and the held row is written the moment its hour is corroborated, in arrival order, into the hour its `ts` names (T0037's own "store it, never delete" recommendation). `close()` spills held rows to disk under their named hour and never finalizes, so T0036 is untouched (nothing is published early, so nothing is ever reopened). The plausibility guard (`_implausible`, `MAX_TS_AHEAD`, `MAX_CONSECUTIVE_DROPS`, `MAX_TS_ABSURD`) is UNCHANGED — the oracle sits behind it. `oracle=None` preserves the pre-change writer byte-for-byte (`command.py` passes one shared oracle to all writers).
 
 **Hardening round (adversarial verification of the quorum itself; three executed defects fixed).**
 
-- **Witness poisoning is closed by the wall clamp.** `observe()` recorded held/stood-down —
-  unconfirmed, possibly bogus — stamps as witnesses and never expired them, so one stream's garbage
-  burst (or a coherently-fast in-band walk of stamps each within `MAX_TS_AHEAD` of the last) parked
-  its witness hours ahead; a later LONE in-window bogus stamp on any other stream then met quorum
-  against the poisoned witness and truncated its live hour (executed: fed=60, LOST=[56..59],
-  manifest-certified, surviving restarts) — falsifying this doc's earlier "same hour, one window,
-  none lost" residual claim. The rule now: **a stream may vouch that time has reached T only once
-  the wall clock is itself within `MAX_TS_AHEAD` of T** — `observe()` clamps the recorded witness at
-  `now + MAX_TS_AHEAD`. Every witness (the handicapped clock included) is then ≤ `now +
-  MAX_TS_AHEAD`, so no quorum, however poisoned, can confirm an hour more than `MAX_TS_AHEAD` before
-  the wall reaches it. A lagging clock only *delays* confirmation — rows held/spilled, drained when
-  the wall catches up, never dropped — so the no-veto rule stands. Executed on both attack shapes
-  (LOST=[] on each); the genuine two-stream boundary, the lone-stream clock-paced rotation and the
-  lagging-clock set-equality against the `oracle=None` baseline are pinned unchanged.
-- **Held rows pass the trade de-dup.** `_hold()` never consulted `_seen`, so a T0026 reconnect
-  replay landing while its hour was unconfirmed was held blind, and a stop before confirmation
-  spilled BOTH copies — merged by the next process into the committed final (executed: trade_ids
-  `[0,1,2,3,4,0,1,2,3,4,10]`). Held rows now dedup against a per-held-hour set seeded from the
-  hour's on-disk parts and held-spills, same `trade_id` rule as stored rows.
-- **A never-confirmed held spill can no longer fabricate an hour.** A held bogus stamp spilled at a
-  stop became an ordinary part; if the process slept through that hour, the next start's sweep
-  merged it into a manifest-certified final whose SOLE content was the uncorroborated stamp — a
-  fabricated hour published as "committed and complete" (executed: `11.parquet == [999]`, valid
-  sidecar). Held rows now spill as **`<HH>.held####.parquet`** — quarantine the sweep, the merge,
-  the recovery floor and the archive's `verify_tree` all ignore, kept and never deleted — and are
-  **redeemed** into ordinary parts only when a live, quorum-confirmed event stream OPENS their hour.
-  The accepted cost: a genuine lone print held at a stop, whose hour never sees another live event
-  after the restart, stays quarantined on disk instead of entering the archive — it is
-  indistinguishable from the bogus stamp by construction (that is what "never confirmed" means), and
-  keeping it out of certified finals is the safe side. Note for `--pairs` smoke runs with a single
-  short-lived process: a stop inside the first `CLOCK_WITNESS_MARGIN` of a lone stream's hour leaves
-  its rows as `.held` files until a later run genuinely opens that hour.
+- **Witness poisoning is closed by the wall clamp.** `observe()` recorded held/stood-down — unconfirmed, possibly bogus — stamps as witnesses and never expired them, so one stream's garbage burst (or a coherently-fast in-band walk of stamps each within `MAX_TS_AHEAD` of the last) parked its witness hours ahead; a later LONE in-window bogus stamp on any other stream then met quorum against the poisoned witness and truncated its live hour (executed: fed=60, LOST=[56..59], manifest-certified, surviving restarts) — falsifying this doc's earlier "same hour, one window, none lost" residual claim. The rule now: **a stream may vouch that time has reached T only once the wall clock is itself within `MAX_TS_AHEAD` of T** — `observe()` clamps the recorded witness at `now + MAX_TS_AHEAD`. Every witness (the handicapped clock included) is then ≤ `now + MAX_TS_AHEAD`, so no quorum, however poisoned, can confirm an hour more than `MAX_TS_AHEAD` before the wall reaches it. A lagging clock only *delays* confirmation — rows held/spilled, drained when the wall catches up, never dropped — so the no-veto rule stands. Executed on both attack shapes (LOST=[] on each); the genuine two-stream boundary, the lone-stream clock-paced rotation and the lagging-clock set-equality against the `oracle=None` baseline are pinned unchanged.
+- **Held rows pass the trade de-dup.** `_hold()` never consulted `_seen`, so a T0026 reconnect replay landing while its hour was unconfirmed was held blind, and a stop before confirmation spilled BOTH copies — merged by the next process into the committed final (executed: trade_ids `[0,1,2,3,4,0,1,2,3,4,10]`). Held rows now dedup against a per-held-hour set seeded from the hour's on-disk parts and held-spills, same `trade_id` rule as stored rows.
+- **A never-confirmed held spill can no longer fabricate an hour.** A held bogus stamp spilled at a stop became an ordinary part; if the process slept through that hour, the next start's sweep merged it into a manifest-certified final whose SOLE content was the uncorroborated stamp — a fabricated hour published as "committed and complete" (executed: `11.parquet == [999]`, valid sidecar). Held rows now spill as **`<HH>.held####.parquet`** — quarantine the sweep, the merge, the recovery floor and the archive's `verify_tree` all ignore, kept and never deleted — and are **redeemed** into ordinary parts only when a live, quorum-confirmed event stream OPENS their hour. The accepted cost: a genuine lone print held at a stop, whose hour never sees another live event after the restart, stays quarantined on disk instead of entering the archive — it is indistinguishable from the bogus stamp by construction (that is what "never confirmed" means), and keeping it out of certified finals is the safe side. Note for `--pairs` smoke runs with a single short-lived process: a stop inside the first `CLOCK_WITNESS_MARGIN` of a lone stream's hour leaves its rows as `.held` files until a later run genuinely opens that hour.
+- Landed: `cli/capture/segment_writer.py` (`HourOracle`, `_held`, `_enter_hour`/`_admit`/`_hold`, `_write_part`), `cli/capture/command.py` (one shared `HourOracle`); hardening round: `HourOracle.observe` (wall clamp), `_hold`/`_held_seen` (held de-dup), `_redeem_held` + `.held`-marker spills (`segment_writer.py`), `verify_tree` skip (`cli/archive/pull.py`).
+- 10 executed regression tests in `tests/test_capture_segment_writer.py` (`test_t0037_*`): the lone in-window bogus stamp in the last 5 min (0 loss, bogus stored in its named hour, publishes on the second witness); the bogus-first-stamp-after-restart (cannot sweep-publish the live hour); a genuine two-stream boundary (publishes within one event, streams-only, clock lagging); a 10-min lagging clock (loss set-EQUAL to the `oracle=None` baseline — zero added); a 10-min leading clock (no early publish); three escalating in-window stamps on one stream (0 loss — the attack that beats designs A and B); a stand-down burst (future hour never published); a lone clock-paced stream (rotation ≤300 s, lone print never lost); `close()`→held-spills redeemed, merged and replay-deduped by a restart; and the drain-order bounds. The pre-fix loss was reproduced against HEAD `189a56a` (57/58/59 dropped in the core and escalating scenarios; the live hour sweep-published on a bogus first stamp). The hardening round added 7 more (`test_t0037_*` poisoned-witness, coherently-fast walk, two replay de-dup shapes, fabricated-hour, held-spill floor guard; `test_verify_tree_skips_held_spills`), each reproduced failing against the pre-hardening writer.
+- **Deploy note for ops:** finals for a quiet-market hour may now appear up to ~5 min later than before, when only the clock witness paces the rotation. Under a clock lagging by more than 5 min, confirmation (and thus finalization) is delayed by roughly the lag minus the margin — rows are held and spilled meanwhile, never dropped. No on-disk format change; no migration. `.held` files in the tree are quarantined never-confirmed rows, not corruption.
 
-- Landed: `cli/capture/segment_writer.py` (`HourOracle`, `_held`, `_enter_hour`/`_admit`/`_hold`,
-  `_write_part`), `cli/capture/command.py` (one shared `HourOracle`); hardening round:
-  `HourOracle.observe` (wall clamp), `_hold`/`_held_seen` (held de-dup), `_redeem_held` +
-  `.held`-marker spills (`segment_writer.py`), `verify_tree` skip (`cli/archive/pull.py`).
-- 10 executed regression tests in `tests/test_capture_segment_writer.py` (`test_t0037_*`): the lone
-  in-window bogus stamp in the last 5 min (0 loss, bogus stored in its named hour, publishes on the
-  second witness); the bogus-first-stamp-after-restart (cannot sweep-publish the live hour); a genuine
-  two-stream boundary (publishes within one event, streams-only, clock lagging); a 10-min lagging
-  clock (loss set-EQUAL to the `oracle=None` baseline — zero added); a 10-min leading clock (no early
-  publish); three escalating in-window stamps on one stream (0 loss — the attack that beats designs A
-  and B); a stand-down burst (future hour never published); a lone clock-paced stream (rotation ≤300 s,
-  lone print never lost); `close()`→held-spills redeemed, merged and replay-deduped by a restart; and
-  the drain-order bounds. The pre-fix loss was reproduced against HEAD `189a56a` (57/58/59 dropped in
-  the core and escalating scenarios; the live hour sweep-published on a bogus first stamp). The
-  hardening round added 7 more (`test_t0037_*` poisoned-witness, coherently-fast walk, two replay
-  de-dup shapes, fabricated-hour, held-spill floor guard; `test_verify_tree_skips_held_spills`), each
-  reproduced failing against the pre-hardening writer.
-- **Deploy note for ops:** finals for a quiet-market hour may now appear up to ~5 min later than
-  before, when only the clock witness paces the rotation. Under a clock lagging by more than 5 min,
-  confirmation (and thus finalization) is delayed by roughly the lag minus the margin — rows are
-  held and spilled meanwhile, never dropped. No on-disk format change; no migration. `.held` files
-  in the tree are quarantined never-confirmed rows, not corruption.
+**Detectors built, not yet deployed (spec `00103`).** Each accepted residual now has a signal, and none has run on a capture host:
+
+- residual (a) — `zcrypto_capture_hour_finalized_early_total`, counted at both publish paths (`_finalize_hour` and the startup sweep, which reaches `_merge_hour` directly).
+- residual (b) — a leading clock is invisible to every clock-referenced counter, because the measurement is taken with the same wrong clock. Its ONLY detector is `zcrypto_clock_offset_seconds` / `zcrypto_clock_synchronised`, published by a host-side chrony timer rather than from inside the Alloy container, so no `CAP_SYS_TIME` grant is needed. `zcrypto-capture-clock-exporter-stale` watches the exporter's own mtime, because a stale `.prom` is re-served forever and would read healthy.
+- past-dated stamps — `zcrypto_capture_ts_past_dated_hour_total`, gated on the oracle: `finalize_completed_hours` nulls `_current_hour` every poll cycle on the oracle-less liquidations writers, where opening a prior hour is the designed mode rather than a fabrication.
+
+Three alert rules and five runbook entries ship with them, including the `bogus-timestamp-hour-rotation` KNOWN LIMITATION that carries the residuals' own reasoning. `zcrypto-capture-rows-quarantined`'s comment and summary are corrected too — they described the late-arrival path while the metric measures the never-confirmed one.
+
+**Why this topic is still `partial`.** The detectors exist in the repo and have emitted nothing in production. Archiving now would delete the only written record of these residuals while their signals are unproven — strictly worse than today. It closes after the attended rollout deploys them and each family is read by value on both hosts.
 
 ## Suggested next steps
 
-Accepted, documented residuals — each deliberately un-addressed now (the knob for
-each starves a legitimate case), each ripe only **if ever observed in production**:
+**Make the residuals observable, so the accepted limits are watched rather than merely written down — spec `00103`.** The three items below stay *accepted design limits*: each knob that would close them starves a legitimate case, and that judgement is unchanged. What is not acceptable is the current state, where the residual is both un-closed and un-watched, so "never observed in production" is a statement about our instrumentation rather than about the data.
 
-- **(a) Two independent streams each taking a guard-passing bogus stamp inside the same hour's
-  closing `MAX_TS_AHEAD` window** defeats `k=2`: their clamped witnesses both reach past the
-  boundary (the stamps need NOT name the same hour — any stamp far enough ahead clamps to
-  `now + MAX_TS_AHEAD`), the next hour confirms up to `MAX_TS_AHEAD` early, and each *stamped*
-  stream's live hour publishes truncated by at most the window (its post-stamp tail drops as late;
-  unstamped streams finalize on their genuine crossing and lose nothing). This is the corrected
-  form of the old "same hour, none lost" claim, which adversarial verification falsified: the loss
-  is real but bounded to `MAX_TS_AHEAD` per stamped stream, and it now takes two independent bad
-  stamps in one five-minute window — a lone stamp, a burst, or a walk can no longer produce it
-  (executed). A higher quorum would starve small `--pairs` runs. Revisit only if two streams are
-  ever seen agreeing on a bogus boundary.
-- **(b) A clock leading >5 min AND a bogus stamp landing together** truncates by lead-minus-5min. The
-  knob — require two DISTINCT requester `ts` before the clock may second — is rejected now because it
-  starves lone sparse streams. Revisit only if a leading-clock + bogus-stamp truncation is observed.
-
-- **Past-dated stamps** (reviewer-measured 2026-07-14, pre-existing — executed equal on the
-  `oracle=None` baseline): a bogus timestamp dated into a *past, un-published* hour can still
-  fabricate a committed final for that hour (and can redeem a quarantined `.held` spill on the way) —
-  the plausibility guard bounds the *future* direction only; Kraken ts is strictly non-decreasing in
-  3.15M measured production rows, so a backward stamp is anomalous but currently trusted. Ripe
-  together with residuals (a)/(b): only if ever observed.
+- **(a) Two independent streams each taking a guard-passing bogus stamp inside the same hour's closing `MAX_TS_AHEAD` window** defeats `k=2`: their clamped witnesses both reach past the boundary (the stamps need NOT name the same hour — any stamp far enough ahead clamps to `now + MAX_TS_AHEAD`), the next hour confirms up to `MAX_TS_AHEAD` early, and each *stamped* stream's live hour publishes truncated by at most the window (its post-stamp tail drops as late; unstamped streams finalize on their genuine crossing and lose nothing). This is the corrected form of the old "same hour, none lost" claim, which adversarial verification falsified: the loss is real but bounded to `MAX_TS_AHEAD` per stamped stream, and it now takes two independent bad stamps in one five-minute window — a lone stamp, a burst, or a walk can no longer produce it (executed). A higher quorum would starve small `--pairs` runs. **Detection**: an early-finalization signal in the `(0, MAX_TS_AHEAD]` band, read together with the clock offset to separate it from a benign lagging clock.
+- **(b) A clock leading >5 min AND a bogus stamp landing together** truncates by lead-minus-5min. The knob — require two DISTINCT requester `ts` before the clock may second — is rejected because it starves lone sparse streams. **Detection**: the same early-finalization signal above `MAX_TS_AHEAD`, where no other cause reaches; and independently, a clock-skew alert on its precondition.
+- **Past-dated stamps** (reviewer-measured 2026-07-14, pre-existing — executed equal on the `oracle=None` baseline): a bogus timestamp dated into a *past, un-published* hour can still fabricate a committed final for that hour (and can redeem a quarantined `.held` spill on the way) — the plausibility guard bounds the *future* direction only; Kraken ts is strictly non-decreasing in 3.15M measured production rows, so a backward stamp is anomalous but currently trusted. **Detection**: a backward-stamp counter at the `_max_ts` comparison, where a backward `ts` today merely fails to advance the maximum, silently — the strongest baseline of the three, since the measured production rate is zero over 3.15M rows.
+- **Correct the `.held` alert's prose** (see the finding above): its comment and `summary` describe the late-arrival path while the metric measures the never-confirmed path, sending a paged operator after the wrong cause.

@@ -1478,7 +1478,7 @@
       "id": 501,
       "type": "timeseries",
       "title": "Textfile age — did the timer run (capture)",
-      "description": "Has a one-off timer stopped writing its metrics file, freezing every gauge it publishes at a healthy-looking last value? The two timers republish on completely different schedules and get completely different bars: the pending-reboot probe runs every 15 minutes and pages above 1 hour stale after `for: 10m`; the daily journal prune pages above 26 hours stale after `for: 30m`. Scoped to the two capture machines only — that is the only scope any alert gives this family. The ops machine's timers are watched by different families with different budgets and live on the data-integrity board.",
+      "description": "Has a one-off timer stopped writing its metrics file, freezing every gauge it publishes at a healthy-looking last value? The three timers republish on completely different schedules and get completely different bars: the pending-reboot probe runs every 15 minutes and pages above 1 hour stale after `for: 10m`; the daily journal prune pages above 26 hours stale after `for: 30m`. Scoped to the two capture machines only — that is the only scope any alert gives this family. The ops machine's timers are watched by different families with different budgets and live on the data-integrity board. The clock exporter is the third: it writes every 5 min and its bar is 1800 s, tighter than the others.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1507,6 +1507,15 @@
           "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/engine-journal-prune.prom\"})",
           "refId": "B",
           "legendFormat": "{{host}} journal prune age"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/clock-offset.prom\"})",
+          "refId": "C",
+          "legendFormat": "{{host}} clock exporter age"
         }
       ],
       "fieldConfig": {
@@ -1582,6 +1591,36 @@
                     {
                       "color": "red",
                       "value": 93600
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1800
                     }
                   ]
                 }

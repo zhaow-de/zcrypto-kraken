@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
+import yaml
 
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, exec_dir
 from cli.engine.venue import VenueStatus
@@ -567,8 +568,13 @@ def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
     repo = Path(__file__).resolve().parents[1]
     assert _VERIFIED_RECORD == repo / "cli" / "engine" / "order-semantics-verified.json"
     assert not (repo / "infra" / "ansible" / "order-semantics-verified.yml").exists()
-    role = (repo / "infra" / "ansible" / "roles" / "engine" / "tasks" / "main.yml").read_text()
-    assert "cli/engine/order-semantics-verified.json" in role
+    # Find the task by KEY and assert on that fact's own expression. Matching the file's text found
+    # the path in a fail_msg while the real lookup() pointed elsewhere; stringifying the task dict and
+    # searching THAT is the same defect one level in.
+    role = yaml.safe_load((repo / "infra" / "ansible" / "roles" / "engine" / "tasks" / "main.yml").read_text())
+    facts = next(mod for task in role for mod in task.values() if isinstance(mod, dict) and "engine_verified_nautilus" in mod)
+    lookup = facts["engine_verified_nautilus"]
+    assert "lookup('file', playbook_dir ~ '/../../cli/engine/order-semantics-verified.json')" in lookup, lookup
     assert _verified_nautilus_versions() == frozenset({"1.230.0", "1.231.0", "2.0.0rc4.dev20260825"}), (
         "the record changed. If an attended order-semantics pass really ran, update this "
         "deliberately alongside the new docs/reference/adapter-verification/ record -- and sweep the other "

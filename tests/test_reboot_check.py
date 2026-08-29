@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "infra/ansible/roles/capture"
@@ -40,6 +41,30 @@ def _series(prom: Path) -> dict[str, float]:
         name, _, value = line.rpartition(" ")
         out[name.strip()] = float(value)
     return out
+
+
+def _installed_dests(role_tasks_yaml: str) -> set[str]:
+    """Every `dest:` the role actually installs, parsed.
+
+    A substring check against the file's text matches a comment or a fail_msg naming the path, and
+    is also blind to a SUFFIXED dest -- `.../zcrypto-reboot-check-TYPO` contains the real name.
+    """
+    return {
+        str(v).strip()
+        for task in yaml.safe_load(role_tasks_yaml) or []
+        for mod in task.values()
+        if isinstance(mod, dict) and (v := mod.get("dest"))
+    }
+
+
+def _rw_paths(rw: str) -> set[str]:
+    """The paths ReadWritePaths actually grants.
+
+    Substring over the raw line is blind to a longer sibling: `/var/lib/x-backup` contains
+    `/var/lib/x`, so a typo'd unit reads as writable. The leading `-` is systemd's may-not-exist
+    marker, not part of the path.
+    """
+    return {p.lstrip("-") for p in rw.removeprefix("ReadWritePaths=").split()}
 
 
 def test_publishes_1_when_the_flag_is_present(tmp_path):
@@ -147,7 +172,7 @@ def test_the_unit_runs_the_installed_script_with_the_expected_arguments():
     binary, flag, out = exec_start.removeprefix("ExecStart=").split()
 
     tasks = (ROLE / "tasks/main.yml").read_text()
-    assert f"dest: {binary}" in tasks, f"the unit runs {binary}, which the role does not install"
+    assert binary in _installed_dests(tasks), f"the unit runs {binary}, which the role does not install"
     assert flag == "/run/reboot-required", f"must read /run, not the /var/run compatibility symlink — got {flag}"
     assert out.endswith(".prom"), out
 
@@ -161,19 +186,22 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
     alloy = (ROLE / "files/config.alloy").read_text()
     # The directory agreeing is necessary but NOT sufficient: dropping "textfile" from
     # set_collectors leaves the block orphaned and the collector off, with the paths still matching.
-    set_collectors = next(line for line in alloy.splitlines() if "set_collectors" in line)
+    # Match the ASSIGNMENT, never any line mentioning the key: a comment naming it must not be
+    # selectable, or the assertion compares against prose and passes or fails on the wrong text.
+    set_collectors = next(line for line in alloy.splitlines() if line.strip().startswith("set_collectors"))
+    # config-selector-ok: the needle carries both quotes, so "textfiles" cannot satisfy it
     assert '"textfile"' in set_collectors, f"the textfile collector is not enabled, so the block is inert: {set_collectors.strip()}"
-    directory = next(line for line in alloy.splitlines() if "directory =" in line).split('"')[1]
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
     # Alloy sees the host root at /host/root; the unit writes on the host itself.
     assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory} — a .prom nobody scrapes"
 
 
 def test_protectsystem_strict_still_permits_writing_the_textfile_dir():
     unit = _rendered_unit()
-    assert "ProtectSystem=strict" in unit
+    assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     out = next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
-    assert str(Path(out).parent) in rw, f"{out} is not writable under ProtectSystem=strict: {rw}"
+    assert str(Path(out).parent) in _rw_paths(rw), f"{out} is not writable under ProtectSystem=strict: {rw}"
 
 
 def test_only_the_timer_is_enabled_not_the_oneshot():
@@ -211,6 +239,10 @@ def test_the_timer_actually_repeats():
     leaves a timer that fires once at boot and never again — converging green, publishing a gauge
     that freezes at its first value."""
     timer = (ROLE / "files/zcrypto-reboot-check.timer").read_text()
-    assert "OnUnitActiveSec=" in timer, "without a repeat interval this fires once per boot"
-    assert "OnBootSec=" in timer, "without a boot trigger the gauge is stale until the first interval"
-    assert "Unit=zcrypto-reboot-check.service" in timer
+    assert any(l.strip().startswith("OnUnitActiveSec=") for l in timer.splitlines()), (
+        "without a repeat interval this fires once per boot"
+    )
+    assert any(l.strip().startswith("OnBootSec=") for l in timer.splitlines()), (
+        "without a boot trigger the gauge is stale until the first interval"
+    )
+    assert any(l.strip() == "Unit=zcrypto-reboot-check.service" for l in timer.splitlines())

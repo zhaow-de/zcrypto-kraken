@@ -700,3 +700,132 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
         f" the number of series returned -- narrowing the pickers to one stream silently drops these"
         f" properties. Match byType:number instead: {offenders}"
     )
+
+
+def _rule_panel_pairs():
+    """Every (rule, panel, target) where the panel charts exactly the rule's own expression."""
+    rules = yaml.safe_load((REPO / "infra/grafana/alerts.yaml").read_text())
+
+    def iter_rules(o):
+        if isinstance(o, dict):
+            if "uid" in o and "data" in o:
+                yield o
+            for v in o.values():
+                yield from iter_rules(v)
+        elif isinstance(o, list):
+            for v in o:
+                yield from iter_rules(v)
+
+    def panels(ps):
+        for p in ps:
+            yield p
+            yield from panels(p.get("panels", []))
+
+    dashboards = [json.loads(f.read_text()) for f in sorted((REPO / "infra/grafana").glob("*dashboard*.json"))]
+    for r in iter_rules(rules):
+        pid = (r.get("annotations") or {}).get("__panelId__")
+        expr = next((q["model"]["expr"] for q in r["data"] if "expr" in q.get("model", {})), None)
+        cond = next(
+            (
+                c["evaluator"]["type"]
+                for q in r["data"]
+                for c in q.get("model", {}).get("conditions", [])
+                if c.get("evaluator", {}).get("params")
+            ),
+            None,
+        )
+        ev = next(
+            (
+                c["evaluator"]["params"][0]
+                for q in r["data"]
+                for c in q.get("model", {}).get("conditions", [])
+                if c.get("evaluator", {}).get("params")
+            ),
+            None,
+        )
+        if pid is None or expr is None or ev is None:
+            continue
+        for d in dashboards:
+            for p in panels(d.get("panels", [])):
+                if str(p.get("id")) != str(pid):
+                    continue
+                for t in p.get("targets", []):
+                    if t.get("expr", "").strip() == expr.strip():
+                        yield r["uid"], p, t, ev, cond
+
+
+def _first_firing_value(condition: str, evaluator: float) -> str:
+    """The smallest whole value that trips the rule -- what a mapping must colour to be a signal."""
+    if condition == "lt":
+        return str(int(evaluator) - 1 if float(evaluator).is_integer() else int(evaluator))
+    return str(int(evaluator) + 1)
+
+
+def test_a_panels_red_line_agrees_with_the_rule_it_charts():
+    """Where a panel draws per-series thresholds, the charted series' bar must equal its rule's.
+
+    A responder paged by a rule opens the panel the annotation names. If that series has no bar, or
+    one calibrated for a different timer, the panel says "healthy" while the rule says "fire" -- and
+    the panel wins, because it is what a human looks at. Both defects that reached this repo were of
+    that shape: a series with no override at all, and one whose only visible line was another
+    series' threshold at twice the value. A third -- two files merged under one `max()`, so a dead
+    timer hid behind a live one -- is NOT caught: the rule and the panel then chart different
+    expressions, so no pair forms and this test is silent on it.
+    """
+    # `zcrypto-ops-tapebars-not-advancing` charts panel 402 refId F, which has no bar while A/B/C
+    # do -- a live instance of exactly what this test forbids, in a dashboard whose intent needs its
+    # own reading. New entries are not acceptable: the guard exists to stop this class growing.
+    known = {"zcrypto-ops-tapebars-not-advancing"}
+    pairs = list(_rule_panel_pairs())
+    # Pairing is exact string equality, so reformatting one expression drops that rule from
+    # coverage with no failure anywhere. The floor makes a collapse visible. Lower it only when a rule or panel is deliberately retired.
+    assert len(pairs) >= 54, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
+    bad = []
+    for uid, panel, target, evaluator, condition in pairs:
+        if uid in known:
+            continue
+        overrides = panel.get("fieldConfig", {}).get("overrides", [])
+        by_ref = {o["matcher"]["options"]: o for o in overrides if o.get("matcher", {}).get("id") == "byFrameRefID"}
+        ref = target.get("refId")
+        if ref in by_ref:
+            steps = [
+                s
+                for prop in by_ref[ref].get("properties", [])
+                if prop.get("id") == "thresholds"
+                for s in prop.get("value", {}).get("steps", [])
+                if s.get("value") is not None
+            ]
+        else:
+            # A series with no override inherits the panel default, which usually carries the bar. Reading an
+            # override on ANOTHER refId as "this panel bars per series" misjudged a panel whose only
+            # override REMOVES a bar, and made a healthy pairing look like a defect.
+            steps = [
+                s
+                for s in panel.get("fieldConfig", {}).get("defaults", {}).get("thresholds", {}).get("steps", [])
+                if s.get("value") is not None
+            ]
+        if not steps:
+            # Some panels colour by value MAPPING rather than a numeric bar (a stat reading
+            # "failed"/"ok"). That is a real signal, but only if the mapping covers the value the
+            # rule fires at -- a panel mapping 0 and 999 renders a firing 2 in the default colour,
+            # which is the same "healthy-looking failure" this test exists to stop.
+            mapped = {
+                str(k)
+                for m in panel.get("fieldConfig", {}).get("defaults", {}).get("mappings", [])
+                for k in (m.get("options") or {})
+                if k != "match"
+            }
+            if mapped and _first_firing_value(condition, evaluator) in mapped:
+                continue
+            bad.append(f"{uid}: panel {panel['id']} refId {ref} has no threshold at all, per-series or default")
+            continue
+
+        # The bar marks where the rule fires. For a `gt 0` counter that point is the first value
+        # that trips it -- a line at 0 would paint a healthy panel red -- so 0 < bar <= 1 is the
+        # same statement. Any other offset (a bar at twice the rule's value) is the defect.
+        def marks_the_rule(v: float) -> bool:
+            return v == evaluator or (evaluator == 0 and 0 < v <= 1)
+
+        if not any(marks_the_rule(s["value"]) for s in steps):
+            bad.append(f"{uid}: panel {panel['id']} refId {ref} bars at {[s['value'] for s in steps]}, rule fires at {evaluator}")
+    assert not bad, "a panel's red line disagrees with the rule that points at it:\n  " + "\n  ".join(bad)
