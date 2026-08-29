@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "the engine can run two builder contracts at once — the shadow-alongside the ruling requires. It cannot today: the contract is wired in, not selected (no builder_contract or contract_version symbol in cli/)."
+ripe_when: "a post-deploy family reaches an ADOPT verdict in `docs/reference/trial-registry.jsonl` — the first candidate that needs the ruled path. The shadow-alongside capability (running the candidate's contract beside the live record; no `builder_contract`/`contract_version` symbol in `cli/` today) is built then, against a real promotion."
 ---
 
 # How a newly validated sleeve enters the live book
@@ -22,9 +22,9 @@ The stated goal of the whole 6b structure is that the live stack runs while rese
 
 **The path is ruled and landed (owner, 2026-08-29; iter-155).** Scoped by what a change TOUCHES rather than by a duration, because the four gates that made the deployable trustworthy each proved something different. Always: a new record via Phase-5 assembly, a builder-contract version bump, and shadow concordance re-earned on the new contract — no class exempt, since a new contract is new code on the path Stage 6a exists to prove.
 
-**Parity is re-earned by replay.** `_check_stage_identity` is exact float equality, so a contract either reproduces or it does not; there is no sample size. It replays against the existing journal in hours, which is stronger than a fresh live window that covers only what the market happened to do. **The band keeps its bar** — ≥3 consecutive complete ISO weeks, every class — because it is statistical and conditional on realized composition, which is precisely what a promotion changes. The compression comes from replay, never from lowering a gate.
+**Parity is re-earned on cycles the new contract produces live** — the candidate runs disarmed beside the trading record, journaling its own cycles, and concordance is the ratified Stage-6a gate over that journal (the `1e-6` compare, ≥14 consecutive clean on-time days, unshortened, every class). Replay against the incumbent's journal cannot be the parity gate: `replay_stages` raises the moment rebuilt targets differ from the journaled ones, and that difference *is* the promotion. The 14 days cost no calendar — they nest inside the band window. **The band keeps its bar** — ≥3 consecutive complete ISO weeks, every class — because it is statistical and conditional on realized composition, which is precisely what a promotion changes.
 
-**Capital does not move during a re-gate**: the new record shadows while the live record keeps trading, and the cut-over follows the band. Stepping the live book down was rejected on a technical objection — the go/no-go edge is the p95 of the drift floor *at the funded NAV*, so a band measured at reduced capital validates a floor the book will not run at.
+**The band splits at cut-over, because only half of it is measurable before.** A shadow book has no fills and the go/no-go band is defined on realized return *with its fills*, so no shadow window can ever produce one — gating cut-over on a passing band would wait forever. The floor half (p95 per-cycle drift floor at the funded NAV, by `accum-replay`) is measurable from the shadow cycles and is quoted in the cut-over decision; the realized half re-accumulates after cut-over on the new record's own fills, ≥3 complete ISO weeks, with the tracking-error trip and the DD ladder armed. Cut-over re-enters at the class's rung — A at 50 % of funded NAV, B and C at rung 1's scale — and capital never steps up until the realized band clears. **A promotion must also beat the incumbent head-to-head**, not merely the registered bar.
 
 Landed in `docs/research/00.master-plan.md` §12 under *Ongoing*, with the alternatives and their rejections in `docs/research/14.phase6-decisions.md` (iter-155).
 
@@ -36,7 +36,7 @@ The gates that made the deployable trustworthy were four: Phase-5 assembly deriv
 
 ### Always, for any promotion
 
-1. **A new registry record** via Phase-5 assembly, superseding the current deployable (33 → 44 → 47 is the existing precedent for the mechanics).
+1. **A new registry record** via Phase-5 assembly, superseding the current deployable (33 → 43 → 44 → 47 is the existing precedent for the mechanics — and 43 is why the contract bump is a rule: its construction was recoverable only by a salvage from a workstation-local transcript, absorbed into maintained code as `cli/portfolio/record43_book.py` by [[T0148]], not by anything the record itself carried).
 2. **A builder-contract version bump.** The contract is what makes a record reproducible; a changed book with an unchanged contract is a record that cannot be rebuilt.
 3. **Shadow concordance re-earned on the NEW contract.** This is the non-negotiable one. 6a's parity check proves the *live* engine computes what the *backtest* computed; a new contract is new code on that path, so parity is unproven by construction until re-measured. No change class exempts it.
 
@@ -56,9 +56,9 @@ The gates that made the deployable trustworthy were four: Phase-5 assembly deriv
 
 ### The two open questions, as ruled
 
-- **Duration.** Parity is not measured in weeks at all — `_check_stage_identity` is exact float equality, so it re-earns by REPLAY against the existing journal. The tracking band keeps its full bar for every class: ≥3 consecutive complete ISO weeks, unweakened, because it is statistical and conditional on the realized composition a promotion changes.
-- **Capital during a class-A re-gate.** Shadow alongside, per *Capital* above.
+- **Duration.** Parity is ≥14 consecutive clean on-time days of Stage-6a concordance over the candidate's OWN journal — the ratified gate, unshortened. It costs no calendar, because those days nest inside the band window. The tracking band keeps its full bar for every class: ≥3 consecutive complete ISO weeks, unweakened.
+- **Capital during a class-A re-gate.** Shadow until cut-over, then re-enter at 50 % of funded NAV while the realized band accumulates, per *Capital* above.
 
 ## Suggested next steps
 
-- **The ruling created one requirement the engine does not meet.** Shadow-alongside needs two builder contracts running at once; today the contract is wired in, not selected. Until that exists, a promotion cannot follow the ruled path — it would have to move capital, which the ruling rejects on the funded-NAV argument. This is the only thing left.
+- **Build the shadow-alongside capability against the first real promotion.** The ruled path needs the candidate runnable beside the live record and scorable under its own contract; the engine selects neither today (the builder is imported directly). The shape — likely a second disarmed instance at the candidate's image digest, plus per-record builder dispatch in the scorer — is deliberately left to the promotion that first needs it, rather than pre-designed against no candidate. This is the only thing left.
