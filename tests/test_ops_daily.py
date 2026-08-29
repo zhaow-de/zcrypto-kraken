@@ -551,3 +551,52 @@ def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
     assert read.firing_now == [], "it is not firing now -- that is the point"
     assert [a.uid for a in read.fired_in_window] == ["zcrypto-capture-stream-silent"]
     assert read.fired_in_window[0].runbook == "infra/runbooks/capture.md#zcrypto-capture-stream-silent"
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        # Attached and combined short flags: curl accepts every one of these.
+        "curl -XDELETE https://healthchecks.io/api/v3/checks/abc",
+        "curl -XPOST https://x/api",
+        "curl -d{} https://x/api",
+        "curl -T/etc/hosts https://x/up",
+        "curl -sO https://x/payload",
+        # `-o /dev/null` first, so a scan that stops at the first output flag never sees the -X.
+        "curl -fsS -o /dev/null -X DELETE https://healthchecks.io/api/v3/checks/abc",
+        # DNS is case-insensitive; the ping check must be too.
+        "curl https://HC-PING.com/uuid",
+        # An interpreter that can shell out, with no redirect for composition to catch.
+        "awk 'BEGIN{system(\"rm -rf /tmp/x\")}'",
+        # find's siblings of -exec and -delete.
+        "find /var/log -execdir rm -rf {} \;",
+        "find / -fprint /var/lib/foo/marker",
+        # A backslash-escaped quote: a naive scanner opens a quote span here and treats the real `;`
+        # as data. Verified against bash -- the `rm` runs.
+        "echo \\' ; rm -rf /var/lib/foo",
+        "echo \\' & rm -rf /var/lib/foo",
+        # An unbalanced quote: bash refuses it, and so must the classifier rather than parsing on.
+        'echo "a ; rm -rf /var/lib/foo',
+    ],
+)
+def test_flag_syntax_interpreters_and_escapes_cannot_launder_a_mutation(cmd):
+    """Thirteen strings that classified AUTONOMOUS after the first composition fix. Each is a real
+    escape route, and together they are why the flag lists are ALLOWLISTS per command and the lexer
+    is `shlex` rather than hand-rolled: a denylist of flags misses the attached form, and a
+    hand-rolled scanner loses to a backslash."""
+    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize(
+    "cmd,host",
+    [
+        ("curl -fsS -m 10 -o /dev/null -w '%{http_code}' https://healthchecks.io/", "ops"),
+        ("curl -s http://127.0.0.1:12345/metrics", "ops"),
+        ("find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 -ls", "zcrypto"),
+        ("sudo docker exec zcrypto-engine zcrypto engine exec-status", "zcrypto"),
+    ],
+)
+def test_the_real_reads_survive_the_allowlists(cmd, host):
+    """The allowlists must still admit the runbooks' own GETs and finds -- a guard that refuses
+    everything has moved the outage, not removed it."""
+    assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS

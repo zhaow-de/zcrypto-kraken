@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shlex
 import sys
 import urllib.error
 import urllib.parse
@@ -452,7 +453,6 @@ _READ_ONLY_COMMANDS = frozenset(
         ("wc", None),
         ("sort", None),
         ("uniq", None),
-        ("awk", None),
         ("date", None),
         ("echo", None),
         ("curl", None),
@@ -568,17 +568,6 @@ _CURL_MUTATING = (
 )
 
 
-def _curl_is_a_plain_read(tokens: list[str], segment: str) -> bool:
-    if "hc-ping" in segment or "healthchecks.io/ping" in segment:
-        return False
-    for token in tokens:
-        if any(token == flag or token.startswith(flag + "=") for flag in _CURL_MUTATING):
-            return False
-        if token == "-o" or token.startswith("-o="):
-            return "/dev/null" in segment
-    return True
-
-
 def _has_mutating_flag(tokens: list[str]) -> bool:
     return any(t in _MUTATING_FLAGS or t.startswith(_MUTATING_FLAG_PREFIXES) for t in tokens)
 
@@ -587,38 +576,72 @@ def _has_mutating_flag(tokens: list[str]) -> bool:
 # process substitution can carry ANY command inside a segment an allowlisted head vouches for --
 # `echo 1 > /var/lib/zcrypto-engine/exec/armed` arms the live executor, and `cat x; rm -rf y`
 # deletes. Understanding shell is not the job; refusing to guess is.
-_COMPOSITION = ("$(", "`", ">", "<(", "${")
+_SEPARATORS = frozenset({";", "&", "&&", "|", "||", "\n"})
+_REDIRECTS = frozenset({">", ">>", "<", "<<", ">|"})
 _NOISE = ("2>&1", "2>/dev/null", "> /dev/null", ">/dev/null")
 
-
-def _split_segments(text: str) -> list[str]:
-    """Split on shell separators OUTSIDE quotes.
-
-    A quoted separator is data, not composition: `grep -iE "collector|error"` is one command, and
-    splitting it leaves fragments no allowlist can vouch for -- which refuses real diagnostics.
-    """
-    out, buf, quote = [], [], None
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if quote:
-            buf.append(ch)
-            if ch == quote:
-                quote = None
-        elif ch in "'\"":
-            quote = ch
-            buf.append(ch)
-        elif ch in ";\n|&":
-            nxt = text[i + 1] if i + 1 < len(text) else ""
-            out.append("".join(buf))
-            buf = []
-            if ch in "|&" and nxt == ch:
-                i += 1
-        else:
-            buf.append(ch)
-        i += 1
-    out.append("".join(buf))
-    return out
+# Flags are ALLOWLISTED per command, never denylisted. `curl` accepts `-XDELETE` attached and `-sO`
+# combined; `find` has `-execdir`, `-fprint` and `-ok` beside the `-exec` and `-delete` anyone thinks
+# to ban. Enumerating what may pass is the only side of that list with a finite length.
+_CURL_READ_FLAGS = frozenset(
+    {
+        "-s",
+        "-S",
+        "-f",
+        "-L",
+        "-I",
+        "-k",
+        "-m",
+        "-w",
+        "-H",
+        "-A",
+        "-o",
+        "-v",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--location",
+        "--head",
+        "--insecure",
+        "--max-time",
+        "--write-out",
+        "--header",
+        "--user-agent",
+        "--output",
+        "--connect-timeout",
+        "--retry",
+    }
+)
+_FIND_READ_PRIMARIES = frozenset(
+    {
+        "-name",
+        "-iname",
+        "-type",
+        "-mtime",
+        "-mmin",
+        "-newer",
+        "-size",
+        "-path",
+        "-ipath",
+        "-maxdepth",
+        "-mindepth",
+        "-print",
+        "-print0",
+        "-printf",
+        "-ls",
+        "-empty",
+        "-user",
+        "-group",
+        "-not",
+        "-o",
+        "-a",
+        "-prune",
+        "-regex",
+        "-inum",
+        "-links",
+        "-perm",
+    }
+)
 
 
 def _strip_noise(text: str) -> str:
@@ -627,12 +650,67 @@ def _strip_noise(text: str) -> str:
     return text
 
 
-def _segment_is_read_only(segment: str) -> bool:
-    scan = segment
-    if any(tok in scan for tok in _COMPOSITION):
+def _lex(text: str) -> list[str]:
+    r"""Tokenise with `shlex`, which knows quoting and backslash escapes; refuse what it cannot parse.
+
+    Hand-rolled splitting lost to shell repeatedly. `echo \' ; rm -rf /x` opens a quote span in a
+    naive scanner, so the real `;` reads as quoted and the whole string passes as one `echo` -- while
+    bash runs the `rm`. `punctuation_chars` makes `;`, `&`, `|`, `<` and `>` their own tokens, so
+    composition is seen rather than inferred, and an unbalanced quote raises rather than parsing to
+    something convenient.
+    """
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    return list(lexer)
+
+
+def _segments(command: str) -> list[list[str]]:
+    """One token list per shell segment; an unparseable command yields one refusing segment."""
+    try:
+        tokens = _lex(_strip_noise(command))
+    except ValueError:
+        return [["\x00unparseable"]]
+    out, current = [], []
+    for token in tokens:
+        if token in _SEPARATORS:
+            out.append(current)
+            current = []
+        else:
+            current.append(token)
+    out.append(current)
+    return [seg for seg in out if seg]
+
+
+def _flags_are_read_only(head: str, tokens: list[str]) -> bool:
+    joined = " ".join(tokens).lower()
+    if head == "curl":
+        # A plain GET to a ping URL marks a dead-man alive: a read that silences an alarm. DNS is
+        # case-insensitive, so the check is too.
+        if "hc-ping" in joined or "healthchecks.io/ping" in joined:
+            return False
+        for token in tokens[1:]:
+            if not token.startswith("-"):
+                continue
+            base = token.split("=", 1)[0]
+            if base in _CURL_READ_FLAGS:
+                continue
+            if re.fullmatch(r"-[A-Za-z]+", token) and all(f"-{ch}" in _CURL_READ_FLAGS for ch in token[1:]):
+                continue
+            return False
+        return True
+    if head == "find":
+        # `-3` is the VALUE of `-mmin`, not a primary: a signed integer can never be a primary, and
+        # refusing it would reject the runbooks' own `find … -mmin -3` freshness checks.
+        return all(t in _FIND_READ_PRIMARIES for t in tokens[1:] if t.startswith("-") and not re.fullmatch(r"[-+]?\d+", t))
+    return True
+
+
+def _segment_is_read_only(tokens: list[str]) -> bool:
+    # shlex splits `$(` into `$` and `(`, so both halves are named; `(`, `)` and `$` never appear in
+    # a read this pass should run, and a substitution can carry any command at all.
+    if any(t in _REDIRECTS or t in ("$", "(", ")", "$(") or "`" in t or t == "\x00unparseable" for t in tokens):
         return False
-    tokens = [t for t in segment.replace("'", " ").replace('"', " ").split() if t]
-    tokens = _strip_wrappers(tokens)
+    tokens = _strip_wrappers(list(tokens))
     if not tokens:
         return False
     head = tokens[0].split("/")[-1]
@@ -644,9 +722,9 @@ def _segment_is_read_only(segment: str) -> bool:
     pair = (head, sub) if (head, sub) in _READ_ONLY_COMMANDS else (head, None)
     if pair not in _READ_ONLY_COMMANDS:
         return False
-    if pair in _REQUIRE_FORMAT and not _inspect_format_is_scoped(segment):
+    if pair in _REQUIRE_FORMAT and not _inspect_format_is_scoped(" ".join(tokens)):
         return False
-    if pair == ("curl", None) and not _curl_is_a_plain_read(tokens, segment):
+    if not _flags_are_read_only(head, tokens):
         return False
     return not _has_mutating_flag(tokens)
 
@@ -654,16 +732,13 @@ def _segment_is_read_only(segment: str) -> bool:
 def classify_action(text: str, *, host: str | None = None) -> Tier:
     """Which tier a runbook step falls in: what it DOES first, what it touches second.
 
-    Rules 2 and 4 are both default-deny -- an unrecognised binary refuses rather than passes. That
-    is the property that catches the verb nobody imagined (`journalctl --vacuum-size` deletes; a
-    `docker exec` payload can be anything), and a change making either permissive is wrong however
-    reasonable it looks.
+    Rules 2 and 4 are both default-deny -- an unrecognised binary, an unparseable command, or a flag
+    outside its command's read allowlist all refuse. That is the property that catches the verb
+    nobody imagined, and a change making either permissive is wrong however reasonable it looks.
     """
     lowered = text.lower()
     commands = _commands(text)
-    read_only = bool(commands) and all(
-        all(_segment_is_read_only(seg) for seg in _split_segments(_strip_noise(c)) if seg.strip()) for c in commands
-    )
+    read_only = bool(commands) and all(all(_segment_is_read_only(seg) for seg in _segments(c)) for c in commands)
     protected = any(obj in lowered for obj in _PROTECTED_OBJECTS)
     if not read_only and protected:
         return Tier.PREPARED
