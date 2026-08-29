@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: "the owner ratifies or amends the change-class table in `## Proposed path` — drafted 2026-08-29, so this is gated on a decision, not an event. Deployment sets when the path is first USED, never when it can be written."
+status: partial
+ripe_when: "the engine can run two builder contracts at once — the shadow-alongside the ruling requires. It cannot today: the contract is wired in, not selected (no builder_contract or contract_version symbol in cli/)."
 ---
 
 # How a newly validated sleeve enters the live book
@@ -18,9 +18,19 @@ The stated goal of the whole 6b structure is that the live stack runs while rese
 - The pieces all exist separately: Phase-5 assembly produced the deployable's weights; the builder-contract mechanism versions records; Stage 6a defined shadow concordance as the parity gate; the ramp defined criteria-gated capital steps. The promotion path is their composition for a *changed* book, plus the answer to how much shadow evidence a change needs (a full 14-day re-gate? proportional to the change?).
 - §12 already forbids the alternative ("new research = new Phase 4 sprints under the same registry") — so promotion governance is an amendment-shaped decision — the same shape as [[T0116]]'s, which was ruled and landed in §12 on 2026-08-02.
 
+## Done so far
+
+**The path is ruled and landed (owner, 2026-08-29; iter-155).** Scoped by what a change TOUCHES rather than by a duration, because the four gates that made the deployable trustworthy each proved something different. Always: a new record via Phase-5 assembly, a builder-contract version bump, and shadow concordance re-earned on the new contract — no class exempt, since a new contract is new code on the path Stage 6a exists to prove.
+
+**Parity is re-earned by replay.** `_check_stage_identity` is exact float equality, so a contract either reproduces or it does not; there is no sample size. It replays against the existing journal in hours, which is stronger than a fresh live window that covers only what the market happened to do. **The band keeps its bar** — ≥3 consecutive complete ISO weeks, every class — because it is statistical and conditional on realized composition, which is precisely what a promotion changes. The compression comes from replay, never from lowering a gate.
+
+**Capital does not move during a re-gate**: the new record shadows while the live record keeps trading, and the cut-over follows the band. Stepping the live book down was rejected on a technical objection — the go/no-go edge is the p95 of the drift floor *at the funded NAV*, so a band measured at reduced capital validates a floor the book will not run at.
+
+Landed in `docs/research/00.master-plan.md` §12 under *Ongoing*, with the alternatives and their rejections in `docs/research/14.phase6-decisions.md` (iter-155).
+
 ## Proposed path
 
-**Status: a draft awaiting the owner's ruling. Nothing here is ratified, and none of it has been landed in §12.**
+**Ratified 2026-08-29 and landed in §12. Kept here as the reasoning behind the amendment; §12 is the operative text.**
 
 The gates that made the deployable trustworthy were four: Phase-5 assembly derived the weights, the builder contract pinned them, Stage 6a's concordance proved the live engine computes what the backtest computed, and 6b's rungs proved the book could actually be executed. A promotion re-earns *some* of those. Which ones is the whole question, and the answer is not a duration — it is **what the change touches**.
 
@@ -42,14 +52,13 @@ The gates that made the deployable trustworthy were four: Phase-5 assembly deriv
 
 ### Capital
 
-The ramp re-enters at the class's floor and **capital never steps up while a re-gate is open**. A promotion is not a reason to advance the ladder; it is a reason to re-prove the rung you are on.
+**The live book keeps trading its current record at its current rung; the candidate shadows beside it**, and capital moves only when the candidate's band clears. Stepping the live book down was considered and rejected: the go/no-go edge is the p95 of the per-cycle drift floor *at the funded NAV*, so a band measured at reduced capital validates a floor the book will not run at. Capital never steps *up* while a re-gate is open — a promotion re-proves the rung you are on, it does not advance the ladder.
 
-### What the owner must rule
+### The two open questions, as ruled
 
-- **The durations.** How many weeks of parity for each class, and how many complete ISO weeks of tracking-band evidence before capital resumes stepping. The go/no-go's `≥3 consecutive complete ISO weeks` is the natural anchor for class A, but whether a promotion earns the same bar as first go-live is a judgement about how much a changed book is trusted, not something measurable from here.
-- **Whether class A may run at full capital during its re-gate**, or must step down first.
+- **Duration.** Parity is not measured in weeks at all — `_check_stage_identity` is exact float equality, so it re-earns by REPLAY against the existing journal. The tracking band keeps its full bar for every class: ≥3 consecutive complete ISO weeks, unweakened, because it is statistical and conditional on the realized composition a promotion changes.
+- **Capital during a class-A re-gate.** Shadow alongside, per *Capital* above.
 
 ## Suggested next steps
 
-- **(owner)** Rule on `## Proposed path` — the change-class table, the durations, and whether class A steps down during its re-gate. On ratification it lands as a §12 amendment plus a decision-register entry.
-- **(autonomous, after the ruling)** Land the amendment and the register entry; nothing else in this topic is blocked.
+- **The ruling created one requirement the engine does not meet.** Shadow-alongside needs two builder contracts running at once; today the contract is wired in, not selected. Until that exists, a promotion cannot follow the ruled path — it would have to move capital, which the ruling rejects on the funded-NAV argument. This is the only thing left.
