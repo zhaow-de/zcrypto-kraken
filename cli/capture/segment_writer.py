@@ -339,6 +339,7 @@ class SegmentWriter:
         self.segment_bytes = 0
         self.rows_held = 0
         self.rows_quarantined = 0
+        self.hour_finalized_early = 0  # hours published before our clock said they were over (`_count_if_early`)
         self._recover()
 
     def append(self, event: dict) -> None:
@@ -695,7 +696,30 @@ class SegmentWriter:
             # normally causes this, and the traceback names the pair.
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)
 
+    def _count_if_early(self, hour: datetime) -> None:
+        """Count an hour published before our own clock said it was over (spec 00103 D1/D2).
+
+        This is the visible signature of T0037's residual (a) (resolved, records why). Earliness is
+        structurally bounded by MAX_TS_AHEAD -- every oracle witness is clamped at now + MAX_TS_AHEAD
+        and `append()` holds anything above the confirmed hour -- so there is no second band to split.
+        It does NOT see a LEADING clock's truncation: that measurement is taken with the same wrong
+        clock, which subtracts its own lead back out (D1b). The skew alert covers that case, not this.
+        A genuinely past hour yields a negative earliness, so the sweep's ordinary republishing is
+        excluded by the arithmetic rather than by a special case.
+        """
+        earliness = (hour + timedelta(hours=1)) - _utcnow()
+        if earliness > timedelta(0):
+            self.hour_finalized_early += 1
+            logger.warning(
+                "hour finalized early pair=%s kind=%s hour=%s early_s=%.1f",
+                self._pair,
+                self._kind,
+                hour,
+                earliness.total_seconds(),
+            )
+
     def _finalize_hour(self, hour: datetime) -> None:
+        self._count_if_early(hour)
         self._flush_buffer()
         self._merge_hour(self._hour_dir(hour), f"{hour:%H}")
 
@@ -930,6 +954,10 @@ class SegmentWriter:
             for hh in sorted({path.name.split(".part")[0] for path in hour_dir.glob("*.part*.parquet")}):
                 hour = _hour_of(hour_dir, hh)
                 if hour is not None and hour < before:
+                    # This path publishes too — a restart-window early confirmation reaches
+                    # `_merge_hour` from HERE with `_current_hour` still None, never through
+                    # `_finalize_hour` — so it takes the same earliness count (spec 00103 D2).
+                    self._count_if_early(hour)
                     self._merge_hour(hour_dir, hh)
 
     def _write_manifest(self, source: Path, final_path: Path) -> None:
