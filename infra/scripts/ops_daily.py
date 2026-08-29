@@ -9,7 +9,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-import shlex
 import sys
 import urllib.error
 import urllib.parse
@@ -426,66 +425,259 @@ class Tier(Enum):
     PREPARED = "prepared"
 
 
-# Seeded from the commands the runbooks actually contain, not from imagination: extract every
-# backtick span and fenced-block line across infra/runbooks/*.md and count the heads before editing
-# this. A diagnostic the pass refuses is the halt-at-step-1 failure moved rather than fixed.
-_READ_ONLY_COMMANDS = frozenset(
-    {
+# Default-deny. A command is AUTONOMOUS only when it matches one of the shapes enumerated below,
+# and PREPARED otherwise. Three parser generations tried the opposite -- admit a head, then prove
+# its arguments harmless -- and each shipped a fresh escape: shell composition, then attached and
+# combined flags, then the operator spellings `|&` and `&>` beside `sort -o FILE` and
+# `uniq IN OUT`. Those last two are the proof the approach was wrong: they write through an operand
+# that is a filename BY POSITION, so no flag allowlist can ever catch them. Enumerating the
+# permitted commands is the only side of the list with a finite length. A shape the runbooks need
+# and this table lacks costs one PREPARED step; a shape it admits by accident costs the capture pair.
+
+# Value classes. None may contain a shell metacharacter, so no hole can carry a command out of the
+# shape that vouched for it -- the property `_METACHARS` enforces once for the whole string.
+_NAME = r"[A-Za-z0-9][A-Za-z0-9._@:*-]{0,63}"
+_UNIT = r"[A-Za-z0-9][A-Za-z0-9._@*-]{0,63}"
+_PATH = r"/[A-Za-z0-9._/*+-]{0,160}"
+_FILEREF = r"[A-Za-z0-9._/*+-]{1,160}"
+_SINCE = r"-?\d{1,4}[smhd]?|-?\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?"
+_INT = r"\d{1,6}"
+_SINT = r"[-+]?\d{1,6}"
+_URL = r"https?://[A-Za-z0-9._~:/?#@!%+,=-]{1,200}"
+# A flag VALUE that is a literal string: the scanner has already refused every metacharacter that
+# was active where it stood, so what survives cannot leave the shape that vouched for it. Operand
+# classes stay narrow regardless -- an operand is where a filename lands.
+_QUOTED = r"[^\n]{0,240}"
+_PATTERN = r"[^\n]{0,240}"
+_MATCHEXPR = r"[A-Z_]{1,32}=[A-Za-z0-9._@/-]{1,64}"
+_DATEFMT = r"\+[%A-Za-z:._-]{1,24}"
+
+# Every character that lets one command become two, or a word become a command. Checked against the
+# whole string before any shape is tried, so a shape's holes are the only variable parts left.
+# `\` joins them: it is how round two's escapes laundered a separator past a tokeniser.
+_METACHARS = "`$;&<>()\\\n"
+_NOISE = ("2>&1", "2>/dev/null", "> /dev/null", ">/dev/null", "1>/dev/null")
+
+
+@dataclass(frozen=True)
+class _Shape:
+    """One permitted command: its literal head, the flags it may carry, and how many operands.
+
+    Operand ARITY is the load-bearing field. `uniq IN OUT` and `sort -o FILE` write through an
+    operand rather than a verb, so a shape that fixes how many operands a head may take -- and what
+    class each must be -- refuses them without needing to know they write.
+    """
+
+    head: tuple[str, ...]
+    flags: dict[str, str | None] = field(default_factory=dict)
+    short: str | None = None
+    arity: tuple[int, int] = (0, 0)
+    classes: tuple[str, ...] = ()
+    post: str | None = None
+
+
+def _match_shape(shape: _Shape, tokens: list[str]) -> bool:
+    if tuple(tokens[: len(shape.head)]) != shape.head:
+        return False
+    rest, operands, i = tokens[len(shape.head) :], [], 0
+    while i < len(rest):
+        token = rest[i]
+        if token.startswith("-") and token != "-":
+            key, sep, attached = token.partition("=")
+            if key in shape.flags:
+                spec = shape.flags[key]
+                if spec is None:
+                    if sep:
+                        return False
+                    i += 1
+                    continue
+                value = attached if sep else (rest[i + 1] if i + 1 < len(rest) else None)
+                if value is None or not re.fullmatch(spec, value):
+                    return False
+                i += 1 if sep else 2
+                continue
+            if shape.short and re.fullmatch(shape.short, token):
+                i += 1
+                continue
+            return False
+        operands.append(token)
+        i += 1
+    if not shape.arity[0] <= len(operands) <= shape.arity[1]:
+        return False
+    return all(re.fullmatch(shape.classes[min(n, len(shape.classes) - 1)], operand) for n, operand in enumerate(operands))
+
+
+# Reads. Host-independent: none of them writes anywhere, so none needs a host to be safe.
+_READ_SHAPES = (
+    _Shape(
         ("docker", "logs"),
-        ("docker", "inspect"),
-        ("docker", "ps"),
-        ("docker", "images"),
-        ("docker", "stats"),
-        ("journalctl", None),
-        ("systemctl", "status"),
-        ("systemctl", "list-timers"),
-        ("systemctl", "show"),
-        ("systemctl", "is-active"),
-        ("cat", None),
-        ("grep", None),
-        ("ls", None),
-        ("df", None),
-        ("du", None),
-        ("find", None),
-        ("stat", None),
-        ("head", None),
-        ("tail", None),
-        ("wc", None),
-        ("sort", None),
-        ("uniq", None),
-        ("date", None),
-        ("echo", None),
-        ("curl", None),
-        ("grafana-query.py", None),
-        ("continuity.py", None),
-    }
+        {"--since": _SINCE, "--until": _SINCE, "--tail": _INT, "-n": _INT, "--timestamps": None, "-t": None},
+        arity=(1, 1),
+        classes=(_NAME,),
+    ),
+    _Shape(("docker", "inspect"), {"--format": _QUOTED, "-f": _QUOTED}, arity=(1, 1), classes=(_NAME,), post="inspect"),
+    _Shape(("docker", "image", "inspect"), {"--format": _QUOTED}, arity=(1, 1), classes=(_NAME,), post="inspect"),
+    _Shape(("docker", "ps"), {"--filter": _QUOTED, "--format": _QUOTED, "-a": None, "--all": None, "--no-trunc": None}),
+    _Shape(("docker", "images"), {"--digests": None, "--format": _QUOTED}, arity=(0, 1), classes=(_NAME,)),
+    _Shape(("docker", "stats"), {"--no-stream": None, "--format": _QUOTED}, arity=(0, 2), classes=(_NAME,)),
+    _Shape(("systemctl", "status"), {"-n": _INT, "--lines": _INT, "--no-pager": None}, arity=(1, 3), classes=(_UNIT,)),
+    _Shape(("systemctl", "is-active"), {"--quiet": None}, arity=(1, 3), classes=(_UNIT,)),
+    _Shape(("systemctl", "is-enabled"), arity=(1, 3), classes=(_UNIT,)),
+    _Shape(("systemctl", "show"), {"-p": _NAME, "--property": _NAME, "--value": None}, arity=(1, 2), classes=(_UNIT,)),
+    _Shape(("systemctl", "list-timers"), {"--all": None, "--no-pager": None}, arity=(0, 2), classes=(_UNIT,)),
+    _Shape(("systemctl", "list-units"), {"--all": None, "--state": _NAME, "--no-pager": None}, arity=(0, 2), classes=(_UNIT,)),
+    _Shape(("systemctl", "cat"), arity=(1, 2), classes=(_UNIT,)),
+    # journalctl's WRITES are all flags -- `--vacuum-size=`, `--rotate`, `--flush`, `--sync`,
+    # `--update-catalog`, `--relinquish-var`. None is listed, so each refuses by absence rather than
+    # by a denylist someone has to keep complete.
+    _Shape(
+        ("journalctl",),
+        {
+            "-u": _UNIT,
+            "--unit": _UNIT,
+            "--since": _SINCE,
+            "--until": _SINCE,
+            "-n": _INT,
+            "--lines": _INT,
+            "--no-pager": None,
+            "-o": _NAME,
+            "--output": _NAME,
+            "-p": _NAME,
+            "--priority": _NAME,
+            "-b": None,
+            "--boot": None,
+            "-k": None,
+            "-r": None,
+            "--reverse": None,
+            "--utc": None,
+        },
+        arity=(0, 2),
+        classes=(_MATCHEXPR,),
+    ),
+    _Shape(("ls",), {"--time-style": _NAME, "--color": _NAME}, short=r"-[laLdhtrSR1]{1,7}", arity=(0, 4), classes=(_PATH,)),
+    _Shape(("cat",), short=r"-[nA]{1,2}", arity=(1, 4), classes=(_PATH,)),
+    _Shape(("stat",), {"-c": _QUOTED, "--format": _QUOTED}, arity=(1, 3), classes=(_PATH,)),
+    _Shape(("df",), short=r"-[hikPT]{1,5}", arity=(0, 3), classes=(_PATH,)),
+    _Shape(("du",), {"--max-depth": _INT}, short=r"-[xshcabkm]{1,6}", arity=(1, 5), classes=(_PATH,)),
+    # `-exec`, `-execdir`, `-delete`, `-fprint`, `-fls` and `-ok` are absent, so find can only report.
+    _Shape(
+        ("find",),
+        {
+            "-name": _QUOTED,
+            "-iname": _QUOTED,
+            "-path": _QUOTED,
+            "-type": _NAME,
+            "-mmin": _SINT,
+            "-mtime": _SINT,
+            "-maxdepth": _INT,
+            "-mindepth": _INT,
+            "-size": _NAME,
+            "-newer": _PATH,
+            "-ls": None,
+            "-print": None,
+        },
+        arity=(1, 2),
+        classes=(_PATH,),
+    ),
+    _Shape(("sha256sum",), short=r"-[bc]{1,2}", arity=(1, 3), classes=(_FILEREF,)),
+    _Shape(("md5sum",), arity=(1, 3), classes=(_FILEREF,)),
+    _Shape(
+        ("grep",),
+        {"-A": _INT, "-B": _INT, "-C": _INT, "--include": _QUOTED, "-e": _PATTERN},
+        short=r"-[iEvnocleqrRFwxsah]{1,8}|-[ABC]\d{1,3}",
+        arity=(1, 6),
+        classes=(_PATTERN, _FILEREF),
+    ),
+    # A GET to a healthchecks PING url marks a dead-man alive: `post` refuses those by URL.
+    _Shape(
+        ("curl",),
+        {
+            "-m": _INT,
+            "--max-time": _INT,
+            "--connect-timeout": _INT,
+            "-H": _QUOTED,
+            "--header": _QUOTED,
+            "-o": _PATH,
+            "-w": _QUOTED,
+            "--user-agent": _QUOTED,
+        },
+        short=r"-[sSfLIkv]{1,6}",
+        arity=(1, 1),
+        classes=(_URL,),
+        post="curl",
+    ),
+    _Shape(("wg", "show"), arity=(1, 2), classes=(_NAME,)),
+    _Shape(("chronyc",), arity=(1, 2), classes=(_NAME,)),
+    _Shape(("getent",), arity=(2, 2), classes=(_NAME,)),
+    _Shape(("uptime",), short=r"-[ps]{1,2}"),
+    _Shape(("nproc",)),
+    _Shape(("free",), short=r"-[hmgb]{1,2}"),
+    _Shape(("mount",)),
+    _Shape(("vmstat",), arity=(0, 2), classes=(_INT,)),
+    _Shape(("top",), {"-n": _INT}, short=r"-[bn1H]{1,4}"),
+    _Shape(("date",), {"-u": None, "--utc": None}, arity=(0, 1), classes=(_DATEFMT,)),
+    _Shape(("hostname",)),
+    # The repo's own read-only instruments. Their operands are PromQL and paths, so the class is a
+    # literal: the scanner has already refused every metacharacter that was active where it stood.
+    _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
+    _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
+    _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
+    _Shape(("id",), arity=(0, 1), classes=(_NAME,)),
 )
-# `zcrypto engine <sub>` is three tokens, so it needs its own read-only set rather than a
-# (binary, subcommand) pair: `exec-status` reads, `cycle --replace` deletes a boundary's record.
-_READ_ONLY_ZCRYPTO_ENGINE = frozenset({"exec-status", "report", "tracking-report", "decompose", "accum-replay", "soak-check"})
-# `docker inspect` REQUIRES --format: unscoped it prints the container's environment, which on the
-# engine host is the live Kraken trade key.
-_REQUIRE_FORMAT = frozenset({("docker", "inspect")})
-# Refused inside an otherwise-read-only command, matched as exact tokens so `-fsS` is not `-f`.
-# find's primaries are single-dash, so the double-dash spellings alone would miss them.
-_MUTATING_FLAGS = frozenset(
-    {
-        "--rotate",
-        "--flush",
-        "--force",
-        "-f",
-        "--apply",
-        "--delete",
-        "-delete",
-        "-exec",
-        "--prune",
-        "--rm",
-        "--replace",
-    }
+
+# `zcrypto engine <sub>`: `exec-status` reads, `cycle --replace` deletes a boundary's record, and
+# `gate-export` writes a textfile. The read subcommands are named one by one for the same reason.
+_ZCRYPTO_READ_SUBS = ("exec-status", "report", "tracking-report", "decompose", "accum-replay", "soak-check")
+_ZCRYPTO_SHAPES = tuple(
+    _Shape(
+        ("zcrypto", "engine", sub),
+        {
+            "--journal-dir": _PATH,
+            "--since": _SINCE,
+            "--until": _SINCE,
+            "--nav": _INT,
+            "--minimums": _FILEREF,
+            "--path": _NAME,
+            "--date": _SINCE,
+            "--pair": _NAME,
+            "--json": None,
+        },
+    )
+    for sub in _ZCRYPTO_READ_SUBS
 )
-# Prefixes, because the flag carries a value: `--vacuum-size=200M` deletes the journal and would
-# never match an exact-token list. This is the round-4 Critical; keep it a prefix.
-_MUTATING_FLAG_PREFIXES = ("--vacuum",)
+
+# Pipeline filters. Every one takes ZERO file operands -- the rule that refuses `sort -o out`,
+# `uniq in out` and `tee`, none of which announces its write in a verb. `grep` takes exactly its
+# pattern. `awk`, `sed`, `xargs`, `tee` and `dd` are absent: each can run or write from an operand.
+_FILTER_SHAPES = (
+    _Shape(("head",), {"-n": _INT, "-c": _INT}, short=r"-\d{1,6}"),
+    _Shape(("tail",), {"-n": _INT, "-c": _INT}, short=r"-\d{1,6}"),
+    _Shape(("wc",), short=r"-[lwcm]{1,4}"),
+    _Shape(("sort",), {"-k": _NAME, "-t": _QUOTED}, short=r"-[hrnufbV]{1,6}"),
+    _Shape(("uniq",), short=r"-[cdu]{1,3}"),
+    _Shape(("cut",), {"-d": _QUOTED, "-f": _NAME, "-c": _NAME}),
+    _Shape(
+        ("grep",),
+        {"-A": _INT, "-B": _INT, "-C": _INT, "-e": _PATTERN},
+        short=r"-[iEvnocleqFwxa]{1,8}|-[ABC]\d{1,3}",
+        arity=(1, 1),
+        classes=(_PATTERN,),
+    ),
+    _Shape(("column",), {"-t": None, "-s": _QUOTED}),
+    _Shape(("tr",), {"-d": _QUOTED, "-s": _QUOTED}, arity=(0, 2), classes=(_QUOTED,)),
+)
+
+# Mutations the user authorised for the telemetry hosts, where the loop can revert every one of them
+# itself. Gated on the host, and vetoed by `_PROTECTED_OBJECTS` -- a converge is never here.
+_TELEMETRY_SHAPES = (
+    _Shape(("systemctl", "restart"), {"--no-block": None}, arity=(1, 2), classes=(_UNIT,)),
+    _Shape(("systemctl", "start"), {"--no-block": None}, arity=(1, 2), classes=(_UNIT,)),
+    _Shape(("systemctl", "stop"), arity=(1, 2), classes=(_UNIT,)),
+    _Shape(("docker", "restart"), arity=(1, 2), classes=(_NAME,)),
+    _Shape(("docker", "start"), arity=(1, 2), classes=(_NAME,)),
+    _Shape(("docker", "stop"), arity=(1, 2), classes=(_NAME,)),
+)
+
 _PROTECTED_OBJECTS = (
     "zcrypto-capture",
     "zcrypto-engine",
@@ -498,15 +690,18 @@ _PROTECTED_OBJECTS = (
     "grafana-push.sh",
     "@sha256:",
 )
-_TELEMETRY_OBJECTS = ("grafana-alloy", "alloy", ".timer", ".prom")
 _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
-_WRAPPERS = ("sudo", "uv", "run", "python", "python3", "bash", "sh", "-c", "time", "env")
+# Stripped before matching: they change who runs a command, never what it does. `ssh <host>` also
+# RETARGETS it, so the host it names replaces the caller's for the telemetry gate.
+_PREFIXES = (("sudo",), ("sudo", "-n"), ("uv", "run"), ("time",))
+_DOCKER_EXEC_VALUE_FLAGS = frozenset({"-u", "--user", "-w", "--workdir", "-e", "--env"})
 
 _CMD_SPAN = re.compile(r"`([^`\n]+)`")
+_SAFE_INSPECT_FIELDS = (".Mounts", ".State", ".Config.Image", ".Config.Entrypoint", ".RestartCount", ".Name", ".Created", ".Id")
 
 
 def _commands(text: str) -> list[str]:
-    """Every backtick span, or — when there is none — the whole text as one command.
+    """Every backtick span, or -- when there is none -- the whole text as one command.
 
     Never refused for want of markup: the skill passes the one command it is about to run, usually
     bare, and refusing that would prepare everything at runtime under a green suite.
@@ -515,235 +710,161 @@ def _commands(text: str) -> list[str]:
     return spans or ([text.strip()] if text.strip() else [])
 
 
-def _strip_wrappers(tokens: list[str]) -> list[str]:
-    """`docker exec <container>` is a wrapper, never a read: its payload is the real command.
-
-    `docker exec zcrypto-engine zcrypto engine exec-status` reads; `docker exec zcrypto-archive-pull
-    rm -f /tmp/gate-cache.json` deletes. Only the payload separates them.
-    """
-    while tokens:
-        head = tokens[0].split("/")[-1]
-        if head in _WRAPPERS or head.startswith("--"):
-            tokens = tokens[1:]
-        elif head == "ssh" and len(tokens) > 1:
-            tokens = tokens[2:]
-        elif head == "docker" and len(tokens) > 2 and tokens[1] == "exec":
-            tokens = tokens[2:]
-            while tokens and (tokens[0].startswith("-") or tokens[0].startswith("zcrypto-")):
-                tokens = tokens[1:]
-        else:
-            return tokens
-    return tokens
-
-
-# CLAUDE.md names the fields an inspect may scope to. `--format` alone is not enough: the banned
-# `{{json .Config}}` and `{{.Config.Env}}` both carry it, and both print the live trade key.
-_SAFE_INSPECT_FIELDS = (".Mounts", ".State", ".Config.Image", ".Config.Entrypoint", ".RestartCount", ".Name", ".Created", ".Id")
-
-
-def _inspect_format_is_scoped(segment: str) -> bool:
-    match = re.search(r"--format[= ]\s*(\S.*)", segment)
-    if not match:
-        return False
-    selectors = re.findall(r"\.\w[\w.]*", match.group(1))
-    return bool(selectors) and all(sel.startswith(_SAFE_INSPECT_FIELDS) for sel in selectors)
-
-
-# A bare `curl` is a read; with a method, a body, an upload or an output file it writes. And a plain
-# GET to a healthchecks ping URL MARKS A DEAD-MAN ALIVE -- a read that silences the alarm.
-_CURL_MUTATING = (
-    "-X",
-    "--request",
-    "-d",
-    "--data",
-    "--data-binary",
-    "--data-raw",
-    "--data-urlencode",
-    "--json",
-    "-F",
-    "--form",
-    "-T",
-    "--upload-file",
-    "-O",
-)
-
-
-def _has_mutating_flag(tokens: list[str]) -> bool:
-    return any(t in _MUTATING_FLAGS or t.startswith(_MUTATING_FLAG_PREFIXES) for t in tokens)
-
-
-# Shell composition is refused outright rather than parsed: a substitution, a redirect or a
-# process substitution can carry ANY command inside a segment an allowlisted head vouches for --
-# `echo 1 > /var/lib/zcrypto-engine/exec/armed` arms the live executor, and `cat x; rm -rf y`
-# deletes. Understanding shell is not the job; refusing to guess is.
-_SEPARATORS = frozenset({";", "&", "&&", "|", "||", "\n"})
-_REDIRECTS = frozenset({">", ">>", "<", "<<", ">|"})
-_NOISE = ("2>&1", "2>/dev/null", "> /dev/null", ">/dev/null")
-
-# Flags are ALLOWLISTED per command, never denylisted. `curl` accepts `-XDELETE` attached and `-sO`
-# combined; `find` has `-execdir`, `-fprint` and `-ok` beside the `-exec` and `-delete` anyone thinks
-# to ban. Enumerating what may pass is the only side of that list with a finite length.
-_CURL_READ_FLAGS = frozenset(
-    {
-        "-s",
-        "-S",
-        "-f",
-        "-L",
-        "-I",
-        "-k",
-        "-m",
-        "-w",
-        "-H",
-        "-A",
-        "-o",
-        "-v",
-        "--silent",
-        "--show-error",
-        "--fail",
-        "--location",
-        "--head",
-        "--insecure",
-        "--max-time",
-        "--write-out",
-        "--header",
-        "--user-agent",
-        "--output",
-        "--connect-timeout",
-        "--retry",
-    }
-)
-_FIND_READ_PRIMARIES = frozenset(
-    {
-        "-name",
-        "-iname",
-        "-type",
-        "-mtime",
-        "-mmin",
-        "-newer",
-        "-size",
-        "-path",
-        "-ipath",
-        "-maxdepth",
-        "-mindepth",
-        "-print",
-        "-print0",
-        "-printf",
-        "-ls",
-        "-empty",
-        "-user",
-        "-group",
-        "-not",
-        "-o",
-        "-a",
-        "-prune",
-        "-regex",
-        "-inum",
-        "-links",
-        "-perm",
-    }
-)
-
-
 def _strip_noise(text: str) -> str:
     for noise in _NOISE:
         text = text.replace(noise, " ")
     return text
 
 
-def _lex(text: str) -> list[str]:
-    r"""Tokenise with `shlex`, which knows quoting and backslash escapes; refuse what it cannot parse.
+def _scan(text: str) -> list[list[str]] | None:
+    r"""Tokenise into pipeline stages, refusing every metacharacter that is ACTIVE where it stands.
 
-    Hand-rolled splitting lost to shell repeatedly. `echo \' ; rm -rf /x` opens a quote span in a
-    naive scanner, so the real `;` reads as quoted and the whole string passes as one `echo` -- while
-    bash runs the `rm`. `punctuation_chars` makes `;`, `&`, `|`, `<` and `>` their own tokens, so
-    composition is seen rather than inferred, and an unbalanced quote raises rather than parsing to
-    something convenient.
+    Exact shell quoting rather than an approximation: outside quotes anything that can start a
+    command, redirect one or join two is refused; inside single quotes nothing is special, so a real
+    grep pattern may hold `(`, `|` and `\\`; inside double quotes only expansion and escape are.
+    Getting this exactly right is what lets the shapes trust their operands -- and it is why
+    `docker inspect --format '{{.State.Status}} {{.RestartCount}}'` is one token, not two.
     """
-    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    return list(lexer)
+    stages: list[list[str]] = []
+    tokens: list[str] = []
+    current: list[str] = []
+    quote = ""
+    quoted = False
 
+    def close() -> None:
+        nonlocal current, quoted
+        if current or quoted:
+            tokens.append("".join(current))
+        current, quoted = [], False
 
-def _segments(command: str) -> list[list[str]]:
-    """One token list per shell segment; an unparseable command yields one refusing segment."""
-    try:
-        tokens = _lex(_strip_noise(command))
-    except ValueError:
-        return [["\x00unparseable"]]
-    out, current = [], []
-    for token in tokens:
-        if token in _SEPARATORS:
-            out.append(current)
-            current = []
+    for char in text:
+        if quote:
+            if char == quote:
+                quote = ""
+            elif quote == '"' and char in "$`\\":
+                return None
+            else:
+                current.append(char)
+        elif char in "'\"":
+            quote, quoted = char, True
+        elif char in _METACHARS:
+            return None
+        elif char == "|":
+            close()
+            stages.append(tokens)
+            tokens = []
+        elif char.isspace():
+            close()
         else:
-            current.append(token)
-    out.append(current)
-    return [seg for seg in out if seg]
+            current.append(char)
+    if quote:
+        return None
+    close()
+    stages.append(tokens)
+    return stages
 
 
-def _flags_are_read_only(head: str, tokens: list[str]) -> bool:
+def _inspect_format_is_scoped(tokens: list[str]) -> bool:
+    """CLAUDE.md's secrets rule, made structural: an inspect prints only the fields named there.
+
+    Unscoped, `docker inspect` prints the container's environment, which on the engine host is the
+    live Kraken trade key. `{{json .Config}}` and `{{json .Config.Env}}` both carry `--format` and
+    both print it, so the presence of the flag is never the test -- every selector is.
+    """
+    joined = " ".join(tokens)
+    if "--format" not in joined and " -f " not in f" {joined} ":
+        return False
+    selectors = re.findall(r"\.\w[\w.]*", joined.split("--format", 1)[-1] if "--format" in joined else joined)
+    return bool(selectors) and all(sel.startswith(_SAFE_INSPECT_FIELDS) for sel in selectors)
+
+
+def _curl_is_read(tokens: list[str]) -> bool:
+    """A plain GET to a healthchecks ping URL marks a dead-man alive -- a read that silences an alarm."""
     joined = " ".join(tokens).lower()
-    if head == "curl":
-        # A plain GET to a ping URL marks a dead-man alive: a read that silences an alarm. DNS is
-        # case-insensitive, so the check is too.
-        if "hc-ping" in joined or "healthchecks.io/ping" in joined:
-            return False
-        for token in tokens[1:]:
-            if not token.startswith("-"):
-                continue
-            base = token.split("=", 1)[0]
-            if base in _CURL_READ_FLAGS:
-                continue
-            if re.fullmatch(r"-[A-Za-z]+", token) and all(f"-{ch}" in _CURL_READ_FLAGS for ch in token[1:]):
-                continue
-            return False
+    return "hc-ping" not in joined and "healthchecks.io/ping" not in joined
+
+
+_POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
+
+
+def _matches(shapes, tokens: list[str]) -> bool:
+    for shape in shapes:
+        if not _match_shape(shape, tokens):
+            continue
+        check = _POSTCHECKS.get(shape.post) if shape.post else None
+        if check and not check(tokens):
+            continue
         return True
-    if head == "find":
-        # `-3` is the VALUE of `-mmin`, not a primary: a signed integer can never be a primary, and
-        # refusing it would reject the runbooks' own `find … -mmin -3` freshness checks.
-        return all(t in _FIND_READ_PRIMARIES for t in tokens[1:] if t.startswith("-") and not re.fullmatch(r"[-+]?\d+", t))
-    return True
+    return False
 
 
-def _segment_is_read_only(tokens: list[str]) -> bool:
-    # shlex splits `$(` into `$` and `(`, so both halves are named; `(`, `)` and `$` never appear in
-    # a read this pass should run, and a substitution can carry any command at all.
-    if any(t in _REDIRECTS or t in ("$", "(", ")", "$(") or "`" in t or t == "\x00unparseable" for t in tokens):
-        return False
-    tokens = _strip_wrappers(list(tokens))
-    if not tokens:
-        return False
-    head = tokens[0].split("/")[-1]
-    sub = tokens[1] if len(tokens) > 1 and not tokens[1].startswith("-") else None
-    if head == "zcrypto":
-        if sub != "engine" or len(tokens) < 3 or tokens[2] not in _READ_ONLY_ZCRYPTO_ENGINE:
-            return False
-        return not _has_mutating_flag(tokens)
-    pair = (head, sub) if (head, sub) in _READ_ONLY_COMMANDS else (head, None)
-    if pair not in _READ_ONLY_COMMANDS:
-        return False
-    if pair in _REQUIRE_FORMAT and not _inspect_format_is_scoped(" ".join(tokens)):
-        return False
-    if not _flags_are_read_only(head, tokens):
-        return False
-    return not _has_mutating_flag(tokens)
+def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
+    """Peel what changes WHO runs a command, never what it does; report the host an ssh retargets to.
+
+    `docker exec <container>` is peeled for the same reason: its payload is the real command, and
+    only the payload separates `docker exec zcrypto-engine zcrypto engine exec-status` from
+    `docker exec zcrypto-archive-pull rm -f /tmp/gate-cache.json`. What comes out is matched against
+    the shapes like any other command, so a peeled payload is never trusted -- only re-examined.
+    """
+    target = None
+    changed = True
+    while changed and tokens:
+        changed = False
+        # The NAS spells it `/usr/local/bin/docker`: docker is off the non-interactive ssh PATH there.
+        tokens = [tokens[0].rsplit("/", 1)[-1], *tokens[1:]]
+        for prefix in _PREFIXES:
+            if tuple(tokens[: len(prefix)]) == prefix:
+                tokens, changed = tokens[len(prefix) :], True
+                break
+        if changed:
+            continue
+        if len(tokens) > 2 and tokens[0] == "ssh" and re.fullmatch(_NAME, tokens[1]):
+            target, tokens, changed = tokens[1], tokens[2:], True
+        elif len(tokens) > 1 and tokens[0] in ("python", "python3") and tokens[1].endswith(".py"):
+            tokens, changed = tokens[1:], True
+        elif len(tokens) > 1 and tokens[0] in ("bash", "sh") and tokens[1].endswith(".sh"):
+            tokens, changed = tokens[1:], True
+        elif len(tokens) > 2 and tokens[0] == "docker" and tokens[1] == "exec":
+            rest = tokens[2:]
+            while rest and rest[0].startswith("-"):
+                rest = rest[2:] if rest[0] in _DOCKER_EXEC_VALUE_FLAGS else rest[1:]
+            if len(rest) > 1 and re.fullmatch(_NAME, rest[0]):
+                tokens, changed = rest[1:], True
+    return tokens, target
 
 
 def classify_action(text: str, *, host: str | None = None) -> Tier:
-    """Which tier a runbook step falls in: what it DOES first, what it touches second.
+    """Which tier a runbook step falls in. Default-deny: unrecognised is PREPARED, always.
 
-    Rules 2 and 4 are both default-deny -- an unrecognised binary, an unparseable command, or a flag
-    outside its command's read allowlist all refuse. That is the property that catches the verb
-    nobody imagined, and a change making either permissive is wrong however reasonable it looks.
+    A command is AUTONOMOUS only when EVERY backtick span in the text matches an enumerated shape.
+    There is no rule that reads a command's words and decides it looks harmless -- that rule is what
+    three review rounds broke. Making any branch here permissive is wrong however reasonable it looks.
     """
-    lowered = text.lower()
     commands = _commands(text)
-    read_only = bool(commands) and all(all(_segment_is_read_only(seg) for seg in _segments(c)) for c in commands)
-    protected = any(obj in lowered for obj in _PROTECTED_OBJECTS)
-    if not read_only and protected:
+    if not commands:
         return Tier.PREPARED
-    if read_only:
+    if all(_classify_one(command, host) is Tier.AUTONOMOUS for command in commands):
         return Tier.AUTONOMOUS
-    if any(obj in lowered for obj in _TELEMETRY_OBJECTS) and host in _TELEMETRY_HOSTS:
+    return Tier.PREPARED
+
+
+def _classify_one(command: str, host: str | None) -> Tier:
+    stages = _scan(_strip_noise(command))
+    if not stages or not all(stages):
+        return Tier.PREPARED
+    first, *filters = stages
+    if not all(_matches(_FILTER_SHAPES, stage) for stage in filters):
+        return Tier.PREPARED
+    tokens, target = _strip_prefixes(first)
+    if not tokens:
+        return Tier.PREPARED
+    if _matches(_READ_SHAPES + _ZCRYPTO_SHAPES, tokens):
+        return Tier.AUTONOMOUS
+    lowered = command.lower()
+    if (
+        (target or host) in _TELEMETRY_HOSTS
+        and not any(obj in lowered for obj in _PROTECTED_OBJECTS)
+        and _matches(_TELEMETRY_SHAPES, tokens)
+    ):
         return Tier.AUTONOMOUS
     return Tier.PREPARED

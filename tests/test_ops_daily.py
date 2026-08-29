@@ -496,6 +496,81 @@ def test_shell_composition_and_write_shaped_reads_are_never_autonomous(cmd):
 @pytest.mark.parametrize(
     "cmd",
     [
+        # Operator SPELLINGS. `shlex(punctuation_chars=True)` emits each run of `();<>|&` as one
+        # token, and the parser generation denylisted five of them: `|&` pipes stdout+stderr and
+        # RUNS the second command, and all three `&>` forms redirect. Verified in real bash --
+        # `echo x |& rm -rf …` deleted the marker while the classifier called it a read.
+        "echo pwned |& rm -rf /tmp/probe_target",
+        "echo x |& rm -rf /var/lib/zcrypto-capture",
+        "echo x |& sudo systemctl restart zcrypto-engine",
+        "echo pwned >& /tmp/probe_redir_both",
+        "echo pwned &> /tmp/probe_amp_redir",
+        "echo pwned &>> /tmp/probe_amp_append",
+        "cat /etc/hostname ;; rm -rf /tmp/x",
+        # Writes through an OPERAND, not a verb: `sort -o FILE` writes FILE, and uniq's second
+        # positional is its output file -- with no flag at all. These are why the flag-allowlist
+        # design was abandoned: no list of flags can catch a filename that is one by position.
+        "sort -o /tmp/probe_sort_out /etc/hostname",
+        "uniq /etc/hostname /tmp/probe_uniq_out",
+        "cat /etc/hostname | tee /tmp/probe_tee",
+        # journalctl's maintenance writes, beside the `--vacuum-size` that was an earlier Critical.
+        "journalctl --update-catalog",
+        "journalctl --sync",
+        "journalctl --relinquish-var",
+        # `date -s` sets the system clock, and the runbooks sudo.
+        "date -s '2020-01-01 00:00:00'",
+        "date --set=2020-01-01",
+    ],
+)
+def test_the_round_three_escapes_are_refused(cmd):
+    """Each string here was AUTONOMOUS under the parser and mutates in real bash.
+
+    They are the reason the parser was replaced by an enumerated allowlist: three rounds each closed
+    one class and shipped the next. A shape absent from the table refuses by construction, so these
+    pass without anyone having imagined the verb -- but they are kept as fixtures because a guard is
+    unproven until the defect it names is seen to trip it.
+    """
+    for host in ("zcrypto", "ops", "nas"):
+        assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.PREPARED, host
+
+
+@pytest.mark.parametrize(
+    "cmd,host",
+    [
+        ("sudo /usr/local/bin/docker logs --since 3h zcrypto-archive-pull | tail -50", "nas"),
+        ("sudo docker inspect grafana-alloy --format '{{.State.Status}} {{.RestartCount}} {{.State.OOMKilled}}'", "ops"),
+        ("sudo docker exec zcrypto-engine zcrypto engine exec-status", "zcrypto"),
+        ("uv run python infra/scripts/grafana-query.py 'up{job=\"capture_app\"}'", "ops"),
+        ("sudo docker logs --since 5h zcrypto-engine | grep 'not scored'", "zcrypto"),
+    ],
+)
+def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
+    """The false-refusal side of the rewrite, at the four places it nearly broke.
+
+    The NAS spells docker `/usr/local/bin/docker`; a `--format` body and a grep pattern hold spaces,
+    so a stage must be tokenised quote-aware or it splits into nonsense; `docker exec <container>`
+    fronts a genuine read; and the repo's own query script takes PromQL full of braces and quotes.
+    """
+    assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS
+
+
+def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():
+    """`docker exec` is peeled so its payload can be judged -- the peel must not BE the judgement.
+
+    Same container, same wrapper, opposite verdicts: only the payload separates them."""
+    assert (
+        ops_daily.classify_action("sudo docker exec zcrypto-engine zcrypto engine exec-status", host="zcrypto")
+        is ops_daily.Tier.AUTONOMOUS
+    )
+    assert (
+        ops_daily.classify_action("sudo docker exec zcrypto-archive-pull rm -f /tmp/gate-cache.json", host="nas")
+        is ops_daily.Tier.PREPARED
+    )
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
         "sudo docker logs grafana-alloy --since 1h 2>&1 | grep -iE 'collector|error'",
         "sudo docker logs zcrypto-capture 2>&1 | grep -E 'checksum desync|desync recovery'",
         "sudo docker inspect --format '{{.State.Status}} {{.RestartCount}}' zcrypto-engine",
