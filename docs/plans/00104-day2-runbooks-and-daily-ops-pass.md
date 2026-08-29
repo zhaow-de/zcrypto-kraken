@@ -390,9 +390,13 @@ Run: `uv run pytest tests/test_ops_daily.py -v 2>&1 | tail -5` — module missin
 
 `read_alerts` calls `GET {GRAFANA_URL}/api/prometheus/grafana/api/v1/rules` for current state (the uid is the rule object's **top-level `uid`** field, and a rule without one sets `unreadable` rather than yielding a silently empty list — **measured 2026-08-29** against the live API: a rule object's keys are `alerts, annotations, duration, evaluationTime, folderUid, health, isPaused, labels, lastEvaluation, name, notificationSettings, provenance, queriedDatasourceUIDs, query, state, totals, totalsFiltered, type, uid`, its `labels` carry only `severity`, and **no `__`-prefixed label exists**; the runbook link is parsed from the summary with the same regex the alert test uses, `infra/runbooks/([\w.-]+\.md)#([\w-]+)`), then `GET {GRAFANA_URL}/api/v1/rules/history?from=&to=&limit=` in chunks no wider than `HISTORY_CHUNK = timedelta(hours=6)`, each chunk's returned row count compared against `HISTORY_PAGE_LIMIT`; a chunk at the limit sets `unreadable`. Every request carries `Authorization: Bearer <token>` and a 30 s timeout. Any `URLError`/`HTTPError`/`KeyError` sets `unreadable` with the reason and returns empty lists — never a partial list presented as complete.
 
+- [ ] **Step 3b: The host, built and tested**
+
+`_UID_HOST` maps the five `zcrypto-alloy-dark-*` uids to their host labels (values in this task's Interfaces). Add a fixture whose rule fires with **no** `host` label and uid `zcrypto-alloy-dark-capture-primary`, and assert `Alert.host == "zcrypto"`; add one with an instance-level `host` label and assert the label wins. Without these the map is prose, and a copy-paste error in the two capture entries is invisible.
+
 - [ ] **Step 4: Green**
 
-Run: `uv run pytest tests/test_ops_daily.py -v 2>&1 | tail -3` — the three pass.
+Run: `uv run pytest tests/test_ops_daily.py -v 2>&1 | tail -3` — all pass, the host cases included.
 
 - [ ] **Step 5: Commit**
 
@@ -603,8 +607,8 @@ git commit -m "feat(ops): the operations journal, one entry per pass, shape-test
 
 **Interfaces:**
 - Produces: `Tier(Enum)` with `AUTONOMOUS` / `PREPARED`; `classify_action(text: str, *, host: str | None = None) -> Tier`; and the CLI subcommand `ops-daily.py classify --host <host> "<text>"`, printing the tier and exiting 0 for `AUTONOMOUS`, 3 for `PREPARED`.
-- **The instrument resolves each fired alert's host; the report carries it.** `Alert.host` comes from the instance's `host` label when it has one, else from an explicit uid map for the rules whose expression aggregates the label away. The five `zcrypto-alloy-dark-*` rules are exactly that case — their expr is `count(up{host="ops"}) or on() vector(0)`, so the firing instance carries only `severity`; a skill told to read "the alert's host label" would get nothing and prepare everything, making rule 3 unreachable for the family that motivates it.
-- **The host is a separate argument because a runbook step does not carry one.** `infra/runbooks/observability.md`'s alloy-dark section serves four uids — `zcrypto-alloy-dark-nas`, `-ops`, `-capture-primary`, `-capture-secondary` — with one body: *"Restart it — safe, and the usual fix: `sudo docker restart grafana-alloy`."* The same sentence is routine on ops and **attended on the capture pair**. A classifier reading only the text must therefore either allow it everywhere or forbid it everywhere; the host arrives from the fired alert's labels, and the pass must pass it in.
+- **The instrument resolves each fired alert's host; the report carries it.** `Alert.host` comes from the instance's `host` label when it has one, else from an explicit uid map for the rules whose expression aggregates the label away: `zcrypto-alloy-dark-ops` → `ops`, `-nas` → `nas`, `-zaccess` → `zaccess`, `-capture-primary` → **`zcrypto`**, `-capture-secondary` → **`zcrypto-red`** (the two capture entries are the ones a copy-paste would break, and getting either wrong makes a capture-Alloy restart autonomous with nothing red). The five `zcrypto-alloy-dark-*` rules are exactly that case — their expr is `count(up{host="ops"}) or on() vector(0)`, so the firing instance carries only `severity`; a skill told to read "the alert's host label" would get nothing and prepare everything, making rule 3 unreachable for the family that motivates it.
+- **The host is a separate argument because a runbook step does not carry one.** `infra/runbooks/observability.md`'s alloy-dark section serves four uids — `zcrypto-alloy-dark-nas`, `-ops`, `-capture-primary`, `-capture-secondary` — with one body: *"Restart it — safe, and the usual fix: `sudo docker restart grafana-alloy`."* The same sentence is routine on ops and **attended on the capture pair**. A classifier reading only the text must therefore either allow it everywhere or forbid it everywhere; the host is resolved by the instrument (label, else the uid map above) and carried on `Alert.host`; the pass passes that value and derives nothing.
 - **Its production caller is the skill** (Task 16 step 3), via the subcommand — `infra/scripts/` is not a package, so an import line in a skill would be the one part nobody verifies.
 
 **The precedence, in order:**
@@ -641,6 +645,11 @@ def test_the_same_step_is_routine_on_ops_and_attended_on_the_capture_pair(host, 
     "`uv run python infra/scripts/grafana-query.py 'zcrypto_capture_book_desynced'`",
     "**Engine-side**: `sudo docker inspect --format '{{.State.Status}} {{.RestartCount}}' zcrypto-engine`",
     "**Prove the prune ring is alive**: `systemctl list-timers 'zcrypto-*'` and `journalctl -u zcrypto-capture-prune -n 3 --no-pager`",
+    # a pipeline whose every segment reads -- refusing this refuses most real diagnostics
+    "`sudo docker logs zcrypto-capture --since 1h 2>&1 | tail -50`",
+    # the watermark section's own step 1: if this refuses, the pass halts on the incident whose
+    # vacuum line is the fixture above
+    "`df -h /` then `sudo du -xsh /var/lib/zcrypto-capture/* | sort -h`",
     "Read the engine's gate: `sudo docker exec zcrypto-engine zcrypto engine exec-status`.",
 ])
 def test_a_read_only_step_is_autonomous_on_any_host_even_naming_a_protected_object(text):
@@ -659,6 +668,11 @@ def test_a_read_only_step_is_autonomous_on_any_host_even_naming_a_protected_obje
     "Converge the secondary: `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-red`.",
     # capture-daemon.md, the watermark section: `journalctl` reads, `--vacuum-size` deletes.
     "**The systemd journal**: `sudo journalctl --vacuum-size=200M`.",
+    # engine.md: the payload of a `docker exec` mutates, and the runbook says --replace DELETES
+    # the boundary's record and its snapshots tree. The wrapper must not launder it.
+    "`sudo docker exec zcrypto-engine zcrypto engine cycle --at 2026-08-29T12:00:00+00:00 --replace`",
+    # gate.md: the same wrapper, a deletion payload, and no -f to rescue it.
+    "`ssh nas`, then `sudo /usr/local/bin/docker exec zcrypto-archive-pull rm /tmp/gate-cache.json`",
 ])
 def test_a_mutating_step_on_a_protected_object_is_prepared_on_any_host(text):
     assert ops_daily.classify_action(text, host="ops") is ops_daily.Tier.PREPARED
@@ -677,9 +691,57 @@ def test_the_classify_subcommand_is_what_the_skill_calls(capsys):
 
 - [ ] **Step 2: red** — `Tier`, `classify_action` and the subcommand do not exist.
 
-- [ ] **Step 3: Implement the four rules**
+- [ ] **Step 3: Implement — wrappers stripped, pipelines split, allowlist derived from the corpus**
 
-**Classify the commands, not the prose.** Extract every backtick-quoted command in the step; a step with no command is `PREPARED` (nothing to judge). A command is read-only when its `(binary, subcommand)` pair is on `_READ_ONLY_COMMANDS` — `docker logs`, `docker inspect`, `docker ps`, `journalctl`, `systemctl status`, `systemctl list-timers`, `cat`, `grep`, `ls`, `zcrypto engine exec-status`, `grafana-query.py` — **and** it carries no flag on `_MUTATING_FLAGS` (`--vacuum*`, `--force`, `-f`, `--apply`, `--delete`, `--prune`, `--rm`). A step is read-only only when **every** extracted command is read-only; one unrecognised binary and it is not. `_PROTECTED_OBJECTS` (`zcrypto-capture`, `zcrypto-engine`, the exec control files, `converge.sh`, `site.yml`, `grafana-push.sh`, an image re-pin) and `_TELEMETRY_OBJECTS` (`grafana-alloy`, `alloy`, a `.timer`, a textfile exporter) carry rules 1 and 3. Host matching is **exact against `{ops, nas, zaccess}`**, never a substring, so a host the map does not know can never satisfy rule 3. The docstring records that rules 2 and 4 are both default-deny, and that a change making either permissive is wrong however reasonable it looks.
+Not from imagination: the allowlist is derived from the commands the runbooks actually contain. Extract every backtick command across `infra/runbooks/*.md` and count the heads (339 commands today; `docker logs` 44, `grafana-query.py` 33, `docker inspect` 26, `journalctl` 21, `ls` 20, `docker exec` 11, `systemctl status` 10, `cat` 10, `docker ps` 10, `df` 7, `find` 6, `systemctl list-timers` 6, `du` 3, `grep` 3 …). Re-run that extraction when the allowlist is written; a diagnostic the pass refuses is the halt-at-step-1 failure moved rather than fixed.
+
+**Normalise, then decide, in this order:**
+
+1. **Strip wrappers**, recursively: `sudo`, `ssh <host>, then`, `/usr/local/bin/` (the NAS's full path), `sh -c '…'`, `bash -c '…'`, `uv run`, `uv run python`, and — the one that matters — **`docker exec <container>`**, whose payload is the real command. `docker exec` is never itself read-only: `sudo docker exec zcrypto-engine zcrypto engine exec-status` reads, and `sudo docker exec zcrypto-archive-pull rm -f /tmp/gate-cache.json` deletes, and only the payload separates them.
+2. **Split pipelines** on `|` and `&&`. **Every** segment must be read-only; a read head with a mutating tail is not a read. (`docker logs … | tail -50` is read-only in both segments; a `| xargs rm` would not be.)
+3. **Normalise each segment** to `(basename, subcommand)`.
+4. **Decide**: a segment is read-only when its pair is on `_READ_ONLY_COMMANDS` **and** it carries no flag on `_MUTATING_FLAGS`.
+
+`_READ_ONLY_COMMANDS`, seeded from that extraction and each entry justified by a real line: `docker logs`, `docker inspect`, `docker ps`, `docker images`, `journalctl`, `systemctl status`, `systemctl list-timers`, `systemctl show`, `systemctl is-active`, `cat`, `grep`, `ls`, `df`, `du`, `find`, `stat`, `head`, `tail`, `wc`, `sort`, `uniq`, `awk`, `sed -n`, `zcrypto engine exec-status`, `zcrypto engine report`, `zcrypto engine tracking-report`, `grafana-query.py`, `curl -fsS` against a `/metrics` or public endpoint. **`docker exec` is deliberately absent** — it is a wrapper, resolved by step 1.
+
+`_MUTATING_FLAGS`, refused inside an otherwise-read-only command: `--vacuum*`, `--rotate`, `--flush`, `--force`, `-f` (except `docker logs -f`, which only follows), `--apply`, `--delete`, `--prune`, `--rm`, `--replace`.
+
+`_PROTECTED_OBJECTS`: `zcrypto-capture`, `zcrypto-engine`, `zcrypto-red`, the `exec/` control files, `converge.sh`, `site.yml`, `grafana-push.sh`, an image digest re-pin. `_TELEMETRY_OBJECTS`: `grafana-alloy`, `alloy`, a `.timer`, a textfile exporter. Host matching is **exact** against `{ops, nas, zaccess}`.
+
+The docstring records that rules 2 and 4 are both default-deny, and that an unrecognised binary refuses rather than passes — the property that would have caught `journalctl --vacuum-size` and `docker exec … --replace` alike.
+
+- [ ] **Step 3b: The corpus test — the guard against the next unimagined verb**
+
+Fixtures cannot cover 339 commands. Extract every backtick command from `infra/runbooks/*.md` at test time and assert two properties, neither of which enumerates:
+
+```python
+_DESTRUCTIVE = ("--replace", "--vacuum", "--apply", "--prune", "--force", " rm ", "systemctl stop",
+                "systemctl restart", "docker restart", "docker stop", "docker rm", "converge.sh")
+
+
+def test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous():
+    """The guard against the verb nobody imagined: it does not matter which allowlist entry lets a
+    command through, only that nothing destructive does. Both Criticals this classifier has already
+    had -- `journalctl --vacuum-size`, `docker exec ... cycle --replace` -- fail this test."""
+    offenders = [
+        c for c in _runbook_commands()
+        if any(tok in c for tok in _DESTRUCTIVE)
+        and ops_daily.classify_action(f"`{c}`", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+    ]
+    assert not offenders, f"destructive commands classified autonomous: {offenders}"
+
+
+def test_most_read_only_diagnostics_are_autonomous_on_ops():
+    """The opposite failure: an allowlist so narrow the pass refuses its own diagnostics has moved
+    halt-at-step-1 rather than fixed it. The bar is a floor, not a target -- raise it when the
+    corpus grows, never lower it to make a change pass."""
+    reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
+    autonomous = [c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops") is ops_daily.Tier.AUTONOMOUS]
+    assert len(autonomous) / len(reads) >= 0.70, (
+        f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous; "
+        f"refused sample: {[c for c in reads if c not in autonomous][:10]}"
+    )
+```
 
 - [ ] **Step 4: green, then prove the pair bites**
 
@@ -688,8 +750,8 @@ Run the suite. Then delete the host condition from rule 3 — the single change 
 - [ ] **Step 5: Run the command the skill will run**
 
 ```bash
-uv run python infra/scripts/ops-daily.py classify --host ops "Restart it: sudo docker restart grafana-alloy"; echo "exit=$?"
-uv run python infra/scripts/ops-daily.py classify --host zcrypto "Restart it: sudo docker restart grafana-alloy"; echo "exit=$?"
+uv run python infra/scripts/ops-daily.py classify --host ops 'Restart it: `sudo docker restart grafana-alloy`'; echo "exit=$?"
+uv run python infra/scripts/ops-daily.py classify --host zcrypto 'Restart it: `sudo docker restart grafana-alloy`'; echo "exit=$?"
 ```
 Expected: `autonomous` / `exit=0`, then `prepared` / `exit=3`. Task 16's skill text quotes this command; running it here, **before** the skill is written, is what keeps the skill's first instruction from being one nobody has executed.
 
