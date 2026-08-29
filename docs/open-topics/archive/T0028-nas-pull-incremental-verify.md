@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # Role A NAS pull re-hashes the whole archive every cycle
@@ -37,6 +37,28 @@ Found by the iter-093 final whole-branch review of Role A (finding #2). Part of 
 - **The slice is keyed on the loop's own cycle counter, never the clock** — `infra/nas/pull-entrypoint.sh` passes `--slice $((cycle % 24))`. The loop's real period is `interval + work` and drifts, so a clock-keyed slice starves a fixed subset of slices forever whenever the drifted period divides 24 h; the counter is in-memory, so the every-24-cycles guarantee holds across an uninterrupted run.
 - **The scope is a deployed setting, not a build.** `--hash-scope full|incremental` defaults to `full`, so every non-NAS caller behaves exactly as before; the NAS value is `nas_archive_pull_hash_scope` in `infra/ansible/host_vars/nas/vars.yml`, rendered into `ARCHIVE_PULL_HASH_SCOPE`, and the nas role asserts the value the CLI would otherwise reject with exit 2. Flipping the scope — and rolling it back — is a config-only converge on the running digest.
 - **The two operating imperatives this work needed are live on the deploy skills, not on `.claude/rules/fleet-deploys.md`** — the rule's condensation moved every per-tier converge mechanic out to the skills, leaving it one NAS line (the `-compat` invariant) and no NAS section. The NAS-specific one is a bullet in `.claude/skills/zcrypto-rollout-image/SKILL.md`'s `## NAS converges`: there is no `nas_alloy_digest` — the pin is `nas_alloy_image` — and the role deploys `infra/nas/config.alloy` unconditionally but restarts Alloy only under `-e nas_apply_compose=true`, without which a converge is render-only. The other is generic, and sits in the `## Shared converge mechanics` block duplicated verbatim into that skill and `zcrypto-bump-alloy`: a newly admitted metric family's first scrape is verified by VALUE, where `(no series)` reads FAIL.
+
+## Resolution
+
+**Resolved 2026-08-29 by spec `00102`, measured on both legs rather than modelled.** The pull's walk is unchanged — every file is still stat-ed, so lag and the dead-man still cover the whole archive — and only the sha256 narrowed, to what rsync transferred plus a rotating 1/24 slice keyed on the loop's own cycle counter.
+
+Leg A ran the old `full` scope under the new image to take the baseline; leg B flipped one config value. Per channel, log line and published gauge agreeing to the millisecond:
+
+| channel | files_hashed A→B | verify_s A→B | hashed/walked |
+| --- | --- | --- | --- |
+| capture | 28,171 → 1,175 | 169.978 → 13.583 | 4.15% |
+| capture_red | 25,141 → 1,052 | 221.819 → 9.085 | 4.16% |
+| panel | 14,028 → 590 | 13.402 → 3.989 | 4.18% |
+| liquidations | 8,701 → 346 | 4.825 → 2.117 | 3.96% |
+| reconciled | 456 → 20 | 0.499 → 0.147 | 4.39% |
+
+**410.5 s → 28.9 s per cycle, a 93.0% cut**, `failed=0` on all five channels. `files_walked` GREW on four of five and shrank on none, which is the check that the walk stayed whole. Every channel lands on the 1/24 = 4.167% slice target, so the rotation is doing what D3 says rather than a channel getting lucky.
+
+**The horizon, replacing every estimate this topic carried.** A full re-verification of the archive is 24 cycles. Measured cadence: `changes(zcrypto_archive_pull_verify_seconds{channel="capture"}[6h])` = 5, so the period is ~70–75 min and the wrap completes in roughly **28–30 h**. That is change-counting over a 6 h window, not a timed wrap — no wrap has been watched end to end, and coverage rests on the slice arithmetic plus `test_the_rotation_slice_catches_a_corrupt_final_nothing_transferred` and the two mutation probes.
+
+**Deployed exceptionally, and the exception is recorded where it binds.** Both legs ran an interim image built from the feature branch rather than `develop` — the user's decision, for the two-leg measurement, explicitly not a pattern to repeat. `docs/reference/fleet-pins.md`'s archive-pull row carries that constraint and the condition that retires it.
+
+**What the branch found that the spec did not predict**: every NAS converge that RECREATES the container replays the whole gate export cold (~59 min measured on both legs), because the cache lives in the container's ephemeral `/tmp`. The spec had reasoned that keeping `cli/archive/` outside the replay-fingerprint closure avoided it; that reasoning was sound and the conclusion did not follow. Corrected in the spec, the plan, `fleet-pins.md`, `vars.yml` and the rollout skill.
 
 ## Suggested next steps
 
