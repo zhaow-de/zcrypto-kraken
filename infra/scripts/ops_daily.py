@@ -80,6 +80,24 @@ def _get(url: str, token: str, opener) -> dict:
         return json.load(response)
 
 
+def _history_transitions(payload: dict):
+    """(timestamp_ms, line) per state transition.
+
+    Measured against the live API 2026-08-29: the frame carries three columns named by
+    `schema.fields` -- `time`, `line`, `labels` -- and the RULE IDENTITY is in `line`
+    (`ruleUID`, `ruleTitle`), never in `labels`, which holds only the ingest's own metadata.
+    """
+    columns = (payload.get("data") or {}).get("values") or []
+    names = [f.get("name") for f in ((payload.get("schema") or {}).get("fields") or [])]
+    if len(columns) < 2:
+        return
+    t_idx = names.index("time") if "time" in names else 0
+    l_idx = names.index("line") if "line" in names else 1
+    for stamp, line in zip(columns[t_idx], columns[l_idx]):
+        if isinstance(line, dict):
+            yield stamp, line
+
+
 def _host_of(uid: str, instance: dict) -> str | None:
     labels = instance.get("labels") or {}
     return labels.get("host") or _UID_HOST.get(uid)
@@ -87,6 +105,7 @@ def _host_of(uid: str, instance: dict) -> str | None:
 
 def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.request.urlopen) -> AlertsRead:
     read = AlertsRead()
+    rule_links: dict[str, str | None] = {}
     try:
         payload = _get(f"{GRAFANA_URL}/api/prometheus/grafana/api/v1/rules", token, opener)
         for group in payload["data"]["groups"]:
@@ -97,6 +116,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 instances = rule.get("alerts") or [{}]
                 summary = (rule.get("annotations") or {}).get("summary") or ""
                 link = _RUNBOOK_LINK.search(summary)
+                rule_links[uid] = link.group(0) if link else None
                 if rule.get("state") == "firing":
                     read.firing_now.append(
                         Alert(
@@ -119,7 +139,22 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
             url = f"{GRAFANA_URL}/api/v1/rules/history?" + urllib.parse.urlencode(
                 {"from": int(chunk_start.timestamp()), "to": int(chunk_end.timestamp()), "limit": HISTORY_PAGE_LIMIT}
             )
-            rows = (_get(url, token, opener).get("data") or {}).get("values") or []
+            payload = _get(url, token, opener)
+            rows = (payload.get("data") or {}).get("values") or []
+            for stamp, line in _history_transitions(payload):
+                if (line.get("current") or "") != "Alerting":
+                    continue
+                uid = line.get("ruleUID")
+                if not uid or uid in fired:
+                    continue
+                fired[uid] = Alert(
+                    uid=uid,
+                    title=line.get("ruleTitle", ""),
+                    state="fired-in-window",
+                    active_at=datetime.fromtimestamp(stamp / 1000, timezone.utc).isoformat(),
+                    runbook=rule_links.get(uid),
+                    host=_UID_HOST.get(uid),
+                )
             if rows and len(rows[0]) >= HISTORY_PAGE_LIMIT:
                 read.unreadable = (
                     f"the alert-state history hit the page limit ({HISTORY_PAGE_LIMIT}) in "
@@ -501,11 +536,101 @@ def _strip_wrappers(tokens: list[str]) -> list[str]:
     return tokens
 
 
+# CLAUDE.md names the fields an inspect may scope to. `--format` alone is not enough: the banned
+# `{{json .Config}}` and `{{.Config.Env}}` both carry it, and both print the live trade key.
+_SAFE_INSPECT_FIELDS = (".Mounts", ".State", ".Config.Image", ".Config.Entrypoint", ".RestartCount", ".Name", ".Created", ".Id")
+
+
+def _inspect_format_is_scoped(segment: str) -> bool:
+    match = re.search(r"--format[= ]\s*(\S.*)", segment)
+    if not match:
+        return False
+    selectors = re.findall(r"\.\w[\w.]*", match.group(1))
+    return bool(selectors) and all(sel.startswith(_SAFE_INSPECT_FIELDS) for sel in selectors)
+
+
+# A bare `curl` is a read; with a method, a body, an upload or an output file it writes. And a plain
+# GET to a healthchecks ping URL MARKS A DEAD-MAN ALIVE -- a read that silences the alarm.
+_CURL_MUTATING = (
+    "-X",
+    "--request",
+    "-d",
+    "--data",
+    "--data-binary",
+    "--data-raw",
+    "--data-urlencode",
+    "--json",
+    "-F",
+    "--form",
+    "-T",
+    "--upload-file",
+    "-O",
+)
+
+
+def _curl_is_a_plain_read(tokens: list[str], segment: str) -> bool:
+    if "hc-ping" in segment or "healthchecks.io/ping" in segment:
+        return False
+    for token in tokens:
+        if any(token == flag or token.startswith(flag + "=") for flag in _CURL_MUTATING):
+            return False
+        if token == "-o" or token.startswith("-o="):
+            return "/dev/null" in segment
+    return True
+
+
 def _has_mutating_flag(tokens: list[str]) -> bool:
     return any(t in _MUTATING_FLAGS or t.startswith(_MUTATING_FLAG_PREFIXES) for t in tokens)
 
 
+# Shell composition is refused outright rather than parsed: a substitution, a redirect or a
+# process substitution can carry ANY command inside a segment an allowlisted head vouches for --
+# `echo 1 > /var/lib/zcrypto-engine/exec/armed` arms the live executor, and `cat x; rm -rf y`
+# deletes. Understanding shell is not the job; refusing to guess is.
+_COMPOSITION = ("$(", "`", ">", "<(", "${")
+_NOISE = ("2>&1", "2>/dev/null", "> /dev/null", ">/dev/null")
+
+
+def _split_segments(text: str) -> list[str]:
+    """Split on shell separators OUTSIDE quotes.
+
+    A quoted separator is data, not composition: `grep -iE "collector|error"` is one command, and
+    splitting it leaves fragments no allowlist can vouch for -- which refuses real diagnostics.
+    """
+    out, buf, quote = [], [], None
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+            buf.append(ch)
+        elif ch in ";\n|&":
+            nxt = text[i + 1] if i + 1 < len(text) else ""
+            out.append("".join(buf))
+            buf = []
+            if ch in "|&" and nxt == ch:
+                i += 1
+        else:
+            buf.append(ch)
+        i += 1
+    out.append("".join(buf))
+    return out
+
+
+def _strip_noise(text: str) -> str:
+    for noise in _NOISE:
+        text = text.replace(noise, " ")
+    return text
+
+
 def _segment_is_read_only(segment: str) -> bool:
+    scan = segment
+    if any(tok in scan for tok in _COMPOSITION):
+        return False
     tokens = [t for t in segment.replace("'", " ").replace('"', " ").split() if t]
     tokens = _strip_wrappers(tokens)
     if not tokens:
@@ -519,7 +644,9 @@ def _segment_is_read_only(segment: str) -> bool:
     pair = (head, sub) if (head, sub) in _READ_ONLY_COMMANDS else (head, None)
     if pair not in _READ_ONLY_COMMANDS:
         return False
-    if pair in _REQUIRE_FORMAT and "--format" not in segment:
+    if pair in _REQUIRE_FORMAT and not _inspect_format_is_scoped(segment):
+        return False
+    if pair == ("curl", None) and not _curl_is_a_plain_read(tokens, segment):
         return False
     return not _has_mutating_flag(tokens)
 
@@ -535,7 +662,7 @@ def classify_action(text: str, *, host: str | None = None) -> Tier:
     lowered = text.lower()
     commands = _commands(text)
     read_only = bool(commands) and all(
-        all(_segment_is_read_only(seg) for seg in re.split(r"\|\||\||&&", c) if seg.strip()) for c in commands
+        all(_segment_is_read_only(seg) for seg in _split_segments(_strip_noise(c)) if seg.strip()) for c in commands
     )
     protected = any(obj in lowered for obj in _PROTECTED_OBJECTS)
     if not read_only and protected:

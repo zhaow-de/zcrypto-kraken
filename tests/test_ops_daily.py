@@ -150,7 +150,7 @@ def test_an_instance_host_label_wins_over_the_uid_map():
     assert read.firing_now[0].host == "nas"
 
 
-# --- Task 12: the log plane -------------------------------------------------------------------
+# --- Task 12 (spec 00104): the log plane -------------------------------------------------------------------
 
 
 def test_the_loki_uid_defaults_to_the_named_datasource_and_is_overridable():
@@ -179,7 +179,7 @@ def test_an_unreachable_loki_is_reported_never_read_as_no_errors():
     assert read.counts == [] and read.unreadable and "502" in read.unreadable
 
 
-# --- Task 13: the dead-men, the fleet verdict, the window's deploys ----------------------------
+# --- Task 13 (spec 00104): the dead-men, the fleet verdict, the window's deploys ----------------------------
 
 
 def test_the_deadmen_are_read_both_through_grafana_and_directly(monkeypatch):
@@ -218,7 +218,7 @@ def test_the_deploy_window_holds_only_lines_inside_it(tmp_path):
     assert [d["limit"] for d in lines] == ["ops"]
 
 
-# --- Task 14: the report, the exit codes -------------------------------------------------------
+# --- Task 14 (spec 00104): the report, the exit codes -------------------------------------------------------
 
 
 def _report(**kw):
@@ -272,7 +272,7 @@ def test_the_cli_refuses_an_unknown_subcommand():
     assert ops_daily.main(["frobnicate"]) == 2
 
 
-# --- Task 15b: the tier classifier -------------------------------------------------------------
+# --- Task 15b (spec 00104): the tier classifier -------------------------------------------------------------
 
 # infra/runbooks/observability.md, the alloy-dark section -- one body serving nas, ops AND both
 # capture hosts, which is why the host is an argument and not read out of the step.
@@ -363,6 +363,22 @@ _DESTRUCTIVE = (
     "docker stop",
     "docker rm",
     "converge.sh",
+    # Destructive OR banned: a command CLAUDE.md forbids (an unscoped inspect, `docker exec … env`,
+    # `docker compose config` -- each prints the container environment, and on the engine host that
+    # is the live trade key) is not a read-only diagnostic either; counting it as one would make the
+    # floor below measure something other than what it claims.
+    "compose down",
+    "compose up",
+    "compose restart",
+    "compose config",
+    "docker run",
+    "system prune",
+    "image prune",
+    "exec … env",
+    # `{{json .Config}}` exactly -- NOT a prefix: `{{json .Config.Entrypoint}}` is on CLAUDE.md's
+    # allowed list, and a prefix token would call a correct classification an offender.
+    "{{json .Config}}",
+    ".Config.Env",
 )
 
 
@@ -448,3 +464,90 @@ def test_classify_without_a_host_prepares():
 def test_the_cli_names_both_subcommands_when_misused(capsys):
     assert ops_daily.main(["frobnicate"]) == 2
     assert "classify" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "cat /etc/foo ; rm -rf /var/lib/zcrypto-engine/store",
+        "docker logs zcrypto-capture; sudo systemctl restart zcrypto-capture",
+        "docker logs zcrypto-capture & rm -rf /var/lib/zcrypto-capture",
+        "echo $(sudo systemctl restart zcrypto-engine)",
+        "echo 1 > /var/lib/zcrypto-engine/exec/armed",
+        "echo 1 > /var/lib/zcrypto-engine/exec/kill",
+        "curl -X DELETE https://healthchecks.io/api/v3/checks/abc",
+        "curl -X POST https://example.invalid/api/annotations -d '{}'",
+        "curl https://hc-ping.com/some-uuid",
+        "docker inspect --format '{{json .Config}}' zcrypto-engine",
+        "docker inspect --format '{{.Config.Env}}' zcrypto-engine",
+        "docker inspect zcrypto-engine",
+    ],
+)
+def test_shell_composition_and_write_shaped_reads_are_never_autonomous(cmd):
+    """Every one of these classified AUTONOMOUS before the whole-branch review, and each is a real
+    escape route rather than a hypothetical: a redirect into `exec/armed` ARMS the live venue
+    executor; a GET to a ping URL marks a dead-man alive, silencing the alarm; `{{json .Config}}`
+    prints the container's environment, which on the engine host is the Kraken trade key. The corpus
+    test cannot reach any of them -- no runbook contains a composition attack -- so they are pinned
+    here by construction."""
+    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "sudo docker logs grafana-alloy --since 1h 2>&1 | grep -iE 'collector|error'",
+        "sudo docker logs zcrypto-capture 2>&1 | grep -E 'checksum desync|desync recovery'",
+        "sudo docker inspect --format '{{.State.Status}} {{.RestartCount}}' zcrypto-engine",
+        "curl -fsS http://127.0.0.1:12345/metrics",
+    ],
+)
+def test_the_true_positives_still_pass(cmd):
+    """The other half of the bargain: a guard that refuses everything is not a guard, it is an
+    outage. A quoted pipe is data, not composition."""
+    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+
+
+def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
+    """The daily pass's core case, and it was silently missing: history rows were fetched and
+    discarded, so `fired_in_window` was a copy of `firing_now` and an alert that fired at 02:00 and
+    cleared at 03:00 never reached the report, the runbook loop, or the journal. The frame's shape
+    is measured against the live API: three columns named by `schema.fields`, the rule identity in
+    `line`, never in `labels`."""
+    rules = _rules(
+        {
+            "name": "Capture · stream silent",
+            "uid": "zcrypto-capture-stream-silent",
+            "state": "inactive",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/capture.md#zcrypto-capture-stream-silent"},
+            "alerts": [],
+        }
+    )
+    history = {
+        "schema": {"fields": [{"name": "time"}, {"name": "line"}, {"name": "labels"}]},
+        "data": {
+            "values": [
+                [1787987260000, 1787990860000],
+                [
+                    {
+                        "previous": "Pending",
+                        "current": "Alerting",
+                        "ruleUID": "zcrypto-capture-stream-silent",
+                        "ruleTitle": "Capture · stream silent",
+                    },
+                    {
+                        "previous": "Alerting",
+                        "current": "Normal",
+                        "ruleUID": "zcrypto-capture-stream-silent",
+                        "ruleTitle": "Capture · stream silent",
+                    },
+                ],
+                [{}, {}],
+            ]
+        },
+    }
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(rules, history))
+    assert read.firing_now == [], "it is not firing now -- that is the point"
+    assert [a.uid for a in read.fired_in_window] == ["zcrypto-capture-stream-silent"]
+    assert read.fired_in_window[0].runbook == "infra/runbooks/capture.md#zcrypto-capture-stream-silent"
