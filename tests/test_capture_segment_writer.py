@@ -1858,6 +1858,22 @@ def test_t0037_lone_bogus_future_stamp_counts_no_past_dated_hour(tmp_path, clock
     assert w.ts_past_dated_hour == 0
 
 
+def test_t0037_an_oracle_less_writer_reopening_a_prior_hour_counts_nothing(tmp_path, clock):
+    # CONTROL with teeth for the gate: `finalize_completed_hours` refuses oracle-BEARING writers and
+    # nulls `_current_hour`, so the liquidations pollers re-enter the first-event branch on every poll
+    # cycle. A sparse symbol waking up into a prior hour above the re-anchored floor is their DESIGNED
+    # write mode (T0046), not a fabricated hour -- ungated, this counter would measure poll cadence.
+    # It bites: without `self._oracle is not None` the append below reads 1.
+    w = _new_writer(tmp_path, flush_rows=5000)  # oracle-less, as the poller builds them
+    w.append(_book_event(10, 0))
+    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w._current_hour is None  # the re-entry this gate exists for
+
+    w.append(_book_event(11, 30))  # at/above the floor, but behind the pinned 16:00 clock
+
+    assert w.ts_past_dated_hour == 0
+
+
 # --- T0046: wall-clock hour finalization for sparse writers --------------------------------------
 #
 # `finalize_completed_hours(cutoff)` is the escape hatch for a symbol so sparse that no "next event"
