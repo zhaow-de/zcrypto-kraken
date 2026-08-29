@@ -275,7 +275,7 @@ def _two_asymmetric_cycles() -> list[CycleStages]:
     """Cycle 1: sleeves agree, governor off. Cycle 2: sleeves cancel, governor halves.
 
     Chosen so median-of-ratios and ratio-of-medians disagree on BOTH the sleeve->combined and the
-    capped->final ratios; a single-cycle fixture cannot discriminate, since there they coincide.
+    capped->limited->final ratios; a single-cycle fixture cannot discriminate, since there they coincide.
     """
     return [
         CycleStages(
@@ -347,8 +347,8 @@ def test_a_binding_whole_book_limit_is_attributed_to_the_limits_not_the_governor
     Every other fixture has no limit binding, where `capped -> limited` is 1.000 and the merged
     `capped -> final` label happened to read correctly. This is the cycle that separates them --
     the limits take a quarter of the book and the governor half, and each share must land on its
-    own line. Under the old single column the governor would have been reported at 0.375, i.e.
-    de-levering twice as hard as it did.
+    own line. Under the old single column this cycle printed the multiplier, 0.500, against the
+    label `capped -> final` -- so the governor was credited with the limits' quarter as well.
     """
     stages = [
         CycleStages(

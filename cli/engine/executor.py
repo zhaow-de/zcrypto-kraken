@@ -400,6 +400,7 @@ def _stage(record: CycleRecord) -> CycleStages:
         sleeve_positions={},
         combined={},
         capped={},
+        limited={},
         final=targets,
         multiplier=1.0,
         closes=dict(record.closes),
