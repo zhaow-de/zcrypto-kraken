@@ -429,3 +429,22 @@ def test_most_read_only_diagnostics_are_autonomous_on_ops():
         f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous; "
         f"refused sample: {sorted(c for c in reads if c not in autonomous)[:12]}"
     )
+
+
+def test_the_classify_subcommand_is_what_the_skill_calls(capsys):
+    """The skill branches on this exit code. An incantation nobody runs is how a procedure's first
+    instruction silently rots -- this one did not exist until the plan's smoke step ran it."""
+    assert ops_daily.main(["classify", "--host", "ops", _ALLOY_RESTART]) == 0
+    assert capsys.readouterr().out.strip() == "autonomous"
+    assert ops_daily.main(["classify", "--host", "zcrypto", _ALLOY_RESTART]) == 3
+    assert capsys.readouterr().out.strip() == "prepared"
+
+
+def test_classify_without_a_host_prepares():
+    """Not knowing where an action lands is not permission to run it."""
+    assert ops_daily.main(["classify", _ALLOY_RESTART]) == 3
+
+
+def test_the_cli_names_both_subcommands_when_misused(capsys):
+    assert ops_daily.main(["frobnicate"]) == 2
+    assert "classify" in capsys.readouterr().out

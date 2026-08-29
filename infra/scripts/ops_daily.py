@@ -351,8 +351,21 @@ def _parse_since(text: str) -> timedelta:
 
 
 def main(argv: list[str]) -> int:
+    if argv and argv[0] == "classify":
+        rest = argv[1:]
+        host = None
+        if "--host" in rest:
+            i = rest.index("--host")
+            host = rest[i + 1]
+            rest = rest[:i] + rest[i + 2 :]
+        if not rest:
+            print('usage: ops-daily.py classify --host <host> "<command>"')
+            return 2
+        tier = classify_action(" ".join(rest), host=host)
+        print(tier.value)
+        return 0 if tier is Tier.AUTONOMOUS else 3
     if not argv or argv[0] != "report":
-        print("usage: ops-daily.py report [--since 24h] [--journal-entry]")
+        print('usage: ops-daily.py report [--since 24h] [--journal-entry]\n       ops-daily.py classify --host <host> "<command>"')
         return 2
     window = _parse_since(argv[argv.index("--since") + 1]) if "--since" in argv else timedelta(hours=24)
     now = datetime.now(timezone.utc)
