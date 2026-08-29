@@ -2775,6 +2775,13 @@ rules:
     orgId: 1
     condition: C
     data:
+      # NOT covered: the .prom being DELETED. The mtime series then vanishes rather than
+      # staling -- noDataState OK swallows a whole-query empty, and one host disappearing is not
+      # noData at all, since `max by (host)` simply drops that dimension. The skew rule reads empty
+      # as healthy too, so neither fires. Left as-is because the 5-min timer recreates the file:
+      # persistent silence needs the textfile DIRECTORY gone, which also fails the script's mktemp.
+      # Closing it properly is per-host absent() legs, not noDataState: Alerting, which would page
+      # on any datasource blip. Both precedent staleness rules share this gap.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
