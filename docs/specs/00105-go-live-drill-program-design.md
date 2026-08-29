@@ -1,0 +1,72 @@
+# 00105 — the go-live drill program: induce the unexpected, measure what fires, land the response
+
+Advances [[T0049]] to the point where only the rung-1 window blocks it. One branch, one PR, cut after spec `00104`'s PR ([[T0157]]) merges — the Grafana-dark procedure lands in a file that PR creates.
+
+| # | component | what it buys |
+| --- | --- | --- |
+| A | two drill runbooks in the PROCEDURE kind — `infra/runbooks/drills-telemetry.md`, `infra/runbooks/drills-order-path.md` | every scenario has an induction instrument, a bound, and a recording shape before anyone is tired at 03:00 |
+| B | the ops drill log — `docs/reference/drill-log.md` | the artifact the master plan's Stage-6b list names and nothing provides |
+| C | one resilience alert, `zcrypto-engine-dark-with-exposure`, and the `observability.md#grafana-cloud-dark` procedure | the two gaps no drill can close by rehearsal alone |
+| D | the telemetry tier **executed** in attended windows during the iteration, results in the log and in sections | the log is not empty when the PR merges, and the instruments are proven on the drills that need no money |
+| E | the order-path tier fully written and parked; the three enhancements it needs registered as their own specs | rung 1 opens on a program, not on improvisation |
+
+## The measured basis
+
+Read on `develop` at `48adb42c`, 2026-08-29. The engine has **never been armed** (`docs/reference/fleet-pins.md`, engine row), so every order-path scenario has harness evidence at most. The go/no-go clause (`docs/research/00.master-plan.md` §12) requires *ops drills passed (kill-switch, WS-loss, restart-reduce-only)* — the kill-switch host drill spec `00088` prescribes has no recorded run; WS loss is drilled and incident-proven on the capture side and unit-tested only on the engine side; the restart hold has latched at every converge but has never classified a real resting order. The emergency surface is three presence files under `/var/lib/zcrypto-engine/exec/` (`armed`, `kill`, `restart-hold`), `zcrypto engine exec-status`, and `systemctl stop`: **no command cancels all resting orders or closes any position**; the kill trip's sweep and the startup adopt pass are the only cancel paths, and the only close path is a hand-signed plan through the 15-minute maker-first machine. No alert reads `zcrypto_exec_position`. No alert carries a Slack mention. Grafana-Cloud-dark is detected within ~20 min by [[T0083]]'s mutual watchdog and has no procedure for the duration; `prometheus.remote_write` ships with Alloy's default WAL and `loki.write` with none, so what a long outage loses permanently is unmeasured.
+
+## Decisions
+
+### D1 — every scenario is a PROCEDURE section with the same seven parts
+
+*What this proves* · *Preconditions* (window, host, tier gate) · *Induce* (exact commands or instrument) · *Must fire* (which alert or dead-man, on which channel, within what bound) · *Operator action* · *Record* · *Retire when*. The bound is **derived, never guessed**: a Grafana rule's `for` plus its group's evaluation interval; a healthchecks check's timeout plus grace. The `Retire when` is checkable as the runbook README demands; for a drill it is usually "the code path it exercises no longer exists" — and for Q, deliberately, never.
+
+Two files, split by tier so neither crosses the README's ~12-section bar: `drills-telemetry.md` carries C, I, K, O, P+R, Q and one section stating when the **proven** tier — F, H, J, L, M, N, T — is re-verified: only when the code path it proved changes, with the incident or drill that proved it cited. `drills-order-path.md` carries A1, A2, B, D, E, F2, G. Both join `infra/runbooks/README.md`'s index under their own headings.
+
+**Inducing a fault on live capture happens only inside an attended window, never inside a published Kraken maintenance window**, and the primary's capture daemon and Alloy are not touched by any telemetry-tier drill in this iteration (`fleet-deploys.md`; spec `00104` D7 homes the gate).
+
+### D2 — the drill log is Markdown, one run per entry, lightly tested
+
+`docs/reference/drill-log.md`: `## <YYYY-MM-DD> — <scenario id> — <pass | fail | partial>`, then one paragraph with labelled clauses — *host* · *induction* · *time-to-alert* (with the three timestamps where a Slack path is involved: rule `activeAt`, message, device) · *channels* · *operator action* · *follow-ups* (a `T<NNNN>` or an explicit drop). `tests/test_drill_log.py` asserts only the heading shape and that dates do not decrease. The master plan's artifact list names this file at closeout.
+
+### D3 — the telemetry tier, executed now
+
+| id | induce | must fire | what the run establishes |
+| --- | --- | --- | --- |
+| **C** Grafana dark | `docker network disconnect` the Alloy container on **ops** and on **the secondary** for 2 h | the watchdog page (`zcrypto-grafana-watchdog`, 600 s timeout + 600 s grace) | page time; what backfills on reconnect per plane (the remote-write WAL against `loki.write`'s absence of one) — which becomes the procedure's permanent-loss statement for a 12 h outage; which rules misfire on return (`delta()`/`increase()` blindness, first-sample rules) |
+| **I** watermark | a throwaway capture container on ops from the pinned digest, a tmpfs data dir a few hundred MiB wide, a throwaway healthchecks check as its dead-man | the withheld ping → the throwaway check pages | the breach → withhold → page path end to end, on no production host |
+| **K** Alloy kill | `docker stop grafana-alloy` on ops | `zcrypto-alloy-dark-ops` | bound met; restart recipe verified by value |
+| **O** timer death | stop one ops timer past its check's timeout + grace | that unit's healthchecks dead-man | whether the panel timer, which has no staleness rule, is caught by its dead-man alone — a missing rule if not |
+| **P + R** secondary | one window: `systemctl stop zcrypto-capture` (R); then break the compose so the container is never created — a nonexistent image reference — and let the unit's `Restart=always` loop (P) | hc.io `capture-redundant` by staleness; `zcrypto-alloy-dark-capture-secondary` stays quiet (Alloy is up) | the one log class no Alloy pipeline sees is caught, and in how long; the secondary's gap is healed by the primary and the reconcile ledger read afterwards |
+| **Q** phone push | rides K (metrics receiver), one failing invocation inside the liquidations container for `zcrypto-ops-error-logs` (logs receiver), and I's throwaway check (healthchecks native) | a push on the phone, three paths | per path: arrived or not, the three timestamps, the channel's mobile setting and DND state; with no mention anywhere, paths 1–2 push only under "all new messages" — the fix candidates are `<!channel>` on the critical template alone and the mobile setting recorded as an operator precondition in `docs/reference/fleet.md` |
+
+### D4 — the order-path tier, written now, run at rung 1
+
+Fitted around the probe window's existing Drill A/B (`engine-procedures.md#engine-probe-window` after `00104`). Every plan is signed off by the owner, never inside the final 60 minutes before a boundary, per that procedure.
+
+- **E kill switch**: with a resting plan, `sudo touch …/exec/kill` — the 5-s poll revokes the resting order; `exec-status` reads `level=none`; then the alert-path half: `zcrypto-engine-exec-kill-tripped` on Slack within bound. Reset per the runbook (a hand-placed file carries no withdrawn-fill reason).
+- **G restart → reduce-only**: with a resting plan, `sudo systemctl stop zcrypto-engine`, then start. Establishes first what the venue did with the resting GTC order during the stop — **unverified in the repo today** — then the hold latches (`reasons=…restart_hold`) and the adopt pass cancels the opener; ledger and Kraken's open-orders page read by value.
+- **F2 engine-side WS loss**: with a resting plan, disconnect the engine container's network — quote silence > 30 s revokes within the next tick; reconnect; the data socket's reconnect lines read in `docker logs`.
+- **A1 primary reboot, no fill**: a far-from-touch order resting; attended reboot of the primary per `docs/reference/fleet.md` § Reboots. Capture gap healed by the secondary (ledger read), hold latched, opener cancelled.
+- **A2 primary reboot, a fill lands while down**: a marketable order resting when the stop lands. The adopt pass must reconcile the venue's higher `filled_qty` with a repair and a WARNING, leaving a real position. This is the scenario the owner named; its exposure is rung-1 money.
+- **D unattended positions** is defined as A2's end state plus `zcrypto-engine-dark-with-exposure` (D5) firing while the engine is down; the operator's response is B.
+- **B the red button**: `zcrypto engine flatten` against A2's position and a small spot balance; the number is decision-to-flat. Runs only once spec `00106` is built.
+
+Three enhancements the tier needs, each its own spec and PR on the live trade path (Fable floor), none built here: **`00106` flatten** — as ruled 2026-08-29: kill file first, cancel every resting order account-wide, reduce-only **market** closes on every margin position, **market** sells on every non-EUR spot balance, typed confirmation, `--dry-run`, journaled, exit codes flat / partial / venue unreachable. **A `rest-hold` plan mode** — `rest-cancel` cancels on acknowledgement, so no existing mode keeps an order resting for E, G, F2 or A to act on. **Cancel-on-stop** — `ExecStop` is `compose down` and nothing cancels resting openers before the process exits; **ruled only after G measures the current behaviour**.
+
+### D5 — the alert and the procedure no drill can supply
+
+- `zcrypto-engine-dark-with-exposure` (critical): `zcrypto_exec_position` non-zero at last sight and the engine's scrape absent — the plan pins the expression against `up{job="engine_app"}` and the gauge's staleness. Runbook section in `engine.md`; the response is B. Pushed after its inputs exist (they do), first sample verified by value.
+- `observability.md#grafana-cloud-dark` (PROCEDURE): for the duration rely on the dead-man domain and the daily pass's direct healthchecks read (`00104` D4), `docker logs` on hosts, `exec-status` on the engine host; on return, the list of rules blind to a condition already present at first sample, re-verified by value; the permanent-loss statement per plane from drill C.
+
+## Verification
+
+- Every telemetry drill has a drill-log entry with measured times and a runbook section or amendment; no result lives only in a report.
+- `tests/test_drill_log.py` bites on a malformed heading (mutation probe).
+- The alert's first sample is read by value; the guard's `for` and interval are quoted in the section's bound.
+- The order-path sections are dry-read against the probe procedure by a cold reviewer: every command resolves, every expected ledger value names its field.
+
+## Out of scope
+
+- Running any order-path drill — rung 1's window, on the owner's word, with `00106` and the `rest-hold` mode built first.
+- The flatten command, the `rest-hold` mode, cancel-on-stop — `00106` and two further specs.
+- Provider-level events (S) — accepted as-is by [[T0088]]; B and C are its mitigations.
