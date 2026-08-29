@@ -36,6 +36,10 @@ class CycleStages:
     sleeve_positions: dict[str, dict[str, float]]  # per sleeve, per asset
     combined: dict[str, float]
     capped: dict[str, float]
+    # After the §10 whole-book limits, before the governor multiply. `final` is
+    # `multiplier * limited` by construction (`_check_stage_identity` enforces it), so without
+    # this stage the table has to attribute the limits' share to the governor's column.
+    limited: dict[str, float]
     final: dict[str, float]
     multiplier: float
     closes: dict[str, float]  # the 4h close used for the forming row, per asset
@@ -208,6 +212,7 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
         sleeve_positions=sleeves,
         combined=combined,
         capped=capped,
+        limited=limited,
         final=final,
         multiplier=multiplier,
         closes=closes,
@@ -238,6 +243,8 @@ _MEDIAN_KEYS = (
     "cancellation_ratio",
     "capped_gross",
     "capped_ratio",
+    "limited_gross",
+    "limited_ratio",
     "multiplier",
     "governed_ratio",
     "final_gross",
@@ -257,6 +264,7 @@ def decompose_payload(stages: list[CycleStages]) -> dict:
     for s in stages:
         ratio, combined_gross, mean_sleeve_gross = cancellation_ratio(s.sleeve_positions)
         capped_gross = sum(abs(v) for v in s.capped.values())
+        limited_gross = sum(abs(v) for v in s.limited.values())
         # This ratio's denominator is the BUILDER's combined book, not cancellation_ratio's
         # sleeve-side recomputation: numerator and denominator must be summed off the same floats.
         # Mixed, an unbound cycle reports 1.0000000000000002 -- gross growing THROUGH the caps,
@@ -272,9 +280,13 @@ def decompose_payload(stages: list[CycleStages]) -> dict:
                 "cancellation_ratio": ratio,
                 "capped_gross": capped_gross,
                 "capped_ratio": capped_gross / combined_gross_builder if combined_gross_builder else math.nan,
+                "limited_gross": limited_gross,
+                # Same-floats rule as capped_ratio above: both grosses are summed off the builder's
+                # own books, never a recomputation.
+                "limited_ratio": limited_gross / capped_gross if capped_gross else math.nan,
                 "multiplier": s.multiplier,
-                # final = multiplier * the whole-book-LIMITED book (see replay_stages), which equals
-                # multiplier * capped on every cycle where no §10 limit binds -- so far, all of them.
+                # `final` is multiplier * the LIMITED book, so this is the governor's own share and
+                # nothing else. It equalled capped -> final only while no limit bound.
                 "governed_ratio": s.multiplier,
                 "final_gross": sum(abs(v) for v in s.final.values()),
                 "n_active": sum(1 for v in s.final.values() if v != 0.0),
@@ -301,7 +313,7 @@ def _render_decompose(payload: dict) -> str:
     """Fixed-width attribution table: one line per cycle, a median line, then the summary."""
     header = (
         f"{'cycle':<16} {'B':>8} {'A1':>8} {'A2':>8} {'combined':>8} {'ratio':>5} "
-        f"{'capped':>8} {'mult':>5} {'final':>8} {'act':>3} {'cap?':>4}"
+        f"{'capped':>8} {'limited':>8} {'mult':>5} {'final':>8} {'act':>3} {'cap?':>4}"
     )
     lines = [
         "Gross attribution per cycle (gross columns are % of NAV; ratio = combined / mean sleeve gross)",
@@ -314,7 +326,7 @@ def _render_decompose(payload: dict) -> str:
         lines.append(
             f"{r['cycle_ts'][:16]:<16} {_pct(g['B'])} {_pct(g['A1'])} {_pct(g['A2'])} "
             f"{_pct(r['combined_gross'])} {_ratio(r['cancellation_ratio'])} "
-            f"{_pct(r['capped_gross'])} {_ratio(r['multiplier'])} {_pct(r['final_gross'])} "
+            f"{_pct(r['capped_gross'])} {_pct(r['limited_gross'])} {_ratio(r['multiplier'])} {_pct(r['final_gross'])} "
             f"{r['n_active']:>3} {'yes' if r['cap_bound'] else 'no':>4}"
         )
     m = payload["median"]
@@ -322,7 +334,7 @@ def _render_decompose(payload: dict) -> str:
     lines.append(
         f"{'MEDIAN':<16} {'':>8} {'':>8} {'':>8} "
         f"{_pct(m['combined_gross'])} {_ratio(m['cancellation_ratio'])} "
-        f"{_pct(m['capped_gross'])} {_ratio(m['multiplier'])} {_pct(m['final_gross'])} "
+        f"{_pct(m['capped_gross'])} {_pct(m['limited_gross'])} {_ratio(m['multiplier'])} {_pct(m['final_gross'])} "
         f"{'':>3} {'':>4}"
     )
 
@@ -335,7 +347,8 @@ def _render_decompose(payload: dict) -> str:
         f"  median mean sleeve gross  {_pct(m['mean_sleeve_gross'])} % of NAV",
         f"  sleeve -> combined        {_ratio(m['cancellation_ratio'])}   fraction of the sleeves' average gross left after combining them",
         f"  combined -> capped        {_ratio(m['capped_ratio'])}   fraction left after the position caps",
-        f"  capped -> final           {_ratio(m['governed_ratio'])}   fraction left by the volatility governor (its multiplier)",
+        f"  capped -> limited         {_ratio(m['limited_ratio'])}   fraction left by the whole-book limits",
+        f"  limited -> final          {_ratio(m['governed_ratio'])}   fraction left by the volatility governor (its multiplier)",
         f"  cap-bound cycles: {n_cap_bound} of {payload['n_cycles']}",
     ]
     if payload.get("n_failed"):

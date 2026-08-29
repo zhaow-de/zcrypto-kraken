@@ -247,6 +247,7 @@ def test_decompose_payload_reports_every_stage_and_the_ratios():
             sleeve_positions={"B": {"BTC": 0.12}, "A1": {"BTC": 0.06}, "A2": {"BTC": 0.0}},
             combined={"BTC": 0.06},
             capped={"BTC": 0.06},
+            limited={"BTC": 0.06},  # no whole-book limit binds in this fixture
             final={"BTC": 0.03},
             multiplier=0.5,
             closes={"BTC": 50000.0},
@@ -282,6 +283,7 @@ def _two_asymmetric_cycles() -> list[CycleStages]:
             sleeve_positions={"B": {"BTC": 0.12}, "A1": {"BTC": 0.12}, "A2": {"BTC": 0.12}},
             combined={"BTC": 0.12},
             capped={"BTC": 0.12},
+            limited={"BTC": 0.12},  # no whole-book limit binds in this fixture
             final={"BTC": 0.12},
             multiplier=1.0,
             closes={"BTC": 100.0},
@@ -292,6 +294,7 @@ def _two_asymmetric_cycles() -> list[CycleStages]:
             sleeve_positions={"B": {"BTC": 0.09}, "A1": {"BTC": -0.09}, "A2": {"BTC": 0.0}},
             combined={"BTC": 0.0},
             capped={"BTC": 0.0},
+            limited={"BTC": 0.0},  # no whole-book limit binds in this fixture
             final={"BTC": 0.0},
             multiplier=0.5,
             closes={"BTC": 100.0},
@@ -323,10 +326,56 @@ def test_decompose_render_names_each_consecutive_stage_ratio():
     assert "MEDIAN" in text
     # Each value pinned to ITS OWN label: asserting the labels alone would pass a summary whose
     # three ratios were rendered against the wrong lines.
-    for label, value in (("sleeve -> combined", "0.500"), ("combined -> capped", "1.000"), ("capped -> final", "0.750")):
+    # `capped -> limited` is the whole-book limits' own share and `limited -> final` the governor's.
+    # Before they were split, the governor's column carried both, so a binding limit would have been
+    # reported as the governor de-levering -- the one event the limit-bound counter exists to name.
+    for label, value in (
+        ("sleeve -> combined", "0.500"),
+        ("combined -> capped", "1.000"),
+        ("capped -> limited", "1.000"),
+        ("limited -> final", "0.750"),
+    ):
         line = next(ln for ln in text.splitlines() if label in ln)
         assert value in line
+    assert "capped -> final" not in text, "the merged label attributes the limits' share to the governor"
     assert "cap-bound cycles: 0 of 2" in text
+
+
+def test_a_binding_whole_book_limit_is_attributed_to_the_limits_not_the_governor():
+    """The non-degenerate case: `limited` < `capped`, so the two shares differ.
+
+    Every other fixture has no limit binding, where `capped -> limited` is 1.000 and the merged
+    `capped -> final` label happened to read correctly. This is the cycle that separates them --
+    the limits take a quarter of the book and the governor half, and each share must land on its
+    own line. Under the old single column the governor would have been reported at 0.375, i.e.
+    de-levering twice as hard as it did.
+    """
+    stages = [
+        CycleStages(
+            cycle_ts=datetime(2026, 8, 1, 12, tzinfo=UTC),
+            sleeve_positions={"B": {"BTC": 0.16}, "A1": {"BTC": 0.16}, "A2": {"BTC": 0.16}},
+            combined={"BTC": 0.16},
+            capped={"BTC": 0.16},
+            limited={"BTC": 0.12},  # a whole-book limit takes a quarter
+            final={"BTC": 0.06},  # the governor then halves what the limits left
+            multiplier=0.5,
+            closes={"BTC": 50000.0},
+            cap_bound=False,
+        )
+    ]
+    payload = decompose_payload(stages)
+    row = payload["cycles"][0]
+    assert row["limited_gross"] == pytest.approx(0.12)
+    assert row["limited_ratio"] == pytest.approx(0.75)
+    assert row["governed_ratio"] == pytest.approx(0.5)
+    # The shares must not be equal here, or this fixture proves nothing the degenerate one did not.
+    assert row["limited_ratio"] != pytest.approx(row["governed_ratio"])
+
+    text = _render_decompose(payload)
+    limits_line = next(ln for ln in text.splitlines() if "capped -> limited" in ln)
+    governor_line = next(ln for ln in text.splitlines() if "limited -> final" in ln)
+    assert "0.750" in limits_line
+    assert "0.500" in governor_line
 
 
 def test_decompose_report_counts_a_record_that_fails_to_replay():
@@ -355,6 +404,7 @@ def _stage(ts, weight, close):
         sleeve_positions={s: {"BTC": 0.0} for s in ("B", "A1", "A2")},
         combined={"BTC": 0.0},
         capped={"BTC": 0.0},
+        limited={"BTC": 0.0},  # no whole-book limit binds in this fixture
         final={"BTC": weight},
         multiplier=1.0,
         closes={"BTC": close},
