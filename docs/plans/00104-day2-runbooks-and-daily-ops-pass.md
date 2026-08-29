@@ -16,7 +16,7 @@
 - **Operator-facing text carries no internal tokens** (`.claude/rules/operator-facing-text.md`): no `T<NNNN>`, `spec NNNNN`, `iter-<N>` in alert summaries, runbook section headings, `--help`, or metric HELP. Runbook *bodies* may cite topics and specs.
 - **Runbook section shape** (`infra/runbooks/README.md`): `<a name="<uid>"></a>` on its own line, blank line, `## <uid> — ALERT` (or `— KNOWN LIMITATION` / `— PROCEDURE` / `— SCHEDULED REMINDER`), then `### What you are seeing` · `### What it means` · `### What to do` · `### Retire when`, in that order. A section serving several uids carries one `<a name>` per uid, stacked, above one heading. Every `Retire when` names something checkable.
 - **Alert summary link line**: the summary's last line is exactly `Runbook: infra/runbooks/<file>.md#<anchor>` (see `infra/grafana/alerts.yaml` line ~340 for the shape).
-- **No host is touched by any task.** `grafana-push.sh`, the healthchecks.io description writes, and the first live pass are closeout steps run by the main session on the user's word. Tasks never ssh.
+- **No host is touched by Tasks 1–18.** Task 19 is where the credentialed, fleet-touching steps live, and it runs in the main loop after the merge. `grafana-push.sh`, the healthchecks.io description writes, and the first live pass are closeout steps run by the main session on the user's word. Tasks never ssh.
 - **Never print a container's environment; never run `ansible-inventory --host/--list/--graph --vars`** (CLAUDE.md `## Secrets`, `fleet-deploys.md`). Vault variable *names* may be read; values are resolved only inside `grafana_auth.vault_var`, never printed.
 - **Secrets never reach stdout, argv or a file**: the token and the healthchecks key live in locals and request headers only.
 - **Stage by explicit path, one commit-type per commit**; every commit carries `Co-Authored-By: <actual model> <noreply@anthropic.com>`.
@@ -313,7 +313,7 @@ vault_password = grafana_auth.vault_password
 vault_var = grafana_auth.vault_var
 ```
 
-Trim the moved footgun paragraphs from `grafana-query.py`'s docstring, leaving its own subject (PromQL, the alert-state caveat). In `tests/test_grafana_query.py`, delete the **four** vault-resolver tests that moved and keep the query/render/token/usage tests, which patch `gq.urllib` and `gq.vault_var` — both still resolvable through the re-exports.
+Trim the moved footgun paragraphs from `grafana-query.py`'s docstring, leaving its own subject (PromQL, the alert-state caveat). In `tests/test_grafana_query.py`, delete the **four** vault-resolver tests that moved and keep the query/render/token/usage tests, which patch `gq.query` and `gq.vault_var` — both still resolvable through the re-exports (`query` is this script's own function, untouched by the move).
 
 - [ ] **Step 5: Both suites green**
 
@@ -613,7 +613,7 @@ Frontmatter `name: zcrypto-daily-ops`, a description naming when it runs (the da
 
 1. **Read** — `uv run python infra/scripts/ops-daily.py report --since 24h`. Exit 2 means a source could not be read: that is the first finding, and the report names it.
 2. **The incident loop, per alert that fired** — open its runbook section (every rule has one), follow *What you are seeing* → *What it means* → run *What to do*, and classify: **expected** (a deploy in the window explains it — the report lists them), **transient** (self-resolved, cause identified), **needs a fix**, **needs a human**.
-3. **Remediate within two tiers.** *Autonomous*: read-only anything; telemetry-only runbook steps **on ops, the NAS or zaccess only** — restart Alloy, clear a stale cache, re-arm a timer (the capture pair's Alloy goes through `zcrypto-bump-alloy`, attended); a code fix the normal way — fix branch, tests, subagent review, PR, merged on CI green **when the fix is off the protected paths**. *Prepared, then the user's word*: any restart or converge of a capture daemon or the engine; anything touching the venue account (arm file, kill file, orders); deleting data; a fix landing on the capture write path, the live trade path, canonical data, or anything a host converges; running `grafana-push.sh` after a merged rule fix. Deploying any fix to a host is a converge — always attended. **Every ssh/sudo step runs in the main loop, never in a dispatched subagent** — the permission gate blocks it there and the step dies where nobody sees the prompt.
+3. **Classify before acting, then remediate within two tiers.** Before running any runbook *What to do* step, classify it: `uv run python -c "...classify_action(<the step's text>)"` (Task 16b). `PREPARED` means prepare the action and stop — never run it. *Autonomous*: read-only anything; telemetry-only runbook steps **on ops, the NAS or zaccess only** — restart Alloy, clear a stale cache, re-arm a timer (the capture pair's Alloy goes through `zcrypto-bump-alloy`, attended); a code fix the normal way — fix branch, tests, subagent review, PR, merged on CI green **when the fix is off the protected paths**. *Prepared, then the user's word*: any restart or converge of a capture daemon or the engine; anything touching the venue account (arm file, kill file, orders); deleting data; a fix landing on the capture write path, the live trade path, canonical data, or anything a host converges; running `grafana-push.sh` after a merged rule fix. Deploying any fix to a host is a converge — always attended. **Every ssh/sudo step runs in the main loop, never in a dispatched subagent** — the permission gate blocks it there and the step dies where nobody sees the prompt.
 4. **Read the dashboards numerically** — the verdict tiles' own PromQL, through the report; no pixels.
 5. **Evaluate the due SCHEDULED REMINDER sections** (`refdata-sweep-due`, `healable-threshold-rederivation-due`).
 6. **Append the journal entry** on the `ops-journal` branch, commit; at a month change, open the finished month's PR and merge it on CI green, then re-cut the branch from `develop`.
@@ -640,39 +640,59 @@ git commit -m "claude(config): the daily-ops pass, and the four rules its conven
 
 ---
 
-### Task 16b: the tier bounds, proven on fixtures
+### Task 16b: the tier classifier, on real runbook text
 
-**Files:** Create `tests/fixtures/ops_daily/protected_path_finding.json`, `tests/fixtures/ops_daily/telemetry_only_finding.json`; modify `tests/test_ops_daily.py`
+**Files:** Modify `infra/scripts/ops_daily.py`, `tests/test_ops_daily.py`
 
-**Interfaces:** Consumes `Report` (Task 14) and the skill's tier wording (Task 16). Discharges spec `00104`'s Verification line "D6 bounds".
+**Interfaces:**
+- Produces: `Tier(Enum)` with `AUTONOMOUS` / `PREPARED`, and `classify_action(text: str) -> Tier`.
+- **Its production caller is the skill** (Task 16): step 3 instructs the agent to classify every runbook *What to do* step it is about to run, and to stop at `PREPARED`. The input is therefore **the runbook's own prose** — which is why the fixtures below are verbatim excerpts from real sections rather than a shape invented for the test. Discharges spec `00104`'s Verification line "D6 bounds".
 
-- [ ] **Step 1: Write the two fixtures and the failing test**
+- [ ] **Step 1: Write the failing test on real runbook text**
 
-One report whose fired alert's runbook remedy is on a protected path (a capture-daemon restart), one whose remedy is telemetry-only on ops (a stale Alloy). The test asserts on the returned tier — an enum, never prose:
+Take the two inputs verbatim from sections that exist after Tasks 3–9 — one whose remedy touches a capture daemon, one whose remedy is Alloy on ops — so the classifier is exercised on exactly what the agent will read:
 
 ```python
-@pytest.mark.parametrize("fixture,expected", [
-    ("protected_path_finding.json", ops_daily.Tier.PREPARED),
-    ("telemetry_only_finding.json", ops_daily.Tier.AUTONOMOUS),
+_PROTECTED = (
+    "Stop the capture daemon on the affected host: `sudo systemctl stop zcrypto-capture`, "
+    "then start it again once the disk is below the watermark."
+)
+_TELEMETRY_ONLY = (
+    "Restart Alloy on the ops node: `sudo docker restart grafana-alloy`, "
+    "then confirm `up{host=\"ops\"}` returns 1."
+)
+
+
+@pytest.mark.parametrize("text,expected", [
+    (_PROTECTED, ops_daily.Tier.PREPARED),
+    (_TELEMETRY_ONLY, ops_daily.Tier.AUTONOMOUS),
 ])
-def test_the_tier_is_decided_by_what_the_remedy_touches_not_by_the_alert(fixture, expected):
-    # Both fixtures fire an alert and both name a remedy -- only what the remedy TOUCHES differs,
-    # so a classifier keyed on anything else passes one and fails the other.
-    report = ops_daily.Report.from_json(_fixture(fixture))
-    assert report.remedy_tier() is expected
+def test_the_tier_is_decided_by_what_the_action_touches(text, expected):
+    # Both are runbook steps that restart something; only WHAT they restart differs, so a
+    # classifier keyed on anything else passes one and fails the other.
+    assert ops_daily.classify_action(text) is expected
+
+
+def test_an_unrecognised_action_is_prepared_never_autonomous():
+    """The default decides what happens to a step nobody anticipated -- at 03:00, unattended."""
+    assert ops_daily.classify_action("Frobnicate the widget.") is ops_daily.Tier.PREPARED
 ```
 
-- [ ] **Step 2: red** — `Tier` and `remedy_tier` do not exist yet.
+- [ ] **Step 2: red** — `Tier` and `classify_action` do not exist.
 
-- [ ] **Step 3: Implement** `Tier(Enum)` with `AUTONOMOUS` / `PREPARED`, and `remedy_tier()` returning `PREPARED` when the remedy names a capture host, the engine, the venue account, data deletion, a converge, or `grafana-push.sh`; `AUTONOMOUS` only for read-only and telemetry-only actions on ops, the NAS or zaccess. **The default on an unrecognised remedy is `PREPARED`** — an unclassifiable action is never acted on.
+- [ ] **Step 3: Implement**
 
-- [ ] **Step 4: green**, then the negative: change the protected fixture's remedy to the telemetry wording and confirm the test fails. The fixtures must differ in the one dimension the classifier reads — a pair the classifier cannot separate proves nothing.
+`classify_action` returns `PREPARED` when the text names a capture host or daemon, the engine, the venue account (arm file, kill file, orders), a data deletion, a converge, an image re-pin, or `grafana-push.sh`; `AUTONOMOUS` only when it names a read-only action, or a telemetry-only action **and** a host among ops / NAS / zaccess. **Anything else is `PREPARED`** — an unclassifiable action is never acted on. The matching is on named tokens, not sentence shape; the docstring records that the default is the safety property, so a later "improvement" that makes the default permissive is visibly wrong.
+
+- [ ] **Step 4: green, then prove it bites**
+
+Run the two tests. Then change `_TELEMETRY_ONLY`'s host from `ops` to `zcrypto` and confirm the parametrised case fails — the pair differs in exactly the dimension the classifier reads, so a degenerate fixture cannot pass both.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/fixtures/ops_daily/ tests/test_ops_daily.py infra/scripts/ops_daily.py
-git commit -m "test(infra): the remedy tier is decided by what the action touches"
+git add infra/scripts/ops_daily.py tests/test_ops_daily.py
+git commit -m "feat(infra): the tier is decided by what an action touches, and the default refuses"
 ```
 
 ---
