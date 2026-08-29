@@ -1066,7 +1066,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "abs(node_timex_offset_seconds{host=~\"$capture_host\"})",
+          "expr": "abs(zcrypto_clock_offset_seconds{host=~\"$capture_host\"})",
           "refId": "C",
           "legendFormat": "{{host}} clock offset (absolute)"
         },
@@ -1075,7 +1075,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "node_timex_sync_status{host=~\"$capture_host\"}",
+          "expr": "zcrypto_clock_synchronised{host=~\"$capture_host\"}",
           "refId": "D",
           "legendFormat": "{{host}} clock synchronised (1 = yes)"
         }

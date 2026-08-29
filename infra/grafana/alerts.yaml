@@ -3450,7 +3450,7 @@ rules:
       # seconding a bogus stamp. So skew is flagged long before it can either cause residual (b) or
       # make the earliness counter ambiguous.
       #
-      # The host matcher is spelled out on BOTH legs on purpose: `node_timex_*` is admitted only on
+      # The host matcher is spelled out on BOTH legs on purpose: these families are admitted only on
       # the capture hosts (infra/ansible/roles/capture/files/config.alloy), and an unqualified
       # selector would claim the whole fleet and read NoData for every other host.
       #
@@ -3467,7 +3467,7 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'abs(node_timex_offset_seconds{host=~"zcrypto|zcrypto-red"}) > 10 or (node_timex_sync_status{host=~"zcrypto|zcrypto-red"} == bool 0) > 0'
+          expr: 'abs(zcrypto_clock_offset_seconds{host=~"zcrypto|zcrypto-red"}) > 10 or (zcrypto_clock_synchronised{host=~"zcrypto|zcrypto-red"} == bool 0) > 0'
           instant: true
           refId: A
       - refId: C

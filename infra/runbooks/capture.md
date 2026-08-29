@@ -123,7 +123,7 @@ The writer rotates the archive hour from **the event's own exchange timestamp**,
 3. **Clock skew firing with the clock AHEAD, early closes silent** ⇒ residual (b) may be live and structurally invisible. This is the one case where silence proves nothing. Compare the suspect hours' row counts against the peer machine directly rather than trusting the counter.
 4. **Past-dated firing** ⇒ the third residual, independent of the other two and with a hard-zero baseline. Its own section below.
 
-**On reading the offset's direction**: `node_timex_offset_seconds` carries the kernel's *correction*, not the error — a positive value means the local clock is **behind** the reference. If you are about to act on the direction, confirm it on the machine (`timedatectl`, or `date -u` against a clock you trust) rather than inferring it from the sign.
+**On reading the offset's direction**: `zcrypto_clock_offset_seconds` carries the clock's own error, positive when it is **fast** — running AHEAD of the reference. That is the dangerous direction here: a leading clock is what truncates an hour, and it is invisible to every other signal. Note the sign is the opposite of the kernel's `node_timex` convention, so do not carry an instinct over from it. If you are about to act on the direction, confirm it on the machine (`chronyc tracking`, or `date -u` against a clock you trust).
 
 ### Retire when
 
@@ -206,12 +206,12 @@ A **critical** Grafana alert, one instance per capture machine. That machine's c
 
 10 seconds is a structural bar, not a fitted one: orders of magnitude above a disciplined clock's steady state, and 30× below the five-minute margin at which the clock witness can start seconding a bogus stamp. So there is room, and the correct posture is prompt rather than frantic.
 
-**No role configures a time daemon on these machines today.** That is why an unmanaged clock here can drift monotonically rather than being pulled back, and it is the thing to check first.
+**No ansible role configures a time daemon, but chrony IS running on these machines** (`systemctl is-active chrony`), so the clock is disciplined — do not read this section as "nothing corrects the clock". What is unmanaged is the CONFIGURATION: nothing in this repo pins chrony's sources or step limits, so a chrony that stops or is reconfigured out from under us is a change no converge would notice. That is why an unattended clock here can drift monotonically rather than being pulled back, and it is the thing to check first.
 
 ### What to do
 
 1. **Confirm it on the machine**, not from the metric alone: `timedatectl` on the machine the page names, and `date -u` against a clock you trust.
-2. **Establish the direction.** `node_timex_offset_seconds` reports the kernel's *correction*, so a positive value means the local clock is **behind**. Direction decides everything below, so confirm it in step 1 rather than reading it off the sign.
+2. **Establish the direction.** `zcrypto_clock_offset_seconds` is positive when the clock is **fast**, i.e. ahead of the reference — the direction that truncates hours. Direction decides everything below, so confirm it in step 1 rather than reading it off the sign.
 3. **Restore the time discipline.** Prefer a slew. A correction that **steps the clock forward** briefly hands the clock witness a lead it did not earn, which is exactly residual (b)'s precondition — so make that correction while you are watching, and read the early-close counter afterwards.
 4. **Then look backwards.** Did `zcrypto-capture-hour-finalized-early` fire while the clock was off? If the clock was **ahead**, its silence proves nothing — compare the suspect hours' row counts against the peer machine instead.
 5. **Both machines skewed at once** points at something shared — a hypervisor, a network time source, a converge — rather than at one machine.
@@ -220,7 +220,7 @@ A **critical** Grafana alert, one instance per capture machine. That machine's c
 
 `zcrypto-capture-clock-skew` is absent from `infra/grafana/alerts.yaml`, or the capture writer no longer takes the wall clock as a witness for opening an hour — at which point a skewed clock stops being able to truncate the archive and this becomes ordinary machine hygiene rather than a data-integrity signal.
 
-**One blind spot is deliberate and lives elsewhere.** A healthy clock produces an empty query, so the rule reads no-data as healthy — which means the two `node_timex_*` series *vanishing* also reads as healthy. That is closed at the shipper's configuration rather than here: `tests/test_infra_alloy_series.py` pins both the `timex` collector's enablement and the two names in the capture keep-regex, and dropping either fails the suite.
+**One blind spot is deliberate and lives elsewhere.** A healthy clock produces an empty query, so the rule reads no-data as healthy — which means the two series *vanishing* also reads as healthy. Two things close it: the exporter publishes on EVERY run including the healthy case, and when chrony cannot be read it publishes the offset as NaN with the synchronised flag at 0, which pages. A silent series therefore means the host timer itself stopped — check `systemctl list-timers zcrypto-clock-offset` before reading silence as a good clock.
 
 ______________________________________________________________________
 
