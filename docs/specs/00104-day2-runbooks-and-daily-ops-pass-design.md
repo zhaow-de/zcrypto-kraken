@@ -44,6 +44,8 @@ Read on `develop` at `48adb42c`, 2026-08-29, from the repo alone:
 | `ops.md` (+2) | reconcile-exporter-stale, reconcile-source-lag; and the existing healable-gap-rate section gains the link its rule lacks |
 | `engine.md` (+4, −2) | cycle-stale, cycle-failed, engine-error-logs, engine-log-dead join; the two PROCEDURE sections (`engine-probe-window`, `engine-tracking-band`) move to **`engine-procedures.md`** with anchors byte-identical and every citation updated in the same commit — a paged operator and an attended probe session are different readers, and the procedures are 360 of the file's 634 lines |
 
+**The dead-men get the same treatment.** D1's guard covers Grafana rules; the ten healthchecks.io checks (`capture`, `capture-redundant`, `engine`, `engine-shadow`, `nas`, `gate-verify`, the five ops checks, and `grafana-watchdog`) page through their own native Slack integration with no runbook link at all. Each maps to the section that owns its daemon — the map lives in `observability.md#zcrypto-hcio-watchdog` as a table, and every check's healthchecks.io **description** carries `Runbook: infra/runbooks/<file>#<anchor>` so the native page itself names the procedure — set through the management API in an attended step at closeout ([[T0083]]'s retag precedent), read back and verified.
+
 Each section is in the established four-part shape and cites concrete commands. The content basis is the reader drafts in the plan's scratch material; every command, path, unit name and metric in a section is **verified against the repo by the implementer before it lands** — a draft is a starting point, never a citation. `infra/runbooks/README.md` gains one index heading per new file listing every uid served.
 
 ### D3 — rule prose is fixed where the summary is rewritten; one expression changes
@@ -91,7 +93,8 @@ The skill's dispatch text carries the host-touching rule: every ssh/sudo step ru
 | the two drill recipes (throwaway container from the pinned digest with `docker network disconnect/connect`; a synthetic `.prom` in the textfile dir fires the real rule through the real transport) and the caveat that an injected series proves wiring, never timing; the compose "container never created" log blind spot | `docs/reference/fleet.md` |
 | inducing a fault on live capture is a gated, attended-window action | `.claude/rules/fleet-deploys.md` invariants (protected file — the edit is shown to the user) |
 | rule out your own changes with timestamps: an alert's `activeAt` against every converge, restart and drill of the day | `.claude/rules/agent-ops.md`, one clause on the attribution bullet |
-| widening-window bounding (`increase()` at 1h/6h/24h/7d) and reading the ledger for shape | the `ops.md` gap sections' *What to do* |
+| widening-window bounding (`increase()` at 1h/6h/24h/7d) and reading the ledger for shape; when the system already healed the event, the remaining work is measurement — confirm the mint and the archive, never react operationally on a healthy host | the `ops.md` gap sections' *What to do* |
+| two producers measuring the same silence independently — when they disagree, the disagreement is the finding; a single source cannot report its own under-reporting | `.claude/rules/agent-ops.md`, one clause beside the empty-query bullet |
 | **"healable equals healed proves no loss" — dropped**, recorded as circular by archived [[T0101]] | nowhere |
 
 ## Verification
