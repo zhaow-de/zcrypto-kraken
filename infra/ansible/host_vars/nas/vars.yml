@@ -55,7 +55,11 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # To actually roll back, converge WITH `-e nas_apply_compose=true` from a repo state predating spec
 # 00102, so the OLD entrypoint is deployed alongside the old image. The flag is not optional here:
 # without it the role is render-only, the files land, the container keeps running the NEW pair, and
-# the converge still reports success -- a rollback that silently did not happen. Symptom if you get it wrong: all five channels exit 2, no
+# the converge still reports success -- a rollback that silently did not happen.
+# Delete the per-channel textfiles on the way out (archive-pull-*.prom in the NAS textfile dir):
+# the old image writes none, so they would otherwise sit frozen at their last good values and
+# keep feeding the data-integrity dashboard numbers no cycle produced. No alert reads them, so
+# nothing would tell you. Symptom if you get it wrong: all five channels exit 2, no
 # textfile is written on that path (the write follows the exit-2 raise), so the per-channel gauges
 # freeze at their last good values rather than reading zero -- `zcrypto-nas-archive-pull-stalled`
 # is what still catches it, so this is loud but slow, not silent.
