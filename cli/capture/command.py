@@ -616,9 +616,11 @@ class CaptureCollector:
         )
         yield CounterMetricFamily(
             "zcrypto_capture_ts_past_dated_hour_total",
-            # Spec 00103 D5: T0037's residual (b). Oracle-bearing writers only -- `_enter_hour` gates the
-            # increment, so this counts fabrication rather than the pollers' poll cadence.
-            "Processes whose first event for a stream opened an hour already behind the wall clock.",
+            # Spec 00103 D5: T0037's PAST-DATED residual, which carries no letter in the topic. Not
+            # residual (b) -- that one is a leading clock, and D1b proves no clock-referenced counter
+            # can see it; the skew alert is its only detector. Oracle-bearing writers only:
+            # `_enter_hour` gates the increment, so this counts fabrication rather than poll cadence.
+            "First events that opened a stream's hour already behind the wall clock.",
             value=sum(w.ts_past_dated_hour for w in writers),
         )
 
