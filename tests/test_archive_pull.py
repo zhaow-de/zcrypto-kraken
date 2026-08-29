@@ -382,15 +382,16 @@ def test_a_narrowed_scope_without_a_slice_is_refused(tmp_path: Path) -> None:
 # --- spec 00102 Task 3: the `pull` command -- scope, cost, and the gauge file ----
 
 
-def _plain(output: str) -> str:
-    """CLI output with ANSI styling removed.
+def _squashed(output: str) -> str:
+    """CLI output with ANSI styling removed and whitespace collapsed.
 
-    Typer renders a usage error through rich, which styles the option name INSIDE the sentence, so
-    `"--channel" in r.output` is False whenever colour is on and True when it is not. CI enables
-    colour and a plain terminal does not, which is a test that passes locally and fails there --
-    exactly what happened. Assert on the stripped text: the message is the claim, the styling is not.
+    Typer's OptionHighlighter styles each hyphen of an option separately, so a raw `r.output` holds
+    `-\x1b[0m\x1b[1;36m-channel` and never the literal; the rich panel also word-wraps at COLUMNS,
+    which can split the name across lines. Strip then squash -- same treatment as
+    `tests/test_panel_command.py`. Holds for any realistic width; below ~20 columns rich interleaves
+    the panel's box borders between fragments, which no squash recovers, and nothing runs there.
     """
-    return re.sub(r"\x1b\[[0-9;]*m", "", output)
+    return re.sub(r"\s+", "", re.sub(r"\x1b\[[0-9;]*m", "", output))
 
 
 def _pull(args: list[str], monkeypatch, *, transferred: frozenset[str] = frozenset(), now: datetime, lines: list[str]):
@@ -453,12 +454,12 @@ def test_pull_textfile_without_channel_is_a_usage_error(tmp_path: Path, monkeypa
     r = _pull(
         [str(tmp_path), "--textfile", str(tmp_path / "p.prom")], monkeypatch, now=datetime(2026, 7, 12, 0, tzinfo=UTC), lines=[]
     )
-    assert r.exit_code == 2 and "--channel" in _plain(r.output), r.output
+    assert r.exit_code == 2 and "--channel" in _squashed(r.output), r.output
 
 
 def test_pull_incremental_without_slice_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
     r = _pull([str(tmp_path), "--hash-scope", "incremental"], monkeypatch, now=NOW, lines=[])
-    assert r.exit_code == 2 and "--slice" in _plain(r.output), r.output
+    assert r.exit_code == 2 and "--slice" in _squashed(r.output), r.output
 
 
 def test_pull_without_textfile_writes_no_prom_file(tmp_path: Path, monkeypatch) -> None:
