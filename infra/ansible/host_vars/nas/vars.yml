@@ -49,10 +49,13 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # rollback while the current entrypoint is deployed. `pull-entrypoint.sh` is a BIND MOUNT from the
 # repo (compose.yaml), not baked into the image, so an image roll leaves it in place -- and it
 # passes `--hash-scope`/`--slice` unconditionally on all five channels. Flipping
-# `nas_archive_pull_hash_scope` to `full` does NOT help: the flag is still sent, and any CLI older
-# than 28d32463 rejects it as an unknown option and exits 2 on every channel.
-# To actually roll back, converge from a repo state that predates spec 00102 so the OLD entrypoint
-# is deployed alongside the old image. Symptom if you get it wrong: all five channels exit 2, no
+# `nas_archive_pull_hash_scope` to `full` does NOT help: the flag is still sent, and any CLI built
+# before a3a3837e (where both flags landed) rejects it as an unknown option and exits 2 on every
+# channel.
+# To actually roll back, converge WITH `-e nas_apply_compose=true` from a repo state predating spec
+# 00102, so the OLD entrypoint is deployed alongside the old image. The flag is not optional here:
+# without it the role is render-only, the files land, the container keeps running the NEW pair, and
+# the converge still reports success -- a rollback that silently did not happen. Symptom if you get it wrong: all five channels exit 2, no
 # textfile is written on that path (the write follows the exit-2 raise), so the per-channel gauges
 # freeze at their last good values rather than reading zero -- `zcrypto-nas-archive-pull-stalled`
 # is what still catches it, so this is loud but slow, not silent.
