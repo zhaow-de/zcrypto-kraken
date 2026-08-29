@@ -382,6 +382,17 @@ def test_a_narrowed_scope_without_a_slice_is_refused(tmp_path: Path) -> None:
 # --- spec 00102 Task 3: the `pull` command -- scope, cost, and the gauge file ----
 
 
+def _plain(output: str) -> str:
+    """CLI output with ANSI styling removed.
+
+    Typer renders a usage error through rich, which styles the option name INSIDE the sentence, so
+    `"--channel" in r.output` is False whenever colour is on and True when it is not. CI enables
+    colour and a plain terminal does not, which is a test that passes locally and fails there --
+    exactly what happened. Assert on the stripped text: the message is the claim, the styling is not.
+    """
+    return re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+
 def _pull(args: list[str], monkeypatch, *, transferred: frozenset[str] = frozenset(), now: datetime, lines: list[str]):
     monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, transferred))
     monkeypatch.setattr(command, "_utc_now", lambda: now)
@@ -442,12 +453,12 @@ def test_pull_textfile_without_channel_is_a_usage_error(tmp_path: Path, monkeypa
     r = _pull(
         [str(tmp_path), "--textfile", str(tmp_path / "p.prom")], monkeypatch, now=datetime(2026, 7, 12, 0, tzinfo=UTC), lines=[]
     )
-    assert r.exit_code == 2 and "--channel" in r.output
+    assert r.exit_code == 2 and "--channel" in _plain(r.output), r.output
 
 
 def test_pull_incremental_without_slice_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
     r = _pull([str(tmp_path), "--hash-scope", "incremental"], monkeypatch, now=NOW, lines=[])
-    assert r.exit_code == 2 and "--slice" in r.output
+    assert r.exit_code == 2 and "--slice" in _plain(r.output), r.output
 
 
 def test_pull_without_textfile_writes_no_prom_file(tmp_path: Path, monkeypatch) -> None:
