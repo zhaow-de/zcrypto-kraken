@@ -212,7 +212,7 @@ _MINIMUMS = {"BTC": (0.00005, 0.45)}
 
 
 def _stage(ts, *, weight=1.0, close=50000.0):
-    # CycleStages is a frozen dataclass with NINE required fields and no defaults; supplying
+    # CycleStages is a frozen dataclass with NINE required fields (plus `nav`, which defaults); supplying
     # three raises TypeError at construction, before any assertion is reached.
     return CycleStages(
         cycle_ts=datetime.fromisoformat(ts),
