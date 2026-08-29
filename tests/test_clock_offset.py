@@ -233,6 +233,7 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
     # Match the ASSIGNMENT, never any line mentioning the key: a comment naming it must not be
     # selectable, or the assertion compares against prose.
     set_collectors = next(line for line in alloy.splitlines() if line.strip().startswith("set_collectors"))
+    # config-selector-ok: the needle carries both quotes, so "textfiles" cannot satisfy it
     assert '"textfile"' in set_collectors, f"the textfile collector is not enabled, so the block is inert: {set_collectors.strip()}"
     directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
     # Alloy sees the host root at /host/root; the unit writes on the host itself.

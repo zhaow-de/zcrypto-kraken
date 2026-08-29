@@ -338,7 +338,7 @@ def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
     """
     unit = _rendered_unit()
     exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
-    assert "--textfile" in exec_start, "the prune must publish a .prom — a oneshot has no /metrics endpoint to scrape"
+    assert "--textfile" in exec_start.split(), "the prune must publish a .prom — a oneshot has no /metrics endpoint to scrape"
     out = exec_start.split("--textfile", 1)[1].strip().split()[0]
     host_dir = str(Path(out).parent)
 
