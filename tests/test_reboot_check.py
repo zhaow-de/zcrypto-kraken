@@ -187,7 +187,7 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
 
 def test_protectsystem_strict_still_permits_writing_the_textfile_dir():
     unit = _rendered_unit()
-    assert "ProtectSystem=strict" in unit
+    assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     out = next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
     assert str(Path(out).parent) in rw, f"{out} is not writable under ProtectSystem=strict: {rw}"
@@ -228,6 +228,10 @@ def test_the_timer_actually_repeats():
     leaves a timer that fires once at boot and never again — converging green, publishing a gauge
     that freezes at its first value."""
     timer = (ROLE / "files/zcrypto-reboot-check.timer").read_text()
-    assert "OnUnitActiveSec=" in timer, "without a repeat interval this fires once per boot"
-    assert "OnBootSec=" in timer, "without a boot trigger the gauge is stale until the first interval"
-    assert "Unit=zcrypto-reboot-check.service" in timer
+    assert any(l.strip().startswith("OnUnitActiveSec=") for l in timer.splitlines()), (
+        "without a repeat interval this fires once per boot"
+    )
+    assert any(l.strip().startswith("OnBootSec=") for l in timer.splitlines()), (
+        "without a boot trigger the gauge is stale until the first interval"
+    )
+    assert any(l.strip() == "Unit=zcrypto-reboot-check.service" for l in timer.splitlines())

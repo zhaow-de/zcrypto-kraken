@@ -312,7 +312,7 @@ def test_protectsystem_strict_still_permits_writing_the_journal_dir():
     """ProtectSystem=strict mounts /usr and /var read-only; without the ReadWritePaths escape the
     prune cannot delete anything it correctly identified."""
     unit = _rendered_unit()
-    assert "ProtectSystem=strict" in unit
+    assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     journal = f"{_role_vars()['engine_state_dir']}/journal"
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
     assert journal in rw, f"{journal} is not writable under ProtectSystem=strict: {rw}"

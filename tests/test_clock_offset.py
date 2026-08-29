@@ -246,7 +246,7 @@ def test_protectsystem_strict_still_permits_the_two_writes_the_probe_needs():
     breaks the READ as well as the publish — and the exporter would then report an unknown offset
     forever while the unit converged green."""
     unit = _rendered_unit()
-    assert "ProtectSystem=strict" in unit
+    assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
     assert str(Path(_exec_start()[-1]).parent) in rw, f"the output directory is not writable: {rw}"
     assert "/run/chrony" in rw, f"chronyc cannot create its client socket: {rw}"
@@ -281,6 +281,10 @@ def test_the_timer_actually_repeats():
     """Removing OnUnitActiveSec leaves a timer that fires once at boot and never again — converging
     green, publishing an offset that freezes at its first value."""
     timer = (ROLE / "files/zcrypto-clock-offset.timer").read_text()
-    assert "OnUnitActiveSec=" in timer, "without a repeat interval this fires once per boot"
-    assert "OnBootSec=" in timer, "without a boot trigger the gauge is stale until the first interval"
-    assert "Unit=zcrypto-clock-offset.service" in timer
+    assert any(l.strip().startswith("OnUnitActiveSec=") for l in timer.splitlines()), (
+        "without a repeat interval this fires once per boot"
+    )
+    assert any(l.strip().startswith("OnBootSec=") for l in timer.splitlines()), (
+        "without a boot trigger the gauge is stale until the first interval"
+    )
+    assert any(l.strip() == "Unit=zcrypto-clock-offset.service" for l in timer.splitlines())
