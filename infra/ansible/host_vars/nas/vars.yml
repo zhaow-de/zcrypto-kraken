@@ -44,10 +44,18 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # absent cache must read -- it is not a missed invalidation. Read `cache_hits` instead.
 # Gate metrics describe the PREVIOUS image for ~1 h after a roll — check the textfile's mtime first.
 # Previous pin: 9f814848fce1 (revision eb6a503a), verified resident at the re-pin.
-# ROLLBACK TRAP: do not reach further back than this. Anything older than eb6a503a predates
-# `--hash-scope`, and the entrypoint passes it unconditionally, so an older image exits 2 on every
-# channel and custody verification stops -- silently, since a failed pull writes no textfile. Roll
-# `nas_archive_pull_hash_scope` back to `full` in the same change if you must go further.
+# ROLLBACK TRAP -- THERE IS NO IMAGE-ONLY ROLLBACK FROM THIS PIN. `--hash-scope` was born on the
+# T0028 branch (a3a3837e); `eb6a503a` does NOT carry it, so the previous pin above is NOT a working
+# rollback while the current entrypoint is deployed. `pull-entrypoint.sh` is a BIND MOUNT from the
+# repo (compose.yaml), not baked into the image, so an image roll leaves it in place -- and it
+# passes `--hash-scope`/`--slice` unconditionally on all five channels. Flipping
+# `nas_archive_pull_hash_scope` to `full` does NOT help: the flag is still sent, and any CLI older
+# than 28d32463 rejects it as an unknown option and exits 2 on every channel.
+# To actually roll back, converge from a repo state that predates spec 00102 so the OLD entrypoint
+# is deployed alongside the old image. Symptom if you get it wrong: all five channels exit 2, no
+# textfile is written on that path (the write follows the exit-2 raise), so the per-channel gauges
+# freeze at their last good values rather than reading zero -- `zcrypto-nas-archive-pull-stalled`
+# is what still catches it, so this is loud but slow, not silent.
 # Moving this pin replays the whole gate export COLD -- an hour-scale operation on this host, not
 # a restart. EVERY converge that recreates the container does this, fingerprint or not: the cache is
 # `--cache /tmp/gate-cache.json` and `/tmp` is on none of the container's mounts, so a recreate takes

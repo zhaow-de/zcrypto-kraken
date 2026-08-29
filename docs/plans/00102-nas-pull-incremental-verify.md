@@ -16,7 +16,7 @@
 - Metric names, exactly: `zcrypto_archive_pull_verify_seconds`, `zcrypto_archive_pull_files_hashed`, `zcrypto_archive_pull_files_walked`, each with one `channel` label — spec D4. One file per channel. HELP text carries no `T<NNNN>`/`spec`/`iter` tokens (`operator-facing-text.md`).
 - The `pull complete ...` log line keeps ` failed=%d ` verbatim — spec D5; the dead-man rule matches `failed=0`.
 - `--hash-scope` defaults to `full`; a pull invoked as today behaves as today — spec D7. `--textfile` and `--channel` are both optional and go together.
-- **Never touch `cli/config.py` or `cli/__init__.py`** — they are inside the gate-export replay-fingerprint closure; `cli/archive/` is not, and that is what keeps both converges out of the cold replay.
+- **Never touch `cli/config.py` or `cli/__init__.py`** — they are inside the gate-export replay-fingerprint closure; `cli/archive/` is not. That keeps the FINGERPRINT stable, but it does **not** avoid the cold replay: every converge that recreates the container replays regardless, because the gate cache lives in the container's ephemeral `/tmp` (measured on both legs). Budget the replay for each converge.
 - The keep-regex edit, the `NAS_REQUIRED` pin and the two dashboard panels land in ONE commit — spec D8; the suite fails on any subset.
 - `README.md` `## Usage` documents the four new options in the same change — `readme-usage.md`.
 - Every guard is proven on a fixture where defect and fix differ, and the suite keeps a true positive — `agent-ops.md`. `infra/scripts/mutate-probe.sh` refuses a dirty worktree, so every proof runs after its commit.
