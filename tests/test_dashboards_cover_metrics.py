@@ -752,31 +752,49 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     one calibrated for a different timer, the panel says "healthy" while the rule says "fire" -- and
     the panel wins, because it is what a human looks at. Both defects that reached this repo were of
     that shape: a series with no override at all, and one whose only visible line was another
-    series' threshold at twice the value.
+    series' threshold at twice the value. A third -- two files merged under one `max()`, so a dead
+    timer hid behind a live one -- is NOT caught: the rule and the panel then chart different
+    expressions, so no pair forms and this test is silent on it.
     """
-    # Found by this guard on its first run, in dashboards this branch does not touch. Recorded
-    # rather than fixed here: each needs its own override and its own reading of what the panel is
-    # for. New entries are not acceptable -- the guard exists to stop this class growing.
-    known = {"zcrypto-ops-tapebars-not-advancing", "zcrypto-ops-verify-replay-run-broken"}
+    # `zcrypto-ops-tapebars-not-advancing` charts panel 402 refId F, which has no bar while A/B/C
+    # do -- a live instance of exactly what this test forbids, in a dashboard whose intent needs its
+    # own reading. New entries are not acceptable: the guard exists to stop this class growing.
+    known = {"zcrypto-ops-tapebars-not-advancing"}
+    pairs = list(_rule_panel_pairs())
+    # Pairing is exact string equality, so reformatting one expression drops that rule from
+    # coverage with no failure anywhere. The floor makes a collapse visible; raise it, never lower.
+    assert len(pairs) >= 54, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
     bad = []
-    for uid, panel, target, evaluator in _rule_panel_pairs():
+    for uid, panel, target, evaluator in pairs:
         if uid in known:
             continue
         overrides = panel.get("fieldConfig", {}).get("overrides", [])
         by_ref = {o["matcher"]["options"]: o for o in overrides if o.get("matcher", {}).get("id") == "byFrameRefID"}
-        if not by_ref:  # this panel does not use per-series bars at all
-            continue
         ref = target.get("refId")
-        if ref not in by_ref:
-            bad.append(f"{uid}: panel {panel['id']} draws per-series bars but refId {ref} has none")
+        if ref in by_ref:
+            steps = [
+                s
+                for prop in by_ref[ref].get("properties", [])
+                if prop.get("id") == "thresholds"
+                for s in prop.get("value", {}).get("steps", [])
+                if s.get("value") is not None
+            ]
+        else:
+            # A series with no override inherits the panel default, which is a real bar. Reading an
+            # override on ANOTHER refId as "this panel bars per series" misjudged a panel whose only
+            # override REMOVES a bar, and made a healthy pairing look like a defect.
+            steps = [
+                s
+                for s in panel.get("fieldConfig", {}).get("defaults", {}).get("thresholds", {}).get("steps", [])
+                if s.get("value") is not None
+            ]
+        if not steps:
+            # Some panels colour by value MAPPING rather than a numeric bar (a stat showing
+            # "failed"/"ok"). There is no threshold to agree with, so there is nothing to check.
+            if panel.get("fieldConfig", {}).get("defaults", {}).get("mappings"):
+                continue
+            bad.append(f"{uid}: panel {panel['id']} refId {ref} has no threshold at all, per-series or default")
             continue
-        steps = [
-            s
-            for prop in by_ref[ref].get("properties", [])
-            if prop.get("id") == "thresholds"
-            for s in prop.get("value", {}).get("steps", [])
-            if s.get("value") is not None
-        ]
 
         # The bar marks where the rule fires. For a `gt 0` counter that point is the first value
         # that trips it -- a line at 0 would paint a healthy panel red -- so 0 < bar <= 1 is the
