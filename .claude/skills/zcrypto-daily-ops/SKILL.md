@@ -55,6 +55,8 @@ The verdict tiles' own PromQL is what the report's fleet checks already ran. Rea
 
 The runbook's SCHEDULED REMINDER sections — `reference-data.md#refdata-sweep-due`, `ops.md#healable-threshold-rederivation-due`. A reminder that has come due is work, not decoration.
 
+**Both are calendar triggers delivered as Slack messages with no metric behind them, so with no Slack tool there is nothing on the fleet to read them from** — they cannot be evaluated, only reported unevaluated. Say that in the entry; do not record them as clear.
+
 ## 6. Write the journal entry
 
 Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in. Commit.
@@ -68,6 +70,8 @@ The entry's paragraph, to `#zcrypto`. If no Slack tool is reachable, say so in t
 ## 8. Re-arm tomorrow
 
 A scheduled message fires once. Schedule tomorrow's trigger before finishing, the way `refdata-sweep-due` does.
+
+**With no Slack tool, the chain stops here and the entry must say so** — the next pass has nothing to trigger it. A session-local scheduler is not a substitute: it dies with the session, and this reminder has to outlive it.
 
 ## Failure modes — catch yourself
 
