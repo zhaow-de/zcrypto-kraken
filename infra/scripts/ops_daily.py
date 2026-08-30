@@ -436,8 +436,13 @@ class Tier(Enum):
 
 # Value classes. None may contain a shell metacharacter, so no hole can carry a command out of the
 # shape that vouched for it -- the property `_METACHARS` enforces once for the whole string.
-_NAME = r"[A-Za-z0-9][A-Za-z0-9._@:*-]{0,63}"
+# No `*`: a container name is never a glob, and a glob names what a filter cannot check --
+# the shape of the defect that reached the secret files through `cat <dir>/*`.
+_NAME = r"[A-Za-z0-9][A-Za-z0-9._@:-]{0,63}"
 _UNIT = r"[A-Za-z0-9][A-Za-z0-9._@*-]{0,63}"
+# `systemctl list-timers 'zcrypto-*'` needs the glob; `systemctl restart 'zcrypto-*'` would be a
+# mass restart from one token, so the MUTATING shapes take the exact spelling only.
+_UNIT_EXACT = r"[A-Za-z0-9][A-Za-z0-9._@-]{0,63}"
 _PATH = r"/[A-Za-z0-9._/*+-]{0,160}"
 _FILEREF = r"[A-Za-z0-9._/*+-]{1,160}"
 _SINCE = r"-?\d{1,4}[smhd]?|-?\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?"
@@ -476,9 +481,12 @@ class _Shape:
     post: str | None = None
 
 
-def _match_shape(shape: _Shape, tokens: list[str]) -> bool:
+def _match_shape(shape: _Shape, tokens: list[str]) -> list[str] | None:
+    """The operands this shape matched, or None. The operands are returned because a read's SAFETY
+    can depend on which file it names -- `cat` under `/var/log` and `cat` under a secrets dir are
+    the same shape."""
     if tuple(tokens[: len(shape.head)]) != shape.head:
-        return False
+        return None
     rest, operands, i = tokens[len(shape.head) :], [], 0
     while i < len(rest):
         token = rest[i]
@@ -488,23 +496,25 @@ def _match_shape(shape: _Shape, tokens: list[str]) -> bool:
                 spec = shape.flags[key]
                 if spec is None:
                     if sep:
-                        return False
+                        return None
                     i += 1
                     continue
                 value = attached if sep else (rest[i + 1] if i + 1 < len(rest) else None)
                 if value is None or not re.fullmatch(spec, value):
-                    return False
+                    return None
                 i += 1 if sep else 2
                 continue
             if shape.short and re.fullmatch(shape.short, token):
                 i += 1
                 continue
-            return False
+            return None
         operands.append(token)
         i += 1
     if not shape.arity[0] <= len(operands) <= shape.arity[1]:
-        return False
-    return all(re.fullmatch(shape.classes[min(n, len(shape.classes) - 1)], operand) for n, operand in enumerate(operands))
+        return None
+    if not all(re.fullmatch(shape.classes[min(n, len(shape.classes) - 1)], operand) for n, operand in enumerate(operands)):
+        return None
+    return operands
 
 
 # Reads. Host-independent: none of them writes anywhere, so none needs a host to be safe.
@@ -674,9 +684,9 @@ _FILTER_SHAPES = (
 # Mutations the user authorised for the telemetry hosts, where the loop can revert every one of them
 # itself. Gated on the host, and vetoed by `_PROTECTED_OBJECTS` -- a converge is never here.
 _TELEMETRY_SHAPES = (
-    _Shape(("systemctl", "restart"), {"--no-block": None}, arity=(1, 2), classes=(_UNIT,)),
-    _Shape(("systemctl", "start"), {"--no-block": None}, arity=(1, 2), classes=(_UNIT,)),
-    _Shape(("systemctl", "stop"), arity=(1, 2), classes=(_UNIT,)),
+    _Shape(("systemctl", "restart"), {"--no-block": None}, arity=(1, 2), classes=(_UNIT_EXACT,)),
+    _Shape(("systemctl", "start"), {"--no-block": None}, arity=(1, 2), classes=(_UNIT_EXACT,)),
+    _Shape(("systemctl", "stop"), arity=(1, 2), classes=(_UNIT_EXACT,)),
     _Shape(("docker", "restart"), arity=(1, 2), classes=(_NAME,)),
     _Shape(("docker", "start"), arity=(1, 2), classes=(_NAME,)),
     _Shape(("docker", "stop"), arity=(1, 2), classes=(_NAME,)),
@@ -699,15 +709,59 @@ _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
 # the runbooks' own permission check on `logship-secrets.env`, which prints no bytes of it.
+#
+# This is an allowlist of WHERE they may read, not a denylist of secret-looking names. The name
+# version was written first and broke immediately: `cat /opt/zcrypto-capture/*` carries no
+# secret-shaped token and printed the Loki push password, and `grep -r X /etc/zcrypto-ops/` did the
+# same by recursion. A glob or a directory names nothing the filter can match -- which is the exact
+# defect the two inherited post-checks had, reintroduced by hand one commit after being described.
 _CONTENT_HEADS = frozenset({"cat", "grep"})
-_SECRET_PATH_MARKERS = ("secret", ".env", "vault", "credential", "id_rsa", ".pem", ".key")
+_READ_SAFE_ROOTS = (
+    "/var/log/",
+    "/var/lib/zcrypto-node-textfile/",
+    "/var/lib/zcrypto-ops/",
+    "/var/lib/zcrypto-engine/exec/",
+    "/var/lib/zcrypto-engine/journal/",
+    "/mnt/zhao-crypto/",
+    "/run/log/",
+    "/etc/systemd/",
+    "/proc/",
+    "/sys/",
+    # Named as a FILE, not as its directory: `/etc/zcrypto-ops/alloy/` also holds alloy-secrets.env,
+    # so allowing the directory would re-open the glob hole for the sake of one compose file.
+    "/etc/zcrypto-ops/alloy/compose.yaml",
+    "/etc/machine-id",
+)
+
+
+def _reads_only_safe_paths(head: str, operands: list[str]) -> bool:
+    """Every path a content head names must sit under a read-safe root, absolute and traversal-free.
+
+    `grep`'s first operand is its pattern, never a path. A `*` cannot cross `/`, so a glob under a
+    safe root stays under it; `..` can leave, so it is refused outright.
+    """
+    paths = operands[1:] if head == "grep" else operands
+    return all(path.startswith(_READ_SAFE_ROOTS) and ".." not in path for path in paths)
+
+
 # Stripped before matching: they change who runs a command, never what it does. `ssh <host>` also
 # RETARGETS it, so the host it names replaces the caller's for the telemetry gate.
 _PREFIXES = (("sudo",), ("sudo", "-n"), ("uv", "run"), ("time",))
 _DOCKER_EXEC_VALUE_FLAGS = frozenset({"-u", "--user", "-w", "--workdir", "-e", "--env"})
 
 _CMD_SPAN = re.compile(r"`([^`\n]+)`")
-_SAFE_INSPECT_FIELDS = (".Mounts", ".State", ".Config.Image", ".Config.Entrypoint", ".RestartCount", ".Name", ".Created", ".Id")
+_SAFE_INSPECT_FIELDS = (
+    ".Mounts",
+    ".State",
+    ".Config.Image",
+    ".Config.Entrypoint",
+    ".RestartCount",
+    ".Name",
+    ".Created",
+    ".Id",
+    ".HostConfig.NanoCpus",
+    ".HostConfig.Memory",
+)
 
 
 def _commands(text: str) -> list[str]:
@@ -831,15 +885,16 @@ def _curl_is_read(tokens: list[str]) -> bool:
 _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
 
 
-def _matches(shapes, tokens: list[str]) -> bool:
+def _matches(shapes, tokens: list[str]) -> list[str] | None:
     for shape in shapes:
-        if not _match_shape(shape, tokens):
+        operands = _match_shape(shape, tokens)
+        if operands is None:
             continue
         check = _POSTCHECKS.get(shape.post) if shape.post else None
         if check and not check(tokens):
             continue
-        return True
-    return False
+        return operands
+    return None
 
 
 def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
@@ -897,13 +952,14 @@ def _classify_one(command: str, host: str | None) -> Tier:
     if not stages or not all(stages):
         return Tier.PREPARED
     first, *filters = stages
-    if not all(_matches(_FILTER_SHAPES, stage) for stage in filters):
+    if not all(_matches(_FILTER_SHAPES, stage) is not None for stage in filters):
         return Tier.PREPARED
     tokens, target = _strip_prefixes(first)
     if not tokens:
         return Tier.PREPARED
-    if _matches(_READ_SHAPES + _ZCRYPTO_SHAPES, tokens):
-        if tokens[0] in _CONTENT_HEADS and any(m in t.lower() for t in tokens[1:] for m in _SECRET_PATH_MARKERS):
+    operands = _matches(_READ_SHAPES + _ZCRYPTO_SHAPES, tokens)
+    if operands is not None:
+        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens[0], operands):
             return Tier.PREPARED
         return Tier.AUTONOMOUS
     lowered = command.lower()

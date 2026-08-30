@@ -644,7 +644,7 @@ def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
         # An interpreter that can shell out, with no redirect for composition to catch.
         "awk 'BEGIN{system(\"rm -rf /tmp/x\")}'",
         # find's siblings of -exec and -delete.
-        "find /var/log -execdir rm -rf {} \;",
+        r"find /var/log -execdir rm -rf {} \;",
         "find / -fprint /var/lib/foo/marker",
         # A backslash-escaped quote: a naive scanner opens a quote span here and treats the real `;`
         # as data. Verified against bash -- the `rm` runs.
@@ -704,6 +704,16 @@ def test_the_real_reads_survive_the_allowlists(cmd, host):
         "sudo cat /etc/zcrypto/secrets.env",
         "grep -r KRAKEN /opt/zcrypto-capture/logship-secrets.env",
         "cat infra/ansible/group_vars/all/vault.yml",
+        # Round five. The name-matching version of this veto passed every string above and still
+        # printed the Loki push password, because a glob and a directory carry no secret-shaped
+        # token -- the danger arrives through what the filter cannot name. These are the forms that
+        # matter; the literal-filename ones above never exercised the hole.
+        "sudo cat /opt/zcrypto-capture/*",
+        "sudo cat /etc/zcrypto-ops/alloy/*",
+        "cat /home/deploy/.ssh/*",
+        "grep -rF LOKI /etc/zcrypto-ops/",
+        "grep -r . /home/deploy/.ssh/",
+        "cat /var/log/../opt/zcrypto-capture/logship-secrets.env",
     ],
 )
 def test_the_round_four_escapes_are_refused(cmd):
@@ -733,6 +743,12 @@ def test_the_round_four_escapes_are_refused(cmd):
         ),
         ("sudo ls -la /opt/zcrypto-capture/logship-secrets.env", "zcrypto"),
         ("sha256sum /etc/zcrypto-capture/alloy/conf/config.alloy", "zcrypto"),
+        ("cat /var/lib/zcrypto-node-textfile/*.prom", "ops"),
+        ("grep -rE '^Storage=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/", "ops"),
+        ("sudo cat /var/lib/zcrypto-engine/exec/kill", "zcrypto"),
+        ("cat /mnt/zhao-crypto/.pull-status", "nas"),
+        ("grep -A3 group_add /etc/zcrypto-ops/alloy/compose.yaml", "ops"),
+        ("sudo docker inspect zcrypto-capture --format 'cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}}'", "zcrypto"),
     ],
 )
 def test_the_round_four_fixes_kept_their_true_positives(cmd, host):
@@ -744,3 +760,29 @@ def test_the_round_four_fixes_kept_their_true_positives(cmd, host):
     still answers the permission check on the secrets file it names.
     """
     assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "docker restart al*",
+        "docker stop *",
+        "systemctl restart 'zcrypto-*'",
+        "systemctl restart zcrypto-*",
+        "systemctl stop 'zcrypto-*.service'",
+    ],
+)
+def test_a_mutating_target_is_never_a_glob(cmd):
+    """One token that expands to many is the same defect as `cat <secretdir>/*`, on the write side.
+
+    A glob in a container or unit name turns one authorised telemetry restart into a mass one, and
+    nothing downstream re-checks what it expanded to. Reads keep their patterns -- the exact-unit
+    class is only on the mutating shapes -- so `systemctl list-timers 'zcrypto-*'` still runs.
+    """
+    assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED
+
+
+def test_the_read_patterns_the_exact_unit_class_must_not_break():
+    assert ops_daily.classify_action("systemctl list-timers 'zcrypto-*'", host="ops") is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action("systemctl list-units 'zcrypto-*.service' --all", host="ops") is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action("systemctl restart alloy", host="ops") is ops_daily.Tier.AUTONOMOUS
