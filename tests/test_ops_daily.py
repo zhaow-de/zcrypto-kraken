@@ -18,7 +18,8 @@ import re
 import subprocess
 import sys
 import urllib.error
-from datetime import datetime, timedelta, timezone
+import urllib.parse
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -1136,3 +1137,69 @@ def test_the_journal_paragraph_stays_quiet_when_nothing_warned():
         now=NOW,
     ).journal_paragraph()
     assert "WARNING" not in para, para
+
+
+# --- spec 00107 D3: the reminders are read from the source that actually knows ------------------------------
+
+
+def _register(tmp_path, *rows, decoy=True):
+    """A register whose re-confirmation log holds `rows` (first-cell, fetched-at) -- plus, by default,
+    a dated table AFTER the next heading, so a parser that ignores section boundaries reads 2099."""
+    text = [
+        "# Kraken reference-data snapshot register",
+        "",
+        "## Provenance",
+        "",
+        "| Sweep | Fetched at (UTC) |",
+        "| -- | -- |",
+        "| not a sweep row | 2000-01-01T00:00:00+00:00 |",
+        "",
+        "## Re-confirmation log",
+        "",
+        "Prose before the table, with a date in it: 2031-01-01.",
+        "",
+        "| Sweep | Fetched at (UTC) | Full response |",
+        "| -- | -- | -- |",
+        *[f"| {first} | {fetched} | 1429 pairs / 824 assets |" for first, fetched in rows],
+        "",
+    ]
+    if decoy:
+        text += ["## Deferred: account-gated facts", "", "| #9 (decoy) | 2099-01-01T00:00:00+00:00 | x |", ""]
+    path = tmp_path / "register.md"
+    path.write_text("\n".join(text))
+    return path
+
+
+def test_the_last_sweep_date_is_read_from_the_real_register_not_a_fixture_shaped_to_the_parser():
+    """The parse must find the committed file's latest row. Row #0 is 2026-07-07 and row #1 is
+    2026-08-04, so `>=` the latter proves the LAST row was read, and the bound never rots as sweeps
+    append. The second assertion re-derives the answer independently of the parser."""
+    found = ops_daily.last_sweep_date(ops_daily.REGISTER)
+    assert found is not None and found >= date(2026, 8, 4), found
+    rows = [line for line in ops_daily.REGISTER.read_text().splitlines() if line.startswith("| #")]
+    assert found.isoformat() in rows[-1], (found, rows[-1])
+
+
+def test_the_last_row_of_the_log_wins_and_tables_outside_it_are_ignored(tmp_path):
+    register = _register(
+        tmp_path, ("#0 (Phase 0, iter-002)", "2026-07-07T03:29:00+00:00"), ("#1 (monthly, 2026-08-04)", "2026-08-04T10:40:09+00:00")
+    )
+    assert ops_daily.last_sweep_date(register) == date(2026, 8, 4)
+
+
+def test_a_log_with_no_dated_row_reads_as_none_never_as_a_date_from_elsewhere(tmp_path):
+    assert ops_daily.last_sweep_date(_register(tmp_path)) is None
+    assert ops_daily.last_sweep_date(_register(tmp_path, decoy=False)) is None
+
+
+@pytest.mark.parametrize(
+    "last,expected",
+    [
+        (date(2026, 8, 4), date(2026, 9, 4)),
+        (date(2026, 12, 4), date(2027, 1, 4)),
+        (date(2026, 1, 31), date(2026, 2, 28)),
+    ],
+)
+def test_the_monthly_cadence_is_a_calendar_month_with_the_day_clamped(last, expected):
+    """The sweep reminders were armed a calendar month apart (2026-08-04 -> 2026-09-04), not 30 days."""
+    assert ops_daily._a_month_after(last) == expected

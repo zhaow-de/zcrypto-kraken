@@ -6,6 +6,7 @@ because a source that cannot be reached is a finding ABOUT that source, never a 
 
 from __future__ import annotations
 
+import calendar
 import http.client
 import importlib.util
 import json
@@ -16,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -187,6 +188,29 @@ LOKI_DS_UID_DEFAULT = "grafanacloud-logs"
 HEALTHCHECKS_API = "https://healthchecks.io/api/v3/checks/"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_LOG = REPO_ROOT / "docs/reference/deploy-log.jsonl"
+REGISTER = REPO_ROOT / "docs/reference/kraken-snapshot-register.md"
+# A row of the register's `## Re-confirmation log` table: first cell `#<n> (...)`, second cell the
+# ISO stamp. Only rows under THAT heading count: the register holds other dated tables.
+_LOG_ROW = re.compile(r"^\| #\d+[^|]*\|\s*(\d{4}-\d{2}-\d{2})T")
+
+
+def last_sweep_date(register: Path) -> date | None:
+    """The `Fetched at` date of the LAST row under `## Re-confirmation log`, or None when no row parses."""
+    found = None
+    in_log = False
+    for line in register.read_text().splitlines():
+        if line.startswith("## "):
+            in_log = line.startswith("## Re-confirmation log")
+            continue
+        row = _LOG_ROW.match(line) if in_log else None
+        if row:
+            found = date.fromisoformat(row.group(1))
+    return found
+
+
+def _a_month_after(d: date) -> date:
+    year, month = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
 
 
 @dataclass
