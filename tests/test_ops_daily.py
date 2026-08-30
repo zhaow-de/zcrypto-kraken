@@ -1026,3 +1026,16 @@ def test_a_vault_that_cannot_be_read_exits_2(monkeypatch, capsys):
 def test_a_bad_since_suffix_is_a_usage_error_not_a_traceback():
     assert ops_daily.main(["report", "--since", "24w"]) == 2
     assert ops_daily.main(["report", "--since", "abc"]) == 2
+
+
+def test_a_truncated_sample_array_is_an_unreadable_source_too():
+    """`"value": [0]` raised `IndexError` past both parses — the same inversion, narrower trigger.
+
+    `read_deadmen` had named `IndexError` beside the tuple all along, so the file's own precedent
+    said where it belonged; it is in `_UNREACHABLE` now and that special case is gone.
+    """
+    truncated = {"data": {"result": [{"metric": {}, "value": [0]}]}}
+    assert ops_daily.read_logs("tok", window=DAY, opener=_canned(truncated)).unreadable
+    assert ops_daily.read_deadmen("tok", opener=_canned(truncated)).unreadable
+    checks = ops_daily.read_verdict("tok", opener=_canned(truncated))
+    assert checks and all(c.value.startswith("unreadable:") for c in checks), checks

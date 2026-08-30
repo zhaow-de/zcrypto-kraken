@@ -11,6 +11,7 @@ import importlib.util
 import json
 import re
 import sys
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -47,7 +48,7 @@ _TIMEOUT = 30
 # unreachable source is a finding about that source. `URLError` and `HTTPError` are `OSError`
 # subclasses, so naming `OSError` covers them too; `HTTPException` carries `IncompleteRead` and
 # `RemoteDisconnected`. No fixture produces any of these -- only a real network does.
-_UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError)
+_UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError, IndexError)
 
 # The history API pages. A chunk returning AT the limit may have dropped transitions, and a report
 # that shows the survivors reads as a quiet day -- so chunks stay narrow and the count is checked.
@@ -268,7 +269,7 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
     try:
         series = _proxy_query(PROM_DS_UID, "max(hc_checks_down_total) or on() vector(999)", token, opener)
         read.via_prometheus = float(series[0]["value"][1]) if series else None
-    except (*_UNREACHABLE, IndexError) as exc:
+    except _UNREACHABLE as exc:
         read.unreadable = f"the dead-man count could not be read through Grafana: {exc}"
 
     def note(text):
@@ -450,6 +451,10 @@ def main(argv: list[str]) -> int:
     try:
         token = grafana_auth.vault_var("grafana_sa_token")
     except Exception as exc:
+        # The catch is deliberately broad -- `vault_var` fails across six unrelated hierarchies and a
+        # narrow tuple would be guaranteed incomplete -- so keep the traceback for the case where
+        # this is a real bug rather than a locked agent. stderr, so stdout stays valid markdown.
+        traceback.print_exc(file=sys.stderr)
         print(
             f"# Daily pass\n\n**Verdict: attention** (exit 2)\n\n## Sources that could not be read\n- the vault could not be read, so no source was queried: {type(exc).__name__}: {exc}"
         )
