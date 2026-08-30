@@ -1388,7 +1388,8 @@ def test_the_report_refuses_to_be_built_without_a_reminders_read():
 
 # --- spec 00107 D5: the dead-man descriptions are checked, not generated ---------------------------------------
 
-_CLEAN_DESC = "Pings on a clean overlay-writer cycle. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled"
+_GOOD_LINK = "infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled"
+_CLEAN_DESC = f"Pings on a clean overlay-writer cycle. Runbook: {_GOOD_LINK}"
 
 
 def test_a_description_carrying_an_internal_token_is_a_finding_named_per_check():
@@ -1443,4 +1444,30 @@ def test_a_missing_or_dangling_runbook_link_is_a_finding():
 def test_a_check_with_no_description_at_all_is_a_finding_not_a_pass():
     assert ops_daily.check_descriptions([{"name": "bare"}]) == [
         "`bare`: no `Runbook: infra/runbooks/<file>#<anchor>` in its description"
+    ]
+
+
+def test_a_working_link_is_not_a_finding_for_how_its_prefix_was_typed():
+    """The prefix marks a citation; it is not a formatting rule, and every spelling below sends the
+    operator to the same anchor. This check detects and cannot repair, so a description reported for
+    a link that works costs a finding line in every daily report until a human edits a hand-written
+    field that was never wrong -- the expensive direction, and the reason the prefix is the loose
+    half of the match while the `infra/runbooks/` path stays exact."""
+    checks = [
+        {"name": "exact", "desc": f"Runbook: {_GOOD_LINK}"},
+        {"name": "lower", "desc": f"runbook: {_GOOD_LINK}"},
+        {"name": "nospace", "desc": f"Runbook:{_GOOD_LINK}"},
+        {"name": "twospace", "desc": f"Runbook:  {_GOOD_LINK}"},
+        {"name": "newline", "desc": f"Runbook:\n{_GOOD_LINK}"},
+    ]
+    assert ops_daily.check_descriptions(checks) == []
+
+
+def test_every_prefixed_link_is_judged_not_only_the_first():
+    """One citation resolving says nothing about the next: a description whose SECOND link is dead
+    still sends the operator to a fragment that scrolls nowhere. The finding names the dead link, so
+    a check that stopped at the first goes SILENT here rather than merely naming the wrong one."""
+    checks = [{"name": "second-dead", "desc": f"Runbook: {_GOOD_LINK} and Runbook: infra/runbooks/ops.md#no-such-anchor"}]
+    assert ops_daily.check_descriptions(checks) == [
+        "`second-dead`: its runbook link infra/runbooks/ops.md#no-such-anchor resolves to no anchor"
     ]
