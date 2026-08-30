@@ -132,6 +132,12 @@ ______________________________________________________________________
 
 A critical-severity Grafana alert (`Reconciler · residual gap increased (permanent loss)`): `zcrypto_reconcile_residual_gap_seconds_total` increased with no counter reset in the last 24 hours. This is the highest-severity rule in the system.
 
+**Bound the event before acting on it.** Query the same counter across widening windows — `increase(<metric>[1h])`, `[6h]`, `[24h]`, `[7d]`. Equal values at 6 h and 7 d mean one event, not a trend; a zero at 1 h means it has stopped. Two queries separate a degrading host from one bad patch, and the alert's own wording cannot.
+
+**Read the ledger for shape, not just totals.** Per-pair and per-hour records distinguish "every pair briefly" from "one pair for a long time" — different faults with the same total.
+
+**When the system already healed it, the remaining work is measurement.** Confirm the mint is real and the archive whole, then stop: reacting operationally to an event that is over, on a host that is fine, is its own incident.
+
 **One booking keeps this red for 24 hours by construction** — the expression is `increase(...[24h])`, so an hour-H gap booked at the `:12`/`:42` tick after H+2 h holds the alert firing until that tick leaves the window a day later, and every notification in between is the **same** event re-notifying, never evidence of a new one. Whether anything *new* booked is read from the counter's **level**: compare `zcrypto_reconcile_residual_gap_seconds_total` now against the total your triage recorded — flat means no new booking. (The `increase()` value itself reads slightly above the booked seconds — Prometheus extrapolates to the window edges; a ~0.07 % excess is the extrapolation, not a second increment.) Expect resolution at the first evaluation after the booking tick + 24 h; verify it actually resolves then rather than assuming.
 
 **And a flat level is only a clean bill while the writer cycle is alive.** Check the age of `zcrypto_reconcile_last_success_timestamp_seconds`: the stamp is written at cycle **completion**, and a steady-state cycle now runs in seconds, so healthy is one tick interval (30 min) plus a seconds-scale cycle — an age past ~35 min is already worth a look, and a cycle long enough to matter has its own warning ([`zcrypto-reconcile-cycle-duration`](#zcrypto-reconcile-cycle-duration)) well below the 3 h staleness page. The 23-minute cycle measured during the 2026-08-21 vol spike (\[[T0147]\]) is the **pre-`00097`** cost model that motivated the change, not a reading to expect today; before that spec the stamp was written near cycle *start* and mis-stated a long cycle's completion by its whole duration. The cycle also **skips fail-closed** on a stale or unclean NAS `.pull-status` (rc 0, `WARNING: writer cycle SKIPPED` in the unit journal naming the reason — routine for ~2 ticks after the NAS 02:25 reboot); a persistent skip only pages via `zcrypto-reconcile-exporter-stale` at 3 h, so during a triage read the journal, not just the alert list. Unit journals on the ops host need `sudo` — unprivileged `journalctl -u` prints `-- No entries --` plus a hint, which is a permissions artifact, never evidence the unit did not run.
@@ -274,3 +280,93 @@ Both bars are provisional and say so in `infra/grafana/alerts.yaml`: they come f
 ### Retire when
 
 `zcrypto_reconcile_ledger_scan_seconds` is no longer published by `cli/archive/command.py`, or the ledger stops being scanned in full each cycle — i.e. compaction has landed and the counters are derived from a bounded read.
+
+______________________________________________________________________
+
+<a name="zcrypto-reconcile-exporter-stale"></a>
+
+## zcrypto-reconcile-exporter-stale — ALERT
+
+### What you are seeing
+
+A **critical** Grafana alert (`Reconciler · exporter stale`): `time() - zcrypto_reconcile_last_success_timestamp_seconds` has read above 10800 s (3 h) for 5 minutes, or the series is gone entirely — `noDataState` is `Alerting`, so total silence pages here too.
+
+The overlay-writer cycle runs at `*:12` and `*:42`, so 3 h is roughly six missed cycles. The threshold was provisioned for the older hourly cadence and was deliberately kept when the cadence doubled.
+
+### What it means
+
+`reconcile.prom` has not been rewritten. While this fires, primary gaps are neither healed nor measured, and every sibling reconcile rule is blind rather than green: `zcrypto-reconcile-residual-gap`, `-healable-gap-rate`, `-source-lag`, `-cycle-duration` and both ledger-scan rules all carry `noDataState: OK` and defer the "the reconciler is gone" question to this rule.
+
+**Three causes, and two sibling alerts discriminate them:**
+
+- **`Ops · archive-pull stalled` also firing** ⇒ the unit itself is not completing. Go to that section; this one is its downstream echo.
+- **`Ops · archive-pull non-zero exit` also firing** ⇒ the reconcile container ran and failed. **A failed cycle publishes no textfile at all** — `cli/archive/command.py`'s reconcile raises `Exit(1)` on any integrity failure *before* `_write_textfile` is reached, and exits 2 before that when a mirror root is missing. That is deliberate: fresh-looking numbers from a cycle that could not read its inputs would be worse than none. So `last_success_timestamp` freezes, and this alert is the escalation of a failure that has persisted 3 h.
+- **Neither sibling firing** ⇒ **the fail-closed gate is skipping every cycle**, and this rule is the ONLY pager for that.
+
+**What a persistent gate skip looks like, because nothing else says it out loud:** the unit is green, `ops_archive_pull_exit_code` is 0, `ops_archive_pull_last_success_timestamp` keeps advancing, the healthchecks.io dead-man keeps being pinged, and one line per tick goes into the unit journal —
+
+```
+zcrypto-archive-pull: WARNING: writer cycle SKIPPED (fail-closed gate): <reason>
+```
+
+That line is a shell `echo`, so it carries **no `level` label** in Loki (the ops Alloy parse stage labels only Python-logging-shaped lines) and can never reach `Ops · ERROR logs`. The skip is a state, not a fault, by design: the reconciler reads the NAS's mirrors and cannot tell "this hour does not exist" from "this hour did not arrive", so a stale or unclean NAS view would let it ledger permanent, deduped, never-revisited false verdicts. Skipping keeps the ledger honest and costs nothing — the hours reconcile on the next healthy cycle.
+
+The gate skips on exactly these conditions, read from `/mnt/zhao-crypto/.pull-status`: the file missing or unreadable; `capture_ok` or `secondary_ok` not both `1`; `ts_epoch` not a plain unix timestamp; `ts_epoch` more than 14400 s (4 h) old; `ts_epoch` more than 600 s in the FUTURE. The file is written by the NAS's own pull loop immediately after its primary and secondary capture pulls, so a stale one means the NAS's VPS pulls are broken or its loop is dead — **the fault is upstream, on the NAS, not here.**
+
+### What to do
+
+1. **Read the unit and the timer.** `ssh hp`, then `systemctl list-timers zcrypto-archive-pull.timer` and `systemctl status zcrypto-archive-pull.service`.
+2. **Read the journal — with `sudo`.** `sudo journalctl -u zcrypto-archive-pull.service --since -4h --no-pager | tail -60`. Print the line count before believing an empty result: an unprivileged `journalctl -u` prints `-- No entries --` with a you-cannot-see-system-messages hint above it, which is a permissions artifact and not an idle unit. Look for `SKIPPED (fail-closed gate)` and its reason, or the reconcile CLI's `archive reconcile: … ERROR` lines.
+3. **If it is skipping, read the gate's input rather than guessing**: `cat /mnt/zhao-crypto/.pull-status` and `date -u +%s`, and compare `ts_epoch` against the two bounds above. **Do not hand-edit `.pull-status`** — it is the reader's ground truth, and the gate exists precisely to refuse a frozen view. Take the incident to the NAS: its `zcrypto-nas-archive-pull-stalled` / `-errors` rules and `hc_checks_down_total`.
+4. **If the reconcile step is failing**, read the ERROR line's `pair=`/`kind=`/`hour=` from step 2, then: `docker ps -a --filter name=zcrypto-reconcile` (a leftover container after a dockerd crash fails the next run on a name conflict — `docker rm zcrypto-reconcile` clears it), and `ls /mnt/zhao-crypto/capture-segments | head` to confirm the read-only NFS view is alive. The mount is `soft`, so a dead NAS surfaces EIO rather than hanging, and the CLI treats an unreadable segment as a loud integrity fact.
+5. **Do not print the container's environment** while triaging on any host. Scope every inspect: `docker inspect --format '{{.State.Status}} {{.RestartCount}}' <name>`, never `{{json .Config}}` or `{{json .Config.Env}}`, and never `docker compose config`.
+6. **After the fix**, wait for the next `:12`/`:42` tick, or start the unit attended with `sudo systemctl start zcrypto-archive-pull.service` (it also re-runs the daily trade backfill if today's has not run; both steps are idempotent by design). Then verify by value from the workstation: `bash infra/scripts/ops-postverify.sh` — its `reconcile freshness (s)` check reads `time() - node_textfile_mtime_seconds{file=~".*reconcile.prom"}` under 4200. **`(no series)` is a FAIL there, never a zero.**
+7. **Never read this gauge as coverage.** It is run liveness only: it can read maximally fresh while an hour that was lost has not yet been booked. Hour H is bookable no earlier than H+2 h, at the next `:12`/`:42` tick.
+
+### Retire when
+
+`zcrypto_reconcile_last_success_timestamp_seconds` is no longer emitted by `_write_textfile` in `cli/archive/command.py`, or `zcrypto-reconcile-exporter-stale` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="zcrypto-reconcile-source-lag"></a>
+
+## zcrypto-reconcile-source-lag — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert (`Reconciler · capture mirror lagging`): `max by (source) (zcrypto_reconcile_source_lag_seconds)` above 10800 s (3 h) for 10 minutes. **One instance per mirror** — the `source` label reads `primary` or `secondary` and names which one, and the two fire independently.
+
+The value is the age of that mirror's **newest committed final of any pair, book or trades**, measured from the hour that final covers. A final only commits after its hour closes and the NAS pulls roughly hourly (`ARCHIVE_PULL_INTERVAL`, default 3600 s, plus the loop's own work), so 1–2 h is the healthy steady state.
+
+### What it means
+
+This is a **dataflow** dead-man, and that is what makes it worth its own rule: it is independent of both capture hosts' healthchecks.io pings, and a host can keep pinging happily while writing nothing.
+
+Read the `source` label first, because the two directions mean very different things:
+
+- **`secondary` lagging ⇒ the fleet has no witness.** Nothing is lost yet, and it is still a warning, but until it recovers **any** primary silence books as `both_streams_silent` — permanent, paged, never revisited. Treat it with more urgency than its severity suggests.
+- **`primary` lagging while the secondary is fresh ⇒ every affected hour is being covered from the secondary.** Expect `zcrypto-reconcile-healable-gap-rate` to follow.
+- **Both lagging ⇒ look at the transport, not the fleet** — the NAS's pull loop or the ops node's NFS view of it, since both mirrors are read through the same `/mnt/zhao-crypto` mount.
+
+**A reading of `+Inf` is not lag — it means that mirror is EMPTY.** The reconciler scanned the mirror's root and found no committed final for any pair at all, and `+Inf` is published deliberately (omitting the series would leave the rule with nothing to evaluate and nothing would fire). Operationally: the tree was wiped, re-rooted, or never populated, or the NFS view resolved to an empty directory. It is not the "root is missing" case — a missing root makes the cycle exit 2 before publishing anything, which surfaces as `Ops · archive-pull non-zero exit` and then `Reconciler · exporter stale` instead.
+
+**And the number can be stale in the one situation that matters.** A broken NAS pull flips `.pull-status` and the ops writer cycle then skips fail-closed, which rewrites nothing — so `reconcile.prom` freezes and the lag you are reading is the last pre-skip one. Confirm the reading is live before acting on it.
+
+### What to do
+
+1. **Confirm the reading is live.** `zcrypto-reconcile-exporter-stale` must not be firing, and `time() - node_textfile_mtime_seconds{file=~".*reconcile.prom"}` must be under 4200 s — `uv run python infra/scripts/grafana-query.py 'time() - node_textfile_mtime_seconds{file=~".*reconcile.prom"}'` from the workstation. `(no series)` is a FAIL, never a zero.
+2. **Look at the named mirror on `ssh hp`.** The layout is `<root>/<BASE>/<QUOTE>/<book|trades>/<YYYY>/<MM>/<DD>/<HH>.parquet`, `primary` = `/mnt/zhao-crypto/capture-segments`, `secondary` = `/mnt/zhao-crypto/capture-segments-red`:
+   ```
+   ls -lt /mnt/zhao-crypto/capture-segments/BTC/EUR/book/$(date -u +%Y/%m/%d)/ | head
+   ls -lt /mnt/zhao-crypto/capture-segments-red/BTC/EUR/book/$(date -u +%Y/%m/%d)/ | head
+   ```
+   Compare the two. A mount that has gone away answers with EIO or an empty listing rather than hanging (the export is mounted `soft`), and an empty listing here with a populated sibling is the `+Inf` shape.
+3. **Discriminate the capture host from its pull channel.** The host's own signals answer the first half — `zcrypto-capture-all-streams-silent` / `-stream-silent` and [`capture.md`](capture.md). `cat /mnt/zhao-crypto/.pull-status` answers the second: `capture_ok=0` or `secondary_ok=0` is the NAS telling you which pull failed, and its `zcrypto-nas-archive-pull-errors` / `-stalled` rules carry the reason.
+4. **`+Inf`: do not attempt to repopulate the tree from ops.** The mount is read-only by role and writing through a soft mount can corrupt silently; the mirror is the NAS's to restore, and pushes go only through its own rrsync channel.
+5. **Do not converge or restart a capture host on this signal alone** (`.claude/rules/fleet-deploys.md`) — a converge on the primary restarts live, unbackfillable capture, and this alert has not yet said the daemon is at fault.
+6. **All-clear by value**: `uv run python infra/scripts/grafana-query.py 'zcrypto_reconcile_source_lag_seconds'` shows both sources back under ~7200 after the next NAS pull plus the next `:12`/`:42` writer tick.
+
+### Retire when
+
+`zcrypto_reconcile_source_lag_seconds` is no longer emitted by `_write_textfile` in `cli/archive/command.py`, or `zcrypto-reconcile-source-lag` is absent from `infra/grafana/alerts.yaml`.
