@@ -1079,10 +1079,14 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
     """The blind spot closed in KIND, not by instance.
 
     `_canned` never looked at the request, so a Prometheus query path shipped against a Loki
-    datasource and 404'd on the first live run while the suite stayed green. Two endpoints were
-    pinned when that was fixed; the module builds eight, and the four left unpinned would fail the
-    same way. Every one of them is asserted here, so a path or a datasource uid cannot drift on any
-    reader without a test saying so.
+    datasource and 404'd on the first live run while the suite stayed green. The module builds EIGHT
+    endpoints: the rules API, the chunked rule history, the dead-man Prometheus query, the direct
+    healthchecks.io read, the Loki log query, the verdict Prometheus query, and the reminders'
+    `increase()` and `resets()`. Six of them are asserted here; the log and the verdict reads are
+    pinned by `test_the_log_read_uses_lokis_query_path_not_prometheuss` and
+    `test_the_prometheus_reads_keep_the_prometheus_query_path`. Six plus two is the whole set, so a
+    path or a datasource uid cannot drift on any reader without a test saying so -- and a NINTH
+    reader added without a pin makes the enumeration above false, which is the sentence to re-read.
     """
     monkeypatch.setenv("GRAFANA_LOKI_DS_UID", ops_daily.LOKI_DS_UID_DEFAULT)
     monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "k")
@@ -1160,17 +1164,23 @@ def test_the_journal_paragraph_stays_quiet_when_nothing_warned():
 # --- spec 00107 D3: the reminders are read from the source that actually knows ------------------------------
 
 
-def _register(tmp_path, *rows, decoy=True):
+def _register(tmp_path, *rows, decoy=True, preamble=False):
     """A register whose re-confirmation log holds `rows` (first-cell, fetched-at) -- plus, by default,
     a dated table AFTER the next heading, so a parser that ignores section boundaries reads 2099.
 
     The un-numbered `not a sweep row` sits INSIDE the log and LAST, where only `_LOG_ROW`'s `#\\d+`
     rejects it: drop that clause and the parse answers 2000-01-01 instead of the real row, or
     instead of None. Under an earlier heading it guarded nothing -- the section gate got there first.
+
+    `preamble=True` puts a well-formed row ABOVE the first heading, which is the only place the
+    gate's STARTING value can be read: every `## ` line reassigns `in_log`, so a row under a wrong
+    heading cannot tell a `False` initializer from a `True` one. Pass it with no rows in the log, or
+    the real rows overwrite the preamble's answer and the distinction disappears again.
     """
     text = [
         "# Kraken reference-data snapshot register",
         "",
+        *(["| #8 (above every heading) | 2098-01-01T00:00:00+00:00 | x |", ""] if preamble else []),
         "## Provenance",
         "",
         "| Sweep | Fetched at (UTC) |",
@@ -1218,6 +1228,11 @@ def test_the_last_row_of_the_log_wins_and_tables_outside_it_are_ignored(tmp_path
 def test_a_log_with_no_dated_row_reads_as_none_never_as_a_date_from_elsewhere(tmp_path):
     assert ops_daily.last_sweep_date(_register(tmp_path)) is None
     assert ops_daily.last_sweep_date(_register(tmp_path, decoy=False)) is None
+    # Above the FIRST heading, where the gate's initializer is the only thing that can reject the
+    # row -- the two cases above are decided by a `## ` line reassigning `in_log`, so they pass
+    # unchanged if the gate starts open. A register's preamble is prose in practice; a table there
+    # is what a botched edit leaves behind.
+    assert ops_daily.last_sweep_date(_register(tmp_path, preamble=True)) is None
 
 
 @pytest.mark.parametrize(
@@ -1287,11 +1302,9 @@ def test_the_healable_reminder_fires_only_when_the_counter_moved(tmp_path, value
 
 
 def test_the_healable_reminder_names_a_counter_reset_and_never_quotes_it_as_movement(tmp_path):
-    """The counter is re-emitted from the ledger's totals every cycle, so a ledger correction or
-    rebuild that lowers the total is a reset, and `increase()` then reports the whole post-reset
-    value as movement -- the hazard the `zcrypto-reconcile-healable-gap-rate` rule guards with
-    `resets()`. The reminder names the reset and owes the ledger recount; the false number never
-    reaches the report."""
+    """A non-zero `resets()` in the window makes the paired `increase()` unquotable: the reminder is
+    owed, its status names the reset, and the figure `increase()` returned never reaches the report
+    as movement. The two reads are paired precisely so the second can veto the first."""
     read = ops_daily.read_reminders(
         "tok", now=NOW, window=DAY, opener=_canned(_counter("18850.2"), _counter(1)), register=_register(tmp_path, *_TWO_SWEEPS)
     )
@@ -1374,7 +1387,9 @@ def test_an_unreadable_reminder_source_exits_2_like_every_other_source():
 
 
 def test_the_report_refuses_to_be_built_without_a_reminders_read():
-    """A default that reads as 'nothing due' is the silent gap this iteration closes; the field is required."""
+    """A default that reads as 'nothing due' is the silent gap this iteration closes, so `build_report`
+    carries no default for `reminders`: omitting it raises rather than reporting an unread source as
+    clean. `Report.reminders` gaining a default later would not be caught here -- this pins the call."""
     with pytest.raises(TypeError):
         ops_daily.build_report(
             alerts=ops_daily.AlertsRead(),

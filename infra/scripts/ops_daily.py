@@ -279,11 +279,12 @@ def read_reminders(
         note(f"the healable counter could not be read: {exc}")
         return read
     if reset:
-        # A counter summed from an append-only ledger DECREASES when a record is corrected or the
-        # ledger is rebuilt, and `increase()` then reports the whole post-reset value as movement
-        # (T0044). The `zcrypto-reconcile-healable-gap-rate` rule guards the same window with
-        # `resets()`; this mirrors it, and the number is deliberately not quoted -- the ledger's own
-        # count is the arbiter.
+        # A counter summed from an append-only ledger CAN DECREASE when a record is corrected or the
+        # ledger is rebuilt -- a correction that raises the total resets nothing -- and `increase()`
+        # then reports the whole post-reset value as movement (`T0044`, resolved, records the
+        # correction it was opened on). The `zcrypto-reconcile-healable-gap-rate` rule guards the
+        # same window with `resets()`; this mirrors it, and the number is deliberately not quoted --
+        # the ledger's own count is the arbiter.
         owed = True
         status = f"counter reset in {hours} h (a ledger correction or rebuild), so its movement says nothing -- recount the qualifying days from the ledger"
     else:
@@ -323,9 +324,10 @@ def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[st
     """One line per defect in a dead-man check's description, named per check (spec 00107 D5).
 
     The descriptions are hand-written in healthchecks.io, outside the reach of every repo test, and
-    are read from a phone with nothing open. Two assertions each: at least one `Runbook: <file>#<anchor>`
-    citation, EVERY one of them resolving against a real `<a name=…>` tag in the file it names, and
-    no internal token.
+    are read from a phone with nothing open. Two assertions each: at least one
+    `Runbook: infra/runbooks/<file>#<anchor>` citation -- the prefix is part of the shape the finding
+    quotes back -- EVERY one of them resolving against a real `<a name=…>` tag in the file it names,
+    and no internal token.
     Detects, never repairs -- the descriptions live in the SaaS, so a finding is a line for a human.
     """
     out = []
