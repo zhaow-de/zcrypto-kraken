@@ -104,7 +104,12 @@ def _history_transitions(payload: dict):
     t_idx = names.index("time") if "time" in names else 0
     l_idx = names.index("line") if "line" in names else 1
     for stamp, line in zip(columns[t_idx], columns[l_idx]):
-        if isinstance(line, dict):
+        # `stamp` is type-checked for the same reason `line` is, and it is the more dangerous of the
+        # two: if the frame ever drops its `time` field, `t_idx` falls back to 0 and lands on the
+        # SAME column as `line`, so the isinstance below passes and `stamp / 1000` divides a dict.
+        # `TypeError` is deliberately outside `_UNREACHABLE`, so that raise would take the whole
+        # pass down -- no report, exit 1 -- for a frame it could not read.
+        if isinstance(line, dict) and isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
             yield stamp, line
 
 

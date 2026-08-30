@@ -1039,3 +1039,58 @@ def test_a_truncated_sample_array_is_an_unreadable_source_too():
     assert ops_daily.read_deadmen("tok", opener=_canned(truncated)).unreadable
     checks = ops_daily.read_verdict("tok", opener=_canned(truncated))
     assert checks and all(c.value.startswith("unreadable:") for c in checks), checks
+
+
+@pytest.mark.parametrize(
+    "schema,values",
+    [
+        # `time` gone: t_idx falls back to 0 and resolves to the SAME column as `line`, so the
+        # dict passes the line check and `stamp / 1000` divides a dict by an int.
+        ({"fields": [{"name": "line"}, {"name": "labels"}]}, [[{"ruleUID": "u", "current": "Alerting"}], [{}]]),
+        # `time` as RFC3339 strings, the other realistic drift of this frame.
+        (
+            {"fields": [{"name": "time"}, {"name": "line"}, {"name": "labels"}]},
+            [["2026-08-29T02:00:00Z"], [{"ruleUID": "u", "current": "Alerting"}], [{}]],
+        ),
+    ],
+)
+def test_a_history_frame_whose_time_column_drifted_is_read_not_fatal(schema, values):
+    """`line` was type-checked and `stamp` was not, and `stamp` is the more dangerous of the two.
+
+    This frame is the payload the module's own comments treat as least stable -- measured once
+    against the live API. `TypeError` is deliberately outside `_UNREACHABLE`, so an unguarded
+    division here takes the whole pass down with no report at all: exit 1, ATTENTION, for a source
+    it could not read. Reading no transitions from a frame it does not understand is the right
+    answer; crashing is not.
+    """
+    read = ops_daily.read_alerts(
+        "tok", now=NOW, window=DAY, opener=_canned(_rules(), {"schema": schema, "data": {"values": values}})
+    )
+    assert read.unreadable is None
+    assert read.fired_in_window == []
+
+
+def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
+    """The blind spot closed in KIND, not by instance.
+
+    `_canned` never looked at the request, so a Prometheus query path shipped against a Loki
+    datasource and 404'd on the first live run while the suite stayed green. Two endpoints were
+    pinned when that was fixed; the module builds six, and the four left unpinned would fail the
+    same way. Every one of them is asserted here, so a path or a datasource uid cannot drift on any
+    reader without a test saying so.
+    """
+    monkeypatch.setenv("GRAFANA_LOKI_DS_UID", ops_daily.LOKI_DS_UID_DEFAULT)
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "k")
+
+    alerts = _recording(_rules(), _EMPTY_HISTORY)
+    ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=alerts)
+    assert any(u.endswith("/api/prometheus/grafana/api/v1/rules") for u in alerts.urls), alerts.urls
+    history = [u for u in alerts.urls if "/rules/history" in u]
+    assert history, alerts.urls
+    assert all("from=" in u and "to=" in u and "limit=" in u for u in history), history
+
+    deadmen = _recording({"data": {"result": []}}, {"checks": []})
+    ops_daily.read_deadmen("tok", opener=deadmen)
+    assert any("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in deadmen.urls), deadmen.urls
+    assert any(u == "https://healthchecks.io/api/v3/checks/" for u in deadmen.urls), deadmen.urls
+    assert not any("/loki/" in u for u in deadmen.urls), deadmen.urls
