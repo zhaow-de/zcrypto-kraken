@@ -723,10 +723,13 @@ _READ_SAFE_ROOTS = (
     "/var/lib/zcrypto-engine/exec/",
     "/var/lib/zcrypto-engine/journal/",
     "/mnt/zhao-crypto/",
-    "/run/log/",
-    "/etc/systemd/",
-    "/proc/",
-    "/sys/",
+    # `/etc/systemd/journald.conf` and `.conf.d/` both, by prefix -- NOT `/etc/systemd/`, where a
+    # unit file may carry `Environment=` inline. Every root here is one a runbook actually reads:
+    # `/proc/` and `/sys/` were added on the assumption that they are inert, and `/proc/` is not --
+    # `cat /proc/<pid>/environ` prints a container's environment, which on the engine host is the
+    # live Kraken trade key that CLAUDE.md forbids printing. An allowlist may hold only what has
+    # been checked, or it is a denylist again.
+    "/etc/systemd/journald.conf",
     # Named as a FILE, not as its directory: `/etc/zcrypto-ops/alloy/` also holds alloy-secrets.env,
     # so allowing the directory would re-open the glob hole for the sake of one compose file.
     "/etc/zcrypto-ops/alloy/compose.yaml",

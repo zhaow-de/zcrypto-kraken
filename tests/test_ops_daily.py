@@ -786,3 +786,26 @@ def test_the_read_patterns_the_exact_unit_class_must_not_break():
     assert ops_daily.classify_action("systemctl list-timers 'zcrypto-*'", host="ops") is ops_daily.Tier.AUTONOMOUS
     assert ops_daily.classify_action("systemctl list-units 'zcrypto-*.service' --all", host="ops") is ops_daily.Tier.AUTONOMOUS
     assert ops_daily.classify_action("systemctl restart alloy", host="ops") is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "sudo cat /proc/1234/environ",
+        "cat /proc/self/environ",
+        "grep -r KRAKEN /proc/",
+        "cat /sys/class/net/eth0/address",
+        "sudo cat /etc/systemd/system/zcrypto-engine.service",
+        "cat /var/logsecret/keys.txt",
+    ],
+)
+def test_a_read_safe_root_holds_only_what_was_checked(cmd):
+    """`/proc/` and `/sys/` were listed as inert without checking, and `/proc/` is not inert.
+
+    `cat /proc/<pid>/environ` prints a container's environment -- on the engine host the live Kraken
+    trade key, the one read CLAUDE.md names outright. `/etc/systemd/` was equally speculative: a
+    unit file can carry `Environment=` inline, so only journald's own config is listed. The last
+    case pins the prefix boundary: a root ending in `/` cannot be widened by a sibling that merely
+    starts with its letters.
+    """
+    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
