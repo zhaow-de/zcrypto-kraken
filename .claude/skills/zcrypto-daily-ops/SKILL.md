@@ -59,7 +59,7 @@ The report's `## Reminders` section is the trigger — an **OWED** line is work,
 
 ## 6. Rewrite any dead-man description the report faults
 
-The report's `## Dead-men` section prints one `- description:` line per faulted check: a description with no `Runbook: infra/runbooks/<file>#<anchor>` link, one whose link resolves to no anchor in the file it names, or one carrying repo-internal vocabulary — on a surface read from a phone with nothing open.
+The report's `## Dead-men` section prints one `- description:` line per **defect**, each naming its check: a description with no `Runbook: infra/runbooks/<file>#<anchor>` link, one whose link resolves to no anchor in the file it names, or one carrying repo-internal vocabulary — on a surface read from a phone with nothing open. **One check can produce several lines** — a missing link plus two internal tokens is three — so count the distinct check names before writing a number into the entry.
 
 **This is not an alert.** Nothing fired, so there is no runbook section to open; no command is run, so there is nothing to classify; and it does not move the verdict — a day whose only finding is a description is still `all-clear`, by design. What it needs is a hand rewrite, which no repo change can make: the descriptions are hand-written in healthchecks.io.
 
