@@ -6,6 +6,7 @@ because a source that cannot be reached is a finding ABOUT that source, never a 
 
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import json
 import re
@@ -39,6 +40,14 @@ GRAFANA_URL = grafana_auth.GRAFANA_URL
 PROM_DS_UID = "grafanacloud-prom"
 _RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 _TIMEOUT = 30
+# What "the source could not be read" actually looks like against a live endpoint. `URLError` alone
+# is not enough: urllib wraps OSError only around the REQUEST, so a timeout, a reset or a truncated
+# body during `getresponse()` or the read escapes uncaught -- and the pass dies at 03:00 with a
+# traceback and exit 1, which is the ATTENTION code, exactly inverting the module's contract that an
+# unreachable source is a finding about that source. `URLError` and `HTTPError` are `OSError`
+# subclasses, so naming `OSError` covers them too; `HTTPException` carries `IncompleteRead` and
+# `RemoteDisconnected`. No fixture produces any of these -- only a real network does.
+_UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError)
 
 # The history API pages. A chunk returning AT the limit may have dropped transitions, and a report
 # that shows the survivors reads as a quiet day -- so chunks stay narrow and the count is checked.
@@ -128,7 +137,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                             host=_host_of(uid, instances[0]),
                         )
                     )
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+    except _UNREACHABLE as exc:
         return AlertsRead(unreadable=f"the rules API could not be read: {exc}")
 
     fired = {a.uid: a for a in read.firing_now}
@@ -162,7 +171,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 )
                 break
             chunk_start = chunk_end
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+    except _UNREACHABLE as exc:
         read.unreadable = f"the alert-state history could not be read: {exc}"
     read.fired_in_window = list(fired.values())
     return read
@@ -229,7 +238,7 @@ def read_logs(token: str, *, window: timedelta, opener=urllib.request.urlopen, e
     expr = f'sum by (host, container, level) (count_over_time({{host=~".+", level=~"WARNING|ERROR|CRITICAL"}}[{hours}h]))'
     try:
         result = _proxy_query(loki_ds_uid(env), expr, token, opener, api_path=_LOKI_QUERY_PATH)
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+    except _UNREACHABLE as exc:
         return LogsRead(unreadable=f"the log plane could not be read: {exc}")
     counts = [
         LogCount(
@@ -255,7 +264,7 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
     try:
         series = _proxy_query(PROM_DS_UID, "max(hc_checks_down_total) or on() vector(999)", token, opener)
         read.via_prometheus = float(series[0]["value"][1]) if series else None
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, IndexError) as exc:
+    except (*_UNREACHABLE, IndexError) as exc:
         read.unreadable = f"the dead-man count could not be read through Grafana: {exc}"
 
     def note(text):
@@ -269,7 +278,7 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
         request = urllib.request.Request(HEALTHCHECKS_API, headers={"X-Api-Key": key})
         with opener(request, timeout=_TIMEOUT) as response:
             read.via_healthchecks = json.load(response).get("checks", [])
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+    except _UNREACHABLE as exc:
         note(f"healthchecks.io could not be read directly: {exc}")
     return read
 
@@ -293,7 +302,7 @@ def read_verdict(token: str, *, opener=urllib.request.urlopen) -> list[Check]:
     for name, expr in VERDICT_CHECKS:
         try:
             series = _proxy_query(PROM_DS_UID, expr, token, opener)
-        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+        except _UNREACHABLE as exc:
             checks.append(Check(name, expr, ok=False, value=f"unreadable: {exc}"))
             continue
         checks.append(

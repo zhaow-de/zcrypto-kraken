@@ -10,6 +10,7 @@ invention, so every test passed while the pass would have matched no alert to an
 from __future__ import annotations
 
 import contextlib
+import http.client
 import importlib.util
 import io
 import json
@@ -916,6 +917,7 @@ def test_the_log_read_uses_lokis_query_path_not_prometheuss():
     ops_daily.read_logs("tok", window=DAY, opener=opener)
     assert len(opener.urls) == 1
     assert "/loki/api/v1/query" in opener.urls[0], opener.urls[0]
+    assert "/uid/grafanacloud-logs/" in opener.urls[0], opener.urls[0]
 
 
 def test_the_prometheus_reads_keep_the_prometheus_query_path():
@@ -923,3 +925,37 @@ def test_the_prometheus_reads_keep_the_prometheus_query_path():
     opener = _recording({"data": {"result": []}})
     ops_daily.read_verdict("tok", opener=opener)
     assert opener.urls and all("/api/v1/query" in u and "/loki/" not in u for u in opener.urls), opener.urls
+    assert all("/uid/grafanacloud-prom/" in u for u in opener.urls), opener.urls
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError("timed out"),
+        ConnectionResetError("reset by peer"),
+        http.client.RemoteDisconnected("closed without response"),
+        http.client.IncompleteRead(b"half"),
+        urllib.error.URLError("dns"),
+        urllib.error.HTTPError("u", 502, "bad gateway", {}, None),
+    ],
+)
+def test_a_transport_failure_is_an_unreadable_source_not_a_crash(exc):
+    """urllib wraps OSError only around the REQUEST, so these escape a `URLError`-only catch.
+
+    None of them can be produced by a fixture that returns a payload, which is why they survived
+    every green run: they need a real network. Uncaught, the 03:00 pass dies with a traceback and
+    Python exits 1 -- the ATTENTION code -- so an unreachable Grafana would have been reported as
+    a fleet finding rather than as the unreadable source it is, inverting the module's contract.
+    """
+    for read, kwargs in (
+        (ops_daily.read_logs, {"window": DAY}),
+        (ops_daily.read_alerts, {"now": NOW, "window": DAY}),
+        (ops_daily.read_deadmen, {}),
+    ):
+        result = read("tok", opener=_raises(exc), **kwargs)
+        assert result.unreadable, f"{read.__name__} let {type(exc).__name__} escape"
+
+
+def test_the_verdict_read_survives_a_transport_failure_too():
+    checks = ops_daily.read_verdict("tok", opener=_raises(TimeoutError("timed out")))
+    assert checks and all(c.ok is None or c.ok is False for c in checks), checks
