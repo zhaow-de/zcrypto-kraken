@@ -238,9 +238,14 @@ def read_logs(token: str, *, window: timedelta, opener=urllib.request.urlopen, e
     expr = f'sum by (host, container, level) (count_over_time({{host=~".+", level=~"WARNING|ERROR|CRITICAL"}}[{hours}h]))'
     try:
         result = _proxy_query(loki_ds_uid(env), expr, token, opener, api_path=_LOKI_QUERY_PATH)
+        counts = _log_counts(result)
     except _UNREACHABLE as exc:
         return LogsRead(unreadable=f"the log plane could not be read: {exc}")
-    counts = [
+    return LogsRead(counts=sorted(counts, key=lambda c: -c.count))
+
+
+def _log_counts(result) -> list[LogCount]:
+    return [
         LogCount(
             host=(s.get("metric") or {}).get("host", "?"),
             container=(s.get("metric") or {}).get("container", "?"),
@@ -249,7 +254,6 @@ def read_logs(token: str, *, window: timedelta, opener=urllib.request.urlopen, e
         )
         for s in result
     ]
-    return LogsRead(counts=sorted(counts, key=lambda c: -c.count))
 
 
 def _readonly_key() -> str | None:
@@ -300,16 +304,19 @@ VERDICT_CHECKS: tuple[tuple[str, str], ...] = (
 def read_verdict(token: str, *, opener=urllib.request.urlopen) -> list[Check]:
     checks = []
     for name, expr in VERDICT_CHECKS:
+        # The PARSE is inside the guard too: a 200 whose shape changed raises `KeyError` out here,
+        # and an uncaught raise leaves the pass at exit 1 -- attention -- for a source it could not
+        # read. A body it cannot understand is the same finding as a body it cannot fetch.
         try:
             series = _proxy_query(PROM_DS_UID, expr, token, opener)
+            check = (
+                Check(name, expr, ok=True, value=str(series[0]["value"][1]))
+                if series
+                else Check(name, expr, ok=False, value="(no series)")
+            )
         except _UNREACHABLE as exc:
-            checks.append(Check(name, expr, ok=False, value=f"unreadable: {exc}"))
-            continue
-        checks.append(
-            Check(name, expr, ok=True, value=str(series[0]["value"][1]))
-            if series
-            else Check(name, expr, ok=False, value="(no series)")
-        )
+            check = Check(name, expr, ok=False, value=f"unreadable: {exc}")
+        checks.append(check)
     return checks
 
 
@@ -431,9 +438,22 @@ def main(argv: list[str]) -> int:
     if not argv or argv[0] != "report":
         print('usage: ops-daily.py report [--since 24h] [--journal-entry]\n       ops-daily.py classify --host <host> "<command>"')
         return 2
-    window = _parse_since(argv[argv.index("--since") + 1]) if "--since" in argv else timedelta(hours=24)
+    try:
+        window = _parse_since(argv[argv.index("--since") + 1]) if "--since" in argv else timedelta(hours=24)
+    except (KeyError, ValueError, IndexError) as exc:
+        print(f"--since takes a count and h or d, like 24h or 3d: {exc}")
+        return 2
     now = datetime.now(timezone.utc)
-    token = grafana_auth.vault_var("grafana_sa_token")
+    # The vault is a SOURCE like any other. A locked GPG agent raises `CalledProcessError`, which is
+    # a `SubprocessError` and NOT an `OSError`, so `_UNREACHABLE` does not cover it -- and uncaught
+    # it exits 1, the attention code, for a credential the pass could not read.
+    try:
+        token = grafana_auth.vault_var("grafana_sa_token")
+    except Exception as exc:
+        print(
+            f"# Daily pass\n\n**Verdict: attention** (exit 2)\n\n## Sources that could not be read\n- the vault could not be read, so no source was queried: {type(exc).__name__}: {exc}"
+        )
+        return 2
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),

@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import re
+import subprocess
 import sys
 import urllib.error
 from datetime import datetime, timedelta, timezone
@@ -992,3 +993,36 @@ def test_a_healthy_but_empty_verdict_is_not_an_unreadable_source():
     )
     assert not report.unreadable, report.unreadable
     assert report.exit_code == 1, report.exit_code
+
+
+def test_a_shape_changed_payload_is_an_unreadable_source_not_a_crash():
+    """A 200 whose body changed shape used to raise `KeyError` past the guard.
+
+    Both parses now sit inside their try. Uncaught, each left the pass at exit 1 -- attention -- for
+    a source it could not read, the same inversion as a transport failure one line earlier.
+    """
+    bad = {"data": {"result": [{"metric": {}, "vaIue": [0, "1"]}]}}
+    assert ops_daily.read_logs("tok", window=DAY, opener=_canned(bad)).unreadable
+    checks = ops_daily.read_verdict("tok", opener=_canned(bad))
+    assert checks and all(c.value.startswith("unreadable:") for c in checks), checks
+
+
+def test_a_vault_that_cannot_be_read_exits_2(monkeypatch, capsys):
+    """The vault is a source too, and its failure is not an `OSError`.
+
+    A locked GPG agent raises `CalledProcessError` -- a `SubprocessError` -- so `_UNREACHABLE` never
+    covered it, and `main` resolved the token outside any handler. That exited 1 with a traceback:
+    a credential the pass could not read, reported as a finding about the fleet.
+    """
+
+    def boom(*a, **k):
+        raise subprocess.CalledProcessError(2, ["vault-pass.sh"])
+
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", boom)
+    assert ops_daily.main(["report"]) == 2
+    assert "the vault could not be read" in capsys.readouterr().out
+
+
+def test_a_bad_since_suffix_is_a_usage_error_not_a_traceback():
+    assert ops_daily.main(["report", "--since", "24w"]) == 2
+    assert ops_daily.main(["report", "--since", "abc"]) == 2
