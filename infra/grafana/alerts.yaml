@@ -2903,7 +2903,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- the bounded recovery ladder ran and did not recover it. That pair's L2 is not being captured, AND it silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so hc.io is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-book-desync-stuck"
+      summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- the bounded recovery ladder ran and did not recover it. That pair's L2 is still being written but is no longer certified against Kraken's checksum, AND the desync silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so hc.io is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-book-desync-stuck"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "101"
     labels:
