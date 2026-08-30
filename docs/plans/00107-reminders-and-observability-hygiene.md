@@ -70,9 +70,8 @@ def _drop_levels(caplog, prefix: str) -> list[int]:
 
 
 def test_a_late_event_behind_a_committed_hour_is_dropped_at_info(tmp_path, caplog):
-    # ~600 of these per reconnect, on every reconnect: as WARNING they were ~1200 lines a day
-    # competing with real findings in the daily pass's log read, and they told nothing the scraped
-    # counter `zcrypto_capture_reconnects_total` does not tell better.
+    # A reconnect's replay is expected, not a fault: the scraped `zcrypto_capture_reconnects_total`
+    # is the instrument for how often it happens, and the daily pass's WARNING read carries findings only.
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
     assert w.finalize_completed_hours(_ts(11, 0)) == 1
@@ -114,10 +113,10 @@ In `cli/capture/segment_writer.py`, the late-event site (currently lines 361–3
             # An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
             # trade snapshot replays prints from before the boundary (T0026); writing them beside a
             # committed final would either duplicate rows it already holds or strand them.
-            # INFO, not WARNING: this is the expected consequence of a normal reconnect, ~600 lines
-            # per event, and at WARNING it drowned the daily pass's log read. The instrument for
-            # "how often does this happen" is the scraped `zcrypto_capture_reconnects_total`, never
-            # a count of these lines — do not raise it back (spec 00107 D4).
+            # INFO, not WARNING: the expected consequence of a normal reconnect, not a fault. The
+            # instrument for "how often does this happen" is the scraped
+            # `zcrypto_capture_reconnects_total`, never a count of these lines — do not raise it
+            # back (spec 00107 D4).
             logger.info("dropping late event pair=%s kind=%s ts=%s floor=%s", self._pair, self._kind, ts, floor)
 ```
 
@@ -165,12 +164,13 @@ Body: the measured basis (two bursts in 24 h matching `increase(zcrypto_capture_
 uv run pytest tests/test_capture_segment_writer.py --collect-only -q -k dropped_at_info 2>&1 | tail -4
 ```
 
-Expected: exactly 3 tests collected. Then, with `PROBE='uv run pytest tests/test_capture_segment_writer.py -q -p no:cacheprovider -k dropped_at_info'`:
+Expected: exactly 3 tests collected. The probe command is a shell ARRAY, expanded as `"${PROBE[@]}"` — `mutate-probe.sh` runs its arguments as `"$@"`, and the session shell is zsh, where an unquoted scalar `$PROBE` stays ONE word and the baseline fails with rc 7 before anything is mutated:
 
 ```bash
+PROBE=(uv run pytest tests/test_capture_segment_writer.py -q -p no:cacheprovider -k dropped_at_info)
 infra/scripts/mutate-probe.sh --file cli/capture/segment_writer.py \
   --control 's/logger.info("dropping late event/logger.debug("dropping late event/' \
-  --mutation 's/logger.info("dropping late event/logger.warning("dropping late event/' -- $PROBE
+  --mutation 's/logger.info("dropping late event/logger.warning("dropping late event/' -- "${PROBE[@]}"
 grep -n 'logger.info("dropping replayed event' cli/capture/segment_writer.py
 ```
 
@@ -179,10 +179,10 @@ Expected: `mutate-probe: KILLED (control proven, tree restored byte-identically)
 ```bash
 infra/scripts/mutate-probe.sh --file cli/capture/segment_writer.py \
   --control 's/logger.info("dropping late event/logger.debug("dropping late event/' \
-  --mutation "${A}s/logger.info/logger.warning/" -- $PROBE
+  --mutation "${A}s/logger.info/logger.warning/" -- "${PROBE[@]}"
 infra/scripts/mutate-probe.sh --file cli/capture/segment_writer.py \
   --control 's/logger.info("dropping late event/logger.debug("dropping late event/' \
-  --mutation "${B}s/logger.info/logger.warning/" -- $PROBE
+  --mutation "${B}s/logger.info/logger.warning/" -- "${PROBE[@]}"
 ```
 
 Expected: `KILLED` both times. A `SURVIVED` on either replay site means the two `dropping replayed event` tests reached the same site — re-read Step 1's held-hour fixture (the clock must be inside the hour's first five minutes so the row is HELD). Record the three verdicts for Task 8's entry.
@@ -332,7 +332,7 @@ ______________________________________________________________________
 @dataclass(frozen=True)
 class Reminder:
     name: str      # "refdata sweep" | "healable re-derivation"
-    status: str    # "due in 5 days (last sweep 2026-08-04)" | "OVERDUE by 6 days (…)" | "counter moved +88.4 s in 24 h, recount the qualifying days" | "counter unchanged in 24 h"
+    status: str    # "due in 5 days (last sweep 2026-08-04)" | "OVERDUE by 6 days (…)" | "counter moved +88.4 s in 24 h, recount the qualifying days" | "counter unchanged in 24 h" | "counter reset in 24 h (a ledger correction or rebuild) …"
     owed: bool     # True when the runbook section is work now
     runbook: str   # "infra/runbooks/reference-data.md#refdata-sweep-due" | "infra/runbooks/ops.md#healable-threshold-rederivation-due"
 
@@ -391,12 +391,25 @@ def test_a_register_with_no_dated_row_is_an_unreadable_source_never_not_due(tmp_
 @pytest.mark.parametrize("value,owed,word", [("88.4", True, "moved +88.4 s"), ("0", False, "unchanged")])
 def test_the_healable_reminder_fires_only_when_the_counter_moved(tmp_path, value, owed, word):
     """The trigger discriminates: a counter that did not move owes nothing, one that did names the
-    recount. The count itself stays the runbook's step 1, from the ledger -- Cloud cannot see it."""
-    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(value)), register=_register(tmp_path, *_TWO_SWEEPS))
+    recount. The count itself stays the runbook's step 1, from the ledger -- Cloud cannot see it.
+    Two payloads: the increase, then `resets` (0 -- no reset in the window)."""
+    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(value), _counter(0)), register=_register(tmp_path, *_TWO_SWEEPS))
     healable = _reminder(read, "healable re-derivation")
     assert healable.owed is owed
     assert word in healable.status, healable.status
     assert healable.runbook == "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+
+
+def test_the_healable_reminder_names_a_counter_reset_and_never_quotes_it_as_movement(tmp_path):
+    """The counter is re-emitted from the ledger's totals every cycle, so a ledger correction or
+    rebuild that lowers the total is a reset, and `increase()` then reports the whole post-reset
+    value as movement -- the hazard the `zcrypto-reconcile-healable-gap-rate` rule guards with
+    `resets()`. The reminder names the reset and owes the ledger recount; the false number never
+    reaches the report."""
+    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter("18850.2"), _counter(1)), register=_register(tmp_path, *_TWO_SWEEPS))
+    healable = _reminder(read, "healable re-derivation")
+    assert healable.owed is True
+    assert "reset" in healable.status and "18850" not in healable.status, healable.status
 
 
 def test_a_healable_counter_with_no_series_is_unreadable_never_quiet(tmp_path):
@@ -426,19 +439,20 @@ In `test_a_transport_failure_is_an_unreadable_source_not_a_crash` (line 944), ad
     ):
 ```
 
-In `test_every_endpoint_the_instrument_builds_is_pinned` (line 1073), change the docstring's "the module builds six" to "the module builds seven" and append before the function's end:
+In `test_every_endpoint_the_instrument_builds_is_pinned` (line 1073), change the docstring's "the module builds six" to "the module builds eight" (the reminders read is two queries) and append before the function's end:
 
 ```python
     reminders = _recording(_counter(0))
     ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=reminders)
-    assert len(reminders.urls) == 1 and "/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in reminders.urls[0], reminders.urls
+    assert len(reminders.urls) == 2 and all("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in reminders.urls), reminders.urls
     assert "increase(zcrypto_reconcile_healable_gap_seconds_total[24h])" in urllib.parse.unquote(reminders.urls[0]), reminders.urls
+    assert "resets(zcrypto_reconcile_healable_gap_seconds_total[24h])" in urllib.parse.unquote(reminders.urls[1]), reminders.urls
 ```
 
 - [ ] **Step 2: Run and see them fail**
 
-Run: `uv run pytest tests/test_ops_daily.py -q -k "reminder or transport_failure or endpoint" 2>&1 | tail -6`
-Expected: every new test and the two edited ones fail with `AttributeError: module 'ops_daily' has no attribute 'read_reminders'`.
+Run: `uv run pytest tests/test_ops_daily.py -q -k "reminder or healable or no_dated_row or transport_failure or endpoint" 2>&1 | tail -6`
+Expected: every test above and the two edited ones fail with `AttributeError: module 'ops_daily' has no attribute 'read_reminders'`; Task 2's `test_a_log_with_no_dated_row…` is selected too and still passes.
 
 - [ ] **Step 3: Implement**
 
@@ -496,15 +510,26 @@ def read_reminders(
     hours = max(1, int(window.total_seconds() // 3600))
     try:
         series = _proxy_query(PROM_DS_UID, f"sum(increase({HEALABLE_COUNTER}[{hours}h]))", token, opener)
-        if not series:
+        resets = _proxy_query(PROM_DS_UID, f"sum(resets({HEALABLE_COUNTER}[{hours}h]))", token, opener)
+        if not series or not resets:
             note("the healable counter returned no series, so the re-derivation reminder could not be evaluated")
             return read
         moved = float(series[0]["value"][1])
+        reset = float(resets[0]["value"][1]) > 0
     except _UNREACHABLE as exc:
         note(f"the healable counter could not be read: {exc}")
         return read
-    owed = moved > 0
-    status = f"counter moved +{moved:.1f} s in {hours} h, recount the qualifying days" if owed else f"counter unchanged in {hours} h"
+    if reset:
+        # The counter is re-emitted from the ledger's totals every cycle (`cli/archive/command.py`),
+        # so a ledger correction or rebuild that lowers the total is a reset, and `increase()` then
+        # reports the whole post-reset value as movement. The `zcrypto-reconcile-healable-gap-rate`
+        # rule guards the same window with `resets()` (T0044); this mirrors it, and the number is
+        # deliberately not quoted -- the ledger's own count is the arbiter.
+        owed = True
+        status = f"counter reset in {hours} h (a ledger correction or rebuild), so its movement says nothing -- recount the qualifying days from the ledger"
+    else:
+        owed = moved > 0
+        status = f"counter moved +{moved:.1f} s in {hours} h, recount the qualifying days" if owed else f"counter unchanged in {hours} h"
     read.reminders.append(Reminder("healable re-derivation", status, owed=owed, runbook=HEALABLE_RUNBOOK))
     return read
 ```
@@ -524,23 +549,26 @@ git commit -m "feat(ops_daily): read_reminders -- due-ness from the register row
 - [ ] **Step 6: Mutation-probe the two triggers and the row selection (clean tree)**
 
 ```bash
-uv run pytest tests/test_ops_daily.py --collect-only -q -k "reminder or sweep_date or last_row or no_dated_row" 2>&1 | tail -3
+uv run pytest tests/test_ops_daily.py --collect-only -q -k "reminder or sweep_date or last_row or no_dated_row or healable" 2>&1 | tail -3
 ```
 
-Expected: at least 12 tests collected. With `PROBE='uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k "reminder or sweep_date or last_row or no_dated_row"'` and the control `--control 's/^def read_reminders(/def read_reminderz(/'` on every run:
+Expected: exactly 12 tests collected — by name: the real-register read (1), last-row-wins (1), no-dated-row (1), the refdata parametrization (3), the register-unreadable case (1), the healable parametrization (2), the reset case (1), the no-series case (1), the real-register-yields-both case (1); the cadence test carries none of the words and no mutation below touches `_a_month_after`. The probe is a shell array (Task 1 Step 7 says why), with the control `--control 's/^def read_reminders(/def read_reminderz(/'` on every run:
 
 ```bash
+PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k 'reminder or sweep_date or last_row or no_dated_row or healable')
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def read_reminders(/def read_reminderz(/' \
-  --mutation 's/owed = moved > 0/owed = moved >= 0/' -- $PROBE
+  --mutation 's/owed = moved > 0/owed = moved >= 0/' -- "${PROBE[@]}"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def read_reminders(/def read_reminderz(/' \
-  --mutation 's/found = date\.fromisoformat/found = found or date.fromisoformat/' -- $PROBE
+  --mutation 's/reset = float(resets\[0\]\["value"\]\[1\]) > 0/reset = False/' -- "${PROBE[@]}"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def read_reminders(/def read_reminderz(/' \
-  --mutation 's/in_log = line.startswith("## Re-confirmation log")/in_log = True/' -- $PROBE
+  --mutation 's/found = date\.fromisoformat/found = found or date.fromisoformat/' -- "${PROBE[@]}"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def read_reminders(/def read_reminderz(/' \
-  --mutation 's/owed=days <= 0/owed=days < 0/' -- $PROBE
+  --mutation 's/in_log = line.startswith("## Re-confirmation log")/in_log = True/' -- "${PROBE[@]}"
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def read_reminders(/def read_reminderz(/' \
+  --mutation 's/owed=days <= 0/owed=days < 0/' -- "${PROBE[@]}"
 ```
 
-Expected: `KILLED` four times — always-firing healable trigger, first-row-wins, section-blind parse (the 2099 decoy), and due-today-not-owed each trip a test. Record the verdicts.
+Expected: `KILLED` five times — always-firing healable trigger, a reset read as movement (the `18850` fixture then reaches the status), first-row-wins, section-blind parse (the 2099 decoy), and due-today-not-owed each trip a test. Record the verdicts.
 
 ______________________________________________________________________
 
@@ -706,12 +734,12 @@ def test_a_check_with_no_description_at_all_is_a_finding_not_a_pass():
 
 - [ ] **Step 2: Run and see them fail**
 
-Run: `uv run pytest tests/test_ops_daily.py -q -k description 2>&1 | tail -5`
-Expected: 3 failed with `AttributeError: module 'ops_daily' has no attribute 'check_descriptions'`.
+Run: `uv run pytest tests/test_ops_daily.py -q -k "description or runbook_link" 2>&1 | tail -5`
+Expected: 3 failed with `AttributeError: module 'ops_daily' has no attribute 'check_descriptions'` (`-k` matches names only; the dangling-link test carries `runbook_link`, not `description`).
 
 - [ ] **Step 3: Implement**
 
-After `HEALTHCHECKS_API = "https://healthchecks.io/api/v3/checks/"` and the `REPO_ROOT`/`DEPLOY_LOG` lines in `infra/scripts/ops_daily.py`:
+After `read_reminders` (the last of Task 3's additions) in `infra/scripts/ops_daily.py` — it needs only `_RUNBOOK_LINK` and `REPO_ROOT`, both defined far above:
 
 ```python
 RUNBOOKS = REPO_ROOT / "infra/runbooks"
@@ -788,6 +816,17 @@ def test_the_deadmen_read_checks_the_descriptions_it_fetched(monkeypatch):
     assert read.description_findings == ["`zcrypto-engine-shadow`: its description carries the internal token 'T0083'"], read.description_findings
 
 
+def test_a_runbook_read_failure_during_the_descriptions_check_is_named_as_such_not_as_healthchecks(monkeypatch):
+    """The check reads runbook files; a failure there is a finding about the RUNBOOKS, and the
+    checks it fetched stay read -- never `healthchecks.io could not be read directly`."""
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    monkeypatch.setattr(ops_daily, "check_descriptions", lambda checks: (_ for _ in ()).throw(OSError("runbooks unreadable")))
+    prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
+    read = ops_daily.read_deadmen("tok", opener=_canned(prom, {"checks": [{"name": "x", "desc": _CLEAN_DESC}]}))
+    assert len(read.via_healthchecks) == 1 and read.description_findings == []
+    assert read.unreadable and "runbooks could not be read" in read.unreadable and "healthchecks.io" not in read.unreadable, read.unreadable
+
+
 def test_a_description_finding_is_attention_and_reaches_the_report_and_the_paragraph():
     deadmen = ops_daily.DeadmenRead(
         via_prometheus=0.0,
@@ -819,15 +858,19 @@ def test_todays_ten_real_descriptions_all_pass():
 
 - [ ] **Step 2: Run and see them fail**
 
-Run: `uv run pytest tests/test_ops_daily.py -q -k "descriptions or description_finding" 2>&1 | tail -6`
-Expected: the first three fail on `DeadmenRead.__init__() got an unexpected keyword argument 'description_findings'` / missing attribute; the fixture test fails with `FileNotFoundError`.
+Run: `uv run pytest tests/test_ops_daily.py -q -k "descriptions or description_finding" 2>&1 | tail -7`
+Expected: 5 failed — the four that build or read `DeadmenRead` fail on `DeadmenRead.__init__() got an unexpected keyword argument 'description_findings'` / missing attribute (the runbook-failure test is among them: nothing calls `check_descriptions` yet, so its raising stub never runs and it fails on the missing attribute); the fixture test fails with `FileNotFoundError`.
 
 - [ ] **Step 3: Implement**
 
-`DeadmenRead` gains `description_findings: list[str] = field(default_factory=list)` after `via_healthchecks`. In `read_deadmen`, inside the `try` that reads healthchecks, after `read.via_healthchecks = json.load(response).get("checks", [])`, add (inside the `with` block is fine — it is a pure computation):
+`DeadmenRead` gains `description_findings: list[str] = field(default_factory=list)` after `via_healthchecks`. In `read_deadmen`, the healthchecks `try` ends with `note(f"healthchecks.io could not be read directly: {exc}")` — make that except-branch `return read`, and add AFTER the whole try/except, in place of the final `return read`. The check reads runbook FILES, so it gets its own `try` and its own note: inside the healthchecks `try`, an `OSError` from a runbook would be reported as healthchecks.io unreadable.
 
 ```python
+    try:
         read.description_findings = check_descriptions(read.via_healthchecks)
+    except _UNREACHABLE as exc:
+        note(f"the runbooks could not be read to check the dead-man descriptions: {exc}")
+    return read
 ```
 
 `Report.exit_code`'s attention condition becomes:
@@ -895,21 +938,22 @@ git commit -m "feat(ops_daily): the dead-man read checks the ten descriptions it
 - [ ] **Step 7: Mutation-probe both assertions (clean tree)**
 
 ```bash
-uv run pytest tests/test_ops_daily.py --collect-only -q -k "description" 2>&1 | tail -3
+uv run pytest tests/test_ops_daily.py --collect-only -q -k "description or runbook_link" 2>&1 | tail -3
 ```
 
-Expected: 7 tests collected. With `PROBE='uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k description'`:
+Expected: exactly 8 tests collected — the three from Task 5 and the five from this task. `-k` matches NAMES only, and `test_a_missing_or_dangling_runbook_link_is_a_finding` is the one test the anchor mutation below moves (every other fixture's link resolves or is absent), so a filter of `description` alone collects 7 and the second probe SURVIVES for want of a selector, not a guard. The probe is a shell array (Task 1 Step 7 says why):
 
 ```bash
+PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k 'description or runbook_link')
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
-  --mutation 's/for token in _INTERNAL_TOKEN.findall(desc):/for token in ():/' -- $PROBE
+  --mutation 's/for token in _INTERNAL_TOKEN.findall(desc):/for token in ():/' -- "${PROBE[@]}"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
-  --mutation 's/not in path.read_text():/not in path.read_text() and False:/' -- $PROBE
+  --mutation 's/not in path.read_text():/not in path.read_text() and False:/' -- "${PROBE[@]}"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
-  --mutation 's/or self.deadmen.description_findings$/or []/' -- $PROBE
+  --mutation 's/or self.deadmen.description_findings$/or []/' -- "${PROBE[@]}"
 ```
 
-Expected: `KILLED` three times — a token check that never fires, an anchor check that never fires, and a finding that no longer moves the exit code. Record the verdicts.
+Expected: `KILLED` three times — a token check that never fires, an anchor check that never fires (the `dangling` fixture: `ops.md` exists, the anchor does not), and a finding that no longer moves the exit code. Record the verdicts.
 
 ______________________________________________________________________
 
@@ -953,10 +997,10 @@ Replace the section's *What you are seeing* paragraph (line 198) with:
 The daily pass's report names this reminder under `## Reminders`: **OWED** when `zcrypto_reconcile_healable_gap_seconds_total` increased in the window — a new healable-gap event landed, so the count in step 1 is owed again — and `ok` when it did not. A Slack message in `#zcrypto` may prompt the same; the report is the trigger, the message a convenience ping that cannot be verified to exist from this side. It is not an alert — **nothing is wrong**. Unlike `refdata-sweep-due`, which is calendar-driven, this one is event-driven: qualifying days accrue only when the counter moves, and the pass reads the counter, never the ledger — step 1 is still yours.
 ```
 
-Step 3 (line 216, `**Fewer than three qualifying days ⇒ do nothing except re-arm.**`) keeps its text; append this sentence to it:
+Step 3 (line 216, `**Fewer than three qualifying days ⇒ do nothing except re-arm.**`) keeps its text; append these sentences to it — they also settle the lost 2026-08-27 message: it is NOT replaced by a fresh scheduling in this branch, because the next re-arm is this step's own, the next time the report says OWED and the section runs:
 
 ```markdown
-The re-arm is a convenience — the pass re-evaluates the counter every day whether or not the message lands.
+The re-arm is a convenience — the pass re-evaluates the counter every day whether or not the message lands, so a message that never arrives (the 2026-08-27 one did not) is not replaced out of band: the next one is scheduled here, when this section next runs.
 ```
 
 - [ ] **Step 3: Pre-commit and commit the runbooks**
@@ -1043,7 +1087,7 @@ uv run python infra/scripts/ops-daily.py report --since 24h > "$SCRATCH/pass-aft
 sed -n '/## Reminders/,/## Deploys/p' "$SCRATCH/pass-after.md"; grep -n "description" "$SCRATCH/pass-after.md"; grep -n "capture WARNING\|/capture WARNING" "$SCRATCH/pass-after.md"
 ```
 
-Expected: `rc=` printed immediately after the command; `## Reminders` shows both lines with `ok`/`OWED` and their runbook anchors; `## Dead-men` shows `- descriptions: all 10 carry a resolving runbook link and no internal token`; exit code equal to Task 0's unless a reminder source was unreadable (then 2, and the line names which — a finding to report, not to paper over). The `## Logs` section still shows the capture WARNING counts for the window: the INFO change reaches the hosts only with the next image rollout (out of scope here — the rollout skill owns it), so the count is expected to persist until then and the entry says so.
+Expected: `rc=` printed immediately after the command; `## Reminders` shows both lines with `ok`/`OWED` and their runbook anchors; `## Dead-men` shows `- descriptions: all 10 carry a resolving runbook link and no internal token`; exit code equal to Task 0's unless a reminder source was unreadable (then 2, and the line names which — a finding to report, not to paper over). The `## Logs` section still shows the capture WARNING counts for the window: the INFO change reaches the hosts only with the next capture-image rollout — the attended one `T0037`'s `ripe_when` already owes (spec `00103`'s detectors ride the same digest), so no separate rollout is registered for it — and the count is expected to persist until then; the entry says so.
 
 - [ ] **Step 2: The suites the branch can reach, and the guards that reach docs**
 
@@ -1058,9 +1102,10 @@ Expected: all passed. The token guard covers the new literals in `infra/scripts/
 Load the `iteration-closeout` skill. Append to `docs/iterations-history-phase6.md` (Phase 6 — day-2 operations) a section `## 2026-MM-DD — iter-<N>: the signals that were silently absent — reminders, log levels, and the descriptions no test can reach (spec 00107)` where `<N>` is one above the file's highest `iter-` (157 as of writing — re-read the tail before writing). Bullets, one per change, in the file's existing shape:
 
 - the lost reminder and the structural fact (no list/verify API), and D1's answer: `read_reminders()` computes due-ness daily from the register row and the healable counter; owed reports, unreadable exits 2 — with the before/after exit codes and the `## Reminders` lines from Steps 1 and Task 0;
-- the three drop lines at INFO with the measured basis (bursts matching `zcrypto_capture_reconnects_total` 2 and 1; gap counter 0) and the note that the hosts emit WARNING until the next image rollout;
+- the three drop lines at INFO with the measured basis (bursts matching `zcrypto_capture_reconnects_total` 2 and 1; gap counter 0) and the note that the hosts emit WARNING until the capture-image rollout `T0037`'s `ripe_when` owes carries the digest — no rollout of its own;
+- the healable reminder's three states — moved, unchanged, reset — and why the reset state exists (the counter is re-emitted from ledger totals; `increase()` reads a correction as movement; the alert rule's `resets()` guard mirrored);
 - the description check: two assertions per check, the true positive over today's ten (`tests/fixtures/healthchecks_descriptions.json`, fields name/tags/desc only), detection not generation and why;
-- every guard mutation-probed: the verdicts from Tasks 1, 3 and 6 (three sites, four reminder mutations, three description mutations — all KILLED, or the one that was not and what was done);
+- every guard mutation-probed: the verdicts from Tasks 1, 3 and 6 (three sites, five reminder mutations, three description mutations — all KILLED, or the one that was not and what was done);
 - D6: T0103's sentence re-trued; the memo note extended; `archive/T0113` deliberately left.
 
 No decisions-log entry: nothing here is subject-matter research (`decisions-log.md`'s gate).
@@ -1073,4 +1118,4 @@ git commit -m "docs(iterations-history): iter-<N> -- reminders, log levels, and 
 
 - [ ] **Step 4: Review trailers and the branch's end**
 
-`infra/scripts/review-trailer-audit.sh` must pass before push; the Task 1 commit's reviewer is at the Fable floor. Report the branch ready — the PR opens only on the user's word (`branch-workflow.md`). The rollout that carries the INFO change to the capture hosts is a separate attended step through `zcrypto-rollout-image`, not part of this branch.
+`infra/scripts/review-trailer-audit.sh` must pass before push; the Task 1 commit's reviewer is at the Fable floor. Report the branch ready — the PR opens only on the user's word (`branch-workflow.md`). The INFO change reaches the capture hosts with the attended capture-image rollout `T0037`'s `ripe_when` already registers (through `zcrypto-rollout-image`); this branch owes no rollout and registers none — the topic is the deferral's home, and the report's `## Logs` count is the evidence of the gap until it lands.

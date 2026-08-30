@@ -26,7 +26,7 @@ The daily routines stop depending on a Slack message arriving. The pass computes
 
 Rejected: re-arming alone (restores a trigger that can vanish again undetected), and belt-and-braces (keeps a mechanism whose health nobody can verify while implying it is covered — the worse half of both).
 
-The reminder is still re-armed, as a convenience. It is no longer the thing the check rests on.
+The reminder is still re-armed, as a convenience — by the runbook step that already does it, the next time the section runs. It is no longer the thing the check rests on, so the lost 2026-08-27 message is not replaced out of band.
 
 ### D2 — due-ness lives in the instrument, not in a test
 
@@ -39,7 +39,7 @@ The reminder is still re-armed, as a convenience. It is no longer the thing the 
 ### D3 — each reminder is read from the source that actually knows
 
 - **Refdata sweep**: the last row of `docs/reference/kraken-snapshot-register.md`'s `## Re-confirmation log` table (`#1 (monthly, 2026-08-04)`) plus the monthly cadence [[T0113]] defines. Pure repo, no network. Reports `due in N days` or `OVERDUE by N days`.
-- **Healable re-derivation**: whether `zcrypto_reconcile_healable_gap_seconds_total` **increased** in the window. The runbook's own step 1 says to count qualifying days from the ledger and never from Grafana Cloud, because Cloud retains ~14 days and every event predates its window — so the pass does **not** attempt the count. It answers the only question it can answer honestly: *has a new healable-gap event landed since you last looked?* If the counter moved, the recount is owed and the runbook section is named; if it did not, nothing is.
+- **Healable re-derivation**: whether `zcrypto_reconcile_healable_gap_seconds_total` **increased** in the window. The runbook's own step 1 says to count qualifying days from the ledger and never from Grafana Cloud, because Cloud retains ~14 days and every event predates its window — so the pass does **not** attempt the count. It answers the only question it can answer honestly: *has a new healable-gap event landed since you last looked?* If the counter moved, the recount is owed and the runbook section is named; if it did not, nothing is. **A reset in the window is its own state**: the counter is re-emitted from the ledger's totals every cycle, so a ledger correction or rebuild that lowers the total is a reset, and `increase()` then reports the whole post-reset value as movement — the hazard `zcrypto-reconcile-healable-gap-rate` guards with `resets()` over this same counter and window. The reminder mirrors that guard: on a reset it names the reset, owes the ledger recount, and never quotes the number.
 
 This keeps the instrument **pure-HTTP**. An `ssh`-plus-`sudo` read for the ledger would have given it its first host dependency and a new class of unreadable source, to answer a question the counter already answers. The trigger is also more correct event-driven than calendar-driven: the re-derivation is gated on qualifying days accruing, not on time passing.
 
@@ -66,13 +66,14 @@ The cost, accepted: this detects but cannot repair. With ten checks and a daily 
 ## Verification
 
 - The level change is proven by a test that fails against `logger.warning` — the guard sees the defect it names, on all three sites.
-- `read_reminders()` is proven against the **real** register (its parse must find `2026-08-04` in the committed file, not a fixture shaped to the parser) and against a fixture where the counter moved and one where it did not, so the trigger discriminates rather than always firing.
+- `read_reminders()` is proven against the **real** register (its parse must find `2026-08-04` in the committed file, not a fixture shaped to the parser) and against a fixture where the counter moved, one where it did not, and one where it reset, so the trigger discriminates rather than always firing — and a correction is never read as an event.
 - The description assertions are proven by a fixture carrying an internal token and one carrying a dead runbook link, **plus the true positive that today's ten real descriptions all pass** — a check that refuses everything is not a check.
 - Every guard mutation-probed through `infra/scripts/mutate-probe.sh`.
 - The pass is re-run live and its exit code read, before and after.
 
 ## Out of scope
 
-- A descriptions-as-code push mechanism (D5), and a metric/alert for due-ness (D2) — both named with the condition that would justify them.
+- A descriptions-as-code push mechanism (D5), and a metric/alert for due-ness (D2) — both **dropped**, not deferred: no topic tracks either, and each is reopened only if its named condition arrives (drift recurring; the pass proving insufficient).
+- The capture-image rollout that carries D4 to the hosts — not this iteration's, and not registered by it: the attended rollout [[T0037]]'s `ripe_when` already owes carries the digest, and the pass's `## Logs` count is the evidence of the gap until it lands.
 - Any change to reconnect behaviour. The reconnects are normal; the bursts are their expected consequence, and 2–3 a day across two hosts is not a fault.
 - The capture WARNING bursts as a phenomenon to explain further. D4 explains them; the memo's `noisy warning` idea is discharged by this spec rather than left owing a second data point.
