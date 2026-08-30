@@ -83,6 +83,12 @@ grafana_loki_token: !vault |
           61393536383865326461393462616433386266336161326237326665663835393536646163636166
           66393636626538623136323764653438626332303162633531623861336466303364366230653532
           37613837333539633761
+# `/projects/<code>/metrics/<key>` — the ops Alloy's healthchecks.io scrape path (config.alloy
+# joins host and scheme). Its LAST SEGMENT is the `hcr_` read-only key, and the SAME secret is also
+# vaulted on its own as `healthchecks_readonly_api_key` in group_vars/all/vault.yml, where
+# ops_daily.py reads it. Nothing keeps the two in sync: rotate them AS ONE. Rewriting only this
+# path leaves the daily pass presenting a revoked key; rewriting only the other leaves the Alloy
+# scrape on it. Full recipe in the T0085 topic.
 hc_prometheus_metrics_path: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           64653061306435386361353637323137393839306464623963373037643265376536336431393432
