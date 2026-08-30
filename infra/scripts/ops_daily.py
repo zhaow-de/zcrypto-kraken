@@ -203,8 +203,16 @@ class Check:
     value: str
 
 
-def _proxy_query(ds_uid: str, expr: str, token: str, opener) -> list[dict]:
-    url = f"{GRAFANA_URL}/api/datasources/proxy/uid/{ds_uid}/api/v1/query?" + urllib.parse.urlencode({"query": expr})
+# Loki and Prometheus answer under DIFFERENT paths behind the same datasource proxy, and the
+# difference is not cosmetic: Loki 404s on Prometheus's `/api/v1/query`. The path is a parameter so
+# each caller states which API it is talking to rather than inheriting a default that is right for
+# only one of them.
+_PROM_QUERY_PATH = "/api/v1/query"
+_LOKI_QUERY_PATH = "/loki/api/v1/query"
+
+
+def _proxy_query(ds_uid: str, expr: str, token: str, opener, api_path: str = _PROM_QUERY_PATH) -> list[dict]:
+    url = f"{GRAFANA_URL}/api/datasources/proxy/uid/{ds_uid}{api_path}?" + urllib.parse.urlencode({"query": expr})
     return _get(url, token, opener)["data"]["result"]
 
 
@@ -220,7 +228,7 @@ def read_logs(token: str, *, window: timedelta, opener=urllib.request.urlopen, e
     hours = max(1, int(window.total_seconds() // 3600))
     expr = f'sum by (host, container, level) (count_over_time({{host=~".+", level=~"WARNING|ERROR|CRITICAL"}}[{hours}h]))'
     try:
-        result = _proxy_query(loki_ds_uid(env), expr, token, opener)
+        result = _proxy_query(loki_ds_uid(env), expr, token, opener, api_path=_LOKI_QUERY_PATH)
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
         return LogsRead(unreadable=f"the log plane could not be read: {exc}")
     counts = [

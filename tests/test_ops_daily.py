@@ -43,6 +43,27 @@ def _canned(*payloads):
     return opener
 
 
+def _recording(*payloads):
+    """`_canned`, but it keeps the URLs it was asked for.
+
+    `_canned` never looks at the request, so every endpoint the instrument builds was
+    unasserted -- which is how a Prometheus query path shipped against a Loki datasource and
+    404'd on the first live run. A test that only feeds a payload back proves parsing and
+    nothing about where the payload would have come from.
+    """
+    urls: list[str] = []
+    queue = list(payloads)
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        urls.append(request.full_url if hasattr(request, "full_url") else str(request))
+        payload = queue.pop(0) if len(queue) > 1 else queue[0]
+        yield io.BytesIO(json.dumps(payload).encode())
+
+    opener.urls = urls
+    return opener
+
+
 def _raises(exc):
     @contextlib.contextmanager
     def opener(request, timeout=None):
@@ -882,3 +903,23 @@ def test_every_directory_read_root_ends_in_a_slash():
     """
     assert all(root.endswith("/") for root in ops_daily._READ_SAFE_DIRS), ops_daily._READ_SAFE_DIRS
     assert not any(f.endswith("/") for f in ops_daily._READ_SAFE_FILES), ops_daily._READ_SAFE_FILES
+
+
+def test_the_log_read_uses_lokis_query_path_not_prometheuss():
+    """Loki answers under `/loki/api/v1/query`; `/api/v1/query` is Prometheus's and 404s there.
+
+    Measured against the live stack: the Prometheus spelling returned HTTP 404 and the Loki one
+    returned 200 with series. The whole suite was green while the log plane had never worked once,
+    because no test looked at the URL -- so this asserts the path, not the parse.
+    """
+    opener = _recording({"data": {"result": []}})
+    ops_daily.read_logs("tok", window=DAY, opener=opener)
+    assert len(opener.urls) == 1
+    assert "/loki/api/v1/query" in opener.urls[0], opener.urls[0]
+
+
+def test_the_prometheus_reads_keep_the_prometheus_query_path():
+    """The same proxy helper serves both datasources, so widening it for Loki must not move these."""
+    opener = _recording({"data": {"result": []}})
+    ops_daily.read_verdict("tok", opener=opener)
+    assert opener.urls and all("/api/v1/query" in u and "/loki/" not in u for u in opener.urls), opener.urls
