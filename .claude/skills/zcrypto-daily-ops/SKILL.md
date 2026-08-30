@@ -59,11 +59,11 @@ The report's `## Reminders` section is the trigger — an **OWED** line is work,
 
 ## 6. Rewrite any dead-man description the report faults
 
-The report's `## Dead-men` section prints one `- description:` line per **defect**, each naming its check: a description with no `Runbook: infra/runbooks/<file>#<anchor>` link, one whose link resolves to no anchor in the file it names, or one carrying repo-internal vocabulary — on a surface read from a phone with nothing open. **One check can produce several lines** — a missing link plus two internal tokens is three — so count the distinct check names before writing a number into the entry.
+The report's `## Dead-men` section prints one `- description:` line per **defect**, each naming its check: a description with no `Runbook: infra/runbooks/<file>#<anchor>` link, one whose link resolves to no anchor in the file it names, or one carrying repo-internal vocabulary — on a surface read from a phone with nothing open. **One check can produce several lines** — a missing link plus two internal tokens is three — and the journal paragraph's `description finding(s)` clause counts those lines, not the checks. Let that number stand as printed; the entry's own prose is where the distinct checks are named.
 
 **This is not an alert.** Nothing fired, so there is no runbook section to open; no command is run, so there is nothing to classify; and it does not move the verdict — a day whose only finding is a description is still `all-clear`, by design. What it needs is a hand rewrite, which no repo change can make: the descriptions are hand-written in healthchecks.io.
 
-**The fix is a hand rewrite of that check's description in healthchecks.io**, with the admin key (`healthchecks_api_key` in the vault — the read-only key the report reads with cannot write). Give it the `Runbook:` link and drop the vocabulary; send the description field and nothing else, so the check's own schedule and grace period are untouched; then read it back. The finding clears on the next pass.
+**The fix is a hand rewrite of that check's description in healthchecks.io**, with the admin key (`healthchecks_api_key` in `infra/ansible/group_vars/capture_host/vault.yml`, not the default `all/` vault — the read-only key the report reads with cannot write). Give it the `Runbook:` link and drop the vocabulary; send the description field and nothing else, so the check's own schedule and grace period are untouched; then read it back. The finding clears on the next pass.
 
 **If it is not fixed, say so in the entry, with the check named.** The line reprints every day until someone rewrites it, and a finding nobody names reads as a new one each morning.
 
