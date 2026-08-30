@@ -9,14 +9,19 @@
 # `zcrypto-ops`; there is no host or group called `ops`) — or an end keeps the old key. Both, because
 # each peer block carries the other end's public key.
 #
-# The other five are read from the WORKSTATION by file path, never through inventory:
-# `grafana_sa_token` by `infra/scripts/grafana-query.py` and `infra/scripts/ops_daily.py` (through
-# `grafana_auth.vault_var`, whose default IS this file); `slack_webhook_url` by
-# `infra/scripts/grafana-push.sh`; `zaccess_client_p12_b64` and `zaccess_client_p12_pass` by
-# `infra/scripts/zaccess-extract-client-cert.sh`; and `healthchecks_readonly_api_key` by
-# `ops_daily.py`'s direct dead-man read. Note `grafana-push.sh` does NOT open the vault — it
-# REQUIRES `GRAFANA_SA_TOKEN` in the environment and only documents the read recipe in a comment. `all` is the honest scope because it is the
-# only group that includes `workstation` AND covers the access hosts.
+# The other five never reach a host. Four are read from the WORKSTATION BY FILE PATH:
+# `grafana_sa_token` by `infra/scripts/grafana-query.py` and `infra/scripts/ops_daily.py`,
+# `healthchecks_readonly_api_key` by `ops_daily.py`'s direct dead-man read (all three through
+# `grafana_auth.vault_var`, whose default IS this file), and `zaccess_client_p12_b64` +
+# `zaccess_client_p12_pass` by `infra/scripts/zaccess-extract-client-cert.sh`.
+#
+# `slack_webhook_url` is the odd one: NOTHING in production reads it from this file. It is vaulted
+# here and reaches `grafana-push.sh` through the environment as `GRAFANA_SLACK_WEBHOOK_URL`, the
+# same way that script takes `GRAFANA_SA_TOKEN` — grafana-push.sh opens no vault at all and only
+# documents the read recipe in a comment. Its only file-path reader is a test.
+#
+# `all` is the honest scope because it is the only group that includes `workstation` AND covers the
+# access hosts.
 #
 # Moved here from group_vars/capture_host/ (spec 00054, 2026-07-16, owner's call): neither is
 # capture-specific (that clause is about `grafana_sa_token` and `slack_webhook_url`, the two the move
@@ -55,8 +60,9 @@ slack_webhook_url: !vault |
 
 # The Grafana Cloud Alloy credentials (grafana_prom_* / grafana_loki_*) MOVED to
 # group_vars/observed/vault.yml (spec 00054): the ops node ships telemetry too and could not see
-# them here. grafana_sa_token and slack_webhook_url stay — they are workstation reads, consumed by
-# infra/scripts/grafana-push.sh from the workstation, not by any managed host.
+# them here. grafana_sa_token and slack_webhook_url stay — neither reaches a managed host. (The
+# 00054 move predates their current readers; who reads what today is the paragraph at the top, not
+# this one.)
 
 # zaccess WireGuard link (spec 00075): tunnel privates + psk; publics in group_vars/all/vars.yml
 zaccess_wg_bridgehead_private_key: !vault |
