@@ -1471,3 +1471,81 @@ def test_every_prefixed_link_is_judged_not_only_the_first():
     assert ops_daily.check_descriptions(checks) == [
         "`second-dead`: its runbook link infra/runbooks/ops.md#no-such-anchor resolves to no anchor"
     ]
+
+
+def test_the_deadmen_read_checks_the_descriptions_it_fetched(monkeypatch):
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
+    direct = {
+        "checks": [
+            {
+                "name": "zcrypto-engine-shadow",
+                "desc": "T0083 retagged. Runbook: infra/runbooks/engine.md#zcrypto-engine-cycle-stale",
+            },
+            {"name": "zcrypto-gate-verify", "desc": _CLEAN_DESC},
+        ]
+    }
+    read = ops_daily.read_deadmen("tok", opener=_canned(prom, direct))
+    assert read.unreadable is None
+    assert read.description_findings == ["`zcrypto-engine-shadow`: its description carries the internal token 'T0083'"], (
+        read.description_findings
+    )
+
+
+def test_a_runbook_read_failure_during_the_descriptions_check_is_named_as_such_not_as_healthchecks(monkeypatch):
+    """The check reads runbook files; a failure there is a finding about the RUNBOOKS, and the
+    checks it fetched stay read -- never `healthchecks.io could not be read directly`.
+
+    `None` is not `[]`: a check that never ran must not print as one that ran and found nothing.
+    Exit 2 and the unreadable line already carry the truth, and a `descriptions: all 1 carry …`
+    line beside them says the opposite of what happened."""
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    monkeypatch.setattr(ops_daily, "check_descriptions", lambda checks: (_ for _ in ()).throw(OSError("runbooks unreadable")))
+    prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
+    read = ops_daily.read_deadmen("tok", opener=_canned(prom, {"checks": [{"name": "x", "desc": _CLEAN_DESC}]}))
+    assert len(read.via_healthchecks) == 1 and read.description_findings is None, read.description_findings
+    assert read.unreadable and "runbooks" in read.unreadable and "healthchecks.io" not in read.unreadable, read.unreadable
+    markdown = _report(deadmen=read).markdown()
+    assert "descriptions: all" not in markdown, markdown
+
+
+def test_a_description_finding_reaches_the_report_and_the_paragraph_and_never_blocks():
+    """Spec 00107 D5: the finding is a report line and a journal clause, never the exit code -- the
+    check cannot repair, and a SaaS description no repo change touches would hold the pass at
+    `attention` every day until a human logged in, destroying the all-clear entry the journal exists
+    to produce. VISIBILITY is therefore the whole guarantee, so both surfaces are pinned here, and so
+    is the verdict the operator reads above them."""
+    deadmen = ops_daily.DeadmenRead(
+        via_prometheus=0.0,
+        via_healthchecks=[{"name": "x"}],
+        description_findings=["`x`: its description carries the internal token 'T0083'"],
+    )
+    r = _report(deadmen=deadmen)
+    assert r.exit_code == 0, r.exit_code
+    md = r.markdown()
+    assert "- description: `x`: its description carries the internal token 'T0083'" in md, md
+    assert "**Verdict: all-clear** (exit 0)" in md, md
+    assert "- descriptions: all" not in md, md  # the finding line and the all-clear line are exclusive
+    assert "1 description finding" in r.journal_paragraph(), r.journal_paragraph()
+
+
+def test_clean_descriptions_say_so_in_the_report_and_stay_out_of_the_paragraph():
+    """`description_findings=[]` is the CHECKED-and-clean state, and the only one that may print the
+    all-clear line -- the default `None` means the check did not run."""
+    r = _report(
+        deadmen=ops_daily.DeadmenRead(via_prometheus=0.0, via_healthchecks=[{"name": "a"}, {"name": "b"}], description_findings=[])
+    )
+    assert r.exit_code == 0
+    assert "- descriptions: all 2 carry a resolving runbook link and no internal token" in r.markdown(), r.markdown()
+    assert "description finding" not in r.journal_paragraph()
+
+
+def test_todays_ten_real_descriptions_all_pass():
+    """The true positive: a check that refuses everything is not a check. `name`/`tags`/`desc` of the
+    ten live checks, read 2026-08-30 through the read-only key -- never the whole object, which
+    carries the check's write URL. This reads the committed fixture only: rewriting a description in
+    healthchecks.io moves nothing here until the fixture is re-fetched (the plan for spec 00107 says
+    how), and a red AFTER that re-fetch is the finding the daily pass would have made."""
+    checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
+    assert len(checks) == 10, len(checks)
+    assert ops_daily.check_descriptions(checks) == []

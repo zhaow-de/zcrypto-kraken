@@ -362,6 +362,10 @@ class LogsRead:
 class DeadmenRead:
     via_prometheus: float | None = None
     via_healthchecks: list[dict] = field(default_factory=list)
+    # Three states, not two: `None` is "the check did not run" (healthchecks unreadable, or the
+    # runbooks were), `[]` is "ran, found nothing". Defaulting to `[]` would print the all-clear
+    # description line under a report that never looked.
+    description_findings: list[str] | None = None
     unreadable: str | None = None
 
 
@@ -445,6 +449,16 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
             read.via_healthchecks = json.load(response).get("checks", [])
     except _UNREACHABLE as exc:
         note(f"healthchecks.io could not be read directly: {exc}")
+        return read
+    # The check reads runbook FILES, so it gets its own `try` and its own note: inside the
+    # healthchecks `try`, an `OSError` from a runbook would be reported as healthchecks.io unreadable.
+    try:
+        read.description_findings = check_descriptions(read.via_healthchecks)
+    # `AttributeError` beside `_UNREACHABLE`: this is the module's first content-dependent parse of
+    # the healthchecks payload, and a `checks` element that is not an object would otherwise
+    # traceback out at exit 1 -- ATTENTION, the inverted contract this module's docstring names.
+    except (*_UNREACHABLE, AttributeError) as exc:
+        note(f"the dead-man descriptions could not be checked (the runbooks are read here): {exc}")
     return read
 
 
@@ -556,6 +570,14 @@ class Report:
             f"- via Grafana: {self.deadmen.via_prometheus}",
             f"- direct: {len(self.deadmen.via_healthchecks)} checks read",
         ]
+        # The `is not None` is the whole point of the three states: without it the all-clear line
+        # prints beside `## Sources that could not be read` on a run where the check never ran.
+        if self.deadmen.description_findings:
+            out += [f"- description: {f}" for f in self.deadmen.description_findings]
+        elif self.deadmen.description_findings is not None and self.deadmen.via_healthchecks:
+            out.append(
+                f"- descriptions: all {len(self.deadmen.via_healthchecks)} carry a resolving runbook link and no internal token"
+            )
         out += ["", "## Reminders"] + (
             [f"- {'OWED' if r.owed else 'ok'} {r.name}: {r.status} — {r.runbook}" for r in self.reminders.reminders]
             or ["- none read"]
@@ -574,6 +596,9 @@ class Report:
         # journal says nothing -- which is what happened on the first real pass, whose ONLY finding
         # was 1802 WARNING lines the paragraph dropped. Omitted when zero so a silent day stays short.
         warnings = sum(c.count for c in self.logs.counts if c.level == "WARNING")
+        # A description finding moves no exit code (spec 00107 D5 -- the check detects and cannot
+        # repair), so this clause is the only trace it leaves in the artefact that gets pasted.
+        findings = len(self.deadmen.description_findings or [])
         # The OWED marker travels with the clause. The paragraph is the artefact that gets pasted
         # into the journal, and `refdata sweep: due in 0 days` -- the owed-today spelling -- skims
         # as "not yet" without it, where the markdown's own line is unambiguous.
@@ -584,7 +609,7 @@ class Report:
             f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired} · checks {failed} · "
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
-            f"{len(self.deadmen.via_healthchecks)} read directly · deploys {deploys} · "
+            f"{len(self.deadmen.via_healthchecks)} read directly{f', {findings} description finding{"s" if findings != 1 else ""}' if findings else ''} · deploys {deploys} · "
             f"reminders {reminders} · "
             f"actions none · follow-ups none"
         )

@@ -1,0 +1,52 @@
+[
+  {
+    "name": "zcrypto-engine-shadow",
+    "tags": "engine engine-shadow",
+    "desc": "The trade engine's 4-hourly cycle on zcrypto: it pings on a completed cycle and pings /fail on a failed one. A stale check with NO preceding /fail means a cycle raised before either ping — the node is up but the cycle died. Runbook: infra/runbooks/engine.md#zcrypto-engine-cycle-stale"
+  },
+  {
+    "name": "zcrypto-verify-replay",
+    "tags": "ops verify-replay",
+    "desc": "The nightly canonical-archive sweep on the ops node. Withheld when the run produced no summary — and withheld independently of both Grafana rules for that timer, so this check can be the only thing that notices. Runbook: infra/runbooks/ops.md#zcrypto-ops-verify-replay-run-broken"
+  },
+  {
+    "name": "zcrypto-verified-replay",
+    "tags": "ops verified-replay",
+    "desc": "The verified-replay unit on the ops node. Withheld when the run did not reach its clean-exit ping. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-verified-replay-stale"
+  },
+  {
+    "name": "zcrypto-capture-red",
+    "tags": "capture-redundant capture-daemon",
+    "desc": "L2 capture daemon on zcrypto-red (the redundant secondary), pinging every 60 s. Withheld on the same conditions as the primary's check. Losing this one alone does not lose data; losing it together with the primary's does. Runbook: infra/runbooks/capture.md#zcrypto-capture-all-streams-silent"
+  },
+  {
+    "name": "zcrypto-gate-verify",
+    "tags": "nas gate-verify",
+    "desc": "The gate export on the NAS: a GET on a clean gate, a GET to /fail otherwise. Withheld when the gate is unclean or the export did not run at all. Runbook: infra/runbooks/gate.md#zcrypto-gate-exporter-stale"
+  },
+  {
+    "name": "zcrypto-panel",
+    "tags": "ops panel",
+    "desc": "The panel-materialize unit on the ops node. Withheld when the run did not complete cleanly. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-panel-exit-nonzero"
+  },
+  {
+    "name": "zcrypto-archive-pull",
+    "tags": "ops archive-pull",
+    "desc": "The half-hourly overlay-writer cycle on the ops node, pinging only on a clean cycle. Withheld when the fail-closed gate skipped the cycle, or the run failed. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled"
+  },
+  {
+    "name": "zcrypto-liquidations",
+    "tags": "ops liquidations",
+    "desc": "The liquidations poller on the ops node. Withheld when the poller is not cycling, or when its disk watermark is breached. Runbook: infra/runbooks/observability.md#zcrypto-ops-poller-log-dead"
+  },
+  {
+    "name": "zcrypto-grafana-watchdog",
+    "tags": "ops grafana-watchdog",
+    "desc": "The ops timer probing Grafana every 5 min: it pings on success and /fail on probe failure, with a 600 s timeout and 600 s grace. It goes down when Grafana is unreachable from the ops node, or when the pinger itself died — then it pages by staleness instead. This is the check that still works when Grafana is dark. Runbook: infra/runbooks/observability.md#zcrypto-hcio-watchdog"
+  },
+  {
+    "name": "zcrypto-capture",
+    "tags": "capture capture-daemon",
+    "desc": "L2 capture daemon on zcrypto (the primary), pinging every 60 s. The ping is withheld when the websocket is disconnected, when ANY pair has an open gap, or when the disk watermark is breached — so one stuck pair silences this check for all 12 pairs. Runbook: infra/runbooks/capture.md#zcrypto-capture-all-streams-silent"
+  }
+]
