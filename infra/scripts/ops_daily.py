@@ -409,11 +409,17 @@ class Report:
         fired = ", ".join(f"`{a.uid}`" for a in self.alerts.firing_now) or "none"
         failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"
         errors = sum(c.count for c in self.logs.counts if c.level in ("ERROR", "CRITICAL"))
+        # WARNING is carried too, and only when there is some. A healthy fleet produces no
+        # ERROR/CRITICAL for weeks, so a paragraph counting only those records "0" every day and the
+        # journal says nothing -- which is what happened on the first real pass, whose ONLY finding
+        # was 1802 WARNING lines the paragraph dropped. Omitted when zero so a silent day stays short.
+        warnings = sum(c.count for c in self.logs.counts if c.level == "WARNING")
         deploys = ", ".join(str(d.get("limit")) for d in self.deploys) or "none"
         hours = int(self.window.total_seconds() // 3600)
         return (
             f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired} · checks {failed} · "
-            f"logs {errors} ERROR/CRITICAL lines · dead-men {self.deadmen.via_prometheus} down via Grafana, "
+            f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
+            f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
             f"{len(self.deadmen.via_healthchecks)} read directly · deploys {deploys} · "
             f"actions none · follow-ups none"
         )
