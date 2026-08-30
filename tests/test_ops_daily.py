@@ -906,13 +906,14 @@ def test_every_directory_read_root_ends_in_a_slash():
     assert not any(f.endswith("/") for f in ops_daily._READ_SAFE_FILES), ops_daily._READ_SAFE_FILES
 
 
-def test_the_log_read_uses_lokis_query_path_not_prometheuss():
+def test_the_log_read_uses_lokis_query_path_not_prometheuss(monkeypatch):
     """Loki answers under `/loki/api/v1/query`; `/api/v1/query` is Prometheus's and 404s there.
 
     Measured against the live stack: the Prometheus spelling returned HTTP 404 and the Loki one
     returned 200 with series. The whole suite was green while the log plane had never worked once,
     because no test looked at the URL -- so this asserts the path, not the parse.
     """
+    monkeypatch.delenv("GRAFANA_LOKI_DS_UID", raising=False)
     opener = _recording({"data": {"result": []}})
     ops_daily.read_logs("tok", window=DAY, opener=opener)
     assert len(opener.urls) == 1
@@ -956,6 +957,38 @@ def test_a_transport_failure_is_an_unreadable_source_not_a_crash(exc):
         assert result.unreadable, f"{read.__name__} let {type(exc).__name__} escape"
 
 
-def test_the_verdict_read_survives_a_transport_failure_too():
+def test_a_verdict_read_that_could_not_be_read_exits_2_not_1():
+    """`read_verdict` reports through its checks, so its failures bypassed `Report.unreadable`.
+
+    An isolated timeout on the verdict query alone therefore exited 1 -- ATTENTION -- which says a
+    Grafana the pass could not reach is something wrong with the FLEET. The old assertion here was
+    `all(ok is False)`, which a healthy empty result satisfies identically and so proved nothing;
+    the `unreadable:` prefix is what distinguishes them.
+    """
     checks = ops_daily.read_verdict("tok", opener=_raises(TimeoutError("timed out")))
-    assert checks and all(c.ok is None or c.ok is False for c in checks), checks
+    assert checks and all(c.value.startswith("unreadable:") for c in checks), checks
+    report = ops_daily.build_report(
+        alerts=ops_daily.AlertsRead(),
+        logs=ops_daily.LogsRead(),
+        deadmen=ops_daily.DeadmenRead(),
+        verdict=checks,
+        deploys=[],
+        now=NOW,
+    )
+    assert report.unreadable, "a verdict the pass could not read is an unreadable SOURCE"
+    assert report.exit_code == 2, report.exit_code
+
+
+def test_a_healthy_but_empty_verdict_is_not_an_unreadable_source():
+    """The true positive the old assertion could not tell apart: `(no series)` is a FAIL, not a gap."""
+    checks = ops_daily.read_verdict("tok", opener=_canned({"data": {"result": []}}))
+    report = ops_daily.build_report(
+        alerts=ops_daily.AlertsRead(),
+        logs=ops_daily.LogsRead(),
+        deadmen=ops_daily.DeadmenRead(),
+        verdict=checks,
+        deploys=[],
+        now=NOW,
+    )
+    assert not report.unreadable, report.unreadable
+    assert report.exit_code == 1, report.exit_code

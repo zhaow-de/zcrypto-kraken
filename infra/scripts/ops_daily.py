@@ -344,7 +344,19 @@ class Report:
 
     @property
     def unreadable(self) -> list[str]:
-        return [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable) if n]
+        """Every source that could not be read -- the verdict checks included.
+
+        The verdict read reports through its checks rather than an `unreadable` field, so a timeout
+        on it alone used to leave the pass at exit 1, ATTENTION: a Grafana it could not reach,
+        reported as something wrong with the FLEET. The `unreadable:` prefix is written by
+        `read_verdict` for exactly this case and is the only value that carries it.
+        """
+        named = [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable) if n]
+        return named + [
+            f"{c.name} could not be read: {c.value.removeprefix('unreadable: ')}"
+            for c in self.verdict
+            if c.value.startswith("unreadable:")
+        ]
 
     @property
     def exit_code(self) -> int:
