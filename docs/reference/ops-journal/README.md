@@ -14,7 +14,8 @@ A heading carrying the date and the verdict, then one paragraph of labelled clau
 ## 2026-08-29 — all-clear
 
 window 24 h to 2026-08-29 06:00Z · alerts none · checks all pass · logs 0 ERROR/CRITICAL lines ·
-dead-men 0 down via Grafana, 10 read directly · deploys none · actions none · follow-ups none
+dead-men 0 down via Grafana, 10 read directly · deploys none ·
+reminders refdata sweep: due in 5 days (last sweep 2026-08-04), healable re-derivation: counter unchanged in 24 h · actions none · follow-ups none
 ```
 
 The verdict is one of `all-clear`, `attention`, `incident`. `tests/test_ops_journal.py` checks only that every heading parses and that dates increase within a file — greppable, not a schema, so the paragraph stays prose an operator can read.
