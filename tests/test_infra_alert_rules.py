@@ -1114,3 +1114,23 @@ def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
             assert token in expr, f"{uid} does not cover {token}: {expr!r}"
     assert not re.search(r'job="engine_app"[^}]*host=~"zcrypto\|zcrypto-red"', expr), "engine_app must not select zcrypto-red"
     assert not re.search(r'host=~"zcrypto\|zcrypto-red"[^}]*job="engine_app"', expr), "engine_app must not select zcrypto-red"
+
+
+def test_every_runbook_cross_reference_resolves():
+    """A runbook that points at a section in another runbook must point at one that exists.
+
+    The alert-to-runbook direction has been guarded since these files were written; the
+    runbook-to-runbook direction had 119 references and no guard, and one of them was wrong — the
+    dead-man map sent the liquidations poller to `ops-node.md` for a section living in
+    `observability.md`. An operator at 03:00 follows that link and finds nothing, which is worse
+    than no link at all because it costs them the time to go looking.
+    """
+    runbooks = Path(__file__).resolve().parents[1] / "infra/runbooks"
+    anchors, refs = set(), []
+    for path in runbooks.glob("*.md"):
+        text = path.read_text()
+        anchors |= {f"{path.name}#{a}" for a in re.findall(r'<a name="([^"]+)"></a>', text)}
+        refs += [(path.name, f"{m.group(1)}#{m.group(2)}") for m in re.finditer(r"\b([a-z0-9-]+\.md)#([a-z0-9-]+)", text)]
+    assert refs, "no cross-references found at all — the extraction broke, not the runbooks"
+    broken = sorted({(src, ref) for src, ref in refs if ref not in anchors})
+    assert not broken, f"runbook references pointing at sections that do not exist: {broken}"

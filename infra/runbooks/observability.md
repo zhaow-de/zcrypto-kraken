@@ -344,7 +344,7 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 | `ops` | `panel` | the panel-materialize unit | the run did not complete cleanly | `ops-node.md#zcrypto-ops-panel-exit-nonzero` |
 | `ops` | `verify-replay` | the nightly canonical-archive sweep | the run produced no summary — **withheld independently of both Grafana rules for that timer** | `ops.md#zcrypto-ops-verify-replay-run-broken` |
 | `ops` | `verified-replay` | the verified-replay unit | the run did not reach its clean-exit ping | `ops-node.md#zcrypto-ops-verified-replay-stale` |
-| `ops` | `liquidations` | the liquidations poller (`LIQUIDATIONS_HEALTHCHECK_URL`) | the poller is not cycling, or its disk watermark is breached | `ops-node.md#zcrypto-ops-poller-log-dead` |
+| `ops` | `liquidations` | the liquidations poller (`LIQUIDATIONS_HEALTHCHECK_URL`) | the poller is not cycling, or its disk watermark is breached | `observability.md#zcrypto-ops-poller-log-dead` |
 | `ops` | — (check `zcrypto-grafana-watchdog`) | the ops timer probing Grafana every 5 min; pings on success, `/fail` on probe failure; 600 s timeout / 600 s grace | Grafana is unreachable from ops, **or** the pinger itself died (then it pages by staleness) | this section |
 
 **There is no dead-man check for the NAS archive-pull loop.** Nothing in the repo pings one — the NAS's only hc.io check is the gate one above. That pull loop's liveness is Grafana-only, through `nas.md#zcrypto-nas-archive-pull-stalled`, so a Grafana outage leaves it unwatched. Treat that as a known asymmetry, not as a check you have failed to find.
