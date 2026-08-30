@@ -1,6 +1,6 @@
 # 00105 — the go-live drill program: implementation plan
 
-Spec: `docs/specs/00105-go-live-drill-program-design.md`. Branch `feat/t0049-drill-program`, cut from `develop` after PR #352 ([[T0157]] / spec `00104`) merged — `infra/runbooks/observability.md`, `engine.md` and the PROCEDURE kind all exist there now, so no task here creates them.
+Spec: `docs/specs/00105-go-live-drill-program-design.md`. Branch `feat/00105-go-live-drill-program`, cut from `develop` after PR #352 ([[T0157]] / spec `00104`) merged — `infra/runbooks/observability.md`, `engine.md` and the PROCEDURE kind all exist there now, so no task here creates them.
 
 ## Goal
 
