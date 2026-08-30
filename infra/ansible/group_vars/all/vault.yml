@@ -2,9 +2,10 @@
 #
 # Unlike group_vars/observed/ (Alloy's credentials, which managed hosts render) and
 # group_vars/capture_host/ (the live trade key + per-host URLs), nothing here is consumed by a
-# managed host at all: both values below are read by `infra/scripts/grafana-push.sh` from the
-# WORKSTATION, by file path, never through inventory. `all` is therefore the honest scope — it is
-# the only group that includes `workstation`, where the script actually runs.
+# managed host at all: every value below is read from the WORKSTATION, by file path, never through
+# inventory — `grafana_sa_token` and `slack_webhook_url` by `infra/scripts/grafana-push.sh`, and
+# `healthchecks_readonly_api_key` by `infra/scripts/ops_daily.py`'s direct dead-man read. `all` is
+# therefore the honest scope — it is the only group that includes `workstation`, where they run.
 #
 # Moved here from group_vars/capture_host/ (spec 00054, 2026-07-16, owner's call): neither is
 # capture-specific, and parking a project-level tooling secret in a host group misstates who owns
@@ -193,3 +194,12 @@ zaccess_client_p12_pass: !vault |
           34613231313435653265643533393563396235323339663532363339643630613932653237643833
           3437393566616432620a626630313864376236653962356137653962366533383034356537313662
           39316133323536643635643765333234346136333665343732313261363930346637
+
+healthchecks_readonly_api_key: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          62633638626463353264373466633739643936313961656136396565663666393663636435326131
+          6366356331363964646530626261623639366237643931330a623963336563653164643662666436
+          31363631656163396337663161353865316636333938363463306334306338376137363934643861
+          3334363261643561300a303633336636656237313264643230646133383136373264353962613761
+          64666439656637323463613964653039626337623738353761336532326333623634633666316631
+          3263383535333862656362633361326235613430366234643762
