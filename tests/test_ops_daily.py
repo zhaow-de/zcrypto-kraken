@@ -842,3 +842,32 @@ def test_the_greps_the_runbooks_actually_run():
         "sudo docker logs grafana-alloy --since 1h 2>&1 | grep -iE 'collector|error'",
     ):
         assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "cat /etc/systemd/journald.conf.evil",
+        "cat /etc/zcrypto-ops/alloy/compose.yamlxsecrets.env",
+        "cat /etc/zcrypto-ops/alloy/compose.yaml.bak",
+        "cat /etc/machine-id-backup/secrets",
+    ],
+)
+def test_a_single_file_root_does_not_admit_names_that_extend_it(cmd):
+    """The three file entries were matched by `startswith`, so any longer name read clean.
+
+    Nothing on the fleet matched, which is what kept it latent — but `/etc/zcrypto-ops/alloy/` holds
+    alloy-secrets.env beside the compose file it lists, so a `compose.yaml.bak` there would have been
+    a door onto that directory. Files match exactly; only directory roots, all `/`-terminated, match
+    by prefix.
+    """
+    assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED
+
+
+def test_the_exact_file_roots_still_read():
+    for cmd in (
+        "grep -rE '^Storage=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/",
+        "grep -A3 group_add /etc/zcrypto-ops/alloy/compose.yaml",
+        "cat /etc/machine-id",
+    ):
+        assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd

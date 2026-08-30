@@ -720,22 +720,24 @@ _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
 # same by recursion. A glob or a directory names nothing the filter can match -- which is the exact
 # defect the two inherited post-checks had, reintroduced by hand one commit after being described.
 _CONTENT_HEADS = frozenset({"cat", "grep"})
-_READ_SAFE_ROOTS = (
+# Directories, matched by prefix -- every one ends in `/` so a sibling cannot ride in on its
+# letters (`/var/logsecret/` is not `/var/log/`).
+_READ_SAFE_DIRS = (
     "/var/log/",
     "/var/lib/zcrypto-node-textfile/",
     "/var/lib/zcrypto-ops/",
     "/var/lib/zcrypto-engine/exec/",
     "/var/lib/zcrypto-engine/journal/",
     "/mnt/zhao-crypto/",
-    # `/etc/systemd/journald.conf` and `.conf.d/` both, by prefix -- NOT `/etc/systemd/`, where a
-    # unit file may carry `Environment=` inline. Every root here is one a runbook actually reads:
-    # `/proc/` and `/sys/` were added on the assumption that they are inert, and `/proc/` is not --
-    # `cat /proc/<pid>/environ` prints a container's environment, which on the engine host is the
-    # live Kraken trade key that CLAUDE.md forbids printing. An allowlist may hold only what has
-    # been checked, or it is a denylist again.
+    "/etc/systemd/journald.conf.d/",
+)
+# Single files, matched EXACTLY. As prefixes these admitted anything extending the name --
+# `journald.conf.evil`, `compose.yamlxsecrets.env`, `/etc/machine-id-backup/secrets` all read
+# clean, verified. Nothing on the fleet matches today, which is what made it latent rather than
+# open; `/etc/zcrypto-ops/alloy/` is listed as this one file because alloy-secrets.env sits beside
+# it, and a `compose.yaml.bak` would otherwise have been a door onto the same directory.
+_READ_SAFE_FILES = (
     "/etc/systemd/journald.conf",
-    # Named as a FILE, not as its directory: `/etc/zcrypto-ops/alloy/` also holds alloy-secrets.env,
-    # so allowing the directory would re-open the glob hole for the sake of one compose file.
     "/etc/zcrypto-ops/alloy/compose.yaml",
     "/etc/machine-id",
 )
@@ -749,7 +751,7 @@ def _reads_only_safe_paths(head: str, operands: list[str]) -> bool:
     safe root stays under it; `..` can leave, so it is refused outright.
     """
     paths = operands[1:] if head == "grep" else operands
-    return all(path.startswith(_READ_SAFE_ROOTS) and ".." not in path for path in paths)
+    return all(".." not in path and (path.startswith(_READ_SAFE_DIRS) or path in _READ_SAFE_FILES) for path in paths)
 
 
 # Stripped before matching: they change who runs a command, never what it does. `ssh <host>` also
