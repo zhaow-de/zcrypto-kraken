@@ -1107,6 +1107,10 @@ def test_the_journal_paragraph_carries_warnings_when_there_are_any():
         counts=[
             ops_daily.LogCount(host="zcrypto", container="capture", level="WARNING", count=1201),
             ops_daily.LogCount(host="zcrypto-red", container="capture", level="WARNING", count=601),
+            # An ERROR beside them, because a WARNING-only fixture leaves the LEVEL FILTER unpinned:
+            # summing every count instead of just the warnings survives such a suite, and a mutant
+            # folding ERROR into the WARNING figure would ship green.
+            ops_daily.LogCount(host="ops", container="liquidations", level="ERROR", count=2),
         ]
     )
     para = ops_daily.build_report(
@@ -1118,7 +1122,7 @@ def test_the_journal_paragraph_carries_warnings_when_there_are_any():
         now=NOW,
     ).journal_paragraph()
     assert "1802 WARNING" in para, para
-    assert "0 ERROR/CRITICAL" in para, para
+    assert "2 ERROR/CRITICAL" in para, para
 
 
 def test_the_journal_paragraph_stays_quiet_when_nothing_warned():
