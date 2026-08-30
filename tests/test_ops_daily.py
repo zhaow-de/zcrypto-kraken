@@ -1144,7 +1144,12 @@ def test_the_journal_paragraph_stays_quiet_when_nothing_warned():
 
 def _register(tmp_path, *rows, decoy=True):
     """A register whose re-confirmation log holds `rows` (first-cell, fetched-at) -- plus, by default,
-    a dated table AFTER the next heading, so a parser that ignores section boundaries reads 2099."""
+    a dated table AFTER the next heading, so a parser that ignores section boundaries reads 2099.
+
+    The un-numbered `not a sweep row` sits INSIDE the log and LAST, where only `_LOG_ROW`'s `#\\d+`
+    rejects it: drop that clause and the parse answers 2000-01-01 instead of the real row, or
+    instead of None. Under an earlier heading it guarded nothing -- the section gate got there first.
+    """
     text = [
         "# Kraken reference-data snapshot register",
         "",
@@ -1152,7 +1157,6 @@ def _register(tmp_path, *rows, decoy=True):
         "",
         "| Sweep | Fetched at (UTC) |",
         "| -- | -- |",
-        "| not a sweep row | 2000-01-01T00:00:00+00:00 |",
         "",
         "## Re-confirmation log",
         "",
@@ -1161,6 +1165,7 @@ def _register(tmp_path, *rows, decoy=True):
         "| Sweep | Fetched at (UTC) | Full response |",
         "| -- | -- | -- |",
         *[f"| {first} | {fetched} | 1429 pairs / 824 assets |" for first, fetched in rows],
+        "| not a sweep row | 2000-01-01T00:00:00+00:00 | x |",
         "",
     ]
     if decoy:
@@ -1173,10 +1178,15 @@ def _register(tmp_path, *rows, decoy=True):
 def test_the_last_sweep_date_is_read_from_the_real_register_not_a_fixture_shaped_to_the_parser():
     """The parse must find the committed file's latest row. Row #0 is 2026-07-07 and row #1 is
     2026-08-04, so `>=` the latter proves the LAST row was read, and the bound never rots as sweeps
-    append. The second assertion re-derives the answer independently of the parser."""
+    append. The second assertion re-derives the answer by a different mechanism -- slicing the
+    section out by heading rather than walking lines -- but honours the SAME boundary, so it can
+    disagree with `last_sweep_date` only when `last_sweep_date` is wrong. A whole-file scan here
+    would instead fail against a correct parser the day a numbered row appears under a later
+    heading, which is the case this test exists to defend."""
     found = ops_daily.last_sweep_date(ops_daily.REGISTER)
     assert found is not None and found >= date(2026, 8, 4), found
-    rows = [line for line in ops_daily.REGISTER.read_text().splitlines() if line.startswith("| #")]
+    log = ops_daily.REGISTER.read_text().split("\n## Re-confirmation log\n", 1)[1].split("\n## ", 1)[0]
+    rows = [line for line in log.splitlines() if line.startswith("| #")]
     assert found.isoformat() in rows[-1], (found, rows[-1])
 
 

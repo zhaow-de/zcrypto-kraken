@@ -190,7 +190,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_LOG = REPO_ROOT / "docs/reference/deploy-log.jsonl"
 REGISTER = REPO_ROOT / "docs/reference/kraken-snapshot-register.md"
 # A row of the register's `## Re-confirmation log` table: first cell `#<n> (...)`, second cell the
-# ISO stamp. Only rows under THAT heading count: the register holds other dated tables.
+# ISO stamp. The heading gate in `last_sweep_date` is defensive, not a report on what the register
+# currently holds: a dated row under any other heading must never become the answer, whether or not
+# one exists there yet.
 _LOG_ROW = re.compile(r"^\| #\d+[^|]*\|\s*(\d{4}-\d{2}-\d{2})T")
 
 
