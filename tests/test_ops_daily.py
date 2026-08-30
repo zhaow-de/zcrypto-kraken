@@ -871,3 +871,14 @@ def test_the_exact_file_roots_still_read():
         "cat /etc/machine-id",
     ):
         assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
+
+
+def test_every_directory_read_root_ends_in_a_slash():
+    """The split between prefix-matched dirs and exactly-matched files is only sound while it holds.
+
+    A `_READ_SAFE_DIRS` entry added without its trailing slash silently becomes a prefix again, and
+    admits every sibling whose name merely extends it — the defect the split was made to close. The
+    comment above the constant says so; this asserts it.
+    """
+    assert all(root.endswith("/") for root in ops_daily._READ_SAFE_DIRS), ops_daily._READ_SAFE_DIRS
+    assert not any(f.endswith("/") for f in ops_daily._READ_SAFE_FILES), ops_daily._READ_SAFE_FILES
