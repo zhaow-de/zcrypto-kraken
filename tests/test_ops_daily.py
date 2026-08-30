@@ -1094,3 +1094,45 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
     assert any("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in deadmen.urls), deadmen.urls
     assert any(u == "https://healthchecks.io/api/v3/checks/" for u in deadmen.urls), deadmen.urls
     assert not any("/loki/" in u for u in deadmen.urls), deadmen.urls
+
+
+def test_the_journal_paragraph_carries_warnings_when_there_are_any():
+    """The paragraph is the journal's payload, and it summed only ERROR/CRITICAL.
+
+    Day one of the real pass had zero of those and 1201 WARNINGs on the capture primary — the only
+    finding of the day — and the paragraph the skill tells you to paste read "logs 0 ERROR/CRITICAL
+    lines". A month of entries would have recorded nothing. WARNING is where a healthy fleet talks.
+    """
+    logs = ops_daily.LogsRead(
+        counts=[
+            ops_daily.LogCount(host="zcrypto", container="capture", level="WARNING", count=1201),
+            ops_daily.LogCount(host="zcrypto-red", container="capture", level="WARNING", count=601),
+            # An ERROR beside them, because a WARNING-only fixture leaves the LEVEL FILTER unpinned:
+            # summing every count instead of just the warnings survives such a suite, and a mutant
+            # folding ERROR into the WARNING figure would ship green.
+            ops_daily.LogCount(host="ops", container="liquidations", level="ERROR", count=2),
+        ]
+    )
+    para = ops_daily.build_report(
+        alerts=ops_daily.AlertsRead(),
+        logs=logs,
+        deadmen=ops_daily.DeadmenRead(),
+        verdict=[],
+        deploys=[],
+        now=NOW,
+    ).journal_paragraph()
+    assert "1802 WARNING" in para, para
+    assert "2 ERROR/CRITICAL" in para, para
+
+
+def test_the_journal_paragraph_stays_quiet_when_nothing_warned():
+    """The true positive: a genuinely silent day must not grow a clause saying so."""
+    para = ops_daily.build_report(
+        alerts=ops_daily.AlertsRead(),
+        logs=ops_daily.LogsRead(),
+        deadmen=ops_daily.DeadmenRead(),
+        verdict=[],
+        deploys=[],
+        now=NOW,
+    ).journal_paragraph()
+    assert "WARNING" not in para, para

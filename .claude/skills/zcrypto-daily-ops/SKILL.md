@@ -55,6 +55,8 @@ The verdict tiles' own PromQL is what the report's fleet checks already ran. Rea
 
 The runbook's SCHEDULED REMINDER sections — `reference-data.md#refdata-sweep-due`, `ops.md#healable-threshold-rederivation-due`. A reminder that has come due is work, not decoration.
 
+**Slack delivers the TRIGGER, not the evidence — so with no Slack tool the reminder is undelivered, never unevaluable.** Check due-ness at its source instead: for the sweep, the last re-confirmation row in `docs/reference/kraken-snapshot-register.md` plus the monthly cadence; for the healable threshold, the ledger, which that section's own step 1 already says to count from rather than from Grafana. Record what you found. **Never read "no message arrived" as clear** — the day the trigger chain is broken is exactly the day the sweep goes unnoticed.
+
 ## 6. Write the journal entry
 
 Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in. Commit.
@@ -68,6 +70,10 @@ The entry's paragraph, to `#zcrypto`. If no Slack tool is reachable, say so in t
 ## 8. Re-arm tomorrow
 
 A scheduled message fires once. Schedule tomorrow's trigger before finishing, the way `refdata-sweep-due` does.
+
+**With no Slack tool, the chain stops here and the entry must say so** — the next pass has nothing to trigger it. A session-local scheduler is not a substitute: it dies with the session, and this reminder has to outlive it.
+
+**The recovery, because this is not terminal**: MCP tools bind at SESSION START, so enabling a Slack connector mid-pass does nothing for the pass in flight — a NEW session gets them. The Slack half is safely run late: post the entry's paragraph and schedule the trigger from the next session, then re-true the entry. That is what 2026-08-30 did.
 
 ## Failure modes — catch yourself
 
