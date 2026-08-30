@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **The exit-code contract of `ops_daily.py` holds**: 0 all-clear, 1 attention, 2 a source it could not read; 2 outranks 1. A reminder that is **owed** reports and never blocks (spec D2: "It reports; it does not block") — it leaves the exit code alone. A reminder source the pass **could not read** (no dated register row, the counter query failed or returned no series) is `unreadable` → exit 2, the module's own contract ("a source that cannot be reached is a finding ABOUT that source, never a silent gap"). A **description finding** (spec D5) is attention → exit 1: it is a defect on an operator surface that needs a human rewrite.
+- **The exit-code contract of `ops_daily.py` holds**: 0 all-clear, 1 attention, 2 a source it could not read; 2 outranks 1. A reminder that is **owed** reports and never blocks (spec D2: "It reports; it does not block") — it leaves the exit code alone. A reminder source the pass **could not read** (no dated register row, the counter query failed or returned no series) is `unreadable` → exit 2, the module's own contract ("a source that cannot be reached is a finding ABOUT that source, never a silent gap"). A **description finding** (spec D5) leaves the exit code alone too — it is a report line and a journal paragraph clause, never attention: the check cannot repair, so an escalation would never clear until a human logged into healthchecks.io, and every day's journal entry would read `attention` until they did. Its VISIBILITY in both surfaces is the whole guarantee and is what the tests pin. A description source the pass could not READ (healthchecks.io unreachable, the runbooks unreadable) is `unreadable` → exit 2 as above — never blurred with the finding.
 - **The instrument stays pure-HTTP** (spec D3): no `ssh`, no ledger read. The healable reminder answers only "did `zcrypto_reconcile_healable_gap_seconds_total` increase in the window"; the count of qualifying days stays the runbook's own step 1, from the ledger.
 - **Every guard is proven on a fixture where defect and correct behaviour differ, then mutation-probed** through `infra/scripts/mutate-probe.sh` on a clean tree after its commit (`agent-ops.md`). Verify `--collect-only` selects the intended tests before trusting any verdict.
 - **No string literal in `infra/scripts/*.py` may carry `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `WP<N>`, or a `D<n>` decision number** — `tests/test_internal_terms_not_operator_visible.py` scans every non-docstring literal there. Regex source like `r"\bT\d{4}\b"` does not match (no four digits follow the `T`); report text like `"internal token {token!r}"` is a runtime value. Token-carrying fixtures live in `tests/`, which is not scanned. Comments and docstrings may cite `spec 00107`, `T0103`.
@@ -58,7 +58,7 @@ ______________________________________________________________________
 ### Task 1: The three reconnect-replay drops log at INFO (spec D4)
 
 **Files:**
-- Modify: `cli/capture/segment_writer.py:361-364` (the late-event drop in `append`), `:508-511` (the replay drop in `_admit`), `:542-545` (the replay drop in `_hold`)
+- Modify: `cli/capture/segment_writer.py` — three `logger.warning` calls, named by symbol, not by line: the `dropping late event` drop in `append`, and the `dropping replayed event` drop in each of `_admit` and `_hold`. Step 3 quotes each replacement block; **the `key = event[self._dedup_key]` assignment that precedes both replay sites is NOT part of either block** — replacing it away is a `NameError` on every dedup-keyed writer.
 - Modify: `tests/test_capture_segment_writer.py` (append three tests at the end; change `caplog.at_level(logging.WARNING)` at line 1988 to `logging.INFO`)
 - Modify: `tests/test_liquidations_coinalyze.py:558` and `:572` (`caplog.at_level(logging.WARNING)` → `logging.INFO`), and `:549-551` (the test's name and its comment, Step 4)
 - Modify: `cli/liquidations/coinalyze.py:16-17` (the last two lines of the module docstring's overlap-safety invariant, Step 4)
@@ -119,7 +119,7 @@ Expected: 3 failed, each with `assert [30] == [20]` — the record exists and is
 
 - [ ] **Step 3: Change the three sites and write the comment once**
 
-In `cli/capture/segment_writer.py`, the late-event site (currently lines 361–364) becomes:
+In `cli/capture/segment_writer.py`, each block below REPLACES exactly the lines it reproduces — find them by their text, never by a line count. The late-event site in `append` (its three-line comment plus the `logger.warning("dropping late event…` call; the `return` below it is untouched) becomes:
 
 ```python
             # An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
@@ -132,7 +132,7 @@ In `cli/capture/segment_writer.py`, the late-event site (currently lines 361–3
             logger.info("dropping late event pair=%s kind=%s ts=%s floor=%s", self._pair, self._kind, ts, floor)
 ```
 
-The `_admit` site (currently line 510) becomes:
+The `_admit` site — the three lines `if key in self._seen:` / its `logger.warning` / `return`, leaving the `key = event[self._dedup_key]` above them exactly as it is — becomes:
 
 ```python
             if key in self._seen:
@@ -141,7 +141,7 @@ The `_admit` site (currently line 510) becomes:
                 return
 ```
 
-The `_hold` site (currently line 544) becomes:
+The `_hold` site — the same three lines, opening `if key in seen:` (no `self.`), with its own `key = event[self._dedup_key]` above them likewise untouched — becomes:
 
 ```python
             if key in seen:
@@ -175,6 +175,8 @@ writer's dedup and its late-event floor still hold behind the watermark.
 Verify the docstring with `sed -n '8,24p' cli/liquidations/coinalyze.py` — the paragraph must still read as one invariant, the cited test name must match the renamed test exactly, and no other `warning` in the paragraph may have changed.
 
 `docs/plans/00055-liquidations-poller-watermark.md` quotes the old test name; it is a point-in-time record of that iteration and is deliberately left.
+
+Two more prose sites this level change falsifies are **not** touched here — `docs/open-topics/T0037-…` (live, argues from the drop being a bare WARNING) and `.claude/skills/zcrypto-rollout-image/SKILL.md` (calls those lines resubscribe replay). Both are doc-kind edits and land in Task 7, Steps 5 and 7, so this commit stays code-and-tests. Do not edit them from here.
 
 - [ ] **Step 5: Run the reachable suites**
 
@@ -351,6 +353,21 @@ git add infra/scripts/ops_daily.py tests/test_ops_daily.py
 git commit -m "feat(ops_daily): read the last re-confirmation row of the snapshot register"
 ```
 
+- [ ] **Step 6: Mutation-probe the cadence guard (tree must be clean)**
+
+`last_sweep_date`'s own mutations live in Task 3 Step 6, where `read_reminders` exists to carry the control. `_a_month_after` has no reader yet, so it is probed here, against its own three fixtures — spec 00107's verification clause is "every guard", and this is the one that would otherwise carry none. The probe is a shell ARRAY, expanded as `"${PROBE[@]}"` (Task 1 Step 7 says why):
+
+```bash
+uv run pytest tests/test_ops_daily.py --collect-only -q -k cadence 2>&1 | tail -3
+PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k cadence)
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def _a_month_after(/def _a_month_afterz(/' \
+  --mutation 's/(d.year + 1, 1)/(d.year, 1)/' -- "${PROBE[@]}"
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def _a_month_after(/def _a_month_afterz(/' \
+  --mutation 's/min(d.day,/max(d.day,/' -- "${PROBE[@]}"
+```
+
+Expected: exactly 3 tests collected — the one parametrization; no other test name in the file carries `cadence` **at this point in the branch**. Task 3 adds `test_the_refdata_reminder_is_computed_from_the_register_and_the_monthly_cadence`, so a re-run of this proof on the final tree collects 6 and stays KILLED (that test reads `_a_month_after` too). Then `KILLED` twice. The first drops the December year rollover, so the Dec→Jan fixture answers `2026-01-04` where it must answer `2027-01-04` — a wrong VALUE, the shape the guard exists to catch. The second drops the day clamp, so the Jan-31 fixture asks for `2026-02-31` and `date()` raises; a raise is a fail and a fail is a kill, and it proves that fixture reaches the clamp at all. Record both verdicts.
+
 ______________________________________________________________________
 
 ### Task 3: `read_reminders()` — the sixth read (spec D1, D2, D3)
@@ -454,8 +471,13 @@ def test_a_healable_counter_with_no_series_is_unreadable_never_quiet(tmp_path):
     assert _reminder(read, "refdata sweep")  # the half that could be read still is
 
 
-def test_the_real_register_yields_a_refdata_reminder(tmp_path):
-    """Against the committed file, with the counter canned: the pass's own default path parses."""
+def test_the_real_register_yields_a_refdata_reminder():
+    """Against the committed file, with the counter canned: the pass's own default path parses.
+
+    No `tmp_path`, deliberately -- this test's entire value is that it omits `register=`, so the
+    committed `REGISTER` default is what gets exercised. A fixture parameter here is an invitation to
+    pass `register=_register(tmp_path, ...)` for consistency with its neighbours, which would delete
+    the only coverage of the path `main` actually takes."""
     read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
     assert read.unreadable is None, read.unreadable
     assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"}
@@ -496,9 +518,11 @@ In `test_every_endpoint_the_instrument_builds_is_pinned` (line 1073), change the
     reminders = _recording(_counter(0))
     ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=reminders)
     assert len(reminders.urls) == 2 and all("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in reminders.urls), reminders.urls
-    assert "increase(zcrypto_reconcile_healable_gap_seconds_total[24h])" in urllib.parse.unquote(reminders.urls[0]), reminders.urls
-    assert "resets(zcrypto_reconcile_healable_gap_seconds_total[24h])" in urllib.parse.unquote(reminders.urls[1]), reminders.urls
+    assert "sum(increase(zcrypto_reconcile_healable_gap_seconds_total[24h]))" in urllib.parse.unquote(reminders.urls[0]), reminders.urls
+    assert "sum(resets(zcrypto_reconcile_healable_gap_seconds_total[24h]))" in urllib.parse.unquote(reminders.urls[1]), reminders.urls
 ```
+
+The `sum(` is pinned, not decoration: every fixture returns exactly one series, so `series[0]` behaves identically with or without the aggregation and nothing else in the suite would notice its loss. If the counter ever gains a label (a second reconciler instance, a per-pair split), an unaggregated read reports one label's movement as the whole and takes `resets` off a different series than `increase` — a wrong OWED/ok answer on the daily instrument.
 
 - [ ] **Step 2: Run and see them fail**
 
@@ -610,7 +634,7 @@ git commit -m "feat(ops_daily): read_reminders -- due-ness from the register row
 uv run pytest tests/test_ops_daily.py --collect-only -q -k "reminder or sweep_date or last_row or no_dated_row or healable" 2>&1 | tail -3
 ```
 
-Expected: exactly 12 tests collected — by name: the real-register read (1), last-row-wins (1), no-dated-row (1), the refdata parametrization (3), the register-unreadable case (1), the healable parametrization (2), the reset case (1), the no-series case (1), the real-register-yields-both case (1); the cadence test carries none of the words and no mutation below touches `_a_month_after`, and the citation guard carries none of them either — Step 7 probes it against the file it actually reads. The probe is a shell array (Task 1 Step 7 says why), with the control `--control 's/^def read_reminders(/def read_reminderz(/'` on every run:
+Expected: exactly 12 tests collected — by name: the real-register read (1), last-row-wins (1), no-dated-row (1), the refdata parametrization (3), the register-unreadable case (1), the healable parametrization (2), the reset case (1), the no-series case (1), the real-register-yields-both case (1); the cadence test carries none of the words and no mutation below touches `_a_month_after` — that guard is probed on its own three fixtures in Task 2 Step 6 — and the citation guard carries none of them either; Step 7 probes it against the file it actually reads. The probe is a shell array (Task 1 Step 7 says why), with the control `--control 's/^def read_reminders(/def read_reminderz(/'` on every run:
 
 ```bash
 PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k 'reminder or sweep_date or last_row or no_dated_row or healable')
@@ -767,16 +791,7 @@ infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
 
 Expected: exactly 2 tests collected (`test_an_owed_reminder_reports_and_never_blocks`, `test_an_unreadable_reminder_source_exits_2_like_every_other_source` — no other name in the file carries either phrase), then `KILLED`: the control drops exit 2 and the unreadable test bites it; the mutation turns an owed reminder into attention and the `r.exit_code == 0` assertion bites that. Record the verdict.
 
-**This exact sed stops matching later in the branch.** The description-findings task rewrites `exit_code` into a parenthesised multi-line condition, after which no line reads `if self.alerts.firing_now or` and `mutate-probe.sh` exits **6** (`no-op sed proves nothing`) — a no-op sed, not a guard that stopped discriminating. Anyone re-running the recorded proof on the final tree uses the addressed form instead, which is the same mutation against the same guard:
-
-```bash
-PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k 'owed_reminder or unreadable_reminder')
-infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
-  --control 's|if self.unreadable:|if False:|' \
-  --mutation 's|^            self.alerts.firing_now$|            any(r.owed for r in self.reminders.reminders) or self.alerts.firing_now|' -- "${PROBE[@]}"
-```
-
-The `^`/`$` anchors are load-bearing: `self.alerts.firing_now` occurs three times in the module (`exit_code`, `markdown`, `journal_paragraph`), and unanchored the sed rewrites the two comprehensions as well and the file stops parsing — which `mutate-probe.sh` reports as KILLED on a collection error, a verdict about nothing.
+**This sed keeps matching for the rest of the branch**: no later task edits `exit_code`, whose attention condition stays the one line `if self.alerts.firing_now or [c for c in self.verdict if not c.ok] or (self.deadmen.via_prometheus or 0) > 0:` (spec 00107 D5 rules the description finding out of it). So the recorded proof re-runs verbatim on the final tree. Should a future change break the line up, `mutate-probe.sh` exits **6** (`no-op sed proves nothing`) rather than reporting a false verdict — re-address the mutation to the rewritten line, never treat the 6 as a pass.
 
 ______________________________________________________________________
 
@@ -858,10 +873,10 @@ After `read_reminders` (the last of Task 3's additions) in `infra/scripts/ops_da
 
 ```python
 RUNBOOKS = REPO_ROOT / "infra/runbooks"
-# D5 asks for the LINK, not a path in passing -- and for THE link the prefix introduces. Searching
-# `_RUNBOOK_LINK` over the whole description would judge whichever path comes first, so a passing
-# mention that happens to resolve passes a description whose real link is dead. Composed from
-# `_RUNBOOK_LINK` rather than respelled, so the two cannot drift apart.
+# Spec 00107 D5 asks for the LINK, not a path in passing -- and for THE link the prefix introduces.
+# Searching `_RUNBOOK_LINK` over the whole description would judge whichever path comes first, so a
+# passing mention that happens to resolve passes a description whose real link is dead. Composed
+# from `_RUNBOOK_LINK` rather than respelled, so the two cannot drift apart.
 _RUNBOOK_PREFIX = "Runbook: "
 _RUNBOOK_CITED = re.compile(re.escape(_RUNBOOK_PREFIX) + _RUNBOOK_LINK.pattern)
 # The vocabulary `.claude/rules/operator-facing-text.md` bans from any surface read without the repo
@@ -913,13 +928,13 @@ ______________________________________________________________________
 ### Task 6: The dead-man read checks the descriptions it fetched, and the true positive (spec D5)
 
 **Files:**
-- Modify: `infra/scripts/ops_daily.py` — the `DeadmenRead` dataclass, `read_deadmen`, `Report.exit_code`, the `## Dead-men` block of `Report.markdown`, and `Report.journal_paragraph`. Symbols, not line numbers: the tasks before this one insert ~100 lines above them all. Every edit below is content-anchored.
+- Modify: `infra/scripts/ops_daily.py` — the `DeadmenRead` dataclass, `read_deadmen`, the `## Dead-men` block of `Report.markdown`, and `Report.journal_paragraph`. **`Report.exit_code` is deliberately NOT touched** (spec 00107 D5's ruling: a description finding is a report line, not an exit code). Symbols, not line numbers: the tasks before this one insert ~100 lines above them all. Every edit below is content-anchored.
 - Create: `tests/fixtures/healthchecks_descriptions.json` (name, tags, desc of the ten live checks — nothing else)
 - Modify: `tests/test_ops_daily.py` — new tests appended
 
 **Interfaces:**
 - Consumes: `check_descriptions` (Task 5).
-- Produces: `DeadmenRead.description_findings: list[str] | None` (default `None` — the check did not run; `[]` — it ran and found nothing), set by `read_deadmen` after a successful direct read; findings → exit 1, listed under `## Dead-men` in the markdown, counted in the journal paragraph when non-zero.
+- Produces: `DeadmenRead.description_findings: list[str] | None` (default `None` — the check did not run; `[]` — it ran and found nothing), set by `read_deadmen` after a successful direct read; findings are listed under `## Dead-men` in the markdown and counted in the journal paragraph when non-zero, and **move no exit code** (spec 00107 D5).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -957,15 +972,23 @@ def test_a_runbook_read_failure_during_the_descriptions_check_is_named_as_such_n
     assert "descriptions: all" not in markdown, markdown
 
 
-def test_a_description_finding_is_attention_and_reaches_the_report_and_the_paragraph():
+def test_a_description_finding_reaches_the_report_and_the_paragraph_and_never_blocks():
+    """Spec 00107 D5: the finding is a report line and a journal clause, never the exit code -- the
+    check cannot repair, and a SaaS description no repo change touches would hold the pass at
+    `attention` every day until a human logged in, destroying the all-clear entry the journal exists
+    to produce. VISIBILITY is therefore the whole guarantee, so both surfaces are pinned here, and so
+    is the verdict the operator reads above them."""
     deadmen = ops_daily.DeadmenRead(
         via_prometheus=0.0,
         via_healthchecks=[{"name": "x"}],
         description_findings=["`x`: its description carries the internal token 'T0083'"],
     )
     r = _report(deadmen=deadmen)
-    assert r.exit_code == 1, r.exit_code
-    assert "- description: `x`: its description carries the internal token 'T0083'" in r.markdown(), r.markdown()
+    assert r.exit_code == 0, r.exit_code
+    md = r.markdown()
+    assert "- description: `x`: its description carries the internal token 'T0083'" in md, md
+    assert "**Verdict: all-clear** (exit 0)" in md, md
+    assert "- descriptions: all" not in md, md  # the finding line and the all-clear line are exclusive
     assert "1 description finding" in r.journal_paragraph(), r.journal_paragraph()
 
 
@@ -981,8 +1004,9 @@ def test_clean_descriptions_say_so_in_the_report_and_stay_out_of_the_paragraph()
 def test_todays_ten_real_descriptions_all_pass():
     """The true positive: a check that refuses everything is not a check. `name`/`tags`/`desc` of the
     ten live checks, read 2026-08-30 through the read-only key -- never the whole object, which
-    carries the check's write URL. Re-fetch it (the plan for spec 00107 says how) if a description
-    is rewritten; a red here after a rewrite is the finding the daily pass would have made."""
+    carries the check's write URL. This reads the committed fixture only: rewriting a description in
+    healthchecks.io moves nothing here until the fixture is re-fetched (the plan for spec 00107 says
+    how), and a red AFTER that re-fetch is the finding the daily pass would have made."""
     checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
     assert len(checks) == 10, len(checks)
     assert ops_daily.check_descriptions(checks) == []
@@ -991,7 +1015,7 @@ def test_todays_ten_real_descriptions_all_pass():
 - [ ] **Step 2: Run and see them fail**
 
 Run: `uv run pytest tests/test_ops_daily.py -q -k "descriptions or description_finding" 2>&1 | tail -7`
-Expected: 5 failed, in three flavours. The two that CONSTRUCT a `DeadmenRead` with the new kwarg (`…description_finding_is_attention…`, `…clean_descriptions_say_so…`) fail on `TypeError: DeadmenRead.__init__() got an unexpected keyword argument 'description_findings'`. The two that read the attribute off a `read_deadmen` result (`…checks_the_descriptions_it_fetched`, `…runbook_read_failure…`) fail on `AttributeError: 'DeadmenRead' object has no attribute 'description_findings'` — the runbook-failure test among them, because nothing calls `check_descriptions` yet, so its raising stub never runs. The fixture test fails with `FileNotFoundError`.
+Expected: 5 failed, in three flavours. The two that CONSTRUCT a `DeadmenRead` with the new kwarg (`…description_finding_reaches…`, `…clean_descriptions_say_so…`) fail on `TypeError: DeadmenRead.__init__() got an unexpected keyword argument 'description_findings'`. The two that read the attribute off a `read_deadmen` result (`…checks_the_descriptions_it_fetched`, `…runbook_read_failure…`) fail on `AttributeError: 'DeadmenRead' object has no attribute 'description_findings'` — the runbook-failure test among them, because nothing calls `check_descriptions` yet, so its raising stub never runs. The fixture test fails with `FileNotFoundError`.
 
 - [ ] **Step 3: Implement**
 
@@ -1017,17 +1041,7 @@ In `read_deadmen`, the healthchecks `try` ends with `note(f"healthchecks.io coul
     return read
 ```
 
-`Report.exit_code`'s attention condition becomes:
-
-```python
-        if (
-            self.alerts.firing_now
-            or [c for c in self.verdict if not c.ok]
-            or (self.deadmen.via_prometheus or 0) > 0
-            or self.deadmen.description_findings
-        ):
-            return 1
-```
+**`Report.exit_code` is not edited at all** — spec 00107 D5 rules that a description finding is a report line and a journal clause, never attention, so the attention condition keeps its three terms and the module's `unreadable` → 2 path (which the note above already routes a runbook failure into) is the only exit code this task can move. The instinct on seeing a finding printed under an `all-clear` headline is to escalate it; Step 7's sixth mutation is exactly that instinct, and it must be KILLED.
 
 In `markdown()`, after `f"- direct: {len(self.deadmen.via_healthchecks)} checks read",` inside the dead-men list, close that list and add:
 
@@ -1076,7 +1090,7 @@ Expected: all passed — including `test_todays_ten_real_descriptions_all_pass`.
 
 **All ten are expected to pass — a red here is first a defect in `check_descriptions` or in the fetch, not on the live surface.** The three descriptions that pre-dated 2026-08-30 did carry `Phase-6`, `spec 00050` and `T0083`, and all ten were rewritten that same day: 10 of 10 descriptions written, 10 of 10 runbook targets resolving, 0 carrying an internal token, measured with the admin key and recorded in the memo's Block A ledger (`docs/memo.local.md` — the in-flight authority; grep it before believing anything else about that surface). So read WHICH check and which finding it names, and suspect this code first: a live `Runbook — ` or lower-case `runbook:` that `_RUNBOOK_CITED` misses and reports as *no link at all*; an anchor spelling `_RUNBOOK_LINK`'s character class does not admit; a `_INTERNAL_TOKEN` false positive such as a grace time written `T0300`. Fix the checker where the checker is wrong.
 
-Only when the finding has been **confirmed by eye against the live description** (read it with the read-only key) is it a real defect on the live surface — exit 1 is what the pass will now say about it, and it is never a fixture to edit. The route then, with the confirmed check names named in the commit body:
+Only when the finding has been **confirmed by eye against the live description** (read it with the read-only key) is it a real defect on the live surface — the daily report will name it under `## Dead-men` every day until a human rewrites that description in healthchecks.io, and it is never a fixture to edit. The route then, with the confirmed check names named in the commit body:
 
 1. Commit the fixture exactly as fetched (Step 6) — it is the evidence of what the surface said that day.
 2. Narrow the true positive to the checks that are clean, and pin the offenders so the narrowing cannot silently grow. Narrowing on an *unconfirmed* red is how spec 00107's required true positive gets satisfied by shrinking it: the check goes permanently blind to those names, and the second assertion below does not catch it, because a false positive also produces *some* finding per pinned name.
@@ -1092,8 +1106,9 @@ def test_todays_real_descriptions_pass_except_the_ones_owing_a_rewrite():
     """The true positive, narrowed to what is genuinely clean: every description outside
     `_DESCRIPTIONS_OWED` passes, and every name inside it really does produce a finding. `name`/
     `tags`/`desc` of the live checks, read 2026-08-30 through the read-only key -- never the whole
-    object, which carries the check's write URL. Re-fetch it (the plan for spec 00107 says how) if a
-    description is rewritten; a red here after a rewrite is the finding the daily pass would make."""
+    object, which carries the check's write URL. This reads the committed fixture only: rewriting a
+    description in healthchecks.io moves nothing here until the fixture is re-fetched (the plan for
+    spec 00107 says how), and a red AFTER that re-fetch is the finding the daily pass would make."""
     checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
     assert len(checks) == 10, len(checks)
     assert ops_daily.check_descriptions([c for c in checks if c["name"] not in _DESCRIPTIONS_OWED]) == []
@@ -1129,12 +1144,22 @@ infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^de
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
   --mutation 's/not in path.read_text():/not in path.read_text() and False:/' -- "${PROBE[@]}"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
-  --mutation 's/or self.deadmen.description_findings$/or []/' -- "${PROBE[@]}"
-infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
   --mutation 's/link = _RUNBOOK_CITED.search(desc)/link = _RUNBOOK_LINK.search(desc) if _RUNBOOK_PREFIX in desc else None/' -- "${PROBE[@]}"
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
+  --mutation 's/if self.deadmen.description_findings:/if False:/' -- "${PROBE[@]}"
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
+  --mutation 's/findings = len(self.deadmen.description_findings or \[\])/findings = 0/' -- "${PROBE[@]}"
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^def check_descriptions(/def check_descriptionz(/' \
+  --mutation 's|if self.alerts.firing_now or|if self.deadmen.description_findings or self.alerts.firing_now or|' -- "${PROBE[@]}"
 ```
 
-Expected: `KILLED` four times — a token check that never fires, an anchor check that never fires (the `dangling` fixture: `ops.md` exists, the anchor does not), a finding that no longer moves the exit code, and a link judged by the first path anywhere in the description rather than the one the `Runbook: ` prefix introduces. That fourth mutation keeps the prefix *requirement* and drops only the *anchoring*, so `passing-mention-first` is the one and only fixture it moves — `prefixless` still fails on the missing prefix, and every other fixture carries a single path or none. A blunter mutation that dropped the prefix check too would be killed by `prefixless` and prove nothing about the anchoring. Record the verdicts.
+Expected: `KILLED` six times — a token check that never fires; an anchor check that never fires (the `dangling` fixture: `ops.md` exists, the anchor does not); a link judged by the first path anywhere in the description rather than the one the `Runbook: ` prefix introduces; and then the three that hold spec 00107 D5's ruling, which is now the whole guarantee.
+
+**The last three, since visibility replaced the exit code as what this feature buys.** The fourth mutation suppresses the finding from the markdown — and, because the two branches are exclusive, prints the all-clear description line in its place, the exact silent-gap shape: the finding-line assertion bites. The fifth drops the journal clause while leaving the markdown intact, so the paragraph that actually gets pasted into the journal goes quiet on its own: the `1 description finding` assertion bites, and nothing else moves. The sixth is not a slip but the plausible "fix" — escalating a finding printed under an `all-clear` headline — and `assert r.exit_code == 0` bites it; that sed matches only the single-line attention condition `exit_code` still carries (Task 4 Step 7 says what a rc **6** there means).
+
+The mutations are addressed to distinct lines: `if self.deadmen.description_findings:` matches only the markdown branch (the `elif` reads `… is not None`, not `:`), and `findings = len(…)` only the journal one.
+
+**The third mutation (the link one) is deliberately narrow**: it keeps the prefix *requirement* and drops only the *anchoring*, so `passing-mention-first` is the one and only fixture it moves — `prefixless` still fails on the missing prefix, and every other fixture carries a single path or none. A blunter mutation that dropped the prefix check too would be killed by `prefixless` and prove nothing about the anchoring. Record the six verdicts.
 
 ______________________________________________________________________
 
@@ -1143,9 +1168,11 @@ ______________________________________________________________________
 **Files:**
 - Modify: `infra/runbooks/reference-data.md:3` (the file's opening sentence) and `:13-15` (`refdata-sweep-due` → *What you are seeing*), `:33` (step 4)
 - Modify: `infra/runbooks/ops.md:194-198` (`healable-threshold-rederivation-due` → *What you are seeing*), `:216` (step 3)
-- Modify: `.claude/skills/zcrypto-daily-ops/SKILL.md` — the paragraph under `## What this is` (line 11) and the two paragraphs under `## 5. Evaluate the due reminders`
+- Modify: `.claude/skills/zcrypto-daily-ops/SKILL.md` — the paragraph under `## What this is` (line 11), the two paragraphs under `## 5. Evaluate the due reminders`, a NEW `## 6.` section after it, and the renumbering of the three headings below
+- Modify: `.claude/skills/zcrypto-rollout-image/SKILL.md` — the one `resubscribe replay` sentence on the Phase 1 immediate-checks bullet
 - Modify: `docs/open-topics/archive/T0103-reconciler-books-unfilled-silence-as-healed.md:36` (one sentence, in place)
-- Modify: `docs/reference/ops-journal/README.md` — the two example-paragraph lines inside the fenced block (Step 7)
+- Modify: `docs/open-topics/T0037-rotation-trusts-an-untrusted-timestamp.md` — the parked-residuals bullet carrying `documented as noise` (one bullet, in place; status untouched)
+- Modify: `docs/reference/ops-journal/README.md` — the two example-paragraph lines inside the fenced block (Step 9)
 - Edit, never commit: `docs/memo.local.md` (gitignored)
 
 **Interfaces:**
@@ -1176,7 +1203,7 @@ The report computes due-ness regardless — the message is a convenience, not wh
 Replace the section's *What you are seeing* paragraph (line 198) with:
 
 ```markdown
-The daily pass's report names this reminder under `## Reminders`: **OWED** when `zcrypto_reconcile_healable_gap_seconds_total` increased in the window — a new healable-gap event landed, so the count in step 1 is owed again — and `ok` when it did not. A Slack message in `#zcrypto` may prompt the same; the report is the trigger, the message a convenience ping that cannot be verified to exist from this side. It is not an alert — **nothing is wrong**. Unlike `refdata-sweep-due`, which is calendar-driven, this one is event-driven: qualifying days accrue only when the counter moves, and the pass reads the counter, never the ledger — step 1 is still yours.
+The daily pass's report names this reminder under `## Reminders`: **OWED** when `zcrypto_reconcile_healable_gap_seconds_total` increased in the window — a new healable-gap event landed, so the count in step 1 is owed again — and `ok` when it did not. **A third line says the counter *reset*** — a ledger correction or rebuild lowered the total, so `increase()` would read the whole post-reset value as movement. That is OWED too, and the report deliberately quotes no figure with it: the recount below is the only arbiter. A Slack message in `#zcrypto` may prompt the same; the report is the trigger, the message a convenience ping that cannot be verified to exist from this side. It is not an alert — **nothing is wrong**. Unlike `refdata-sweep-due`, which is calendar-driven, this one is event-driven: qualifying days accrue only when the counter moves, and the pass reads the counter, never the ledger — step 1 is still yours.
 ```
 
 Step 3 (line 216, `**Fewer than three qualifying days ⇒ do nothing except re-arm.**`) keeps its text; append these sentences to it — they also settle the lost 2026-08-27 message: it is NOT replaced by a fresh scheduling in this branch, because the next re-arm is this step's own, the next time the report says OWED and the section runs:
@@ -1196,7 +1223,7 @@ git commit -m "docs(runbooks): the daily report is the reminder trigger, the Sla
 
 Expected: pre-commit clean after re-staging any mdformat rewrite; the anchor tests still pass (the `<a name=…>` lines are untouched — verify with `git diff HEAD~1 --stat` that no anchor line changed: `git diff HEAD~1 | grep '^[-+]<a name' | wc -l` prints `0`).
 
-- [ ] **Step 4: The skill — step 5 evaluates the report, not the inbox**
+- [ ] **Step 4: The skill — step 5 evaluates the report, and a new step 6 says what to do about a faulted description**
 
 In `.claude/skills/zcrypto-daily-ops/SKILL.md`, line 11's clause `It reads what fired, what the logs said, whether the dead-men are alive, whether the fleet's own series are present and fresh, and what was deployed` becomes:
 
@@ -1212,15 +1239,57 @@ The report's `## Reminders` section is the trigger — an **OWED** line is work,
 **Slack's scheduled message is a convenience ping, never the check.** Its scheduling cannot be listed or verified from this side, so "no message arrived" means nothing and a message that did arrive adds nothing the report did not already say. A reminder source the report could not read is exit 2, like any other.
 ```
 
+Then the description remedy, which today lands on no operating surface at all: step 2 is per alert that fired and none does, step 3 classifies a command and there is none, and no runbook section covers it — so a pass reading a `description:` line has nothing that tells it what to do. Insert a **new section between `## 5. Evaluate the due reminders` and the journal section**, and renumber the three headings below it (`## 6. Write the journal entry` → `## 7.`, `## 7. Post the summary` → `## 8.`, `## 8. Re-arm tomorrow` → `## 9.`; nothing outside this file cites those numbers — verified by grep over `.claude/`, `infra/runbooks/` and `docs/reference/`):
+
+```markdown
+## 6. Rewrite any dead-man description the report faults
+
+The report's `## Dead-men` section prints one `- description:` line per faulted check: a description with no `Runbook: infra/runbooks/<file>#<anchor>` link, one whose link resolves to no anchor in the file it names, or one carrying repo-internal vocabulary — on a surface read from a phone with nothing open.
+
+**This is not an alert.** Nothing fired, so there is no runbook section to open; no command is run, so there is nothing to classify; and it does not move the verdict — a day whose only finding is a description is still `all-clear`, by design. What it needs is a hand rewrite, which no repo change can make: the descriptions are hand-written in healthchecks.io.
+
+**The fix is a hand rewrite of that check's description in healthchecks.io**, with the admin key (`healthchecks_api_key` in the vault — the read-only key the report reads with cannot write). Give it the `Runbook:` link and drop the vocabulary; send the description field and nothing else, so the check's own schedule and grace period are untouched; then read it back. The finding clears on the next pass.
+
+**If it is not fixed, say so in the entry, with the check named.** The line reprints every day until someone rewrites it, and a finding nobody names reads as a new one each morning.
+```
+
 Then:
 
 ```bash
 uv run pre-commit run -a 2>&1 | tail -6
+grep -n '^## ' .claude/skills/zcrypto-daily-ops/SKILL.md
 git add .claude/skills/zcrypto-daily-ops/SKILL.md
-git commit -m "claude(daily_ops): step 5 evaluates the report's reminders; Slack is the convenience"
+git commit -m "claude(daily_ops): step 5 evaluates the report's reminders; a new step 6 for a faulted description"
 ```
 
-- [ ] **Step 5: T0103's archive — the belief re-trued in place (spec D6)**
+Expected from the grep: `## What this is`, then `## 1.` … `## 9.` in order with no number repeated or skipped, then `## Failure modes — catch yourself` last. Keep the new section free of the vocabulary `operator-facing-text.md` bars — no phase, topic, iteration or spec serial anywhere in it.
+
+`docs/specs/00104-…-design.md` and `docs/plans/00104-…md` enumerate the pass's steps as 1–8; both are point-in-time records of the iteration that built the skill, and are deliberately left. The skill itself is the live surface.
+
+- [ ] **Step 5: The rollout skill — the drop lines are reconnect replay, not resubscribe (spec D6)**
+
+`.claude/skills/zcrypto-rollout-image/SKILL.md`'s Phase 1 immediate-checks bullet ends with the sentence (verify `grep -c "resubscribe replay" .claude/skills/zcrypto-rollout-image/SKILL.md` prints `1` first):
+
+```markdown
+`dropping late event` lines right after start are healthy resubscribe replay, not a failure.
+```
+
+The same measurement that licenses spec 00107 D4 disproves that attribution — resubscribes, resubscribe errors and desyncs all read 0 in the window, while reconnects read 2 and 1 and match the bursts one-for-one — and this is a skill an operator follows while converging the unbackfillable capture pair. Replace that sentence, and nothing else on the bullet, with:
+
+```markdown
+`dropping late event` lines right after start are healthy reconnect replay, not a failure — a reconnect's trade snapshot replays prints from before the boundary. How often that happens is read from the scraped `zcrypto_capture_reconnects_total`, never from a count of these lines.
+```
+
+No level word is written here on purpose: the hosts keep emitting the old level until the capture-image rollout carries spec 00107 D4 to them, and a skill sentence naming a level would be false in the gap and then rot again at the next change. The line's TEXT is what an operator greps, and it is unchanged.
+
+```bash
+uv run pre-commit run -a 2>&1 | tail -6
+grep -c "resubscribe replay" .claude/skills/zcrypto-rollout-image/SKILL.md   # 0
+git add .claude/skills/zcrypto-rollout-image/SKILL.md
+git commit -m "claude(rollout_image): the late-event drops are reconnect replay, not resubscribe"
+```
+
+- [ ] **Step 6: T0103's archive — the belief re-trued in place (spec D6)**
 
 Load the `topic-ops` skill first (every topic-file edit). In `docs/open-topics/archive/T0103-reconciler-books-unfilled-silence-as-healed.md` line 36, this sentence (verify `grep -c "cannot be deleted through the API"` prints `1` first):
 
@@ -1244,7 +1313,29 @@ git commit -m "docs(open-topics): T0103 -- the 2026-08-27 reminder never landed;
 
 `archive/T0113` also describes the Slack reminder as the sweep's trigger; it is a point-in-time record of how the routine was homed on 2026-08-04 and is deliberately left.
 
-- [ ] **Step 6: The memo (gitignored — edit, never stage)**
+- [ ] **Step 7: T0037's live topic — the argument re-trued where the level change falsifies it (spec D4)**
+
+`docs/open-topics/T0037-rotation-trusts-an-untrusted-timestamp.md` is `status: partial` and live, and one sentence of its parked-residuals argument rests on both facts this iteration changes: that the late-event drop is a bare WARNING, and that the rollout skill calls those lines resubscribe replay. `topic-ops` is already loaded from Step 6. Verify `grep -c "documented as noise" docs/open-topics/T0037-rotation-trusts-an-untrusted-timestamp.md` prints `1`, then replace this bullet in place:
+
+```markdown
+- **Both residuals manifest as the same pair of events: an hour finalized EARLY, and that stream's post-stamp tail then dropped as late.** Neither half is counted. The late-event drop is a bare `logger.warning` (`cli/capture/segment_writer.py:362`) with no counter behind it — and `.claude/skills/zcrypto-rollout-image/SKILL.md` tells operators that `dropping late event` lines right after a start are healthy resubscribe replay, so the one visible trace is documented as noise.
+```
+
+with:
+
+```markdown
+- **Both residuals manifest as the same pair of events: an hour finalized EARLY, and that stream's post-stamp tail then dropped as late.** Neither half is counted. The late-event drop in `append` logs at INFO with no counter behind it (spec `00107` D4), and it is expected reconnect replay by design — so the one visible trace is deliberately noise, which is the argument FOR `zcrypto_capture_hour_finalized_early_total` (`## Done so far`) rather than against it.
+```
+
+The status stays `partial` and no sub-item is completed here — this is prose re-truing, so the index bullet and `## Done so far` are untouched. Compare `grep '^#' <file>` before and after (identical), then:
+
+```bash
+uv run pre-commit run -a 2>&1 | tail -6
+git add docs/open-topics/T0037-rotation-trusts-an-untrusted-timestamp.md
+git commit -m "docs(open-topics): T0037 -- the late-event drop is INFO and reconnect replay, not documented noise"
+```
+
+- [ ] **Step 8: The memo (gitignored — edit, never stage)**
 
 ```bash
 grep -n "armed OUTSIDE" docs/memo.local.md
@@ -1261,7 +1352,7 @@ Two edits, both to the working file only:
 
 `git status --short` must not list the memo afterwards.
 
-- [ ] **Step 7: The journal README's example paragraph carries the clauses the instrument now prints**
+- [ ] **Step 9: The journal README's example paragraph carries the clauses the instrument now prints**
 
 `docs/reference/ops-journal/README.md` shows the canonical paragraph inside a fenced block, and a pass writing its entry by hand follows that shape. `tests/test_ops_journal.py` checks only headings, so nothing goes red when it drifts — which is exactly why it must be edited here. Replace the **two paragraph lines only** — the ones beginning `window 24 h to` and `dead-men 0 down via Grafana` (16–17 today); the `## 2026-08-29 — all-clear` heading above and the closing ``` ``` ``` fence below them stay, or the rest of the README ends up inside an unterminated code block:
 
@@ -1288,7 +1379,7 @@ ______________________________________________________________________
 - Modify: `docs/iterations-history-phase6.md` (append one entry)
 
 **Interfaces:**
-- Consumes: `.tmp/pass-before.md` and the two healable-counter values (Task 0), the mutation verdicts recorded in Tasks 1, 3, 4 and 6.
+- Consumes: `.tmp/pass-before.md` and the two healable-counter values (Task 0), the mutation verdicts recorded in Tasks 1, 2, 3, 4 and 6.
 
 - [ ] **Step 1: The after reading (main loop — it reads the vault)**
 
@@ -1315,9 +1406,9 @@ Load the `iteration-closeout` skill. Append to `docs/iterations-history-phase6.m
 - the lost reminder and the structural fact (no list/verify API), and D1's answer: `read_reminders()` computes due-ness daily from the register row and the healable counter; owed reports, unreadable exits 2 — with the before/after exit codes and the `## Reminders` lines from Steps 1 and Task 0;
 - the three drop lines at INFO with the measured basis (bursts matching `zcrypto_capture_reconnects_total` 2 and 1; gap counter 0), the accepted loss spec 00107 D4 names for the shared `SegmentWriter`'s liquidations consumers (the reconnect counter is capture's alone; `test_poll_cycle_second_cycle_is_silent_no_dedup_drops` is what still holds the watermark invariant, and re-levelling its capture is what keeps it biting), and the note that the hosts emit WARNING until the capture-image rollout `T0037`'s `ripe_when` owes carries the digest — no rollout of its own;
 - the healable reminder's three states — moved, unchanged, reset — and why the reset state exists (the counter is re-emitted from ledger totals; `increase()` reads a correction as movement; the alert rule's `resets()` guard mirrored);
-- the description check: two assertions per check, the true positive over today's ten (`tests/fixtures/healthchecks_descriptions.json`, fields name/tags/desc only), detection not generation and why — and, if the true positive named any live description as owed, those check names as a finding of this pass, owing a human rewrite in healthchecks.io that the daily report will name until it lands;
-- every guard mutation-probed: the verdicts from Tasks 1, 3, 4 and 6 (three drop sites, five reminder mutations plus the runbook-anchor rename the citation guard catches, the owed-reminder-must-not-block mutation, four description mutations — all KILLED, or the one that was not and what was done);
-- D6: T0103's sentence re-trued; the memo note extended; `archive/T0113` deliberately left.
+- the description check: two assertions per check, the true positive over today's ten (`tests/fixtures/healthchecks_descriptions.json`, fields name/tags/desc only), detection not generation and why — **and the ruling that a finding is a report line and a journal clause, never the exit code**, so the visibility is what the tests pin and the remedy (a hand rewrite in healthchecks.io with the admin key) is what the skill's new step 6 tells the pass to do; if the true positive named any live description as owed, those check names as a finding of this pass, which the daily report names until the rewrite lands;
+- every guard mutation-probed: the verdicts from Tasks 1, 2, 3, 4 and 6 (three drop sites, two cadence mutations, five reminder mutations plus the runbook-anchor rename the citation guard catches, the owed-reminder-must-not-block mutation, six description mutations — all KILLED, or the one that was not and what was done);
+- D6: T0103's sentence re-trued and T0037's parked-residuals bullet with it; the rollout skill's `resubscribe replay` attribution corrected to reconnect; the memo note extended; `archive/T0113` deliberately left.
 
 No decisions-log entry: nothing here is subject-matter research (`decisions-log.md`'s gate).
 
