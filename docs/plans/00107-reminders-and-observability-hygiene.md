@@ -30,17 +30,18 @@ ______________________________________________________________________
 **Files:** none modified.
 
 **Interfaces:**
-- Produces: the pre-change exit code and report, saved as `<scratchpad>/pass-before.md`, quoted in Task 8's closeout entry.
+- Produces: the pre-change exit code and report, saved as `.tmp/pass-before.md` (gitignored, and a repo path so a later task's shell finds it), quoted in Task 8's closeout entry.
 
 - [ ] **Step 1: Run the pass on the branch's starting code (main loop — it reads the vault)**
 
 ```bash
+SCRATCH="$(git rev-parse --show-toplevel)/.tmp"; mkdir -p "$SCRATCH"; echo "$SCRATCH"
 git log --oneline -1
 uv run python infra/scripts/ops-daily.py report --since 24h > "$SCRATCH/pass-before.md"; echo "rc=$?" | tee -a "$SCRATCH/pass-before.md"
 tail -3 "$SCRATCH/pass-before.md"
 ```
 
-where `SCRATCH` is the session's scratchpad directory. Expected: `rc=0`, `rc=1` or `rc=2` printed **immediately after the pipeline's own command** (the `echo` reads `$?` of the redirect, which is the script's); the report's `## Logs` section is what Task 1 changes and its `## Dead-men` section shows `- direct: 10 checks read`. If the vault is locked (the report reads `the vault could not be read`), unlock the GPG agent and re-run — an exit-2-for-the-vault baseline says nothing about the fleet.
+`.tmp/` is gitignored (`.gitignore:3`) and it is a repo path, not a shell session's: the later task that quotes this baseline runs in a different shell and re-derives the same directory from the same line. Expected: `rc=0`, `rc=1` or `rc=2` printed **immediately after the pipeline's own command** (the `echo` reads `$?` of the redirect, which is the script's); the report's `## Logs` section is what Task 1 changes and its `## Dead-men` section shows `- direct: 10 checks read`. If the vault is locked (the report reads `the vault could not be read`), unlock the GPG agent and re-run — an exit-2-for-the-vault baseline says nothing about the fleet.
 
 ______________________________________________________________________
 
@@ -49,7 +50,8 @@ ______________________________________________________________________
 **Files:**
 - Modify: `cli/capture/segment_writer.py:361-364` (the late-event drop in `append`), `:508-511` (the replay drop in `_admit`), `:542-545` (the replay drop in `_hold`)
 - Modify: `tests/test_capture_segment_writer.py` (append three tests at the end; change `caplog.at_level(logging.WARNING)` at line 1988 to `logging.INFO`)
-- Modify: `tests/test_liquidations_coinalyze.py:558` and `:572` (`caplog.at_level(logging.WARNING)` → `logging.INFO`)
+- Modify: `tests/test_liquidations_coinalyze.py:558` and `:572` (`caplog.at_level(logging.WARNING)` → `logging.INFO`), and `:549-551` (the test's name and its comment, Step 4)
+- Modify: `cli/liquidations/coinalyze.py:16-17` (one word of the module docstring, Step 4)
 
 **Interfaces:**
 - Consumes: `_new_writer`, `_new_trade_writer`, `_oracle_writer`, `_book_event`, `_trade_event`, `_ts`, `HourOracle`, `TRADE_SCHEMA`, the autouse `clock` fixture — all already in `tests/test_capture_segment_writer.py`.
@@ -144,6 +146,13 @@ The `_hold` site (currently line 544) becomes:
 
 `caplog.at_level(logging.WARNING)` sets the root level, and the `zcrypto.*` loggers inherit it, so an INFO record is not captured at all — `test_restart_reseeds_dedup_keys_from_open_hour_parts` (`tests/test_capture_segment_writer.py:1988`, asserts the line IS present) would go red, and the two in `tests/test_liquidations_coinalyze.py` (`:558` asserts absence, `:572` asserts presence) would be respectively vacuous and red. Change all three to `caplog.at_level(logging.INFO)`.
 
+Then the prose those three sites leave false (`code-prose.md`'s rot test — a claim about a level that no longer exists):
+
+- `cli/liquidations/coinalyze.py` line 16 ends the overlap-safety invariant with `and a `dropping replayed event` warning that still`. Change that one word: `warning` → `line`. The claim (a drop that still fires is a genuine anomaly, not steady-state noise) stays true and is the sentence the liquidations half of spec 00107 D4 rests on; only the level in it is now wrong.
+- `tests/test_liquidations_coinalyze.py:549` — rename `test_poll_cycle_second_cycle_is_silent_no_dedup_warnings` to `test_poll_cycle_second_cycle_is_silent_no_dedup_drops`, and re-word its comment (`:550-551`) from `trigger ZERO writer-level "dropping replayed event" warnings` to `trigger ZERO writer-level "dropping replayed event" drops`. The assertion (`"dropping replayed event" not in caplog.text`) is unchanged and, at INFO capture, now means what its name says.
+
+`docs/plans/00055-liquidations-poller-watermark.md` quotes the old test name; it is a point-in-time record of that iteration and is deliberately left.
+
 - [ ] **Step 5: Run the reachable suites**
 
 Run: `uv run pytest tests/test_capture_segment_writer.py tests/test_liquidations_coinalyze.py -q 2>&1 | tail -3`
@@ -152,7 +161,7 @@ Expected: all passed, 0 failed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add cli/capture/segment_writer.py tests/test_capture_segment_writer.py tests/test_liquidations_coinalyze.py
+git add cli/capture/segment_writer.py cli/liquidations/coinalyze.py tests/test_capture_segment_writer.py tests/test_liquidations_coinalyze.py
 git commit -m "fix(capture): the three reconnect-replay drops log at INFO -- the reconnect counter is the signal"
 ```
 
@@ -174,9 +183,12 @@ infra/scripts/mutate-probe.sh --file cli/capture/segment_writer.py \
 grep -n 'logger.info("dropping replayed event' cli/capture/segment_writer.py
 ```
 
-Expected: `mutate-probe: KILLED (control proven, tree restored byte-identically)`. The grep prints two line numbers, `A` (in `_admit`) and `B` (in `_hold`); run once per line:
+Expected: `mutate-probe: KILLED (control proven, tree restored byte-identically)`. The grep prints the two replay sites; both carry the identical call, so each mutation must be ADDRESSED to one line — `A` in `_admit`, `B` in `_hold`. Assign them from the grep, never by hand, and check them before use: an empty `A` makes `sed` apply `s/logger.info/logger.warning/` to EVERY line, flipping all three sites at once, and `mutate-probe` still prints KILLED — one joint proof recorded as two per-site proofs, with the SURVIVED diagnostic below unable to ever fire.
 
 ```bash
+A=$(grep -n 'logger.info("dropping replayed event' cli/capture/segment_writer.py | sed -n 1p | cut -d: -f1)
+B=$(grep -n 'logger.info("dropping replayed event' cli/capture/segment_writer.py | sed -n 2p | cut -d: -f1)
+echo "A=$A B=$B"   # two distinct bare integers, A < B — anything else, stop and re-read the grep
 infra/scripts/mutate-probe.sh --file cli/capture/segment_writer.py \
   --control 's/logger.info("dropping late event/logger.debug("dropping late event/' \
   --mutation "${A}s/logger.info/logger.warning/" -- "${PROBE[@]}"
@@ -424,7 +436,23 @@ def test_the_real_register_yields_a_refdata_reminder(tmp_path):
     read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
     assert read.unreadable is None, read.unreadable
     assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"}
+
+
+def test_every_runbook_citation_the_instrument_itself_prints_resolves():
+    """Closed in KIND, not by instance: `REFDATA_RUNBOOK` and `HEALABLE_RUNBOOK` reach the operator's
+    report verbatim, and the repo's cross-reference guards scan `alerts.yaml`, `infra/grafana/*.json`
+    and `infra/runbooks/*.md` -- none of them scans `infra/scripts/`. Spec 00107 D6 rewrites both of
+    the sections cited here: a rename would turn the runbook-internal guard red and get it re-pointed
+    at the new anchor while this module's copy rotted silently, sending a paged operator to a fragment
+    that scrolls nowhere. Scanning the source keeps a citation added later covered by nobody's memory.
+    """
+    cited = set(re.findall(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)", _SCRIPT.read_text()))
+    assert cited, "no runbook citation found in the instrument -- this guard has gone vacuous, not clean"
+    anchors = {f"{p.name}#{a}" for p in _RUNBOOKS.glob("*.md") for a in re.findall(r'<a name="([^"]+)"></a>', p.read_text())}
+    assert {f"{f}#{a}" for f, a in cited} <= anchors, sorted({f"{f}#{a}" for f, a in cited} - anchors)
 ```
+
+`re`, `_SCRIPT` (the path `ops_daily` was loaded from, not a second spelling of it) and `_RUNBOOKS` are already at the top of `tests/test_ops_daily.py` (lines 17, 26, 375) — do not re-import or re-declare any of them.
 
 Then edit two existing tests:
 
@@ -451,8 +479,8 @@ In `test_every_endpoint_the_instrument_builds_is_pinned` (line 1073), change the
 
 - [ ] **Step 2: Run and see them fail**
 
-Run: `uv run pytest tests/test_ops_daily.py -q -k "reminder or healable or no_dated_row or transport_failure or endpoint" 2>&1 | tail -6`
-Expected: every test above and the two edited ones fail with `AttributeError: module 'ops_daily' has no attribute 'read_reminders'`; Task 2's `test_a_log_with_no_dated_row…` is selected too and still passes.
+Run: `uv run pytest tests/test_ops_daily.py -q -k "reminder or healable or no_dated_row or transport_failure or endpoint or citation" 2>&1 | tail -6`
+Expected: every test above and the two edited ones fail with `AttributeError: module 'ops_daily' has no attribute 'read_reminders'` — except the citation guard, which fails on its own message (`no runbook citation found in the instrument`), the module carrying no runbook citation until Step 3 adds the two constants. Task 2's `test_a_log_with_no_dated_row…` is selected too and still passes.
 
 - [ ] **Step 3: Implement**
 
@@ -552,7 +580,7 @@ git commit -m "feat(ops_daily): read_reminders -- due-ness from the register row
 uv run pytest tests/test_ops_daily.py --collect-only -q -k "reminder or sweep_date or last_row or no_dated_row or healable" 2>&1 | tail -3
 ```
 
-Expected: exactly 12 tests collected — by name: the real-register read (1), last-row-wins (1), no-dated-row (1), the refdata parametrization (3), the register-unreadable case (1), the healable parametrization (2), the reset case (1), the no-series case (1), the real-register-yields-both case (1); the cadence test carries none of the words and no mutation below touches `_a_month_after`. The probe is a shell array (Task 1 Step 7 says why), with the control `--control 's/^def read_reminders(/def read_reminderz(/'` on every run:
+Expected: exactly 12 tests collected — by name: the real-register read (1), last-row-wins (1), no-dated-row (1), the refdata parametrization (3), the register-unreadable case (1), the healable parametrization (2), the reset case (1), the no-series case (1), the real-register-yields-both case (1); the cadence test carries none of the words and no mutation below touches `_a_month_after`, and the citation guard carries none of them either — Step 7 probes it against the file it actually reads. The probe is a shell array (Task 1 Step 7 says why), with the control `--control 's/^def read_reminders(/def read_reminderz(/'` on every run:
 
 ```bash
 PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k 'reminder or sweep_date or last_row or no_dated_row or healable')
@@ -569,6 +597,20 @@ infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py --control 's/^de
 ```
 
 Expected: `KILLED` five times — always-firing healable trigger, a reset read as movement (the `18850` fixture then reaches the status), first-row-wins, section-blind parse (the 2099 decoy), and due-today-not-owed each trip a test. Record the verdicts.
+
+- [ ] **Step 7: Mutation-probe the citation guard against the RUNBOOK, not the module (clean tree)**
+
+The defect this guard names is a runbook anchor renamed out from under the constant, so the mutated file is the runbook. Mutating the constant instead proves nothing about this guard: the two literal `assert refdata.runbook == …` pins in Step 1 kill that mutation on their own.
+
+```bash
+uv run pytest tests/test_ops_daily.py --collect-only -q -k citation 2>&1 | tail -3
+PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k citation)
+infra/scripts/mutate-probe.sh --file infra/runbooks/reference-data.md \
+  --control 's|<a name=|<a nameX=|' \
+  --mutation 's|<a name="refdata-sweep-due"></a>|<a name="refdata-sweep-due-renamed"></a>|' -- "${PROBE[@]}"
+```
+
+Expected: exactly 1 test collected, then `KILLED` — the control (every anchor in that file unharvestable) proves the probe reads the runbooks at all, and the mutation is the rename itself. Record the verdict.
 
 ______________________________________________________________________
 
@@ -619,7 +661,7 @@ def test_the_report_refuses_to_be_built_without_a_reminders_read():
 - [ ] **Step 2: Run and see them fail**
 
 Run: `uv run pytest tests/test_ops_daily.py -q 2>&1 | tail -8`
-Expected: every `build_report(` call now fails with `TypeError: build_report() got an unexpected keyword argument 'reminders'`; the clause test fails on `missing clause: reminders`; the required-field test fails because no `TypeError` is raised.
+Expected: every `build_report(` call now fails with `TypeError: build_report() got an unexpected keyword argument 'reminders'` — the clause test among them, and on that same `TypeError`, not on `missing clause: reminders`: Step 1 put `reminders=` into `_report`'s base dict, so `_report()` raises before the loop it added the clause to ever runs. The required-field test fails with `DID NOT RAISE TypeError`, today's `build_report` accepting the call it must refuse.
 
 - [ ] **Step 3: Implement**
 
@@ -676,12 +718,26 @@ git add infra/scripts/ops_daily.py tests/test_ops_daily.py
 git commit -m "feat(ops_daily): the report carries the reminders -- owed reports, unreadable exits 2"
 ```
 
+- [ ] **Step 7: Mutation-probe the does-NOT-block half (clean tree)**
+
+Spec 00107 D2's second half is asserted here and nowhere else, and the mutation is not a slip — it is the plausible "fix" a later editor makes on seeing an `OWED` line under an all-clear headline.
+
+```bash
+uv run pytest tests/test_ops_daily.py --collect-only -q -k "owed_reminder or unreadable_reminder" 2>&1 | tail -3
+PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k 'owed_reminder or unreadable_reminder')
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control 's|if self.unreadable:|if False:|' \
+  --mutation 's|if self.alerts.firing_now or|if any(r.owed for r in self.reminders.reminders) or self.alerts.firing_now or|' -- "${PROBE[@]}"
+```
+
+Expected: exactly 2 tests collected (`test_an_owed_reminder_reports_and_never_blocks`, `test_an_unreadable_reminder_source_exits_2_like_every_other_source` — no other name in the file carries either phrase), then `KILLED`: the control drops exit 2 and the unreadable test bites it; the mutation turns an owed reminder into attention and the `r.exit_code == 0` assertion bites that. Record the verdict.
+
 ______________________________________________________________________
 
 ### Task 5: `check_descriptions()` — a resolving runbook link and no internal token (spec D5)
 
 **Files:**
-- Modify: `infra/scripts/ops_daily.py` — new constant and function after `HEALTHCHECKS_API` (line 187)
+- Modify: `infra/scripts/ops_daily.py` — new constants and one function, placed by Step 3
 - Modify: `tests/test_ops_daily.py` — new tests appended
 
 **Interfaces:**
@@ -717,15 +773,18 @@ def test_a_description_carrying_an_internal_token_is_a_finding_named_per_check()
 
 
 def test_a_missing_or_dangling_runbook_link_is_a_finding():
-    """A link resolves against the FILE it names: an anchor living in a sibling file scrolls nowhere."""
+    """A link resolves against the FILE it names: an anchor living in a sibling file scrolls nowhere.
+    And the literal `Runbook: ` prefix is half of what spec 00107 D5 asks for -- a path mentioned in
+    passing is not the link an operator follows from a phone."""
     checks = [
         {"name": "dangling", "desc": "Runbook: infra/runbooks/ops.md#no-such-anchor"},
         {"name": "wrong-file", "desc": "Runbook: infra/runbooks/capture.md#zcrypto-ops-archive-pull-stalled"},
         {"name": "linkless", "desc": "Pings every minute."},
+        {"name": "prefixless", "desc": "Context in infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled, no link."},
         {"name": "clean", "desc": _CLEAN_DESC},
     ]
     findings = ops_daily.check_descriptions(checks)
-    assert sorted(f.split(":")[0] for f in findings) == ["`dangling`", "`linkless`", "`wrong-file`"], findings
+    assert sorted(f.split(":")[0] for f in findings) == ["`dangling`", "`linkless`", "`prefixless`", "`wrong-file`"], findings
 
 
 def test_a_check_with_no_description_at_all_is_a_finding_not_a_pass():
@@ -735,7 +794,7 @@ def test_a_check_with_no_description_at_all_is_a_finding_not_a_pass():
 - [ ] **Step 2: Run and see them fail**
 
 Run: `uv run pytest tests/test_ops_daily.py -q -k "description or runbook_link" 2>&1 | tail -5`
-Expected: 3 failed with `AttributeError: module 'ops_daily' has no attribute 'check_descriptions'` (`-k` matches names only; the dangling-link test carries `runbook_link`, not `description`).
+Expected: 3 failed, 1 passed — the three new ones fail with `AttributeError: module 'ops_daily' has no attribute 'check_descriptions'`, and the passing one is the pre-existing `test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link`, which the same word matches. (`-k` matches names only; the dangling-link test carries `runbook_link`, not `description`.)
 
 - [ ] **Step 3: Implement**
 
@@ -743,9 +802,16 @@ After `read_reminders` (the last of Task 3's additions) in `infra/scripts/ops_da
 
 ```python
 RUNBOOKS = REPO_ROOT / "infra/runbooks"
+# D5 asks for the LINK, not a path in passing: `_RUNBOOK_LINK` matches the path anywhere in the
+# description, so the literal prefix is checked beside it or a description that merely cites a
+# runbook reads as one carrying the link an operator follows from a phone.
+_RUNBOOK_PREFIX = "Runbook: infra/runbooks/"
 # The vocabulary `.claude/rules/operator-facing-text.md` bans from any surface read without the repo
-# open. `Phase[ -]` because the live descriptions spelled it `Phase-6`.
-_INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+\d{5}|\bWP\d")
+# open. `Phase[ -]` because the live descriptions spelled it `Phase-6`; the optional backtick because
+# a serial is as often written `spec `00050``. The bare decision number that rule also bans is
+# deliberately absent (spec 00107 D5 says why): this check detects without repairing, so a false
+# positive is a finding line in every daily report until a human rewrites a description.
+_INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+`?\d{5}|\bWP\d")
 
 
 def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[str]:
@@ -760,7 +826,7 @@ def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[st
     for check in checks:
         name = check.get("name") or check.get("slug") or "?"
         desc = check.get("desc") or ""
-        link = _RUNBOOK_LINK.search(desc)
+        link = _RUNBOOK_LINK.search(desc) if _RUNBOOK_PREFIX in desc else None
         if link is None:
             out.append(f"`{name}`: no `Runbook: infra/runbooks/<file>#<anchor>` in its description")
         else:
@@ -795,7 +861,7 @@ ______________________________________________________________________
 
 **Interfaces:**
 - Consumes: `check_descriptions` (Task 5).
-- Produces: `DeadmenRead.description_findings: list[str]` (default `[]`), populated by `read_deadmen` after a successful direct read; findings → exit 1, listed under `## Dead-men` in the markdown, counted in the journal paragraph when non-zero.
+- Produces: `DeadmenRead.description_findings: list[str] | None` (default `None` — the check did not run; `[]` — it ran and found nothing), set by `read_deadmen` after a successful direct read; findings → exit 1, listed under `## Dead-men` in the markdown, counted in the journal paragraph when non-zero.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -818,13 +884,19 @@ def test_the_deadmen_read_checks_the_descriptions_it_fetched(monkeypatch):
 
 def test_a_runbook_read_failure_during_the_descriptions_check_is_named_as_such_not_as_healthchecks(monkeypatch):
     """The check reads runbook files; a failure there is a finding about the RUNBOOKS, and the
-    checks it fetched stay read -- never `healthchecks.io could not be read directly`."""
+    checks it fetched stay read -- never `healthchecks.io could not be read directly`.
+
+    `None` is not `[]`: a check that never ran must not print as one that ran and found nothing.
+    Exit 2 and the unreadable line already carry the truth, and a `descriptions: all 1 carry …`
+    line beside them says the opposite of what happened."""
     monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
     monkeypatch.setattr(ops_daily, "check_descriptions", lambda checks: (_ for _ in ()).throw(OSError("runbooks unreadable")))
     prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
     read = ops_daily.read_deadmen("tok", opener=_canned(prom, {"checks": [{"name": "x", "desc": _CLEAN_DESC}]}))
-    assert len(read.via_healthchecks) == 1 and read.description_findings == []
-    assert read.unreadable and "runbooks could not be read" in read.unreadable and "healthchecks.io" not in read.unreadable, read.unreadable
+    assert len(read.via_healthchecks) == 1 and read.description_findings is None, read.description_findings
+    assert read.unreadable and "runbooks" in read.unreadable and "healthchecks.io" not in read.unreadable, read.unreadable
+    markdown = _report(deadmen=read).markdown()
+    assert "descriptions: all" not in markdown, markdown
 
 
 def test_a_description_finding_is_attention_and_reaches_the_report_and_the_paragraph():
@@ -840,7 +912,9 @@ def test_a_description_finding_is_attention_and_reaches_the_report_and_the_parag
 
 
 def test_clean_descriptions_say_so_in_the_report_and_stay_out_of_the_paragraph():
-    r = _report(deadmen=ops_daily.DeadmenRead(via_prometheus=0.0, via_healthchecks=[{"name": "a"}, {"name": "b"}]))
+    """`description_findings=[]` is the CHECKED-and-clean state, and the only one that may print the
+    all-clear line -- the default `None` means the check did not run."""
+    r = _report(deadmen=ops_daily.DeadmenRead(via_prometheus=0.0, via_healthchecks=[{"name": "a"}, {"name": "b"}], description_findings=[]))
     assert r.exit_code == 0
     assert "- descriptions: all 2 carry a resolving runbook link and no internal token" in r.markdown(), r.markdown()
     assert "description finding" not in r.journal_paragraph()
@@ -859,17 +933,29 @@ def test_todays_ten_real_descriptions_all_pass():
 - [ ] **Step 2: Run and see them fail**
 
 Run: `uv run pytest tests/test_ops_daily.py -q -k "descriptions or description_finding" 2>&1 | tail -7`
-Expected: 5 failed — the four that build or read `DeadmenRead` fail on `DeadmenRead.__init__() got an unexpected keyword argument 'description_findings'` / missing attribute (the runbook-failure test is among them: nothing calls `check_descriptions` yet, so its raising stub never runs and it fails on the missing attribute); the fixture test fails with `FileNotFoundError`.
+Expected: 5 failed, in three flavours. The two that CONSTRUCT a `DeadmenRead` with the new kwarg (`…description_finding_is_attention…`, `…clean_descriptions_say_so…`) fail on `TypeError: DeadmenRead.__init__() got an unexpected keyword argument 'description_findings'`. The two that read the attribute off a `read_deadmen` result (`…checks_the_descriptions_it_fetched`, `…runbook_read_failure…`) fail on `AttributeError: 'DeadmenRead' object has no attribute 'description_findings'` — the runbook-failure test among them, because nothing calls `check_descriptions` yet, so its raising stub never runs. The fixture test fails with `FileNotFoundError`.
 
 - [ ] **Step 3: Implement**
 
-`DeadmenRead` gains `description_findings: list[str] = field(default_factory=list)` after `via_healthchecks`. In `read_deadmen`, the healthchecks `try` ends with `note(f"healthchecks.io could not be read directly: {exc}")` — make that except-branch `return read`, and add AFTER the whole try/except, in place of the final `return read`. The check reads runbook FILES, so it gets its own `try` and its own note: inside the healthchecks `try`, an `OSError` from a runbook would be reported as healthchecks.io unreadable.
+`DeadmenRead` gains, after `via_healthchecks`:
+
+```python
+    # Three states, not two: `None` is "the check did not run" (healthchecks unreadable, or the
+    # runbooks were), `[]` is "ran, found nothing". Defaulting to `[]` would print the all-clear
+    # description line under a report that never looked.
+    description_findings: list[str] | None = None
+```
+
+In `read_deadmen`, the healthchecks `try` ends with `note(f"healthchecks.io could not be read directly: {exc}")` — make that except-branch `return read`, and add AFTER the whole try/except, in place of the final `return read`. The check reads runbook FILES, so it gets its own `try` and its own note: inside the healthchecks `try`, an `OSError` from a runbook would be reported as healthchecks.io unreadable.
 
 ```python
     try:
         read.description_findings = check_descriptions(read.via_healthchecks)
-    except _UNREACHABLE as exc:
-        note(f"the runbooks could not be read to check the dead-man descriptions: {exc}")
+    # `AttributeError` beside `_UNREACHABLE`: this is the module's first content-dependent parse of
+    # the healthchecks payload, and a `checks` element that is not an object would otherwise
+    # traceback out at exit 1 -- ATTENTION, the inverted contract this module's docstring names.
+    except (*_UNREACHABLE, AttributeError) as exc:
+        note(f"the dead-man descriptions could not be checked (the runbooks are read here): {exc}")
     return read
 ```
 
@@ -890,11 +976,13 @@ In `markdown()`, after `f"- direct: {len(self.deadmen.via_healthchecks)} checks 
 ```python
         if self.deadmen.description_findings:
             out += [f"- description: {f}" for f in self.deadmen.description_findings]
-        elif self.deadmen.via_healthchecks:
+        elif self.deadmen.description_findings is not None and self.deadmen.via_healthchecks:
             out.append(f"- descriptions: all {len(self.deadmen.via_healthchecks)} carry a resolving runbook link and no internal token")
 ```
 
-In `journal_paragraph()`, add `findings = len(self.deadmen.description_findings)` beside `warnings = ...`, and change the `read directly` clause to:
+The `is not None` is the whole point of the three states: without it the all-clear line prints beside `## Sources that could not be read` on a run where the check never ran.
+
+In `journal_paragraph()`, add `findings = len(self.deadmen.description_findings or [])` beside `warnings = ...`, and change the `read directly` clause to:
 
 ```python
             f"{len(self.deadmen.via_healthchecks)} read directly{f', {findings} description finding{'s' if findings != 1 else ''}' if findings else ''} · deploys {deploys} · "
@@ -916,17 +1004,39 @@ with urllib.request.urlopen(req, timeout=30) as r:
 # name, tags, desc ONLY: the full object carries the check's write URLs, which are credentials.
 out = [{"name": c.get("name"), "tags": c.get("tags"), "desc": c.get("desc")} for c in checks]
 Path("tests/fixtures/healthchecks_descriptions.json").write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n")
-print(len(out), "checks;", sum(1 for c in out if "Runbook:" in (c["desc"] or "")), "carry a Runbook: line")
+print(len(out), "checks;", sum(1 for c in out if "Runbook: infra/runbooks/" in (c["desc"] or "")), "carry the link")
 EOF
 grep -c '"ping_url"\|hc-ping\|"update_url"\|"pause_url"' tests/fixtures/healthchecks_descriptions.json
 ```
 
-Expected: `10 checks; 10 carry a Runbook: line`, and the grep prints `0` — no URL of any kind in the file. If the count is not 10, or any description lacks a `Runbook:` line, stop: that is a live finding to report, not a fixture to edit.
+Expected: `10 checks; 10 carry the link`, and the grep prints `0` — no URL of any kind in the file. The counted prefix is the literal one `check_descriptions` requires, so this print and the check agree. If the count is not 10, or fewer than 10 carry the link, that is a live finding to report and Step 5's route applies — never a fixture to edit.
 
 - [ ] **Step 5: Run the tests**
 
 Run: `uv run pytest tests/test_ops_daily.py -q 2>&1 | tail -3`
-Expected: all passed — including `test_todays_ten_real_descriptions_all_pass`. If it fails, read WHICH description it names: a real defect on the live surface is reported (exit 1 is what the pass will now say), not fixed by editing the fixture.
+Expected: all passed — including `test_todays_ten_real_descriptions_all_pass`.
+
+**If it fails, read WHICH check and which finding it names.** That is a real defect on the live surface — exit 1 is what the pass will now say about it — never a fixture to edit. A failure here is likely, not surprising: spec 00107 measured `Phase-6`, `spec 00050` and `T0083` in the three descriptions that pre-dated 2026-08-30, and this branch cannot rewrite a SaaS field. The route, which keeps the branch moving and the finding visible:
+
+1. Commit the fixture exactly as fetched (Step 6) — it is the evidence of what the surface said that day.
+2. Narrow the true positive to the checks that are clean, and pin the offenders so the narrowing cannot silently grow:
+
+```python
+# Checks whose LIVE description carries a finding, read 2026-08-30 -- each owes a human rewrite in
+# healthchecks.io, which no repo change can make. The daily report names them every day until then.
+_DESCRIPTIONS_OWED = {"<check name>", ...}
+
+
+def test_todays_ten_real_descriptions_all_pass():
+    ...  # docstring and the two lines above unchanged
+    assert ops_daily.check_descriptions([c for c in checks if c["name"] not in _DESCRIPTIONS_OWED]) == []
+    owed = ops_daily.check_descriptions([c for c in checks if c["name"] in _DESCRIPTIONS_OWED])
+    assert {f.split("`")[1] for f in owed} == _DESCRIPTIONS_OWED, owed   # every finding names its check first
+```
+
+The second assertion is what keeps the first honest: a name added to the set without a real finding behind it turns the test red, and a description rewritten in healthchecks.io turns it red too — at which point the name comes out of the set and the true positive widens back.
+
+3. Carry the named checks into Task 8's entry as a live finding of this iteration. It needs no separate registration: the report names it in every daily pass until a human rewrites it, which is exactly what spec 00107 D5 bought.
 
 - [ ] **Step 6: Commit**
 
@@ -941,7 +1051,7 @@ git commit -m "feat(ops_daily): the dead-man read checks the ten descriptions it
 uv run pytest tests/test_ops_daily.py --collect-only -q -k "description or runbook_link" 2>&1 | tail -3
 ```
 
-Expected: exactly 8 tests collected — the three from Task 5 and the five from this task. `-k` matches NAMES only, and `test_a_missing_or_dangling_runbook_link_is_a_finding` is the one test the anchor mutation below moves (every other fixture's link resolves or is absent), so a filter of `description` alone collects 7 and the second probe SURVIVES for want of a selector, not a guard. The probe is a shell array (Task 1 Step 7 says why):
+Expected: exactly 9 tests collected — the three from Task 5, the five from this task, and the pre-existing `test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link` (`tests/test_ops_daily.py:85`), whose name the word `runbook_link` also matches and which no mutation below moves. `-k` matches NAMES only, and `test_a_missing_or_dangling_runbook_link_is_a_finding` is the one test the anchor mutation below moves (every other fixture's link resolves or is absent), so a filter of `description` alone collects 7 and the second probe SURVIVES for want of a selector, not a guard. The probe is a shell array (Task 1 Step 7 says why):
 
 ```bash
 PROBE=(uv run pytest tests/test_ops_daily.py -q -p no:cacheprovider -k 'description or runbook_link')
@@ -964,6 +1074,7 @@ ______________________________________________________________________
 - Modify: `infra/runbooks/ops.md:194-198` (`healable-threshold-rederivation-due` → *What you are seeing*), `:216` (step 3)
 - Modify: `.claude/skills/zcrypto-daily-ops/SKILL.md` — the paragraph under `## What this is` (line 11) and the two paragraphs under `## 5. Evaluate the due reminders`
 - Modify: `docs/open-topics/archive/T0103-reconciler-books-unfilled-silence-as-healed.md:36` (one sentence, in place)
+- Modify: `docs/reference/ops-journal/README.md:17-18` (the example paragraph, Step 7)
 - Edit, never commit: `docs/memo.local.md` (gitignored)
 
 **Interfaces:**
@@ -1070,6 +1181,25 @@ grep -n "armed OUTSIDE\|noisy warning" docs/memo.local.md
 
 Append to the note that says the reminders are armed OUTSIDE the repo: ` — and cannot be verified from this side: the Slack MCP schedules but never lists, so an arming that failed to exist is invisible (T0103's 2026-08-27 reminder never landed); spec 00107 D1 moved the load onto read_reminders() and the message is a convenience.` Mark the `noisy warning` idea discharged by spec 00107 D4 in the memo's own convention for a discharged item. `git status --short` must not list the memo afterwards.
 
+- [ ] **Step 7: The journal README's example paragraph carries the clauses the instrument now prints**
+
+`docs/reference/ops-journal/README.md:17-18` shows the canonical paragraph, and a pass writing its entry by hand follows that shape. `tests/test_ops_journal.py` checks only headings, so nothing goes red when it drifts — which is exactly why it must be edited here. Inside the fenced block, replace the two paragraph lines with:
+
+```markdown
+window 24 h to 2026-08-29 06:00Z · alerts none · checks all pass · logs 0 ERROR/CRITICAL lines ·
+dead-men 0 down via Grafana, 10 read directly · deploys none ·
+reminders refdata sweep: due in 5 days (last sweep 2026-08-04), healable re-derivation: counter unchanged in 24 h · actions none · follow-ups none
+```
+
+The `N description finding(s)` clause is deliberately not in the example: it is printed only when there are findings, and an example carrying it would teach a shape a clean day never has.
+
+```bash
+uv run pre-commit run -a 2>&1 | tail -6
+uv run pytest tests/test_ops_journal.py -q 2>&1 | tail -3
+git add docs/reference/ops-journal/README.md
+git commit -m "docs(ops-journal): the example paragraph carries the reminders clause"
+```
+
 ______________________________________________________________________
 
 ### Task 8: Closeout — the after reading, the guards that reach docs, the entry
@@ -1078,11 +1208,12 @@ ______________________________________________________________________
 - Modify: `docs/iterations-history-phase6.md` (append one entry)
 
 **Interfaces:**
-- Consumes: `<scratchpad>/pass-before.md` (Task 0), the mutation verdicts recorded in Tasks 1, 3 and 6.
+- Consumes: `.tmp/pass-before.md` (Task 0), the mutation verdicts recorded in Tasks 1, 3, 4 and 6.
 
 - [ ] **Step 1: The after reading (main loop — it reads the vault)**
 
 ```bash
+SCRATCH="$(git rev-parse --show-toplevel)/.tmp"; mkdir -p "$SCRATCH"; ls -l "$SCRATCH/pass-before.md"
 uv run python infra/scripts/ops-daily.py report --since 24h > "$SCRATCH/pass-after.md"; echo "rc=$?" | tee -a "$SCRATCH/pass-after.md"
 sed -n '/## Reminders/,/## Deploys/p' "$SCRATCH/pass-after.md"; grep -n "description" "$SCRATCH/pass-after.md"; grep -n "capture WARNING\|/capture WARNING" "$SCRATCH/pass-after.md"
 ```
@@ -1104,8 +1235,8 @@ Load the `iteration-closeout` skill. Append to `docs/iterations-history-phase6.m
 - the lost reminder and the structural fact (no list/verify API), and D1's answer: `read_reminders()` computes due-ness daily from the register row and the healable counter; owed reports, unreadable exits 2 — with the before/after exit codes and the `## Reminders` lines from Steps 1 and Task 0;
 - the three drop lines at INFO with the measured basis (bursts matching `zcrypto_capture_reconnects_total` 2 and 1; gap counter 0) and the note that the hosts emit WARNING until the capture-image rollout `T0037`'s `ripe_when` owes carries the digest — no rollout of its own;
 - the healable reminder's three states — moved, unchanged, reset — and why the reset state exists (the counter is re-emitted from ledger totals; `increase()` reads a correction as movement; the alert rule's `resets()` guard mirrored);
-- the description check: two assertions per check, the true positive over today's ten (`tests/fixtures/healthchecks_descriptions.json`, fields name/tags/desc only), detection not generation and why;
-- every guard mutation-probed: the verdicts from Tasks 1, 3 and 6 (three sites, five reminder mutations, three description mutations — all KILLED, or the one that was not and what was done);
+- the description check: two assertions per check, the true positive over today's ten (`tests/fixtures/healthchecks_descriptions.json`, fields name/tags/desc only), detection not generation and why — and, if the true positive named any live description as owed, those check names as a finding of this pass, owing a human rewrite in healthchecks.io that the daily report will name until it lands;
+- every guard mutation-probed: the verdicts from Tasks 1, 3, 4 and 6 (three drop sites, five reminder mutations plus the runbook-anchor rename the citation guard catches, the owed-reminder-must-not-block mutation, three description mutations — all KILLED, or the one that was not and what was done);
 - D6: T0103's sentence re-trued; the memo note extended; `archive/T0113` deliberately left.
 
 No decisions-log entry: nothing here is subject-matter research (`decisions-log.md`'s gate).

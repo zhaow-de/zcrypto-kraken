@@ -53,7 +53,9 @@ Nothing depends on them being WARNING, verified: the capture log-dead rules sele
 
 ### D5 — the descriptions are checked, not generated
 
-For each of the ten checks the pass already fetches, two assertions: the description carries a `Runbook: infra/runbooks/<file>#<anchor>` that resolves against a real anchor, and it carries no internal token (`Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `WP<N>`). Violations are findings in the report, named per check.
+For each of the ten checks the pass already fetches, two assertions: the description carries a `Runbook: infra/runbooks/<file>#<anchor>` that resolves against a real anchor, and it carries no internal token (`Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>` in the bare or the backticked spelling, `WP<N>`). Violations are findings in the report, named per check.
+
+The literal `Runbook: ` prefix is part of the first assertion, not decoration: a description that merely mentions a runbook path in passing has not been given the link an operator follows from a phone, and accepting one would report as checked a description that carries no link at all. The bare decision number (`D5`) that `operator-facing-text.md` also bans is deliberately **not** in the token set: this check detects without repairing, so a false positive costs a finding line in every daily report until a human rewrites a description that was never wrong.
 
 Rejected: descriptions-as-code with a renderer and a push script, mirroring `alerts.yaml` + `grafana-push.sh`. The hole found was **undetected drift**, and a source file does not close that better — the tokens would have been written into the file too. It would also make a third copy of content the dead-man map in `observability.md` already holds. Detection is what was missing; generation is the upgrade if drift proves recurring rather than one-off.
 
@@ -63,11 +65,14 @@ The cost, accepted: this detects but cannot repair. With ten checks and a daily 
 
 [[T0103]]'s archive says the reminder "cannot be deleted through the API, so it will land in `#zcrypto` on the day". Observation disproves it. The archived file is re-trued in place, and the memo's "armed OUTSIDE the repo" note gains what this iteration measured: that the arming cannot be verified from this side at all, which is why D1 moves the load off it.
 
+**And on every operating surface that still names Slack as the trigger, in this same change** — a ruling recorded only in a spec is invisible at execution time. Three of them, each going false the moment D1 lands, each to name the report's `## Reminders` section instead: `infra/runbooks/reference-data.md`'s opening sentence and its `#refdata-sweep-due` section, which tell the operator they are here because a scheduled Slack message came due; `infra/runbooks/ops.md#healable-threshold-rederivation-due`, which calls itself "a calendar trigger with no metric behind it" when the counter it now reads is exactly that metric; and `.claude/skills/zcrypto-daily-ops/SKILL.md`'s step 5, which evaluates the Slack inbox rather than the report the pass just produced.
+
 ## Verification
 
 - The level change is proven by a test that fails against `logger.warning` — the guard sees the defect it names, on all three sites.
 - `read_reminders()` is proven against the **real** register (its parse must find `2026-08-04` in the committed file, not a fixture shaped to the parser) and against a fixture where the counter moved, one where it did not, and one where it reset, so the trigger discriminates rather than always firing — and a correction is never read as an event.
 - The description assertions are proven by a fixture carrying an internal token and one carrying a dead runbook link, **plus the true positive that today's ten real descriptions all pass** — a check that refuses everything is not a check.
+- The runbook anchors the instrument itself prints are guarded **in kind, not by instance**: every `infra/runbooks/<file>#<anchor>` in the module's own source resolves against the anchors that exist, and the guard fails if it finds none to check. Pinning them literal-against-literal in a test only re-states the constant, so a rename made while editing those very sections — D6 edits both — would send a paged operator to a fragment that scrolls nowhere with the suite still green.
 - Every guard mutation-probed through `infra/scripts/mutate-probe.sh`.
 - The pass is re-run live and its exit code read, before and after.
 
