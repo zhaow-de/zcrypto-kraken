@@ -1116,21 +1116,29 @@ def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
     assert not re.search(r'host=~"zcrypto\|zcrypto-red"[^}]*job="engine_app"', expr), "engine_app must not select zcrypto-red"
 
 
-def test_every_runbook_cross_reference_resolves():
-    """A runbook that points at a section in another runbook must point at one that exists.
+_CROSS_REF = re.compile(r"\b([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 
-    The alert-to-runbook direction has been guarded since these files were written; the
-    runbook-to-runbook direction had 119 references and no guard, and one of them was wrong — the
-    dead-man map sent the liquidations poller to `ops-node.md` for a section living in
-    `observability.md`. An operator at 03:00 follows that link and finds nothing, which is worse
-    than no link at all because it costs them the time to go looking.
+
+def test_every_runbook_cross_reference_resolves():
+    """A runbook citing a section in another runbook must cite one that exists.
+
+    `test_the_index_routes_to_every_section_and_only_to_real_ones` already covers README.md's 91
+    index rows, and covers them in a direction this test does not: that every anchor is routed TO.
+    Do not drop it on the strength of this one. What was unguarded is the other 28 references --
+    body prose in `observability.md`, `capture-daemon.md`, `ops-node.md`, `engine.md`, `hosts.md`
+    and `nas.md` -- and one of them was wrong: the dead-man map sent the liquidations poller to
+    `ops-node.md` for a section living in `observability.md`. An operator at 03:00 follows that and
+    finds nothing, which costs more than no link would.
+
+    The charset matches its siblings deliberately: broad enough that a stray capital produces a
+    MATCH that fails the assert, rather than no match and silent non-coverage.
     """
-    runbooks = Path(__file__).resolve().parents[1] / "infra/runbooks"
-    anchors, refs = set(), []
-    for path in runbooks.glob("*.md"):
-        text = path.read_text()
-        anchors |= {f"{path.name}#{a}" for a in re.findall(r'<a name="([^"]+)"></a>', text)}
-        refs += [(path.name, f"{m.group(1)}#{m.group(2)}") for m in re.finditer(r"\b([a-z0-9-]+\.md)#([a-z0-9-]+)", text)]
-    assert refs, "no cross-references found at all — the extraction broke, not the runbooks"
+    anchors = {f"{name}#{anchor}" for anchor, names in _runbook_anchors().items() for name in names}
+    refs = [
+        (path.name, f"{m.group(1)}#{m.group(2)}")
+        for path in sorted(RUNBOOKS.glob("*.md"))
+        for m in _CROSS_REF.finditer(path.read_text())
+    ]
+    assert refs, "no cross-references found at all -- the extraction broke, not the runbooks"
     broken = sorted({(src, ref) for src, ref in refs if ref not in anchors})
     assert not broken, f"runbook references pointing at sections that do not exist: {broken}"
