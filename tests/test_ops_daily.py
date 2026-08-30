@@ -10,10 +10,12 @@ invention, so every test passed while the pass would have matched no alert to an
 from __future__ import annotations
 
 import contextlib
+import http.client
 import importlib.util
 import io
 import json
 import re
+import subprocess
 import sys
 import urllib.error
 from datetime import datetime, timedelta, timezone
@@ -40,6 +42,27 @@ def _canned(*payloads):
         payload = queue.pop(0) if len(queue) > 1 else queue[0]
         yield io.BytesIO(json.dumps(payload).encode())
 
+    return opener
+
+
+def _recording(*payloads):
+    """`_canned`, but it keeps the URLs it was asked for.
+
+    `_canned` never looks at the request, so every endpoint the instrument builds was
+    unasserted -- which is how a Prometheus query path shipped against a Loki datasource and
+    404'd on the first live run. A test that only feeds a payload back proves parsing and
+    nothing about where the payload would have come from.
+    """
+    urls: list[str] = []
+    queue = list(payloads)
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        urls.append(request.full_url if hasattr(request, "full_url") else str(request))
+        payload = queue.pop(0) if len(queue) > 1 else queue[0]
+        yield io.BytesIO(json.dumps(payload).encode())
+
+    opener.urls = urls
     return opener
 
 
@@ -882,3 +905,192 @@ def test_every_directory_read_root_ends_in_a_slash():
     """
     assert all(root.endswith("/") for root in ops_daily._READ_SAFE_DIRS), ops_daily._READ_SAFE_DIRS
     assert not any(f.endswith("/") for f in ops_daily._READ_SAFE_FILES), ops_daily._READ_SAFE_FILES
+
+
+def test_the_log_read_uses_lokis_query_path_not_prometheuss(monkeypatch):
+    """Loki answers under `/loki/api/v1/query`; `/api/v1/query` is Prometheus's and 404s there.
+
+    Measured against the live stack: the Prometheus spelling returned HTTP 404 and the Loki one
+    returned 200 with series. The whole suite was green while the log plane had never worked once,
+    because no test looked at the URL -- so this asserts the path, not the parse.
+    """
+    monkeypatch.delenv("GRAFANA_LOKI_DS_UID", raising=False)
+    opener = _recording({"data": {"result": []}})
+    ops_daily.read_logs("tok", window=DAY, opener=opener)
+    assert len(opener.urls) == 1
+    assert "/loki/api/v1/query" in opener.urls[0], opener.urls[0]
+    assert "/uid/grafanacloud-logs/" in opener.urls[0], opener.urls[0]
+
+
+def test_the_prometheus_reads_keep_the_prometheus_query_path():
+    """The same proxy helper serves both datasources, so widening it for Loki must not move these."""
+    opener = _recording({"data": {"result": []}})
+    ops_daily.read_verdict("tok", opener=opener)
+    assert opener.urls and all("/api/v1/query" in u and "/loki/" not in u for u in opener.urls), opener.urls
+    assert all("/uid/grafanacloud-prom/" in u for u in opener.urls), opener.urls
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError("timed out"),
+        ConnectionResetError("reset by peer"),
+        http.client.RemoteDisconnected("closed without response"),
+        http.client.IncompleteRead(b"half"),
+        urllib.error.URLError("dns"),
+        urllib.error.HTTPError("u", 502, "bad gateway", {}, None),
+    ],
+)
+def test_a_transport_failure_is_an_unreadable_source_not_a_crash(exc):
+    """urllib wraps OSError only around the REQUEST, so these escape a `URLError`-only catch.
+
+    None of them can be produced by a fixture that returns a payload, which is why they survived
+    every green run: they need a real network. Uncaught, the 03:00 pass dies with a traceback and
+    Python exits 1 -- the ATTENTION code -- so an unreachable Grafana would have been reported as
+    a fleet finding rather than as the unreadable source it is, inverting the module's contract.
+    """
+    for read, kwargs in (
+        (ops_daily.read_logs, {"window": DAY}),
+        (ops_daily.read_alerts, {"now": NOW, "window": DAY}),
+        (ops_daily.read_deadmen, {}),
+    ):
+        result = read("tok", opener=_raises(exc), **kwargs)
+        assert result.unreadable, f"{read.__name__} let {type(exc).__name__} escape"
+
+
+def test_a_verdict_read_that_could_not_be_read_exits_2_not_1():
+    """`read_verdict` reports through its checks, so its failures bypassed `Report.unreadable`.
+
+    An isolated timeout on the verdict query alone therefore exited 1 -- ATTENTION -- which says a
+    Grafana the pass could not reach is something wrong with the FLEET. The old assertion here was
+    `all(ok is False)`, which a healthy empty result satisfies identically and so proved nothing;
+    the `unreadable:` prefix is what distinguishes them.
+    """
+    checks = ops_daily.read_verdict("tok", opener=_raises(TimeoutError("timed out")))
+    assert checks and all(c.value.startswith("unreadable:") for c in checks), checks
+    report = ops_daily.build_report(
+        alerts=ops_daily.AlertsRead(),
+        logs=ops_daily.LogsRead(),
+        deadmen=ops_daily.DeadmenRead(),
+        verdict=checks,
+        deploys=[],
+        now=NOW,
+    )
+    assert report.unreadable, "a verdict the pass could not read is an unreadable SOURCE"
+    assert report.exit_code == 2, report.exit_code
+
+
+def test_a_healthy_but_empty_verdict_is_not_an_unreadable_source():
+    """The true positive the old assertion could not tell apart: `(no series)` is a FAIL, not a gap."""
+    checks = ops_daily.read_verdict("tok", opener=_canned({"data": {"result": []}}))
+    report = ops_daily.build_report(
+        alerts=ops_daily.AlertsRead(),
+        logs=ops_daily.LogsRead(),
+        deadmen=ops_daily.DeadmenRead(),
+        verdict=checks,
+        deploys=[],
+        now=NOW,
+    )
+    assert not report.unreadable, report.unreadable
+    assert report.exit_code == 1, report.exit_code
+
+
+def test_a_shape_changed_payload_is_an_unreadable_source_not_a_crash():
+    """A 200 whose body changed shape used to raise `KeyError` past the guard.
+
+    Both parses now sit inside their try. Uncaught, each left the pass at exit 1 -- attention -- for
+    a source it could not read, the same inversion as a transport failure one line earlier.
+    """
+    bad = {"data": {"result": [{"metric": {}, "vaIue": [0, "1"]}]}}
+    assert ops_daily.read_logs("tok", window=DAY, opener=_canned(bad)).unreadable
+    checks = ops_daily.read_verdict("tok", opener=_canned(bad))
+    assert checks and all(c.value.startswith("unreadable:") for c in checks), checks
+
+
+def test_a_vault_that_cannot_be_read_exits_2(monkeypatch, capsys):
+    """The vault is a source too, and its failure is not an `OSError`.
+
+    A locked GPG agent raises `CalledProcessError` -- a `SubprocessError` -- so `_UNREACHABLE` never
+    covered it, and `main` resolved the token outside any handler. That exited 1 with a traceback:
+    a credential the pass could not read, reported as a finding about the fleet.
+    """
+
+    def boom(*a, **k):
+        raise subprocess.CalledProcessError(2, ["vault-pass.sh"])
+
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", boom)
+    assert ops_daily.main(["report"]) == 2
+    assert "the vault could not be read" in capsys.readouterr().out
+
+
+def test_a_bad_since_suffix_is_a_usage_error_not_a_traceback():
+    assert ops_daily.main(["report", "--since", "24w"]) == 2
+    assert ops_daily.main(["report", "--since", "abc"]) == 2
+
+
+def test_a_truncated_sample_array_is_an_unreadable_source_too():
+    """`"value": [0]` raised `IndexError` past both parses — the same inversion, narrower trigger.
+
+    `read_deadmen` had named `IndexError` beside the tuple all along, so the file's own precedent
+    said where it belonged; it is in `_UNREACHABLE` now and that special case is gone.
+    """
+    truncated = {"data": {"result": [{"metric": {}, "value": [0]}]}}
+    assert ops_daily.read_logs("tok", window=DAY, opener=_canned(truncated)).unreadable
+    assert ops_daily.read_deadmen("tok", opener=_canned(truncated)).unreadable
+    checks = ops_daily.read_verdict("tok", opener=_canned(truncated))
+    assert checks and all(c.value.startswith("unreadable:") for c in checks), checks
+
+
+@pytest.mark.parametrize(
+    "schema,values",
+    [
+        # `time` gone: t_idx falls back to 0 and resolves to the SAME column as `line`, so the
+        # dict passes the line check and `stamp / 1000` divides a dict by an int.
+        ({"fields": [{"name": "line"}, {"name": "labels"}]}, [[{"ruleUID": "u", "current": "Alerting"}], [{}]]),
+        # `time` as RFC3339 strings, the other realistic drift of this frame.
+        (
+            {"fields": [{"name": "time"}, {"name": "line"}, {"name": "labels"}]},
+            [["2026-08-29T02:00:00Z"], [{"ruleUID": "u", "current": "Alerting"}], [{}]],
+        ),
+    ],
+)
+def test_a_history_frame_whose_time_column_drifted_is_read_not_fatal(schema, values):
+    """`line` was type-checked and `stamp` was not, and `stamp` is the more dangerous of the two.
+
+    This frame is the payload the module's own comments treat as least stable -- measured once
+    against the live API. `TypeError` is deliberately outside `_UNREACHABLE`, so an unguarded
+    division here takes the whole pass down with no report at all: exit 1, ATTENTION, for a source
+    it could not read. Reading no transitions from a frame it does not understand is the right
+    answer; crashing is not.
+    """
+    read = ops_daily.read_alerts(
+        "tok", now=NOW, window=DAY, opener=_canned(_rules(), {"schema": schema, "data": {"values": values}})
+    )
+    assert read.unreadable is None
+    assert read.fired_in_window == []
+
+
+def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
+    """The blind spot closed in KIND, not by instance.
+
+    `_canned` never looked at the request, so a Prometheus query path shipped against a Loki
+    datasource and 404'd on the first live run while the suite stayed green. Two endpoints were
+    pinned when that was fixed; the module builds six, and the four left unpinned would fail the
+    same way. Every one of them is asserted here, so a path or a datasource uid cannot drift on any
+    reader without a test saying so.
+    """
+    monkeypatch.setenv("GRAFANA_LOKI_DS_UID", ops_daily.LOKI_DS_UID_DEFAULT)
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "k")
+
+    alerts = _recording(_rules(), _EMPTY_HISTORY)
+    ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=alerts)
+    assert any(u.endswith("/api/prometheus/grafana/api/v1/rules") for u in alerts.urls), alerts.urls
+    history = [u for u in alerts.urls if "/rules/history" in u]
+    assert history, alerts.urls
+    assert all("from=" in u and "to=" in u and "limit=" in u for u in history), history
+
+    deadmen = _recording({"data": {"result": []}}, {"checks": []})
+    ops_daily.read_deadmen("tok", opener=deadmen)
+    assert any("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in deadmen.urls), deadmen.urls
+    assert any(u == "https://healthchecks.io/api/v3/checks/" for u in deadmen.urls), deadmen.urls
+    assert not any("/loki/" in u for u in deadmen.urls), deadmen.urls

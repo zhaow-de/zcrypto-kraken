@@ -6,10 +6,12 @@ because a source that cannot be reached is a finding ABOUT that source, never a 
 
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import json
 import re
 import sys
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -39,6 +41,14 @@ GRAFANA_URL = grafana_auth.GRAFANA_URL
 PROM_DS_UID = "grafanacloud-prom"
 _RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 _TIMEOUT = 30
+# What "the source could not be read" actually looks like against a live endpoint. `URLError` alone
+# is not enough: urllib wraps OSError only around the REQUEST, so a timeout, a reset or a truncated
+# body during `getresponse()` or the read escapes uncaught -- and the pass dies at 03:00 with a
+# traceback and exit 1, which is the ATTENTION code, exactly inverting the module's contract that an
+# unreachable source is a finding about that source. `URLError` and `HTTPError` are `OSError`
+# subclasses, so naming `OSError` covers them too; `HTTPException` carries `IncompleteRead` and
+# `RemoteDisconnected`. No fixture produces any of these -- only a real network does.
+_UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError, IndexError)
 
 # The history API pages. A chunk returning AT the limit may have dropped transitions, and a report
 # that shows the survivors reads as a quiet day -- so chunks stay narrow and the count is checked.
@@ -94,7 +104,12 @@ def _history_transitions(payload: dict):
     t_idx = names.index("time") if "time" in names else 0
     l_idx = names.index("line") if "line" in names else 1
     for stamp, line in zip(columns[t_idx], columns[l_idx]):
-        if isinstance(line, dict):
+        # `stamp` is type-checked for the same reason `line` is, and it is the more dangerous of the
+        # two: if the frame ever drops its `time` field, `t_idx` falls back to 0 and lands on the
+        # SAME column as `line`, so the isinstance below passes and `stamp / 1000` divides a dict.
+        # `TypeError` is deliberately outside `_UNREACHABLE`, so that raise would take the whole
+        # pass down -- no report, exit 1 -- for a frame it could not read.
+        if isinstance(line, dict) and isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
             yield stamp, line
 
 
@@ -128,7 +143,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                             host=_host_of(uid, instances[0]),
                         )
                     )
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+    except _UNREACHABLE as exc:
         return AlertsRead(unreadable=f"the rules API could not be read: {exc}")
 
     fired = {a.uid: a for a in read.firing_now}
@@ -162,7 +177,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 )
                 break
             chunk_start = chunk_end
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+    except _UNREACHABLE as exc:
         read.unreadable = f"the alert-state history could not be read: {exc}"
     read.fired_in_window = list(fired.values())
     return read
@@ -203,8 +218,16 @@ class Check:
     value: str
 
 
-def _proxy_query(ds_uid: str, expr: str, token: str, opener) -> list[dict]:
-    url = f"{GRAFANA_URL}/api/datasources/proxy/uid/{ds_uid}/api/v1/query?" + urllib.parse.urlencode({"query": expr})
+# Loki and Prometheus answer under DIFFERENT paths behind the same datasource proxy, and the
+# difference is not cosmetic: Loki 404s on Prometheus's `/api/v1/query`. The path is a parameter so
+# each caller states which API it is talking to rather than inheriting a default that is right for
+# only one of them.
+_PROM_QUERY_PATH = "/api/v1/query"
+_LOKI_QUERY_PATH = "/loki/api/v1/query"
+
+
+def _proxy_query(ds_uid: str, expr: str, token: str, opener, api_path: str = _PROM_QUERY_PATH) -> list[dict]:
+    url = f"{GRAFANA_URL}/api/datasources/proxy/uid/{ds_uid}{api_path}?" + urllib.parse.urlencode({"query": expr})
     return _get(url, token, opener)["data"]["result"]
 
 
@@ -220,10 +243,15 @@ def read_logs(token: str, *, window: timedelta, opener=urllib.request.urlopen, e
     hours = max(1, int(window.total_seconds() // 3600))
     expr = f'sum by (host, container, level) (count_over_time({{host=~".+", level=~"WARNING|ERROR|CRITICAL"}}[{hours}h]))'
     try:
-        result = _proxy_query(loki_ds_uid(env), expr, token, opener)
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+        result = _proxy_query(loki_ds_uid(env), expr, token, opener, api_path=_LOKI_QUERY_PATH)
+        counts = _log_counts(result)
+    except _UNREACHABLE as exc:
         return LogsRead(unreadable=f"the log plane could not be read: {exc}")
-    counts = [
+    return LogsRead(counts=sorted(counts, key=lambda c: -c.count))
+
+
+def _log_counts(result) -> list[LogCount]:
+    return [
         LogCount(
             host=(s.get("metric") or {}).get("host", "?"),
             container=(s.get("metric") or {}).get("container", "?"),
@@ -232,7 +260,6 @@ def read_logs(token: str, *, window: timedelta, opener=urllib.request.urlopen, e
         )
         for s in result
     ]
-    return LogsRead(counts=sorted(counts, key=lambda c: -c.count))
 
 
 def _readonly_key() -> str | None:
@@ -247,7 +274,7 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
     try:
         series = _proxy_query(PROM_DS_UID, "max(hc_checks_down_total) or on() vector(999)", token, opener)
         read.via_prometheus = float(series[0]["value"][1]) if series else None
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError, IndexError) as exc:
+    except _UNREACHABLE as exc:
         read.unreadable = f"the dead-man count could not be read through Grafana: {exc}"
 
     def note(text):
@@ -261,7 +288,7 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
         request = urllib.request.Request(HEALTHCHECKS_API, headers={"X-Api-Key": key})
         with opener(request, timeout=_TIMEOUT) as response:
             read.via_healthchecks = json.load(response).get("checks", [])
-    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
+    except _UNREACHABLE as exc:
         note(f"healthchecks.io could not be read directly: {exc}")
     return read
 
@@ -283,16 +310,19 @@ VERDICT_CHECKS: tuple[tuple[str, str], ...] = (
 def read_verdict(token: str, *, opener=urllib.request.urlopen) -> list[Check]:
     checks = []
     for name, expr in VERDICT_CHECKS:
+        # The PARSE is inside the guard too: a 200 whose shape changed raises `KeyError` out here,
+        # and an uncaught raise leaves the pass at exit 1 -- attention -- for a source it could not
+        # read. A body it cannot understand is the same finding as a body it cannot fetch.
         try:
             series = _proxy_query(PROM_DS_UID, expr, token, opener)
-        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as exc:
-            checks.append(Check(name, expr, ok=False, value=f"unreadable: {exc}"))
-            continue
-        checks.append(
-            Check(name, expr, ok=True, value=str(series[0]["value"][1]))
-            if series
-            else Check(name, expr, ok=False, value="(no series)")
-        )
+            check = (
+                Check(name, expr, ok=True, value=str(series[0]["value"][1]))
+                if series
+                else Check(name, expr, ok=False, value="(no series)")
+            )
+        except _UNREACHABLE as exc:
+            check = Check(name, expr, ok=False, value=f"unreadable: {exc}")
+        checks.append(check)
     return checks
 
 
@@ -327,7 +357,19 @@ class Report:
 
     @property
     def unreadable(self) -> list[str]:
-        return [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable) if n]
+        """Every source that could not be read -- the verdict checks included.
+
+        The verdict read reports through its checks rather than an `unreadable` field, so a timeout
+        on it alone used to leave the pass at exit 1, ATTENTION: a Grafana it could not reach,
+        reported as something wrong with the FLEET. The `unreadable:` prefix is written by
+        `read_verdict` for exactly this case and is the only value that carries it.
+        """
+        named = [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable) if n]
+        return named + [
+            f"{c.name} could not be read: {c.value.removeprefix('unreadable: ')}"
+            for c in self.verdict
+            if c.value.startswith("unreadable:")
+        ]
 
     @property
     def exit_code(self) -> int:
@@ -402,9 +444,26 @@ def main(argv: list[str]) -> int:
     if not argv or argv[0] != "report":
         print('usage: ops-daily.py report [--since 24h] [--journal-entry]\n       ops-daily.py classify --host <host> "<command>"')
         return 2
-    window = _parse_since(argv[argv.index("--since") + 1]) if "--since" in argv else timedelta(hours=24)
+    try:
+        window = _parse_since(argv[argv.index("--since") + 1]) if "--since" in argv else timedelta(hours=24)
+    except (KeyError, ValueError, IndexError) as exc:
+        print(f"--since takes a count and h or d, like 24h or 3d: {exc}")
+        return 2
     now = datetime.now(timezone.utc)
-    token = grafana_auth.vault_var("grafana_sa_token")
+    # The vault is a SOURCE like any other. A locked GPG agent raises `CalledProcessError`, which is
+    # a `SubprocessError` and NOT an `OSError`, so `_UNREACHABLE` does not cover it -- and uncaught
+    # it exits 1, the attention code, for a credential the pass could not read.
+    try:
+        token = grafana_auth.vault_var("grafana_sa_token")
+    except Exception as exc:
+        # The catch is deliberately broad -- `vault_var` fails across six unrelated hierarchies and a
+        # narrow tuple would be guaranteed incomplete -- so keep the traceback for the case where
+        # this is a real bug rather than a locked agent. stderr, so stdout stays valid markdown.
+        traceback.print_exc(file=sys.stderr)
+        print(
+            f"# Daily pass\n\n**Verdict: attention** (exit 2)\n\n## Sources that could not be read\n- the vault could not be read, so no source was queried: {type(exc).__name__}: {exc}"
+        )
+        return 2
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),
