@@ -16,7 +16,7 @@ A **warning** Grafana alert, `Capture · book desync stuck on a pair`, one insta
 
 ### What it means
 
-**Correct the rule's own story first.** The rule's block comment and its alert summary in `infra/grafana/alerts.yaml` say recovery is "a SINGLE fire-and-forget resubscribe" that "the transition guard will not retry". That has not been true since the bounded recovery ladder landed (`cli/capture/desync_recovery.py`, spec 00072), and the summary is being re-trued in the same change as this section. Read the page's Fix line with that in mind.
+**Recovery is a bounded ladder, not one attempt.** The rule's comment and summary used to say "a SINGLE fire-and-forget resubscribe" that "the transition guard will not retry"; that stopped being true when the ladder landed (`cli/capture/desync_recovery.py`, spec 00072) and both now describe the ladder. So a pair that reaches this page is one the whole ladder failed to recover — a restart is the next rung, not a first retry.
 
 What actually runs, driven by `_desync_recovery_loop` in `cli/capture/command.py` on a `DESYNC_RECOVERY_INTERVAL_SECONDS = 5` tick:
 

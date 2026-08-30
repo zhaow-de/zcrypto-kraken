@@ -87,7 +87,7 @@ A warning-severity Grafana alert (*Capture · reboot pending (attended)*), one i
 
 The gauge is published every 15 minutes by `zcrypto-reboot-check.timer` as an **explicit 0 or 1**, never as an absent series. It will keep firing until a human reboots the host. That persistence is the design, not a nuisance.
 
-**The alert summary's pointer is wrong and is being corrected to name this section.** It says "Guidance in `.claude/rules/fleet-deploys.md`"; that rule carries only the Kraken-maintenance-window bullet and no reboot procedure. The discipline lives in **`docs/reference/fleet.md` § Reboots**, restated below so you need neither file at 03:00.
+**The reboot discipline lives in `docs/reference/fleet.md` § Reboots**, which the alert summary now names — it used to point at `.claude/rules/fleet-deploys.md`, which carries only the Kraken-maintenance-window bullet and no reboot procedure. The procedure is restated below so you need neither file at 03:00.
 
 ### What it means
 

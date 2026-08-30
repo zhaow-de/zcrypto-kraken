@@ -2526,7 +2526,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one journal-path log line from zcrypto-archive-pull on the ops node in 26h -- the hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The four systemd units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed. Runbook: infra/runbooks/observability.md#zcrypto-ops-journal-transport-dead"
+      summary: "Not one journal-path log line from zcrypto-archive-pull on the ops node in 26h -- the half-hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The four systemd units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed. Runbook: infra/runbooks/observability.md#zcrypto-ops-journal-transport-dead"
       __dashboardUid__: "zcrypto-logs"
       __panelId__: "103"
     labels:
@@ -2637,7 +2637,7 @@ rules:
     # no gap between 15-minute publishes to ride out.
     for: 15m
     annotations:
-      summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended. Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in .claude/rules/fleet-deploys.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
+      summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended. Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "503"
     labels:
@@ -2867,10 +2867,11 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Recovery from a checksum desync is a SINGLE fire-and-forget resubscribe, fired only on the
-      # not-was_desynced TRANSITION (deliberately -- retrying in a loop trips Kraken's rate limit).
-      # So if that one attempt does not take, `desynced` stays True, the transition guard never
-      # re-fires, and the pair is stuck. min_over_time, not max: a desync that HEALED within the
+      # Recovery from a checksum desync is a BOUNDED LADDER (`cli/capture/desync_recovery.py`):
+      # rung 1 resubscribes the pair on the not-was_desynced transition, then a grace, then rung 2
+      # and a backoff, then a cooldown -- deliberately bounded, because retrying in a loop trips
+      # Kraken's rate limit. So a pair still desynced at 15 min is one the whole ladder failed to
+      # recover, not one attempt that went unretried. min_over_time, not max: a desync that HEALED within the
       # window has a 0 in it, so only a pair desynced for the whole 15 min fires -- the stuck shape,
       # not the transient one the daemon handles by itself 234/234 times.
       #
@@ -2902,7 +2903,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- its single fire-and-forget resubscribe did not take, and the transition guard will not retry. That pair's L2 is not being captured, AND it silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so hc.io is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-book-desync-stuck"
+      summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- the bounded recovery ladder ran and did not recover it. That pair's L2 is not being captured, AND it silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so hc.io is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-book-desync-stuck"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "101"
     labels:
