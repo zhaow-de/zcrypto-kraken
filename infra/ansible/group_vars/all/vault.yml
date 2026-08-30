@@ -1,11 +1,17 @@
 # group_vars/all — PROJECT-LEVEL SECRETS that belong to no host group.
 #
-# Unlike group_vars/observed/ (Alloy's credentials, which managed hosts render) and
-# group_vars/capture_host/ (the live trade key + per-host URLs), nothing here is consumed by a
-# managed host at all: every value below is read from the WORKSTATION, by file path, never through
-# inventory — `grafana_sa_token` and `slack_webhook_url` by `infra/scripts/grafana-push.sh`, and
-# `healthchecks_readonly_api_key` by `infra/scripts/ops_daily.py`'s direct dead-man read. `all` is
-# therefore the honest scope — it is the only group that includes `workstation`, where they run.
+# MIXED CUSTODY — do not read this file as workstation-only. Three of the eight values ARE
+# rendered onto managed hosts through inventory: `zaccess_wg_bridgehead_private_key` and
+# `zaccess_wg_preshared_key` by `roles/access`, `zaccess_wg_ops_private_key` and the same preshared
+# key by `roles/access_ops`, both templating `/etc/wireguard/zaccess0.conf`. **Editing any of those
+# three needs a converge of `zaccess` and `ops`** or the hosts keep the old key.
+#
+# The other five are read from the WORKSTATION by file path, never through inventory:
+# `grafana_sa_token` and `slack_webhook_url` by `infra/scripts/grafana-push.sh`,
+# `zaccess_client_p12_b64` and `zaccess_client_p12_pass` by
+# `infra/scripts/zaccess-extract-client-cert.sh`, and `healthchecks_readonly_api_key` by
+# `infra/scripts/ops_daily.py`'s direct dead-man read. `all` is the honest scope because it is the
+# only group that includes `workstation` AND covers the access hosts.
 #
 # Moved here from group_vars/capture_host/ (spec 00054, 2026-07-16, owner's call): neither is
 # capture-specific, and parking a project-level tooling secret in a host group misstates who owns
@@ -195,6 +201,15 @@ zaccess_client_p12_pass: !vault |
           3437393566616432620a626630313864376236653962356137653962366533383034356537313662
           39316133323536643635643765333234346136333665343732313261363930346637
 
+# The healthchecks.io READ-ONLY key (`hcr_` prefix; the `hcw_` admin key is
+# `healthchecks_api_key` in group_vars/capture_host/). Read by ops_daily.py's direct dead-man read,
+# which is what keeps that domain visible while Grafana is dark.
+#
+# DUPLICATED BY CONSTRUCTION, and nothing keeps the two in sync: this is the same secret as the
+# last path segment of `hc_prometheus_metrics_path` in group_vars/observed/vault.yml, which embeds
+# the read-only key in its URL. Rotate them AS ONE -- a rotation that rewrites only the metrics
+# path leaves the daily pass presenting a revoked key, and the pass would report the dead-man
+# domain unreadable rather than wrong.
 healthchecks_readonly_api_key: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           62633638626463353264373466633739643936313961656136396565663666393663636435326131

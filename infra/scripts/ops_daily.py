@@ -282,7 +282,7 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
 
     key = _readonly_key()
     if not key:
-        note("healthchecks_readonly_api_key is absent from the vault, so the direct dead-man read did not run")
+        note("healthchecks_readonly_api_key could not be read from the vault, so the direct dead-man read did not run")
         return read
     try:
         request = urllib.request.Request(HEALTHCHECKS_API, headers={"X-Api-Key": key})
