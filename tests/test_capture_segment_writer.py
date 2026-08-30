@@ -2067,8 +2067,8 @@ def _drop_levels(caplog, prefix: str) -> list[int]:
 
 
 def test_a_late_event_behind_a_committed_hour_is_dropped_at_info(tmp_path, caplog):
-    # A reconnect's replay is expected, not a fault: the scraped `zcrypto_capture_reconnects_total`
-    # is the instrument for how often it happens, and the daily pass's WARNING read carries findings only.
+    # A reconnect's replay is expected, not a fault, so the drop is INFO and not a warning:
+    # `zcrypto_capture_reconnects_total` -- never a count of these lines -- measures how often it happens.
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
     assert w.finalize_completed_hours(_ts(11, 0)) == 1
