@@ -195,7 +195,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A message in Slack `#zcrypto` prompting a re-read of the healable-gap-rate threshold. It is not an alert — **nothing is wrong**. Like `refdata-sweep-due`, it is a calendar trigger with no metric behind it.
+The daily pass's report names this reminder under `## Reminders`: **OWED** when `zcrypto_reconcile_healable_gap_seconds_total` increased in the window — a new healable-gap event landed, so the count in step 1 is owed again — and `ok` when it did not. **A third status says the counter *reset*** — a ledger correction or rebuild lowered the total, so `increase()` would read the whole post-reset value as movement. That is OWED too, and the report deliberately quotes no figure with it: the recount below is the only arbiter. A Slack message in `#zcrypto` may prompt the same; the report is the trigger, the message a convenience ping that cannot be verified to exist from this side. It is not an alert — **nothing is wrong**. Unlike `refdata-sweep-due`, which is calendar-driven, this one is event-driven: qualifying days accrue only when the counter moves, and the pass reads the counter, never the ledger — step 1 is still yours.
 
 ### What it means
 
@@ -213,7 +213,7 @@ The `gt [600]` threshold above is **provisional**: it was set before enough stea
 
 2. **Count only days AFTER the 2026-07-28 counter fix.** Earlier values are not fittable: 2026-07-17 was a staged drill, and 2026-07-27's value is 96.4112 % fiction — that overstatement is what the fix corrected.
 
-3. **Fewer than three qualifying days ⇒ do nothing except re-arm.** Schedule the next reminder in `#zcrypto` — the following month, matching `refdata-sweep-due`'s cadence — and stop. Fitting from one or two points is the intuition-wearing-a-table this threshold already suffered from once.
+3. **Fewer than three qualifying days ⇒ do nothing except re-arm.** Schedule the next reminder in `#zcrypto` — the following month, matching `refdata-sweep-due`'s cadence — and stop. Fitting from one or two points is the intuition-wearing-a-table this threshold already suffered from once. The re-arm is a convenience — the pass re-evaluates the counter every day whether or not the message lands, so a message that never arrives (the 2026-08-27 one did not) is not replaced out of band: the next one is scheduled here, when this section next runs.
 
 4. **Three or more ⇒ the re-derivation is due, and it is real work** — fit the threshold, push it with `infra/grafana/alerts.yaml`, verify the pushed rule by reading it back from the provisioning API rather than trusting an exit code. Open a `T<NNNN>` for it if it needs a decision; this runbook holds the trigger, not the backlog.
 

@@ -1,6 +1,6 @@
 # Reference-data runbooks — facts a third party owns
 
-You are here because a **scheduled reminder came due** in Slack. Nothing is wrong and nothing fired: these routines re-confirm facts nobody here controls, which move without emitting any signal we could alert on. Each section is written to be actioned without opening any other document.
+You are here because the daily pass's report listed a reminder as **OWED** under `## Reminders`, or a **scheduled reminder came due** in Slack. Nothing is wrong and nothing fired: these routines re-confirm facts nobody here controls, which move without emitting any signal we could alert on. Each section is written to be actioned without opening any other document.
 
 `README.md` beside this file is the index, and states what belongs in a runbook at all.
 
@@ -12,7 +12,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A message in Slack `#zcrypto` saying the Kraken reference-data sweep is due. It is not an alert — nothing is wrong. It is a **calendar trigger with no metric behind it**, armed as a scheduled Slack message because the facts it re-confirms are owned by a third party and move without emitting any signal we could alert on.
+The daily pass's report (`ops-daily.py report`) names this reminder under `## Reminders` — `due in N days` or `OVERDUE by N days`, computed every day from the last row of the register's re-confirmation log plus the monthly cadence. A scheduled Slack message in `#zcrypto` may say the same. **The report is the trigger; the Slack message is a convenience ping** — its scheduling cannot be listed or verified from this side, so its absence means nothing and its presence adds nothing. It is not an alert — nothing is wrong. The facts it re-confirms are owned by a third party and move without emitting any signal we could alert on.
 
 ### What it means
 
@@ -30,7 +30,7 @@ Run `/zcrypto-refdata-sweep` — the skill carries the procedure and the exact c
 1. **Automated half**: re-fetch, re-render, diff the rendered tables (never the hash), append a log row in `docs/reference/kraken-snapshot-register.md`. The stamp moves even on an unchanged sweep.
 2. **Attended half**: open **Kraken Pro → Fee tab**, report **tier** and **30-day USD spot volume**. Unchanged → logged; changed → `docs/reference/kraken-fee-schedule.md` is corrected *and* the re-pricing named (`cli/costs/fees.py` encodes that ladder verbatim); unavailable → recorded as **not re-read**, never inherited from the previous row.
 3. **Never cost anything off the register's fee columns.** `kraken-fee-schedule.md` owns the level; those columns are a drift detector on the endpoint. If they finally move, reconcile *back* to the fee doc rather than adopting the newer-looking API numbers.
-4. **Re-arm the next reminder** — a scheduled Slack message fires once. Scheduling the following month's is part of closing this one out, or the routine silently stops after a single run.
+4. **Re-arm the next reminder** — a scheduled Slack message fires once. Scheduling the following month's is part of closing this one out, or the routine silently stops after a single run. The report computes due-ness regardless — the message is a convenience, not what the check rests on.
 
 Out of scope here: MiCA status, tax rules and market-data pricing have no endpoint and are human re-reads belonging to the pre-go/no-go sweep, which lives in `T0085`, not in this cadence.
 
