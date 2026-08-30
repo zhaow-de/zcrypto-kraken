@@ -809,3 +809,36 @@ def test_a_read_safe_root_holds_only_what_was_checked(cmd):
     starts with its letters.
     """
     assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "grep -e KRAKEN /opt/zcrypto-capture/logship-secrets.env",
+        "grep -e . /opt/zcrypto-capture/logship-secrets.env",
+        "sudo grep -e x /home/deploy/.ssh/id_rsa",
+        "grep -e X /etc/shadow",
+        "grep -in -e ADMIN /etc/zcrypto-ops/alloy/alloy-secrets.env",
+        # operand 0 is the secret and operand 1 is safe, so skipping operand 0 passed the command
+        "grep -e X /etc/shadow /var/log/syslog",
+        "grep --regexp=X /etc/shadow",
+        "grep -ie X /etc/shadow",
+    ],
+)
+def test_grep_e_does_not_turn_the_first_file_into_the_pattern(cmd):
+    """The path check skips `grep`'s first operand as its pattern; `-e` moves the pattern elsewhere.
+
+    With `-e` value-taking, `grep -e X /etc/shadow` left the FILE at operand 0, where the skip threw
+    it away unchecked — and both seeded secrets printed. `-e` is a valueless short flag now, so the
+    pattern is always positional. The skip is only ever sound while that stays true.
+    """
+    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
+
+
+def test_the_greps_the_runbooks_actually_run():
+    for cmd in (
+        "grep -rE '^Storage=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/",
+        "grep -A3 group_add /etc/zcrypto-ops/alloy/compose.yaml",
+        "sudo docker logs grafana-alloy --since 1h 2>&1 | grep -iE 'collector|error'",
+    ):
+        assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd

@@ -593,7 +593,11 @@ _READ_SHAPES = (
     _Shape(("md5sum",), arity=(1, 3), classes=(_FILEREF,)),
     _Shape(
         ("grep",),
-        {"-A": _INT, "-B": _INT, "-C": _INT, "--include": _QUOTED, "-e": _PATTERN},
+        # `-e` is deliberately NOT value-taking, and must never become so: it would consume the
+        # pattern, leaving the first FILE at operand 0 -- which `_reads_only_safe_paths` skips as
+        # the pattern. That pair read `/etc/shadow` under an AUTONOMOUS verdict. Left as a valueless
+        # short flag the pattern stays positional and every file is checked; no runbook uses `-e`.
+        {"-A": _INT, "-B": _INT, "-C": _INT, "--include": _QUOTED},
         short=r"-[iEvnocleqrRFwxsah]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 6),
         classes=(_PATTERN, _FILEREF),
@@ -672,7 +676,7 @@ _FILTER_SHAPES = (
     _Shape(("cut",), {"-d": _QUOTED, "-f": _NAME, "-c": _NAME}),
     _Shape(
         ("grep",),
-        {"-A": _INT, "-B": _INT, "-C": _INT, "-e": _PATTERN},
+        {"-A": _INT, "-B": _INT, "-C": _INT},
         short=r"-[iEvnocleqFwxa]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 1),
         classes=(_PATTERN,),
@@ -740,7 +744,8 @@ _READ_SAFE_ROOTS = (
 def _reads_only_safe_paths(head: str, operands: list[str]) -> bool:
     """Every path a content head names must sit under a read-safe root, absolute and traversal-free.
 
-    `grep`'s first operand is its pattern, never a path. A `*` cannot cross `/`, so a glob under a
+    `grep`'s first operand is its pattern -- which holds only because no shape lets a flag consume
+    that pattern. Give `-e` a value spec and this skip silently drops a FILE instead. A `*` cannot cross `/`, so a glob under a
     safe root stays under it; `..` can leave, so it is refused outright.
     """
     paths = operands[1:] if head == "grep" else operands
