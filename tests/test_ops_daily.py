@@ -18,7 +18,8 @@ import re
 import subprocess
 import sys
 import urllib.error
-from datetime import datetime, timedelta, timezone
+import urllib.parse
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -251,6 +252,7 @@ def _report(**kw):
         deadmen=ops_daily.DeadmenRead(via_prometheus=0.0, via_healthchecks=[{"name": "x"}]),
         verdict=[ops_daily.Check("capture primary up", "up{...}", ok=True, value="1")],
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     )
     return ops_daily.build_report(**{**base, **kw})
@@ -286,7 +288,7 @@ def test_unreadable_outranks_fired_so_a_partial_read_is_never_reported_as_attent
 
 def test_the_journal_paragraph_carries_every_labelled_clause():
     para = _report().journal_paragraph()
-    for clause in ("window", "alerts", "checks", "logs", "dead-men", "deploys", "actions", "follow-ups"):
+    for clause in ("window", "alerts", "checks", "logs", "dead-men", "deploys", "reminders", "actions", "follow-ups"):
         assert clause in para, f"missing clause: {clause}"
 
 
@@ -953,6 +955,7 @@ def test_a_transport_failure_is_an_unreadable_source_not_a_crash(exc):
         (ops_daily.read_logs, {"window": DAY}),
         (ops_daily.read_alerts, {"now": NOW, "window": DAY}),
         (ops_daily.read_deadmen, {}),
+        (ops_daily.read_reminders, {"now": NOW, "window": DAY}),
     ):
         result = read("tok", opener=_raises(exc), **kwargs)
         assert result.unreadable, f"{read.__name__} let {type(exc).__name__} escape"
@@ -974,6 +977,7 @@ def test_a_verdict_read_that_could_not_be_read_exits_2_not_1():
         deadmen=ops_daily.DeadmenRead(),
         verdict=checks,
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     )
     assert report.unreadable, "a verdict the pass could not read is an unreadable SOURCE"
@@ -989,6 +993,7 @@ def test_a_healthy_but_empty_verdict_is_not_an_unreadable_source():
         deadmen=ops_daily.DeadmenRead(),
         verdict=checks,
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     )
     assert not report.unreadable, report.unreadable
@@ -1074,10 +1079,14 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
     """The blind spot closed in KIND, not by instance.
 
     `_canned` never looked at the request, so a Prometheus query path shipped against a Loki
-    datasource and 404'd on the first live run while the suite stayed green. Two endpoints were
-    pinned when that was fixed; the module builds six, and the four left unpinned would fail the
-    same way. Every one of them is asserted here, so a path or a datasource uid cannot drift on any
-    reader without a test saying so.
+    datasource and 404'd on the first live run while the suite stayed green. The module builds EIGHT
+    endpoints: the rules API, the chunked rule history, the dead-man Prometheus query, the direct
+    healthchecks.io read, the Loki log query, the verdict Prometheus query, and the reminders'
+    `increase()` and `resets()`. Six of them are asserted here; the log and the verdict reads are
+    pinned by `test_the_log_read_uses_lokis_query_path_not_prometheuss` and
+    `test_the_prometheus_reads_keep_the_prometheus_query_path`. Six plus two is the whole set, so a
+    path or a datasource uid cannot drift on any reader without a test saying so -- and a NINTH
+    reader added without a pin makes the enumeration above false, which is the sentence to re-read.
     """
     monkeypatch.setenv("GRAFANA_LOKI_DS_UID", ops_daily.LOKI_DS_UID_DEFAULT)
     monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "k")
@@ -1094,6 +1103,18 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
     assert any("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in deadmen.urls), deadmen.urls
     assert any(u == "https://healthchecks.io/api/v3/checks/" for u in deadmen.urls), deadmen.urls
     assert not any("/loki/" in u for u in deadmen.urls), deadmen.urls
+
+    reminders = _recording(_counter(0))
+    ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=reminders)
+    assert len(reminders.urls) == 2 and all("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in reminders.urls), (
+        reminders.urls
+    )
+    assert "sum(increase(zcrypto_reconcile_healable_gap_seconds_total[24h]))" in urllib.parse.unquote(reminders.urls[0]), (
+        reminders.urls
+    )
+    assert "sum(resets(zcrypto_reconcile_healable_gap_seconds_total[24h]))" in urllib.parse.unquote(reminders.urls[1]), (
+        reminders.urls
+    )
 
 
 def test_the_journal_paragraph_carries_warnings_when_there_are_any():
@@ -1119,6 +1140,7 @@ def test_the_journal_paragraph_carries_warnings_when_there_are_any():
         deadmen=ops_daily.DeadmenRead(),
         verdict=[],
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     ).journal_paragraph()
     assert "1802 WARNING" in para, para
@@ -1133,6 +1155,412 @@ def test_the_journal_paragraph_stays_quiet_when_nothing_warned():
         deadmen=ops_daily.DeadmenRead(),
         verdict=[],
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     ).journal_paragraph()
     assert "WARNING" not in para, para
+
+
+# --- spec 00107 D3: the reminders are read from the source that actually knows ------------------------------
+
+
+def _register(tmp_path, *rows, decoy=True, preamble=False):
+    """A register whose re-confirmation log holds `rows` (first-cell, fetched-at) -- plus, by default,
+    a dated table AFTER the next heading, so a parser that ignores section boundaries reads 2099.
+
+    The un-numbered `not a sweep row` sits INSIDE the log and LAST, where only `_LOG_ROW`'s `#\\d+`
+    rejects it: drop that clause and the parse answers 2000-01-01 instead of the real row, or
+    instead of None. Under an earlier heading it guarded nothing -- the section gate got there first.
+
+    `preamble=True` puts a well-formed row ABOVE the first heading, which is the only place the
+    gate's STARTING value can be read: every `## ` line reassigns `in_log`, so a row under a wrong
+    heading cannot tell a `False` initializer from a `True` one. Pass it with no rows in the log, or
+    the real rows overwrite the preamble's answer and the distinction disappears again.
+    """
+    text = [
+        "# Kraken reference-data snapshot register",
+        "",
+        *(["| #8 (above every heading) | 2098-01-01T00:00:00+00:00 | x |", ""] if preamble else []),
+        "## Provenance",
+        "",
+        "| Sweep | Fetched at (UTC) |",
+        "| -- | -- |",
+        "",
+        "## Re-confirmation log",
+        "",
+        "Prose before the table, with a date in it: 2031-01-01.",
+        "",
+        "| Sweep | Fetched at (UTC) | Full response |",
+        "| -- | -- | -- |",
+        *[f"| {first} | {fetched} | 1429 pairs / 824 assets |" for first, fetched in rows],
+        "| not a sweep row | 2000-01-01T00:00:00+00:00 | x |",
+        "",
+    ]
+    if decoy:
+        text += ["## Deferred: account-gated facts", "", "| #9 (decoy) | 2099-01-01T00:00:00+00:00 | x |", ""]
+    path = tmp_path / "register.md"
+    path.write_text("\n".join(text))
+    return path
+
+
+def test_the_last_sweep_date_is_read_from_the_real_register_not_a_fixture_shaped_to_the_parser():
+    """The parse must find the committed file's latest row. Row #0 is 2026-07-07 and row #1 is
+    2026-08-04, so `>=` the latter proves the LAST row was read, and the bound never rots as sweeps
+    append. The second assertion re-derives the answer by a different mechanism -- slicing the
+    section out by heading rather than walking lines -- but honours the SAME boundary, so it can
+    disagree with `last_sweep_date` only when `last_sweep_date` is wrong. A whole-file scan here
+    would instead fail against a correct parser the day a numbered row appears under a later
+    heading, which is the case this test exists to defend."""
+    found = ops_daily.last_sweep_date(ops_daily.REGISTER)
+    assert found is not None and found >= date(2026, 8, 4), found
+    log = ops_daily.REGISTER.read_text().split("\n## Re-confirmation log\n", 1)[1].split("\n## ", 1)[0]
+    rows = [line for line in log.splitlines() if line.startswith("| #")]
+    assert found.isoformat() in rows[-1], (found, rows[-1])
+
+
+def test_the_last_row_of_the_log_wins_and_tables_outside_it_are_ignored(tmp_path):
+    register = _register(
+        tmp_path, ("#0 (Phase 0, iter-002)", "2026-07-07T03:29:00+00:00"), ("#1 (monthly, 2026-08-04)", "2026-08-04T10:40:09+00:00")
+    )
+    assert ops_daily.last_sweep_date(register) == date(2026, 8, 4)
+
+
+def test_a_log_with_no_dated_row_reads_as_none_never_as_a_date_from_elsewhere(tmp_path):
+    assert ops_daily.last_sweep_date(_register(tmp_path)) is None
+    assert ops_daily.last_sweep_date(_register(tmp_path, decoy=False)) is None
+    # Above the FIRST heading, where the gate's initializer is the only thing that can reject the
+    # row -- the two cases above are decided by a `## ` line reassigning `in_log`, so they pass
+    # unchanged if the gate starts open. A register's preamble is prose in practice; a table there
+    # is what a botched edit leaves behind.
+    assert ops_daily.last_sweep_date(_register(tmp_path, preamble=True)) is None
+
+
+@pytest.mark.parametrize(
+    "last,expected",
+    [
+        (date(2026, 8, 4), date(2026, 9, 4)),
+        (date(2026, 12, 4), date(2027, 1, 4)),
+        (date(2026, 1, 31), date(2026, 2, 28)),
+    ],
+)
+def test_the_monthly_cadence_is_a_calendar_month_with_the_day_clamped(last, expected):
+    """The sweep reminders were armed a calendar month apart (2026-08-04 -> 2026-09-04), not 30 days."""
+    assert ops_daily._a_month_after(last) == expected
+
+
+def _counter(value):
+    return {"data": {"result": [{"metric": {}, "value": [1, str(value)]}]}}
+
+
+_TWO_SWEEPS = (("#0 (Phase 0, iter-002)", "2026-07-07T03:29:00+00:00"), ("#1 (monthly, 2026-08-04)", "2026-08-04T10:40:09+00:00"))
+
+
+def _reminder(read, name):
+    (found,) = [r for r in read.reminders if r.name == name]
+    return found
+
+
+@pytest.mark.parametrize(
+    "now,status,owed",
+    [
+        (datetime(2026, 8, 30, 3, 0, tzinfo=timezone.utc), "due in 5 days", False),
+        (datetime(2026, 9, 4, 3, 0, tzinfo=timezone.utc), "due in 0 days", True),
+        (datetime(2026, 9, 10, 3, 0, tzinfo=timezone.utc), "OVERDUE by 6 days", True),
+    ],
+)
+def test_the_refdata_reminder_is_computed_from_the_register_and_the_monthly_cadence(tmp_path, now, status, owed):
+    """A lost Slack message costs nothing: due-ness is derived from repo state every day."""
+    read = ops_daily.read_reminders(
+        "tok", now=now, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    refdata = _reminder(read, "refdata sweep")
+    assert refdata.status.startswith(status), refdata.status
+    assert "2026-08-04" in refdata.status, refdata.status
+    assert refdata.owed is owed
+    assert refdata.runbook == "infra/runbooks/reference-data.md#refdata-sweep-due"
+    assert read.unreadable is None
+
+
+def test_a_register_with_no_dated_row_is_an_unreadable_source_never_not_due(tmp_path):
+    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path))
+    assert read.unreadable and "Re-confirmation log" in read.unreadable, read.unreadable
+    assert not [r for r in read.reminders if r.name == "refdata sweep"]
+
+
+@pytest.mark.parametrize("value,owed,word", [("88.4", True, "moved ~+88.4 s"), ("0", False, "unchanged")])
+def test_the_healable_reminder_fires_only_when_the_counter_moved(tmp_path, value, owed, word):
+    """The trigger discriminates: a counter that did not move owes nothing, one that did names the
+    recount. The count itself stays the runbook's step 1, from the ledger -- Cloud cannot see it.
+    Two payloads: the increase, then `resets` (0 -- no reset in the window)."""
+    read = ops_daily.read_reminders(
+        "tok", now=NOW, window=DAY, opener=_canned(_counter(value), _counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    healable = _reminder(read, "healable re-derivation")
+    assert healable.owed is owed
+    assert word in healable.status, healable.status
+    assert healable.runbook == "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+
+
+def test_the_healable_reminder_names_a_counter_reset_and_never_quotes_it_as_movement(tmp_path):
+    """A non-zero `resets()` in the window makes the paired `increase()` unquotable: the reminder is
+    owed, its status names the reset, and the figure `increase()` returned never reaches the report
+    as movement. The two reads are paired precisely so the second can veto the first."""
+    read = ops_daily.read_reminders(
+        "tok", now=NOW, window=DAY, opener=_canned(_counter("18850.2"), _counter(1)), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    healable = _reminder(read, "healable re-derivation")
+    assert healable.owed is True
+    assert "reset" in healable.status and "18850" not in healable.status, healable.status
+
+
+def test_a_healable_counter_with_no_series_is_unreadable_never_quiet(tmp_path):
+    read = ops_daily.read_reminders(
+        "tok", now=NOW, window=DAY, opener=_canned({"data": {"result": []}}), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    assert read.unreadable and "no series" in read.unreadable, read.unreadable
+    assert not [r for r in read.reminders if r.name == "healable re-derivation"]
+    assert _reminder(read, "refdata sweep")  # the half that could be read still is
+
+
+def test_the_real_register_yields_a_refdata_reminder():
+    """Against the committed file, with the counter canned: the pass's own default path parses.
+
+    No `tmp_path`, deliberately -- this test's entire value is that it omits `register=`, so the
+    committed `REGISTER` default is what gets exercised. A fixture parameter here is an invitation to
+    pass `register=_register(tmp_path, ...)` for consistency with its neighbours, which would delete
+    the only coverage of the path `main` actually takes."""
+    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
+    assert read.unreadable is None, read.unreadable
+    assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"}
+
+
+def test_every_runbook_citation_the_instrument_itself_prints_resolves():
+    """Closed in KIND, not by instance: `REFDATA_RUNBOOK` and `HEALABLE_RUNBOOK` reach the operator's
+    report verbatim, and the repo's cross-reference guards scan `alerts.yaml`, `infra/grafana/*.json`
+    and `infra/runbooks/*.md` -- none of them scans `infra/scripts/`. Spec 00107 D6 rewrites both of
+    the sections cited here: a rename would turn the runbook-internal guard red and get it re-pointed
+    at the new anchor while this module's copy rotted silently, sending a paged operator to a fragment
+    that scrolls nowhere. Scanning the source keeps a citation added later covered by nobody's memory.
+    """
+    cited = set(re.findall(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)", _SCRIPT.read_text()))
+    assert cited, "no runbook citation found in the instrument -- this guard has gone vacuous, not clean"
+    anchors = {f"{p.name}#{a}" for p in _RUNBOOKS.glob("*.md") for a in re.findall(r'<a name="([^"]+)"></a>', p.read_text())}
+    assert {f"{f}#{a}" for f, a in cited} <= anchors, sorted({f"{f}#{a}" for f, a in cited} - anchors)
+
+
+# --- spec 00107 D2: the reminders reach the report and the paragraph ----------------------------------------
+
+
+def test_an_owed_reminder_reports_and_never_blocks():
+    """Spec 00107 D2: the reminder is a finding in the report, not an exit code -- a calendar date
+    passing is not a fleet defect. It reaches the markdown AND the journal paragraph, because the
+    paragraph is what gets pasted."""
+    owed = ops_daily.RemindersRead(
+        reminders=[
+            ops_daily.Reminder(
+                "refdata sweep",
+                "OVERDUE by 6 days (last sweep 2026-08-04)",
+                owed=True,
+                runbook="infra/runbooks/reference-data.md#refdata-sweep-due",
+            ),
+            ops_daily.Reminder(
+                "healable re-derivation",
+                "counter unchanged in 24 h",
+                owed=False,
+                runbook="infra/runbooks/ops.md#healable-threshold-rederivation-due",
+            ),
+        ]
+    )
+    r = _report(reminders=owed)
+    assert r.exit_code == 0, r.exit_code
+    md = r.markdown()
+    assert "## Reminders" in md and "OWED refdata sweep: OVERDUE by 6 days" in md and "#refdata-sweep-due" in md, md
+    assert "ok healable re-derivation: counter unchanged" in md, md
+    para = r.journal_paragraph()
+    assert "reminders OWED refdata sweep: OVERDUE by 6 days" in para, para
+    assert "OWED healable" not in para, para  # the marker discriminates; it is not decoration
+
+
+def test_an_unreadable_reminder_source_exits_2_like_every_other_source():
+    r = _report(reminders=ops_daily.RemindersRead(unreadable="the healable counter could not be read: timed out"))
+    assert r.exit_code == 2 and "healable counter could not be read" in r.markdown()
+
+
+def test_the_report_refuses_to_be_built_without_a_reminders_read():
+    """A default that reads as 'nothing due' is the silent gap this iteration closes, so `build_report`
+    carries no default for `reminders`: omitting it raises rather than reporting an unread source as
+    clean. `Report.reminders` gaining a default later would not be caught here -- this pins the call."""
+    with pytest.raises(TypeError):
+        ops_daily.build_report(
+            alerts=ops_daily.AlertsRead(),
+            logs=ops_daily.LogsRead(),
+            deadmen=ops_daily.DeadmenRead(),
+            verdict=[],
+            deploys=[],
+            now=NOW,
+        )
+
+
+# --- spec 00107 D5: the dead-man descriptions are checked, not generated ---------------------------------------
+
+_GOOD_LINK = "infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled"
+_CLEAN_DESC = f"Pings on a clean overlay-writer cycle. Runbook: {_GOOD_LINK}"
+
+
+def test_a_description_carrying_an_internal_token_is_a_finding_named_per_check():
+    """`operator-facing-text.md` governs this surface, read from a phone with nothing open -- and it is
+    the one surface no repo test reaches, because the descriptions are hand-written in a SaaS. Every
+    banned token in one description is its own finding, named per check; a clean one yields none."""
+    checks = [
+        {
+            "name": "zcrypto-engine-shadow",
+            "desc": "Phase-6 shadow engine, spec 00050. Runbook: infra/runbooks/engine.md#zcrypto-engine-cycle-stale",
+        },
+        {
+            "name": "zcrypto-gate-verify",
+            "desc": "Gate export, see T0083 and iter-120. Runbook: infra/runbooks/gate.md#zcrypto-gate-exporter-stale",
+        },
+        {"name": "clean", "desc": _CLEAN_DESC},
+    ]
+    findings = ops_daily.check_descriptions(checks)
+    engine = [f for f in findings if f.startswith("`zcrypto-engine-shadow`")]
+    assert {t for f in engine for t in ("Phase-6", "spec 00050") if repr(t) in f} == {"Phase-6", "spec 00050"}, findings
+    gate = [f for f in findings if f.startswith("`zcrypto-gate-verify`")]
+    assert {t for f in gate for t in ("T0083", "iter-120") if repr(t) in f} == {"T0083", "iter-120"}, findings
+    assert not [f for f in findings if f.startswith("`clean`")], findings
+    assert len(findings) == 4, findings
+
+
+def test_a_missing_or_dangling_runbook_link_is_a_finding():
+    """A link resolves against the FILE it names: an anchor living in a sibling file scrolls nowhere.
+    And the literal `Runbook: ` prefix is half of what spec 00107 D5 asks for -- a path mentioned in
+    passing is not the link an operator follows from a phone.
+
+    `passing-mention-first` is the pair the other fixtures cannot make: a RESOLVING mention ahead of
+    a DEAD link, so a check that searches the whole description finds the mention, passes, and sends
+    the operator to the fragment that scrolls nowhere. It is the link the prefix introduces that is
+    judged."""
+    checks = [
+        {"name": "dangling", "desc": "Runbook: infra/runbooks/ops.md#no-such-anchor"},
+        {"name": "wrong-file", "desc": "Runbook: infra/runbooks/capture.md#zcrypto-ops-archive-pull-stalled"},
+        {"name": "linkless", "desc": "Pings every minute."},
+        {"name": "prefixless", "desc": "Context in infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled, no link."},
+        {
+            "name": "passing-mention-first",
+            "desc": "Context in infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled. Runbook: infra/runbooks/ops.md#no-such-anchor",
+        },
+        {"name": "clean", "desc": _CLEAN_DESC},
+    ]
+    findings = ops_daily.check_descriptions(checks)
+    expected = ["`dangling`", "`linkless`", "`passing-mention-first`", "`prefixless`", "`wrong-file`"]
+    assert sorted(f.split(":")[0] for f in findings) == expected, findings
+
+
+def test_a_check_with_no_description_at_all_is_a_finding_not_a_pass():
+    assert ops_daily.check_descriptions([{"name": "bare"}]) == [
+        "`bare`: no `Runbook: infra/runbooks/<file>#<anchor>` in its description"
+    ]
+
+
+def test_a_working_link_is_not_a_finding_for_how_its_prefix_was_typed():
+    """The prefix marks a citation; it is not a formatting rule, and every spelling below sends the
+    operator to the same anchor. This check detects and cannot repair, so a description reported for
+    a link that works costs a finding line in every daily report until a human edits a hand-written
+    field that was never wrong -- the expensive direction, and the reason the prefix is the loose
+    half of the match while the `infra/runbooks/` path stays exact."""
+    checks = [
+        {"name": "exact", "desc": f"Runbook: {_GOOD_LINK}"},
+        {"name": "lower", "desc": f"runbook: {_GOOD_LINK}"},
+        {"name": "nospace", "desc": f"Runbook:{_GOOD_LINK}"},
+        {"name": "twospace", "desc": f"Runbook:  {_GOOD_LINK}"},
+        {"name": "newline", "desc": f"Runbook:\n{_GOOD_LINK}"},
+    ]
+    assert ops_daily.check_descriptions(checks) == []
+
+
+def test_every_prefixed_link_is_judged_not_only_the_first():
+    """One citation resolving says nothing about the next: a description whose SECOND link is dead
+    still sends the operator to a fragment that scrolls nowhere. The finding names the dead link, so
+    a check that stopped at the first goes SILENT here rather than merely naming the wrong one."""
+    checks = [{"name": "second-dead", "desc": f"Runbook: {_GOOD_LINK} and Runbook: infra/runbooks/ops.md#no-such-anchor"}]
+    assert ops_daily.check_descriptions(checks) == [
+        "`second-dead`: its runbook link infra/runbooks/ops.md#no-such-anchor resolves to no anchor"
+    ]
+
+
+def test_the_deadmen_read_checks_the_descriptions_it_fetched(monkeypatch):
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
+    direct = {
+        "checks": [
+            {
+                "name": "zcrypto-engine-shadow",
+                "desc": "T0083 retagged. Runbook: infra/runbooks/engine.md#zcrypto-engine-cycle-stale",
+            },
+            {"name": "zcrypto-gate-verify", "desc": _CLEAN_DESC},
+        ]
+    }
+    read = ops_daily.read_deadmen("tok", opener=_canned(prom, direct))
+    assert read.unreadable is None
+    assert read.description_findings == ["`zcrypto-engine-shadow`: its description carries the internal token 'T0083'"], (
+        read.description_findings
+    )
+
+
+def test_a_runbook_read_failure_during_the_descriptions_check_is_named_as_such_not_as_healthchecks(monkeypatch):
+    """The check reads runbook files; a failure there is a finding about the RUNBOOKS, and the
+    checks it fetched stay read -- never `healthchecks.io could not be read directly`.
+
+    `None` is not `[]`: a check that never ran must not print as one that ran and found nothing.
+    Exit 2 and the unreadable line already carry the truth, and a `descriptions: all 1 carry …`
+    line beside them says the opposite of what happened."""
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
+    monkeypatch.setattr(ops_daily, "check_descriptions", lambda checks: (_ for _ in ()).throw(OSError("runbooks unreadable")))
+    prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
+    read = ops_daily.read_deadmen("tok", opener=_canned(prom, {"checks": [{"name": "x", "desc": _CLEAN_DESC}]}))
+    assert len(read.via_healthchecks) == 1 and read.description_findings is None, read.description_findings
+    assert read.unreadable and "runbooks" in read.unreadable and "healthchecks.io" not in read.unreadable, read.unreadable
+    markdown = _report(deadmen=read).markdown()
+    assert "descriptions: all" not in markdown, markdown
+
+
+def test_a_description_finding_reaches_the_report_and_the_paragraph_and_never_blocks():
+    """Spec 00107 D5: the finding is a report line and a journal clause, never the exit code -- the
+    check cannot repair, and a SaaS description no repo change touches would hold the pass at
+    `attention` every day until a human logged in, destroying the all-clear entry the journal exists
+    to produce. VISIBILITY is therefore the whole guarantee, so both surfaces are pinned here, and so
+    is the verdict the operator reads above them."""
+    deadmen = ops_daily.DeadmenRead(
+        via_prometheus=0.0,
+        via_healthchecks=[{"name": "x"}],
+        description_findings=["`x`: its description carries the internal token 'T0083'"],
+    )
+    r = _report(deadmen=deadmen)
+    assert r.exit_code == 0, r.exit_code
+    md = r.markdown()
+    assert "- description: `x`: its description carries the internal token 'T0083'" in md, md
+    assert "**Verdict: all-clear** (exit 0)" in md, md
+    assert "- descriptions: all" not in md, md  # the finding line and the all-clear line are exclusive
+    assert "1 description finding" in r.journal_paragraph(), r.journal_paragraph()
+
+
+def test_clean_descriptions_say_so_in_the_report_and_stay_out_of_the_paragraph():
+    """`description_findings=[]` is the CHECKED-and-clean state, and the only one that may print the
+    all-clear line -- the default `None` means the check did not run."""
+    r = _report(
+        deadmen=ops_daily.DeadmenRead(via_prometheus=0.0, via_healthchecks=[{"name": "a"}, {"name": "b"}], description_findings=[])
+    )
+    assert r.exit_code == 0
+    assert "- descriptions: all 2 carry a resolving runbook link and no internal token" in r.markdown(), r.markdown()
+    assert "description finding" not in r.journal_paragraph()
+
+
+def test_todays_ten_real_descriptions_all_pass():
+    """The true positive: a check that refuses everything is not a check. `name`/`tags`/`desc` of the
+    ten live checks, read 2026-08-30 through the read-only key -- never the whole object, which
+    carries the check's write URL. This reads the committed fixture only: rewriting a description in
+    healthchecks.io moves nothing here until the fixture is re-fetched (the plan for spec 00107 says
+    how), and a red AFTER that re-fetch is the finding the daily pass would have made."""
+    checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
+    assert len(checks) == 10, len(checks)
+    assert ops_daily.check_descriptions(checks) == []

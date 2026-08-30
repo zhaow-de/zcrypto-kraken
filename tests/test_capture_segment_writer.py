@@ -1985,7 +1985,7 @@ def test_restart_reseeds_dedup_keys_from_open_hour_parts(tmp_path, caplog):
     w1.close()
 
     w2 = SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         w2.append(dict(event))
     w2.close()
     assert "dropping replayed event" in caplog.text
@@ -2055,3 +2055,43 @@ def test_a_raising_metrics_update_after_a_segment_commit_does_not_undo_or_interr
     assert w.segment_bytes == 0  # the byte count itself is what failed to update
     assert "segment committed but its metrics update failed" in caplog.text
     assert "merge failed" not in caplog.text  # the merge succeeded; only its OWN metrics update failed
+
+
+# --- spec 00107 D4: the reconnect-replay drops are INFO, and the reconnect counter is the signal ----
+
+
+def _drop_levels(caplog, prefix: str) -> list[int]:
+    """The level of every record whose message starts with `prefix`, as a LIST: a site that stopped
+    logging (no record) must fail exactly like one that logs at the wrong level."""
+    return [r.levelno for r in caplog.records if r.getMessage().startswith(prefix)]
+
+
+def test_a_late_event_behind_a_committed_hour_is_dropped_at_info(tmp_path, caplog):
+    # A reconnect's replay is expected, not a fault, so the drop is INFO and not a warning:
+    # `zcrypto_capture_reconnects_total` -- never a count of these lines -- measures how often it happens.
+    w = _new_writer(tmp_path, flush_rows=5000)
+    w.append(_book_event(10, 0))
+    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):
+        w.append(_book_event(10, 30, checksum=999))
+    assert _drop_levels(caplog, "dropping late event") == [logging.INFO]
+
+
+def test_a_replay_into_the_open_hour_is_dropped_at_info(tmp_path, caplog):
+    w = _new_trade_writer(tmp_path, flush_rows=50)
+    w.append(_trade_event(10, 0, 1))
+    with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):
+        w.append(_trade_event(10, 0, 1))
+    w.close()
+    assert _drop_levels(caplog, "dropping replayed event") == [logging.INFO]
+
+
+def test_a_replay_into_a_held_hour_is_dropped_at_info(tmp_path, clock, caplog):
+    # The third site: the hold path runs its own de-dup while the hour is still unconfirmed.
+    clock.now = _ts(10, 0, 30)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, flush_rows=50, dedup_key="trade_id")
+    w.append(_trade_event(10, 0, 0))
+    with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):
+        w.append(_trade_event(10, 0, 0))
+    w.close()
+    assert _drop_levels(caplog, "dropping replayed event") == [logging.INFO]

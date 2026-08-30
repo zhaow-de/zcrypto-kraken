@@ -26,7 +26,7 @@ The executable form of the app-image canary rollout: the one image serves captur
 ## Phase 1 — Secondary converge
 
 - `site.yml --limit zcrypto-red -e capture_image_digest=sha256:<candidate>` — the stop→start window contains only stop → migration-if-any → start.
-- Immediate checks: container up with `RestartCount` 0, all pairs subscribed with zero subscribe errors, parquet advancing. `dropping late event` lines right after start are healthy resubscribe replay, not a failure.
+- Immediate checks: container up with `RestartCount` 0, all pairs subscribed with zero subscribe errors, parquet advancing. `dropping late event` lines right after start are healthy **restart** replay, not a failure — the writer re-seeds its floor from the segments already on disk, and the first subscription's trade snapshot replays prints from before that boundary. **`zcrypto_capture_reconnects_total` reads 0 for this, and that is correct** — a first connect that succeeds increments nothing, so a zero there is never evidence against the benign reading. The same lines *during* a run are reconnect replay, and that is what the counter answers for. Either way, never read how often it happens off a count of these lines.
 
 ## Phase 2 — The bake gate: the smallest window that covers the events
 

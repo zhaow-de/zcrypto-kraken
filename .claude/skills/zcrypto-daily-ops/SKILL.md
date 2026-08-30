@@ -8,7 +8,7 @@ disable-model-invocation: false
 
 ## What this is
 
-The proactive half of day-2 operations. Alerts fire at you; this pass goes looking. It reads what fired, what the logs said, whether the dead-men are alive, whether the fleet's own series are present and fresh, and what was deployed — then follows the runbook for anything that fired, fixes what it may, and leaves a journal entry so a quiet day is distinguishable from a day nobody looked.
+The proactive half of day-2 operations. Alerts fire at you; this pass goes looking. It reads what fired, what the logs said, whether the dead-men are alive and their descriptions still resolve, whether the fleet's own series are present and fresh, what was deployed, and which reminders are due — then follows the runbook for anything that fired, fixes what it may, and leaves a journal entry so a quiet day is distinguishable from a day nobody looked.
 
 **Every ssh/sudo step runs in the main loop, never in a dispatched subagent** — the permission gate blocks it there and the step dies where nobody sees the prompt.
 
@@ -53,21 +53,31 @@ The verdict tiles' own PromQL is what the report's fleet checks already ran. Rea
 
 ## 5. Evaluate the due reminders
 
-The runbook's SCHEDULED REMINDER sections — `reference-data.md#refdata-sweep-due`, `ops.md#healable-threshold-rederivation-due`. A reminder that has come due is work, not decoration.
+The report's `## Reminders` section is the trigger — an **OWED** line is work, not decoration: open the section it names (`reference-data.md#refdata-sweep-due`, `ops.md#healable-threshold-rederivation-due`) and do it. The sweep's due-ness is computed from the register's last re-confirmation row plus the monthly cadence; the healable line says only whether the counter moved in the window — the count itself is still that section's step 1, from the ledger.
 
-**Slack delivers the TRIGGER, not the evidence — so with no Slack tool the reminder is undelivered, never unevaluable.** Check due-ness at its source instead: for the sweep, the last re-confirmation row in `docs/reference/kraken-snapshot-register.md` plus the monthly cadence; for the healable threshold, the ledger, which that section's own step 1 already says to count from rather than from Grafana. Record what you found. **Never read "no message arrived" as clear** — the day the trigger chain is broken is exactly the day the sweep goes unnoticed.
+**Slack's scheduled message is a convenience ping, never the check.** Its scheduling cannot be listed or verified from this side, so "no message arrived" means nothing and a message that did arrive adds nothing the report did not already say. A reminder source the report could not read is exit 2, like any other.
 
-## 6. Write the journal entry
+## 6. Rewrite any dead-man description the report faults
+
+The report's `## Dead-men` section prints one `- description:` line per **defect**, each naming its check: a description with no `Runbook: infra/runbooks/<file>#<anchor>` link, one whose link resolves to no anchor in the file it names, or one carrying repo-internal vocabulary — on a surface read from a phone with nothing open. **One check can produce several lines** — a missing link plus two internal tokens is three — and the journal paragraph's `description finding(s)` clause counts those lines, not the checks. Let that number stand as printed; the entry's own prose is where the distinct checks are named.
+
+**This is not an alert.** Nothing fired, so there is no runbook section to open; no command is run, so there is nothing to classify; and it does not move the verdict — a day whose only finding is a description is still `all-clear`, by design. What it needs is a hand rewrite, which no repo change can make: the descriptions are hand-written in healthchecks.io.
+
+**The fix is a hand rewrite of that check's description in healthchecks.io**, with the admin key (`healthchecks_api_key` in `infra/ansible/group_vars/capture_host/vault.yml`, not the default `all/` vault — the read-only key the report reads with cannot write). Give it the `Runbook:` link and drop the vocabulary; send the description field and nothing else, so the check's own schedule and grace period are untouched; then read it back. The finding clears on the next pass.
+
+**If it is not fixed, say so in the entry, with the check named.** The line reprints every day until someone rewrites it, and a finding nobody names reads as a new one each morning.
+
+## 7. Write the journal entry
 
 Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in. Commit.
 
 At a month change: open the finished month's PR, merge it on CI green, delete the branch, and re-cut `ops-journal` from `develop`. No review, no word — the second standing exception in `branch-workflow.md`.
 
-## 7. Post the summary
+## 8. Post the summary
 
 The entry's paragraph, to `#zcrypto`. If no Slack tool is reachable, say so in the entry rather than dropping it.
 
-## 8. Re-arm tomorrow
+## 9. Re-arm tomorrow
 
 A scheduled message fires once. Schedule tomorrow's trigger before finishing, the way `refdata-sweep-due` does.
 

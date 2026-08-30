@@ -6,6 +6,7 @@ because a source that cannot be reached is a finding ABOUT that source, never a 
 
 from __future__ import annotations
 
+import calendar
 import http.client
 import importlib.util
 import json
@@ -16,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -187,6 +188,162 @@ LOKI_DS_UID_DEFAULT = "grafanacloud-logs"
 HEALTHCHECKS_API = "https://healthchecks.io/api/v3/checks/"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_LOG = REPO_ROOT / "docs/reference/deploy-log.jsonl"
+REGISTER = REPO_ROOT / "docs/reference/kraken-snapshot-register.md"
+# A row of the register's `## Re-confirmation log` table: first cell `#<n> (...)`, second cell the
+# ISO stamp. The heading gate in `last_sweep_date` is defensive, not a report on what the register
+# currently holds: a dated row under any other heading must never become the answer, whether or not
+# one exists there yet.
+_LOG_ROW = re.compile(r"^\| #\d+[^|]*\|\s*(\d{4}-\d{2}-\d{2})T")
+
+
+def last_sweep_date(register: Path) -> date | None:
+    """The `Fetched at` date of the LAST row under `## Re-confirmation log`, or None when no row parses."""
+    found = None
+    in_log = False
+    for line in register.read_text().splitlines():
+        if line.startswith("## "):
+            in_log = line.startswith("## Re-confirmation log")
+            continue
+        row = _LOG_ROW.match(line) if in_log else None
+        if row:
+            found = date.fromisoformat(row.group(1))
+    return found
+
+
+def _a_month_after(d: date) -> date:
+    year, month = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
+REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
+HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+
+
+@dataclass(frozen=True)
+class Reminder:
+    name: str
+    status: str
+    owed: bool
+    runbook: str
+
+
+@dataclass
+class RemindersRead:
+    reminders: list[Reminder] = field(default_factory=list)
+    unreadable: str | None = None
+
+
+def read_reminders(
+    token: str, *, now: datetime, window: timedelta, opener=urllib.request.urlopen, register: Path = REGISTER
+) -> RemindersRead:
+    """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
+    nothing (spec 00107 D1). Each reminder comes from the source that actually knows: the sweep from
+    the register's last re-confirmation row plus the monthly cadence; the healable re-derivation from
+    whether its counter moved in the window -- the qualifying-day COUNT comes from the ledger, which
+    the runbook cited here names as the arbiter and which Grafana Cloud cannot see, so this pure-HTTP
+    instrument does not reach it.
+
+    An owed reminder reports and never blocks; a source that could not be read is `unreadable`, like
+    every other read here.
+    """
+    read = RemindersRead()
+
+    def note(text):
+        read.unreadable = f"{read.unreadable}; {text}" if read.unreadable else text
+
+    try:
+        last = last_sweep_date(register)
+    except _UNREACHABLE as exc:
+        note(f"the snapshot register could not be read: {exc}")
+    else:
+        if last is None:
+            note(f"no dated row under `## Re-confirmation log` in {register.name}")
+        else:
+            days = (_a_month_after(last) - now.date()).days
+            status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+            read.reminders.append(
+                Reminder("refdata sweep", f"{status} (last sweep {last.isoformat()})", owed=days <= 0, runbook=REFDATA_RUNBOOK)
+            )
+
+    hours = max(1, int(window.total_seconds() // 3600))
+    try:
+        series = _proxy_query(PROM_DS_UID, f"sum(increase({HEALABLE_COUNTER}[{hours}h]))", token, opener)
+        resets = _proxy_query(PROM_DS_UID, f"sum(resets({HEALABLE_COUNTER}[{hours}h]))", token, opener)
+        if not series or not resets:
+            note("the healable counter returned no series, so the re-derivation reminder could not be evaluated")
+            return read
+        moved = float(series[0]["value"][1])
+        reset = float(resets[0]["value"][1]) > 0
+    except _UNREACHABLE as exc:
+        note(f"the healable counter could not be read: {exc}")
+        return read
+    if reset:
+        # A counter summed from an append-only ledger CAN DECREASE when a record is corrected or the
+        # ledger is rebuilt -- a correction that raises the total resets nothing -- and `increase()`
+        # then reports the whole post-reset value as movement (`T0044`, resolved, records the
+        # correction it was opened on). The `zcrypto-reconcile-healable-gap-rate` rule guards the
+        # same window with `resets()`; this mirrors it, and the number is deliberately not quoted --
+        # the ledger's own count is the arbiter.
+        owed = True
+        status = f"counter reset in {hours} h (a ledger correction or rebuild), so its movement says nothing -- recount the qualifying days from the ledger"
+    else:
+        owed = moved > 0
+        # `increase()` extrapolates to the range boundaries, so this figure is NOT the ledger's
+        # delta -- and the ledger is the arbiter the runbook names, precisely because Cloud cannot
+        # answer the question. Quote it as the approximation it is (spec 00107 D3).
+        status = (
+            f"counter moved ~+{moved:.1f} s in {hours} h (scraped, extrapolated -- not the ledger's), recount the qualifying days"
+            if owed
+            else f"counter unchanged in {hours} h"
+        )
+    read.reminders.append(Reminder("healable re-derivation", status, owed=owed, runbook=HEALABLE_RUNBOOK))
+    return read
+
+
+RUNBOOKS = REPO_ROOT / "infra/runbooks"
+# A link the prefix introduces, not any path the description happens to mention: an unprefixed
+# mention that resolves would otherwise pass a description whose actual link is dead. The prefix is
+# the LOOSE half deliberately -- it marks a citation and is not a formatting rule, so any case and
+# any run of whitespace (a newline included) after the colon still names a link an operator can
+# follow, while `_RUNBOOK_LINK` keeps the path exact. Tightening it back reports descriptions whose
+# links work, and this check cannot repair what it reports. The link is wrapped in a group so a
+# finding can quote it verbatim; `_RUNBOOK_LINK`'s own file and anchor groups sit one number further
+# along, and it is composed rather than respelled so the two cannot drift apart.
+_RUNBOOK_CITED = re.compile(r"(?i:Runbook:)\s*(" + _RUNBOOK_LINK.pattern + ")")
+# The vocabulary `.claude/rules/operator-facing-text.md` bans from any surface read without the repo
+# open, spelled wider than that rule spells it wherever hand-written prose varies: either separator
+# after the phase word, an optional backtick around a serial. The bare decision number the rule also
+# bans is deliberately absent -- this check detects and cannot repair, so a false positive is a
+# finding line in every daily report until a human edits a description that was never wrong, and a
+# two-character token is the alternation that would mint them.
+_INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+`?\d{5}|\bWP\d")
+
+
+def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[str]:
+    """One line per defect in a dead-man check's description, named per check (spec 00107 D5).
+
+    The descriptions are hand-written in healthchecks.io, outside the reach of every repo test, and
+    are read from a phone with nothing open. Two assertions each: at least one
+    `Runbook: infra/runbooks/<file>#<anchor>` citation -- the prefix is part of the shape the finding
+    quotes back -- EVERY one of them resolving against a real `<a name=…>` tag in the file it names,
+    and no internal token.
+    Detects, never repairs -- the descriptions live in the SaaS, so a finding is a line for a human.
+    """
+    out = []
+    for check in checks:
+        name = check.get("name") or check.get("slug") or "?"
+        desc = check.get("desc") or ""
+        links = list(_RUNBOOK_CITED.finditer(desc))
+        if not links:
+            out.append(f"`{name}`: no `Runbook: infra/runbooks/<file>#<anchor>` in its description")
+        for link in links:
+            path = runbooks / link.group(2)
+            if not path.exists() or f'<a name="{link.group(3)}"></a>' not in path.read_text():
+                out.append(f"`{name}`: its runbook link {link.group(1)} resolves to no anchor")
+        for token in _INTERNAL_TOKEN.findall(desc):
+            out.append(f"`{name}`: its description carries the internal token {token!r}")
+    return out
 
 
 @dataclass
@@ -207,6 +364,10 @@ class LogsRead:
 class DeadmenRead:
     via_prometheus: float | None = None
     via_healthchecks: list[dict] = field(default_factory=list)
+    # Three states, not two: `None` is "the check did not run" (healthchecks unreadable, or the
+    # runbooks were), `[]` is "ran, found nothing". Defaulting to `[]` would print the all-clear
+    # description line under a report that never looked.
+    description_findings: list[str] | None = None
     unreadable: str | None = None
 
 
@@ -290,6 +451,16 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
             read.via_healthchecks = json.load(response).get("checks", [])
     except _UNREACHABLE as exc:
         note(f"healthchecks.io could not be read directly: {exc}")
+        return read
+    # The check reads runbook FILES, so it gets its own `try` and its own note: inside the
+    # healthchecks `try`, an `OSError` from a runbook would be reported as healthchecks.io unreadable.
+    try:
+        read.description_findings = check_descriptions(read.via_healthchecks)
+    # `AttributeError` beside `_UNREACHABLE`: this is the module's first content-dependent parse of
+    # the healthchecks payload, and a `checks` element that is not an object would otherwise
+    # traceback out at exit 1 -- ATTENTION, the inverted contract this module's docstring names.
+    except (*_UNREACHABLE, AttributeError) as exc:
+        note(f"the dead-man descriptions could not be checked (the runbooks are read here): {exc}")
     return read
 
 
@@ -354,17 +525,18 @@ class Report:
     deadmen: DeadmenRead
     verdict: list[Check]
     deploys: list[dict]
+    reminders: RemindersRead
 
     @property
     def unreadable(self) -> list[str]:
-        """Every source that could not be read -- the verdict checks included.
+        """Every source that could not be read -- the verdict checks and the reminders included.
 
         The verdict read reports through its checks rather than an `unreadable` field, so a timeout
         on it alone used to leave the pass at exit 1, ATTENTION: a Grafana it could not reach,
         reported as something wrong with the FLEET. The `unreadable:` prefix is written by
         `read_verdict` for exactly this case and is the only value that carries it.
         """
-        named = [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable) if n]
+        named = [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable, self.reminders.unreadable) if n]
         return named + [
             f"{c.name} could not be read: {c.value.removeprefix('unreadable: ')}"
             for c in self.verdict
@@ -400,6 +572,18 @@ class Report:
             f"- via Grafana: {self.deadmen.via_prometheus}",
             f"- direct: {len(self.deadmen.via_healthchecks)} checks read",
         ]
+        # The `is not None` is the whole point of the three states: without it the all-clear line
+        # prints beside `## Sources that could not be read` on a run where the check never ran.
+        if self.deadmen.description_findings:
+            out += [f"- description: {f}" for f in self.deadmen.description_findings]
+        elif self.deadmen.description_findings is not None and self.deadmen.via_healthchecks:
+            out.append(
+                f"- descriptions: all {len(self.deadmen.via_healthchecks)} carry a resolving runbook link and no internal token"
+            )
+        out += ["", "## Reminders"] + (
+            [f"- {'OWED' if r.owed else 'ok'} {r.name}: {r.status} — {r.runbook}" for r in self.reminders.reminders]
+            or ["- none read"]
+        )
         out += ["", "## Deploys in window"] + (
             [f"- {d.get('ts')} {d.get('playbook')} --limit {d.get('limit')}" for d in self.deploys] or ["- none"]
         )
@@ -414,19 +598,29 @@ class Report:
         # journal says nothing -- which is what happened on the first real pass, whose ONLY finding
         # was 1802 WARNING lines the paragraph dropped. Omitted when zero so a silent day stays short.
         warnings = sum(c.count for c in self.logs.counts if c.level == "WARNING")
+        # A description finding moves no exit code (spec 00107 D5 -- the check detects and cannot
+        # repair), so this clause is the only trace it leaves in the artefact that gets pasted.
+        findings = len(self.deadmen.description_findings or [])
+        # The OWED marker travels with the clause. The paragraph is the artefact that gets pasted
+        # into the journal, and `refdata sweep: due in 0 days` -- the owed-today spelling -- skims
+        # as "not yet" without it, where the markdown's own line is unambiguous.
+        reminders = ", ".join(f"{'OWED ' if r.owed else ''}{r.name}: {r.status}" for r in self.reminders.reminders) or "none read"
         deploys = ", ".join(str(d.get("limit")) for d in self.deploys) or "none"
         hours = int(self.window.total_seconds() // 3600)
         return (
             f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired} · checks {failed} · "
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
-            f"{len(self.deadmen.via_healthchecks)} read directly · deploys {deploys} · "
+            f"{len(self.deadmen.via_healthchecks)} read directly{f', {findings} description finding{"s" if findings != 1 else ""}' if findings else ''} · deploys {deploys} · "
+            f"reminders {reminders} · "
             f"actions none · follow-ups none"
         )
 
 
-def build_report(*, alerts, logs, deadmen, verdict, deploys, now, window=timedelta(hours=24)) -> Report:
-    return Report(now=now, window=window, alerts=alerts, logs=logs, deadmen=deadmen, verdict=verdict, deploys=deploys)
+def build_report(*, alerts, logs, deadmen, verdict, deploys, reminders, now, window=timedelta(hours=24)) -> Report:
+    return Report(
+        now=now, window=window, alerts=alerts, logs=logs, deadmen=deadmen, verdict=verdict, deploys=deploys, reminders=reminders
+    )
 
 
 def _parse_since(text: str) -> timedelta:
@@ -476,6 +670,7 @@ def main(argv: list[str]) -> int:
         deadmen=read_deadmen(token),
         verdict=read_verdict(token),
         deploys=read_deploys(window, now=now),
+        reminders=read_reminders(token, now=now, window=window),
         now=now,
         window=window,
     )

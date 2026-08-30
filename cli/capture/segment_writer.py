@@ -361,7 +361,11 @@ class SegmentWriter:
             # An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
             # trade snapshot replays prints from before the boundary (T0026); writing them beside a
             # committed final would either duplicate rows it already holds or strand them.
-            logger.warning("dropping late event pair=%s kind=%s ts=%s floor=%s", self._pair, self._kind, ts, floor)
+            # INFO, not WARNING: the expected consequence of a normal reconnect, not a fault. The
+            # instrument for "how often does this happen" is the scraped
+            # `zcrypto_capture_reconnects_total`, never a count of these lines — do not raise it
+            # back (spec 00107 D4).
+            logger.info("dropping late event pair=%s kind=%s ts=%s floor=%s", self._pair, self._kind, ts, floor)
             return
         if self._oracle is not None:
             # T0037: acting on a boundary — finalizing the live hour because one ts says a new hour
@@ -507,7 +511,8 @@ class SegmentWriter:
         if self._dedup_key is not None:
             key = event[self._dedup_key]
             if key in self._seen:
-                logger.warning("dropping replayed event pair=%s kind=%s %s=%s", self._pair, self._kind, self._dedup_key, key)
+                # INFO for the reason at the late-event drop in `append`: the reconnect counter is the signal.
+                logger.info("dropping replayed event pair=%s kind=%s %s=%s", self._pair, self._kind, self._dedup_key, key)
                 return
             self._seen.add(key)
         ts = event["ts"]
@@ -541,7 +546,8 @@ class SegmentWriter:
                 seen = self._held_seen[hour] = self._disk_keys(files)
             key = event[self._dedup_key]
             if key in seen:
-                logger.warning("dropping replayed event pair=%s kind=%s %s=%s", self._pair, self._kind, self._dedup_key, key)
+                # INFO for the reason at the late-event drop in `append`: the reconnect counter is the signal.
+                logger.info("dropping replayed event pair=%s kind=%s %s=%s", self._pair, self._kind, self._dedup_key, key)
                 return
             seen.add(key)
         rows = self._held.setdefault(hour, [])

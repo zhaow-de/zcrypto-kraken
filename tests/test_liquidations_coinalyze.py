@@ -546,16 +546,16 @@ def test_poll_cycle_skips_buckets_at_or_below_watermark(tmp_path):
     assert marks == {"BTC": t_fresh}  # advanced on submit
 
 
-def test_poll_cycle_second_cycle_is_silent_no_dedup_warnings(tmp_path, caplog):
+def test_poll_cycle_second_cycle_is_silent_no_dedup_drops(tmp_path, caplog):
     # The production symptom, reproduced and killed: an identical follow-up cycle must submit
-    # nothing and trigger ZERO writer-level "dropping replayed event" warnings.
+    # nothing and trigger ZERO writer-level "dropping replayed event" drops.
     now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
     t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
     body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]}]
     writers = _btc_writer(tmp_path)
     marks: dict[str, int] = {}
     assert poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body)) == 1
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         again = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
     writers["BTC"].close()
     assert again == 0
@@ -569,7 +569,7 @@ def test_poll_cycle_none_watermarks_preserves_resubmit_behavior(tmp_path, caplog
     body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]}]
     writers = _btc_writer(tmp_path)
     poll_cycle("key", ["BTC"], writers, now=now, opener=_opener(body))
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         poll_cycle("key", ["BTC"], writers, now=now, opener=_opener(body))
     writers["BTC"].close()
     assert "dropping replayed event" in caplog.text
