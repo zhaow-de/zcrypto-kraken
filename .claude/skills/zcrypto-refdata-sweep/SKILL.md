@@ -68,6 +68,8 @@ print("REFUSALS:", refusals or "none"); print("ANNOUNCED DELISTINGS:", announced
 
 5. **Update `docs/reference/kraken-snapshot-register.md`**: header (`Fetched at:`, `Raw snapshot sha256:`, the response counts), the provenance raw-file path, the changed tables, and **append a row to the re-confirmation log** — sweep number, timestamp, counts, hash prefix, verdict. **The stamp moves even when nothing changed**; that is the whole mechanism.
 
+   **The row's first two cells have a required shape** — the daily pass reads the last row of that table to decide whether the next sweep is due. The first cell must **begin** `#<n>`, and the second must be a full ISO stamp: `| #2 (monthly, 2026-09-04) | 2026-09-04T10:40:09+00:00 | … |`. A first cell written any other way (`Sweep 2`, `2 (monthly)`) is skipped in silence, the row above answers in its place, and the pass reports a sweep that just ran as overdue.
+
 6. **State the consequence of any delta, do not just report it.** A delta touching **fees** or **`margin_rate`** (the borrow/rollover rate) invalidates downstream numbers — name them: `T0090`'s cost basis, the deployable's quoted band. Silence here is how a stale fee reaches a go/no-go.
 
 7. **The attended half — re-read the account's own fee tier.** The public endpoint cannot see it, and `docs/reference/kraken-fee-schedule.md` is authoritative precisely because it was read from the logged-in account. Ask the owner to open **Kraken Pro → Fee tab** and report two values: the **current tier** and the **30-day USD spot volume**. Then:
