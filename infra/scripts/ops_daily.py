@@ -215,6 +215,91 @@ def _a_month_after(d: date) -> date:
     return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
 
 
+HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
+REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
+HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+
+
+@dataclass(frozen=True)
+class Reminder:
+    name: str
+    status: str
+    owed: bool
+    runbook: str
+
+
+@dataclass
+class RemindersRead:
+    reminders: list[Reminder] = field(default_factory=list)
+    unreadable: str | None = None
+
+
+def read_reminders(
+    token: str, *, now: datetime, window: timedelta, opener=urllib.request.urlopen, register: Path = REGISTER
+) -> RemindersRead:
+    """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
+    nothing (spec 00107 D1). Each reminder comes from the source that actually knows: the sweep from
+    the register's last re-confirmation row plus the monthly cadence; the healable re-derivation from
+    whether its counter moved in the window -- the qualifying-day COUNT comes from the ledger, which
+    the runbook cited here names as the arbiter and which Grafana Cloud cannot see, so this pure-HTTP
+    instrument does not reach it.
+
+    An owed reminder reports and never blocks; a source that could not be read is `unreadable`, like
+    every other read here.
+    """
+    read = RemindersRead()
+
+    def note(text):
+        read.unreadable = f"{read.unreadable}; {text}" if read.unreadable else text
+
+    try:
+        last = last_sweep_date(register)
+    except _UNREACHABLE as exc:
+        note(f"the snapshot register could not be read: {exc}")
+    else:
+        if last is None:
+            note(f"no dated row under `## Re-confirmation log` in {register.name}")
+        else:
+            days = (_a_month_after(last) - now.date()).days
+            status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+            read.reminders.append(
+                Reminder("refdata sweep", f"{status} (last sweep {last.isoformat()})", owed=days <= 0, runbook=REFDATA_RUNBOOK)
+            )
+
+    hours = max(1, int(window.total_seconds() // 3600))
+    try:
+        series = _proxy_query(PROM_DS_UID, f"sum(increase({HEALABLE_COUNTER}[{hours}h]))", token, opener)
+        resets = _proxy_query(PROM_DS_UID, f"sum(resets({HEALABLE_COUNTER}[{hours}h]))", token, opener)
+        if not series or not resets:
+            note("the healable counter returned no series, so the re-derivation reminder could not be evaluated")
+            return read
+        moved = float(series[0]["value"][1])
+        reset = float(resets[0]["value"][1]) > 0
+    except _UNREACHABLE as exc:
+        note(f"the healable counter could not be read: {exc}")
+        return read
+    if reset:
+        # A counter summed from an append-only ledger DECREASES when a record is corrected or the
+        # ledger is rebuilt, and `increase()` then reports the whole post-reset value as movement
+        # (T0044). The `zcrypto-reconcile-healable-gap-rate` rule guards the same window with
+        # `resets()`; this mirrors it, and the number is deliberately not quoted -- the ledger's own
+        # count is the arbiter.
+        owed = True
+        status = f"counter reset in {hours} h (a ledger correction or rebuild), so its movement says nothing -- recount the qualifying days from the ledger"
+    else:
+        owed = moved > 0
+        # `increase()` extrapolates to the range boundaries, so this figure is NOT the ledger's
+        # delta -- and the ledger is the arbiter the runbook names, precisely because Cloud cannot
+        # answer the question. Quote it as the approximation it is (spec 00107 D3).
+        status = (
+            f"counter moved ~+{moved:.1f} s in {hours} h (scraped, extrapolated -- not the ledger's), recount the qualifying days"
+            if owed
+            else f"counter unchanged in {hours} h"
+        )
+    read.reminders.append(Reminder("healable re-derivation", status, owed=owed, runbook=HEALABLE_RUNBOOK))
+    return read
+
+
 @dataclass
 class LogCount:
     host: str

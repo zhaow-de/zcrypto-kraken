@@ -954,6 +954,7 @@ def test_a_transport_failure_is_an_unreadable_source_not_a_crash(exc):
         (ops_daily.read_logs, {"window": DAY}),
         (ops_daily.read_alerts, {"now": NOW, "window": DAY}),
         (ops_daily.read_deadmen, {}),
+        (ops_daily.read_reminders, {"now": NOW, "window": DAY}),
     ):
         result = read("tok", opener=_raises(exc), **kwargs)
         assert result.unreadable, f"{read.__name__} let {type(exc).__name__} escape"
@@ -1076,7 +1077,7 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
 
     `_canned` never looked at the request, so a Prometheus query path shipped against a Loki
     datasource and 404'd on the first live run while the suite stayed green. Two endpoints were
-    pinned when that was fixed; the module builds six, and the four left unpinned would fail the
+    pinned when that was fixed; the module builds eight, and the four left unpinned would fail the
     same way. Every one of them is asserted here, so a path or a datasource uid cannot drift on any
     reader without a test saying so.
     """
@@ -1095,6 +1096,18 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
     assert any("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in deadmen.urls), deadmen.urls
     assert any(u == "https://healthchecks.io/api/v3/checks/" for u in deadmen.urls), deadmen.urls
     assert not any("/loki/" in u for u in deadmen.urls), deadmen.urls
+
+    reminders = _recording(_counter(0))
+    ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=reminders)
+    assert len(reminders.urls) == 2 and all("/uid/%s/api/v1/query" % ops_daily.PROM_DS_UID in u for u in reminders.urls), (
+        reminders.urls
+    )
+    assert "sum(increase(zcrypto_reconcile_healable_gap_seconds_total[24h]))" in urllib.parse.unquote(reminders.urls[0]), (
+        reminders.urls
+    )
+    assert "sum(resets(zcrypto_reconcile_healable_gap_seconds_total[24h]))" in urllib.parse.unquote(reminders.urls[1]), (
+        reminders.urls
+    )
 
 
 def test_the_journal_paragraph_carries_warnings_when_there_are_any():
@@ -1213,3 +1226,105 @@ def test_a_log_with_no_dated_row_reads_as_none_never_as_a_date_from_elsewhere(tm
 def test_the_monthly_cadence_is_a_calendar_month_with_the_day_clamped(last, expected):
     """The sweep reminders were armed a calendar month apart (2026-08-04 -> 2026-09-04), not 30 days."""
     assert ops_daily._a_month_after(last) == expected
+
+
+def _counter(value):
+    return {"data": {"result": [{"metric": {}, "value": [1, str(value)]}]}}
+
+
+_TWO_SWEEPS = (("#0 (Phase 0, iter-002)", "2026-07-07T03:29:00+00:00"), ("#1 (monthly, 2026-08-04)", "2026-08-04T10:40:09+00:00"))
+
+
+def _reminder(read, name):
+    (found,) = [r for r in read.reminders if r.name == name]
+    return found
+
+
+@pytest.mark.parametrize(
+    "now,status,owed",
+    [
+        (datetime(2026, 8, 30, 3, 0, tzinfo=timezone.utc), "due in 5 days", False),
+        (datetime(2026, 9, 4, 3, 0, tzinfo=timezone.utc), "due in 0 days", True),
+        (datetime(2026, 9, 10, 3, 0, tzinfo=timezone.utc), "OVERDUE by 6 days", True),
+    ],
+)
+def test_the_refdata_reminder_is_computed_from_the_register_and_the_monthly_cadence(tmp_path, now, status, owed):
+    """A lost Slack message costs nothing: due-ness is derived from repo state every day."""
+    read = ops_daily.read_reminders(
+        "tok", now=now, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    refdata = _reminder(read, "refdata sweep")
+    assert refdata.status.startswith(status), refdata.status
+    assert "2026-08-04" in refdata.status, refdata.status
+    assert refdata.owed is owed
+    assert refdata.runbook == "infra/runbooks/reference-data.md#refdata-sweep-due"
+    assert read.unreadable is None
+
+
+def test_a_register_with_no_dated_row_is_an_unreadable_source_never_not_due(tmp_path):
+    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)), register=_register(tmp_path))
+    assert read.unreadable and "Re-confirmation log" in read.unreadable, read.unreadable
+    assert not [r for r in read.reminders if r.name == "refdata sweep"]
+
+
+@pytest.mark.parametrize("value,owed,word", [("88.4", True, "moved ~+88.4 s"), ("0", False, "unchanged")])
+def test_the_healable_reminder_fires_only_when_the_counter_moved(tmp_path, value, owed, word):
+    """The trigger discriminates: a counter that did not move owes nothing, one that did names the
+    recount. The count itself stays the runbook's step 1, from the ledger -- Cloud cannot see it.
+    Two payloads: the increase, then `resets` (0 -- no reset in the window)."""
+    read = ops_daily.read_reminders(
+        "tok", now=NOW, window=DAY, opener=_canned(_counter(value), _counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    healable = _reminder(read, "healable re-derivation")
+    assert healable.owed is owed
+    assert word in healable.status, healable.status
+    assert healable.runbook == "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+
+
+def test_the_healable_reminder_names_a_counter_reset_and_never_quotes_it_as_movement(tmp_path):
+    """The counter is re-emitted from the ledger's totals every cycle, so a ledger correction or
+    rebuild that lowers the total is a reset, and `increase()` then reports the whole post-reset
+    value as movement -- the hazard the `zcrypto-reconcile-healable-gap-rate` rule guards with
+    `resets()`. The reminder names the reset and owes the ledger recount; the false number never
+    reaches the report."""
+    read = ops_daily.read_reminders(
+        "tok", now=NOW, window=DAY, opener=_canned(_counter("18850.2"), _counter(1)), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    healable = _reminder(read, "healable re-derivation")
+    assert healable.owed is True
+    assert "reset" in healable.status and "18850" not in healable.status, healable.status
+
+
+def test_a_healable_counter_with_no_series_is_unreadable_never_quiet(tmp_path):
+    read = ops_daily.read_reminders(
+        "tok", now=NOW, window=DAY, opener=_canned({"data": {"result": []}}), register=_register(tmp_path, *_TWO_SWEEPS)
+    )
+    assert read.unreadable and "no series" in read.unreadable, read.unreadable
+    assert not [r for r in read.reminders if r.name == "healable re-derivation"]
+    assert _reminder(read, "refdata sweep")  # the half that could be read still is
+
+
+def test_the_real_register_yields_a_refdata_reminder():
+    """Against the committed file, with the counter canned: the pass's own default path parses.
+
+    No `tmp_path`, deliberately -- this test's entire value is that it omits `register=`, so the
+    committed `REGISTER` default is what gets exercised. A fixture parameter here is an invitation to
+    pass `register=_register(tmp_path, ...)` for consistency with its neighbours, which would delete
+    the only coverage of the path `main` actually takes."""
+    read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
+    assert read.unreadable is None, read.unreadable
+    assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"}
+
+
+def test_every_runbook_citation_the_instrument_itself_prints_resolves():
+    """Closed in KIND, not by instance: `REFDATA_RUNBOOK` and `HEALABLE_RUNBOOK` reach the operator's
+    report verbatim, and the repo's cross-reference guards scan `alerts.yaml`, `infra/grafana/*.json`
+    and `infra/runbooks/*.md` -- none of them scans `infra/scripts/`. Spec 00107 D6 rewrites both of
+    the sections cited here: a rename would turn the runbook-internal guard red and get it re-pointed
+    at the new anchor while this module's copy rotted silently, sending a paged operator to a fragment
+    that scrolls nowhere. Scanning the source keeps a citation added later covered by nobody's memory.
+    """
+    cited = set(re.findall(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)", _SCRIPT.read_text()))
+    assert cited, "no runbook citation found in the instrument -- this guard has gone vacuous, not clean"
+    anchors = {f"{p.name}#{a}" for p in _RUNBOOKS.glob("*.md") for a in re.findall(r'<a name="([^"]+)"></a>', p.read_text())}
+    assert {f"{f}#{a}" for f, a in cited} <= anchors, sorted({f"{f}#{a}" for f, a in cited} - anchors)
