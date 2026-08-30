@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # Day-2 operations: every alert has a runbook, and a daily pass reads the fleet
@@ -33,6 +33,14 @@ Delivered on `feat/t0157-day2-runbooks-daily-ops` (spec `00104`, plan `00104`, c
 - **Day one earned its place twice over.** The journal paragraph summed only ERROR/CRITICAL, so the day's only finding — 1802 WARNING lines across the capture pair — would have been written as "logs 0 ERROR/CRITICAL lines", the journal reproducing inside itself the silence it exists to prevent. And writing the ten descriptions *from* the dead-man map found a cross-reference pointing at the wrong file, in a direction 28 references wide that nothing guarded. Both fixed and guarded.
 - **One measurement left open deliberately**: the capture WARNING volume arrives in two ~600-line bursts 16 h apart, with resubscribes, resubscribe errors and desyncs all reading 0 — so it is not the post-restart replay the rollout skill attributes those lines to. Integrity intact (gap seconds 0, gate streak 50). Recorded in the journal; no metric moved, no page owed.
 
-## Suggested next steps
+## Resolution
 
-- **(human — a session capability, not necessarily a defect)** The pass's Slack half could not run: `#zcrypto` is unreachable from the executing session, so the summary was not posted, tomorrow's trigger was not re-armed, and the two SCHEDULED REMINDER sections could not be evaluated — they are calendar triggers delivered as Slack messages with no metric behind them, so nothing on the fleet reads them. A session-local scheduler is not a substitute: it dies with the session and the reminder must outlive it. **This topic stays `partial` on that alone.** Decide which it is: if an attended session has the Slack tooling, the deliverable is complete and this closes on the first pass that posts; if no session has it, the pass cannot re-arm itself and that gap deserves its own topic.
+**Resolved 2026-08-30.** Every signal that can page an operator resolves to a runbook section, and the proactive pass exists, has run, and closed its own loop.
+
+Delivered across PRs #350, #352, #353, #354, #355 and the `ops-journal` branch: 51 previously-unrunbooked rules linked (50 sections written; the fifty-first already existed and only lacked its link); the read-only instrument with its five reads; the operations journal; the `/zcrypto-daily-ops` skill and its tier classifier; and the live-stack push — 83 rules and 10 dead-man checks now carrying `Runbook:` links, verified by value.
+
+**The first pass ran on 2026-08-30 and returned all-clear (exit 0)**, wrote its entry, posted its summary to `#zcrypto`, and scheduled tomorrow's trigger. That last step is what closes this: a pass that cannot re-arm itself is not a daily pass, and it is the reason this topic stayed `partial` through two earlier attempts to close it.
+
+**Both delays earned themselves.** The first live run found a log plane that had never worked — Loki queried on Prometheus's path, 404, invisible to a green suite because no test asserted a URL. The first pass found the journal paragraph summing only ERROR/CRITICAL, which would have recorded the day's only finding as "0 lines". Neither was reachable by review; both needed the thing to actually run.
+
+**One observation left open, and deliberately not held here**: the capture WARNING volume arrives in ~600-line bursts rather than continuously, with resubscribes and desyncs at 0, so it is not the post-restart replay the rollout skill attributes those lines to. Integrity is intact (gap seconds 0, gate streak 50). It is recorded in the journal entry and carried into tomorrow's reminder for a second data point; it is an operational finding the pass produced, not an unbuilt part of this topic.
