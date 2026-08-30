@@ -597,7 +597,11 @@ _READ_SHAPES = (
             "--connect-timeout": _INT,
             "-H": _QUOTED,
             "--header": _QUOTED,
-            "-o": _PATH,
+            # `-o` WRITES the file it names, so only the discard target is permitted: a verified
+            # escape wrote an arbitrary path with attacker-fetched content under an AUTONOMOUS
+            # verdict, and the read path returns before the protected-object veto ever runs.
+            # `-O`, `--output`, `--output-dir`, `-T`, `--upload-file` and `-d` stay absent.
+            "-o": r"/dev/null",
             "-w": _QUOTED,
             "--user-agent": _QUOTED,
         },
@@ -691,6 +695,12 @@ _PROTECTED_OBJECTS = (
     "@sha256:",
 )
 _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
+# The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
+# the same host reach the same secrets through the filesystem, so they get the same treatment.
+# Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
+# the runbooks' own permission check on `logship-secrets.env`, which prints no bytes of it.
+_CONTENT_HEADS = frozenset({"cat", "grep"})
+_SECRET_PATH_MARKERS = ("secret", ".env", "vault", "credential", "id_rsa", ".pem", ".key")
 # Stripped before matching: they change who runs a command, never what it does. `ssh <host>` also
 # RETARGETS it, so the host it names replaces the caller's for the telemetry gate.
 _PREFIXES = (("sudo",), ("sudo", "-n"), ("uv", "run"), ("time",))
@@ -711,9 +721,17 @@ def _commands(text: str) -> list[str]:
 
 
 def _strip_noise(text: str) -> str:
+    """Drop the stderr redirections, but only as WHOLE tokens.
+
+    A raw replace made the classifier disagree with bash: `docker logs2>/dev/nullzcrypto-engine`
+    became `docker logs zcrypto-engine` here while bash reads a command `logs2` redirecting into a
+    file. Padding makes the match whitespace-delimited, so anything glued to a word keeps its `>`
+    and meets the metacharacter gate.
+    """
+    padded = f" {text} "
     for noise in _NOISE:
-        text = text.replace(noise, " ")
-    return text
+        padded = padded.replace(f" {noise} ", " ")
+    return padded.strip()
 
 
 def _scan(text: str) -> list[list[str]] | None:
@@ -764,18 +782,44 @@ def _scan(text: str) -> list[list[str]] | None:
     return stages
 
 
+_TEMPLATE_ACTION = re.compile(r"\{\{(.*?)\}\}", re.S)
+_SELECTOR = re.compile(r"\.\w[\w.]*")
+
+
+def _inspect_format(tokens: list[str]) -> str | None:
+    for n, token in enumerate(tokens):
+        if token.startswith("--format="):
+            return token.split("=", 1)[1]
+        if token in ("--format", "-f") and n + 1 < len(tokens):
+            return tokens[n + 1]
+    return None
+
+
 def _inspect_format_is_scoped(tokens: list[str]) -> bool:
     """CLAUDE.md's secrets rule, made structural: an inspect prints only the fields named there.
 
     Unscoped, `docker inspect` prints the container's environment, which on the engine host is the
-    live Kraken trade key. `{{json .Config}}` and `{{json .Config.Env}}` both carry `--format` and
-    both print it, so the presence of the flag is never the test -- every selector is.
+    live Kraken trade key. Allowlisting the SELECTORS it mentions is not enough, and that premise
+    cost a verified leak: a Go template reaches the whole object through a bare root reference, so
+    `--format '{{.Name}}{{json .}}'` mentions one safe selector and marshals `ContainerJSON` --
+    `.Config.Env` and the key with it. `{{index . "Config" "Env"}}` does the same with no selector
+    at all. So each ACTION is default-denied instead: a safe dotted selector, optionally wrapped in
+    `json`, and nothing else -- no bare `.`, no `index`, `printf`, `range`, `with` or `call`. Text
+    outside the actions is inert label material and needs no check.
     """
-    joined = " ".join(tokens)
-    if "--format" not in joined and " -f " not in f" {joined} ":
+    fmt = _inspect_format(tokens)
+    if fmt is None:
         return False
-    selectors = re.findall(r"\.\w[\w.]*", joined.split("--format", 1)[-1] if "--format" in joined else joined)
-    return bool(selectors) and all(sel.startswith(_SAFE_INSPECT_FIELDS) for sel in selectors)
+    actions = _TEMPLATE_ACTION.findall(fmt)
+    if not actions:
+        return False
+    for action in actions:
+        body = action.strip()
+        if body.startswith("json "):
+            body = body[len("json ") :].strip()
+        if not _SELECTOR.fullmatch(body) or not body.startswith(_SAFE_INSPECT_FIELDS):
+            return False
+    return True
 
 
 def _curl_is_read(tokens: list[str]) -> bool:
@@ -859,6 +903,8 @@ def _classify_one(command: str, host: str | None) -> Tier:
     if not tokens:
         return Tier.PREPARED
     if _matches(_READ_SHAPES + _ZCRYPTO_SHAPES, tokens):
+        if tokens[0] in _CONTENT_HEADS and any(m in t.lower() for t in tokens[1:] for m in _SECRET_PATH_MARKERS):
+            return Tier.PREPARED
         return Tier.AUTONOMOUS
     lowered = command.lower()
     if (
