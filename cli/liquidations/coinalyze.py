@@ -15,11 +15,10 @@ and re-submissions into already-FINALIZED hours are dropped by the writer's late
 (`_current_hour`/`_floor` in `cli/capture/segment_writer.py`). Narrowing the window or touching
 the floor logic must preserve all of this -- and a `dropping replayed event` line that still
 fires is now a genuine anomaly, not steady-state noise. What holds that claim is
-`tests/test_liquidations_coinalyze.py::test_poll_cycle_second_cycle_is_silent_no_dedup_drops`,
-which runs in CI on every PR. In production the line logs at INFO (spec 00107 D4, for the
-capture writer's reconnect bursts), so it reaches no alert rule and no daily-pass log read: a
-runtime-only watermark regression is read from raw INFO logs, and costs no data, because the
-writer's dedup and its late-event floor still hold behind the watermark.
+`tests/test_liquidations_coinalyze.py::test_poll_cycle_second_cycle_is_silent_no_dedup_drops`.
+In production the line logs at INFO (spec 00107 D4, for the capture writer's reconnect bursts), so a
+runtime-only watermark regression is read out of the raw logs rather than announcing itself -- and
+costs no data, because the writer's dedup and its late-event floor still hold behind the watermark.
 """
 
 from __future__ import annotations
