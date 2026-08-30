@@ -300,6 +300,46 @@ def read_reminders(
     return read
 
 
+RUNBOOKS = REPO_ROOT / "infra/runbooks"
+# THE link the prefix introduces, not any path the description happens to mention: searching
+# `_RUNBOOK_LINK` over the whole description judges whichever path comes first, so a mention that
+# resolves would pass a description whose actual link is dead. Composed from `_RUNBOOK_LINK` rather
+# than respelled, so the two cannot drift apart.
+_RUNBOOK_PREFIX = "Runbook: "
+_RUNBOOK_CITED = re.compile(re.escape(_RUNBOOK_PREFIX) + _RUNBOOK_LINK.pattern)
+# The vocabulary `.claude/rules/operator-facing-text.md` bans from any surface read without the repo
+# open, spelled wider than that rule spells it wherever hand-written prose varies: either separator
+# after the phase word, an optional backtick around a serial. The bare decision number the rule also
+# bans is deliberately absent -- this check detects and cannot repair, so a false positive is a
+# finding line in every daily report until a human edits a description that was never wrong, and a
+# two-character token is the alternation that would mint them.
+_INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+`?\d{5}|\bWP\d")
+
+
+def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[str]:
+    """One line per defect in a dead-man check's description, named per check (spec 00107 D5).
+
+    The descriptions are hand-written in healthchecks.io, outside the reach of every repo test, and
+    are read from a phone with nothing open. Two assertions each: a `Runbook: <file>#<anchor>` link
+    that resolves against a real `<a name=…>` tag in the file it names, and no internal token.
+    Detects, never repairs -- the descriptions live in the SaaS, so a finding is a line for a human.
+    """
+    out = []
+    for check in checks:
+        name = check.get("name") or check.get("slug") or "?"
+        desc = check.get("desc") or ""
+        link = _RUNBOOK_CITED.search(desc)
+        if link is None:
+            out.append(f"`{name}`: no `Runbook: infra/runbooks/<file>#<anchor>` in its description")
+        else:
+            path = runbooks / link.group(1)
+            if not path.exists() or f'<a name="{link.group(2)}"></a>' not in path.read_text():
+                out.append(f"`{name}`: its runbook link {link.group(0).removeprefix(_RUNBOOK_PREFIX)} resolves to no anchor")
+        for token in _INTERNAL_TOKEN.findall(desc):
+            out.append(f"`{name}`: its description carries the internal token {token!r}")
+    return out
+
+
 @dataclass
 class LogCount:
     host: str

@@ -1384,3 +1384,63 @@ def test_the_report_refuses_to_be_built_without_a_reminders_read():
             deploys=[],
             now=NOW,
         )
+
+
+# --- spec 00107 D5: the dead-man descriptions are checked, not generated ---------------------------------------
+
+_CLEAN_DESC = "Pings on a clean overlay-writer cycle. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled"
+
+
+def test_a_description_carrying_an_internal_token_is_a_finding_named_per_check():
+    """`operator-facing-text.md` governs this surface, read from a phone with nothing open -- and it is
+    the one surface no repo test reaches, because the descriptions are hand-written in a SaaS. Every
+    banned token in one description is its own finding, named per check; a clean one yields none."""
+    checks = [
+        {
+            "name": "zcrypto-engine-shadow",
+            "desc": "Phase-6 shadow engine, spec 00050. Runbook: infra/runbooks/engine.md#zcrypto-engine-cycle-stale",
+        },
+        {
+            "name": "zcrypto-gate-verify",
+            "desc": "Gate export, see T0083 and iter-120. Runbook: infra/runbooks/gate.md#zcrypto-gate-exporter-stale",
+        },
+        {"name": "clean", "desc": _CLEAN_DESC},
+    ]
+    findings = ops_daily.check_descriptions(checks)
+    engine = [f for f in findings if f.startswith("`zcrypto-engine-shadow`")]
+    assert {t for f in engine for t in ("Phase-6", "spec 00050") if repr(t) in f} == {"Phase-6", "spec 00050"}, findings
+    gate = [f for f in findings if f.startswith("`zcrypto-gate-verify`")]
+    assert {t for f in gate for t in ("T0083", "iter-120") if repr(t) in f} == {"T0083", "iter-120"}, findings
+    assert not [f for f in findings if f.startswith("`clean`")], findings
+    assert len(findings) == 4, findings
+
+
+def test_a_missing_or_dangling_runbook_link_is_a_finding():
+    """A link resolves against the FILE it names: an anchor living in a sibling file scrolls nowhere.
+    And the literal `Runbook: ` prefix is half of what spec 00107 D5 asks for -- a path mentioned in
+    passing is not the link an operator follows from a phone.
+
+    `passing-mention-first` is the pair the other fixtures cannot make: a RESOLVING mention ahead of
+    a DEAD link, so a check that searches the whole description finds the mention, passes, and sends
+    the operator to the fragment that scrolls nowhere. It is the link the prefix introduces that is
+    judged."""
+    checks = [
+        {"name": "dangling", "desc": "Runbook: infra/runbooks/ops.md#no-such-anchor"},
+        {"name": "wrong-file", "desc": "Runbook: infra/runbooks/capture.md#zcrypto-ops-archive-pull-stalled"},
+        {"name": "linkless", "desc": "Pings every minute."},
+        {"name": "prefixless", "desc": "Context in infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled, no link."},
+        {
+            "name": "passing-mention-first",
+            "desc": "Context in infra/runbooks/ops-node.md#zcrypto-ops-archive-pull-stalled. Runbook: infra/runbooks/ops.md#no-such-anchor",
+        },
+        {"name": "clean", "desc": _CLEAN_DESC},
+    ]
+    findings = ops_daily.check_descriptions(checks)
+    expected = ["`dangling`", "`linkless`", "`passing-mention-first`", "`prefixless`", "`wrong-file`"]
+    assert sorted(f.split(":")[0] for f in findings) == expected, findings
+
+
+def test_a_check_with_no_description_at_all_is_a_finding_not_a_pass():
+    assert ops_daily.check_descriptions([{"name": "bare"}]) == [
+        "`bare`: no `Runbook: infra/runbooks/<file>#<anchor>` in its description"
+    ]
