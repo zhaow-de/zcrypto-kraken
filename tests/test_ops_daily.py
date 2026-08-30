@@ -252,6 +252,7 @@ def _report(**kw):
         deadmen=ops_daily.DeadmenRead(via_prometheus=0.0, via_healthchecks=[{"name": "x"}]),
         verdict=[ops_daily.Check("capture primary up", "up{...}", ok=True, value="1")],
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     )
     return ops_daily.build_report(**{**base, **kw})
@@ -287,7 +288,7 @@ def test_unreadable_outranks_fired_so_a_partial_read_is_never_reported_as_attent
 
 def test_the_journal_paragraph_carries_every_labelled_clause():
     para = _report().journal_paragraph()
-    for clause in ("window", "alerts", "checks", "logs", "dead-men", "deploys", "actions", "follow-ups"):
+    for clause in ("window", "alerts", "checks", "logs", "dead-men", "deploys", "reminders", "actions", "follow-ups"):
         assert clause in para, f"missing clause: {clause}"
 
 
@@ -976,6 +977,7 @@ def test_a_verdict_read_that_could_not_be_read_exits_2_not_1():
         deadmen=ops_daily.DeadmenRead(),
         verdict=checks,
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     )
     assert report.unreadable, "a verdict the pass could not read is an unreadable SOURCE"
@@ -991,6 +993,7 @@ def test_a_healthy_but_empty_verdict_is_not_an_unreadable_source():
         deadmen=ops_daily.DeadmenRead(),
         verdict=checks,
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     )
     assert not report.unreadable, report.unreadable
@@ -1133,6 +1136,7 @@ def test_the_journal_paragraph_carries_warnings_when_there_are_any():
         deadmen=ops_daily.DeadmenRead(),
         verdict=[],
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     ).journal_paragraph()
     assert "1802 WARNING" in para, para
@@ -1147,6 +1151,7 @@ def test_the_journal_paragraph_stays_quiet_when_nothing_warned():
         deadmen=ops_daily.DeadmenRead(),
         verdict=[],
         deploys=[],
+        reminders=ops_daily.RemindersRead(),
         now=NOW,
     ).journal_paragraph()
     assert "WARNING" not in para, para
@@ -1328,3 +1333,54 @@ def test_every_runbook_citation_the_instrument_itself_prints_resolves():
     assert cited, "no runbook citation found in the instrument -- this guard has gone vacuous, not clean"
     anchors = {f"{p.name}#{a}" for p in _RUNBOOKS.glob("*.md") for a in re.findall(r'<a name="([^"]+)"></a>', p.read_text())}
     assert {f"{f}#{a}" for f, a in cited} <= anchors, sorted({f"{f}#{a}" for f, a in cited} - anchors)
+
+
+# --- spec 00107 D2: the reminders reach the report and the paragraph ----------------------------------------
+
+
+def test_an_owed_reminder_reports_and_never_blocks():
+    """Spec 00107 D2: the reminder is a finding in the report, not an exit code -- a calendar date
+    passing is not a fleet defect. It reaches the markdown AND the journal paragraph, because the
+    paragraph is what gets pasted."""
+    owed = ops_daily.RemindersRead(
+        reminders=[
+            ops_daily.Reminder(
+                "refdata sweep",
+                "OVERDUE by 6 days (last sweep 2026-08-04)",
+                owed=True,
+                runbook="infra/runbooks/reference-data.md#refdata-sweep-due",
+            ),
+            ops_daily.Reminder(
+                "healable re-derivation",
+                "counter unchanged in 24 h",
+                owed=False,
+                runbook="infra/runbooks/ops.md#healable-threshold-rederivation-due",
+            ),
+        ]
+    )
+    r = _report(reminders=owed)
+    assert r.exit_code == 0, r.exit_code
+    md = r.markdown()
+    assert "## Reminders" in md and "OWED refdata sweep: OVERDUE by 6 days" in md and "#refdata-sweep-due" in md, md
+    assert "ok healable re-derivation: counter unchanged" in md, md
+    para = r.journal_paragraph()
+    assert "reminders OWED refdata sweep: OVERDUE by 6 days" in para, para
+    assert "OWED healable" not in para, para  # the marker discriminates; it is not decoration
+
+
+def test_an_unreadable_reminder_source_exits_2_like_every_other_source():
+    r = _report(reminders=ops_daily.RemindersRead(unreadable="the healable counter could not be read: timed out"))
+    assert r.exit_code == 2 and "healable counter could not be read" in r.markdown()
+
+
+def test_the_report_refuses_to_be_built_without_a_reminders_read():
+    """A default that reads as 'nothing due' is the silent gap this iteration closes; the field is required."""
+    with pytest.raises(TypeError):
+        ops_daily.build_report(
+            alerts=ops_daily.AlertsRead(),
+            logs=ops_daily.LogsRead(),
+            deadmen=ops_daily.DeadmenRead(),
+            verdict=[],
+            deploys=[],
+            now=NOW,
+        )

@@ -465,17 +465,18 @@ class Report:
     deadmen: DeadmenRead
     verdict: list[Check]
     deploys: list[dict]
+    reminders: RemindersRead
 
     @property
     def unreadable(self) -> list[str]:
-        """Every source that could not be read -- the verdict checks included.
+        """Every source that could not be read -- the verdict checks and the reminders included.
 
         The verdict read reports through its checks rather than an `unreadable` field, so a timeout
         on it alone used to leave the pass at exit 1, ATTENTION: a Grafana it could not reach,
         reported as something wrong with the FLEET. The `unreadable:` prefix is written by
         `read_verdict` for exactly this case and is the only value that carries it.
         """
-        named = [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable) if n]
+        named = [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable, self.reminders.unreadable) if n]
         return named + [
             f"{c.name} could not be read: {c.value.removeprefix('unreadable: ')}"
             for c in self.verdict
@@ -511,6 +512,10 @@ class Report:
             f"- via Grafana: {self.deadmen.via_prometheus}",
             f"- direct: {len(self.deadmen.via_healthchecks)} checks read",
         ]
+        out += ["", "## Reminders"] + (
+            [f"- {'OWED' if r.owed else 'ok'} {r.name}: {r.status} — {r.runbook}" for r in self.reminders.reminders]
+            or ["- none read"]
+        )
         out += ["", "## Deploys in window"] + (
             [f"- {d.get('ts')} {d.get('playbook')} --limit {d.get('limit')}" for d in self.deploys] or ["- none"]
         )
@@ -525,6 +530,10 @@ class Report:
         # journal says nothing -- which is what happened on the first real pass, whose ONLY finding
         # was 1802 WARNING lines the paragraph dropped. Omitted when zero so a silent day stays short.
         warnings = sum(c.count for c in self.logs.counts if c.level == "WARNING")
+        # The OWED marker travels with the clause. The paragraph is the artefact that gets pasted
+        # into the journal, and `refdata sweep: due in 0 days` -- the owed-today spelling -- skims
+        # as "not yet" without it, where the markdown's own line is unambiguous.
+        reminders = ", ".join(f"{'OWED ' if r.owed else ''}{r.name}: {r.status}" for r in self.reminders.reminders) or "none read"
         deploys = ", ".join(str(d.get("limit")) for d in self.deploys) or "none"
         hours = int(self.window.total_seconds() // 3600)
         return (
@@ -532,12 +541,15 @@ class Report:
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
             f"{len(self.deadmen.via_healthchecks)} read directly · deploys {deploys} · "
+            f"reminders {reminders} · "
             f"actions none · follow-ups none"
         )
 
 
-def build_report(*, alerts, logs, deadmen, verdict, deploys, now, window=timedelta(hours=24)) -> Report:
-    return Report(now=now, window=window, alerts=alerts, logs=logs, deadmen=deadmen, verdict=verdict, deploys=deploys)
+def build_report(*, alerts, logs, deadmen, verdict, deploys, reminders, now, window=timedelta(hours=24)) -> Report:
+    return Report(
+        now=now, window=window, alerts=alerts, logs=logs, deadmen=deadmen, verdict=verdict, deploys=deploys, reminders=reminders
+    )
 
 
 def _parse_since(text: str) -> timedelta:
@@ -587,6 +599,7 @@ def main(argv: list[str]) -> int:
         deadmen=read_deadmen(token),
         verdict=read_verdict(token),
         deploys=read_deploys(window, now=now),
+        reminders=read_reminders(token, now=now, window=window),
         now=now,
         window=window,
     )
