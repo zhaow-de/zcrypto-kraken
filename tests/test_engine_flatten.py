@@ -2143,11 +2143,22 @@ def test_absent_credentials_refuse_with_exit_one_and_never_construct_a_client(mo
 def test_the_command_never_names_a_credential_value(monkeypatch, tmp_path, caplog):
     """The refusal goes through `_abort`, which LOGS and never echoes, so the log record is the only
     surface a key could leak on -- an assertion on `result.output` alone stays green on an
-    implementation that prints the value into it (`tests/test_error_paths_are_logged.py`)."""
+    implementation that prints the value into it (`tests/test_error_paths_are_logged.py`).
+
+    `caplog.handler` is attached to the "zcrypto" logger by hand, and the presence half is asserted
+    before the containment half. `cli.logging.config.configure()` sets `propagate = False` there on
+    the CLI's first invocation in the process while caplog's own handler sits on the root, so this
+    reads an EMPTY log depending only on what ran earlier in the session -- and an empty log
+    contains no key either, which is the whole test passing while looking at nothing."""
     monkeypatch.setenv("KRAKEN_SPOT_API_KEY", "the-key-value")
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
-    with caplog.at_level(logging.ERROR):
-        result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
+    zcrypto_logger = logging.getLogger("zcrypto")
+    zcrypto_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.ERROR, logger="zcrypto"):
+            result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
+    finally:
+        zcrypto_logger.removeHandler(caplog.handler)
     assert result.exit_code == 1
     assert "KRAKEN_SPOT_API_SECRET" in caplog.text  # the refusal really did reach the log
     assert "the-key-value" not in caplog.text
