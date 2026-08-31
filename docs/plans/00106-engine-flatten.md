@@ -40,7 +40,8 @@ Every task's requirements implicitly include this section. Read all of it — ta
 
 ### Verification scope
 
-- Run the tests the diff can reach: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py -q`. The full suite is CI's; do not run it locally.
+- Run the tests the diff can reach: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py tests/test_infra_shell_templates_render.py -q`. The full suite is CI's; do not run it locally.
+- `tests/test_infra_shell_templates_render.py` holds a two-way completeness registry over `roles/*/templates/*.sh.j2` **and** renders each one through Ansible's own `Templar` under the role's `defaults/main.yml` plus a fixed `RUNTIME_FACTS` dict. Creating the wrapper template turns two of its tests red until the task that creates it registers the name and adds the engine uid/gid — which the engine role sets by `set_fact` from `getent` and carries in no defaults file. It is the only test in the repo that renders a template under the role's OWN variables.
 - `tests/test_nautilus_interface_pin.py::test_the_pin_covers_every_nautilus_name_cli_imports` walks `cli/**/*.py` with `ast` and fails on any `from nautilus_trader… import X` absent from `PINNED_SYMBOLS`. **Every task that adds a nautilus import widens that list in the same commit** — Task 1 for the `nautilus_trader.model` names, Task 9 for `KrakenSpotHttpClient`. It is not in any other task's verification command, so an unpinned import surfaces first in CI, after the branch was reported finished.
 - `tests/test_ops_daily.py` extracts every backticked and fenced command from `infra/runbooks/*.md` and classifies it. **`zcrypto-flatten` must never classify AUTONOMOUS.** If a runbook edit turns that file red, never fix it by widening the classifier's allowlist for this command.
 - No host-touching step (ssh, sudo, ansible, vault) appears anywhere in this plan. Every task runs entirely in the repo. The converge that puts the wrapper on the engine host and the live read-only dry-run through it are attended human steps, registered in the topic at closeout and out of scope here.
@@ -93,6 +94,7 @@ Every one of these is binding on the implementer. Do not re-litigate them mid-ta
 1. **The owed live read-only dry-run is registered in the topic only**, never in `docs/reference/adapter-verification/<version>.md`'s "Owed checks not discharged" section. `infra/runbooks/engine.md`'s pre-probe step 3 refuses to **arm** on an open item there, so putting a flatten check in that section would block arming on something unrelated to arming.
 1. **`_VENUE_MUTATING_NAMES` gains `.cancel_all_orders`** alongside allowlisting `flatten.py`. The guard's own docstring says a second module learning to cancel is the same escape; account-wide cancel is the most destructive cancel there is and belongs on the list it protects.
 1. **`"zcrypto-flatten"` joins `_DESTRUCTIVE` in `tests/test_ops_daily.py`**, so the unattended daily pass's classifier is asserted never to call the red button autonomous.
+1. **A venue rejection carries the venue's own words and no minted label.** Four reason labels exist and no more: `dust_below_venue_minimum`, `unclosable_below_minimum`, `no_eur_or_btc_pair`, `no_reference_price` — each one a decision *this code* made before sending. What the venue answers is journaled verbatim as the leg's `error`; the spec's D3 says so, and inferring a label from a rejection message would pin the journal to message text nothing here has measured.
 
 ______________________________________________________________________
 
@@ -107,6 +109,7 @@ ______________________________________________________________________
 | `tests/test_engine_executor.py` | Modify. Widen `_VENUE_MUTATING_NAMES` and its allowlist. |
 | `tests/test_nautilus_interface_pin.py` | Modify. `PINNED_SYMBOLS` gains the three nautilus names this branch newly imports under `cli/`. |
 | `tests/test_ops_daily.py` | Modify. Add `zcrypto-flatten` to `_DESTRUCTIVE`. |
+| `tests/test_infra_shell_templates_render.py` | Modify. Register the new shell template and give `RUNTIME_FACTS` the engine uid/gid the role sets by `set_fact`. |
 | `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2` | Create. The host wrapper. |
 | `infra/ansible/roles/engine/tasks/main.yml` | Modify. One template task installing the wrapper. |
 | `infra/runbooks/engine-procedures.md` | Modify. The `engine-flatten` PROCEDURE section. |
@@ -139,7 +142,7 @@ ______________________________________________________________________
   - `read_positions(client, rec) -> list[PositionRow]`
   - `read_balances(client, rec) -> list[BalanceRow]`
   - `read_listing(client, rec) -> dict[str, Any]` — keyed `"<BASE>/<QUOTE>"` (e.g. `"BTC/EUR"`), value the raw instrument object.
-  - `constraints_for(symbol: str, listing: dict[str, Any]) -> PairConstraints` — raises `FlattenUnreachable` on a required field that is absent or unreadable.
+  - `constraints_for(symbol: str, listing: dict[str, Any]) -> PairConstraints` — raises `FlattenUnreachable` on a required field that is absent, unreadable, or a non-positive quantization step.
   - `read_book_price(client, rec, constraints, side) -> float` — `side` `"SELL"` takes the best bid, `"BUY"` the best ask.
 
 - [ ] **Step 1: Write the failing tests**
@@ -177,11 +180,14 @@ class _Book:
 class _Instrument:
     """A listing row shaped like the adapter's: every constraint float()-able or None."""
 
-    def __init__(self, symbol: str, *, ordermin=0.0001, lot_step=0.00000001, tick_size=0.1) -> None:
+    def __init__(self, symbol: str, *, ordermin=0.0001, lot_step=0.00000001, tick_size=None) -> None:
         self.id = f"{symbol}.KRAKEN"
         self.min_quantity = ordermin
         self.size_increment = lot_step
-        self.price_increment = tick_size
+        # The tick defaults by QUOTE, not to one number: a BTC-quoted pair ticks at seven decimals,
+        # and the euro pairs' 0.1 would floor a reference price like 0.03 BTC to zero -- turning a
+        # live balance into dust and hiding every routing assertion that depends on it being sold.
+        self.price_increment = tick_size if tick_size is not None else (0.0000001 if symbol.endswith("/BTC") else 0.1)
         self.min_notional = None  # this adapter never maps costmin -- cli/engine/venuestate.py
 
 
@@ -218,6 +224,9 @@ class FakeClient:
     instance the next call to it will raise."""
 
     api_key_masked = "kr***xy"
+    # The secret itself, distinct from its masked form, so a journal test can assert on the VALUE
+    # that would leak rather than on the name of the variable it arrived in.
+    api_key = "kNEVER-IN-THE-JOURNAL-0000"
 
     def __init__(self, *, instruments=None, orders=None, positions=None, balances=None, books=None) -> None:
         self.calls: list[tuple[str, dict]] = []
@@ -312,6 +321,20 @@ def test_the_listing_is_keyed_by_symbol_and_a_missing_constraint_aborts_the_pair
     # The venue's own field name: an absent field is caught by `_required`, which never sees the
     # friendly label `_as_float` would have used.
     assert "size_increment" in str(exc.value)
+
+
+@pytest.mark.parametrize("field", ["size_increment", "price_increment"])
+def test_a_zero_quantization_step_aborts_rather_than_dividing_by_it(field):
+    """A step of zero passes an is-it-absent check and then divides. `_floor_to_step` raises a bare
+    ValueError on it, which nothing between here and the operator catches -- so the exit-code
+    contract would arrive as a traceback with no journal."""
+    rows = [_Instrument("BTC/EUR")]
+    setattr(rows[0], field, 0.0)
+    client = FakeClient(instruments=rows)
+    rec = flatten.Recorder()
+    with pytest.raises(flatten.FlattenUnreachable) as exc:
+        flatten.constraints_for("BTC/EUR", flatten.read_listing(client, rec))
+    assert "positive step" in str(exc.value)
 
 
 def test_an_empty_listing_aborts():
@@ -553,6 +576,19 @@ def _as_float(value: Any, field: str, what: str) -> float:
     return out
 
 
+def _as_step(value: Any, field: str, what: str) -> float:
+    """A quantization step, which must be positive to be one.
+
+    `_required` only rejects `None`, so a venue publishing `0` would reach `_floor_to_step` and
+    raise a bare `ValueError` no caller here catches -- the operator would get a traceback where
+    the exit-code contract promises a named unreachable. A zero step IS a shape the venue changed.
+    """
+    out = _as_float(value, field, what)
+    if out <= 0.0:
+        raise FlattenUnreachable(f"{what}: {field} {value!r} is not a positive step")
+    return out
+
+
 def _symbol_of(instrument_id: Any) -> str:
     """`BTC/EUR.KRAKEN` -> `BTC/EUR`. The venue half is stripped; the adapter has already renamed
     Kraken's legacy XBT/XDG codes (`cli/engine/instruments.py`)."""
@@ -667,8 +703,8 @@ def constraints_for(symbol: str, listing: dict[str, Any]) -> PairConstraints:
         symbol=symbol,
         instrument_id=_required(row, "id", what),
         ordermin=_as_float(_required(row, "min_quantity", what), "ordermin", what),
-        lot_step=_as_float(_required(row, "size_increment", what), "lot_step", what),
-        tick_size=_as_float(_required(row, "price_increment", what), "tick_size", what),
+        lot_step=_as_step(_required(row, "size_increment", what), "lot_step", what),
+        tick_size=_as_step(_required(row, "price_increment", what), "tick_size", what),
     )
 
 
@@ -1411,6 +1447,10 @@ def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: dict[str
 
     wanted: dict[str, str] = {}
     for leg in [*margin_raw, *spot_raw]:
+        # One book read per pair, and the FIRST leg on a pair fixes which side it is priced from --
+        # margin legs first. Where a margin leg and a spot leg share a pair the loser is priced one
+        # spread away, which moves the printed estimate and the dust boundary and nothing else: no
+        # order this module sends carries a price.
         wanted.setdefault(leg.symbol, leg.side)
     if any(leg.symbol.endswith("/BTC") for leg in spot_raw) and "BTC/EUR" in listing:
         wanted.setdefault("BTC/EUR", "SELL")
@@ -2398,7 +2438,10 @@ def test_the_journal_records_the_snapshots_the_requests_the_confirm_and_the_exit
     assert doc["snapshot_after"]["positions"] == []
     assert [e["call"] for e in doc["requests"]].count("submit_order") == 1
     assert doc["api_key_masked"] == "kr***xy"
-    assert "KRAKEN_SPOT_API" not in path.read_text()
+    # The key's own VALUE, and never the name of the variable it arrived in: that name reaches no
+    # part of this process, so asserting its absence is green under every implementation, leak
+    # included. Only the masked form may appear in an artifact written to the engine's exec dir.
+    assert FakeClient.api_key not in path.read_text()
 
 
 def test_a_refused_run_still_journals_the_refusal(tmp_path):
@@ -2787,6 +2830,7 @@ ______________________________________________________________________
 
 - Create: `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2`
 - Modify: `infra/ansible/roles/engine/tasks/main.yml` (one task, directly after `install the engine systemd unit`)
+- Modify: `tests/test_infra_shell_templates_render.py` (`REGISTERED`, `RUNTIME_FACTS`)
 - Test: `tests/test_engine_flatten_wrapper.py`
 
 **Interfaces:**
@@ -2818,6 +2862,7 @@ from pathlib import Path
 
 import jinja2
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2"
@@ -2983,15 +3028,20 @@ def test_a_non_root_invocation_refuses(tmp_path):
 
 
 def test_the_role_installs_the_wrapper_root_owned_and_not_world_readable():
-    text = ROLE_TASKS.read_text()
-    assert "zcrypto-flatten.sh.j2" in text
-    assert "/usr/local/sbin/zcrypto-flatten" in text
+    """Root-owned and 0750: a wrapper the engine account could rewrite would turn the engine's own
+    compromise into a path to the trade key. Read from the PARSED task -- a substring search over
+    the whole file is satisfied by any other task's owner and mode."""
+    (task,) = [t for t in yaml.safe_load(ROLE_TASKS.read_text()) if "zcrypto-flatten.sh.j2" in str(t)]
+    template = task["ansible.builtin.template"]
+    assert template["dest"] == "/usr/local/sbin/zcrypto-flatten"
+    assert template["owner"] == "root" and template["group"] == "root"
+    assert template["mode"] == "0750"
 
 
-def test_the_template_renders_under_strict_undefined_with_the_role_s_own_variables():
-    """A variable the engine play does not define aborts the render mid-converge, on the host that
-    holds the trade key."""
-    assert _render()
+def test_the_template_renders_with_nothing_left_undefined():
+    """A `{{ name }}` this file's own CONTEXT does not carry aborts the render. Whether the ROLE
+    carries it is `tests/test_infra_shell_templates_render.py`'s question, not this file's."""
+    assert "{{" not in _render()
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -3108,17 +3158,39 @@ In `infra/ansible/roles/engine/tasks/main.yml`, directly after the `install the 
     mode: "0750"
 ```
 
-- [ ] **Step 5: Run the tests and the linters**
+- [ ] **Step 5: Register the template in the repo-wide shell-template guard**
 
-Run: `uv run pytest tests/test_engine_flatten_wrapper.py tests/test_internal_terms_not_operator_visible.py tests/test_panel_regenerate.py -q`
+A new `roles/*/templates/*.sh.j2` turns two tests in `tests/test_infra_shell_templates_render.py` red the moment the file exists — the two-way completeness registry, and the render of every template through Ansible's own `Templar` under the role's `defaults/main.yml`. The engine role sets `engine_uid`/`engine_gid` by `set_fact` from `getent` and declares them in no defaults file, so that render aborts `AnsibleUndefinedVariable` until they are supplied. Both are one line each; neither is a reason to weaken the guard.
+
+Add to `REGISTERED`, in its existing alphabetical order — after `"zaccess-probe.sh.j2"`:
+
+```python
+    "zcrypto-flatten.sh.j2",
+```
+
+Add to `RUNTIME_FACTS`, beside the `ops_uid`/`ops_gid` pair it mirrors:
+
+```python
+    # The engine role reads these from getent at converge time and declares them in no defaults
+    # file, so the render has no other source for them.
+    "engine_uid": "998",
+    "engine_gid": "998",
+```
+
+Run: `uv run pytest tests/test_infra_shell_templates_render.py -q`
+Expected: PASS, with `test_shell_template_renders_to_valid_bash[zcrypto-flatten.sh.j2]` among the collected ids. This is the check that the template renders under the role's own variables; the wrapper suite's own render uses a hand-written context and structurally cannot see a variable the role fails to define.
+
+- [ ] **Step 6: Run the tests and the linters**
+
+Run: `uv run pytest tests/test_engine_flatten_wrapper.py tests/test_infra_shell_templates_render.py tests/test_internal_terms_not_operator_visible.py tests/test_panel_regenerate.py -q`
 Expected: PASS. `test_panel_regenerate.py::test_every_ansible_template_is_parseable_jinja` covers the new template; `test_internal_terms_not_operator_visible.py` covers its non-comment lines and the new ansible task name.
 
 Run: `uv run pre-commit run -a` and fix anything ansible-lint reports on the new task.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2 infra/ansible/roles/engine/tasks/main.yml tests/test_engine_flatten_wrapper.py
+git add infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2 infra/ansible/roles/engine/tasks/main.yml tests/test_engine_flatten_wrapper.py tests/test_infra_shell_templates_render.py
 git commit -m "feat(engine): the zcrypto-flatten host wrapper the engine role deploys"
 ```
 
@@ -3168,9 +3240,11 @@ The runbook edit below cannot move `test_most_read_only_diagnostics_are_autonomo
 
 - [ ] **Step 3: Write the runbook section**
 
-Append to `infra/runbooks/engine-procedures.md`:
+Append to `infra/runbooks/engine-procedures.md`. The leading rule is the separator this file already puts between `engine-probe-window` and `engine-tracking-band`; a third section appended without it reads as a continuation of the second:
 
 ````markdown
+______________________________________________________________________
+
 <a name="engine-flatten"></a>
 
 ## engine-flatten — PROCEDURE
@@ -3429,7 +3503,7 @@ Name the CLASS of commits the entry covers ("every commit on this branch"), neve
 - [ ] **Step 5: Run the gate and the reachable tests**
 
 Run: `uv run pre-commit run -a` to green, re-staging what the hooks rewrite.
-Run: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py -q`
+Run: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py tests/test_infra_shell_templates_render.py -q`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
