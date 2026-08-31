@@ -3831,7 +3831,7 @@ In `infra/runbooks/README.md`, in the `### [engine-procedures.md]` block, append
 Run: `uv run pytest tests/test_ops_daily.py tests/test_infra_alert_rules.py tests/test_code_prose_citations.py -q`
 Expected: PASS. `test_every_runbook_anchor_is_defined_in_exactly_one_file` covers the new anchor; the index row Step 4 adds is covered by `test_the_index_routes_to_every_section_and_only_to_real_ones`, whose `unrouted` assertion is what goes red on a section no index row routes to. Both live in `tests/test_infra_alert_rules.py`.
 
-Both new pins — `test_the_red_button_is_never_autonomous` and the corpus guard `test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous`, which the runbook section has just given something to catch — are green from birth and therefore unproven here. Their defect is constructed and watched to trip in the mutation-probe task: `mutate-probe.sh` refuses the dirty worktree this task leaves, so the probe cannot run before the commit below.
+Both new pins — `test_the_red_button_is_never_autonomous` and the corpus guard `test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous`, which the runbook section has just given something to catch — are green from birth and therefore unproven at this point. Construct the defect by hand before the commit (admit `zcrypto-flatten` as a `_READ_SHAPES` entry, run the two tests, see them name the real command strings, restore), then run their mutation probes **after** the commit below: `mutate-probe.sh` refuses the dirty worktree this task leaves, so a scored probe cannot run before it. The probe lines are in the mutation-probe task.
 
 - [ ] **Step 6: Commit**
 
@@ -4025,17 +4025,40 @@ infra/scripts/mutate-probe.sh --file tests/test_engine_flatten.py \
   --mutation 's/^        self._asks = \[_Level(ask)\]$/        self._asks = [_Level(ask)]; self.bids = self._bids; self.asks = self._asks/' \
   -- uv run pytest tests/test_engine_flatten.py::test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lacks -q
 
-# The unattended pass's classifier really refuses the red button -- proven here rather than in the
-# task that writes the runbook section, because `mutate-probe.sh` refuses the dirty tree that task
-# leaves. The `-k` filter must collect TWO tests, `test_the_red_button_is_never_autonomous` and
-# `test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous`; check with
-# `--collect-only` first, since a filter that deselects one of them scores the other's verdict.
+# The unattended pass's classifier really refuses the red button. Named tests, never a `-k` filter:
+# a KILLED verdict over a filter says SOME collected test bites, and three tests carry the button's
+# name today. Already run and KILLED in the runbook task, after its commit made the tree clean --
+# recorded here so the verdicts are copied from that run, not re-derived.
 # The control flips both of `classify_action`/`_classify_one`'s default-deny returns, so every
-# command classifies autonomous; the mutation admits the button as a read shape.
+# command classifies autonomous; each mutation admits one spelling of the button as a read shape.
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   --control 's/^    return Tier.PREPARED$/    return Tier.AUTONOMOUS/' \
   --mutation 's|^_READ_SHAPES = ($|_READ_SHAPES = (\n    _Shape(("zcrypto-flatten",), {"--execute": None}),|' \
-  -- uv run pytest tests/test_ops_daily.py -q -k "red_button or destructive_token"
+  -- uv run pytest tests/test_ops_daily.py::test_the_red_button_is_never_autonomous -q
+
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control 's/^    return Tier.PREPARED$/    return Tier.AUTONOMOUS/' \
+  --mutation 's|^_READ_SHAPES = ($|_READ_SHAPES = (\n    _Shape(("zcrypto-flatten",), {"--execute": None}),|' \
+  -- uv run pytest tests/test_ops_daily.py::test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous -q
+
+# Twice over the wrapping walk: the host-wrapper shape moves its `sudo`, absolute-path and `ssh`
+# rows, the in-container shape moves its `docker exec` and bare rows. Neither alone reaches all six.
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control 's/^    return Tier.PREPARED$/    return Tier.AUTONOMOUS/' \
+  --mutation 's|^_READ_SHAPES = ($|_READ_SHAPES = (\n    _Shape(("zcrypto-flatten",), {"--execute": None}),|' \
+  -- uv run pytest tests/test_ops_daily.py::test_no_wrapping_of_the_red_button_reaches_autonomous -q
+
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control 's/^    return Tier.PREPARED$/    return Tier.AUTONOMOUS/' \
+  --mutation 's|^_READ_SHAPES = ($|_READ_SHAPES = (\n    _Shape(("zcrypto", "engine", "flatten"), {"--execute": None, "--state-dir": _PATH}),|' \
+  -- uv run pytest tests/test_ops_daily.py::test_no_wrapping_of_the_red_button_reaches_autonomous -q
+
+# The READ half of each wrapping pair is really observed -- without it the walk's refusals would be
+# satisfied by a classifier that refuses everything. Breaking the `ssh` peel fails one row's read.
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control 's/^    return Tier.PREPARED$/    return Tier.AUTONOMOUS/' \
+  --mutation 's/tokens\[0\] == "ssh"/tokens[0] == "ssh_NEVER"/' \
+  -- uv run pytest tests/test_ops_daily.py::test_no_wrapping_of_the_red_button_reaches_autonomous -q
 
 # The image entrypoint override is really required, and really before the image.
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2 \
