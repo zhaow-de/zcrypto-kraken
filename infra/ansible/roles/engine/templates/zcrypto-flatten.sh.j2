@@ -1,0 +1,94 @@
+#!/bin/sh
+# Rendered by the `engine` Ansible role at /usr/local/sbin/zcrypto-flatten — do not hand-edit on
+# the host, it is overwritten on the next converge. Edit
+# infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2 instead.
+#
+# The emergency halt (spec 00106 D1). Order is load-bearing throughout:
+#   1. the kill file FIRST, so nothing re-opens what is about to be closed;
+#   2. the unit stopped, and PROVEN inactive — one key means one client, and a second live client
+#      fights the engine over nonces;
+#   3. the command, as a one-off container from the digest the engine itself runs.
+# `--entrypoint zcrypto` is load-bearing: the image's own ENTRYPOINT is the capture daemon's shell
+# script, and without the override `engine flatten` is appended to THAT — the container would start
+# capture on a host whose engine was just stopped with positions open. The rendered compose file
+# bypasses the same trap with its exec-form `entrypoint:`.
+# No ZCRYPTO_METRICS_PORT reaches this container (compose sets it, engine.env does not), so its
+# exporter never starts and cannot collide with the running engine's published port.
+set -eu
+
+UNIT=zcrypto-engine.service
+STATE_DIR="{{ engine_state_dir }}"
+KILL_FILE="$STATE_DIR/exec/kill"
+IMAGE="{{ engine_image }}@{{ engine_image_digest }}"
+OWNER="{{ engine_uid }}:{{ engine_gid }}"
+STOP_WAIT_SECONDS=60
+
+execute=0
+if [ "$#" -gt 1 ]; then
+  echo "usage: zcrypto-flatten [--execute]" >&2
+  exit 1
+fi
+case "${1:-}" in
+  "") ;;
+  --execute) execute=1 ;;
+  *)
+    echo "usage: zcrypto-flatten [--execute]" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$(id -u)" != 0 ]; then
+  echo "zcrypto-flatten: run it as root — sudo zcrypto-flatten" >&2
+  exit 1
+fi
+
+if [ "$execute" -eq 0 ]; then
+  echo "zcrypto-flatten: reading the account and printing the plan. Nothing is written and no order is sent."
+  echo "zcrypto-flatten: these reads share the trade key with the running engine, so one engine order or cancel may be rejected and left unresolved; the engine reconciles that at its next boundary."
+else
+  # exec/ is created lazily by the engine's own kill-file writer, and the role's state-directory
+  # task creates only the state dir, store/ and journal/ — so on a freshly converged or rebuilt host
+  # exec/ does not exist and the redirection below would die under `set -eu` with nothing latched,
+  # nothing stopped and no container started. 0750 is the role's own posture for these directories;
+  # without the chmod a root-created one lands at root's umask.
+  mkdir -p "$STATE_DIR/exec"
+  chown "$OWNER" "$STATE_DIR/exec"
+  chmod 0750 "$STATE_DIR/exec"
+  # The latch, before anything else. Nothing in the code base ever clears it: a person does.
+  printf '%s flatten\n' "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" > "$KILL_FILE"
+  # Owned by the service account, not by root: a root-owned file in the engine's own 0750 control
+  # directory would make the engine's later write of it fail.
+  chown "$OWNER" "$KILL_FILE"
+  chmod 0644 "$KILL_FILE"
+  echo "zcrypto-flatten: the halt is latched at $KILL_FILE. Nothing clears it automatically."
+
+  systemctl stop "$UNIT"
+  waited=0
+  while [ "$waited" -lt "$STOP_WAIT_SECONDS" ]; do
+    if ! systemctl is-active --quiet "$UNIT"; then
+      break
+    fi
+    waited=$((waited + 1))
+    sleep 1
+  done
+  if systemctl is-active --quiet "$UNIT"; then
+    echo "zcrypto-flatten: $UNIT is still running after ${STOP_WAIT_SECONDS}s — refusing to open a second client on the same key. The halt stays latched; stop the unit by hand and run this again." >&2
+    exit 1
+  fi
+  echo "zcrypto-flatten: $UNIT is stopped."
+fi
+
+set -- engine flatten --state-dir "$STATE_DIR"
+if [ "$execute" -eq 1 ]; then
+  set -- "$@" --execute
+fi
+
+# -it: the confirmation is read from the controlling terminal, never from stdin.
+exec docker run --rm -it --network host \
+  --user "$OWNER" \
+  --env-file /opt/zcrypto-engine/engine.env \
+  -v "$STATE_DIR:$STATE_DIR" \
+  -v /opt/zcrypto-engine/zcrypto.toml:/app/zcrypto.toml:ro \
+  --entrypoint zcrypto \
+  "$IMAGE" \
+  "$@"

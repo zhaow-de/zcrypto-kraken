@@ -42,6 +42,10 @@ RUNTIME_FACTS = {
     # The access role's ops-side probe reads ops vars that live in inventory, not in its own role.
     "ops_textfile_dir": "/var/lib/zcrypto-ops/textfile",
     "ops_data_dir": "/var/lib/zcrypto-ops",
+    # The engine role reads these from getent at converge time and declares them in no defaults
+    # file, so the render has no other source for them.
+    "engine_uid": "998",
+    "engine_gid": "998",
 }
 
 # Every roles/*/templates/*.sh.j2 must appear here. The completeness test below fails on any
@@ -57,6 +61,7 @@ REGISTERED = {
     "zaccess-agentboard-start.sh.j2",
     "zaccess-probe-ops.sh.j2",
     "zaccess-probe.sh.j2",
+    "zcrypto-flatten.sh.j2",
 }
 
 
