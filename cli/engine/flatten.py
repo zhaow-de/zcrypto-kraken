@@ -31,6 +31,8 @@ from cli.logging import get_logger
 logger = get_logger("engine.flatten")
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from cli.engine.instruments import BelowMinimum, SizedOrder
 
 # The account the exec client reports under -- `cli/engine/node.py`'s `_ACCOUNT_ID`, pinned equal
@@ -708,7 +710,7 @@ def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
 CONFIRM_PROMPT = f"Type {CONFIRM_WORD} to close every position and sell every non-EUR balance at market, anything else aborts: "
 
 
-def kill_file_path(state_dir):
+def kill_file_path(state_dir: Path) -> Path:
     """The engine's own control file, not a second spelling of it -- a kill file the engine does
     not read stops nothing."""
     from cli.engine.execgate import KILL_FILE, exec_dir
@@ -716,14 +718,20 @@ def kill_file_path(state_dir):
     return exec_dir(state_dir) / KILL_FILE
 
 
-def check_kill_file(state_dir) -> str:
+def check_kill_file(state_dir: Path) -> str:
     """Present or refuse. Without it, the engine's next start re-opens what this sweep closes; the
     host wrapper writes it before it stops the unit, so an absent one means the button was invoked
-    some other way."""
+    some other way.
+
+    `UnicodeDecodeError` is caught BESIDE `OSError` and is not a tidy-up to undo: it is a
+    `ValueError`, so bytes that are not UTF-8 -- anything but the wrapper's own ASCII line wrote
+    this file -- would otherwise travel straight past the refusal and hand the operator a traceback
+    where the exit-code contract promises a named exit-1 naming the file to go and fix.
+    """
     path = kill_file_path(state_dir)
     try:
         return path.read_text()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise FlattenRefused(
             f"the kill file {path} is absent or unreadable -- nothing was sent; place it and run this again"
         ) from exc
@@ -762,7 +770,7 @@ def matches_confirm(reply: str) -> bool:
     return reply.strip() == CONFIRM_WORD
 
 
-def check_venue(venue_reader, now):
+def check_venue(venue_reader, now) -> Any:
     """The public unsigned status endpoint the execution gate already uses, with its own 10 s
     timeout. It never raises, so a refusal here is a reading and not an exception."""
     status = venue_reader(now=now)

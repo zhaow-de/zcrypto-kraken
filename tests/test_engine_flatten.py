@@ -963,6 +963,16 @@ def test_a_present_kill_file_passes_and_its_text_is_returned_for_the_record(tmp_
     assert "flatten" in flatten.check_kill_file(tmp_path)
 
 
+def test_a_kill_file_that_is_not_utf_8_refuses_by_name_rather_than_crashing(tmp_path):
+    """Neither present nor absent is a crash. The kill file is the interlock the whole command
+    hangs on, and a read that raises past the refusal hands the operator a traceback where the
+    exit-code contract promises a named exit-1 refusal naming the file to go and fix."""
+    (_exec_dir(tmp_path) / "kill").write_bytes(b"\xff\xfe not utf-8")
+    with pytest.raises(flatten.FlattenRefused) as exc:
+        flatten.check_kill_file(tmp_path)
+    assert "unreadable" in str(exc.value)
+
+
 def test_the_kill_file_path_is_the_engine_s_own(tmp_path):
     """One control-file directory. A second spelling here is a kill file the engine never reads."""
     from cli.engine.execgate import KILL_FILE, exec_dir
@@ -984,10 +994,22 @@ def test_a_venue_that_is_not_online_aborts():
 
 @pytest.mark.parametrize(
     ("reply", "expected"),
-    [("FLATTEN", True), ("  FLATTEN  ", True), ("flatten", False), ("FLATTE", False), ("", False), ("y", False)],
+    [
+        ("FLATTEN", True),
+        ("  FLATTEN  ", True),
+        ("flatten", False),
+        ("FLATTE", False),
+        # The one negative that CONTAINS the word: every other one here passes under a substring
+        # match too, so without this the exact-vs-substring defect is invisible and `FLATTEN NOW`
+        # authorises the whole irreversible sweep.
+        ("FLATTEN NOW", False),
+        ("", False),
+        ("y", False),
+    ],
 )
 def test_only_the_exact_word_matches(reply, expected):
-    """Case-sensitive and exact: a red button that accepts `y` is a button pressed by accident."""
+    """Case-sensitive, exact, and not merely CONTAINED: a red button that accepts `y` is a button
+    pressed by accident, and one that accepts `FLATTEN NOW` is pressed by a typo."""
     assert flatten.matches_confirm(reply) is expected
 
 
@@ -1023,7 +1045,8 @@ def test_the_prompt_is_written_to_the_terminal_and_not_to_this_process_s_stdout(
     never sees when the wrapper has captured stdout to a log, and the button then waits at a blank
     screen for a word nobody knows to type. pytest's default fd-level capture has already taken
     this process's fd 1, so a prompt printed rather than written to `/dev/tty` reaches the capture
-    file and never the terminal drained below."""
+    file and never the terminal drained below. That is also this guard's limit: run under `-s` the
+    child's fd 1 IS the pty slave, and a prompt sent to stdout would reach the drain and pass."""
     out = tmp_path / "reply.txt"
     pid, fd = pty.fork()
     if pid == 0:
@@ -1069,17 +1092,12 @@ def test_the_terminal_check_answers_false_with_no_controlling_terminal(tmp_path)
     pid = os.fork()
     if pid == 0:
         try:
-            try:
-                os.setsid()  # a fresh session has no controlling terminal
-            except PermissionError:
-                # The child inherited a session it already leads, so it cannot start a fresh one and
-                # cannot shed the terminal. Said out loud: a parent reading no file at all could not
-                # tell that apart from a crash in the check under test.
-                out.write_text("SESSION-LEADER")
-            else:
-                from cli.engine import flatten as child_flatten
+            # Always succeeds here: a freshly forked child carries a new pid and its parent's group,
+            # so it is never the group leader `setsid` refuses. Nothing skips this assertion.
+            os.setsid()  # a fresh session has no controlling terminal
+            from cli.engine import flatten as child_flatten
 
-                out.write_text(str(child_flatten.terminal_available()))
+            out.write_text(str(child_flatten.terminal_available()))
         except BaseException as exc:  # noqa: BLE001 -- the child reports, it does not raise into pytest
             # Without this the parent reads a file that was never written: a FileNotFoundError at
             # `out.read_text()` instead of an assertion naming what went wrong inside the check.
@@ -1087,7 +1105,4 @@ def test_the_terminal_check_answers_false_with_no_controlling_terminal(tmp_path)
         finally:
             os._exit(0)
     os.waitpid(pid, 0)
-    answer = out.read_text()
-    if answer == "SESSION-LEADER":
-        pytest.skip("the test process already leads its session, so the child cannot start a new one")
-    assert answer == "False"
+    assert out.read_text() == "False"
