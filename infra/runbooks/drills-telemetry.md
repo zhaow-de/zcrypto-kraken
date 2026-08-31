@@ -81,6 +81,8 @@ Then read the recovery by value — `sudo docker ps --format '{{.Names}} {{.Stat
 
 ### Record
 
+**Ops half run 2026-08-31 — `pass`.** Held 2 h 00 m 36 s; all six of drill K's pages fired and nothing outside that set did. **The planes recover asymmetrically, which is this drill's finding**: logs replayed the window IN FULL — 8 of 8 lines, complete by per-unit comparison against the preceding 2 h, under `max_age = "48h"` — while metrics recovered NOTHING, 5 samples in 120 min and all in the first four. Nothing scraped leaves no buffer to replay, so a metrics dashboard across an Alloy outage shows a hole rather than a flat line. **No rule misfired on return**, validated against the `changes()`/`delta()`/`increase()` candidates with a control proving the window was visible; `zcrypto-fleet-daemon-restarted` stays quiet because a 2 h gap leaves only one sample in its `[15m]` window — a SHORT hold is what trips it, not a long one. Restored with `docker start`, this drill's own recipe rather than K's `restart`; clear by value 1 min 36 s later.
+
 Two entries, `C-ops` and `C-secondary`. Beyond the standard clauses each carries: what the restarted shipper recovered **per plane** (journal replay against the `max_age = 48h` ceiling; the metrics window absent), and which rules misfired on return — `delta()`/`increase()` reads are blind to a condition already present in a series' first sample after a gap, and a first-sample rule can page spuriously on the way back.
 
 The measured half — what a **restarted shipper** replays — belongs in [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark), labelled *measured*, beside the Cloud-dark half derived from `config.alloy` and labelled *derived*. Land it there in the same sitting.
