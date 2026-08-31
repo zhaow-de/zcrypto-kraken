@@ -70,7 +70,7 @@ The stop reaches nothing else. Each Alloy is its own compose project and its own
 - **Not** the Grafana watchdog check. It `curl`s Grafana from the host, not through Alloy, and keeps pinging success throughout.
 - The ops Loki rules stay quiet — their `[6h]`/`[26h]` windows still hold hours of prior lines.
 
-**Secondary half — two pages, not one**, for the same reason the ops half spells out: an unnamed page mid-hold reads as a real fault. `zcrypto-alloy-dark-capture-secondary` (critical, `metrics`) at ≈16 min, and **`zcrypto-capture-textfile-missing` (critical, `metrics`) about 10 min behind it** — `count(node_reboot_required{host=~"zcrypto|zcrypto-red"})` with evaluator `lt 2` and `for: 20m`, so it is a **value** page rather than a NoData one and fires whenever EITHER capture host stops publishing. Read its summary carefully before reacting: it names the attended-reboot net on **both** hosts, so on a secondary-only induction it is easily misread as a primary-side fault on the unbackfillable host. `zcrypto-alloy-dark-capture-secondary` (critical, `metrics`) at the same ≈16 min. `zcrypto-hcio-watchdog` must stay **quiet** — no check is fed by that host's Alloy.
+**Secondary half — two pages, not one**, for the same reason the ops half spells out: an unnamed page mid-hold reads as a real fault. `zcrypto-alloy-dark-capture-secondary` (critical, `metrics`) at ≈16 min, and **`zcrypto-capture-textfile-missing` (warning, `metrics`) about 10 min behind it** — `count(node_reboot_required{host=~"zcrypto|zcrypto-red"})` with evaluator `lt 2` and `for: 20m`, so it is a **value** page rather than a NoData one and fires whenever EITHER capture host stops publishing. Read its summary carefully before reacting: it names the attended-reboot net on **both** hosts, so on a secondary-only induction it is easily misread as a primary-side fault on the unbackfillable host. `zcrypto-hcio-watchdog` must stay **quiet** — no check is fed by that host's Alloy.
 
 ### Operator action
 
@@ -144,7 +144,7 @@ Route 1: `sudo systemctl start zcrypto-grafana-watchdog.timer`, then confirm the
 
 ### Record
 
-One entry per route — `C′-staleness` and `C′` for the `/fail` route — each with its own page bound, because the two numbers are what an operator uses to tell "the pinger died" from "Grafana died" while looking at neither.
+One entry per route, and **the staleness run already took the id `C′`** (2026-08-31) — so the `/fail` route writes **`C′-fail`**, never a second `C′`. The log is append-only and the heading test admits both spellings, so a duplicate id would stand. Each carries its own page bound, because the two numbers are what an operator uses to tell "the pinger died" from "Grafana died" while looking at neither.
 
 The page bound belongs in [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark), which is the procedure a responder opens for the duration of an outage: for the duration you have the dead-man domain, the daily pass's direct healthchecks read, `docker logs` on the hosts, and `exec-status` on the engine host.
 
