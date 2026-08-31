@@ -70,6 +70,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-venue-snapshot-stale`](engine.md#zcrypto-venue-snapshot-stale) — ALERT: no successful venue-truth snapshot has landed in over five hours.
 - [`engine-data-socket-idle`](engine.md#engine-data-socket-idle) — KNOWN LIMITATION: the engine's data socket is idle by design while disarmed; what its reconnect lines mean, why they exist only in `docker logs`, and how to stop the engine during a Kraken outage so its retries cannot cost the capture primary its reconnect budget.
 - [`zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) — ALERT: A **critical** Grafana alert (`Engine · cycles have stopped`): `time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}` above 16500 s (4h35m) for 5 minutes, **or the series is gone entirely** —…
+- [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) — ALERT: a non-zero position at last sight with the engine's scrape gone — exposure with nothing watching it. `zcrypto-engine-cycle-stale` pages on any darkness; this one is the half where money is out.
 - [`zcrypto-engine-cycle-failed`](engine.md#zcrypto-engine-cycle-failed) — ALERT: A **warning** Grafana alert (`Engine · the last cycle failed`): `zcrypto_engine_cycle_success{host="zcrypto"}` reads 0, with `for: 0s` — the outcome is already final the instant the gauge reads 0, so there…
 - [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) — ALERT: A **warning** Grafana alert (`Engine · ERROR logs`) on the `logs` receiver: at least one ERROR or CRITICAL line from the engine on the capture primary in the last 15 minutes.
 - [`zcrypto-engine-log-dead`](engine.md#zcrypto-engine-log-dead) — ALERT: A **critical** Grafana alert (`Engine · log pipeline dead`) on the `logs` receiver: Loki holds **not one line of any level** from `{host="zcrypto", container="engine"}` in the last 6 hours.
@@ -110,6 +111,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-capture-log-dead-primary`](observability.md#zcrypto-capture-log-dead-primary) and [`zcrypto-capture-log-dead-secondary`](observability.md#zcrypto-capture-log-dead-secondary) — ALERT: A **critical** Grafana alert, one rule per capture host — `Capture · log pipeline dead — Capture primary` (uid `zcrypto-capture-log-dead-primary`, host `zcrypto`) or `— Capture secondary` (uid…
 - [`zcrypto-ops-log-pipeline-dead`](observability.md#zcrypto-ops-log-pipeline-dead) and [`zcrypto-ops-poller-log-dead`](observability.md#zcrypto-ops-poller-log-dead) and [`zcrypto-ops-unit-parse-dead`](observability.md#zcrypto-ops-unit-parse-dead) and [`zcrypto-ops-journal-transport-dead`](observability.md#zcrypto-ops-journal-transport-dead) — ALERT: One of four **critical** Grafana alerts on the ops node's log plane.
 - [`zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog) — ALERT: A **critical** Grafana alert, `Fleet · healthchecks.io watchdog (check down, or hc.io dark)`: `max(hc_checks_down_total) or on() vector(999)` above 0, held 5 minutes.
+- [`grafana-cloud-dark`](observability.md#grafana-cloud-dark) — PROCEDURE: Grafana Cloud itself is unreadable, so every verify-by-value the rest of this file ends in is gone with it. No Grafana rule can page for this; which of the healthchecks.io watchdog's two routes you got is the first fact of the incident.
 
 ### [`ops-node.md`](ops-node.md) — the ops node's timers and units
 
@@ -134,3 +136,30 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-gate-pull-lag`](gate.md#zcrypto-gate-pull-lag) — ALERT: A **critical** Grafana alert, `Gate · journal pull lag high`: `zcrypto_gate_journal_pull_lag_seconds > 21600` (6 h).
 - [`zcrypto-gate-exporter-stale`](gate.md#zcrypto-gate-exporter-stale) — ALERT: A **critical** Grafana alert, `Gate · exporter stale`: `time() - zcrypto_gate_export_timestamp_seconds > 7200` (2 h).
 - [`zcrypto-gate-cache-reverify-stalled`](gate.md#zcrypto-gate-cache-reverify-stalled) — ALERT: A **critical** Grafana alert, `Gate · cache re-verification stalled`: `zcrypto_gate_cache_oldest_verification_age_seconds > 259200` (3 days), held for 15 m.
+
+### [`drills-telemetry.md`](drills-telemetry.md) — induce a telemetry fault on purpose, measure what fires
+
+Nothing fires these; you open one deliberately, in an attended window, and no money moves. Read that file's standing rules before any of the sections below.
+
+- [`drill-c`](drills-telemetry.md#drill-c) — PROCEDURE: the ingest plane goes dark, held long enough to measure what a restarted shipper recovers per plane — logs replay from the positions file under a ceiling, the metrics window is simply absent.
+- [`drill-c-prime`](drills-telemetry.md#drill-c-prime) — PROCEDURE: Grafana Cloud dark — the page time on each of the two routes the ops-side watchdog can fail by, and the proof that the dead-man domain still answers when the Grafana half is gone.
+- [`drill-i`](drills-telemetry.md#drill-i) — PROCEDURE: a disk watermark breach through a withheld ping to a page, end to end, on the ops node and on no capture host.
+- [`drill-j-prime`](drills-telemetry.md#drill-j-prime) — PROCEDURE: the `/fail` route on a dead-man — that an explicit fail ping leaves a process, moves the check and reaches a phone. It proves the route, not the caller.
+- [`drill-k`](drills-telemetry.md#drill-k) — PROCEDURE: Alloy killed and timed — the Alloy-dark bound measured rather than computed, and the restart recipe verified by value. Same instrument as drill C, short hold.
+- [`drill-o`](drills-telemetry.md#drill-o) — PROCEDURE: timer death — whether the one ops timer with no Grafana staleness rule is caught by its dead-man alone, and if it is not, that a rule is owed.
+- [`drill-p-plus-r`](drills-telemetry.md#drill-p-plus-r) — PROCEDURE: the secondary goes away — the one log class no Alloy pipeline sees, a compose service that is never created, whose liveness rests entirely on a dead-man.
+- [`drill-q`](drills-telemetry.md#drill-q) — PROCEDURE: does the phone actually buzz — a page reaching a **phone**, on each of the three receivers independently. Every other section here proves a rule fired; this one proves someone finds out.
+- [`proven-tier-reverification`](drills-telemetry.md#proven-tier-reverification) — PROCEDURE: whether a scenario already proven — by a drill or by a real incident — needs another run. Re-verify only when the code path it proved has changed; the tier's proofs and the scenarios deliberately dropped are the tables there.
+
+### [`drills-order-path.md`](drills-order-path.md) — induce the fault where money is at stake
+
+Every section below runs inside an attended probe window ([`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window)) and exposes real money. Read that file's standing rules first — its A and B are not the window's own A and B.
+
+- [`drill-a1`](drills-order-path.md#drill-a1) — PROCEDURE: the primary reboots with an order resting and no fill — the capture gap healed from the secondary, the reduce-only hold latched, the resting opener cancelled by the startup adopt pass.
+- [`drill-a2`](drills-order-path.md#drill-a2) — PROCEDURE: the primary reboots and a fill lands while it is down — a fill the engine was not present to hear, reconciled at startup into a **real position** the operator is left holding.
+- [`drill-b`](drills-order-path.md#drill-b) — PROCEDURE: the red button — decision-to-flat in wall-clock minutes. Nothing in this system has ever produced that number, and nothing can be promised about a bad afternoon without it.
+- [`drill-d`](drills-order-path.md#drill-d) — PROCEDURE: the engine goes dark with a position open — that the page nothing else covers reaches a phone, and how long an operator stays unaware of an unwatched position.
+- [`drill-e`](drills-order-path.md#drill-e) — PROCEDURE: the kill switch — a hand-placed kill file revoking a resting order inside the executor's tick, and the alert half reaching Slack inside its bound.
+- [`drill-e-prime`](drills-order-path.md#drill-e-prime) — PROCEDURE: E′, the phone-reachable halt — the same placement made from a phone over the fleet's access path, timed from the decision. Run inside E; an access path that refuses is this drill's finding, not a failed setup.
+- [`drill-f2`](drills-order-path.md#drill-f2) — PROCEDURE: the engine loses its socket with an order resting — one cancel attempt, then an `ambiguous` intent, and an order that may still be resting at Kraken with nothing in the process able to reach it.
+- [`drill-g`](drills-order-path.md#drill-g) — PROCEDURE: restart with an order resting — what the venue does with a GTC opener across an engine stop, the reduce-only hold latching, and the adopt pass attaching every matched row before it cancels.
