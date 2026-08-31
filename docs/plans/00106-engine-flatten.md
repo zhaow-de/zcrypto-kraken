@@ -3843,6 +3843,42 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
   --mutation 's|^            logger.error("%s: no reference price.*$|            raise|' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg -q
 
+# The margin leg fixes the side a shared pair is priced from. The mutation leaves the read COUNT at
+# one, so only the price assertion can bite.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def build_plan/def build_plan_DISABLED/' \
+  --mutation 's/^        wanted.setdefault(leg.symbol, leg.side)$/        wanted[leg.symbol] = leg.side/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_a_margin_and_a_spot_leg_on_one_pair_share_one_book_read_taken_on_the_margin_side -q
+
+# The same test's other half, isolated: one book read per PAIR, never per leg. Doubling the loop
+# leaves every price correct, so only the count assertion can bite. Pre-write reads are where a
+# rate limit costs the cancel.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def build_plan/def build_plan_DISABLED/' \
+  --mutation 's/^    for symbol, side in wanted.items():$/    for symbol, side in list(wanted.items()) * 2:/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_a_margin_and_a_spot_leg_on_one_pair_share_one_book_read_taken_on_the_margin_side -q
+
+# A leg is sized against its OWN pair's constraints. Mis-keyed, 0.03 BTC meets BTC/EUR's 0.1 tick,
+# floors to nothing and degrades to unpriced -- safe, and silently estimate-less.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def build_plan/def build_plan_DISABLED/' \
+  --mutation 's/^        spot=\[size_leg(leg, constraints\[leg.symbol\], prices.get(leg.symbol)) for leg in spot_raw\],$/        spot=[size_leg(leg, constraints[sorted(constraints)[0]], prices.get(leg.symbol)) for leg in spot_raw],/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_each_leg_is_sized_with_the_price_and_the_constraints_of_its_own_pair -q
+
+# `read_snapshot` composes three aborting reads and softens none of them: a snapshot carrying
+# `positions=[]` because the venue answered `None` reaches exit 0 over open leverage.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def read_snapshot/def read_snapshot_DISABLED/' \
+  --mutation 's/^        raise FlattenUnreachable("margin positions could not be read: the venue answered nothing")$/        rows = []/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_a_snapshot_read_that_answers_nothing_aborts_instead_of_becoming_an_empty_snapshot -q
+
+# An empty answer is a real one, and the render says so in words -- a plan section that printed
+# nothing reads the same as one that failed to print.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def render_plan/def render_plan_DISABLED/' \
+  --mutation 's/^    if not plan.margin:$/    if False:/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_a_venue_that_answers_empty_is_a_plan_with_no_legs_that_says_so_in_words -q
+
 # A top-of-book price of zero is refused rather than carried. Carried, it makes every notional read
 # as nothing: every basket leg listed as dust, `judge_final` agreeing, exit 0 over a full spot book.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
