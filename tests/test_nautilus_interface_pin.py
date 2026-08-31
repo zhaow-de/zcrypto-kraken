@@ -44,6 +44,8 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.model", "LiquiditySide"),
     ("nautilus_trader.model", "OrderSide"),
     ("nautilus_trader.model", "OrderStatus"),
+    ("nautilus_trader.model", "OrderType"),
+    ("nautilus_trader.model", "Quantity"),
     ("nautilus_trader.model", "StrategyId"),
     ("nautilus_trader.model", "TimeInForce"),
     ("nautilus_trader.model", "TraderId"),
