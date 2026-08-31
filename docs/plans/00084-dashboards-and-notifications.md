@@ -601,7 +601,7 @@ git commit -m "feat(grafana): point every alert rule at the panel that shows it"
 
 **Files:**
 - Create: `tests/test_dashboards_cover_metrics.py`
-- Reference (OPTIONAL, may be absent): `/tmp/claude-1000/-home-zhaow-Projects-zcrypto-kraken/9155f24a-9e4a-4274-8653-7324e91389ec/scratchpad/test_dashboards_cover_metrics.py` — a prior draft in a session scratchpad that does **not** survive a reboot. If it is gone, build from spec D8 alone; nothing here depends on it. **Read it, do not paste it**: it was written against the pre-review design (old uids, `zcrypto-main`, no `Logs` rate lane) and its baseline assumptions have changed. Its PromQL family-extraction approach and its exclusion-set structure are the parts worth reusing.
+- Reference: none needed. A prior draft existed in a session scratchpad, written against the pre-review design (old uids, `zcrypto-main`, no `Logs` rate lane); it was never durable and is gone. The task was built from spec D8, as this line always said it could be — **`tests/test_dashboards_cover_metrics.py` is committed and is the artifact**, so a later reader opens that rather than looking for the draft.
 
 - [ ] **Step 1: Write the three assertions**
 
