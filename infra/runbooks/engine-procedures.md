@@ -440,7 +440,7 @@ Real money moves, at whatever price the market gives. This closes the **whole ac
 sudo zcrypto-flatten
 ```
 
-It prints every resting order it would cancel, every position it would close with its side and quantity, every balance it would sell with an estimate at the taker rate, every balance below the venue's minimum that it will list and not send, and every balance no EUR or BTC pair can carry. It exits 0 and changes nothing. Its reads run beside the still-running engine and share the trade key with it, so one engine order or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary.
+It prints every resting order it would cancel, every position it would close with its side and quantity, every balance it would sell with an estimate at the taker rate, every balance below the venue's minimum that it will list and not send, and every balance no EUR or BTC pair can carry. It exits 0 and changes nothing — 3 if the venue could not be read, 1 if the plan could not be printed, both of them having changed nothing either. Its reads run beside the still-running engine and share the trade key with it, so one engine order or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary.
 
 2. **Press it.**
 
@@ -455,7 +455,7 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 | code | what it means | what to do |
 | -- | -- | -- |
 | **0** | the final read shows no resting order, no open position and nothing sellable left | go to step 4 |
-| **1** | refused with nothing sent — no kill file, no terminal, the word did not match, or no credentials in the container | nothing was sent; fix what it named and run it again |
+| **1** | refused with nothing sent — no kill file, no terminal, the word did not match, the plan could not be shown, or no credentials in the container | nothing was sent; fix what it named and run it again |
 | **2** | something is still open, or the account-wide cancel failed, or a read after the cancel failed | go to step 5 |
 | **3** | the venue could not be reached or read **before anything was sent** | nothing was sent; the account is as it was |
 

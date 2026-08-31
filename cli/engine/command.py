@@ -1933,7 +1933,7 @@ def flatten(
 ) -> None:
     """Close every open position and sell every non-EUR balance at market, account-wide.
 
-    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, 1 refused before the venue was touched, 2 something is still open, 3 the venue could not be read before anything was sent."""
+    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, 1 refused with nothing sent, 2 something is still open, 3 the venue could not be read before anything was sent."""
     # Imported HERE, not at module scope: `cli.engine.flatten` pulls nautilus (~1 s) and
     # `zcrypto --help` must never pay it -- the same reason `cli.engine.node` is lazy above.
     from cli.engine.flatten import run_flatten

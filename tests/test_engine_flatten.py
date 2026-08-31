@@ -1685,6 +1685,13 @@ def test_every_refusal_exits_one_with_no_request_and_no_write(tmp_path, setup, r
     # Every exit-1 refusal `run_flatten` itself makes leaves the record: the refusal and its reason
     # are what the artifact exists for, and an unrecorded refusal is one nobody can reconstruct.
     assert len(list(_exec_dir(tmp_path).glob("flatten-*.json"))) == 1
+    # And it records the confirm truthfully. Every journal on disk is an execute-mode one, where
+    # the word is always required, so the two gates that refuse BEFORE the prompt must say the
+    # prompt was not reached: a record asserting it was not required is one that denies the gate
+    # it just enforced.
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    expected = "mismatch" if setup == "confirm" else "not-reached"
+    assert json.loads(path.read_text())["confirm"] == expected
 
 
 @pytest.mark.parametrize("execute", [True, False])
@@ -2136,8 +2143,9 @@ def test_a_terminal_that_dies_between_the_check_and_the_prompt_refuses_and_journ
     assert "cancel_all_orders" not in names(client)
     (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
     doc = json.loads(path.read_text())
-    # Never "not-required", which is what a dry run records: the word was asked for and could not
-    # be read, and a record that cannot say which of those happened is one nobody can act on.
+    # Never "not-reached", which is what the two gates ahead of the prompt leave: the word was asked
+    # for and could not be read, and a record that cannot say which of those happened is one nobody
+    # can act on.
     assert doc["confirm"] == "unreadable" and doc["exit_code"] == 1
 
 
@@ -2152,6 +2160,22 @@ def test_the_subcommand_is_registered_and_its_help_says_what_pressing_it_does():
     assert "--execute" in result.output
     assert "--state-dir" in result.output
     assert "market" in result.output
+
+
+def test_the_help_gives_exit_one_the_same_words_the_module_contract_does():
+    """`--help` is the only documentation inside the container, and three exit-1 paths -- the
+    confirm mismatch, the unreadable confirm and the display failure -- follow the plan's signed
+    account reads. Help promising the venue was untouched there sends a mid-incident operator
+    hunting a second client on the one live trade key.
+
+    Pinned against `run_flatten`'s own docstring, so the two surfaces cannot drift apart again.
+    Whitespace is normalised first: Typer wraps the paragraph to the terminal width, and the clause
+    lands split across lines at every width this runs at."""
+    result = _runner.invoke(app, ["engine", "flatten", "--help"])
+    assert result.exit_code == 0
+    clause = "1 refused with nothing sent"
+    assert clause in " ".join(flatten.run_flatten.__doc__.split())
+    assert clause in " ".join(result.output.split())
 
 
 def test_the_state_dir_is_required_so_the_button_never_depends_on_a_config_mount():

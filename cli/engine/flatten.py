@@ -1193,7 +1193,11 @@ async def run_flatten(
         "started_at": stamp.isoformat(),
         "state_dir": str(state_dir),
         "api_key_masked": getattr(client, "api_key_masked", None),
-        "confirm": "not-required",
+        # Every journal that exists is an execute-mode one -- a dry run writes none (`_dry_exit`) --
+        # and there the word is always required, so the pre-prompt value states that the prompt was
+        # not reached, never that it was not needed. A refusal artifact denying the gate it just
+        # enforced is a question post-incident forensics has to answer before it can start.
+        "confirm": "not-reached",
         "kill_file": None,
         "requests": rec.entries,
     }
