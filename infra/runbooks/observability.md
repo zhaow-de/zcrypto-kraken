@@ -383,7 +383,7 @@ Grafana Cloud itself is unreadable — the boards, the alert rules, and `infra/s
 
 Those two check settings were read from the healthchecks.io management API on 2026-08-31. **Re-read them** — they are settings on a third party's dashboard and this file does not change when one does.
 
-**Time from the outage to the phone**, measured by [`drills-telemetry.md#drill-c-prime`](drills-telemetry.md#drill-c-prime): PENDING-DRILL-CPRIME-PAGE-BOUND
+**Time from the outage to the phone**, measured by [`drills-telemetry.md#drill-c-prime`](drills-telemetry.md#drill-c-prime) on 2026-08-31 — **and only for one of the two routes**. **Staleness route (the prober dies): 18 min 52 s** from the induction to the Grafana page — the `zcrypto-grafana-watchdog` check paged natively at its own `timeout 600 + grace 600` from the last clean ping, and `zcrypto-hcio-watchdog` followed at its `for: 5m`. Delivery to Slack adds a further 31–40 s, measured across seven drills; **the device leg is unmeasured and is drill Q's**. **`/fail` route (Grafana itself unreachable): unmeasured.** Inducing it is a converge, so it stays attended and no number here covers it — read the DERIVED paragraph above for what that case loses, and do not read the staleness figure as bounding it.
 
 ### What it means
 
