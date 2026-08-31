@@ -1293,15 +1293,21 @@ def test_a_failing_cancel_does_not_stop_the_closes():
 
 def test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order():
     """The first-write boundary is the cancel, not the first order: after it, a read that cannot be
-    parsed leaves the account possibly changed, so nothing further is sent and nothing reads flat."""
+    parsed leaves the account possibly changed, so nothing further is sent and nothing reads flat.
+
+    The ADA balance is what makes `submitted == []` a claim rather than a restatement of the
+    fixture. Without something else to sell it is empty under the defect too -- and the defect here
+    is real and adjacent: `_read_for_the_record` widened to cover THIS read sizes the closers off an
+    empty list, sends none of them, and sells the spot book anyway. That mutant passed this test
+    until the balance was added."""
     broken = _Position("BTC/EUR", "LONG", 0.5)
     del broken.quantity
     client = _sweep_client(
         orders=[[]],
         positions=[[_Position("BTC/EUR", "LONG", 0.5)], [broken]],
-        balances=[[]],
-        symbols=("BTC/EUR",),
-        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+        balances=[[_Balance("ADA", 1200.0)]],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
     )
     rec, listing, plan = _plan_of(client)
     result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
