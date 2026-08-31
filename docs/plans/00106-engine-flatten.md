@@ -3813,7 +3813,7 @@ Expected: empty.
 # The notional floor is really applied -- not silently zeroed.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
   --control 's/^def classify_balance/def classify_balance_DISABLED/' \
-  --mutation 's/applicable = costmin if (costmin is not None and reference_price is not None) else 0.0/applicable = 0.0/' \
+  --mutation 's/applicable = costmin if (costmin is not None and price is not None) else 0.0/applicable = 0.0/' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_balance_over_ordermin_but_under_costmin_is_still_dust -q
 
 # A margin row left in the final snapshot really is a residual.
@@ -3873,7 +3873,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
 # The margin read really is scoped to MARGIN, so a spot holding cannot surface as a position row.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
   --control 's/^def read_positions/def read_positions_DISABLED/' \
-  --mutation 's/account_type=AccountType.MARGIN,/account_type=AccountType.CASH,/' \
+  --mutation 's/"account_type": AccountType.MARGIN,/"account_type": AccountType.CASH,/' \
   -- uv run pytest tests/test_engine_flatten.py::test_the_position_read_is_scoped_to_margin_with_spot_reports_off -q
 
 # A margin quantity that floors to nothing is named, not sent as a zero-quantity order.
@@ -3881,6 +3881,21 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
   --control 's/^def size_leg/def size_leg_DISABLED/' \
   --mutation 's/if qty <= 0.0:/if qty < 0.0:/' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_margin_quantity_that_floors_to_zero_is_unclosable_here_and_named_as_such -q
+
+# The printed estimate is the FLOORED leg's notional. Printed off the raw balance it reads above
+# the very costmin the refusal beside it names. The lot step must stay COARSE in that test: at 1e-8
+# the two products differ by less than `pytest.approx`'s default tolerance and the probe SURVIVES.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def size_leg/def size_leg_DISABLED/' \
+  --mutation 's/estimate = qty \* price if price is not None else None/estimate = leg.quantity * price if price is not None else None/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_the_estimate_is_the_floored_quantity_s_notional_never_the_balance_s -q
+
+# A price the tick floor erases degrades to unpriced -- the direction that SELLS -- instead of
+# zeroing every notional and reading a live balance as dust with `judge_final` agreeing.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def classify_balance/def classify_balance_DISABLED/' \
+  --mutation 's/^    return price if price > 0.0 else None$/    return price/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_a_price_the_tick_floor_leaves_at_nothing_degrades_to_unpriced_and_is_sold -q
 
 # A rejected sub-ordermin margin closer really reaches the journal labelled, not as a bare EOrder
 # string -- the label is what routes the operator to Kraken's settle-position action.
