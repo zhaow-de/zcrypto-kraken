@@ -65,6 +65,7 @@ Every task's requirements implicitly include this section. Read all of it — ta
   - `submit_order(account_id, instrument_id, client_order_id, order_side, order_type, quantity, time_in_force, expire_time=None, price=None, trigger_price=None, trigger_type=None, trailing_offset=None, limit_offset=None, reduce_only=False, post_only=False, quote_quantity=False, display_qty=None, leverage=None, account_type=AccountType.CASH)`
   - `cancel_all_orders()`
 - `nautilus_trader.model.PositionStatusReport` exposes `.instrument_id`, `.position_side`, `.quantity`, `.is_flat`, `.is_long`, `.is_short`.
+- `str(AccountType.MARGIN)` is `"MARGIN"` and `str(AccountType.CASH)` is `"CASH"` — the bare member name with no `AccountType.` prefix, so a journalled parameter can be derived from the enum the call passes instead of spelled a second time beside it.
 - `nautilus_trader.model.AccountState` exposes `.balances -> list[AccountBalance]`; `AccountBalance` exposes `.currency -> Currency`, `.free -> Money`, `.total`, `.locked`. `Currency` has `.code`.
 - Instruments returned by `request_instruments()` are nautilus `Instrument`s carrying `.id -> InstrumentId`, `.min_quantity`, `.size_increment`, `.price_increment` (each `Quantity`/`Price`, `float()`-able, or `None`), and `.min_notional`, which this adapter **always** reads back `None` (`cli/engine/venuestate.py`'s module docstring; that is why `COSTMIN` is committed).
 - Taker fee, tier 1: **0.80 %** (`docs/reference/kraken-fee-schedule.md`, "Spot maker/taker — new schedule (effective 2026-07-09)").
@@ -77,12 +78,12 @@ Every task's requirements implicitly include this section. Read all of it — ta
 
 Every one of these is binding on the implementer. Do not re-litigate them mid-task; if one looks wrong, report it rather than silently deviating.
 
-1. **Required-field validation is per-leg, never over the whole listing.** `request_instruments()` returns ~1600 instruments. Validating all of them would let one unrelated listing row abort the button. The listing as a whole is required only to be a non-empty iterable; `min_quantity`/`size_increment`/`price_increment` are required **only on the pairs a leg actually routes to**, checked at lookup time.
+1. **Required-field validation is per-leg, never over the whole listing.** `request_instruments()` returns ~1600 instruments. Validating all of them would let one unrelated listing row abort the button. The listing as a whole is required only to be a non-empty iterable; `min_quantity`/`size_increment`/`price_increment` are required **only on the pairs a leg actually routes to**, checked at lookup time. A pair the listing does not carry **at all** is not a shape failure and never an abort: `margin_legs` routes such a position to the plan's `unclosable` list exactly as `spot_legs` routes a pairless balance to `unsellable`, nothing is sized or sent for it, the rest of the sweep runs, and `judge_final` reads it back as a `pair_not_listed` residual (spec D4).
 1. **Book prices are read only before the first write, never after.** The snapshot reads `request_book_snapshot(depth=1)` for every pair a snapshot leg routes to, **plus `BTC/EUR` whenever any SPOT leg routes to a `/BTC` pair** — the deterministic pass-two case, and the only one that is deterministic: a margin leg on a `/BTC` pair leaves its proceeds in the pass-one balance read, where they are priced by nothing and sized like any other late-surfacing balance. A leg that appears only in a later pass and has no snapshot reference price is sized on `ordermin`/`lot_step` alone, sent, and journaled `no_reference_price`; its `costmin` floor is then not applicable and the final snapshot judges it on `ordermin` alone. No post-write book read ever happens.
 1. **One predicate serves both the dust classification and the final-snapshot judgement** (`classify_balance`). This makes it structurally impossible for the sweep to skip a balance as dust and then report the same balance as a residual.
 1. **Asset codes are resolved against the listing, never by string surgery alone.** A balance currency code is mapped to a base by trying, in order: the code itself; the explicit alias table `{"XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE"}` (the adapter's own `normalize_spot_symbol` renames, recorded in `cli/engine/instruments.py`'s docstring); the code with a single leading `X` or `Z` stripped — accepting the first that is a base the listing actually lists. A code that resolves to no listed base is treated exactly as an asset with neither pair: journaled `no_eur_or_btc_pair` with the unresolved code in a `note`, and read as a residual (exit 2). It is never silently ignored.
 1. **No settle wait.** The final snapshot is taken immediately after the last order. A fill that has not yet settled shows as a residual and the run exits 2 — the safe direction. The runbook tells the operator that an exit 2 whose journal shows every leg answered `ok` may be a settle race, and that the resolution is to run it again.
-1. **`--execute` always writes a journal, including on every exit-1 refusal** — the refusal and its reason are the record. **The default dry run writes none**: it prints and stops, so an accidental invocation leaves no artifact.
+1. **`--execute` writes a journal on every exit-1 refusal `run_flatten` itself makes** — the absent kill file, the missing terminal, the confirm that did not match: the refusal and its reason are the record. The one exit-1 refusal that writes none is the credentials refusal, which `cli/engine/command.py` raises through `_abort` before `run_flatten` is called and before a client exists — there is no run to record, and the refusal names the variables in the log instead. **The default dry run writes none**: it prints and stops, so an accidental invocation leaves no artifact.
 1. **The journal filename uses ISO-8601 basic format**: `flatten-<YYYYMMDD>T<HHMMSS>Z.json`. Shell-safe with no quoting, which matters at 03:00. The extended-format timestamp lives in the body. The writer opens with mode `"x"` and appends `-2`, `-3`, … on collision, so a second run in the same second cannot destroy the first run's incident record.
 1. **A journal that cannot be written never changes the exit code.** It is logged at CRITICAL and the payload is printed to stdout instead. The exit code describes the account, not our disk.
 1. **The controlling-terminal check runs immediately after the kill-file gate, before any venue read** (converge.sh's order). Refusing early costs nothing; the typed word is still read at the confirm point.
@@ -95,7 +96,7 @@ Every one of these is binding on the implementer. Do not re-litigate them mid-ta
 1. **The owed live read-only dry-run is registered in the topic only**, never in `docs/reference/adapter-verification/<version>.md`'s "Owed checks not discharged" section. `infra/runbooks/engine-procedures.md`'s `engine-probe-window` step 3 refuses to **arm** on an open item there, so putting a flatten check in that section would block arming on something unrelated to arming.
 1. **`_VENUE_MUTATING_NAMES` gains `.cancel_all_orders`** alongside allowlisting `flatten.py`. The guard's own docstring says a second module learning to cancel is the same escape; account-wide cancel is the most destructive cancel there is and belongs on the list it protects.
 1. **`"zcrypto-flatten"` joins `_DESTRUCTIVE` in `tests/test_ops_daily.py`**, so the unattended daily pass's classifier is asserted never to call the red button autonomous.
-1. **A venue rejection carries the venue's own words, and the only label it can gain is one this code had already earned before sending.** Four reason labels exist and no more: `dust_below_venue_minimum`, `unclosable_below_minimum`, `no_eur_or_btc_pair`, `no_reference_price` — each one a decision *this code* made before sending. What the venue answers is journaled verbatim as the leg's `error`; the spec's D3 says so, and inferring a label from a rejection message would pin the journal to message text nothing here has measured. The one label a rejection attaches is `unclosable_below_minimum`, and only on a margin leg whose sized quantity this code had already read as below the pair's `ordermin` (spec D4): it is the only thing that routes an operator to Kraken's own settle-position, which an unlabelled `EOrder:` string never does. The rejection text is never read to decide it — so the venue's verbatim words stay beside the label, and the runbook makes reading them the operator's first step, because a refusal for a passing reason wears the same label as a refusal about the size.
+1. **A venue rejection carries the venue's own words, and the only label it can gain is one this code had already earned before sending.** Five reason labels exist and no more: `dust_below_venue_minimum`, `unclosable_below_minimum`, `no_eur_or_btc_pair`, `no_reference_price`, `pair_not_listed` — each one a decision *this code* made before sending. What the venue answers is journaled verbatim as the leg's `error`; the spec's D3 says so, and inferring a label from a rejection message would pin the journal to message text nothing here has measured. The one label a rejection attaches is `unclosable_below_minimum`, and only on a margin leg whose sized quantity this code had already read as below the pair's `ordermin` (spec D4): it is the only thing that routes an operator to Kraken's own settle-position, which an unlabelled `EOrder:` string never does. The rejection text is never read to decide it — so the venue's verbatim words stay beside the label, and the runbook makes reading them the operator's first step, because a refusal for a passing reason wears the same label as a refusal about the size.
 
 ______________________________________________________________________
 
@@ -618,9 +619,12 @@ def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
 
 
 def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
+    # Every recorded parameter is DERIVED from what the call below passes, never spelled a second
+    # time beside it: a hand-written literal is a journal that can read MARGIN while CASH went out,
+    # and the journal is what an operator reads mid-incident. Same in `read_balances`.
     params = {
         "account_id": ACCOUNT_ID,
-        "account_type": "MARGIN",
+        "account_type": str(AccountType.MARGIN),
         "use_spot_position_reports": False,
         "quote_currency": QUOTE_CURRENCY,
     }
@@ -652,7 +656,7 @@ def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
 
 
 def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
-    params = {"account_id": ACCOUNT_ID, "account_type": "CASH"}
+    params = {"account_id": ACCOUNT_ID, "account_type": str(AccountType.CASH)}
     try:
         state = rec.call(
             "request_account_state",
@@ -696,7 +700,12 @@ def read_listing(client: Any, rec: Recorder) -> dict[str, Any]:
 
 def constraints_for(symbol: str, listing: dict[str, Any]) -> PairConstraints:
     """The three constraints a sized order needs, required on THIS pair only. Validating the whole
-    ~1600-row listing would let one unrelated row abort the button."""
+    ~1600-row listing would let one unrelated row abort the button.
+
+    Reaching the absent-row raise below means a caller handed over a leg it should have routed:
+    `margin_legs` and `spot_legs` both hold back a pairless one, precisely so that one row cannot
+    abort a sweep that has not yet cancelled, closed or sold anything.
+    """
     row = listing.get(symbol)
     if row is None:
         raise FlattenUnreachable(f"{symbol} is not in the venue's listing")
@@ -780,7 +789,7 @@ ______________________________________________________________________
   - `listed_bases(listing: dict[str, Any]) -> frozenset[str]`
   - `choose_pair(base: str, listing: dict[str, Any]) -> str | None` — `"<BASE>/EUR"` if listed, else `"<BASE>/BTC"` if listed, else `None`.
   - `@dataclass(frozen=True) class Leg: kind: str; base: str; symbol: str; side: str; quantity: float; account_type: str; source: str`
-  - `margin_legs(positions: list[PositionRow]) -> list[Leg]`
+  - `margin_legs(positions: list[PositionRow], listing: dict[str, Any]) -> tuple[list[Leg], list[dict]]` — the second element is the unclosable list, each `{"symbol": …, "side": …, "quantity": …, "reason": "pair_not_listed", "note": …}`, `side` being the row's own LONG/SHORT and not a close side, since no order is constructed for it.
   - `spot_legs(balances: list[BalanceRow], listing: dict[str, Any]) -> tuple[list[Leg], list[dict]]` — the second element is the unsellable list, each `{"base": …, "code": …, "free": …, "reason": "no_eur_or_btc_pair", "note": …}`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -798,24 +807,49 @@ def _listing(*symbols: str) -> dict[str, Any]:
 def test_a_long_row_becomes_a_sell_and_a_short_row_a_buy():
     """The side comes from `position_side` and never from a sign: PositionStatusReport carries an
     UNSIGNED quantity, so a sign-derived side would close in the wrong direction on a short."""
-    legs = flatten.margin_legs(
+    legs, unclosable = flatten.margin_legs(
         [
             flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "LONG", 0.5),
             flatten.PositionRow("ETH/EUR", "ETH/EUR.KRAKEN", "SHORT", 2.0),
-        ]
+        ],
+        _listing("BTC/EUR", "ETH/EUR"),
     )
+    assert unclosable == []
     assert [(leg.symbol, leg.side, leg.quantity) for leg in legs] == [("BTC/EUR", "SELL", 0.5), ("ETH/EUR", "BUY", 2.0)]
     assert all(leg.account_type == "MARGIN" and leg.kind == "margin" for leg in legs)
 
 
 def test_a_flat_row_is_not_a_leg():
-    assert flatten.margin_legs([flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "FLAT", 0.0)]) == []
+    rows = [flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "FLAT", 0.0)]
+    assert flatten.margin_legs(rows, _listing("BTC/EUR")) == ([], [])
 
 
 def test_an_unrecognised_position_side_aborts_rather_than_being_treated_as_flat():
     """Reading an unknown side as 'nothing to do' is the failure this command exists to prevent."""
     with pytest.raises(flatten.FlattenUnreachable):
-        flatten.margin_legs([flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "BOTH", 1.0)])
+        flatten.margin_legs([flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "BOTH", 1.0)], _listing("BTC/EUR"))
+
+
+def test_a_margin_row_on_a_pair_the_listing_does_not_carry_is_named_and_never_aborts():
+    """The pairless class the whole button turns on: aborting one row among many would cancel
+    nothing, close nothing and sell nothing, leaving the operator the entire account by hand."""
+    legs, unclosable = flatten.margin_legs(
+        [
+            flatten.PositionRow("GONE/EUR", "GONE/EUR.KRAKEN", "LONG", 1.0),
+            flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "SHORT", 0.5),
+        ],
+        _listing("BTC/EUR"),
+    )
+    assert [leg.symbol for leg in legs] == ["BTC/EUR"]
+    assert unclosable == [
+        {
+            "symbol": "GONE/EUR",
+            "side": "LONG",
+            "quantity": 1.0,
+            "reason": "pair_not_listed",
+            "note": "the listing carries no such pair, so nothing can be sized against it",
+        }
+    ]
 
 
 def test_euro_balances_in_either_spelling_are_not_legs():
@@ -922,17 +956,34 @@ def choose_pair(base: str, listing: dict[str, Any]) -> str | None:
     return None
 
 
-def margin_legs(positions: list[PositionRow]) -> list[Leg]:
-    """One leg per LONG or SHORT row. A FLAT row is not a leg; anything else is a side this process
-    cannot close correctly and must not treat as flat."""
+def margin_legs(positions: list[PositionRow], listing: dict[str, Any]) -> tuple[list[Leg], list[dict]]:
+    """One leg per LONG or SHORT row, plus the rows no listed pair can close.
+
+    A FLAT row is not a leg; anything else is a side this process cannot close correctly and must
+    not treat as flat. A row whose pair the listing does not carry is named rather than raised on:
+    nothing can be sized against a pair that is not there, and one such row must not abort a button
+    that has not yet cancelled an order, closed another position or sold a single balance.
+    """
     sides = {"LONG": "SELL", "SHORT": "BUY"}
     out = []
+    unclosable: list[dict] = []
     for row in positions:
         if row.side == "FLAT":
             continue
         side = sides.get(row.side)
         if side is None:
             raise FlattenUnreachable(f"{row.symbol}: position_side {row.side!r} is neither LONG, SHORT nor FLAT")
+        if row.symbol not in listing:
+            unclosable.append(
+                {
+                    "symbol": row.symbol,
+                    "side": row.side,
+                    "quantity": row.quantity,
+                    "reason": "pair_not_listed",
+                    "note": "the listing carries no such pair, so nothing can be sized against it",
+                }
+            )
+            continue
         out.append(
             Leg(
                 kind="margin",
@@ -944,7 +995,7 @@ def margin_legs(positions: list[PositionRow]) -> list[Leg]:
                 source="position_status_report.quantity",
             )
         )
-    return out
+    return out, unclosable
 
 
 def spot_legs(balances: list[BalanceRow], listing: dict[str, Any]) -> tuple[list[Leg], list[dict]]:
@@ -1243,7 +1294,10 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
 
     quote = constraints.symbol.split("/")[1]
     qty = _floor_to_step(leg.quantity, constraints.lot_step)
-    price = reference_price
+    # Floored to the tick before anything reads it: `size_order` runs its notional check at the
+    # floored price, so an estimate printed off the raw book price would disagree with the dust
+    # boundary this same leg is judged by.
+    price = _floor_to_step(reference_price, constraints.tick_size) if reference_price is not None else None
     estimate = qty * price if price is not None else None
     fee = estimate * TAKER_RATE if estimate is not None else None
     base = dict(leg=leg, qty=qty, reference_price=price, quote=quote, estimate=estimate, fee_estimate=fee)
@@ -1287,7 +1341,7 @@ ______________________________________________________________________
 - Produces:
   - `@dataclass(frozen=True) class Snapshot: orders: list[Any]; positions: list[PositionRow]; balances: list[BalanceRow]`
   - `read_snapshot(client, rec) -> Snapshot` — orders, then positions, then balances, in that order.
-  - `@dataclass(frozen=True) class Plan: margin: list[SizedLeg]; spot: list[SizedLeg]; unsellable: list[dict]; prices: dict[str, float]; constraints: dict[str, PairConstraints]; n_open_orders: int`
+  - `@dataclass(frozen=True) class Plan: margin: list[SizedLeg]; spot: list[SizedLeg]; unsellable: list[dict]; unclosable: list[dict]; prices: dict[str, float]; constraints: dict[str, PairConstraints]; n_open_orders: int`
   - `build_plan(client, rec, snapshot: Snapshot, listing: dict[str, Any]) -> Plan`
   - `render_plan(plan: Plan, echo: Callable[[str], None]) -> None`
 
@@ -1366,10 +1420,12 @@ def test_a_missing_constraint_on_a_leg_s_pair_aborts_the_plan():
         flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
 
 
-def test_the_rendered_plan_names_every_leg_every_dust_line_and_every_unsellable_balance():
+def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_cannot_touch():
+    """What the operator reads has to include what the sweep will NOT do -- a balance no pair can
+    carry and a position whose pair the listing does not have are both still there afterwards."""
     client = _client_with(
         orders=[object()],
-        positions=[_Position("BTC/EUR", "LONG", 0.5)],
+        positions=[_Position("BTC/EUR", "LONG", 0.5), _Position("GONE/EUR", "LONG", 1.0)],
         balances=[_Balance("ADA", 1200.0), _Balance("DOT", 0.001), _Balance("WEIRD", 3.0)],
         symbols=("BTC/EUR", "ADA/EUR", "DOT/EUR"),
         books={
@@ -1388,6 +1444,7 @@ def test_the_rendered_plan_names_every_leg_every_dust_line_and_every_unsellable_
     assert "ADA/EUR" in text
     assert "DOT/EUR" in text and "not sent" in text
     assert "WEIRD" in text
+    assert "GONE/EUR" in text and "cannot be closed here" in text
     assert "1 resting order" in text
 
 
@@ -1429,6 +1486,7 @@ class Plan:
     margin: list
     spot: list
     unsellable: list
+    unclosable: list
     prices: dict
     constraints: dict
     n_open_orders: int
@@ -1454,7 +1512,7 @@ def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: dict[str
     -- is sized on the quantity floor alone, which is the safe direction: an unpriced balance is
     sold, never skipped as dust.
     """
-    margin_raw = margin_legs(snapshot.positions)
+    margin_raw, unclosable = margin_legs(snapshot.positions, listing)
     spot_raw, unsellable = spot_legs(snapshot.balances, listing)
 
     wanted: dict[str, str] = {}
@@ -1474,6 +1532,7 @@ def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: dict[str
         margin=[size_leg(leg, constraints[leg.symbol], prices[leg.symbol]) for leg in margin_raw],
         spot=[size_leg(leg, constraints[leg.symbol], prices[leg.symbol]) for leg in spot_raw],
         unsellable=unsellable,
+        unclosable=unclosable,
         prices=prices,
         constraints=constraints,
         n_open_orders=len(snapshot.orders),
@@ -1507,6 +1566,8 @@ def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
         echo(_leg_line(sized))
     for row in plan.unsellable:
         echo(f"  balance {row['code']} {row['free']:.8f} -- neither a EUR nor a BTC pair: it cannot be sold from here")
+    for row in plan.unclosable:
+        echo(f"  {row['symbol']} {row['side']} {row['quantity']:.8f} -- not in the venue's listing: it cannot be closed here")
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -1720,6 +1781,10 @@ def test_the_terminal_check_answers_false_with_no_controlling_terminal(tmp_path)
                 from cli.engine import flatten as child_flatten
 
                 out.write_text(str(child_flatten.terminal_available()))
+        except BaseException as exc:  # noqa: BLE001 -- the child reports, it does not raise into pytest
+            # Without this the parent reads a file that was never written: a FileNotFoundError at
+            # `out.read_text()` instead of an assertion naming what went wrong inside the check.
+            out.write_text(f"ERROR {type(exc).__name__}")
         finally:
             os._exit(0)
     os.waitpid(pid, 0)
@@ -2200,7 +2265,8 @@ def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> Sw
     index, orders_after, post_write_failure, final = 0, None, None, None
     try:
         orders_after = len(read_open_orders(client, rec))
-        for sized, constraints in _sized_with_constraints(margin_legs(read_positions(client, rec)), listing, plan):
+        margin_now, _ = margin_legs(read_positions(client, rec), listing)
+        for sized, constraints in _sized_with_constraints(margin_now, listing, plan):
             index += 1
             outcomes.append(_send(client, rec, sized, constraints, stamp, index, "margin"))
 
@@ -2427,6 +2493,27 @@ def test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two(tmp
     assert "EOrder:Invalid volume" in leg["error"]  # the venue's own words are kept beside the label
 
 
+def test_a_margin_row_on_an_unlisted_pair_never_aborts_the_button_and_exits_two(tmp_path):
+    """The one pairlessness that could cost everything: aborting before the cancel would leave the
+    resting orders resting, every other position open and every balance held, with the engine
+    already stopped. So the row is named, the rest of the sweep runs, and the account reads 2."""
+    _armed(tmp_path)
+    stranded = [_Position("GONE/EUR", "LONG", 1.0)]
+    client = _flat_client(
+        positions=[stranded, stranded, stranded, stranded],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    assert _run(client, tmp_path) == 2
+    assert "cancel_all_orders" in names(client)
+    assert [sent["instrument_id"] for sent in client.submitted] == ["ADA/EUR.KRAKEN"]
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    positions = [row for row in json.loads(path.read_text())["residuals"] if row["kind"] == "position"]
+    assert [row["symbol"] for row in positions] == ["GONE/EUR"]
+    assert positions[0]["reason"] == "pair_not_listed"
+
+
 def test_a_balance_in_an_asset_with_neither_pair_exits_two_never_zero(tmp_path):
     _armed(tmp_path)
     held = [_Balance("WEIRD", 3.0)]
@@ -2588,7 +2675,11 @@ def judge_final(final: Snapshot, listing: dict, prices: dict) -> list[dict]:
         residuals.append({"kind": "order", "count": len(final.orders), "reason": "resting_order"})
     for row in final.positions:
         if row.side in ("LONG", "SHORT"):
-            residuals.append({"kind": "position", "symbol": row.symbol, "side": row.side, "quantity": row.quantity})
+            residual = {"kind": "position", "symbol": row.symbol, "side": row.side, "quantity": row.quantity}
+            if row.symbol not in listing:
+                # Nothing was sent for it and nothing could be: this is where that reaches the record.
+                residual["reason"] = "pair_not_listed"
+            residuals.append(residual)
     from cli.engine.instruments import EUR_CODES
 
     bases = listed_bases(listing)
@@ -2783,7 +2874,7 @@ ______________________________________________________________________
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_engine_flatten.py` (add `from typer.testing import CliRunner` and `from cli.__main__ import app`):
+Append to `tests/test_engine_flatten.py` (add `import logging`, `from typer.testing import CliRunner` and `from cli.__main__ import app`):
 
 ```python
 # --- the CLI surface ----------------------------------------------------------------------------
@@ -2814,12 +2905,17 @@ def test_absent_credentials_refuse_with_exit_one_and_never_construct_a_client(mo
     assert result.exit_code == 1
 
 
-def test_the_command_never_names_a_credential_value(monkeypatch, tmp_path):
+def test_the_command_never_names_a_credential_value(monkeypatch, tmp_path, caplog):
+    """The refusal goes through `_abort`, which LOGS and never echoes, so the log record is the only
+    surface a key could leak on -- an assertion on `result.output` alone stays green on an
+    implementation that prints the value into it (`tests/test_error_paths_are_logged.py`)."""
     monkeypatch.setenv("KRAKEN_SPOT_API_KEY", "the-key-value")
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
-    result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
+    with caplog.at_level(logging.ERROR):
+        result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
     assert result.exit_code == 1
-    assert "the-key-value" not in result.output
+    assert "KRAKEN_SPOT_API_SECRET" in caplog.text  # the refusal really did reach the log
+    assert "the-key-value" not in caplog.text
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -3161,7 +3257,7 @@ Create `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2`:
 set -eu
 
 UNIT=zcrypto-engine.service
-STATE_DIR={{ engine_state_dir }}
+STATE_DIR="{{ engine_state_dir }}"
 KILL_FILE="$STATE_DIR/exec/kill"
 IMAGE="{{ engine_image }}@{{ engine_image_digest }}"
 OWNER="{{ engine_uid }}:{{ engine_gid }}"
@@ -3388,6 +3484,8 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 - **A leg reads `unclosable_below_minimum`?** That label is what *this command* read before it sent anything: the position was smaller than the pair's minimum order size. It is never read off the venue's answer, so **read the `error` beside it in the record first.** No `error` at all means the quantity floored to nothing and there was never an order to send. An `error` naming a rate limit, a temporary lockout or any other passing condition is a refusal that may not be about the size at all — **run the command again**, and judge the label on what the second run answers. An `error` that keeps saying the order is too small is the real case: no order can clear that remainder; only Kraken's own settle-position action in the web UI can, and the adapter cannot send it.
 - **A balance reads `no_eur_or_btc_pair`?** The venue lists no EUR and no BTC pair for it, so this command cannot sell it. Sell it by hand on Kraken against whatever pair exists.
 - **A leg reads `dust_below_venue_minimum`?** Nothing is wrong. The venue would reject that order, and a balance that small is not exposure.
+- **A leg reads `no_reference_price`?** It surfaced after the plan was priced, and no book is read once the first order has gone out — so it was sent with no estimate behind it. The order still went out; the label asks nothing of you, and what the venue answered beside it is the answer.
+- **A position reads `pair_not_listed`?** The venue's listing carries no pair for it, so nothing could be sized and no order was sent — everything else was still cancelled, closed and sold. Close that position by hand on Kraken.
 - **The record says a read after the first order failed?** The account may have moved and the run stopped where it stood. Read Kraken's own pages, then run it again.
 
 6. **Do not clear the kill file to restart the engine until you have decided the reason no longer holds.** Clearing it is the same procedure as for any other latched halt, in [`engine.md`](engine.md#zcrypto-engine-exec-kill-tripped).
@@ -3625,7 +3723,7 @@ Run at the end of writing this plan, against the spec with fresh eyes.
 | D1 dry run reads beside the running engine, wrapper says so | Task 10's dry-run branch and its printed lines |
 | D2 one client from the two env vars, the seven methods, named-field parsing, key never logged | Tasks 1, 7, 9; `api_key_masked` asserted in Task 8's journal test |
 | D3 orders / positions / balances / one listing / book at depth 1; EUR aliases; costmin from the committed table; `size_order` reuse | Tasks 1–4 |
-| D4 side from `position_side`, quantity never above the report's, MARKET IOC reduce-only leverage 2 on margin; spot CASH no reduce-only; EUR-then-BTC pair choice; two passes; dust spot-only; `FLT-` ids | Tasks 2, 3, 7 |
+| D4 side from `position_side`, quantity never above the report's, MARKET IOC reduce-only leverage 2 on margin; spot CASH no reduce-only; EUR-then-BTC pair choice; two passes; dust spot-only; `FLT-` ids; a margin row on an unlisted pair named rather than aborted on | Tasks 2, 3, 4, 7, 8 |
 | D5 the sequence and its ordering | Task 6 (gates), Task 7 (the write order test), Task 8 (`run_flatten`) |
 | D6 the four exit codes, and the journal's contents and path | Task 8 |
 | D7 the widened guard with its reason in the docstring; clean help | Task 5; Task 9 |
