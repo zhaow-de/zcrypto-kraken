@@ -89,6 +89,11 @@ class FakeClient:
         self._books = books or {}
         self.raises: dict[str, Exception] = {}
         self.submitted: list[dict] = []
+        # The same calls again, unnormalised: the objects production actually handed over, so the
+        # types and the keyword NAMES can be checked against the real client. `submitted` is
+        # `_norm`'d, and `_norm` reduces a plain `"MARKET"` to the text a real `OrderType.MARKET`
+        # gives -- it cannot tell the two apart, and only one of them reaches the venue.
+        self.submitted_raw: list[tuple[tuple, dict]] = []
 
     def _maybe_raise(self, name):
         exc = self.raises.pop(name, None)
@@ -143,6 +148,9 @@ class FakeClient:
         }
         self.calls.append(("submit_order", params))
         self.submitted.append(params)
+        self.submitted_raw.append(
+            ((account_id, instrument_id, client_order_id, order_side, order_type, quantity, time_in_force), dict(kw))
+        )
         self._maybe_raise("submit_order")
         return {"ok": True}
 
@@ -1106,3 +1114,361 @@ def test_the_terminal_check_answers_false_with_no_controlling_terminal(tmp_path)
             os._exit(0)
     os.waitpid(pid, 0)
     assert out.read_text() == "False"
+
+
+# --- the write sequence -------------------------------------------------------------------------
+
+_STAMP = datetime(2026, 8, 30, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _sweep_client(*, orders, positions, balances, symbols, books):
+    """Queues, one entry per read of that kind, in call order: orders 3 (snapshot, post-cancel,
+    final), positions 4 (snapshot, post-cancel, post-margin, final), balances 4 (snapshot,
+    post-margin, post-pass-one, final). The last entry repeats if a read happens again."""
+    return FakeClient(
+        instruments=[_Instrument(s) for s in symbols],
+        orders=orders,
+        positions=positions,
+        balances=balances,
+        books=books,
+    )
+
+
+def _plan_of(client):
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    return rec, listing, plan
+
+
+def test_the_full_sequence_calls_the_venue_in_the_order_the_design_fixes():
+    """The order is the design: nothing is sized from the pre-confirm snapshot, a fill during the
+    human-paced confirm lands in the post-cancel read, and the final snapshot reads orders before
+    positions before balances."""
+    client = _sweep_client(
+        orders=[[], [], []],
+        positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    rec, listing, plan = _plan_of(client)
+    before = len(client.calls)
+    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    assert names(client)[before:] == [
+        "cancel_all_orders",
+        "request_order_status_reports",
+        "request_position_status_reports",
+        "submit_order",
+        "request_position_status_reports",
+        "request_account_state",
+        "submit_order",
+        "request_account_state",
+        "request_order_status_reports",
+        "request_position_status_reports",
+        "request_account_state",
+    ]
+
+
+def test_a_margin_closer_carries_reduce_only_market_ioc_leverage_and_the_margin_account():
+    """The client-side side-and-cap invariant is the bound this repo has proven; the venue's own
+    reduce_only flag is the second, and it must actually be sent."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[_Position("BTC/EUR", "SHORT", 0.5)], [_Position("BTC/EUR", "SHORT", 0.5)], [], []],
+        balances=[[]],
+        symbols=("BTC/EUR",),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec, listing, plan = _plan_of(client)
+    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    (sent,) = client.submitted
+    assert sent["order_side"] == "BUY"  # a SHORT closes with a BUY, never a SELL
+    assert sent["order_type"] == "MARKET"
+    assert sent["time_in_force"] == "IOC"
+    assert sent["reduce_only"] is True
+    assert sent["leverage"] == flatten.MARGIN_LEVERAGE
+    assert sent["account_type"] == "MARGIN"
+    assert sent["quantity"] == 0.5
+
+
+def test_a_spot_sell_carries_no_reduce_only_and_no_leverage():
+    """Kraken's reduce_only is a margin concept a spot order cannot carry."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[]],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("ADA/EUR",),
+        books={"ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    rec, listing, plan = _plan_of(client)
+    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    (sent,) = client.submitted
+    assert sent["order_side"] == "SELL"
+    assert sent["account_type"] == "CASH"
+    assert sent.get("reduce_only") is False
+    assert "leverage" not in sent
+
+
+def test_a_fill_during_the_confirm_is_closed_at_the_post_cancel_size_not_the_snapshot_size():
+    """The closes are sized from the read AFTER the cancel. Sizing from the pre-confirm snapshot
+    would leave the difference open and call the account flat."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[
+            [_Position("BTC/EUR", "LONG", 0.5)],
+            [_Position("BTC/EUR", "LONG", 0.9)],
+            [_Position("BTC/EUR", "LONG", 0.9)],
+            [_Position("BTC/EUR", "LONG", 0.9)],
+        ],
+        balances=[[]],
+        symbols=("BTC/EUR",),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec, listing, plan = _plan_of(client)
+    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    assert client.submitted[0]["quantity"] == 0.9
+    assert result.final.positions[0].quantity == 0.9
+
+
+def test_a_rejected_margin_leg_is_journaled_and_the_sweep_continues_to_the_spot_pass():
+    """A rejection is never retried and never stops the rest of the account being flattened, and a
+    leg that cleared `ordermin` before it was sent gains no label from having been refused -- the
+    rejection text is never read."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    client.raises["submit_order"] = RuntimeError("EOrder:Insufficient margin")
+    rec, listing, plan = _plan_of(client)
+    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    margin_outcome = next(o for o in result.outcomes if o.kind == "margin")
+    assert margin_outcome.sent is True and "Insufficient margin" in margin_outcome.error
+    assert margin_outcome.reason is None  # 0.5 clears _Instrument's 0.0001 ordermin
+    assert [o.symbol for o in result.outcomes if o.kind == "spot"] == ["ADA/EUR"]
+    assert result.final is not None
+
+
+def test_a_rejected_sub_ordermin_closer_is_labelled_from_the_arithmetic_not_from_the_venue_s_words():
+    """The other side of the test above, and the label an operator acts on: this closer was sized
+    BELOW the pair's own `ordermin` before it was sent, so its refusal routes to Kraken's
+    settle-position action rather than to a second run.
+
+    The rejection text deliberately says nothing about a minimum -- which Kraken message means
+    "below the minimum" is unmeasured here, so the label may only come from the pre-send
+    arithmetic. Read off the venue's words instead, this leg would wear no label at all."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[_Position("BTC/EUR", "LONG", 0.00005)], [_Position("BTC/EUR", "LONG", 0.00005)], [], []],
+        balances=[[]],
+        symbols=("BTC/EUR",),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    client.raises["submit_order"] = RuntimeError("EOrder:Insufficient margin")
+    rec, listing, plan = _plan_of(client)
+    (outcome,) = flatten.sweep(client, rec, plan, listing, stamp=_STAMP).outcomes
+    assert outcome.sent is True  # it was sent: a sub-ordermin closer is the venue's to refuse
+    assert outcome.reason == "unclosable_below_minimum"
+    assert "Insufficient margin" in outcome.error
+
+
+def test_a_failing_cancel_does_not_stop_the_closes():
+    """The closes do not depend on the cancel, so its failure is recorded and the sweep runs on."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
+        balances=[[]],
+        symbols=("BTC/EUR",),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    client.raises["cancel_all_orders"] = RuntimeError("EGeneral:Temporary lockout")
+    rec, listing, plan = _plan_of(client)
+    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    assert result.cancel_ok is False and "lockout" in result.cancel_error
+    assert len(client.submitted) == 1
+
+
+def test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order():
+    """The first-write boundary is the cancel, not the first order: after it, a read that cannot be
+    parsed leaves the account possibly changed, so nothing further is sent and nothing reads flat."""
+    broken = _Position("BTC/EUR", "LONG", 0.5)
+    del broken.quantity
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[_Position("BTC/EUR", "LONG", 0.5)], [broken]],
+        balances=[[]],
+        symbols=("BTC/EUR",),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec, listing, plan = _plan_of(client)
+    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    assert "cancel_all_orders" in names(client)
+    assert client.submitted == []
+    assert result.post_write_failure is not None
+    assert result.final is None
+
+
+def test_the_second_spot_pass_sells_the_btc_the_first_pass_produced():
+    """Pass one sells a BTC-quoted leg; pass two sells the BTC that produced, priced from the
+    BTC/EUR book taken at the snapshot."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[]],
+        balances=[
+            [_Balance("ETH", 2.0)],
+            [_Balance("ETH", 2.0)],
+            [_Balance("XXBT", 0.06)],
+            [_Balance("XXBT", 0.0)],
+        ],
+        symbols=("ETH/BTC", "BTC/EUR"),
+        books={"ETH/BTC.KRAKEN": _Book(0.03, 0.031), "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec, listing, plan = _plan_of(client)
+    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    assert [s["instrument_id"] for s in client.submitted] == ["ETH/BTC.KRAKEN", "BTC/EUR.KRAKEN"]
+
+
+def test_a_leg_below_the_venue_minimum_is_recorded_and_never_reaches_the_venue():
+    """Two of `_send`'s three verdicts on one read, and the third is every other test here.
+
+    The DOT balance is dust -- 0.001 at 4.00 EUR is 0.004 EUR against the 0.45 EUR costmin -- so no
+    order is constructed for it and it carries no client order id: an id minted for an order that
+    was never sent is an id an operator looks for at the venue. The ADA balance beside it has no
+    reference price (its book is absent) and is sent anyway, which is what keeps this from being a
+    fixture that would pass under a `_send` refusing everything."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[]],
+        balances=[
+            [_Balance("ADA", 1200.0), _Balance("DOT", 0.001)],
+            [_Balance("ADA", 1200.0), _Balance("DOT", 0.001)],
+            [],
+            [],
+        ],
+        symbols=("ADA/EUR", "DOT/EUR"),
+        books={"DOT/EUR.KRAKEN": _Book(4.0, 4.01)},
+    )
+    rec, listing, plan = _plan_of(client)
+    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    assert [s["instrument_id"] for s in client.submitted] == ["ADA/EUR.KRAKEN"]
+
+    ada = next(o for o in result.outcomes if o.symbol == "ADA/EUR")
+    assert ada.sent is True and ada.reason == "no_reference_price"
+    assert ada.client_order_id.startswith(flatten.CLIENT_ORDER_ID_PREFIX)
+
+    dot = next(o for o in result.outcomes if o.symbol == "DOT/EUR")
+    assert dot.sent is False and dot.reason == "dust_below_venue_minimum"
+    assert dot.client_order_id is None and dot.error is None
+
+
+def test_the_client_order_id_cannot_collide_with_the_engine_s_or_the_probe_harness_s():
+    """The executor routes an ack it recognises as its own; an id sharing the engine's shape would
+    make a flatten fill land in the engine's ledger."""
+    cid = flatten.mint_client_order_id(_STAMP, 3)
+    assert cid.startswith(flatten.CLIENT_ORDER_ID_PREFIX)
+    assert "-001-000-" not in cid
+    assert not cid.startswith("O-")
+    assert cid != flatten.mint_client_order_id(_STAMP, 4)
+
+
+def test_every_order_in_one_run_carries_its_own_client_order_id_across_all_three_passes():
+    """The id counter runs over the WHOLE run, not per pass: Kraken refuses a client order id it has
+    already seen, so two legs sharing one id is one leg silently unsent -- recorded as sent, with
+    the venue's duplicate refusal the only trace.
+
+    Three orders across all three passes -- the margin close, pass one's BTC-quoted sell, and pass
+    two's sale of the BTC it produced -- so a counter that restarts at a pass boundary is visible
+    where one restarting per leg would not be."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
+        balances=[[_Balance("ETH", 2.0)], [_Balance("ETH", 2.0)], [_Balance("XXBT", 0.06)], []],
+        symbols=("BTC/EUR", "ETH/BTC"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ETH/BTC.KRAKEN": _Book(0.03, 0.031)},
+    )
+    rec, listing, plan = _plan_of(client)
+    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    ids = [s["client_order_id"] for s in client.submitted]
+    assert len(ids) == 3, ids
+    assert len(set(ids)) == 3, ids
+    assert all(cid.startswith(flatten.CLIENT_ORDER_ID_PREFIX) for cid in ids)
+    assert [o.client_order_id for o in result.outcomes] == ids
+
+
+def test_the_journal_records_the_scoping_of_the_order_that_actually_went_out():
+    """The journal is what an operator reads mid-incident, and one that says MARGIN while CASH went
+    out is worse than none. Every scoping value is derived once and both sent and journalled, so the
+    two cannot be spelled differently; this pins the pairing on both account types at once -- a
+    hand-written literal is correct for one of them and wrong for the other."""
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[_Position("BTC/EUR", "SHORT", 0.5)], [_Position("BTC/EUR", "SHORT", 0.5)], [], []],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    rec, listing, plan = _plan_of(client)
+    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    journalled = [entry["params"] for entry in rec.entries if entry["call"] == "submit_order"]
+    assert [p["account_type"] for p in journalled] == ["MARGIN", "CASH"]
+    for params, sent in zip(journalled, client.submitted, strict=True):
+        assert params["account_id"] == flatten.ACCOUNT_ID
+        for field in ("instrument_id", "client_order_id", "order_side", "order_type", "quantity", "time_in_force"):
+            assert params[field] == sent[field], field
+        assert params["reduce_only"] is sent["reduce_only"]
+        assert params["account_type"] == sent["account_type"]
+        assert params.get("leverage") == sent.get("leverage")
+
+
+def test_the_submit_call_carries_the_library_s_own_types_and_binds_against_the_real_client():
+    """`FakeClient.submit_order` takes `**kw`, so it accepts every keyword including ones the real
+    client does not have, and `_norm` reduces a plain `"MARKET"` to the same text a real
+    `OrderType.MARKET` gives. Every other assertion in this section therefore passes under an
+    implementation that sends strings at a compiled signature and fails only at the venue, on the
+    one call that moves money.
+
+    Both halves the send depends on: the seven positionals land on the parameters they are meant
+    for -- a parameter inserted upstream would slide the client order id into another slot with
+    every fake-driven test still green -- and the scoping keywords exist on the real signature.
+    `instrument_id` is deliberately not type-asserted: it is handed back verbatim from the listing
+    row the venue answered with, so its type is the venue's to choose. `cancel_all_orders` is bound
+    beside it because it is the other venue-mutating call this module makes."""
+    import inspect
+
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+    from nautilus_trader.model import AccountId, AccountType, ClientOrderId, OrderSide, OrderType, Quantity, TimeInForce
+
+    client = _sweep_client(
+        orders=[[]],
+        positions=[[_Position("BTC/EUR", "SHORT", 0.5)], [_Position("BTC/EUR", "SHORT", 0.5)], [], []],
+        balances=[[]],
+        symbols=("BTC/EUR",),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec, listing, plan = _plan_of(client)
+    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    ((positional, kwargs),) = client.submitted_raw
+
+    account_id, _instrument_id, client_order_id, order_side, order_type, quantity, time_in_force = positional
+    assert isinstance(account_id, AccountId)
+    assert isinstance(client_order_id, ClientOrderId)
+    assert isinstance(order_side, OrderSide)
+    assert isinstance(order_type, OrderType)
+    assert isinstance(quantity, Quantity)
+    assert isinstance(time_in_force, TimeInForce)
+    assert isinstance(kwargs["account_type"], AccountType)
+
+    bound = inspect.signature(KrakenSpotHttpClient.submit_order).bind(None, *positional, **kwargs)
+    assert list(bound.arguments)[1:8] == [
+        "account_id",
+        "instrument_id",
+        "client_order_id",
+        "order_side",
+        "order_type",
+        "quantity",
+        "time_in_force",
+    ]
+    inspect.signature(KrakenSpotHttpClient.cancel_all_orders).bind(None)

@@ -777,3 +777,189 @@ def check_venue(venue_reader, now) -> Any:
     if not status.ok:
         raise FlattenUnreachable(f"the venue is not online (it reads {status.status!r}) -- nothing was sent")
     return status
+
+
+@dataclass(frozen=True)
+class LegOutcome:
+    kind: str
+    symbol: str
+    side: str
+    qty: float
+    pass_name: str
+    source: str
+    client_order_id: str | None
+    sent: bool
+    reason: str | None
+    answer: str | None
+    error: str | None
+
+
+@dataclass(frozen=True)
+class SweepResult:
+    cancel_ok: bool
+    cancel_error: str | None
+    orders_after_cancel: int | None
+    post_write_failure: str | None
+    outcomes: list[LegOutcome]
+    final: Snapshot | None
+
+
+def mint_client_order_id(stamp, index: int) -> str:
+    """`FLT-<basic ISO-8601 UTC>-<n>`. Inside the id SHAPE Kraken has already accepted from this
+    repo, and structurally distinct from the engine's `-001-000-` infix -- an id the executor could
+    read as its own would route a flatten fill into the engine's ledger.
+
+    `index` runs over the whole run rather than per pass: the venue refuses an id it has already
+    seen, so two legs sharing one would be one leg silently unsent.
+
+    `stamp` is the run's own and `index` restarts at 1, so two runs beginning inside the same second
+    would mint the same ids. Each needs its own word typed at a terminal, and that is the bound --
+    the journal's own collision protection does not extend here.
+    """
+    return f"{CLIENT_ORDER_ID_PREFIX}{stamp:%Y%m%dT%H%M%SZ}-{index}"
+
+
+def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: PairConstraints, client_order_id: str) -> Any:
+    """One MARKET IOC order. The quantity is minted at the precision the venue's own lot step
+    implies, so the floored value is exactly representable and nothing is rounded UP past the
+    position the report reported.
+
+    Every scoping value is derived ONCE and then both sent and journalled -- `_journalled`'s rule,
+    on the one call in this module that moves money. Spelled a second time beside the call, the
+    journal an operator reads mid-incident can say MARGIN while CASH went out, or name a side the
+    order did not carry.
+    """
+    margin = sized.leg.kind == "margin"
+    quantity = Quantity(sized.qty, step_precision(constraints.lot_step))
+    order_side = OrderSide.SELL if sized.leg.side == "SELL" else OrderSide.BUY
+    order_type, time_in_force = OrderType.MARKET, TimeInForce.IOC
+    kwargs: dict[str, Any] = {"reduce_only": margin, "account_type": AccountType.MARGIN if margin else AccountType.CASH}
+    if margin:
+        kwargs["leverage"] = MARGIN_LEVERAGE
+    params = {
+        "account_id": ACCOUNT_ID,
+        "instrument_id": str(constraints.instrument_id),
+        "client_order_id": client_order_id,
+        "order_side": str(order_side),
+        "order_type": str(order_type),
+        "quantity": float(quantity),
+        "time_in_force": str(time_in_force),
+        **_journalled(kwargs),
+    }
+    return rec.call(
+        "submit_order",
+        params,
+        lambda: client.submit_order(
+            _ACCOUNT,
+            constraints.instrument_id,
+            ClientOrderId(client_order_id),
+            order_side,
+            order_type,
+            quantity,
+            time_in_force,
+            **kwargs,
+        ),
+    )
+
+
+def _sized_with_constraints(legs: list, listing: dict, plan: Plan) -> list:
+    """Each leg paired with the constraints it will be sized and minted at. A pair absent from the
+    plan's own map is looked up now; a shape failure there is a post-write failure, never a guess."""
+    out = []
+    for leg in legs:
+        constraints = plan.constraints.get(leg.symbol) or constraints_for(leg.symbol, listing)
+        out.append((size_leg(leg, constraints, plan.prices.get(leg.symbol)), constraints))
+    return out
+
+
+def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, index: int, pass_name: str) -> LegOutcome:
+    """Never raises: a rejection is journaled and the sweep continues, and is never retried.
+
+    `sent` stays True on every failure raised inside the send -- the local minting of the quantity
+    included, since nothing here can tell that apart from a request that left and was refused. The
+    request may have reached the venue, and recording it as unsent would be the one lie an operator
+    cannot afford here.
+
+    A rejected margin closer this code had ALREADY sized below the pair's `ordermin` is labelled
+    `unclosable_below_minimum` (spec 00106 D4): it is what routes an operator to the venue's own
+    settle-position action, which a bare `EOrder:` string never does. The label comes from the
+    pre-send arithmetic, never from the rejection text -- which Kraken message means "below the
+    minimum" is unmeasured here -- so the venue's words are journaled beside it as the leg's
+    `error`, and a refusal for a passing reason wears the same label as a refusal about the size.
+
+    One `reason` field carries one label: where such a closer is also unpriced, the label is
+    `unclosable_below_minimum` rather than `no_reference_price`. It is the one that names a next
+    action, and the price costs a margin leg nothing -- a closer's quantity comes from the position
+    report and never from a price.
+    """
+    base = dict(
+        kind=sized.leg.kind,
+        symbol=sized.leg.symbol,
+        side=sized.leg.side,
+        qty=sized.qty,
+        pass_name=pass_name,
+        source=sized.leg.source,
+    )
+    if not sized.send:
+        return LegOutcome(**base, client_order_id=None, sent=False, reason=sized.reason, answer=None, error=None)
+    client_order_id = mint_client_order_id(stamp, index)
+    reason = "no_reference_price" if sized.reference_price is None else None
+    try:
+        answer = submit_leg(client, rec, sized, constraints, client_order_id)
+    except Exception as exc:  # noqa: BLE001 -- one leg's rejection must not end the sweep
+        if sized.leg.kind == "margin" and sized.qty < constraints.ordermin:
+            reason = "unclosable_below_minimum"
+        logger.error("flatten leg %s %s was rejected: %s", sized.leg.symbol, sized.leg.side, exc)
+        return LegOutcome(
+            **base, client_order_id=client_order_id, sent=True, reason=reason, answer=None, error=f"{type(exc).__name__}: {exc}"
+        )
+    return LegOutcome(**base, client_order_id=client_order_id, sent=True, reason=reason, answer=repr(answer), error=None)
+
+
+def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> SweepResult:
+    """From the account-wide cancel to the final snapshot. Re-runnable: a second run finds less to
+    do and does it, so nothing here is one-shot.
+
+    Every read after the cancel is inside the one try: past the first write the account may have
+    moved, so a read that fails ends the sweep with a named failure rather than with a verdict.
+
+    The final snapshot is read AFRESH rather than reusing the plan's -- a reused one is a second
+    vote from the witness the sweep has just acted on, and it would report flat whatever the writes
+    achieved.
+    """
+    outcomes: list[LegOutcome] = []
+    cancel_ok, cancel_error = True, None
+    try:
+        rec.call("cancel_all_orders", {}, client.cancel_all_orders)
+    except Exception as exc:  # noqa: BLE001 -- the closes do not depend on the cancel
+        cancel_ok, cancel_error = False, f"{type(exc).__name__}: {exc}"
+        logger.error("the account-wide cancel failed: %s", exc)
+
+    index, orders_after, post_write_failure, final = 0, None, None, None
+    try:
+        orders_after = len(read_open_orders(client, rec))
+        margin_now, _ = margin_legs(read_positions(client, rec), listing)
+        for sized, constraints in _sized_with_constraints(margin_now, listing, plan):
+            index += 1
+            outcomes.append(_send(client, rec, sized, constraints, stamp, index, "margin"))
+
+        read_positions(client, rec)  # journaled evidence of what the closes left behind
+        for pass_name in ("spot-1", "spot-2"):
+            legs, _ = spot_legs(read_balances(client, rec), listing)
+            for sized, constraints in _sized_with_constraints(legs, listing, plan):
+                index += 1
+                outcomes.append(_send(client, rec, sized, constraints, stamp, index, pass_name))
+
+        final = read_snapshot(client, rec)
+    except FlattenUnreachable as exc:
+        post_write_failure = str(exc)
+        logger.error("a read after the first write failed: %s", exc)
+
+    return SweepResult(
+        cancel_ok=cancel_ok,
+        cancel_error=cancel_error,
+        orders_after_cancel=orders_after,
+        post_write_failure=post_write_failure,
+        outcomes=outcomes,
+        final=final,
+    )
