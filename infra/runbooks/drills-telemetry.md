@@ -39,6 +39,7 @@ What a restarted shipper recovers **per plane**, and which rules misfire on the 
 - An attended window, the standing rules above satisfied, and the Kraken maintenance feed read immediately before.
 - **Ops and the secondary only.** Never the primary's Alloy this round.
 - The previous induction reverted and verified by value.
+- **`max(hc_checks_down_total) == 0`, read by value immediately before** — `uv run python infra/scripts/grafana-query.py 'hc_checks_down_total'`. `zcrypto-hcio-watchdog` is in this drill's *Must fire* with a number on the ops half and with *must stay quiet* on the secondary half, and it is a fleet-wide aggregate: a check left down by an earlier drill has it already firing, which turns the ops reading into an unrelated event's `activeAt` and the secondary assertion into one nothing can satisfy. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - Budget two holds of **2 h each**, one per host, sequentially. The hold is the backfill horizon this drill exists to measure; a short hold measures the bound instead, which is drill K.
 
 ### Induce
@@ -109,7 +110,14 @@ The page time on each of the **two** routes by which the ops-side Grafana watchd
 sudo systemctl stop zcrypto-grafana-watchdog.timer
 ```
 
-**Route 2, `/fail`** — a check-scoped converge with `-e ops_grafana_watchdog_probe_url=<an unreachable url>`, so the probe fails and `infra/ansible/roles/ops/templates/grafana-watchdog.sh.j2` pings `<url>/fail` instead of the success url. **Write the reverting converge command down before running the first one.**
+**Route 2, `/fail`** — a converge that overrides the probe url with an unreachable one, so the probe fails and `infra/ansible/roles/ops/templates/grafana-watchdog.sh.j2` pings `<url>/fail` instead of the success url:
+
+```
+infra/ansible/scripts/converge.sh site.yml --limit zcrypto-ops --tags ops \
+  -e ops_grafana_watchdog_probe_url=https://grafana-watchdog-drill.invalid/api/health
+```
+
+**The revert is the same command without the `-e`** — the role default (`infra/ansible/roles/ops/defaults/main.yml`) restores the real probe url. Write that second invocation down before running the first. `converge.sh` requires `--limit`, shows a `--check --diff` preview and takes a typed confirm of the limit value; **never wrap it in `timeout`**, which kills the wrapper while its child keeps converging.
 
 ### Must fire
 
@@ -145,6 +153,7 @@ The breach → withheld ping → page path, whole, on real code — **on the ops
 ### Preconditions
 
 - An attended window; standing rules above. Nothing on a capture host is touched.
+- **`max(hc_checks_down_total) == 0`, read by value immediately before** — `uv run python infra/scripts/grafana-query.py 'hc_checks_down_total'`. `zcrypto-hcio-watchdog` is in this drill's *Must fire* with a number, and it is a fleet-wide aggregate already firing whenever any check anywhere is down, so a page that predates the induction is booked as this drill's measurement. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - **A green control runs first.** Start the throwaway container on a normally-sized data dir and see its throwaway check go **green**. Without it the drill is degenerate: a container that never reached the venue's WS (wrong pairs, missing config, no egress), or one whose disk probe raised and left `watermark.measurable` False, withholds the ping identically — and a check that only ever breached cannot tell any of them apart.
 
 ### Induce
@@ -237,6 +246,14 @@ The Alloy-dark bound, measured rather than computed, and the restart recipe veri
 ### Preconditions
 
 An attended window; standing rules above. **Ops only.** Nothing else induced at the same time — the metrics path of drill Q is read off this induction and needs the page set to be attributable.
+
+**`max(hc_checks_down_total) == 0`, read by value immediately before**:
+
+```
+uv run python infra/scripts/grafana-query.py 'hc_checks_down_total'
+```
+
+This one bites in practice rather than in theory: drill I mints a throwaway check and drill O puts `zcrypto-panel` down, so running K later in the same sitting with either still down has `zcrypto-hcio-watchdog` **already firing** — and its ≈11 min here is the number K exists to measure. An `activeAt` that predates the stop is an unrelated event's time. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 
 ### Induce
 
@@ -342,21 +359,22 @@ That the **one log class no Alloy pipeline sees** is caught, and in how long: a 
 
 ### Preconditions
 
-**Read every one of these by value immediately before the stop, and re-read the same list on a 60 s cadence through the whole hold.** Everything here is a point-in-time read, the loss it guards against is permanent, and nothing in a before-and-after pair can see the primary going silent *between* them.
+**Read all four of these by value immediately before the stop.** Each is a point-in-time read, the loss they guard against is permanent, and nothing in a before-and-after pair can see the primary going silent *between* them — so **the first three, which are the four primary-whole signals, are re-read on a 60 s cadence through the whole hold**. The fourth is an attribution read, taken once.
 
 - `up{job="capture_app",host="zcrypto"}` reads **1**.
 - `min(zcrypto_capture_seconds_since_last_book_message{host="zcrypto"})` reads **under 120 s**, the threshold `zcrypto-capture-all-streams-silent` itself carries.
 - Every primary instance of `zcrypto-capture-all-streams-silent` and of `zcrypto-capture-stream-silent` is **Normal**.
+- `max(hc_checks_down_total)` reads **0** — the attribution read, and the only one here that says nothing about the primary: `zcrypto-hcio-watchdog` is in this drill's *Must fire* with a number, and as a fleet-wide aggregate it is already firing if an earlier drill left a check down. Not 0 ⇒ clear the down check first, or record **`blocked`**. It is not on the cadence and never aborts a hold under way.
 
 ```
-uv run python infra/scripts/grafana-query.py 'up{job="capture_app",host="zcrypto"}' 'min(zcrypto_capture_seconds_since_last_book_message{host="zcrypto"})'
+uv run python infra/scripts/grafana-query.py 'up{job="capture_app",host="zcrypto"}' 'min(zcrypto_capture_seconds_since_last_book_message{host="zcrypto"})' 'hc_checks_down_total'
 ```
 
-Two instruments, because that is two kinds of read: the by-value pair through the query script above, and the two **rule states** through `GET /api/prometheus/grafana/api/v1/rules` with the same bearer token. `ALERTS{alertstate="firing"}` is structurally empty for Grafana-managed rules and reads `(no series)` on a firing fleet, so it is never the instrument here.
+Two instruments, because that is two kinds of read: the by-value ones through the query script above, and the two **rule states** through `GET /api/prometheus/grafana/api/v1/rules` with the same bearer token. `ALERTS{alertstate="firing"}` is structurally empty for Grafana-managed rules and reads `(no series)` on a firing fleet, so it is never the instrument here.
 
-**The list is four long because no signal on it covers another.** On 2026-07-27 all twelve pairs went silent on **both** hosts for ~209 s while the socket read connected and the process kept scraping, so `up` read 1 throughout and only the gauge moved; both silence rules carry `noDataState: OK`, so a primary whose exporter or Alloy has gone away leaves them Normal while `up` goes 0 or empty; and on a single stuck stream neither by-value read moves at all — one pair stops while its siblings keep flowing, the live pairs hold the cross-pair minimum down, and [`capture.md#zcrypto-capture-stream-silent`](capture.md#zcrypto-capture-stream-silent) is the only one of the four that fires. Drop it from the predicate and a per-pair primary silence runs the whole hold out with the secondary's daemon stopped and nothing left to heal that pair from.
+**Those four primary-whole signals are four because no one of them covers another.** On 2026-07-27 all twelve pairs went silent on **both** hosts for ~209 s while the socket read connected and the process kept scraping, so `up` read 1 throughout and only the gauge moved; both silence rules carry `noDataState: OK`, so a primary whose exporter or Alloy has gone away leaves them Normal while `up` goes 0 or empty; and on a single stuck stream neither by-value read moves at all — one pair stops while its siblings keep flowing, the live pairs hold the cross-pair minimum down, and [`capture.md#zcrypto-capture-stream-silent`](capture.md#zcrypto-capture-stream-silent) is the only one of the four that fires. Drop it from the predicate and a per-pair primary silence runs the whole hold out with the secondary's daemon stopped and nothing left to heal that pair from.
 
-**Any one of the four reading anything but the green above — an EMPTY result included — aborts the hold**: run the revert immediately instead of waiting out the cap, record the abort time, and record the run **`partial`**, never `pass`. An abort costs a re-taken window; the overlap it prevents costs L2 that nothing recovers.
+**Any one of those four reading anything but the green above — an EMPTY result included — aborts the hold**: run the revert immediately instead of waiting out the cap, record the abort time, and record the run **`partial`**, never `pass`. An abort costs a re-taken window; the overlap it prevents costs L2 that nothing recovers.
 
 Also required: **no primary converge, reboot, or published Kraken maintenance inside the window.** A converge restarts live capture, and one overlap with both hosts silent books straight to `residual_gap_seconds_total`.
 
@@ -480,7 +498,7 @@ The proofs, and what each rests on:
 
 | id | scenario | what proved it |
 | -- | -- | -- |
-| F | WS loss, capture side | drilled 2026-07-27, plus three real incidents since; runbooked at [`capture.md#zcrypto-capture-all-streams-silent`](capture.md#zcrypto-capture-all-streams-silent) |
+| F | WS loss, capture side | drilled 2026-07-27, and seen since in real incidents; runbooked at [`capture.md#zcrypto-capture-all-streams-silent`](capture.md#zcrypto-capture-all-streams-silent) |
 | H | capture daemon stopped, host down | drilled 2026-07-17 on the primary, and the 2026-07-11 reboot |
 | J | engine cycle failure, engine dead | the 2026-07-11 incident in shadow. **Its `/fail` route was never covered** — that is drill J′ above, and it is not this row |
 | L | healthchecks.io dark, or a check down | drilled 2026-07-21; the mutual watchdog both halves of which are described at [`observability.md#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog) |
@@ -499,8 +517,8 @@ The proofs, and what each rests on:
 
 Re-run it as a drill, record it in `docs/reference/drill-log.md` under the id `N`, and amend this section with the outcome. **N gets no section of its own** — this is where it lives.
 
-- **Induce**, on the NAS (`ssh nas`): `sudo /usr/local/bin/docker stop zcrypto-archive-pull`. **`docker` is at `/usr/local/bin/docker` on that host and is not on a non-interactive ssh `PATH`** — called bare it prints nothing and reads as "no containers" rather than "command not found". Stopping the **container** is the induction: the dead-man matches a clean `zcrypto archive pull` line from **any** channel inside it, so silencing one channel leaves it green.
-- **Must fire**: [`nas.md#zcrypto-nas-archive-pull-stalled`](nas.md#zcrypto-nas-archive-pull-stalled) (critical, `logs`) — a `[3h]` no-clean-line window plus `for: 0s` plus the 60 s group interval ≈ **3 h 1 min after the last clean `pull complete … failed=0` line**, which is where the hold ends. **It is not the only page**: this container also runs the gate export and writes the ops writer's `.pull-status` gate, so expect [`gate.md#zcrypto-gate-exporter-stale`](gate.md#zcrypto-gate-exporter-stale) (critical, `metrics`) on the shorter clock — 7200 s + `for: 5m` + 60 s ≈ **2 h 6 min** from the last successful export — and the unpinged `zcrypto-gate-verify` check at `timeout` 3900 s + `grace` 3600 s = **2 h 25 min**, bringing `zcrypto-hcio-watchdog` ≈7 min behind it. Name all three in the entry: an entry recording one page leaves the next reader two unexplained criticals and a healthchecks.io notification from a domain the drill never mentions.
+- **Induce**, on the NAS (`ssh nas`), with `max(hc_checks_down_total)` read **0** by value first — `zcrypto-hcio-watchdog` is in the *Must fire* below with a number, and a check an earlier drill left down has that fleet-wide aggregate already firing: `sudo /usr/local/bin/docker stop zcrypto-archive-pull`. **`docker` is at `/usr/local/bin/docker` on that host and is not on a non-interactive ssh `PATH`** — called bare it prints nothing and reads as "no containers" rather than "command not found". Stopping the **container** is the induction: the dead-man matches a clean `zcrypto archive pull` line from **any** channel inside it, so silencing one channel leaves it green.
+- **Must fire**: [`nas.md#zcrypto-nas-archive-pull-stalled`](nas.md#zcrypto-nas-archive-pull-stalled) (critical, `logs`) — a `[3h]` no-clean-line window plus `for: 0s` plus the 60 s group interval ≈ **3 h 1 min after the last clean `pull complete … failed=0` line**, which is where the hold ends. **It is not the only page**: this container also runs the gate export and writes the ops writer's `.pull-status` gate, so expect [`gate.md#zcrypto-gate-exporter-stale`](gate.md#zcrypto-gate-exporter-stale) (critical, `metrics`) on the shorter clock — 7200 s + `for: 5m` + 60 s ≈ **2 h 6 min** from the last successful export — and the unpinged `zcrypto-gate-verify` check at `timeout` 3900 s + `grace` 3600 s = 7500 s = **2 h 5 min**, bringing `zcrypto-hcio-watchdog` ≈7 min behind it. Name all three in the entry: an entry recording one page leaves the next reader two unexplained criticals and a healthchecks.io notification from a domain the drill never mentions.
 - **Expect silence that proves nothing.** `zcrypto-gate-mismatch`, `zcrypto-gate-pull-lag` and `zcrypto-gate-streak-reset` stay quiet on **frozen** figures: the textfile persists and is still scraped, so `increase()`/`delta()` read 0 and the gauges hold their last values. The gate domain is suspended for the hold, not healthy.
 - **Read `/archive/.pull-status`'s `ts_epoch` against the current epoch before the stop.** Over an hour old, wait out the next `pull complete` line and induce against a fresh one. That file is at most one loop period old when the stop lands (~1.2 h) and the ops overlay-writer's `MAX_STATUS_AGE` is 4 h, so it can age out **inside** this hold, after which that writer's fail-closed gate skips reconcile and backfill on every `:12`/`:42` cycle — and nothing pages to say it began. A crossing that happens anyway goes in the entry's *follow-ups* clause as the skipped cycles it is. **End the hold at the derived bound above; an overrun only buys more of them.**
 - **Restore** with the recipe in [`nas.md#zcrypto-nas-archive-pull-stalled`](nas.md#zcrypto-nas-archive-pull-stalled), then read a `pull complete … failed=0` line back **naming the capture channels** — `sudo /usr/local/bin/docker logs zcrypto-archive-pull --since 4h`. The dead-man goes green on any single verified channel, so a bare clean line proves the mirror is being fed, not that the unbackfillable half is.
