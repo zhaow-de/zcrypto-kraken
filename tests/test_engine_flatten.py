@@ -1565,7 +1565,7 @@ def _armed(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _run(client, tmp_path, *, execute=True, reply="FLATTEN", venue=_online, tty=True, lines=None):
+def _run(client, tmp_path, *, execute=True, reply="FLATTEN", venue=_online, tty=True, lines=None, prompt=None, echo=None):
     return flatten.run_flatten(
         client,
         state_dir=tmp_path,
@@ -1573,9 +1573,29 @@ def _run(client, tmp_path, *, execute=True, reply="FLATTEN", venue=_online, tty=
         now=lambda: _STAMP,
         venue_reader=venue,
         tty_available=lambda: tty,
-        prompt=lambda _: reply,
-        echo=(lines.append if lines is not None else (lambda _: None)),
+        prompt=prompt if prompt is not None else (lambda _: reply),
+        echo=echo if echo is not None else (lines.append if lines is not None else (lambda _: None)),
     )
+
+
+class _StdoutThatDies:
+    """An echo that starts raising the moment `trigger()` says so, and remembers what landed
+    before that.
+
+    ENOSPC on the wrapper's captured log and EPIPE from a wrapper that died are the incident-day
+    conditions; what the two fixtures below vary is the TIMING relative to the first write, which
+    is the whole of the asymmetry being pinned. `lines` is what makes each one bite: it names the
+    line that would have been there had the trigger never fired.
+    """
+
+    def __init__(self, trigger) -> None:
+        self.trigger = trigger
+        self.lines: list[str] = []
+
+    def __call__(self, line: str) -> None:
+        if self.trigger():
+            raise OSError(28, "No space left on device")
+        self.lines.append(line)
 
 
 def _flat_client(**kw):
@@ -1701,6 +1721,11 @@ def test_a_residual_position_after_the_closes_exits_two(tmp_path):
     client = _flat_client(positions=[row, row, row, row])
     assert _run(client, tmp_path) == 2
     assert client.submitted != []
+    # Every residual row carries a `reason`, the ordinary one included: an absent key is a second
+    # row shape in an artifact read mid-incident. LONG on a listed pair is the ordinary case.
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    (position,) = [r for r in json.loads(path.read_text())["residuals"] if r["kind"] == "position"]
+    assert position["reason"] == "open_position"
 
 
 def test_a_fill_during_the_confirm_leaves_its_residual_in_the_final_snapshot_and_exits_two(tmp_path):
@@ -1961,3 +1986,113 @@ def test_the_journal_filename_needs_no_shell_quoting(tmp_path):
     name = flatten.journal_path(tmp_path, _STAMP).name
     assert name == "flatten-20260830T120000Z.json"
     assert not set(name) & set(":+ '\"")
+
+
+# --- a stdout that goes away, on both sides of the first write ------------------------------
+
+
+@pytest.mark.parametrize("execute", [True, False])
+def test_a_stdout_that_dies_while_the_plan_is_printed_refuses_cleanly_and_never_tracebacks(tmp_path, execute):
+    """Pre-write, so aborting is free -- but cleanly. Unguarded this is an `OSError` out of a
+    function whose contract says it raises nothing, and the traceback carries Python's own exit 1:
+    the code this command defines as "refused with nothing sent", with no journal beside it.
+
+    The trigger fires on the FIRST line, which `render_plan` writes before anything else, so
+    `echo.lines == []` is what says it bit: the plan's opening line is unconditional and would be
+    there under any implementation that got past it. The dry run reaches the same gate and keeps
+    its own contract of leaving no artifact."""
+    _armed(tmp_path)
+    client = _flat_client(positions=[[_Position("BTC/EUR", "LONG", 0.5)]] * 4)
+    echo = _StdoutThatDies(lambda: True)
+    assert _run(client, tmp_path, execute=execute, echo=echo) == 1
+    assert echo.lines == []  # not one line landed: the trigger fired on the plan's first
+    assert "cancel_all_orders" not in names(client)
+    assert "submit_order" not in names(client)
+    journals = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    assert len(journals) == (1 if execute else 0)
+    if execute:
+        doc = json.loads(journals[0].read_text())
+        assert doc["exit_code"] == 1 and "display_failure" in doc
+
+
+def test_a_stdout_that_dies_after_the_orders_went_out_keeps_the_true_code_and_the_record(tmp_path):
+    """The instance that costs the most. Post-write a display failure may cost neither the exit
+    code nor the journal: the cancel and the market sells have reached a real account, and an
+    operator told "refused, nothing sent" -- which is what Python's exit 1 on a traceback says --
+    acts on the opposite of what happened, with nothing to reconstruct from.
+
+    `client.submitted` is the trigger, so every line up to and including the plan lands and the
+    first line AFTER the sweep raises. Two values make it bite: `submitted` is non-empty (the
+    margin closer went out, so the trigger certainly fires) and the summary's own opening line is
+    absent from `echo.lines` (it would be there had it not). The residual position is what makes
+    the true code 2 rather than 0 -- a code a traceback could never produce, and the one an
+    operator has to see."""
+    _armed(tmp_path)
+    row = [_Position("BTC/EUR", "LONG", 0.5)]
+    client = _flat_client(positions=[row, row, row, row])
+    echo = _StdoutThatDies(lambda: bool(client.submitted))
+    assert _run(client, tmp_path, echo=echo) == 2
+    assert client.submitted != []  # the trigger armed itself: orders reached the venue
+    assert echo.lines != [] and not any("does NOT read flat" in line for line in echo.lines)
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    doc = json.loads(path.read_text())
+    assert doc["exit_code"] == 2
+    assert [r["kind"] for r in doc["residuals"]] == ["position"]
+
+
+def test_the_journal_s_own_fallback_survives_the_stdout_that_broke_the_file_write(tmp_path, monkeypatch, caplog):
+    """`write_journal`'s last act may not be able to raise. The two failures arrive together on an
+    incident day -- a full filesystem takes the wrapper's captured log with the artifact, a dead
+    wrapper takes the pipe -- so a fallback that prints is a fallback that dies on the very
+    condition it exists to survive, and it dies INSIDE `_finish`, taking the exit code with it.
+
+    Two fixture values, and removing either makes this green under the defect: `exec_dir` points
+    THROUGH a regular file, so `mkdir` raises `NotADirectoryError` and the file write really does
+    fail; and `print` really does raise, so the fallback really is the thing under test. The
+    payload's own marker in the log is what says the record survived rather than merely not
+    crashing -- `logging` handles a failing handler internally and cannot raise out of here."""
+    (tmp_path / "blocker").write_text("not a directory")
+
+    def through_a_file(_state_dir):
+        return tmp_path / "blocker" / "exec"
+
+    class _DeadStdout:
+        """The condition itself, not a stubbed `print`: `print` is left alone and the STREAM under
+        it is what has gone. Patching `builtins.print` instead reaches inside `logging`'s own
+        failure handling and makes the fallback look broken for a reason production cannot have."""
+
+        def write(self, _text):
+            raise OSError(28, "No space left on device")
+
+        def flush(self):
+            raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("cli.engine.execgate.exec_dir", through_a_file)
+    monkeypatch.setattr("sys.stdout", _DeadStdout())
+    with caplog.at_level("CRITICAL", logger="engine.flatten"):
+        assert flatten.write_journal(tmp_path, _STAMP, {"schema_version": 1, "marker": "kept"}) is None
+    assert '"marker": "kept"' in caplog.text
+
+
+def test_a_terminal_that_dies_between_the_check_and_the_prompt_refuses_and_journals(tmp_path):
+    """`tty_available()` passed a moment ago and the confirm still raised -- a wrapper killed in
+    between, a pty that went. Every other exit-1 refusal is pinned by a fixture; this handler sits
+    on the same contract, on the gate between an operator and a real account, so it gets one too.
+
+    Without it the raise leaves a traceback and Python's own exit 1, which reads identically to a
+    refusal and leaves nothing behind: the journal and the recorded `unreadable` are what tell the
+    two apart afterwards."""
+    _armed(tmp_path)
+    client = _flat_client()
+
+    def gone(_):
+        raise OSError(5, "Input/output error")
+
+    assert _run(client, tmp_path, prompt=gone) == 1
+    assert names(client) != []  # the pre-write reads ran -- this is not the kill-file refusal
+    assert "cancel_all_orders" not in names(client)
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    doc = json.loads(path.read_text())
+    # Never "not-required", which is what a dry run records: the word was asked for and could not
+    # be read, and a record that cannot say which of those happened is one nobody can act on.
+    assert doc["confirm"] == "unreadable" and doc["exit_code"] == 1

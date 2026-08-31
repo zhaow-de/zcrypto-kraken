@@ -1044,6 +1044,11 @@ def judge_final(final: Snapshot, listing: dict, prices: dict) -> list[dict]:
         elif row.symbol not in listing:
             # Nothing was sent for it and nothing could be: this is where that reaches the record.
             residual["reason"] = "pair_not_listed"
+        else:
+            # Every residual row carries a `reason`, including the ordinary one. An absent key is a
+            # second row SHAPE in an artifact read mid-incident, where a missing field reads as a
+            # different kind of thing rather than as the plain case.
+            residual["reason"] = "open_position"
         residuals.append(residual)
     from cli.engine.instruments import EUR_CODES
 
@@ -1102,13 +1107,46 @@ def write_journal(state_dir, stamp, payload: dict) -> Path | None:
         except FileExistsError:
             continue
         except OSError:
-            logger.critical(
-                "the flatten journal could not be written to %s -- the record follows on stdout", candidate, exc_info=True
-            )
-            print(json.dumps(payload, indent=2, sort_keys=True, default=str))
+            logger.critical("the flatten journal could not be written to %s -- the record follows", candidate, exc_info=True)
+            body = json.dumps(payload, indent=2, sort_keys=True, default=str)
+            try:
+                print(body)
+            except OSError:
+                # The condition this fallback exists for is routinely the SAME one that broke the
+                # file write: a full filesystem takes the wrapper's captured log with it, and a
+                # dead wrapper takes the pipe. `logging` handles a failing handler internally and
+                # cannot raise out of here, so it is what goes LAST -- a fallback that dies on the
+                # very condition it exists to survive is no fallback.
+                logger.critical("...and could not be written to stdout either -- the record is\n%s", body)
             return None
     logger.critical("the flatten journal could not be given a free name under %s", base.parent)
     return None
+
+
+class _Echo:
+    """`echo`, with a stdout that can go away.
+
+    ENOSPC on the wrapper's captured log and EPIPE from a wrapper that died are both incident-day
+    conditions, and `run_flatten` promises to raise nothing: an unguarded write turns a completed
+    sweep into a traceback carrying Python's own exit 1 -- the code this command defines as
+    "refused with nothing sent" -- with no journal to reconstruct from.
+
+    `ok` goes False on the first line that did not land, and the two sides of the first write read
+    it differently. BEFORE it, the caller aborts: a plan the operator could not read is a
+    confirmation they cannot give, and aborting is free. AFTER it, `ok` is ignored -- nobody is
+    reading, the orders have gone out, and the journal is the only thing that survives.
+    """
+
+    def __init__(self, echo: Callable[[str], None]) -> None:
+        self._echo = echo
+        self.ok = True
+
+    def __call__(self, message: str) -> None:
+        try:
+            self._echo(message)
+        except OSError as exc:
+            self.ok = False
+            logger.error("a line for the operator could not be written (%s): %s", exc, message)
 
 
 def run_flatten(
@@ -1129,6 +1167,7 @@ def run_flatten(
     3 the venue could not be reached or read BEFORE the first write, which is the cancel.
     """
     stamp = now()
+    say = _Echo(echo)
     rec = Recorder()
     record: dict = {
         "schema_version": 1,
@@ -1141,14 +1180,17 @@ def run_flatten(
         "requests": rec.entries,
     }
 
-    def _finish(code: int, message: str | None = None) -> int:
-        if message:
-            echo(message)
+    def _finish(code: int, *lines: str) -> int:
+        """The durable record is attempted BEFORE the human-readable summary, never after: a
+        stdout that has gone away reaches nobody, and written first the journal exists whatever the
+        terminal does next."""
         record["exit_code"] = code
         record["finished_at"] = now().isoformat()
         path = write_journal(state_dir, stamp, record)
+        for line in lines:
+            say(line)
         if path is not None:
-            echo(f"the record of this run is {path}")
+            say(f"the record of this run is {path}")
         return code
 
     if execute:
@@ -1163,7 +1205,7 @@ def run_flatten(
         status = check_venue(venue_reader, stamp)
     except FlattenUnreachable as exc:
         record["venue_status"] = {"status": "not-online", "ok": False}
-        return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), echo)
+        return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), say)
     record["venue_status"] = {"status": status.status, "ok": status.ok}
 
     try:
@@ -1172,13 +1214,19 @@ def run_flatten(
         plan = build_plan(client, rec, snapshot, listing)
     except FlattenUnreachable as exc:
         record["error"] = str(exc)
-        return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), echo)
+        return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), say)
 
     record["snapshot_before"] = _snapshot_payload(snapshot)
-    render_plan(plan, echo)
+    render_plan(plan, say)
+    if not say.ok:
+        # Pre-write, so aborting is free and correct -- but cleanly: the plan is what the word is
+        # typed against, and a dry run's whole product is that plan. Either way nothing was sent.
+        record["display_failure"] = "the plan could not be written to the operator's terminal"
+        message = "the plan could not be shown -- nothing was sent"
+        return _finish(1, message) if execute else _dry_exit(1, message, say)
 
     if not execute:
-        echo("nothing was sent: this run reads and prints only")
+        say("nothing was sent: this run reads and prints only")
         return 0
 
     try:
@@ -1187,6 +1235,7 @@ def run_flatten(
         # `tty_available()` passed a moment ago; between then and here the terminal can still go.
         # This function promises to raise nothing, and a traceback where the refusal contract
         # promises exit 1 leaves the operator with no journal and no code to read.
+        record["confirm"] = "unreadable"
         return _finish(1, f"the confirmation could not be read from the terminal -- nothing was sent: {exc}")
     if not matches_confirm(reply):
         record["confirm"] = "mismatch"
@@ -1204,17 +1253,17 @@ def run_flatten(
     record["legs"] = [asdict(outcome) for outcome in result.outcomes]
     record["snapshot_after"] = _snapshot_payload(result.final)
     record["residuals"] = residuals
+    # Handed to `_finish` rather than echoed here: past the first write the record must be on disk
+    # before a single line is attempted, and a display failure may cost neither it nor the code.
     if code == 0:
-        echo("the account reads flat: no resting order, no open position, no sellable balance left")
+        lines = ["the account reads flat: no resting order, no open position, no sellable balance left"]
     else:
-        echo("the account does NOT read flat -- what is left:")
-        for row in residuals:
-            echo(f"  {row}")
+        lines = ["the account does NOT read flat -- what is left:", *(f"  {row}" for row in residuals)]
         if result.post_write_failure:
-            echo(f"  a read after the cancel failed: {result.post_write_failure}")
+            lines.append(f"  a read after the cancel failed: {result.post_write_failure}")
         if not result.cancel_ok:
-            echo(f"  the account-wide cancel failed: {result.cancel_error}")
-    return _finish(code)
+            lines.append(f"  the account-wide cancel failed: {result.cancel_error}")
+    return _finish(code, *lines)
 
 
 def _dry_exit(code: int, message: str, echo: Callable[[str], None]) -> int:
