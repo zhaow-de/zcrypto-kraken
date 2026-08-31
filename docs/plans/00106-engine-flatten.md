@@ -379,6 +379,22 @@ def test_positions_are_read_by_named_fields_and_a_missing_one_aborts():
     assert "position_side" in str(exc.value)
 
 
+def test_a_position_read_that_answers_nothing_aborts_rather_than_reading_as_flat():
+    """`None` is not an account with no positions, and read as `[]` it is the one shape that
+    confirms itself: the plan shows no margin leg, the operator confirms, the cancel and the spot
+    sells run, and then `judge_final` re-reads through this same function, finds no residual and
+    reports the account flat at exit 0 with leveraged positions still open.
+
+    The fake's answer script is a queue of whole answers, so `None` is scriptable with no special
+    case -- the `[[]]` default applies only when no script is given and cannot mask this."""
+    client = FakeClient(positions=[None])
+    with pytest.raises(flatten.FlattenUnreachable) as exc:
+        flatten.read_positions(client, flatten.Recorder())
+    assert "answered nothing" in str(exc.value)
+    # The read went out and its answer is what was refused -- not a refusal before reaching the venue.
+    assert names(client) == ["request_position_status_reports"]
+
+
 def test_the_position_read_is_scoped_to_margin_with_spot_reports_off():
     """The three parameters that scope this read are asserted rather than assumed: MARGIN, spot
     position reports off, and the euro quote. Whether they actually keep a spot holding out of the
@@ -660,16 +676,29 @@ def _symbol_of(instrument_id: Any) -> str:
     return str(instrument_id).rsplit(".", 1)[0]
 
 
+def _journalled(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The keyword arguments as the journal records them: a nautilus enum by its string form, every
+    other value verbatim.
+
+    Each read below builds ONE kwargs dict and both sends and journals it, so no scoping value is
+    spelled a second time beside the call. A hand-written literal is a journal that can read MARGIN
+    while CASH went out, and the journal is what an operator reads mid-incident.
+    """
+    return {key: str(value) if isinstance(value, AccountType) else value for key, value in kwargs.items()}
+
+
 def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
     """Every order resting at the venue. Only the LIST is load-bearing here -- its length decides
     the exit code -- so no per-row field is required: an unparseable row must not abort a sweep
     whose whole answer is 'something is still working'."""
-    params = {"account_id": ACCOUNT_ID, "open_only": True}
+    # `account_id` is the constant `_ACCOUNT` is minted from, not a second spelling of it.
+    kwargs: dict[str, Any] = {"open_only": True}
+    params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
         rows = rec.call(
             "request_order_status_reports",
             params,
-            lambda: client.request_order_status_reports(_ACCOUNT, open_only=True),
+            lambda: client.request_order_status_reports(_ACCOUNT, **kwargs),
         )
     except FlattenUnreachable:
         raise
@@ -681,30 +710,29 @@ def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
 
 
 def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
-    # Every recorded parameter is DERIVED from what the call below passes, never spelled a second
-    # time beside it: a hand-written literal is a journal that can read MARGIN while CASH went out,
-    # and the journal is what an operator reads mid-incident. Same in `read_balances`.
-    params = {
-        "account_id": ACCOUNT_ID,
-        "account_type": str(AccountType.MARGIN),
+    kwargs: dict[str, Any] = {
+        "account_type": AccountType.MARGIN,
         "use_spot_position_reports": False,
         "quote_currency": QUOTE_CURRENCY,
     }
+    params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
         rows = rec.call(
             "request_position_status_reports",
             params,
-            lambda: client.request_position_status_reports(
-                _ACCOUNT,
-                account_type=AccountType.MARGIN,
-                use_spot_position_reports=False,
-                quote_currency=QUOTE_CURRENCY,
-            ),
+            lambda: client.request_position_status_reports(_ACCOUNT, **kwargs),
         )
     except FlattenUnreachable:
         raise
     except Exception as exc:  # noqa: BLE001
         raise FlattenUnreachable(f"margin positions could not be read: {exc}") from exc
+    # `None` read as "no positions" is the one shape that CONFIRMS ITSELF: `build_plan` shows no
+    # margin leg, the writes run, and `judge_final` re-reads through this same function, finds no
+    # residual and reports the account flat at exit 0 with leveraged positions still open. Unlike
+    # its three siblings this read has no downstream backstop -- `read_listing` has its empty-map
+    # raise and `read_balances` has `_required(state, "balances")`.
+    if rows is None:
+        raise FlattenUnreachable("margin positions could not be read: the venue answered nothing")
     out = []
     for row in list(rows or []):
         what = "a margin position row"
@@ -718,12 +746,13 @@ def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
 
 
 def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
-    params = {"account_id": ACCOUNT_ID, "account_type": str(AccountType.CASH)}
+    kwargs: dict[str, Any] = {"account_type": AccountType.CASH}
+    params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
         state = rec.call(
             "request_account_state",
             params,
-            lambda: client.request_account_state(_ACCOUNT, account_type=AccountType.CASH),
+            lambda: client.request_account_state(_ACCOUNT, **kwargs),
         )
     except FlattenUnreachable:
         raise

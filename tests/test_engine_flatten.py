@@ -206,6 +206,22 @@ def test_positions_are_read_by_named_fields_and_a_missing_one_aborts():
     assert "position_side" in str(exc.value)
 
 
+def test_a_position_read_that_answers_nothing_aborts_rather_than_reading_as_flat():
+    """`None` is not an account with no positions, and read as `[]` it is the one shape that
+    confirms itself: the plan shows no margin leg, the operator confirms, the cancel and the spot
+    sells run, and then `judge_final` re-reads through this same function, finds no residual and
+    reports the account flat at exit 0 with leveraged positions still open.
+
+    The fake's answer script is a queue of whole answers, so `None` is scriptable with no special
+    case -- the `[[]]` default applies only when no script is given and cannot mask this."""
+    client = FakeClient(positions=[None])
+    with pytest.raises(flatten.FlattenUnreachable) as exc:
+        flatten.read_positions(client, flatten.Recorder())
+    assert "answered nothing" in str(exc.value)
+    # The read went out and its answer is what was refused -- not a refusal before reaching the venue.
+    assert names(client) == ["request_position_status_reports"]
+
+
 def test_the_position_read_is_scoped_to_margin_with_spot_reports_off():
     """The three parameters that scope this read are asserted rather than assumed: MARGIN, spot
     position reports off, and the euro quote. Whether they actually keep a spot holding out of the
