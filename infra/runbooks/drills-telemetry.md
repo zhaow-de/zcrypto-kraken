@@ -181,6 +181,8 @@ Then delete the throwaway check through the management API and remove the contai
 
 ### Record
 
+**Run 2026-08-31 — `pass`.** Green control pinged up at 12:01:48Z; the 300 MiB tmpfs breached 1.8 s after start; the withheld ping paged the check at 12:05:48Z, exactly its chosen 120 + 120, Slack 2 s later; `zcrypto-hcio-watchdog` followed at 12:11:40Z, Slack 34 s. Both throwaway instruments deleted the same sitting, fleet clear by value 12:13:59Z. Two notes for the next run: the watermark ERROR is logged **once**, not once per probe — the gap opens and stays open — and the watchdog measured **1** here against K's **999**, because K took out the hc.io scrape itself.
+
 Entry `I`. The *time-to-alert* clause records this check's own timeout + grace and **says which check it quotes**. The *channels* clause names both pages — the native one and the watchdog — or a two-page induction is booked as one.
 
 The healthchecks-native path of drill Q is read here; see [`drills-telemetry.md#drill-q`](drills-telemetry.md#drill-q).
