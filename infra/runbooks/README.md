@@ -142,12 +142,12 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 Nothing fires these; you open one deliberately, in an attended window, and no money moves. Read that file's standing rules before any of the sections below.
 
 - [`drill-c`](drills-telemetry.md#drill-c) — PROCEDURE: the ingest plane goes dark, held long enough to measure what a restarted shipper recovers per plane — logs replay from the positions file under a ceiling, the metrics window is simply absent.
-- [`drill-c-prime`](drills-telemetry.md#drill-c-prime) — PROCEDURE: Grafana Cloud dark — the page time on each of the two routes the ops-side watchdog can fail by, and the proof that the dead-man domain still answers when the Grafana half is gone.
+- [`drill-c-prime`](drills-telemetry.md#drill-c-prime) — PROCEDURE: C′, Grafana Cloud dark — the page time on each of the two routes the ops-side watchdog can fail by, and the proof that the dead-man domain still answers when the Grafana half is gone.
 - [`drill-i`](drills-telemetry.md#drill-i) — PROCEDURE: a disk watermark breach through a withheld ping to a page, end to end, on the ops node and on no capture host.
-- [`drill-j-prime`](drills-telemetry.md#drill-j-prime) — PROCEDURE: the `/fail` route on a dead-man — that an explicit fail ping leaves a process, moves the check and reaches a phone. It proves the route, not the caller.
+- [`drill-j-prime`](drills-telemetry.md#drill-j-prime) — PROCEDURE: J′, the `/fail` route on a dead-man — that an explicit fail ping leaves a process, moves the check and reaches a phone. It proves the route, not the caller.
 - [`drill-k`](drills-telemetry.md#drill-k) — PROCEDURE: Alloy killed and timed — the Alloy-dark bound measured rather than computed, and the restart recipe verified by value. Same instrument as drill C, short hold.
 - [`drill-o`](drills-telemetry.md#drill-o) — PROCEDURE: timer death — whether the one ops timer with no Grafana staleness rule is caught by its dead-man alone, and if it is not, that a rule is owed.
-- [`drill-p-plus-r`](drills-telemetry.md#drill-p-plus-r) — PROCEDURE: the secondary goes away — the one log class no Alloy pipeline sees, a compose service that is never created, whose liveness rests entirely on a dead-man.
+- [`drill-p-plus-r`](drills-telemetry.md#drill-p-plus-r) — PROCEDURE: P+R, the secondary goes away — the one log class no Alloy pipeline sees, a compose service that is never created, whose liveness rests entirely on a dead-man; and that the **primary stays whole** across the window, which is why its preconditions re-read four signals on a 60 s cadence.
 - [`drill-q`](drills-telemetry.md#drill-q) — PROCEDURE: does the phone actually buzz — a page reaching a **phone**, on each of the three receivers independently. Every other section here proves a rule fired; this one proves someone finds out.
 - [`proven-tier-reverification`](drills-telemetry.md#proven-tier-reverification) — PROCEDURE: whether a scenario already proven — by a drill or by a real incident — needs another run. Re-verify only when the code path it proved has changed; the tier's proofs and the scenarios deliberately dropped are the tables there.
 

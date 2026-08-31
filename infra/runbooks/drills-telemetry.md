@@ -98,7 +98,7 @@ The page time on each of the **two** routes by which the ops-side Grafana watchd
 
 - An attended window; standing rules above.
 - **The `/fail` route restores only by a second converge.** A converge is a human step outside the routine window, so that route is written here and run when a converge window is open. The staleness route needs no converge and can run in any attended window.
-- `zcrypto-grafana-watchdog` read green by value immediately before — `uv run python infra/scripts/grafana-query.py 'hc_check_up{name="zcrypto-grafana-watchdog"}' 'hc_checks_down_total'`. A check already down produces no up→down transition and therefore no notification at all, and the run would book `fail` against a route that works.
+- `zcrypto-grafana-watchdog` read green by value immediately before — `uv run python infra/scripts/grafana-query.py 'hc_check_up{name="zcrypto-grafana-watchdog"}' 'hc_checks_down_total'`. Green means **`hc_check_up == 1` and `max(hc_checks_down_total) == 0`**, both read as values: a check already down produces no up→down transition and therefore no notification at all, and the run would book `fail` against a route that works, while the fleet aggregate is what says the page this drill later times is this induction's rather than a check already down elsewhere. **Not green ⇒ the drill is recorded `blocked` with the reason** — never `pass`, and never `fail`, which would assert a route failed that was never exercised.
 
 ### Induce
 

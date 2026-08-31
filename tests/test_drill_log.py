@@ -15,8 +15,15 @@ LOG = Path(__file__).resolve().parents[1] / "docs/reference/drill-log.md"
 _HEADING = re.compile(r"^## (\d{4}-\d{2}-\d{2}) — ([A-Za-z0-9′+-]+) — (pass|fail|partial|blocked)$")
 
 
+# Depth is matched without requiring the space, because `startswith("## ")` silently DROPS a
+# `##2026-09-02 — K — pass` from both assertions below: the shape check never sees it to reject it,
+# and its date never joins the ordering list. A typo'd entry would read as absent rather than as
+# malformed. The `(?!#)` keeps `###` subsections out of the entry set.
+_ENTRY_LEVEL = re.compile(r"^##(?!#)")
+
+
 def _entry_headings() -> list[str]:
-    return [line for line in LOG.read_text(encoding="utf-8").splitlines() if line.startswith("## ")]
+    return [line for line in LOG.read_text(encoding="utf-8").splitlines() if _ENTRY_LEVEL.match(line)]
 
 
 def test_every_entry_heading_carries_a_date_an_id_and_one_of_four_statuses():
