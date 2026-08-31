@@ -703,3 +703,69 @@ def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
         # the listing does not carry, a side no closer can be derived from) and printing either as
         # the other tells the operator the wrong thing to go and do on Kraken.
         echo(f"  {row['symbol']} {row['side']} {row['quantity']:.8f} -- {row['note']}: it cannot be closed here")
+
+
+CONFIRM_PROMPT = f"Type {CONFIRM_WORD} to close every position and sell every non-EUR balance at market, anything else aborts: "
+
+
+def kill_file_path(state_dir):
+    """The engine's own control file, not a second spelling of it -- a kill file the engine does
+    not read stops nothing."""
+    from cli.engine.execgate import KILL_FILE, exec_dir
+
+    return exec_dir(state_dir) / KILL_FILE
+
+
+def check_kill_file(state_dir) -> str:
+    """Present or refuse. Without it, the engine's next start re-opens what this sweep closes; the
+    host wrapper writes it before it stops the unit, so an absent one means the button was invoked
+    some other way."""
+    path = kill_file_path(state_dir)
+    try:
+        return path.read_text()
+    except OSError as exc:
+        raise FlattenRefused(
+            f"the kill file {path} is absent or unreadable -- nothing was sent; place it and run this again"
+        ) from exc
+
+
+def terminal_available() -> bool:
+    """Whether a controlling terminal exists at all. Checked before any venue read, so a session
+    that could never answer the confirm is refused without spending five requests on it."""
+    try:
+        with open("/dev/tty", "rb"):
+            return True
+    except OSError:
+        return False
+
+
+def read_confirm(prompt_text: str) -> str:
+    """The typed word, read from the controlling terminal and NEVER from stdin: a pipe or a heredoc
+    must not be able to press this button (`infra/ansible/scripts/converge.sh`'s rule). There is
+    deliberately no flag that skips it -- a red button pressed by a script is a different product.
+
+    The PROMPT goes to the terminal too, never to stdout: the host wrapper captures stdout to a
+    log, and a prompt that lands there leaves the operator at a blank screen while the button waits.
+
+    TWO opens, never one `"r+"`: text `"r+"` builds a buffered random-access stream, which requires
+    a seekable file, and a tty is not one -- it raises `io.UnsupportedOperation` before a word is
+    ever read (measured under `pty.fork()` on cpython 3.14.6).
+    """
+    with open("/dev/tty", "w") as out:
+        out.write(prompt_text)
+        out.flush()
+    with open("/dev/tty", "r") as tty:
+        return (tty.readline() or "").strip()
+
+
+def matches_confirm(reply: str) -> bool:
+    return reply.strip() == CONFIRM_WORD
+
+
+def check_venue(venue_reader, now):
+    """The public unsigned status endpoint the execution gate already uses, with its own 10 s
+    timeout. It never raises, so a refusal here is a reading and not an exception."""
+    status = venue_reader(now=now)
+    if not status.ok:
+        raise FlattenUnreachable(f"the venue is not online (it reads {status.status!r}) -- nothing was sent")
+    return status

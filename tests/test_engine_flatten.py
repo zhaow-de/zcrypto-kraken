@@ -6,7 +6,11 @@ venue -- never only about a return value."""
 
 from __future__ import annotations
 
+import os
+import pty
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -917,3 +921,173 @@ def test_each_leg_is_sized_with_the_price_and_the_constraints_of_its_own_pair():
     assert sized.quote == "BTC"
     assert sized.estimate == pytest.approx(0.06)
     assert plan.constraints["ETH/BTC"].tick_size == 0.0000001
+
+
+# --- the gates and the confirm ------------------------------------------------------------------
+
+
+def _exec_dir(tmp_path: Path) -> Path:
+    d = tmp_path / "exec"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _drain(fd: int) -> bytes:
+    """Everything the child wrote to the pty, read after it exited.
+
+    Linux hands back the buffered output first and only then raises EIO on the master, so a read
+    loop that stops at the OSError sees what the child printed (measured on cpython 3.14.6).
+    """
+    seen = b""
+    try:
+        while True:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            seen += chunk
+    except OSError:
+        pass
+    return seen
+
+
+def test_an_absent_kill_file_refuses(tmp_path):
+    """The file is load-bearing: without it nothing stops the engine re-opening what this sweep
+    closes, so the sweep does not start."""
+    _exec_dir(tmp_path)
+    with pytest.raises(flatten.FlattenRefused):
+        flatten.check_kill_file(tmp_path)
+
+
+def test_a_present_kill_file_passes_and_its_text_is_returned_for_the_record(tmp_path):
+    (_exec_dir(tmp_path) / "kill").write_text("2026-08-30T12:00:00+00:00 flatten\n")
+    assert "flatten" in flatten.check_kill_file(tmp_path)
+
+
+def test_the_kill_file_path_is_the_engine_s_own(tmp_path):
+    """One control-file directory. A second spelling here is a kill file the engine never reads."""
+    from cli.engine.execgate import KILL_FILE, exec_dir
+
+    assert flatten.kill_file_path(tmp_path) == exec_dir(tmp_path) / KILL_FILE
+
+
+def test_a_venue_that_is_not_online_aborts():
+    from cli.engine.venue import VenueStatus
+
+    now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+    ok = VenueStatus(status="online", ok=True, observed_at=now)
+    bad = VenueStatus(status="maintenance", ok=False, observed_at=now)
+    assert flatten.check_venue(lambda **_: ok, now).status == "online"
+    with pytest.raises(flatten.FlattenUnreachable) as exc:
+        flatten.check_venue(lambda **_: bad, now)
+    assert "maintenance" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [("FLATTEN", True), ("  FLATTEN  ", True), ("flatten", False), ("FLATTE", False), ("", False), ("y", False)],
+)
+def test_only_the_exact_word_matches(reply, expected):
+    """Case-sensitive and exact: a red button that accepts `y` is a button pressed by accident."""
+    assert flatten.matches_confirm(reply) is expected
+
+
+def test_the_prompt_names_the_word_and_says_what_pressing_it_does():
+    assert flatten.CONFIRM_WORD in flatten.CONFIRM_PROMPT
+    assert "market" in flatten.CONFIRM_PROMPT
+    assert "aborts" in flatten.CONFIRM_PROMPT
+
+
+def test_the_confirm_reads_the_controlling_terminal_and_never_stdin(tmp_path):
+    """A pipe or a heredoc must not be able to drive the confirm (converge.sh's rule). The child's
+    stdin is EMPTY here, so an implementation reading stdin raises instead of returning the word."""
+    out = tmp_path / "reply.txt"
+    pid, fd = pty.fork()
+    if pid == 0:  # child: the pty is its controlling terminal
+        try:
+            os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+            from cli.engine import flatten as child_flatten
+
+            out.write_text(child_flatten.read_confirm("word? "))
+        except BaseException as exc:  # noqa: BLE001 -- the child reports, it does not raise into pytest
+            out.write_text(f"ERROR {type(exc).__name__}")
+        finally:
+            os._exit(0)
+    os.write(fd, b"FLATTEN\n")
+    os.waitpid(pid, 0)
+    os.close(fd)
+    assert out.read_text().strip() == "FLATTEN"
+
+
+def test_the_prompt_is_written_to_the_terminal_and_not_to_this_process_s_stdout(tmp_path):
+    """The read is only half the confirm: a prompt that goes to stdout is a prompt the operator
+    never sees when the wrapper has captured stdout to a log, and the button then waits at a blank
+    screen for a word nobody knows to type. pytest's default fd-level capture has already taken
+    this process's fd 1, so a prompt printed rather than written to `/dev/tty` reaches the capture
+    file and never the terminal drained below."""
+    out = tmp_path / "reply.txt"
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+            from cli.engine import flatten as child_flatten
+
+            out.write_text(child_flatten.read_confirm("TYPE-THE-WORD? "))
+        except BaseException as exc:  # noqa: BLE001 -- the child reports, it does not raise into pytest
+            out.write_text(f"ERROR {type(exc).__name__}")
+        finally:
+            os._exit(0)
+    os.write(fd, b"FLATTEN\n")
+    os.waitpid(pid, 0)
+    seen = _drain(fd)
+    os.close(fd)
+    assert out.read_text().strip() == "FLATTEN"
+    assert b"TYPE-THE-WORD?" in seen
+
+
+def test_the_terminal_check_answers_true_from_a_controlling_terminal(tmp_path):
+    """The gate's other direction. One that answers False everywhere refuses the button in exactly
+    the crisis it exists for, and the no-terminal test below cannot tell the two apart."""
+    out = tmp_path / "answer.txt"
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            from cli.engine import flatten as child_flatten
+
+            out.write_text(str(child_flatten.terminal_available()))
+        except BaseException as exc:  # noqa: BLE001 -- the child reports, it does not raise into pytest
+            out.write_text(f"ERROR {type(exc).__name__}")
+        finally:
+            os._exit(0)
+    os.waitpid(pid, 0)
+    os.close(fd)
+    assert out.read_text() == "True"
+
+
+def test_the_terminal_check_answers_false_with_no_controlling_terminal(tmp_path):
+    """Refusing early costs nothing and saves an operator five venue reads before the refusal."""
+    out = tmp_path / "answer.txt"
+    pid = os.fork()
+    if pid == 0:
+        try:
+            try:
+                os.setsid()  # a fresh session has no controlling terminal
+            except PermissionError:
+                # The child inherited a session it already leads, so it cannot start a fresh one and
+                # cannot shed the terminal. Said out loud: a parent reading no file at all could not
+                # tell that apart from a crash in the check under test.
+                out.write_text("SESSION-LEADER")
+            else:
+                from cli.engine import flatten as child_flatten
+
+                out.write_text(str(child_flatten.terminal_available()))
+        except BaseException as exc:  # noqa: BLE001 -- the child reports, it does not raise into pytest
+            # Without this the parent reads a file that was never written: a FileNotFoundError at
+            # `out.read_text()` instead of an assertion naming what went wrong inside the check.
+            out.write_text(f"ERROR {type(exc).__name__}")
+        finally:
+            os._exit(0)
+    os.waitpid(pid, 0)
+    answer = out.read_text()
+    if answer == "SESSION-LEADER":
+        pytest.skip("the test process already leads its session, so the child cannot start a new one")
+    assert answer == "False"
