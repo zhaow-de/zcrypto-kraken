@@ -10,7 +10,7 @@ Nothing fires these; you open this page deliberately, inside an attended live-or
 
 - **Every drill here runs inside an attended probe window**, never beside one. The window's pre-probe checklist, its two arming keys and its own two drills come first, in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window). Only the account owner authors and places a plan, and no funded plan is dropped inside the final 60 minutes before a 4-hourly boundary (00/04/08/12/16/20 UTC) — run `date -u` immediately before.
 - **Never induce inside a published Kraken maintenance window.** Read `curl -fsS https://status.kraken.com/api/v2/scheduled-maintenances.json` at planning time **and again immediately before each induction**; the entries that matter carry `WebSocket` or `REST` in `components`, and they appear only 2–6 days ahead.
-- **Six of the eight drills below cannot be run today, and the missing pieces are just two.** No plan mode keeps an order resting — `rest-cancel` cancels the moment the venue acknowledges — so E, G, F2, A1 and A2 have nothing to act on until a `rest-hold` mode exists; and B is a command that has not been built. Both are registered build-sequence items in `T0018`, each its own spec and PR on the live trade path. A drill whose instrument does not exist is **`blocked`** with that reason, never `fail`, and never run with a substitute plan mode: an order cancelled a second after it was placed exercises none of what these drills measure.
+- **A drill whose instrument does not exist yet is `blocked`, and two instruments are missing.** No plan mode keeps an order resting — `rest-cancel` cancels the moment the venue acknowledges — so E, G, F2, A1 and A2 have nothing to act on until a `rest-hold` mode exists; and B is a command that has not been built. Both are registered build-sequence items in `T0018`, each its own spec and PR on the live trade path. Each affected section states the gap in its own *Preconditions*; read it there rather than from any count here. Record **`blocked`** with that reason, never `fail`, and never run with a substitute plan mode: an order cancelled a second after it was placed exercises none of what these drills measure.
 - **One induction at a time. Revert it and verify the revert BY VALUE before the next one starts.** An instrument is never widened: each *Induce* names exactly what to do, and anything heavier is a different act with a different blast radius.
 - **The engine's own money guards are not suspended for a drill.** A kill trip during one of these is real — resting orders cancelled, every further intent refused, and nothing continues until a human reads and removes the file. Work [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped) when that happens; do not treat it as drill noise.
 - **A window that stays armed past six hours pages** [`zcrypto-engine-exec-armed-too-long`](engine.md#zcrypto-engine-exec-armed-too-long) (warning, `metrics`). That is the rule working, not a fault — but a drill held for hours, D above all, is held inside a window that will reach it.
@@ -20,8 +20,8 @@ Nothing fires these; you open this page deliberately, inside an attended live-or
 
 A bound is derived or it is not written. Nothing below is an estimate.
 
-- **A Grafana rule's bound is its own `for`, quoted from `infra/grafana/alerts.yaml`, plus its group's evaluation interval.** Every rule named on this page is in the `zcrypto-gate` group.
-- **Every rule group evaluates at 60 s.** That number is in neither `infra/grafana/alerts.yaml` nor `infra/scripts/grafana-push.sh` — it was read from Grafana's provisioning rule-group endpoint (`/api/v1/provisioning/folder/<folder uid>/rule-groups/<group>`, the `interval` field) on 2026-08-31. Re-read it there rather than trusting this line: it is a setting in the stack, and nothing in this repo changes when it moves.
+- **A Grafana rule's bound is its own `for`, quoted from `infra/grafana/alerts.yaml`, plus its own group's evaluation interval.** This page names rules from **three** groups, and the group is a field on each rule in that file: the engine rules are `zcrypto-gate`; `zcrypto-fleet-daemon-restarted`, `zcrypto-alloy-dark-capture-primary`, `zcrypto-fleet-memory-headroom` and `zcrypto-hcio-watchdog` are `zcrypto-fleet`; `zcrypto-capture-all-streams-silent` and `zcrypto-capture-stream-silent` are `zcrypto-capture`.
+- **Every rule group evaluates at 60 s.** That number is in neither `infra/grafana/alerts.yaml` nor `infra/scripts/grafana-push.sh` — it was read from Grafana's provisioning rule-group endpoint (`/api/v1/provisioning/folder/<folder uid>/rule-groups/<group>`, the `interval` field) for all eight groups on 2026-08-31. Re-read it there rather than trusting this line: it is a setting in the stack, and nothing in this repo changes when it moves — and **re-read the interval of the group the rule you are re-deriving actually belongs to**, since the three above can move independently of each other.
 - **The engine's exporter is scraped every 60 s** — `scrape_interval` on the `engine_app` job in `infra/ansible/roles/capture/files/config.alloy` — so a gauge whose value changes on the host is at most one scrape old in Grafana Cloud.
 - **Add ~5 minutes of Prometheus staleness wherever the condition cannot go true until the series goes stale.** That covers every rule here that pages by `noDataState: Alerting` once the engine's exporter is gone, and the Alloy route of `zcrypto-engine-dark-with-exposure`. Without that term those bounds understate the real notice by a third.
 - **The gate's own gauges publish only when the gate is EVALUATED, and that cadence is not constant.** While a plan is running the executor evaluates on every 5-second tick and publishes the verdict from each one; with no plan running it evaluates at engine start and at each 4-hourly boundary. So every kill-switch bound below assumes a plan is resting, and that assumption is why E's preconditions demand one — a kill file placed on an idle engine can wait four hours to reach Grafana at all.
@@ -166,7 +166,7 @@ Entry `B`: decision-to-flat in minutes, what was open when the clock started, wh
 
 ### Retire when
 
-Flattening is no longer an operator act — nothing in `cli/engine/command.py` exposes a flatten command because the close path became automatic. **Written-and-unrun is not retired**: while the command is unbuilt this section is the record of what will be measured the first time it is pressed.
+**Two-phase, because the condition every other section here uses is already true of this one.** Until `zcrypto engine flatten` exists there is nothing whose absence could retire this section: written-and-unrun is not retired, and while the command is unbuilt this section is the record of what will be measured the first time it is pressed. **Once it lands, rewrite this part as every other one reads** — retire when `flatten` is absent from `cli/engine/command.py` again, i.e. the red button was replaced rather than never built.
 
 <a name="drill-d"></a>
 
@@ -267,6 +267,8 @@ sudo touch /var/lib/zcrypto-engine/exec/kill
 <a name="drill-e-prime"></a>
 
 #### E′ — the phone-reachable halt
+
+**Read E′'s own precondition above before starting** — it is the last bullet of *Preconditions*, and it is what decides `blocked` from `fail`: no ssh client on the device means the induction never landed; a client the access path refuses is E′'s finding.
 
 The same placement, made from the phone: an ssh client on the device, the fleet's own access path, and the one-line command above unchanged. Nothing about the engine changes — what is being timed is the human half, from the moment of decision to the gate reading `level=none`, with every step taken on the device and none on the workstation. Record the device and the client **by name**: the answer is a property of that pair, and a later reader cannot infer it.
 
@@ -413,8 +415,10 @@ sudo systemctl start zcrypto-engine
 Entry `G`, and **one reading beyond the log's clauses**, discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table:
 
 ```
-uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total{host="zcrypto"}'
+uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total{host="zcrypto", disposition="matched"}'
 ```
+
+**The `disposition="matched"` selector is the whole reading, not tidiness.** Both label children are registered at engine startup, so an unselected query returns two series — and in a window that already ran A2 the `unmatched` one reads non-zero **by design**, since a fill applied during startup reconciliation is published before any row is attached. Reading the pair without the selector is how a 1 that belongs to A2's fill gets written into the adapter-verification record as a proven `cl_ord_id` echo while `matched` sat at 0 and owed the two-artefact rule below.
 
 - **1 is the expected value.** The adopt pass's own cancel ack arrives on the external stream and keys back through the row the pass attached, and the matched counter is incremented before the fill branch runs.
 - **2 under a fill racing the cancel.** Either value proves Kraken echoes the client order id across a restart, which is the question this reading exists to answer.
