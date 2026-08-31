@@ -23,6 +23,7 @@ Every task's requirements implicitly include this section. Read all of it — ta
 - **Review floor is Fable for every commit on this branch** — this is the live trade path (`.claude/rules/spec-plan-locations.md`). The reviewer is a different agent from the author; `Reviewed-by: <actual reviewer model> <noreply@anthropic.com>` is amended in the same turn the review returns.
 - Commit trailers: `Co-Authored-By: <the actual authoring model> <noreply@anthropic.com>` first, `Reviewed-by:` last, no blank line between. **Never add a `Claude-Session:` trailer — it is banned in this repo.**
 - The commit gate is `uv run pre-commit run -a`, run to green, re-staging everything the hooks rewrite. Never `--no-verify`.
+- **The literal Python in the code fences below is not ruff-format-clean**: the first gate run rewrites a handful of lines (wrapping, and one parenthesised string that collapses). Re-stage the rewrite; never hand-fight the formatter, and if a rewrite moves a line one of the mutation-probe `sed`s targets, fix the `sed` to match the formatted line — Task 12 Step 3 rules which side to correct.
 - Stage by explicit path, one commit-type's file kind per commit. Never `git add -A`.
 
 ### Vocabulary and hygiene rules the tests enforce
@@ -77,7 +78,7 @@ Every task's requirements implicitly include this section. Read all of it — ta
 Every one of these is binding on the implementer. Do not re-litigate them mid-task; if one looks wrong, report it rather than silently deviating.
 
 1. **Required-field validation is per-leg, never over the whole listing.** `request_instruments()` returns ~1600 instruments. Validating all of them would let one unrelated listing row abort the button. The listing as a whole is required only to be a non-empty iterable; `min_quantity`/`size_increment`/`price_increment` are required **only on the pairs a leg actually routes to**, checked at lookup time.
-1. **Book prices are read only before the first write, never after.** The snapshot reads `request_book_snapshot(depth=1)` for every pair a snapshot leg routes to, **plus `BTC/EUR` whenever any leg routes to a `/BTC` pair** — the deterministic pass-two case. A leg that appears only in a later pass and has no snapshot reference price is sized on `ordermin`/`lot_step` alone, sent, and journaled `no_reference_price`; its `costmin` floor is then not applicable and the final snapshot judges it on `ordermin` alone. No post-write book read ever happens.
+1. **Book prices are read only before the first write, never after.** The snapshot reads `request_book_snapshot(depth=1)` for every pair a snapshot leg routes to, **plus `BTC/EUR` whenever any SPOT leg routes to a `/BTC` pair** — the deterministic pass-two case, and the only one that is deterministic: a margin leg on a `/BTC` pair leaves its proceeds in the pass-one balance read, where they are priced by nothing and sized like any other late-surfacing balance. A leg that appears only in a later pass and has no snapshot reference price is sized on `ordermin`/`lot_step` alone, sent, and journaled `no_reference_price`; its `costmin` floor is then not applicable and the final snapshot judges it on `ordermin` alone. No post-write book read ever happens.
 1. **One predicate serves both the dust classification and the final-snapshot judgement** (`classify_balance`). This makes it structurally impossible for the sweep to skip a balance as dust and then report the same balance as a residual.
 1. **Asset codes are resolved against the listing, never by string surgery alone.** A balance currency code is mapped to a base by trying, in order: the code itself; the explicit alias table `{"XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE"}` (the adapter's own `normalize_spot_symbol` renames, recorded in `cli/engine/instruments.py`'s docstring); the code with a single leading `X` or `Z` stripped — accepting the first that is a base the listing actually lists. A code that resolves to no listed base is treated exactly as an asset with neither pair: journaled `no_eur_or_btc_pair` with the unresolved code in a `note`, and read as a residual (exit 2). It is never silently ignored.
 1. **No settle wait.** The final snapshot is taken immediately after the last order. A fill that has not yet settled shows as a residual and the run exits 2 — the safe direction. The runbook tells the operator that an exit 2 whose journal shows every leg answered `ok` may be a settle race, and that the resolution is to run it again.
@@ -94,7 +95,7 @@ Every one of these is binding on the implementer. Do not re-litigate them mid-ta
 1. **The owed live read-only dry-run is registered in the topic only**, never in `docs/reference/adapter-verification/<version>.md`'s "Owed checks not discharged" section. `infra/runbooks/engine-procedures.md`'s `engine-probe-window` step 3 refuses to **arm** on an open item there, so putting a flatten check in that section would block arming on something unrelated to arming.
 1. **`_VENUE_MUTATING_NAMES` gains `.cancel_all_orders`** alongside allowlisting `flatten.py`. The guard's own docstring says a second module learning to cancel is the same escape; account-wide cancel is the most destructive cancel there is and belongs on the list it protects.
 1. **`"zcrypto-flatten"` joins `_DESTRUCTIVE` in `tests/test_ops_daily.py`**, so the unattended daily pass's classifier is asserted never to call the red button autonomous.
-1. **A venue rejection carries the venue's own words, and the only label it can gain is one this code had already earned before sending.** Four reason labels exist and no more: `dust_below_venue_minimum`, `unclosable_below_minimum`, `no_eur_or_btc_pair`, `no_reference_price` — each one a decision *this code* made before sending. What the venue answers is journaled verbatim as the leg's `error`; the spec's D3 says so, and inferring a label from a rejection message would pin the journal to message text nothing here has measured. The one label a rejection attaches is `unclosable_below_minimum`, and only on a margin leg whose sized quantity this code had already read as below the pair's `ordermin` (spec D4): the operator's only remedy there is Kraken's own settle-position, and an unlabelled `EOrder:` string does not say so. The rejection text is never read to decide it.
+1. **A venue rejection carries the venue's own words, and the only label it can gain is one this code had already earned before sending.** Four reason labels exist and no more: `dust_below_venue_minimum`, `unclosable_below_minimum`, `no_eur_or_btc_pair`, `no_reference_price` — each one a decision *this code* made before sending. What the venue answers is journaled verbatim as the leg's `error`; the spec's D3 says so, and inferring a label from a rejection message would pin the journal to message text nothing here has measured. The one label a rejection attaches is `unclosable_below_minimum`, and only on a margin leg whose sized quantity this code had already read as below the pair's `ordermin` (spec D4): it is the only thing that routes an operator to Kraken's own settle-position, which an unlabelled `EOrder:` string never does. The rejection text is never read to decide it — so the venue's verbatim words stay beside the label, and the runbook makes reading them the operator's first step, because a refusal for a passing reason wears the same label as a refusal about the size.
 
 ______________________________________________________________________
 
@@ -1047,12 +1048,20 @@ _ETHBTC = flatten.PairConstraints("ETH/BTC", "ETH/BTC.KRAKEN", ordermin=0.004, l
 _UNLISTED = flatten.PairConstraints("WEIRD/EUR", "WEIRD/EUR.KRAKEN", ordermin=1.0, lot_step=0.001, tick_size=0.001)
 
 
-def test_costmin_comes_from_the_committed_constant_and_only_when_the_quote_matches():
+def test_costmin_comes_from_the_committed_constant_and_only_when_the_quote_matches(monkeypatch):
     """The adapter never maps costmin onto min_notional, so it is committed per symbol and
-    quote-explicit; comparing a BTC-quoted floor against a EUR notional would pass everything."""
+    quote-explicit; comparing a BTC-quoted floor against a EUR notional would pass everything.
+
+    The mismatch is CONSTRUCTED here rather than found: every quote-matching entry would pass under
+    a `costmin_for` that dropped the check, so the last two lines are the only ones that read it."""
+    from cli.engine import instruments
+
     assert flatten.costmin_for("ADA/EUR") == 0.45
     assert flatten.costmin_for("ETH/BTC") == 2e-05
     assert flatten.costmin_for("WEIRD/EUR") is None
+
+    monkeypatch.setitem(instruments.COSTMIN, "ADA/EUR", (0.45, "BTC"))
+    assert flatten.costmin_for("ADA/EUR") is None
 
 
 def test_a_balance_below_ordermin_is_dust_and_one_above_every_floor_is_a_residual():
@@ -1439,9 +1448,11 @@ def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: dict[str
     """Every leg, sized, with its reference price -- and every book read taken HERE, before the
     first write.
 
-    `BTC/EUR` is priced whenever any leg routes through a `/BTC` pair, because the second spot pass
-    sells the BTC those legs produce and no read may happen after the first write. A leg that
-    surfaces only in a later pass and has no price here is sized on the quantity floor alone.
+    `BTC/EUR` is priced whenever a SPOT leg routes through a `/BTC` pair, because the second spot
+    pass sells the BTC those legs produce and no read may happen after the first write. A leg that
+    surfaces only in a later pass and has no price here -- a margin leg's `/BTC` proceeds included
+    -- is sized on the quantity floor alone, which is the safe direction: an unpriced balance is
+    sold, never skipped as dust.
     """
     margin_raw = margin_legs(snapshot.positions)
     spot_raw, unsellable = spot_legs(snapshot.balances, listing)
@@ -1698,14 +1709,24 @@ def test_the_terminal_check_answers_false_with_no_controlling_terminal(tmp_path)
     pid = os.fork()
     if pid == 0:
         try:
-            os.setsid()  # a fresh session has no controlling terminal
-            from cli.engine import flatten as child_flatten
+            try:
+                os.setsid()  # a fresh session has no controlling terminal
+            except PermissionError:
+                # The child inherited a session it already leads, so it cannot start a fresh one and
+                # cannot shed the terminal. Said out loud: a parent reading no file at all could not
+                # tell that apart from a crash in the check under test.
+                out.write_text("SESSION-LEADER")
+            else:
+                from cli.engine import flatten as child_flatten
 
-            out.write_text(str(child_flatten.terminal_available()))
+                out.write_text(str(child_flatten.terminal_available()))
         finally:
             os._exit(0)
     os.waitpid(pid, 0)
-    assert out.read_text() == "False"
+    answer = out.read_text()
+    if answer == "SESSION-LEADER":
+        pytest.skip("the test process already leads its session, so the child cannot start a new one")
+    assert answer == "False"
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1757,10 +1778,16 @@ def terminal_available() -> bool:
 def read_confirm(prompt_text: str) -> str:
     """The typed word, read from the controlling terminal and NEVER from stdin: a pipe or a heredoc
     must not be able to press this button (`infra/ansible/scripts/converge.sh`'s rule). There is
-    deliberately no flag that skips it -- a red button pressed by a script is a different product."""
-    with open("/dev/tty", "r+") as tty:
-        tty.write(prompt_text)
-        tty.flush()
+    deliberately no flag that skips it -- a red button pressed by a script is a different product.
+
+    TWO opens, never one `"r+"`: text `"r+"` builds a buffered random-access stream, which requires
+    a seekable file, and a tty is not one -- it raises `io.UnsupportedOperation` before a word is
+    ever read.
+    """
+    with open("/dev/tty", "w") as out:
+        out.write(prompt_text)
+        out.flush()
+    with open("/dev/tty", "r") as tty:
         return (tty.readline() or "").strip()
 
 
@@ -1802,7 +1829,7 @@ ______________________________________________________________________
 
 **Interfaces:**
 
-- Consumes from Tasks 1–4: `Recorder`, `Plan`, `Snapshot`, `SizedLeg`, `PairConstraints`, `FlattenUnreachable`, `read_open_orders`, `read_positions`, `read_balances`, `read_snapshot`, `margin_legs`, `spot_legs`, `constraints_for`, `size_leg`, `step_precision`, `_ACCOUNT`, `MARGIN_LEVERAGE`, `CLIENT_ORDER_ID_PREFIX`.
+- Consumes from Tasks 1–4: `Recorder`, `Plan`, `Snapshot`, `SizedLeg`, `PairConstraints`, `FlattenUnreachable`, `read_open_orders`, `read_positions`, `read_balances`, `read_snapshot`, `margin_legs`, `spot_legs`, `constraints_for`, `size_leg`, `step_precision`, `_ACCOUNT`, `ACCOUNT_ID`, `MARGIN_LEVERAGE`, `CLIENT_ORDER_ID_PREFIX`, `logger`, and the nautilus names Task 1's import already carries: `Quantity`, `ClientOrderId`, `OrderSide`, `OrderType`, `TimeInForce`, `AccountType`.
 - Produces:
   - `@dataclass(frozen=True) class LegOutcome: kind: str; symbol: str; side: str; qty: float; pass_name: str; source: str; client_order_id: str | None; sent: bool; reason: str | None; answer: str | None; error: str | None`
   - `@dataclass(frozen=True) class SweepResult: cancel_ok: bool; cancel_error: str | None; orders_after_cancel: int | None; post_write_failure: str | None; outcomes: list[LegOutcome]; final: Snapshot | None`
@@ -2055,7 +2082,12 @@ class SweepResult:
 def mint_client_order_id(stamp, index: int) -> str:
     """`FLT-<basic ISO-8601 UTC>-<n>`. Inside the id SHAPE Kraken has already accepted from this
     repo, and structurally distinct from the engine's `-001-000-` infix -- an id the executor could
-    read as its own would route a flatten fill into the engine's ledger."""
+    read as its own would route a flatten fill into the engine's ledger.
+
+    `stamp` is the run's own and `index` restarts at 1, so two runs beginning inside the same second
+    would mint the same ids. Each needs its own word typed at a terminal, and that is the bound --
+    the journal's own collision protection does not extend here.
+    """
     return f"{CLIENT_ORDER_ID_PREFIX}{stamp:%Y%m%dT%H%M%SZ}-{index}"
 
 
@@ -2109,14 +2141,22 @@ def _sized_with_constraints(legs: list, listing: dict, plan: Plan) -> list:
 def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, index: int, pass_name: str) -> LegOutcome:
     """Never raises: a rejection is journaled and the sweep continues, and is never retried.
 
-    `sent` stays True on a failure -- the request left this process and may have reached the venue,
-    so recording it as unsent would be the one lie an operator cannot afford here.
+    `sent` stays True on every failure raised inside the send -- the local minting of the quantity
+    included, since nothing here can tell that apart from a request that left and was refused. The
+    request may have reached the venue, and recording it as unsent would be the one lie an operator
+    cannot afford here.
 
     A rejected margin closer this code had ALREADY sized below the pair's `ordermin` is labelled
-    `unclosable_below_minimum` (spec D4): only the venue's own settle-position clears such a
-    remainder, and an operator reading a bare `EOrder:` string is never told that. The label comes
-    from the pre-send arithmetic, never from the rejection text -- which Kraken message means
-    "below the minimum" is unmeasured here.
+    `unclosable_below_minimum` (spec D4): it is what routes an operator to the venue's own
+    settle-position action, which a bare `EOrder:` string never does. The label comes from the
+    pre-send arithmetic, never from the rejection text -- which Kraken message means "below the
+    minimum" is unmeasured here -- so the venue's words are journaled beside it as the leg's
+    `error`, and a refusal for a passing reason wears the same label as a refusal about the size.
+
+    One `reason` field carries one label: where such a closer is also unpriced, the label is
+    `unclosable_below_minimum` rather than `no_reference_price`. It is the one that names a next
+    action, and the price costs a margin leg nothing -- a closer's quantity comes from the position
+    report and never from a price.
     """
     base = dict(
         kind=sized.leg.kind,
@@ -2217,6 +2257,7 @@ ______________________________________________________________________
   - `exit_code(result: SweepResult, residuals: list[dict]) -> int`
   - `journal_path(state_dir, stamp) -> Path`
   - `write_journal(state_dir, stamp, payload: dict) -> Path | None`
+  - `_dry_exit(code: int, message: str, echo) -> int` — the dry run's return path, which writes no journal.
   - `run_flatten(client, *, state_dir, execute: bool, now=..., venue_reader=..., tty_available=..., prompt=..., echo=...) -> int`
 
 - [ ] **Step 1: Write the failing tests**
@@ -2370,9 +2411,10 @@ def test_a_broken_shape_on_the_post_cancel_re_read_exits_two_with_no_order_sent(
 
 def test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two(tmp_path):
     """The engine's own machine produces sub-ordermin remainders by design, and a remainder left
-    open is exposure -- so it is sent, and only Kraken's own settle-position can clear what the
-    venue refuses. The label carries that: the exit code says 2 for a hundred reasons, and an
-    operator reading a bare `EOrder:` string is never routed to the settle-position action."""
+    open is exposure -- so it is sent, and the venue rules on it. The label is minted from the
+    pre-send arithmetic and the venue's own words are kept beside it: the exit code says 2 for a
+    hundred reasons, an operator reading a bare `EOrder:` string is never routed to the venue's
+    settle-position action, and the words are what say whether the refusal was about the size."""
     _armed(tmp_path)
     tiny = [_Position("BTC/EUR", "LONG", 0.00002)]  # under _Instrument's 0.0001 ordermin
     client = _flat_client(positions=[tiny, tiny, tiny, tiny])
@@ -3343,7 +3385,7 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 5. **On exit 2, read the record.** It is `/var/lib/zcrypto-engine/exec/flatten-<timestamp>.json`, and the command prints its path. Each leg carries what was sent and what the venue answered.
 
 - **Every leg answered without an error, and something is still listed?** The venue may simply not have settled yet — the final read is taken immediately. **Run it again**; a second run finds less to do and does it. A second exit 2 naming the same residual is real.
-- **A leg reads `unclosable_below_minimum`?** The position is smaller than the venue will accept an order for. No order can clear it; only Kraken's own settle-position action in the web UI can, and the adapter cannot send it.
+- **A leg reads `unclosable_below_minimum`?** That label is what *this command* read before it sent anything: the position was smaller than the pair's minimum order size. It is never read off the venue's answer, so **read the `error` beside it in the record first.** No `error` at all means the quantity floored to nothing and there was never an order to send. An `error` naming a rate limit, a temporary lockout or any other passing condition is a refusal that may not be about the size at all — **run the command again**, and judge the label on what the second run answers. An `error` that keeps saying the order is too small is the real case: no order can clear that remainder; only Kraken's own settle-position action in the web UI can, and the adapter cannot send it.
 - **A balance reads `no_eur_or_btc_pair`?** The venue lists no EUR and no BTC pair for it, so this command cannot sell it. Sell it by hand on Kraken against whatever pair exists.
 - **A leg reads `dust_below_venue_minimum`?** Nothing is wrong. The venue would reject that order, and a balance that small is not exposure.
 - **The record says a read after the first order failed?** The account may have moved and the run stopped where it stood. Read Kraken's own pages, then run it again.
@@ -3418,6 +3460,14 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
   --control 's/^def matches_confirm/def matches_confirm_DISABLED/' \
   --mutation 's/return reply.strip() == CONFIRM_WORD/return reply.strip().upper() == CONFIRM_WORD/' \
   -- uv run pytest "tests/test_engine_flatten.py::test_only_the_exact_word_matches[flatten-False]" -q
+
+# The confirm really reads its answer from the controlling terminal. `read_confirm` runs on the live
+# path only -- every other test injects `prompt=` -- so the pty test is the single place it is
+# executed at all, and an implementation that opened the wrong thing would reach an operator first.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def read_confirm/def read_confirm_DISABLED/' \
+  --mutation 's|with open("/dev/tty", "r") as tty:|with open("/dev/null", "r") as tty:|' \
+  -- uv run pytest tests/test_engine_flatten.py::test_the_confirm_reads_the_controlling_terminal_and_never_stdin -q
 
 # The margin read really is scoped to MARGIN, so a spot holding cannot surface as a position row.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
