@@ -468,3 +468,152 @@ def test_a_base_listed_only_against_a_third_quote_is_a_residual_not_a_leg():
     assert legs == []
     assert [(u["base"], u["code"], u["free"], u["reason"]) for u in unsellable] == [("ADA", "ADA", 5.0, "no_eur_or_btc_pair")]
     assert unsellable[0]["note"] != "no listed base matched the code"
+
+
+# --- sizing and the dust class ------------------------------------------------------------------
+
+_ADA = flatten.PairConstraints("ADA/EUR", "ADA/EUR.KRAKEN", ordermin=15.0, lot_step=0.00000001, tick_size=0.000001)
+_BTC = flatten.PairConstraints("BTC/EUR", "BTC/EUR.KRAKEN", ordermin=0.0001, lot_step=0.00000001, tick_size=0.1)
+_ETHBTC = flatten.PairConstraints("ETH/BTC", "ETH/BTC.KRAKEN", ordermin=0.004, lot_step=0.00001, tick_size=0.0000001)
+_UNLISTED = flatten.PairConstraints("WEIRD/EUR", "WEIRD/EUR.KRAKEN", ordermin=1.0, lot_step=0.001, tick_size=0.001)
+
+
+def test_costmin_comes_from_the_committed_constant_and_only_when_the_quote_matches(monkeypatch):
+    """The adapter never maps costmin onto min_notional, so it is committed per symbol and
+    quote-explicit; comparing a BTC-quoted floor against a EUR notional would pass everything.
+
+    The mismatch is CONSTRUCTED here rather than found: every quote-matching entry would pass under
+    a `costmin_for` that dropped the check, so the last two lines are the only ones that read it."""
+    from cli.engine import instruments
+
+    assert flatten.costmin_for("ADA/EUR") == 0.45
+    assert flatten.costmin_for("ETH/BTC") == 2e-05
+    assert flatten.costmin_for("WEIRD/EUR") is None
+
+    monkeypatch.setitem(instruments.COSTMIN, "ADA/EUR", (0.45, "BTC"))
+    assert flatten.costmin_for("ADA/EUR") is None
+
+
+def test_a_balance_below_ordermin_is_dust_and_one_above_every_floor_is_a_residual():
+    assert flatten.classify_balance(10.0, _ADA, 0.40) == "dust"
+    assert flatten.classify_balance(1200.0, _ADA, 0.40) == "residual"
+    assert flatten.classify_balance(0.0, _ADA, 0.40) == "flat"
+
+
+def test_a_balance_over_ordermin_but_under_costmin_is_still_dust():
+    """Both floors apply; clearing one is not clearing them. 16 ADA at 0.02 EUR is 0.32 EUR, under
+    the 0.45 EUR costmin."""
+    assert flatten.classify_balance(16.0, _ADA, 0.02) == "dust"
+
+
+def test_a_btc_quoted_costmin_is_applied_in_its_own_denomination():
+    """The BTC-denominated floor has to BITE somewhere, or `costmin_for` returning it proves only
+    that a lookup works. 0.005 ETH at 0.003 BTC is 1.5e-05 BTC, under the 2e-05 BTC costmin, while
+    clearing the 0.004 ETH ordermin -- so only the notional floor can produce this verdict."""
+    assert flatten.classify_balance(0.005, _ETHBTC, 0.003) == "dust"
+    assert flatten.classify_balance(0.05, _ETHBTC, 0.003) == "residual"
+
+
+def test_a_pair_with_no_committed_costmin_is_judged_on_ordermin_alone():
+    assert flatten.classify_balance(2.0, _UNLISTED, 0.01) == "residual"
+
+
+def test_a_balance_with_no_reference_price_is_judged_on_ordermin_alone():
+    """No post-write book read ever happens, so a leg that surfaces only in a later pass has no
+    price; judging it on ordermin alone is what keeps it from being skipped as dust unmeasured."""
+    assert flatten.classify_balance(1200.0, _ADA, None) == "residual"
+    assert flatten.classify_balance(10.0, _ADA, None) == "dust"
+
+
+def test_a_quantity_that_clears_ordermin_only_before_flooring_is_dust():
+    """The floors run on the POST-floor quantity -- the venue would reject an order sized on the
+    pre-floor one. `ordermin` sits strictly BETWEEN 1.9 and its floored value 1.0, so an
+    implementation checking the pre-floor quantity reads `residual` where this reads `dust`; 2.9,
+    which floors to 2.0, is the true negative that keeps the fixture from refusing everything."""
+    coarse = flatten.PairConstraints("X/EUR", "X/EUR.KRAKEN", ordermin=1.5, lot_step=1.0, tick_size=0.01)
+    assert flatten.classify_balance(1.9, coarse, 100.0) == "dust"
+    assert flatten.classify_balance(2.9, coarse, 100.0) == "residual"
+
+
+def test_a_spot_leg_below_a_floor_is_listed_and_not_sent():
+    leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 10.0, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, _ADA, 0.40)
+    assert sized.send is False
+    assert sized.reason == "dust_below_venue_minimum"
+    assert sized.qty == 10.0
+
+
+def test_a_spot_leg_above_every_floor_is_sent_with_its_estimate_in_its_own_quote():
+    leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.0, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, _ADA, 0.40)
+    assert sized.send is True and sized.reason is None
+    assert sized.qty == 1200.0
+    assert sized.quote == "EUR"
+    assert sized.estimate == pytest.approx(480.0)
+    assert sized.fee_estimate == pytest.approx(480.0 * flatten.TAKER_RATE)
+
+
+def test_a_btc_quoted_leg_estimates_in_btc_and_never_in_euros():
+    """No FX rate is invented; a BTC-quoted estimate stays BTC-quoted."""
+    leg = flatten.Leg("spot", "ETH", "ETH/BTC", "SELL", 2.0, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, _ETHBTC, 0.03)
+    assert sized.quote == "BTC"
+    assert sized.estimate == pytest.approx(0.06)
+
+
+def test_an_unpriced_leg_is_sized_and_sent_with_no_estimate_invented():
+    """`plan.prices` carries no entry for a leg whose book read was refused, and `size_leg` is
+    still called on it. Nothing may crash on the missing price and nothing may print a number
+    standing in for it -- an estimate of 0.0 reads to an operator as a leg worth nothing.
+
+    Both kinds run: the spot path reaches `classify_balance` with no price, the margin path skips
+    it, and only the spot one could be silently downgraded to dust by an invented zero notional."""
+    spot = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.0, "CASH", "account_state.free")
+    sized = flatten.size_leg(spot, _ADA, None)
+    assert sized.send is True and sized.reason is None
+    assert sized.qty == 1200.0
+    assert sized.reference_price is None
+    assert sized.estimate is None
+    assert sized.fee_estimate is None
+
+    margin = flatten.Leg("margin", "BTC", "BTC/EUR", "SELL", 0.5, "MARGIN", "position_status_report.quantity")
+    closer = flatten.size_leg(margin, _BTC, None)
+    assert closer.send is True and closer.reason is None
+    assert closer.estimate is None
+
+
+def test_a_margin_leg_is_never_dust_and_is_sent_below_every_floor():
+    """The engine's own machine deliberately produces sub-ordermin remainders, and a remainder left
+    open is exposure -- so the closer is sent and the venue rules on it."""
+    leg = flatten.Leg("margin", "BTC", "BTC/EUR", "SELL", 0.00001, "MARGIN", "position_status_report.quantity")
+    sized = flatten.size_leg(leg, _BTC, 60000.0)
+    assert sized.send is True and sized.reason is None
+    assert sized.qty == 0.00001
+
+
+def test_a_margin_quantity_that_floors_to_zero_is_unclosable_here_and_named_as_such():
+    """There is no order to send; the row stays in the final snapshot, and only the venue's own UI
+    settle-position can clear it."""
+    coarse = flatten.PairConstraints("X/EUR", "X/EUR.KRAKEN", ordermin=1.0, lot_step=1.0, tick_size=0.01)
+    leg = flatten.Leg("margin", "X", "X/EUR", "SELL", 0.4, "MARGIN", "position_status_report.quantity")
+    sized = flatten.size_leg(leg, coarse, 100.0)
+    assert sized.send is False
+    assert sized.reason == "unclosable_below_minimum"
+
+
+def test_a_margin_leg_quantity_never_exceeds_the_report_s_own():
+    """Flooring may only reduce. A closer larger than the position would open the other way."""
+    leg = flatten.Leg("margin", "X", "X/EUR", "SELL", 1.999, "MARGIN", "position_status_report.quantity")
+    coarse = flatten.PairConstraints("X/EUR", "X/EUR.KRAKEN", ordermin=0.5, lot_step=0.5, tick_size=0.01)
+    sized = flatten.size_leg(leg, coarse, 100.0)
+    assert sized.qty == 1.5
+    assert sized.qty <= leg.quantity
+
+
+def test_the_send_decision_and_the_residual_verdict_cannot_disagree():
+    """One predicate serves both, so a balance skipped as dust can never be reported as a residual
+    -- the contradiction that would tell an operator the account is both flat and not."""
+    for free in (0.0, 5.0, 14.999, 15.0, 1200.0):
+        leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", free, "CASH", "account_state.free")
+        sized = flatten.size_leg(leg, _ADA, 0.40)
+        assert sized.send is (flatten.classify_balance(free, _ADA, 0.40) == "residual")

@@ -473,3 +473,96 @@ def spot_legs(balances: list[BalanceRow], listing: dict[str, Any]) -> tuple[list
             )
         )
     return legs, unsellable
+
+
+@dataclass(frozen=True)
+class SizedLeg:
+    leg: Leg
+    qty: float
+    reference_price: float | None
+    quote: str
+    estimate: float | None
+    fee_estimate: float | None
+    send: bool
+    reason: str | None
+
+
+def costmin_for(symbol: str) -> float | None:
+    """The committed per-symbol notional floor, or None when it does not apply to this pair.
+
+    It is committed rather than read live because the adapter never maps Kraken's `costmin` onto
+    `min_notional` (`cli/engine/venuestate.py`), and it applies only where its own quote matches
+    the pair's -- a BTC-denominated floor compared against a EUR notional passes everything.
+    """
+    from cli.engine.instruments import COSTMIN
+
+    entry = COSTMIN.get(symbol)
+    if entry is None:
+        return None
+    amount, quote = entry
+    return amount if quote == symbol.split("/")[1] else None
+
+
+def _size(free: float, constraints: PairConstraints, reference_price: float | None):
+    """`size_order`'s verdict on one quantity -- the engine's own arithmetic, floors and all.
+
+    A floor that does not apply is passed as 0.0 rather than skipped, so there is ONE call and no
+    second flooring implementation beside the one the engine trusts. An absent reference price
+    therefore disables only the notional floor, never the quantity one.
+    """
+    from cli.engine.instruments import size_order
+
+    costmin = costmin_for(constraints.symbol)
+    applicable = costmin if (costmin is not None and reference_price is not None) else 0.0
+    return size_order(
+        free,
+        reference_price if reference_price is not None else 0.0,
+        ordermin=constraints.ordermin,
+        costmin=applicable,
+        lot_step=constraints.lot_step,
+        tick_size=constraints.tick_size,
+    )
+
+
+def classify_balance(free: float, constraints: PairConstraints, reference_price: float | None) -> str:
+    """`flat` / `dust` / `residual` for one non-EUR free balance.
+
+    THE predicate: the sweep's send decision and the final snapshot's residual verdict both read
+    it, so a balance skipped as dust can never also be reported as a residual.
+    """
+    from cli.engine.instruments import BelowMinimum
+
+    if free <= 0.0:
+        return "flat"
+    return "dust" if isinstance(_size(free, constraints, reference_price), BelowMinimum) else "residual"
+
+
+def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | None) -> SizedLeg:
+    """One leg's order quantity and whether it is sent at all.
+
+    A margin closer is sent regardless of the floors -- the engine's machine deliberately produces
+    sub-`ordermin` remainders and a remainder left open is exposure, so the venue rules on it. Its
+    only unsendable case is a quantity that floors to nothing: there is no order to construct.
+    A spot leg below any applicable floor is listed and not sent; the venue would reject it, and it
+    does not make the account not-flat.
+    """
+    from cli.engine.instruments import _floor_to_step
+
+    quote = constraints.symbol.split("/")[1]
+    qty = _floor_to_step(leg.quantity, constraints.lot_step)
+    # Floored to the tick before anything reads it: `size_order` runs its notional check at the
+    # floored price, so an estimate printed off the raw book price would disagree with the dust
+    # boundary this same leg is judged by.
+    price = _floor_to_step(reference_price, constraints.tick_size) if reference_price is not None else None
+    estimate = qty * price if price is not None else None
+    fee = estimate * TAKER_RATE if estimate is not None else None
+    base = dict(leg=leg, qty=qty, reference_price=price, quote=quote, estimate=estimate, fee_estimate=fee)
+
+    if leg.kind == "margin":
+        if qty <= 0.0:
+            return SizedLeg(**base, send=False, reason="unclosable_below_minimum")
+        return SizedLeg(**base, send=True, reason=None)
+
+    if classify_balance(leg.quantity, constraints, price) == "residual":
+        return SizedLeg(**base, send=True, reason=None)
+    return SizedLeg(**base, send=False, reason="dust_below_venue_minimum")
