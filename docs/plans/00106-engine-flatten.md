@@ -4027,8 +4027,8 @@ infra/scripts/mutate-probe.sh --file tests/test_engine_flatten.py \
 
 # The unattended pass's classifier really refuses the red button. Named tests, never a `-k` filter:
 # a KILLED verdict over a filter says SOME collected test bites, and three tests carry the button's
-# name today. Already run and KILLED in the runbook task, after its commit made the tree clean --
-# recorded here so the verdicts are copied from that run, not re-derived.
+# name today. The runbook task ran these five and got KILLED; that verdict is not reusable here --
+# it describes the tree at that commit, and every commit since could have moved it. Re-run them.
 # The control flips both of `classify_action`/`_classify_one`'s default-deny returns, so every
 # command classifies autonomous; each mutation admits one spelling of the button as a read shape.
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
