@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ---
 
 # The go-live drill program — executing spec 00105
@@ -20,10 +20,14 @@ The go/no-go clause in `docs/research/00.master-plan.md` §12 requires *ops dril
 - **Drill I's throwaway healthchecks check must be created with `channels` naming the Slack integration** — a check made through the API inherits no notification integrations ([[T0085]]'s finding), so an unchannelled check breaches in silence and would record a false FAIL of the dead-man domain.
 - **The four engine enhancements the order-path tier needs** — `00106` flatten ([[T0159]]), a `rest-hold` plan mode, cancel-on-stop (ruled only after drill G measures the venue's behaviour), re-cancel-on-reconnect — are registered as build-sequence items in [[T0018]].
 
+## Done so far
+
+- **The branch is cut and the plan is written.** `feat/00105-go-live-drill-program` carries `docs/plans/00105-go-live-drill-program.md` against spec `00105` — the task-by-task build of the two drill runbooks, the drill log with its shape test and mutation probe, `zcrypto-engine-dark-with-exposure`, `observability.md#grafana-cloud-dark`, the runbook index rows and the master plan's artifact line, plus the executed telemetry tier and the closeout.
+
 ## Suggested next steps
 
-- **(autonomous)** ~~Cut the branch; write plan `00105`; cold spec+plan review~~ — **done**: `feat/00105-go-live-drill-program` carries the spec and a plan through four review-and-fix rounds (round 5's report is still owed; see the memo's Block B). What remains is to execute: `infra/runbooks/drills-telemetry.md`, `drills-order-path.md`, `docs/reference/drill-log.md` + its shape test and mutation probe, `zcrypto-engine-dark-with-exposure` pinned to `up{job="engine_app",host="zcrypto"}` + its `engine.md` section, `observability.md#grafana-cloud-dark`, the README rows, the master plan's artifact line naming `drill-log.md`.
-- **(autonomous)** Execute J′ from the workstation — `engine_healthcheck_url` read through the vault resolver from `group_vars/engine_host/vault.yml`, `curl <url>/fail`, both pages read by value, the first drill-log entry, then a success ping to clear it.
+- **(autonomous)** Finish the plan's cold spec+plan review, then execute it: `infra/runbooks/drills-telemetry.md`, `drills-order-path.md`, `docs/reference/drill-log.md` + its shape test and mutation probe, `zcrypto-engine-dark-with-exposure` pinned to `up{job="engine_app",host="zcrypto"}` + its `engine.md` section, `observability.md#grafana-cloud-dark`, the README rows, the master plan's artifact line naming `drill-log.md`.
+- **(autonomous)** Execute J′ from the workstation — `engine_healthcheck_url` read through the vault resolver from `group_vars/engine_host/vault.yml` and the `<url>/fail` GET issued **from that same process**, never `curl <url>/fail`: the URL is the ping secret and `grafana_auth.py`'s own docstring forbids a resolved credential in argv, where `ps` shows it. Both pages read green by value immediately before the induction and by value again after, the first drill-log entry, then a success ping to clear it.
 - **(autonomous)** Execute the ops-node and secondary drills in this order, each reverted and verified by value before the next, the maintenance feed read immediately before each, the primary read by value before any secondary induction: K → O → I (channels explicit) → C ops half (2 h) → C secondary half (2 h) → C′ staleness route → N → R (cap = `capture-redundant`'s timeout + grace + one evaluation; the reconcile ledger read at the next booking tick shows the primary whole and the secondary's silence as `trade_deficit` at most) → Q's machine timestamps (rule `activeAt` and Slack message) for one `metrics`, one `logs`, one healthchecks-native page. Each: a drill-log entry and a section amendment, committed as it lands.
 - **(autonomous)** Whole-branch cold review; closeout (the changelog entry; the master plan names the drill log); PR; merge on CI green; then push the new alert from merged `develop` and read its first sample by value.
 - **(human)** P on the secondary — a nonexistent image reference in the rendered compose, the unit's `Restart=always` loop, the dead-man's time to page, **restore by a secondary converge with the command written down first**; C′'s `/fail` route — the probe-URL converge on ops and its revert; Q's phone timestamps added to the entries the autonomous run wrote. One window each, the maintenance feed read at planning and immediately before. A single-reviewer round; a PR of the entries and amendments; merge.
