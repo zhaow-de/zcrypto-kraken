@@ -2234,3 +2234,95 @@ def test_the_client_is_built_key_first_then_secret(monkeypatch, tmp_path):
     assert seen["client_args"] == ("the-key", "the-secret")
     assert seen["client_kwargs"] == {}
     assert seen["client"] is not None  # the client the command built is the one run_flatten got
+
+
+# --- stub fidelity ------------------------------------------------------------------------------
+
+
+# `FakeClient`'s recording apparatus: names that exist so a test can read what happened, never
+# restatements of anything the real client offers. The guard below re-checks that claim in the
+# other direction too, so an entry the real client DOES carry reads as red rather than as a
+# standing exemption.
+_FAKE_CLIENT_PLUMBING = frozenset(
+    {
+        "calls",
+        "raises",
+        "submitted",
+        "submitted_raw",
+        "_balances",
+        "_books",
+        "_instruments",
+        "_maybe_raise",
+        "_next",
+        "_orders",
+        "_positions",
+        "_record",
+    }
+)
+
+
+def _nautilus_standins():
+    """(label, stub instance, real class, plumbing) for every double in this file that stands in
+    for the client or for one of the answers it hands back. Built inside a function so the library
+    imports are paid only by the tests that need them.
+
+    Every one of the client's methods is typed `-> typing.Any`, so the real answer classes are not
+    readable off a signature. `CurrencyPair` (the listing row) and `OrderBook`/`BookLevel` (the
+    book) were read from the installed adapter against its public endpoints. The three auth-gated
+    answers -- the order and position reports and the account state -- cannot be read that way;
+    they are named from the fields `cli/engine/flatten.py` requires plus
+    `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`'s probe 1, which records the
+    account read arriving as an `AccountState`.
+    """
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+    from nautilus_trader.model import AccountBalance, AccountState, BookLevel, CurrencyPair, OrderBook, PositionStatusReport
+
+    return [
+        ("FakeClient", FakeClient(), KrakenSpotHttpClient, _FAKE_CLIENT_PLUMBING),
+        ("_Instrument", _Instrument("BTC/EUR"), CurrencyPair, frozenset()),
+        ("_Position", _Position("BTC/EUR", "LONG", 0.5), PositionStatusReport, frozenset()),
+        ("_AccountState", _AccountState([]), AccountState, frozenset()),
+        ("_Balance", _Balance("ADA", 1200.0), AccountBalance, frozenset()),
+        ("_Book", _Book(60000.0, 60010.0), OrderBook, frozenset()),
+        ("_Level", _Level(60000.0), BookLevel, frozenset()),
+    ]
+
+
+def test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lacks():
+    """The direction nothing else covers. A stub MISSING something production reads fails loudly
+    the first time a test runs it -- `_required` raises and the test goes red. A stub OFFERING a
+    name the real type lacks fails NOTHING: every test believes the fabricated field forever, and
+    the live account is the only place the read comes back wrong. On this module that is the whole
+    button reading a shape the venue never sends.
+
+    Every violation is collected rather than raised at the first: one red run should name all of
+    them, not send the reader round the loop once per stub."""
+    violations = []
+    for label, stub, real, plumbing in _nautilus_standins():
+        offered = {name for name in dir(stub) if not name.startswith("__")} - plumbing
+        assert offered, f"{label} offers nothing outside its plumbing list -- the check is vacuous"
+        stale = sorted(name for name in plumbing if hasattr(real, name))
+        extra = sorted(name for name in offered if not hasattr(real, name))
+        if extra:
+            violations.append(f"{label} offers {extra}, which {real.__name__} does not carry")
+        if stale:
+            violations.append(f"{label}'s plumbing list exempts {stale}, which {real.__name__} DOES carry -- check them instead")
+    assert violations == [], "; ".join(violations)
+
+
+def test_the_offers_walk_reaches_every_stub_the_fidelity_table_points_here():
+    """`_nautilus_standins` is the entire reach of the guard above, and
+    tests/test_engine_stub_fidelity.py's table is what CLAIMS that guard covers a given stub.
+    Nothing else joins the two: the table asks only whether the guard's NAME exists somewhere in
+    the engine suite, never whether it iterates the stub the row is about, so a stub can wear the
+    claim while sitting outside the list.
+
+    The join, as a set equality both ways. A table row the walk omits is coverage claimed and not
+    delivered; a walked stub the table does not point here is a library stand-in nobody
+    classified."""
+    from test_engine_stub_fidelity import _OFFERS_FLATTEN, TABLE
+
+    named = {name for name, entry in TABLE[Path(__file__).name].items() if _OFFERS_FLATTEN in entry.guards}
+    assert len(named) > 5, f"the table points only {sorted(named)} at this guard -- the join is checking nothing"
+    walked = {label for label, *_ in _nautilus_standins()}
+    assert named == walked, f"{sorted(named ^ walked)} is claimed on one side of the join and absent from the other"

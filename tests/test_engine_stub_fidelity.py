@@ -75,6 +75,7 @@ _WALK_FLOOR = {
     "test_engine_command.py": 3,
     "test_engine_cycle.py": 4,
     "test_engine_executor.py": 9,
+    "test_engine_flatten.py": 7,
     "test_engine_gate_export.py": 1,
     "test_engine_gate_export_cache.py": 1,
     "test_engine_metrics.py": 4,
@@ -101,6 +102,8 @@ _NODE_SURFACE = "test_every_node_surface_engine_run_reaches_exists_on_the_real_t
 _NODE_OFFERS = "test_the_node_stub_offers_nothing_the_real_type_lacks"
 _CACHE_SURFACE = "test_every_cache_accessor_the_engine_reaches_exists_on_the_real_cache"
 _OFFERS_VENUESTATE = "test_no_stub_in_the_venue_reader_suite_offers_a_name_its_real_library_type_lacks"
+_OFFERS_FLATTEN = "test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lacks"
+_BINDS_FLATTEN = "test_the_submit_call_carries_the_library_s_own_types_and_binds_against_the_real_client"
 
 _BUILDER = "cli.engine.concordance.build_crossfreq_system_fast"
 _BUILDER_RESULT = "the result cli.engine.concordance.build_crossfreq_system_fast returns"
@@ -128,6 +131,23 @@ TABLE: dict[str, dict[str, Standin]] = {
     "test_engine_tracking.py": {
         "_Run": Standin(NOT_A_STANDIN, "a value record for one CLI invocation's exit code, output and file mtimes", ()),
         "_Slice": Standin(NOT_A_STANDIN, "a value record naming a copied journal slice and its per-file minimums", ()),
+    },
+    # The red button drives the venue's HTTP client directly rather than the node, so all but one
+    # of its doubles stand in for something the venue hands over. `typing.Any` is what the client's
+    # signatures promise, which is why the real answer classes are named per row rather than read
+    # off a signature -- the offers guard is what keeps each name honest against the real class.
+    "test_engine_flatten.py": {
+        "FakeClient": Standin(LIBRARY, "nautilus_trader.adapters.kraken.KrakenSpotHttpClient", (_BINDS_FLATTEN, _OFFERS_FLATTEN)),
+        # `request_instruments()`'s row. Measured against the installed adapter's public listing
+        # endpoint, not inferred: the answer is a list of these.
+        "_Instrument": Standin(LIBRARY, "nautilus_trader.model.CurrencyPair", (_OFFERS_FLATTEN,)),
+        "_Position": Standin(LIBRARY, "nautilus_trader.model.PositionStatusReport", (_OFFERS_FLATTEN,)),
+        "_AccountState": Standin(LIBRARY, "nautilus_trader.model.AccountState", (_OFFERS_FLATTEN,)),
+        "_Balance": Standin(LIBRARY, "nautilus_trader.model.AccountBalance", (_OFFERS_FLATTEN,)),
+        # `request_book_snapshot()`'s answer and one of its levels, measured the same way.
+        "_Book": Standin(LIBRARY, "nautilus_trader.model.OrderBook", (_OFFERS_FLATTEN,)),
+        "_Level": Standin(LIBRARY, "nautilus_trader.model.BookLevel", (_OFFERS_FLATTEN,)),
+        "_StdoutThatDies": Standin(OURS, "the echo-callable cli.engine.flatten.run_flatten is built with", ()),
     },
     "test_engine_venuestate.py": {
         "FakeCache": Standin(LIBRARY, "nautilus_trader.common.Cache", (_CACHE_SURFACE, _OFFERS_VENUESTATE)),
