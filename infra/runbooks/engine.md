@@ -331,10 +331,7 @@ If you are deciding whether to act, the difference between those two numbers is 
    sudo docker exec zcrypto-engine zcrypto engine exec-status
    ```
    A running container that answers `exec-status` ⇒ the engine is alive and this is a telemetry incident: **the position stands**. Follow [`observability.md#zcrypto-alloy-dark-capture-primary`](observability.md#zcrypto-alloy-dark-capture-primary) and stop here. `ssh` itself failing, or the container gone, ⇒ the host or the engine is genuinely down and step 3 applies.
-3. **Only once the engine is confirmed dark**, the response is the order-path drills' scenario **B** — the flatten procedure: the kill file first, then every resting order cancelled and the position closed. It is a separate attended procedure with its own section and its own decision-to-flat measurement; it is not part of this page.
-
-PENDING-ANCHOR-DRILL-B
-
+3. **Only once the engine is confirmed dark**, the response is [`drills-order-path.md#drill-b`](drills-order-path.md#drill-b) — the flatten procedure: the kill file first, then every resting order cancelled and the position closed. It is a separate attended procedure with its own decision-to-flat measurement; it is not part of this page. That section also records that closing the position does **not** clear this page while the engine is still dark.
 4. **Read what the position actually was before acting on it.** `$A` is the largest absolute leg at last sight; the per-symbol breakdown is panel 64 and the engine's exec ledger on the host. On the exporter route the ledger is authoritative — the gauge stopped at the moment the exporter did.
 5. **All-clear by value**, not by the alert clearing: `uv run python infra/scripts/grafana-query.py 'up{job="engine_app",host="zcrypto"}' 'max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h])))'` with `up` back at 1, and the position reading whatever you intended to leave it at.
 
