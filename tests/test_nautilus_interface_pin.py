@@ -31,6 +31,7 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.adapters.kraken", "KrakenExecutionClientConfig"),
     ("nautilus_trader.adapters.kraken", "KrakenExecutionClientFactory"),
     ("nautilus_trader.adapters.kraken", "KrakenProductType"),
+    ("nautilus_trader.adapters.kraken", "KrakenSpotHttpClient"),
     ("nautilus_trader.common", "Environment"),
     ("nautilus_trader.common", "LogLevel"),
     ("nautilus_trader.config", "LiveExecutionEngineConfig"),

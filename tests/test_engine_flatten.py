@@ -7,6 +7,7 @@ venue -- never only about a return value."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pty
 from dataclasses import dataclass
@@ -15,7 +16,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import typer
+from typer.testing import CliRunner
 
+from cli.__main__ import app
 from cli.engine import flatten
 
 
@@ -2096,3 +2100,126 @@ def test_a_terminal_that_dies_between_the_check_and_the_prompt_refuses_and_journ
     # Never "not-required", which is what a dry run records: the word was asked for and could not
     # be read, and a record that cannot say which of those happened is one nobody can act on.
     assert doc["confirm"] == "unreadable" and doc["exit_code"] == 1
+
+
+# --- the CLI surface ----------------------------------------------------------------------------
+
+_runner = CliRunner()
+
+
+def test_the_subcommand_is_registered_and_its_help_says_what_pressing_it_does():
+    result = _runner.invoke(app, ["engine", "flatten", "--help"])
+    assert result.exit_code == 0
+    assert "--execute" in result.output
+    assert "--state-dir" in result.output
+    assert "market" in result.output
+
+
+def test_the_state_dir_is_required_so_the_button_never_depends_on_a_config_mount():
+    """The environment being broken is the situation this command exists for."""
+    result = _runner.invoke(app, ["engine", "flatten"])
+    assert result.exit_code != 0
+
+
+def test_absent_credentials_refuse_with_exit_one_and_never_construct_a_client(monkeypatch, tmp_path):
+    """Exit 1 is the refusal code, and it lands here before a client exists: one built without a
+    key is a single request away from the venue.
+
+    The unconstructed client is asserted SEPARATELY from the code, because the code alone cannot
+    see this defect: drop the credential check and the constructor is reached with `None`, and the
+    exception that follows reaches `CliRunner` as exit code 1 as well -- identical from the outside,
+    with the object that holds a venue session already built."""
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    constructed: list[tuple] = []
+    import nautilus_trader.adapters.kraken as kraken_adapter
+
+    monkeypatch.setattr(kraken_adapter, "KrakenSpotHttpClient", lambda *args, **kwargs: constructed.append(args))
+    result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
+    assert result.exit_code == 1
+    assert constructed == []
+
+
+def test_the_command_never_names_a_credential_value(monkeypatch, tmp_path, caplog):
+    """The refusal goes through `_abort`, which LOGS and never echoes, so the log record is the only
+    surface a key could leak on -- an assertion on `result.output` alone stays green on an
+    implementation that prints the value into it (`tests/test_error_paths_are_logged.py`)."""
+    monkeypatch.setenv("KRAKEN_SPOT_API_KEY", "the-key-value")
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with caplog.at_level(logging.ERROR):
+        result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "KRAKEN_SPOT_API_SECRET" in caplog.text  # the refusal really did reach the log
+    assert "the-key-value" not in caplog.text
+
+
+def _stub_the_button(monkeypatch, seen, *, code: int) -> None:
+    """Credentials present, the adapter class and `run_flatten` both replaced by recorders.
+
+    Both are imported INSIDE the command body, so both are attribute lookups on their module at
+    call time and `setattr` on the module reaches them."""
+    monkeypatch.setenv("KRAKEN_SPOT_API_KEY", "the-key")
+    monkeypatch.setenv("KRAKEN_SPOT_API_SECRET", "the-secret")
+
+    class _FakeClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            seen["client_args"] = args
+            seen["client_kwargs"] = kwargs
+
+    import nautilus_trader.adapters.kraken as kraken_adapter
+
+    monkeypatch.setattr(kraken_adapter, "KrakenSpotHttpClient", _FakeClient)
+
+    def _fake_run_flatten(client: Any, **kwargs: Any) -> int:
+        seen["client"] = client
+        seen.update(kwargs)
+        return code
+
+    monkeypatch.setattr(flatten, "run_flatten", _fake_run_flatten)
+
+
+@pytest.mark.parametrize("code", [0, 1, 2, 3])
+def test_the_code_run_flatten_returns_is_the_code_the_process_exits_with(monkeypatch, tmp_path, code):
+    """The four codes are the command's contract -- 0 flat, 1 refused, 2 something is still open,
+    3 the venue could not be read -- and a wrapper, a monitor and an operator all read the process's
+    code, never the return value.
+
+    A Typer command body that `return`s the number instead of raising `typer.Exit` exits 0 whatever
+    it returned, so 1/2/3 are the fixture values that bite and 0 is the true positive that must
+    still pass. Parametrized rather than asserted on one code: a command hardcoding `Exit(2)` would
+    pass a single-code test on 2."""
+    seen: dict[str, Any] = {}
+    _stub_the_button(monkeypatch, seen, code=code)
+    result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
+    assert result.exit_code == code
+
+
+@pytest.mark.parametrize(("argv", "execute"), [([], False), (["--execute"], True)])
+def test_the_typed_state_dir_and_the_execute_flag_are_what_run_flatten_is_handed(monkeypatch, tmp_path, argv, execute):
+    """Both parametrizations are needed: a body that hardcodes `execute=False` sends nothing on an
+    incident day and passes the flag-less case, and one that hardcodes `True` sends without the
+    operator asking and passes the `--execute` case.
+
+    `echo` is asserted to be `typer.echo` ITSELF: `run_flatten` wraps it internally in a guard that
+    swallows a dead stdout, so a caller that pre-wraps it double-wraps, and `CliRunner` redirects
+    `sys.stdout` -- which makes the module's own `print` default indistinguishable from `typer.echo`
+    in captured output. Identity is the only thing that can see the difference here."""
+    seen: dict[str, Any] = {}
+    _stub_the_button(monkeypatch, seen, code=0)
+    state_dir = tmp_path / "engine-state"
+    result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(state_dir), *argv])
+    assert result.exit_code == 0
+    assert seen["state_dir"] == state_dir
+    assert seen["execute"] is execute
+    assert seen["echo"] is typer.echo
+
+
+def test_the_client_is_built_key_first_then_secret(monkeypatch, tmp_path):
+    """Two DIFFERENT fixture values, so a swapped pair is visible: swapped, every request this
+    command makes fails authentication, and it fails on the day the account has to be emptied."""
+    seen: dict[str, Any] = {}
+    _stub_the_button(monkeypatch, seen, code=0)
+    assert _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)]).exit_code == 0
+    assert seen["client_args"] == ("the-key", "the-secret")
+    assert seen["client_kwargs"] == {}
+    assert seen["client"] is not None  # the client the command built is the one run_flatten got
