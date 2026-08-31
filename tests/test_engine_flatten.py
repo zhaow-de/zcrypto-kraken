@@ -1893,10 +1893,15 @@ def test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_s
 def test_the_journal_payload_is_json_serializable_without_the_dump_s_str_fallback(tmp_path, monkeypatch):
     """`write_journal` is the first code in this module to serialize the recorded request params,
     and it dumps with `default=str` -- a net that would quietly stringify a value nobody converted.
-    This round-trips the REAL payload strictly, so the four explicit conversions the record depends
-    on (`_journalled`'s on `AccountType`, and `submit_leg`'s on the instrument id, the side and the
-    quantity) are each pinned: every one of those objects raises `TypeError` under a bare
-    `json.dumps`.
+    This round-trips the REAL payload strictly, so the explicit conversions the record depends on
+    are pinned rather than assumed: `_journalled`'s `str()` on `AccountType`, and `submit_leg`'s on
+    the order side, the order type, the time in force and the quantity. Every one of those objects
+    raises `TypeError` under a bare `json.dumps`.
+
+    NOT the instrument id: `_Instrument.id` is a plain `str` here where production hands
+    `constraints_for` a real `InstrumentId`, so that conversion is invisible from any fixture built
+    on this fake and is pinned by
+    `test_the_recorded_instrument_id_is_converted_where_the_fake_cannot_show_it` instead.
 
     A margin leg is the fixture because it is the only path carrying BOTH an `AccountType` and the
     `leverage` int -- a spot-only sweep never records the enum at all."""
@@ -1915,6 +1920,24 @@ def test_the_journal_payload_is_json_serializable_without_the_dump_s_str_fallbac
     params = [e["params"] for e in captured["payload"]["requests"] if e["call"] == "submit_order"]
     assert params and params[0]["account_type"] == "MARGIN" and params[0]["leverage"] == flatten.MARGIN_LEVERAGE
     json.dumps(captured["payload"])  # no `default=`: the record must be serializable on its own
+
+
+def test_the_recorded_instrument_id_is_converted_where_the_fake_cannot_show_it():
+    """The one journalled conversion no sweep-level fixture can reach. `constraints_for` reads the
+    id straight off the listing row, and this file's row carries a `str` -- so a dropped
+    `str(constraints.instrument_id)` is invisible from every fake-driven run. Built here with the
+    production type, which a bare `json.dumps` refuses, so the fourth conversion is pinned too."""
+    from nautilus_trader.model import InstrumentId
+
+    constraints = flatten.PairConstraints(
+        "BTC/EUR", InstrumentId.from_str("BTC/EUR.KRAKEN"), ordermin=0.0001, lot_step=0.00000001, tick_size=0.1
+    )
+    leg = flatten.Leg("spot", "BTC", "BTC/EUR", "SELL", 0.5, "CASH", "account_state.balances")
+    rec = flatten.Recorder()
+    flatten.submit_leg(FakeClient(), rec, flatten.size_leg(leg, constraints, 60000.0), constraints, "FLT-20260830T120000Z-1")
+    (entry,) = rec.entries
+    assert entry["params"]["instrument_id"] == "BTC/EUR.KRAKEN"
+    json.dumps(rec.entries)  # no `default=`: what `write_journal` would have to fall back on
 
 
 def test_a_refused_run_still_journals_the_refusal(tmp_path):
