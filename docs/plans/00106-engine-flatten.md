@@ -91,10 +91,10 @@ Every one of these is binding on the implementer. Do not re-litigate them mid-ta
 1. **The wrapper writes the kill file with the engine account's ownership** (`chown` to `engine_uid:engine_gid`, mode 0644). A root-owned 0644 file in a 0750 engine-owned directory would make a later engine-side `_write_kill_file` fail `EACCES`.
 1. **The wrapper accepts exactly zero arguments or exactly `--execute`.** Anything else is a usage refusal with exit 1 and no kill file written — a half-remembered `--dry-run` must not reach the container after the button has already been half-pressed.
 1. **`--name` is not passed to `docker run`.** A name collision would refuse the button on a second press.
-1. **The owed live read-only dry-run is registered in the topic only**, never in `docs/reference/adapter-verification/<version>.md`'s "Owed checks not discharged" section. `infra/runbooks/engine.md`'s pre-probe step 3 refuses to **arm** on an open item there, so putting a flatten check in that section would block arming on something unrelated to arming.
+1. **The owed live read-only dry-run is registered in the topic only**, never in `docs/reference/adapter-verification/<version>.md`'s "Owed checks not discharged" section. `infra/runbooks/engine-procedures.md`'s `engine-probe-window` step 3 refuses to **arm** on an open item there, so putting a flatten check in that section would block arming on something unrelated to arming.
 1. **`_VENUE_MUTATING_NAMES` gains `.cancel_all_orders`** alongside allowlisting `flatten.py`. The guard's own docstring says a second module learning to cancel is the same escape; account-wide cancel is the most destructive cancel there is and belongs on the list it protects.
 1. **`"zcrypto-flatten"` joins `_DESTRUCTIVE` in `tests/test_ops_daily.py`**, so the unattended daily pass's classifier is asserted never to call the red button autonomous.
-1. **A venue rejection carries the venue's own words and no minted label.** Four reason labels exist and no more: `dust_below_venue_minimum`, `unclosable_below_minimum`, `no_eur_or_btc_pair`, `no_reference_price` — each one a decision *this code* made before sending. What the venue answers is journaled verbatim as the leg's `error`; the spec's D3 says so, and inferring a label from a rejection message would pin the journal to message text nothing here has measured.
+1. **A venue rejection carries the venue's own words, and the only label it can gain is one this code had already earned before sending.** Four reason labels exist and no more: `dust_below_venue_minimum`, `unclosable_below_minimum`, `no_eur_or_btc_pair`, `no_reference_price` — each one a decision *this code* made before sending. What the venue answers is journaled verbatim as the leg's `error`; the spec's D3 says so, and inferring a label from a rejection message would pin the journal to message text nothing here has measured. The one label a rejection attaches is `unclosable_below_minimum`, and only on a margin leg whose sized quantity this code had already read as below the pair's `ordermin` (spec D4): the operator's only remedy there is Kraken's own settle-position, and an unlabelled `EOrder:` string does not say so. The rejection text is never read to decide it.
 
 ______________________________________________________________________
 
@@ -506,7 +506,8 @@ _ACCOUNT = AccountId(ACCOUNT_ID)
 
 
 class FlattenRefused(Exception):
-    """Refused before the venue was touched -- exit 1."""
+    """Refused with nothing sent -- exit 1. The kill-file and terminal gates precede every read;
+    the confirm mismatch follows the plan's reads and still precedes every write."""
 
 
 class FlattenUnreachable(Exception):
@@ -1026,7 +1027,7 @@ ______________________________________________________________________
 
 **Interfaces:**
 
-- Consumes from Tasks 1–2: `PairConstraints`, `Leg`, `FlattenUnreachable`, `step_precision`.
+- Consumes from Tasks 1–2: `PairConstraints`, `Leg`, `TAKER_RATE`.
 - Produces:
   - `costmin_for(symbol: str) -> float | None`
   - `classify_balance(free: float, constraints: PairConstraints, reference_price: float | None) -> str` — `"flat"`, `"dust"` or `"residual"`.
@@ -1803,7 +1804,7 @@ ______________________________________________________________________
 
 - Consumes from Tasks 1–4: `Recorder`, `Plan`, `Snapshot`, `SizedLeg`, `PairConstraints`, `FlattenUnreachable`, `read_open_orders`, `read_positions`, `read_balances`, `read_snapshot`, `margin_legs`, `spot_legs`, `constraints_for`, `size_leg`, `step_precision`, `_ACCOUNT`, `MARGIN_LEVERAGE`, `CLIENT_ORDER_ID_PREFIX`.
 - Produces:
-  - `@dataclass(frozen=True) class LegOutcome: kind: str; symbol: str; side: str; qty: float; pass_name: str; client_order_id: str | None; sent: bool; reason: str | None; answer: str | None; error: str | None`
+  - `@dataclass(frozen=True) class LegOutcome: kind: str; symbol: str; side: str; qty: float; pass_name: str; source: str; client_order_id: str | None; sent: bool; reason: str | None; answer: str | None; error: str | None`
   - `@dataclass(frozen=True) class SweepResult: cancel_ok: bool; cancel_error: str | None; orders_after_cancel: int | None; post_write_failure: str | None; outcomes: list[LegOutcome]; final: Snapshot | None`
   - `mint_client_order_id(stamp: datetime, index: int) -> str`
   - `submit_leg(client, rec, sized: SizedLeg, constraints: PairConstraints, client_order_id: str) -> Any`
@@ -1930,7 +1931,9 @@ def test_a_fill_during_the_confirm_is_closed_at_the_post_cancel_size_not_the_sna
 
 
 def test_a_rejected_margin_leg_is_journaled_and_the_sweep_continues_to_the_spot_pass():
-    """A rejection is never retried and never stops the rest of the account being flattened."""
+    """A rejection is never retried and never stops the rest of the account being flattened, and a
+    leg that cleared `ordermin` before it was sent gains no label from having been refused -- the
+    rejection text is never read."""
     client = _sweep_client(
         orders=[[]],
         positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
@@ -1943,6 +1946,7 @@ def test_a_rejected_margin_leg_is_journaled_and_the_sweep_continues_to_the_spot_
     result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
     margin_outcome = next(o for o in result.outcomes if o.kind == "margin")
     assert margin_outcome.sent is True and "Insufficient margin" in margin_outcome.error
+    assert margin_outcome.reason is None  # 0.5 clears _Instrument's 0.0001 ordermin
     assert [o.symbol for o in result.outcomes if o.kind == "spot"] == ["ADA/EUR"]
     assert result.final is not None
 
@@ -2030,6 +2034,7 @@ class LegOutcome:
     side: str
     qty: float
     pass_name: str
+    source: str
     client_order_id: str | None
     sent: bool
     reason: str | None
@@ -2106,8 +2111,21 @@ def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, ind
 
     `sent` stays True on a failure -- the request left this process and may have reached the venue,
     so recording it as unsent would be the one lie an operator cannot afford here.
+
+    A rejected margin closer this code had ALREADY sized below the pair's `ordermin` is labelled
+    `unclosable_below_minimum` (spec D4): only the venue's own settle-position clears such a
+    remainder, and an operator reading a bare `EOrder:` string is never told that. The label comes
+    from the pre-send arithmetic, never from the rejection text -- which Kraken message means
+    "below the minimum" is unmeasured here.
     """
-    base = dict(kind=sized.leg.kind, symbol=sized.leg.symbol, side=sized.leg.side, qty=sized.qty, pass_name=pass_name)
+    base = dict(
+        kind=sized.leg.kind,
+        symbol=sized.leg.symbol,
+        side=sized.leg.side,
+        qty=sized.qty,
+        pass_name=pass_name,
+        source=sized.leg.source,
+    )
     if not sized.send:
         return LegOutcome(**base, client_order_id=None, sent=False, reason=sized.reason, answer=None, error=None)
     client_order_id = mint_client_order_id(stamp, index)
@@ -2115,6 +2133,8 @@ def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, ind
     try:
         answer = submit_leg(client, rec, sized, constraints, client_order_id)
     except Exception as exc:  # noqa: BLE001 -- one leg's rejection must not end the sweep
+        if sized.leg.kind == "margin" and sized.qty < constraints.ordermin:
+            reason = "unclosable_below_minimum"
         logger.error("flatten leg %s %s was rejected: %s", sized.leg.symbol, sized.leg.side, exc)
         return LegOutcome(
             **base, client_order_id=client_order_id, sent=True, reason=reason, answer=None, error=f"{type(exc).__name__}: {exc}"
@@ -2351,13 +2371,18 @@ def test_a_broken_shape_on_the_post_cancel_re_read_exits_two_with_no_order_sent(
 def test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two(tmp_path):
     """The engine's own machine produces sub-ordermin remainders by design, and a remainder left
     open is exposure -- so it is sent, and only Kraken's own settle-position can clear what the
-    venue refuses."""
+    venue refuses. The label carries that: the exit code says 2 for a hundred reasons, and an
+    operator reading a bare `EOrder:` string is never routed to the settle-position action."""
     _armed(tmp_path)
-    tiny = [_Position("BTC/EUR", "LONG", 0.00002)]
+    tiny = [_Position("BTC/EUR", "LONG", 0.00002)]  # under _Instrument's 0.0001 ordermin
     client = _flat_client(positions=[tiny, tiny, tiny, tiny])
     client.raises["submit_order"] = RuntimeError("EOrder:Invalid volume")
     assert _run(client, tmp_path) == 2
     assert client.submitted != []
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    (leg,) = [row for row in json.loads(path.read_text())["legs"] if row["kind"] == "margin"]
+    assert leg["reason"] == "unclosable_below_minimum"
+    assert "EOrder:Invalid volume" in leg["error"]  # the venue's own words are kept beside the label
 
 
 def test_a_balance_in_an_asset_with_neither_pair_exits_two_never_zero(tmp_path):
@@ -2422,6 +2447,25 @@ def test_an_instrument_with_no_committed_costmin_is_still_sized_and_sent(tmp_pat
     )
     assert _run(client, tmp_path) == 0
     assert [s["instrument_id"] for s in client.submitted] == ["WEIRD/EUR.KRAKEN"]
+
+
+def test_a_balance_that_appears_after_the_snapshot_is_sold_unpriced_and_the_journal_says_so(tmp_path):
+    """No post-write book read ever happens, so a balance surfacing only in a later pass has no
+    reference price. It is still sold -- skipping it would leave a live holding the run then calls
+    flat -- and the label is what tells the operator no estimate backed that order."""
+    _armed(tmp_path)
+    late = [_Balance("ADA", 1200.0)]
+    client = _flat_client(
+        # Empty at the snapshot, so no ADA/EUR book is read and the plan carries no ADA price.
+        balances=[[], late, [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+    )
+    assert _run(client, tmp_path) == 0
+    assert [s["instrument_id"] for s in client.submitted] == ["ADA/EUR.KRAKEN"]
+    assert "request_book_snapshot" not in names(client)
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    (leg,) = [row for row in json.loads(path.read_text())["legs"] if row["kind"] == "spot"]
+    assert leg["sent"] is True and leg["reason"] == "no_reference_price"
 
 
 def test_the_journal_records_the_snapshots_the_requests_the_confirm_and_the_exit_code(tmp_path):
@@ -2575,7 +2619,7 @@ def run_flatten(
 ) -> int:
     """The whole button. Returns the process exit code; raises nothing.
 
-    0 flat (or the default dry run completed) · 1 refused before the venue was touched · 2 partial:
+    0 flat (or the default dry run completed) · 1 refused with nothing sent · 2 partial:
     the final snapshot is not flat, or a write-side failure means it cannot be called flat ·
     3 the venue could not be reached or read BEFORE the first write, which is the cancel.
     """
@@ -2720,8 +2764,8 @@ def test_the_state_dir_is_required_so_the_button_never_depends_on_a_config_mount
 
 
 def test_absent_credentials_refuse_with_exit_one_and_never_construct_a_client(monkeypatch, tmp_path):
-    """Exit 1 is 'refused before the venue was touched', and a client built without a key is one
-    request away from touching it."""
+    """Exit 1 is the refusal code, and it lands here before a client exists: one built without a
+    key is a single request away from the venue."""
     monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
     result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
@@ -2802,10 +2846,10 @@ And pin the adapter name this command newly imports under `cli/`. In `tests/test
 
 - [ ] **Step 4: Update the README in the same change**
 
-In `README.md`'s `zcrypto engine` subcommand table, add this row directly below the `exec-status` row (note the escaped pipes inside the code span):
+In `README.md`'s `zcrypto engine` subcommand table, add this row directly below the `exec-status` row:
 
 ```markdown
-| `flatten --state-dir <PATH> [--execute]` | Close every open position and sell every non-EUR balance at **market**, account-wide — the emergency halt, run on the engine host through `sudo zcrypto-flatten` and never by hand. Without `--execute` it reads the account, prints every leg with its side, quantity, pair and estimate at the taker rate, lists every balance below the venue minimum and every balance no EUR or BTC pair can carry, and **sends nothing**. With `--execute` it refuses unless the engine's kill file is already present, refuses without a controlling terminal, prints the same plan, and reads a typed `FLATTEN` from the terminal (never from stdin; there is deliberately no flag that skips it) before it cancels every resting order account-wide, closes each margin position with a reduce-only market IOC order sized from a fresh post-cancel read, and sells each non-EUR balance at market in two passes so a BTC-quoted leg's proceeds are sold too. Dust — a balance below the venue's quantity or notional minimum — is listed and not sent, and does not make the account not-flat; a margin remainder is never dust and is sent regardless, since a remainder left open is exposure. Every request and every venue answer is written to `<state-dir>/exec/flatten-<timestamp>.json`, its own artifact. Exit **0** the final read shows no resting order, no open position and nothing sellable left; **1** refused before the venue was touched (no kill file, no terminal, confirmation did not match, credentials absent); **2** something is still open, or the cancel failed, or a read after the first order failed — never 0 and never 3, because the account may already have moved; **3** the venue could not be reached or read before anything was sent. Re-runnable: a second run finds less to do and does it. |
+| `flatten --state-dir <PATH> [--execute]` | Close every open position and sell every non-EUR balance at **market**, account-wide — the emergency halt, run on the engine host through `sudo zcrypto-flatten` and never by hand. Without `--execute` it reads the account, prints every leg with its side, quantity, pair and estimate at the taker rate, lists every balance below the venue minimum and every balance no EUR or BTC pair can carry, and **sends nothing**. With `--execute` it refuses unless the engine's kill file is already present, refuses without a controlling terminal, prints the same plan, and reads a typed `FLATTEN` from the terminal (never from stdin; there is deliberately no flag that skips it) before it cancels every resting order account-wide, closes each margin position with a reduce-only market IOC order sized from a fresh post-cancel read, and sells each non-EUR balance at market in two passes so a BTC-quoted leg's proceeds are sold too. Dust — a balance below the venue's quantity or notional minimum — is listed and not sent, and does not make the account not-flat; a margin remainder is never dust and is sent regardless, since a remainder left open is exposure. Every request and every venue answer is written to `<state-dir>/exec/flatten-<timestamp>.json`, its own artifact. Exit **0** the final read shows no resting order, no open position and nothing sellable left; **1** refused with nothing sent (no kill file, no terminal, confirmation did not match, credentials absent); **2** something is still open, or the cancel failed, or a read after the first order failed — never 0 and never 3, because the account may already have moved; **3** the venue could not be reached or read before anything was sent. Re-runnable: a second run finds less to do and does it. |
 ```
 
 - [ ] **Step 5: Run the tests**
@@ -3039,9 +3083,11 @@ def test_the_role_installs_the_wrapper_root_owned_and_not_world_readable():
 
 
 def test_the_template_renders_with_nothing_left_undefined():
-    """A `{{ name }}` this file's own CONTEXT does not carry aborts the render. Whether the ROLE
-    carries it is `tests/test_infra_shell_templates_render.py`'s question, not this file's."""
-    assert "{{" not in _render()
+    """`_ENV` is `StrictUndefined`, so a `{{ name }}` this file's own CONTEXT does not carry
+    RAISES rather than surviving into the output -- the assertion is that the render completes
+    and produces the script. Whether the ROLE defines every name is
+    `tests/test_infra_shell_templates_render.py`'s question, not this file's."""
+    assert _render().startswith("#!/bin/sh")
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -3288,7 +3334,7 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 | code | what it means | what to do |
 | -- | -- | -- |
 | **0** | the final read shows no resting order, no open position and nothing sellable left | go to step 4 |
-| **1** | refused before the venue was touched — no kill file, no terminal, the word did not match, or no credentials in the container | nothing was sent; fix what it named and run it again |
+| **1** | refused with nothing sent — no kill file, no terminal, the word did not match, or no credentials in the container | nothing was sent; fix what it named and run it again |
 | **2** | something is still open, or the account-wide cancel failed, or a read after the first order failed | go to step 5 |
 | **3** | the venue could not be reached or read **before anything was sent** | nothing was sent; the account is as it was |
 
@@ -3322,28 +3368,7 @@ In `infra/runbooks/README.md`, in the `### [engine-procedures.md]` block, append
 Run: `uv run pytest tests/test_ops_daily.py tests/test_infra_alert_rules.py tests/test_code_prose_citations.py -q`
 Expected: PASS. `test_every_runbook_anchor_is_defined_in_exactly_one_file` covers the new anchor.
 
-Then prove the new pin actually bites, since it is green from birth: construct the defect it names — an enumerated read shape that admits the wrapper — and watch both it and the corpus guard trip.
-
-```bash
-python - <<'PY'
-import pathlib
-path = pathlib.Path("infra/scripts/ops_daily.py")
-text = path.read_text()
-anchor = "_READ_SHAPES = (\n"
-assert anchor in text, "the shape table moved -- find it before trusting this probe"
-path.write_text(text.replace(anchor, anchor + '    _Shape(("zcrypto-flatten",), {"--execute": None}),\n', 1))
-PY
-uv run pytest tests/test_ops_daily.py -q -k "red_button or destructive_token"
-```
-
-Expected: FAIL, both `test_the_red_button_is_never_autonomous` and `test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous` red — the first because the button now matches a read shape, the second because the runbook span carrying the token now classifies autonomous. A pass here means neither guard reads the classifier and the task is not done.
-
-```bash
-git checkout -- infra/scripts/ops_daily.py
-uv run pytest tests/test_ops_daily.py -q -k "red_button or destructive_token"
-```
-
-Expected: PASS again, and `git status --porcelain` shows only this task's own edits.
+Both new pins — `test_the_red_button_is_never_autonomous` and the corpus guard `test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous`, which the runbook section has just given something to catch — are green from birth and therefore unproven here. Their defect is constructed and watched to trip in the mutation-probe task: `mutate-probe.sh` refuses the dirty worktree this task leaves, so the probe cannot run before the commit below.
 
 - [ ] **Step 6: Commit**
 
@@ -3406,6 +3431,25 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
   --mutation 's/if qty <= 0.0:/if qty < 0.0:/' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_margin_quantity_that_floors_to_zero_is_unclosable_here_and_named_as_such -q
 
+# A rejected sub-ordermin margin closer really reaches the journal labelled, not as a bare EOrder
+# string -- the label is what routes the operator to Kraken's settle-position action.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def _send/def _send_DISABLED/' \
+  --mutation 's/if sized.leg.kind == "margin" and sized.qty < constraints.ordermin:/if False:/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two -q
+
+# The unattended pass's classifier really refuses the red button -- proven here rather than in the
+# task that writes the runbook section, because `mutate-probe.sh` refuses the dirty tree that task
+# leaves. The `-k` filter must collect TWO tests, `test_the_red_button_is_never_autonomous` and
+# `test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous`; check with
+# `--collect-only` first, since a filter that deselects one of them scores the other's verdict.
+# The control flips both of `classify_action`/`_classify_one`'s default-deny returns, so every
+# command classifies autonomous; the mutation admits the button as a read shape.
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control 's/^    return Tier.PREPARED$/    return Tier.AUTONOMOUS/' \
+  --mutation 's|^_READ_SHAPES = ($|_READ_SHAPES = (\n    _Shape(("zcrypto-flatten",), {"--execute": None}),|' \
+  -- uv run pytest tests/test_ops_daily.py -q -k "red_button or destructive_token"
+
 # The image entrypoint override is really required, and really before the image.
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2 \
   --control 's|^  --entrypoint zcrypto \\$|  --env ENTRYPOINT_OVERRIDE_REMOVED=1 \\|' \
@@ -3442,7 +3486,7 @@ For the last probe the mutation removes the name and the probe would still pass 
 
 - [ ] **Step 4: Confirm the tree is clean again**
 
-Run: `git status --porcelain && uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py -q`
+Run: `git status --porcelain && uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_ops_daily.py -q`
 Expected: empty status, all green. `mutate-probe.sh` restores on every exit path; a non-empty status here means a restore failed and must be resolved before anything else.
 
 - [ ] **Step 5: Record the verdicts**
