@@ -299,7 +299,7 @@ The overlay-writer cycle runs at `*:12` and `*:42`, so 3 h is roughly six missed
 
 **Three causes, and two sibling alerts discriminate them:**
 
-- **`Ops · archive-pull stalled` also firing** ⇒ the unit itself is not completing. Go to that section; this one is its downstream echo.
+- **`Ops · archive-pull stalled (dead-man)` also firing** ⇒ the unit itself is not completing. Go to that section; this one is its downstream echo.
 - **`Ops · archive-pull non-zero exit` also firing** ⇒ the reconcile container ran and failed. **A failed cycle publishes no textfile at all** — `cli/archive/command.py`'s reconcile raises `Exit(1)` on any integrity failure *before* `_write_textfile` is reached, and exits 2 before that when a mirror root is missing. That is deliberate: fresh-looking numbers from a cycle that could not read its inputs would be worse than none. So `last_success_timestamp` freezes, and this alert is the escalation of a failure that has persisted 3 h.
 - **Neither sibling firing** ⇒ **the fail-closed gate is skipping every cycle**, and this rule is the ONLY pager for that.
 

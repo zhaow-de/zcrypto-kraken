@@ -203,6 +203,10 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_orders_total",
     "zcrypto_exec_fills_total",
     "zcrypto_exec_fees_eur_total",
+    # `zcrypto_exec_position` keeps its exclusion for its BARE VALUE, which stays no fault at any
+    # level -- but it is no longer unwatched: zcrypto-engine-dark-with-exposure pages on it non-zero
+    # at last sight WITH the engine's scrape gone, a conjunction the attended-window reasoning above
+    # does not cover, since nobody is watching the board when the engine is the thing that left.
     "zcrypto_exec_position",
     "zcrypto_exec_realized_pnl_eur",
     # The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
@@ -1122,13 +1126,12 @@ _CROSS_REF = re.compile(r"\b([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 def test_every_runbook_cross_reference_resolves():
     """A runbook citing a section in another runbook must cite one that exists.
 
-    `test_the_index_routes_to_every_section_and_only_to_real_ones` already covers README.md's 91
-    index rows, and covers them in a direction this test does not: that every anchor is routed TO.
-    Do not drop it on the strength of this one. What was unguarded is the other 28 references --
-    body prose in `observability.md`, `capture-daemon.md`, `ops-node.md`, `engine.md`, `hosts.md`
-    and `nas.md` -- and one of them was wrong: the dead-man map sent the liquidations poller to
-    `ops-node.md` for a section living in `observability.md`. An operator at 03:00 follows that and
-    finds nothing, which costs more than no link would.
+    `test_the_index_routes_to_every_section_and_only_to_real_ones` already covers README.md's index
+    rows, and covers them in a direction this test does not: that every anchor is routed TO. Do not
+    drop it on the strength of this one. What was unguarded is every other reference -- body prose
+    in the subsystem files -- and one of them was wrong: the dead-man map sent the liquidations
+    poller to `ops-node.md` for a section living in `observability.md`. An operator at 03:00 follows
+    that and finds nothing, which costs more than no link would.
 
     The charset matches its siblings deliberately: broad enough that a stray capital produces a
     MATCH that fails the assert, rather than no match and silent non-coverage.
@@ -1142,3 +1145,212 @@ def test_every_runbook_cross_reference_resolves():
     assert refs, "no cross-references found at all -- the extraction broke, not the runbooks"
     broken = sorted({(src, ref) for src, ref in refs if ref not in anchors})
     assert not broken, f"runbook references pointing at sections that do not exist: {broken}"
+
+
+# --- the engine dark WITH exposure open: the two-node conjunction IS the rule --------------------
+# `zcrypto-engine-cycle-stale` already pages on any engine darkness. What this rule adds is *and
+# there is money exposed*, and both halves are written in forms whose obvious spelling cannot fire:
+# the position gauge is served by the engine that has gone dark, so it must be read BACKWARDS over a
+# lookback rather than instantaneously, and `engine_app` is a STATIC scrape target, so its `up`
+# series stays present reading 0 when the container dies and a presence count reads 1 forever.
+# Neither defect is visible in the rule's text, and a first-sample read taken while the engine
+# scrapes normally is green over both.
+
+_DARK_WITH_EXPOSURE = "zcrypto-engine-dark-with-exposure"
+# Pinned string, not a keyword: the phone shows the title before the summary, and the two properties
+# argued into this wording -- that it holds on the Alloy route too, and that `at last report` does
+# not assert a position the rule cannot see is still there -- are not expressible as a substring.
+_DARK_WITH_EXPOSURE_TITLE = "Engine · position open at last report and the engine is not reporting"
+# The discriminator the summary must name, spelled as that rule's own title so a responder can find
+# it in the notification list.
+_DARK_DISCRIMINATOR = "Fleet · Alloy dark — Capture primary"
+
+# The `zcrypto-gate` group's evaluation interval, read from Grafana's provisioning rule-group
+# endpoint (`/api/v1/provisioning/folder/<folder uid>/rule-groups/zcrypto-gate`, the `interval`
+# field) on 2026-08-31. Only the replay's step size; the rule's own numbers are read from the file.
+_EVAL_INTERVAL = 60
+# Prometheus's own staleness horizon. The unlookbacked control below is defeated by exactly this:
+# an instant read of the position gauge holds its value for this long after the engine stops
+# publishing and then goes away.
+_STALENESS = 300
+
+
+def test_the_dark_with_exposure_rule_exists_and_fits_the_uid_column():
+    """Presence, pinned separately so the shape tests below fail on their own subject rather than on
+    a `StopIteration` from the lookup helper."""
+    assert _DARK_WITH_EXPOSURE in [r["uid"] for r in _rules()], "an engine dark with exposure open has no alert rule"
+    assert len(_DARK_WITH_EXPOSURE) <= _UID_MAX, f"{len(_DARK_WITH_EXPOSURE)} chars -- the create call will 400"
+
+
+def _dark_with_exposure_lookback(rule) -> int:
+    """The seconds of node A's own `last_over_time` selector, parsed rather than restated."""
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    selector = re.search(r"last_over_time\([^)]*\[(\d+[smh])\]\)", expr)
+    assert selector, f"node A no longer reads the position over a `last_over_time` range: {expr!r}"
+    return _duration_seconds(selector.group(1))
+
+
+def test_the_dark_with_exposure_range_declares_the_window_its_expression_reads():
+    """`relativeTimeRange.from` does not feed a range selector on an instant node, so a mismatch here
+    breaks nothing at evaluation time and no other test would ever see it. What it breaks is the
+    record: this file declares a node's range as the widest window its expression reads, so
+    `relativeTimeRange` is what a maintainer reads for the node's real horizon -- and this rule's
+    horizon is a day, not the ten minutes an unthinking copy of the sibling rules would advertise."""
+    node_a = next(n for n in _rule(_DARK_WITH_EXPOSURE)["data"] if n["refId"] == "A")
+    selector = re.search(r"last_over_time\([^)]*\[(\d+[smh])\]\)", node_a["model"]["expr"])
+    assert selector, f"node A no longer reads the position over a `last_over_time` range: {node_a['model']['expr']!r}"
+    assert node_a["relativeTimeRange"]["from"] == _duration_seconds(selector.group(1)), (
+        f"node A declares {node_a['relativeTimeRange']['from']}s but reads {selector.group(1)} -- the declared "
+        f"horizon and the real one have drifted apart"
+    )
+
+
+def _replay_dark_with_exposure(published, up_at, *, lookback, hold_for, span, a_form="lookbacked", b_form="value"):
+    """Evaluation timestamps at which the rule is FIRING, over one `(position, scrape)` history.
+
+    `published` is the position gauge's samples as `(t, value)` -- the engine that publishes them is
+    the one that goes dark, so after darkness there are none. `up_at(t)` returns 1, 0, or `None` for
+    a series that is not there at all: the engine dying leaves `up` PRESENT at 0 (a static scrape
+    target is never removed), while the primary's Alloy going dark takes the series away.
+
+    Node A is modelled as what it says: `last_over_time` returns the LAST sample in the window, never
+    the largest, so a position closed before the engine went dark reads 0 here. Modelling it as a max
+    over the window makes `max_over_time` -- the wrong reach `alerts.yaml` names beside this rule --
+    indistinguishable from the real one, and the closed-then-dark history below is the fixture where
+    the two forms differ."""
+
+    def a(t: int) -> float:
+        window = lookback if a_form == "lookbacked" else _STALENESS
+        inside = [v for at, v in published if t - window < at <= t]
+        return abs(inside[-1]) if inside else 0.0
+
+    def b(t: int) -> float:
+        u = up_at(t)
+        if u is None:  # both forms fall through `or on() vector(0)` when the series is gone
+            return 0.0
+        return 1.0 if b_form == "presence" else float(u)
+
+    firing, run = set(), 0
+    for t in range(0, span, _EVAL_INTERVAL):
+        if a(t) > 0 and b(t) < 1:
+            run += _EVAL_INTERVAL
+            if run >= hold_for:
+                firing.add(t)
+        else:
+            run = 0
+    return firing
+
+
+def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not():
+    """Replays `(position, scrape)` histories through the rule's OWN lookback and `for:` -- both read
+    out of `alerts.yaml`, never restated here, so this fails when the rule changes.
+
+    The true positive is the event the rule exists for, and the page must outlast a full daily ops
+    pass: it is still firing one evaluation before the lookback sheds the last position reading. The
+    three false positives are the discriminator -- a dark engine with nothing exposed is
+    `zcrypto-engine-cycle-stale`'s page, not this one; a scraping engine with a position open is a
+    normal armed window; and a position CLOSED before the engine went dark is the one `last_over_time`
+    reads as 0 while `max_over_time` would keep paging on it for the rest of the day."""
+    rule = _rule(_DARK_WITH_EXPOSURE)
+    lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
+
+    dark_at = 3600
+    closed_at = 1800
+    span = dark_at + lookback + 2 * 3600
+    open_then_dark = [(t, 0.5) for t in range(0, dark_at, _EVAL_INTERVAL)]
+    flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
+    open_throughout = [(t, 0.5) for t in range(0, span, _EVAL_INTERVAL)]
+    # The executor's fill hook calls `set_position` with the sum over `positions_open`, so a full
+    # close publishes an explicit 0 rather than stopping the series -- which is what makes this
+    # history a published 0 that `last_over_time` can read, and not an absence.
+    closed_then_dark = [(t, 0.5 if t < closed_at else 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
+
+    def goes_dark(t):  # the container dies; the static target keeps publishing `up = 0`
+        return 1 if t < dark_at else 0
+
+    def alloy_goes_dark(t):  # the plane goes dark; the series is REMOVED, not set to 0
+        return 1 if t < dark_at else None
+
+    firing = _replay_dark_with_exposure(open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    assert firing, "a position open at last report and no engine scrape does not page -- the rule cannot fire"
+    assert dark_at <= min(firing) <= dark_at + hold_for, (
+        f"first page at {min(firing)}s is not within `for: {rule['for']}` of the engine going dark at {dark_at}s"
+    )
+    horizon = max(at for at, _ in open_then_dark) + lookback
+    assert horizon - _EVAL_INTERVAL <= max(firing) < horizon, (
+        f"the page stops at {max(firing)}s rather than surviving to the {lookback / 3600:g}h horizon at {horizon}s -- "
+        f"an operator asleep through a daily pass would find it self-resolved"
+    )
+
+    quiet_flat = _replay_dark_with_exposure(flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    assert not quiet_flat, (
+        f"a dark engine with NOTHING exposed pages here too, which is cycle-stale's job: {sorted(quiet_flat)[:3]}"
+    )
+
+    quiet_scraping = _replay_dark_with_exposure(open_throughout, lambda t: 1, lookback=lookback, hold_for=hold_for, span=span)
+    assert not quiet_scraping, f"a healthy engine holding a position pages: {sorted(quiet_scraping)[:3]}"
+
+    quiet_closed = _replay_dark_with_exposure(closed_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    assert not quiet_closed, (
+        f"a position CLOSED before the engine went dark still pages -- that is `max_over_time` behaviour, and it "
+        f"keeps this page up for the rest of the day over money that is not at risk: {sorted(quiet_closed)[:3]}"
+    )
+
+    # The SECOND darkness route, which the rule fires on deliberately: the primary's Alloy takes the
+    # series away and `or on() vector(0)` supplies the 0. Replayed because it is half of what this
+    # rule does and because control 2 below rests on the two routes reaching `$B < 1` differently.
+    alloy_route = _replay_dark_with_exposure(open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    assert alloy_route, "a position open with the primary's whole plane dark does not page -- the accepted double-page is gone"
+
+    # The two controls the verdict rests on. Each replays the TRUE POSITIVE through a defective form
+    # of one node and asserts it does not fire, so the replay is shown to move on each defect rather
+    # than passing everything put through it.
+    #
+    # (1) Node A read instant, its lookback stripped: the gauge holds its last value for Prometheus's
+    # staleness horizon and then goes away, so the condition never survives to `for`.
+    unlookbacked = _replay_dark_with_exposure(
+        open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span, a_form="instant"
+    )
+    assert not unlookbacked, (
+        f"an instant read of the position gauge fires too, so this replay is not proving the lookback: {sorted(unlookbacked)[:3]}"
+    )
+
+    # (2) Node B counting the series' PRESENCE (`count(up{...}) or on() vector(0)`, what the
+    # `zcrypto-alloy-dark-*` rules carry) instead of reading its VALUE. This control and the true
+    # positive above are jointly satisfiable only under the real behaviour of a static scrape target:
+    # model the dark scrape as an ABSENT series and `count()` falls through its own fallback to 0 and
+    # fires here too, turning this control red and naming the modelling error.
+    presence_counting = _replay_dark_with_exposure(
+        open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span, b_form="presence"
+    )
+    assert not presence_counting, (
+        f"a presence count fires on a dead exporter, so this replay is not proving the value read: {sorted(presence_counting)[:3]}"
+    )
+    # And that control's silence is a property of the EXPORTER route alone, not of the presence form:
+    # on the Alloy route the series really is gone, so the count falls through its own fallback and
+    # fires. Asserting it here is what makes the sentence above checkable -- a replay that modelled
+    # the dead exporter as an absent series would turn the control green for the wrong reason.
+    presence_on_alloy_route = _replay_dark_with_exposure(
+        open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, span=span, b_form="presence"
+    )
+    assert presence_on_alloy_route, (
+        "the presence form stays quiet even when the series is ABSENT, so this replay is not modelling the "
+        "`or on() vector(0)` fallback and control 2 proves nothing"
+    )
+
+
+def test_the_dark_with_exposure_page_keeps_the_wording_two_reviews_argued_into_it():
+    """Nothing else in the suite reads what a title SAYS -- `test_every_rule_has_the_fields_the_api_
+    requires` tests membership and the vocabulary guard scans for banned tokens -- so a rewording that
+    reintroduces either refused claim would land green. Both claims are about the SECOND route this
+    rule fires on: the primary's Alloy going dark trips `$B < 1` with the engine running fine, so a
+    title asserting the engine is dark is false there, and a bare *exposure open* asserts a position
+    the rule cannot see is still there. The summary names the discriminator for the same reason
+    `zcrypto-engine-cycle-stale`'s does: the page is read before any runbook is opened."""
+    rule = _rule(_DARK_WITH_EXPOSURE)
+    assert rule["title"] == _DARK_WITH_EXPOSURE_TITLE, f"the title no longer holds on both routes: {rule['title']!r}"
+    summary = (rule.get("annotations") or {}).get("summary", "")
+    assert _DARK_DISCRIMINATOR in summary, (
+        f"the summary does not name {_DARK_DISCRIMINATOR!r}, so the page's first instruction is missing and a "
+        f"responder may flatten a live position for a telemetry incident"
+    )

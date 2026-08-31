@@ -365,10 +365,14 @@ rules:
   # config.alloy to BOTH capture hosts, so `engine_app` is scraped on zcrypto-red too, where no
   # engine runs and nothing listens on 9102: `up{job="engine_app",host="zcrypto-red"}` has read 0
   # for every sample of its life (measured 336/336 hourly points over 30 days, 2026-08-22). An
-  # unscoped rule therefore pages forever on the secondary. Deliberately no such rule exists today
-  # -- engine liveness rides zcrypto-engine-cycle-stale below, zcrypto-engine-log-dead, and the
-  # healthchecks.io dead-man switch, and the scrape-level signal would add detection latency
-  # nothing currently needs. Revisit only if arming stops being episodic.
+  # unscoped rule therefore pages forever on the secondary. An UNSCOPED, unconditional scrape-liveness
+  # rule is still refused, and for the reason it always was: unattended engine liveness rides
+  # zcrypto-engine-cycle-stale below, zcrypto-engine-log-dead, and the healthchecks.io dead-man
+  # switch, and a bare `up == 0` page would only add detection latency nothing needs. What the
+  # scrape-level signal DOES buy is a conjunction nothing else can express --
+  # zcrypto-engine-dark-with-exposure below pairs it with a non-zero position at last sight, so it
+  # pages only when the engine is unreachable AND money is exposed, and it is scoped `host="zcrypto"`
+  # on both halves for exactly the reason above.
   - uid: zcrypto-engine-cycle-stale
     title: "Engine · cycles have stopped"
     ruleGroup: zcrypto-gate
@@ -427,6 +431,117 @@ rules:
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "11"
       unit: "seconds since the last completed cycle"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-dark-with-exposure
+    title: "Engine · position open at last report and the engine is not reporting"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # The conjunction the comment above zcrypto-engine-cycle-stale describes: the engine unreachable
+    # AND money exposed. Both halves are written in the form that can actually fire, and neither
+    # obvious spelling can -- a first-sample read taken while the engine scrapes normally is green
+    # over both defects, so the discrimination replay in tests/test_infra_alert_rules.py is the only
+    # thing that sees them.
+    #
+    # Node A reads the position BACKWARDS. `zcrypto_exec_position` is published by the very engine
+    # this rule detects the absence of, so an instant read holds its value only for Prometheus's ~5
+    # min staleness and then goes away -- the condition dies before `for` elapses, and the naive
+    # `zcrypto_exec_position != 0 unless up{...}` spelling is worse still: the right-hand side is
+    # present-at-0 rather than gone, so it subtracts on every sample and the rule fires on nothing at
+    # all. `last_over_time`, not `max_over_time`: the question is the exposure AT LAST SIGHT, and a
+    # max would keep paging over a position closed hours before the engine went dark. `abs`, because
+    # a short is exposure too.
+    #
+    # Node B reads the scrape's VALUE, not its presence -- the one place this rule must NOT copy the
+    # zcrypto-alloy-dark-* rules. `engine_app` is a STATIC scrape target (see the capture role's
+    # config.alloy), so nothing removes it when the container stops: the series stays present reading
+    # 0, `count()` would read 1, and the threshold could never go true on the one event this rule
+    # exists for. That is the same reading zcrypto-engine-cycle-stale's noDataState comment records,
+    # and the reason `up{job="engine_app",host="zcrypto-red"}` has read 0 for its whole life on a host
+    # where no engine runs -- so `host="zcrypto"` is load-bearing on BOTH halves.
+    #
+    # `min` is 0 on a dead exporter and, through the `or on() vector(0)` fallback, 0 again when the
+    # primary's Alloy takes the series away, so BOTH darkness routes trip it. That double-page is
+    # accepted and named, not a defect: a dark telemetry plane and a dead host remove the series
+    # identically, so silencing the Alloy route would make this rule blind to losing the primary
+    # outright. The summary and the runbook section give the responder the discriminator instead.
+    # The fallback is also what lets noDataState stay Alerting -- a healthy fleet sits at an explicit
+    # 1, so NoData here can only mean the datasource itself is gone.
+    #
+    # `for: 10m` is the only thing between a single missed scrape and a critical page: `up` falls to 0
+    # on the FIRST failed scrape at a 60 s scrape interval, so this is ten attempts, and it is the
+    # posture zcrypto-alloy-dark-ops already takes on this same signal.
+    #
+    # The 24h lookback is a decision, and it is also this page's HORIZON: the alert self-resolves when
+    # the last position reading ages out of it, while the engine may still be dark and the position
+    # still open. Sized to outlast a full daily ops pass; the runbook section says in those words that
+    # a resolve here is not an all-clear.
+    condition: D
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 86400, to: 0}  # 24h, matching the last_over_time window below
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h]))) or on() vector(0)'
+          instant: true
+          refId: A
+      - refId: B
+        queryType: ""
+        # 600, as the zcrypto-alloy-dark-* rules carry on this same instant read -- NOT a copy of A's
+        # 24h: B has no range selector at all, and a wider window would advertise a horizon it does
+        # not have and invite the two to be maintained as one setting.
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min(up{job="engine_app",host="zcrypto"}) or on() vector(0)'
+          instant: true
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: math
+          expression: "$A > 0 && $B < 1"
+          refId: C
+      - refId: D
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "C"
+          refId: D
+          conditions:
+            - evaluator: {type: gt, params: [0]}  # the math node is 1 iff BOTH halves hold
+    # `condition: D`, not the `C` every two-node rule in this file ends at. Spelling it `C` parses
+    # fine and satisfies test_every_rule_has_the_fields_the_api_requires, and evaluates the math
+    # node's raw output instead of the threshold.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: >-
+        The engine's last reported position was non-zero and its scrape has read 0, or been gone, for
+        over 10 minutes — either the engine is dark with exposure open, or the capture primary's
+        telemetry plane is dark and the engine is fine. Check `Fleet · Alloy dark — Capture primary`
+        FIRST: it counts the host's series instead of reading this scrape's value, so it stays >= 1
+        while Alloy is up and co-fires only on the telemetry route — where the position stands and
+        flattening it would pay spread and fees for a telemetry incident. Confirm the engine is
+        actually dark on the host before acting on the position. This page self-resolves when the last
+        position reading ages out of its 24h lookback, which is NOT an all-clear: the engine may still
+        be dark and the position still open.
+        Runbook: infra/runbooks/engine.md#zcrypto-engine-dark-with-exposure
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "64"
+      unit: "base units of exposure at the last position report"
     labels:
       severity: critical
     notification_settings:
