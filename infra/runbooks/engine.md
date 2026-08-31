@@ -286,6 +286,64 @@ Three shapes produce it, and the order you rule them out matters:
 
 ______________________________________________________________________
 
+<a name="zcrypto-engine-dark-with-exposure"></a>
+
+## zcrypto-engine-dark-with-exposure — ALERT
+
+### What you are seeing
+
+A **critical** Grafana alert (`Engine · position open at last report and the engine is not reporting`). Two halves, both scoped to the capture primary, and the alert fires only when both hold for 10 minutes:
+
+- **`$A`** — `max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h]))) or on() vector(0)` — the largest exposure across symbols **at last sight**, over a 24 h lookback. The gauge is published by the engine this alert detects the absence of, so it is read backwards; `abs`, because a short is exposure too. The value on the page is this number, in base units.
+- **`$B`** — `min(up{job="engine_app",host="zcrypto"}) or on() vector(0)` — the engine scrape's **value**, not its presence. `engine_app` is a static scrape target, so the `up` series stays present reading 0 when the container dies.
+
+Panel 64 on the `zcrypto-engine` board (`Position by symbol (base units)`) is `$A`'s own series.
+
+**Two bounds, because the two ways `$B` reaches 0 arrive on different clocks.** Both add the rule's `for: 10m` and the `zcrypto-gate` group's 60 s evaluation interval (`infra/grafana/alerts.yaml` for the `for`; the group interval is a stack setting, read from Grafana's provisioning rule-group endpoint):
+
+- **The engine container dies** — a value read, no staleness term. `up` falls to 0 on the first failed scrape at the 60 s `scrape_interval` the capture role sets for `engine_app` (`infra/ansible/roles/capture/files/config.alloy`), so **≈ 12 min** from the container going away.
+- **The primary's Alloy goes dark** — the series is taken away rather than set to 0, and the `or on() vector(0)` fallback cannot supply the 0 until it goes stale, which is Prometheus's ~5 min. So **≈ 16 min** from Alloy stopping.
+
+If you are deciding whether to act, the difference between those two numbers is how long the exposure has actually been unwatched.
+
+### What it means
+
+**Two routes reach this page, and one of them is a HEALTHY engine.** They are not separable in the expression — a dark telemetry plane and a dead host remove the series identically, and a rule that stayed quiet on an absent series would be blind to losing the primary outright — so the double-page is accepted, and telling the routes apart is the first thing you do rather than something the rule did for you.
+
+- **The exporter route.** The engine container is stopped, crash-looping or wedged, with a non-zero position at its last report. This is the fault the rule exists for.
+- **The Alloy route.** The capture primary's telemetry plane is dark. The engine is running, may still be trading, and may already have closed the position — you cannot see it. Closing a live position here pays spread and fees for a telemetry incident.
+
+**A resolve is not an all-clear.** The 24 h lookback is also this page's horizon: `$A` falls to 0 when the last position reading ages out of it, and the alert clears — while the engine may still be dark and the position still open. It is sized to outlast a full daily ops pass for exactly that reason. If this cleared without you acting, the exposure is still there.
+
+**`zcrypto-engine-cycle-stale` normally fires alongside this one**, and on the same fault. That rule pages on any engine darkness; this one adds *and there is money exposed*, which is what changes the response.
+
+### What to do
+
+1. **Rule out the telemetry plane FIRST — before touching the position.** From the workstation:
+   ```
+   uv run python infra/scripts/grafana-query.py 'count(up{host="zcrypto"}) or on() vector(0)' 'up{job="engine_app",host="zcrypto"}' 'max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h])))'
+   ```
+   `count` ≥ 1 with `up{job="engine_app"}` at 0 ⇒ Alloy is fine and nothing is answering on `127.0.0.1:9102`: the **exporter route**, and `Fleet · Alloy dark — Capture primary` is quiet. A `count` of 0, or `(no series)`, ⇒ the **Alloy route**, and that rule is firing beside this one. **An empty result is never a zero.**
+2. **The discriminator does not separate a dark plane from a dead host** — both remove the series — so on the Alloy route read the engine directly before concluding anything.
+   ```
+   ssh zcrypto
+   sudo docker ps --filter name=zcrypto-engine
+   sudo docker exec zcrypto-engine zcrypto engine exec-status
+   ```
+   A running container that answers `exec-status` ⇒ the engine is alive and this is a telemetry incident: **the position stands**. Follow [`observability.md#zcrypto-alloy-dark-capture-primary`](observability.md#zcrypto-alloy-dark-capture-primary) and stop here. `ssh` itself failing, or the container gone, ⇒ the host or the engine is genuinely down and step 3 applies.
+3. **Only once the engine is confirmed dark**, the response is the order-path drills' scenario **B** — the flatten procedure: the kill file first, then every resting order cancelled and the position closed. It is a separate attended procedure with its own section and its own decision-to-flat measurement; it is not part of this page.
+
+PENDING-ANCHOR-DRILL-B
+
+4. **Read what the position actually was before acting on it.** `$A` is the largest absolute leg at last sight; the per-symbol breakdown is panel 64 and the engine's exec ledger on the host. On the exporter route the ledger is authoritative — the gauge stopped at the moment the exporter did.
+5. **All-clear by value**, not by the alert clearing: `uv run python infra/scripts/grafana-query.py 'up{job="engine_app",host="zcrypto"}' 'max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h])))'` with `up` back at 1, and the position reading whatever you intended to leave it at.
+
+### Retire when
+
+`zcrypto-engine-dark-with-exposure` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_exec_position` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`), or `engine_app` stops being a static scrape target there — the value read in `$B` exists because nothing removes that target when the container stops.
+
+______________________________________________________________________
+
 <a name="zcrypto-engine-cycle-failed"></a>
 
 ## zcrypto-engine-cycle-failed — ALERT
