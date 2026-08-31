@@ -126,7 +126,7 @@ PR_NUMBER=<the number for this PR>
 # `$state` does not survive to the `if` below, which fails closed but merges nothing.
 SHA=$(git rev-parse HEAD)
 timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
-  --jq '[.check_runs[] | {n: .name, s: .status, c: (.conclusion // "")}]' | python3 -c '
+  --jq '[.check_runs[] | {n: .name, s: .status, c: (.conclusion // "")}]'  # default filter=latest: one run per name | python3 -c '
 import sys, json
 runs = json.load(sys.stdin)
 REQUIRED = "Full test suite"          # the context branch protection requires on develop
@@ -138,15 +138,12 @@ if run["s"] != "completed":
 print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed ({run["c"]})")
 '
 
-# Merge only when CI passed or reported no checks. On a failure — or when the
-# 10-minute deadline expires with CI still pending — STOP and ask the user
-# (escalation trigger #4); never merge a red or unfinished PR into develop.
-# Only after the command above PRINTS `success` — re-read it, do not infer it:
-if true; then
-    # Squash so each dependency bump is a single commit on develop (the deliberate
-    # exception to merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
-    gh pr merge "$PR_NUMBER" --squash --delete-branch
-fi
+# Merge ONLY after the poll above printed `success` — re-read it, never infer it; an empty check
+# list is pending, not green. No shell conditional here on purpose: a fresh shell per command means
+# any `if` would test an unset variable and merely LOOK like a guard.
+# Squash so each dependency bump is a single commit on develop (the deliberate exception to
+# merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
+gh pr merge <number> --squash --delete-branch    # the number from the sorted list, not a variable
 # Anything other than `success` — including every `pending` and the 10-minute deadline expiring
 # with it still pending — is escalation trigger #4: surface the PR and stop. Never merge on a
 # state you did not read, and never on an empty check list.
