@@ -1472,3 +1472,67 @@ def test_the_submit_call_carries_the_library_s_own_types_and_binds_against_the_r
         "time_in_force",
     ]
     inspect.signature(KrakenSpotHttpClient.cancel_all_orders).bind(None)
+
+
+def test_a_failing_read_that_nothing_consumes_does_not_cost_the_spot_passes():
+    """The position read taken after the closes feeds only the journal. Inside the one post-write
+    try it took both spot passes and the final snapshot with it: the margin close went out, a
+    1200 ADA balance was left unsold, and the run returned no verdict at all -- because a read
+    nobody reads failed.
+
+    `test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order` is the other half of the
+    asymmetry, and it still holds: the read that SIZES the closers must abort, because a degraded
+    one would size them off an empty list and call the account flat."""
+    broken = _Position("BTC/EUR", "LONG", 0.5)
+    del broken.quantity
+    client = _sweep_client(
+        orders=[[], [], []],
+        positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [broken], []],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    rec, listing, plan = _plan_of(client)
+    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    assert [s["instrument_id"] for s in client.submitted] == ["BTC/EUR.KRAKEN", "ADA/EUR.KRAKEN"]
+    assert result.post_write_failure is None
+    assert result.final is not None
+    # The evidence survives the degrade: the request went out and its answer -- the unreadable row
+    # itself -- is in the journal, which is the whole point of taking the read.
+    position_reads = [entry for entry in rec.entries if entry["call"] == "request_position_status_reports"]
+    assert len(position_reads) == 4 and all("answer" in entry for entry in position_reads)
+
+
+def test_a_failing_post_cancel_order_count_does_not_cost_the_closes():
+    """The same class, one read earlier. `orders_after_cancel` is written into the record and read
+    by no decision -- the exit code judges the FINAL snapshot's orders, never this count. `None`
+    there is a count nobody took; an abort there is every position left open."""
+    client = _sweep_client(
+        orders=[[], None, []],
+        positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
+        balances=[[]],
+        symbols=("BTC/EUR",),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec, listing, plan = _plan_of(client)
+    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    assert result.orders_after_cancel is None
+    assert [s["instrument_id"] for s in client.submitted] == ["BTC/EUR.KRAKEN"]
+    assert result.post_write_failure is None and result.final is not None
+
+
+def test_a_leg_side_this_module_cannot_map_sends_nothing_and_is_named():
+    """Unreachable from `margin_legs`/`spot_legs` -- the only two places a `Leg` is built, both
+    writing a literal side -- so this pins the direction a defect would take rather than a live
+    path. A conditional's else-branch turns an unmapped side into a real market order the other way;
+    the lookup sends nothing and puts the side in the record.
+
+    `sent` stays True on a purely local failure by design (nothing here can tell one from a request
+    that left and was refused), so the assertion that the venue saw nothing is the one that carries
+    the claim."""
+    client = FakeClient()
+    leg = flatten.Leg("margin", "BTC", "BTC/EUR", "SIDEWAYS", 0.5, "MARGIN", "position_status_report.quantity")
+    sized = flatten.size_leg(leg, _BTC, 60000.0)
+    outcome = flatten._send(client, flatten.Recorder(), sized, _BTC, _STAMP, 1, "margin")
+    assert client.submitted == []
+    assert outcome.sent is True and "SIDEWAYS" in outcome.error

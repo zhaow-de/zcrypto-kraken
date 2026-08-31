@@ -810,13 +810,19 @@ def mint_client_order_id(stamp, index: int) -> str:
     read as its own would route a flatten fill into the engine's ledger.
 
     `index` runs over the whole run rather than per pass: the venue refuses an id it has already
-    seen, so two legs sharing one would be one leg silently unsent.
+    seen, so two legs sharing one would be one leg silently unsent. A leg that is NOT sent still
+    advances it, so the numbers an operator reads have gaps -- uniqueness is the property that
+    matters here, and closing the gaps would mean reusing a number that has already gone out.
 
     `stamp` is the run's own and `index` restarts at 1, so two runs beginning inside the same second
     would mint the same ids. Each needs its own word typed at a terminal, and that is the bound --
     the journal's own collision protection does not extend here.
     """
     return f"{CLIENT_ORDER_ID_PREFIX}{stamp:%Y%m%dT%H%M%SZ}-{index}"
+
+
+# The two sides a `Leg` can carry, and the only two this module can build an order from.
+ORDER_SIDES = {"SELL": OrderSide.SELL, "BUY": OrderSide.BUY}
 
 
 def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: PairConstraints, client_order_id: str) -> Any:
@@ -828,10 +834,15 @@ def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: PairCon
     on the one call in this module that moves money. Spelled a second time beside the call, the
     journal an operator reads mid-incident can say MARGIN while CASH went out, or name a side the
     order did not carry.
+
+    The side is LOOKED UP, never defaulted: `margin_legs` and `spot_legs` are the only places a
+    `Leg` is built and both write a literal, so a third spelling can only be a defect -- and a
+    conditional's else-branch would turn it into a real market order in the opposite direction. This
+    module names what it cannot derive rather than guessing it.
     """
     margin = sized.leg.kind == "margin"
     quantity = Quantity(sized.qty, step_precision(constraints.lot_step))
-    order_side = OrderSide.SELL if sized.leg.side == "SELL" else OrderSide.BUY
+    order_side = ORDER_SIDES[sized.leg.side]
     order_type, time_in_force = OrderType.MARKET, TimeInForce.IOC
     kwargs: dict[str, Any] = {"reduce_only": margin, "account_type": AccountType.MARGIN if margin else AccountType.CASH}
     if margin:
@@ -875,10 +886,10 @@ def _sized_with_constraints(legs: list, listing: dict, plan: Plan) -> list:
 def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, index: int, pass_name: str) -> LegOutcome:
     """Never raises: a rejection is journaled and the sweep continues, and is never retried.
 
-    `sent` stays True on every failure raised inside the send -- the local minting of the quantity
-    included, since nothing here can tell that apart from a request that left and was refused. The
-    request may have reached the venue, and recording it as unsent would be the one lie an operator
-    cannot afford here.
+    `sent` stays True on every failure raised inside the send -- the purely local ones, the minting
+    of the quantity and the side lookup, included, since nothing here can tell those apart from a
+    request that left and was refused. The request may have reached the venue, and recording it as
+    unsent would be the one lie an operator cannot afford here.
 
     A rejected margin closer this code had ALREADY sized below the pair's `ordermin` is labelled
     `unclosable_below_minimum` (spec 00106 D4): it is what routes an operator to the venue's own
@@ -916,12 +927,38 @@ def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, ind
     return LegOutcome(**base, client_order_id=client_order_id, sent=True, reason=reason, answer=repr(answer), error=None)
 
 
+def _read_for_the_record(what: str, read: Callable[[], Any]) -> Any:
+    """A POST-WRITE read whose answer nothing but the journal consumes: run it, or name the failure
+    and step over it.
+
+    The asymmetry with every pre-write read is the whole point. Before the first write an unreadable
+    answer must abort -- a shape the venue changed is a finding, and nothing has happened yet. After
+    the cancel and the closes have gone out, aborting on a read NOTHING CONSUMES trades a
+    journalling nicety for unsold balances: `read_positions` raises on a `None` answer, a live venue
+    shape this module documents, and one such answer would otherwise take both spot passes and the
+    final snapshot with it. `Recorder` has already written the request and whatever came back -- the
+    unreadable answer itself, verbatim, or the transport error -- so the evidence an operator reads
+    survives either way; only the abort goes away.
+
+    Never widened to a read something DOES consume. The post-cancel position read that sizes the
+    closers must still abort -- degraded, it would size them from an empty list and report the
+    account flat.
+    """
+    try:
+        return read()
+    except FlattenUnreachable as exc:
+        logger.error("%s could not be read -- it is journaled and the sweep goes on: %s", what, exc)
+        return None
+
+
 def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> SweepResult:
     """From the account-wide cancel to the final snapshot. Re-runnable: a second run finds less to
     do and does it, so nothing here is one-shot.
 
-    Every read after the cancel is inside the one try: past the first write the account may have
-    moved, so a read that fails ends the sweep with a named failure rather than with a verdict.
+    Every read after the cancel whose answer this function CONSUMES is inside the one try: past the
+    first write the account may have moved, so a read that fails ends the sweep with a named failure
+    rather than with a verdict. The two that feed only the journal go through
+    `_read_for_the_record`, which is where that asymmetry is argued.
 
     The final snapshot is read AFRESH rather than reusing the plan's -- a reused one is a second
     vote from the witness the sweep has just acted on, and it would report flat whatever the writes
@@ -937,13 +974,16 @@ def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> Sw
 
     index, orders_after, post_write_failure, final = 0, None, None, None
     try:
-        orders_after = len(read_open_orders(client, rec))
+        # Journal-only, both of them: `orders_after_cancel` is written into the record and read by
+        # no decision -- the exit code judges the FINAL snapshot's orders, never this count.
+        rows = _read_for_the_record("the orders still resting after the cancel", lambda: read_open_orders(client, rec))
+        orders_after = len(rows) if rows is not None else None
         margin_now, _ = margin_legs(read_positions(client, rec), listing)
         for sized, constraints in _sized_with_constraints(margin_now, listing, plan):
             index += 1
             outcomes.append(_send(client, rec, sized, constraints, stamp, index, "margin"))
 
-        read_positions(client, rec)  # journaled evidence of what the closes left behind
+        _read_for_the_record("what the closes left behind", lambda: read_positions(client, rec))
         for pass_name in ("spot-1", "spot-2"):
             legs, _ = spot_legs(read_balances(client, rec), listing)
             for sized, constraints in _sized_with_constraints(legs, listing, plan):
