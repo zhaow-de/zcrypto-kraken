@@ -22,13 +22,16 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from nautilus_trader.model import AccountId, AccountType, ClientOrderId, OrderSide, OrderType, Quantity, TimeInForce
 
 from cli.logging import get_logger
 
 logger = get_logger("engine.flatten")
+
+if TYPE_CHECKING:
+    from cli.engine.instruments import BelowMinimum, SizedOrder
 
 # The account the exec client reports under -- `cli/engine/node.py`'s `_ACCOUNT_ID`, pinned equal
 # by tests/test_engine_flatten.py so a rename cannot point the sweep at another account.
@@ -503,7 +506,24 @@ def costmin_for(symbol: str) -> float | None:
     return amount if quote == symbol.split("/")[1] else None
 
 
-def _size(free: float, constraints: PairConstraints, reference_price: float | None):
+def _tick_floored(reference_price: float | None, constraints: PairConstraints) -> float | None:
+    """The reference price at the venue's tick, or None where the floor leaves nothing of it.
+
+    A live book price is itself a multiple of its own pair's tick, so a floor to 0.0 means a price
+    and a constraint from DIFFERENT pairs were paired. Left at 0.0 every notional reads as nothing,
+    the balance is judged dust and `judge_final` -- one predicate, the same price -- agrees the
+    account is flat. Unpriced is the direction that SELLS it, which is the direction
+    `read_book_price` already takes when it refuses a zero one step earlier.
+    """
+    from cli.engine.instruments import _floor_to_step
+
+    if reference_price is None:
+        return None
+    price = _floor_to_step(reference_price, constraints.tick_size)
+    return price if price > 0.0 else None
+
+
+def _size(free: float, constraints: PairConstraints, reference_price: float | None) -> SizedOrder | BelowMinimum:
     """`size_order`'s verdict on one quantity -- the engine's own arithmetic, floors and all.
 
     A floor that does not apply is passed as 0.0 rather than skipped, so there is ONE call and no
@@ -512,11 +532,12 @@ def _size(free: float, constraints: PairConstraints, reference_price: float | No
     """
     from cli.engine.instruments import size_order
 
+    price = _tick_floored(reference_price, constraints)
     costmin = costmin_for(constraints.symbol)
-    applicable = costmin if (costmin is not None and reference_price is not None) else 0.0
+    applicable = costmin if (costmin is not None and price is not None) else 0.0
     return size_order(
         free,
-        reference_price if reference_price is not None else 0.0,
+        price if price is not None else 0.0,
         ordermin=constraints.ordermin,
         costmin=applicable,
         lot_step=constraints.lot_step,
@@ -525,10 +546,14 @@ def _size(free: float, constraints: PairConstraints, reference_price: float | No
 
 
 def classify_balance(free: float, constraints: PairConstraints, reference_price: float | None) -> str:
-    """`flat` / `dust` / `residual` for one non-EUR free balance.
+    """`flat` / `dust` / `residual` for one non-EUR free spot balance.
 
     THE predicate: the sweep's send decision and the final snapshot's residual verdict both read
     it, so a balance skipped as dust can never also be reported as a residual.
+
+    A margin row is NEVER judged here. Dust is a spot class: the engine's machine deliberately
+    produces sub-`ordermin` remainders, and a remainder left open is exposure, so a position below
+    every floor is still closed (`size_leg`) and still a residual.
     """
     from cli.engine.instruments import BelowMinimum
 
@@ -550,10 +575,10 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
 
     quote = constraints.symbol.split("/")[1]
     qty = _floor_to_step(leg.quantity, constraints.lot_step)
-    # Floored to the tick before anything reads it: `size_order` runs its notional check at the
-    # floored price, so an estimate printed off the raw book price would disagree with the dust
-    # boundary this same leg is judged by.
-    price = _floor_to_step(reference_price, constraints.tick_size) if reference_price is not None else None
+    # Both operands floored before anything reads them: `size_order` runs its checks on the floored
+    # quantity at the floored price, so an estimate printed off the raw balance or the raw book
+    # price would disagree with the dust boundary this same leg is judged by.
+    price = _tick_floored(reference_price, constraints)
     estimate = qty * price if price is not None else None
     fee = estimate * TAKER_RATE if estimate is not None else None
     base = dict(leg=leg, qty=qty, reference_price=price, quote=quote, estimate=estimate, fee_estimate=fee)

@@ -642,3 +642,56 @@ def test_a_spot_quantity_is_floored_to_the_lot_step_before_it_is_sent():
     assert sized.send is True
     assert sized.qty == 1200.12345678
     assert sized.qty < leg.quantity
+
+
+def test_the_estimate_is_the_floored_quantity_s_notional_never_the_balance_s():
+    """The other axis of the same contradiction: an estimate multiplied out of the raw balance sits
+    beside a verdict computed from the floored one. 1.9 units floor to 1.0, so 0.40 EUR is the
+    notional the refusal names -- printed off 1.9 it reads 0.76, above the 0.45 costmin the same
+    line refuses the leg for.
+
+    The lot step is coarse deliberately: at a 1e-8 step the two products differ by less than
+    `pytest.approx`'s default tolerance, and the assertion below would not discriminate.
+    """
+    coarse = flatten.PairConstraints("ADA/EUR", "ADA/EUR.KRAKEN", ordermin=1.0, lot_step=1.0, tick_size=0.01)
+    spot = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1.9, "CASH", "account_state.free")
+    sized = flatten.size_leg(spot, coarse, 0.40)
+    assert sized.qty == 1.0
+    assert sized.estimate == pytest.approx(0.40)
+    assert sized.reason == "dust_below_venue_minimum"
+    assert sized.estimate < flatten.costmin_for("ADA/EUR")
+
+    # The closer prints the same line, and a margin leg is sent -- so its inflated form would be
+    # read as the value actually going to market.
+    margin = flatten.Leg("margin", "ADA", "ADA/EUR", "SELL", 1.9, "MARGIN", "position_status_report.quantity")
+    closer = flatten.size_leg(margin, coarse, 0.40)
+    assert closer.send is True
+    assert closer.estimate == pytest.approx(0.40)
+    assert closer.fee_estimate == pytest.approx(0.40 * flatten.TAKER_RATE)
+
+
+def test_a_price_the_tick_floor_leaves_at_nothing_degrades_to_unpriced_and_is_sold():
+    """A price paired with another pair's tick floors to 0.0, every notional then reads as nothing,
+    and half a bitcoin is judged dust -- with `judge_final` reading the same predicate at the same
+    price and agreeing the account is flat. A live book price is a multiple of its own pair's tick,
+    so only a mis-keyed pairing reaches this; the degradation is where the two cannot disagree.
+
+    Unpriced is the direction that SELLS, which is the same direction `read_book_price` takes when
+    it refuses a zero one step earlier."""
+    assert flatten.classify_balance(0.5, _BTC, 0.03) == "residual"
+
+    leg = flatten.Leg("spot", "BTC", "BTC/EUR", "SELL", 0.5, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, _BTC, 0.03)
+    assert sized.send is True and sized.reason is None
+    assert sized.reference_price is None
+    assert sized.estimate is None
+    assert sized.send is (flatten.classify_balance(0.5, _BTC, 0.03) == "residual")
+
+
+def test_a_price_at_its_own_tick_is_not_degraded():
+    """The true negative for the degradation above: a price that floors to a positive number keeps
+    its estimate, or the guard would refuse every priced leg and read as working."""
+    leg = flatten.Leg("spot", "BTC", "BTC/EUR", "SELL", 0.5, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, _BTC, 60000.0)
+    assert sized.reference_price == 60000.0
+    assert sized.estimate == pytest.approx(30000.0)
