@@ -495,6 +495,8 @@ Per path, record: arrived or not; the three timestamps (rule `activeAt`, Slack m
 
 ### Record
 
+**Machine half run 2026-08-31 — `pass` on all three paths.** `metrics` from `zcrypto-alloy-dark-ops` at drill K — `activeAt` 08:06:40Z, Slack 08:07:11Z, 31 s. healthchecks-native at drill I — check down 12:05:48Z, Slack 12:05:50Z, 2 s, and **no rule `activeAt` exists on that route** because the page is hc.io's own notification. `logs` at drill Q-logs — `activeAt` 12:16:40Z, Slack 12:17:16Z, 36 s. Delivery on the two Grafana paths sits inside the 31–39 s band K measured. The device timestamps and the mobile/DND readings remain owed and are the human step.
+
 **Q has no entry of its own, by design.** Its three readings land in the `K`, `I` and `Q-logs` entries — where their inductions are — and this section is the cross-path summary. The device timestamps and the mobile/DND readings cannot be taken from an unattended run and are marked **owed** in each entry rather than omitted.
 
 ### Retire when
