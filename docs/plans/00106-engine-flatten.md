@@ -3887,14 +3887,14 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
 
 # One leg's unreadable book never costs the whole sweep its cancel, its closes and its sales.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
-  --control 's/^def build_plan/def build_plan_DISABLED/' \
+  --control 's/^async def build_plan/async def build_plan_DISABLED/' \
   --mutation 's|^            logger.error("%s: no reference price.*$|            raise|' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg -q
 
 # The margin leg fixes the side a shared pair is priced from. The mutation leaves the read COUNT at
 # one, so only the price assertion can bite.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
-  --control 's/^def build_plan/def build_plan_DISABLED/' \
+  --control 's/^async def build_plan/async def build_plan_DISABLED/' \
   --mutation 's/^        wanted.setdefault(leg.symbol, leg.side)$/        wanted[leg.symbol] = leg.side/' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_margin_and_a_spot_leg_on_one_pair_share_one_book_read_taken_on_the_margin_side -q
 
@@ -3902,21 +3902,21 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
 # leaves every price correct, so only the count assertion can bite. Pre-write reads are where a
 # rate limit costs the cancel.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
-  --control 's/^def build_plan/def build_plan_DISABLED/' \
+  --control 's/^async def build_plan/async def build_plan_DISABLED/' \
   --mutation 's/^    for symbol, side in wanted.items():$/    for symbol, side in list(wanted.items()) * 2:/' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_margin_and_a_spot_leg_on_one_pair_share_one_book_read_taken_on_the_margin_side -q
 
 # A leg is sized against its OWN pair's constraints. Mis-keyed, 0.03 BTC meets BTC/EUR's 0.1 tick,
 # floors to nothing and degrades to unpriced -- safe, and silently estimate-less.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
-  --control 's/^def build_plan/def build_plan_DISABLED/' \
+  --control 's/^async def build_plan/async def build_plan_DISABLED/' \
   --mutation 's/^        spot=\[size_leg(leg, constraints\[leg.symbol\], prices.get(leg.symbol)) for leg in spot_raw\],$/        spot=[size_leg(leg, constraints[sorted(constraints)[0]], prices.get(leg.symbol)) for leg in spot_raw],/' \
   -- uv run pytest tests/test_engine_flatten.py::test_each_leg_is_sized_with_the_price_and_the_constraints_of_its_own_pair -q
 
 # `read_snapshot` composes three aborting reads and softens none of them: a snapshot carrying
 # `positions=[]` because the venue answered `None` reaches exit 0 over open leverage.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
-  --control 's/^def read_snapshot/def read_snapshot_DISABLED/' \
+  --control 's/^async def read_snapshot/async def read_snapshot_DISABLED/' \
   --mutation 's/^        raise FlattenUnreachable("margin positions could not be read: the venue answered nothing")$/        rows = []/' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_snapshot_read_that_answers_nothing_aborts_instead_of_becoming_an_empty_snapshot -q
 
@@ -3930,7 +3930,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
 # A top-of-book price of zero is refused rather than carried. Carried, it makes every notional read
 # as nothing: every basket leg listed as dust, `judge_final` agreeing, exit 0 over a full spot book.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
-  --control 's/^def read_book_price/def read_book_price_DISABLED/' \
+  --control 's/^async def read_book_price/async def read_book_price_DISABLED/' \
   --mutation 's/^    if price <= 0.0:$/    if False:/' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_non_positive_book_price_aborts_the_read_rather_than_pricing_a_leg_at_nothing -q
 
@@ -3956,7 +3956,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
 
 # The margin read really is scoped to MARGIN, so a spot holding cannot surface as a position row.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
-  --control 's/^def read_positions/def read_positions_DISABLED/' \
+  --control 's/^async def read_positions/async def read_positions_DISABLED/' \
   --mutation 's/"account_type": AccountType.MARGIN,/"account_type": AccountType.CASH,/' \
   -- uv run pytest tests/test_engine_flatten.py::test_the_position_read_is_scoped_to_margin_with_spot_reports_off -q
 
@@ -3984,9 +3984,46 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
 # A rejected sub-ordermin margin closer really reaches the journal labelled, not as a bare EOrder
 # string -- the label is what routes the operator to Kraken's settle-position action.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
-  --control 's/^def _send/def _send_DISABLED/' \
+  --control 's/^async def _send/async def _send_DISABLED/' \
   --mutation 's/if sized.leg.kind == "margin" and sized.qty < constraints.ordermin:/if False:/' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two -q
+
+# --- the async/book correction's own guards ----------------------------------------------------
+# `Recorder.call` really awaits. Un-awaited, the fake's coroutine is journalled as a repr and the
+# read that consumes it fails -- which is exactly what happened live, where the answer never came
+# back at all.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^    async def call/    async def call_DISABLED/' \
+  --mutation 's/^            answer = await fn()$/            answer = fn()/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_the_full_sequence_calls_the_venue_in_the_order_the_design_fixes -q
+
+# The book's side is CALLED, not read. Driven against a real offline `OrderBook`, where reading the
+# attribute hands back the bound method -- the shape the old fake's plain lists hid.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^async def read_book_price/async def read_book_price_DISABLED/' \
+  --mutation 's/^        levels = list(read_side())$/        levels = list(read_side)/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_the_book_read_takes_its_side_from_the_real_order_book_type -q
+
+# A side that is a plain sequence is NAMED, never a bare TypeError out of a function that promises
+# to raise nothing.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^async def read_book_price/async def read_book_price_DISABLED/' \
+  --mutation 's/^    except TypeError as exc:$/    except ZeroDivisionError as exc:/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_a_book_whose_side_is_a_plain_sequence_is_named_rather_than_raising_a_traceback -q
+
+# The command opens the loop. Called synchronously the coroutine is never awaited, `typer.Exit` gets
+# a coroutine object where the code belongs, and the stub records no loop.
+infra/scripts/mutate-probe.sh --file cli/engine/command.py \
+  --control 's/raise typer.Exit(code=asyncio.run(run_flatten(/raise typer.Exit(code=asyncio.run(run_flatten_MISSING(/' \
+  --mutation 's/raise typer.Exit(code=asyncio.run(run_flatten(client, state_dir=state_dir, execute=execute, echo=typer.echo)))/raise typer.Exit(code=run_flatten(client, state_dir=state_dir, execute=execute, echo=typer.echo))/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_the_command_opens_the_event_loop_every_venue_call_needs -q
+
+# The offers guard compares KIND, not only existence. The mutation shadows `_Book`'s two methods
+# with the plain lists they used to be -- every hasattr still passes, and only the kind check bites.
+infra/scripts/mutate-probe.sh --file tests/test_engine_flatten.py \
+  --control 's/^_BOOK_PLUMBING = frozenset/_BOOK_PLUMBING_DISABLED = frozenset/' \
+  --mutation 's/^        self._asks = \[_Level(ask)\]$/        self._asks = [_Level(ask)]; self.bids = self._bids; self.asks = self._asks/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lacks -q
 
 # The unattended pass's classifier really refuses the red button -- proven here rather than in the
 # task that writes the runbook section, because `mutate-probe.sh` refuses the dirty tree that task
@@ -4038,6 +4075,8 @@ infra/scripts/mutate-probe.sh --file tests/test_engine_executor.py \
 For the last probe the mutation removes the name and the probe would still pass (no module names it today), so it is expected to report **SURVIVED**. That is the correct reading and the reason the guard was proven by construction in the earlier task instead: record the SURVIVED verdict and the construction proof together rather than inventing a fixture. Its control empties the module allowlist instead of the name tuple — emptying the tuple leaves the walk with nothing to match, so the probe would PASS under the control and `mutate-probe.sh` would refuse to score anything (exit 5). Every other probe must report `KILLED`.
 
 - [ ] **Step 3: Adjust any sed that does not apply**
+
+Two of the correction's pins carry no mutation probe, and the reason is what they are. `test_every_client_call_the_red_button_makes_needs_a_running_loop` and `test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_await` assert about `KrakenSpotHttpClient` itself, not about anything in `cli/`: no mutation of this repo can move them, and they are not blind if they stay green under one. Each is the pin that goes red the day the adapter's shape changes under the design that assumes it. The second reaches Kraken's public listing endpoint and runs only under `ZCRYPTO_VENUE_CONTRACT=1`; the first needs no network, because with no running loop nothing can be scheduled onto one and no request can leave.
 
 `mutate-probe.sh` exits 6 on a no-op sed. If an expression above misses because the implemented line differs from the plan's, **fix the sed to match the real line**, never the line to match the sed. Re-run until every probe reports a verdict.
 
