@@ -6,6 +6,7 @@ venue -- never only about a return value."""
 
 from __future__ import annotations
 
+import json
 import os
 import pty
 from dataclasses import dataclass
@@ -1542,3 +1543,398 @@ def test_a_leg_side_this_module_cannot_map_sends_nothing_and_is_named():
     outcome = flatten._send(client, flatten.Recorder(), sized, _BTC, _STAMP, 1, "margin")
     assert client.submitted == []
     assert outcome.sent is True and "SIDEWAYS" in outcome.error
+
+
+# --- exit codes, the journal, and the command end to end ----------------------------------------
+
+
+def _online(**_):
+    from cli.engine.venue import VenueStatus
+
+    return VenueStatus(status="online", ok=True, observed_at=_STAMP)
+
+
+def _offline(**_):
+    from cli.engine.venue import VenueStatus
+
+    return VenueStatus(status="maintenance", ok=False, observed_at=_STAMP)
+
+
+def _armed(tmp_path: Path) -> Path:
+    (_exec_dir(tmp_path) / "kill").write_text("2026-08-30T12:00:00+00:00 flatten\n")
+    return tmp_path
+
+
+def _run(client, tmp_path, *, execute=True, reply="FLATTEN", venue=_online, tty=True, lines=None):
+    return flatten.run_flatten(
+        client,
+        state_dir=tmp_path,
+        execute=execute,
+        now=lambda: _STAMP,
+        venue_reader=venue,
+        tty_available=lambda: tty,
+        prompt=lambda _: reply,
+        echo=(lines.append if lines is not None else (lambda _: None)),
+    )
+
+
+def _flat_client(**kw):
+    defaults = dict(
+        orders=[[]], positions=[[]], balances=[[]], symbols=("BTC/EUR",), books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)}
+    )
+    defaults.update(kw)
+    return _sweep_client(**defaults)
+
+
+def test_the_default_invocation_sends_nothing_needs_no_kill_file_and_exits_zero(tmp_path):
+    """The invocation an operator reaches by accident or by muscle memory must be the one that
+    changes nothing -- which is why there is no flag meaning 'do nothing' to forget."""
+    client = _flat_client(
+        balances=[[_Balance("ADA", 1200.0)]],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    lines: list[str] = []
+    assert _run(client, tmp_path, execute=False, lines=lines) == 0
+    assert "cancel_all_orders" not in names(client)
+    assert "submit_order" not in names(client)
+    assert any("ADA/EUR" in line for line in lines)
+    assert list(_exec_dir(tmp_path).glob("flatten-*.json")) == []
+
+
+@pytest.mark.parametrize(
+    ("setup", "reply", "tty", "armed"),
+    [("kill-absent", "FLATTEN", True, False), ("confirm", "nope", True, True), ("no-tty", "FLATTEN", False, True)],
+)
+def test_every_refusal_exits_one_with_no_request_and_no_write(tmp_path, setup, reply, tty, armed):
+    """The only path to `submit_order` or `cancel_all_orders` runs through --execute AND a matched
+    confirm. Each refusal is asserted on what reached the venue, not on the exit code alone."""
+    if armed:
+        _armed(tmp_path)
+    else:
+        _exec_dir(tmp_path)
+    client = _flat_client()
+    assert _run(client, tmp_path, reply=reply, tty=tty) == 1
+    assert "cancel_all_orders" not in names(client)
+    assert "submit_order" not in names(client)
+    if setup == "kill-absent":
+        assert client.calls == []  # refused before a single request
+    # Every exit-1 refusal `run_flatten` itself makes leaves the record: the refusal and its reason
+    # are what the artifact exists for, and an unrecorded refusal is one nobody can reconstruct.
+    assert len(list(_exec_dir(tmp_path).glob("flatten-*.json"))) == 1
+
+
+@pytest.mark.parametrize("execute", [True, False])
+def test_a_venue_that_is_not_online_exits_three_with_nothing_sent(tmp_path, execute):
+    """The dry run takes the venue gate too -- only the kill-file gate is skipped without
+    `--execute`. The two invocations differ in exactly one way: the dry run leaves no artifact,
+    which is `_dry_exit`'s whole contract and is reachable from no other fixture."""
+    _armed(tmp_path)
+    client = _flat_client()
+    assert _run(client, tmp_path, execute=execute, venue=_offline) == 3
+    assert client.calls == []
+    assert len(list(_exec_dir(tmp_path).glob("flatten-*.json"))) == (1 if execute else 0)
+
+
+@pytest.mark.parametrize("execute", [True, False])
+def test_a_missing_field_on_a_pre_write_read_exits_three_and_the_cancel_never_goes_out(tmp_path, execute):
+    """The first write is the cancel. Before it, a shape the venue changed aborts with the account
+    untouched -- that is the whole difference between exit 3 and exit 2. An absent NAMED FIELD is
+    that case; an unrecognised VALUE in a field that is present is not, and has its own fixture.
+    The dry run reaches the same code through `_dry_exit` and leaves no artifact."""
+    _armed(tmp_path)
+    broken = _Position("BTC/EUR", "LONG", 0.5)
+    del broken.position_side
+    client = _flat_client(positions=[[broken]])
+    assert _run(client, tmp_path, execute=execute) == 3
+    assert "cancel_all_orders" not in names(client)
+    assert len(list(_exec_dir(tmp_path).glob("flatten-*.json"))) == (1 if execute else 0)
+
+
+def test_an_unrecognised_position_side_never_aborts_the_button_and_exits_two(tmp_path):
+    """The row the venue answers with a side this build knows (`NO_POSITION_SIDE`) and this command
+    cannot close from. Aborting would leave the resting orders resting, every balance held and the
+    engine already stopped; reading it as flat would exit 0 over an open position. So: the cancel
+    goes out, every other leg is sent, the row is named in the record, and the account reads 2."""
+    _armed(tmp_path)
+    odd = [_Position("BTC/EUR", "NO_POSITION_SIDE", 1.0)]
+    client = _flat_client(
+        positions=[odd, odd, odd, odd],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    assert _run(client, tmp_path) == 2
+    assert "cancel_all_orders" in names(client)
+    assert [sent["instrument_id"] for sent in client.submitted] == ["ADA/EUR.KRAKEN"]
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    positions = [row for row in json.loads(path.read_text())["residuals"] if row["kind"] == "position"]
+    assert [row["reason"] for row in positions] == ["unrecognised_position_side"]
+
+
+def test_a_clean_sweep_of_a_flat_account_exits_zero(tmp_path):
+    _armed(tmp_path)
+    client = _flat_client()
+    assert _run(client, tmp_path) == 0
+
+
+def test_a_flat_row_alone_in_the_final_snapshot_exits_zero(tmp_path):
+    """A FLAT row is not a leg and is not a residual; reading it as one would report a flat account
+    as partial forever."""
+    _armed(tmp_path)
+    flat = [_Position("BTC/EUR", "FLAT", 0.0)]
+    client = _flat_client(positions=[flat, flat, flat, flat])
+    assert _run(client, tmp_path) == 0
+    assert client.submitted == []
+
+
+def test_a_resting_order_that_outlived_the_cancel_exits_two_even_with_nothing_else_open(tmp_path):
+    """It can fill after the operator was told the book was flat."""
+    _armed(tmp_path)
+    client = _flat_client(orders=[[], [], [object()]])
+    assert _run(client, tmp_path) == 2
+
+
+def test_a_residual_position_after_the_closes_exits_two(tmp_path):
+    _armed(tmp_path)
+    row = [_Position("BTC/EUR", "LONG", 0.5)]
+    client = _flat_client(positions=[row, row, row, row])
+    assert _run(client, tmp_path) == 2
+    assert client.submitted != []
+
+
+def test_a_fill_during_the_confirm_leaves_its_residual_in_the_final_snapshot_and_exits_two(tmp_path):
+    """The close is sized from the post-cancel read, and what that read shows is what gets closed --
+    but the account still has to be JUDGED afterwards, so a position the sweep could not finish
+    reads 2 rather than flat."""
+    _armed(tmp_path)
+    grown = [_Position("BTC/EUR", "LONG", 0.9)]
+    client = _flat_client(positions=[[_Position("BTC/EUR", "LONG", 0.5)], grown, grown, grown])
+    assert _run(client, tmp_path) == 2
+    assert client.submitted[0]["quantity"] == 0.9
+
+
+def test_a_broken_shape_on_the_post_cancel_re_read_exits_two_with_no_order_sent(tmp_path):
+    """The first-write boundary is the cancel: past it, neither 0 nor 3 is a claim this run can
+    make. `test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order` pins the same
+    fixture at sweep level; this one pins the code it composes to."""
+    _armed(tmp_path)
+    broken = _Position("BTC/EUR", "LONG", 0.5)
+    del broken.quantity
+    client = _flat_client(positions=[[_Position("BTC/EUR", "LONG", 0.5)], [broken]])
+    assert _run(client, tmp_path) == 2
+    assert "cancel_all_orders" in names(client)
+    assert client.submitted == []
+
+
+def test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two(tmp_path):
+    """The engine's own machine produces sub-ordermin remainders by design, and a remainder left
+    open is exposure -- so it is sent, and the venue rules on it. The label is minted from the
+    pre-send arithmetic and the venue's own words are kept beside it: the exit code says 2 for a
+    hundred reasons, an operator reading a bare `EOrder:` string is never routed to the venue's
+    settle-position action, and the words are what say whether the refusal was about the size."""
+    _armed(tmp_path)
+    tiny = [_Position("BTC/EUR", "LONG", 0.00002)]  # under _Instrument's 0.0001 ordermin
+    client = _flat_client(positions=[tiny, tiny, tiny, tiny])
+    client.raises["submit_order"] = RuntimeError("EOrder:Invalid volume")
+    assert _run(client, tmp_path) == 2
+    assert client.submitted != []
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    (leg,) = [row for row in json.loads(path.read_text())["legs"] if row["kind"] == "margin"]
+    assert leg["reason"] == "unclosable_below_minimum"
+    assert "EOrder:Invalid volume" in leg["error"]  # the venue's own words are kept beside the label
+
+
+def test_a_margin_row_on_an_unlisted_pair_never_aborts_the_button_and_exits_two(tmp_path):
+    """The one pairlessness that could cost everything: aborting before the cancel would leave the
+    resting orders resting, every other position open and every balance held, with the engine
+    already stopped. So the row is named, the rest of the sweep runs, and the account reads 2."""
+    _armed(tmp_path)
+    stranded = [_Position("GONE/EUR", "LONG", 1.0)]
+    client = _flat_client(
+        positions=[stranded, stranded, stranded, stranded],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    assert _run(client, tmp_path) == 2
+    assert "cancel_all_orders" in names(client)
+    assert [sent["instrument_id"] for sent in client.submitted] == ["ADA/EUR.KRAKEN"]
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    positions = [row for row in json.loads(path.read_text())["residuals"] if row["kind"] == "position"]
+    assert [row["symbol"] for row in positions] == ["GONE/EUR"]
+    assert positions[0]["reason"] == "pair_not_listed"
+
+
+def test_a_balance_in_an_asset_with_neither_pair_exits_two_never_zero(tmp_path):
+    _armed(tmp_path)
+    held = [_Balance("WEIRD", 3.0)]
+    client = _flat_client(balances=[held, held, held, held])
+    assert _run(client, tmp_path) == 2
+
+
+def test_a_dust_balance_alone_in_the_final_snapshot_exits_zero(tmp_path):
+    """Dust is listed, not sent, and does not make the account not-flat -- the venue would reject
+    the order that would clear it."""
+    _armed(tmp_path)
+    dust = [_Balance("ADA", 10.0)]
+    client = _flat_client(
+        balances=[dust, dust, dust, dust],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    for row in client._instruments:
+        if row.id.startswith("ADA"):
+            row.min_quantity = 15.0
+    assert _run(client, tmp_path) == 0
+    assert client.submitted == []
+
+
+def test_a_failed_cancel_exits_two_whatever_each_leg_answered(tmp_path):
+    _armed(tmp_path)
+    client = _flat_client()
+    client.raises["cancel_all_orders"] = RuntimeError("EGeneral:Temporary lockout")
+    assert _run(client, tmp_path) == 2
+
+
+def test_a_read_that_fails_after_the_first_write_exits_two_and_never_three(tmp_path):
+    """Never 0 and never 3: the account may already have changed, so neither 'flat' nor 'untouched'
+    is a claim this run can make."""
+    _armed(tmp_path)
+    client = _flat_client()
+    # Break the THIRD open-order read -- the final snapshot's, the last read of the whole run.
+    original, state = client.request_order_status_reports, {"n": 0}
+
+    def counting(account_id, **kw):
+        state["n"] += 1
+        if state["n"] == 3:
+            raise RuntimeError("connection reset")
+        return original(account_id, **kw)
+
+    client.request_order_status_reports = counting
+    assert _run(client, tmp_path) == 2
+
+
+def test_an_instrument_with_no_committed_costmin_is_still_sized_and_sent(tmp_path):
+    """min_notional always reads None from this adapter, so a pair outside the committed table has
+    no notional floor at all -- and must still be sold, not skipped."""
+    _armed(tmp_path)
+    held = [_Balance("WEIRD", 3.0)]
+    client = _flat_client(
+        # snapshot, the read that sizes pass one, then flat: pass two finds nothing left to send.
+        balances=[held, held, [], []],
+        symbols=("BTC/EUR", "WEIRD/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "WEIRD/EUR.KRAKEN": _Book(1.0, 1.01)},
+    )
+    assert _run(client, tmp_path) == 0
+    assert [s["instrument_id"] for s in client.submitted] == ["WEIRD/EUR.KRAKEN"]
+
+
+def test_a_balance_that_appears_after_the_snapshot_is_sold_unpriced_and_the_journal_says_so(tmp_path):
+    """No post-write book read ever happens, so a balance surfacing only in a later pass has no
+    reference price. It is still sold -- skipping it would leave a live holding the run then calls
+    flat -- and the label is what tells the operator no estimate backed that order."""
+    _armed(tmp_path)
+    late = [_Balance("ADA", 1200.0)]
+    client = _flat_client(
+        # Empty at the snapshot, so no ADA/EUR book is read and the plan carries no ADA price.
+        balances=[[], late, [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+    )
+    assert _run(client, tmp_path) == 0
+    assert [s["instrument_id"] for s in client.submitted] == ["ADA/EUR.KRAKEN"]
+    assert "request_book_snapshot" not in names(client)
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    (leg,) = [row for row in json.loads(path.read_text())["legs"] if row["kind"] == "spot"]
+    assert leg["sent"] is True and leg["reason"] == "no_reference_price"
+
+
+def test_the_journal_records_the_snapshots_the_requests_the_confirm_and_the_exit_code(tmp_path):
+    _armed(tmp_path)
+    row = [_Position("BTC/EUR", "LONG", 0.5)]
+    client = _flat_client(positions=[row, row, [], []])
+    assert _run(client, tmp_path) == 0
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    doc = json.loads(path.read_text())
+    assert doc["mode"] == "execute"
+    assert doc["confirm"] == "matched"
+    assert doc["exit_code"] == 0
+    assert doc["snapshot_before"]["positions"][0]["symbol"] == "BTC/EUR"
+    assert doc["snapshot_after"]["positions"] == []
+    assert [e["call"] for e in doc["requests"]].count("submit_order") == 1
+    assert doc["api_key_masked"] == "kr***xy"
+    # The key's own VALUE, and never the name of the variable it arrived in: that name reaches no
+    # part of this process, so asserting its absence is green under every implementation, leak
+    # included. Only the masked form may appear in an artifact written to the engine's exec dir.
+    assert FakeClient.api_key not in path.read_text()
+
+
+def test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_sweep_one(tmp_path):
+    """`run_flatten` holds both snapshots, so it is the first place the stale one can be judged --
+    and residuals read off the pre-sweep snapshot would name positions the sweep has since closed
+    while missing an order that outlived the cancel.
+
+    The fixture makes the two snapshots disagree in BOTH directions, so the exit code alone cannot
+    tell them apart -- it is 2 either way. Pre-sweep: no resting order, one LONG 0.5. Final: one
+    resting order, no position. The residual KINDS are what differ, and are what is asserted."""
+    _armed(tmp_path)
+    row = [_Position("BTC/EUR", "LONG", 0.5)]
+    client = _flat_client(orders=[[], [], [object()]], positions=[row, row, [], []])
+    assert _run(client, tmp_path) == 2
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    doc = json.loads(path.read_text())
+    # Non-degenerate by construction: the recorded snapshots are the two that disagree.
+    assert doc["snapshot_before"]["open_orders"] == 0
+    assert [r["symbol"] for r in doc["snapshot_before"]["positions"]] == ["BTC/EUR"]
+    assert doc["snapshot_after"]["open_orders"] == 1 and doc["snapshot_after"]["positions"] == []
+    assert [r["kind"] for r in doc["residuals"]] == ["order"]
+
+
+def test_the_journal_payload_is_json_serializable_without_the_dump_s_str_fallback(tmp_path, monkeypatch):
+    """`write_journal` is the first code in this module to serialize the recorded request params,
+    and it dumps with `default=str` -- a net that would quietly stringify a value nobody converted.
+    This round-trips the REAL payload strictly, so the four explicit conversions the record depends
+    on (`_journalled`'s on `AccountType`, and `submit_leg`'s on the instrument id, the side and the
+    quantity) are each pinned: every one of those objects raises `TypeError` under a bare
+    `json.dumps`.
+
+    A margin leg is the fixture because it is the only path carrying BOTH an `AccountType` and the
+    `leverage` int -- a spot-only sweep never records the enum at all."""
+    _armed(tmp_path)
+    row = [_Position("BTC/EUR", "LONG", 0.5)]
+    client = _flat_client(positions=[row, row, [], []])
+    captured: dict = {}
+    original = flatten.write_journal
+
+    def spy(state_dir, stamp, payload):
+        captured["payload"] = payload
+        return original(state_dir, stamp, payload)
+
+    monkeypatch.setattr(flatten, "write_journal", spy)
+    assert _run(client, tmp_path) == 0
+    params = [e["params"] for e in captured["payload"]["requests"] if e["call"] == "submit_order"]
+    assert params and params[0]["account_type"] == "MARGIN" and params[0]["leverage"] == flatten.MARGIN_LEVERAGE
+    json.dumps(captured["payload"])  # no `default=`: the record must be serializable on its own
+
+
+def test_a_refused_run_still_journals_the_refusal(tmp_path):
+    """The confirm that did not match is exactly the thing worth having a record of."""
+    _armed(tmp_path)
+    assert _run(_flat_client(), tmp_path, reply="nope") == 1
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    doc = json.loads(path.read_text())
+    assert doc["confirm"] == "mismatch" and doc["exit_code"] == 1
+
+
+def test_a_second_run_in_the_same_second_does_not_destroy_the_first_record(tmp_path):
+    _armed(tmp_path)
+    assert _run(_flat_client(), tmp_path) == 0
+    assert _run(_flat_client(), tmp_path) == 0
+    assert len(list(_exec_dir(tmp_path).glob("flatten-*.json"))) == 2
+
+
+def test_the_journal_filename_needs_no_shell_quoting(tmp_path):
+    """An operator types this path mid-incident."""
+    name = flatten.journal_path(tmp_path, _STAMP).name
+    assert name == "flatten-20260830T120000Z.json"
+    assert not set(name) & set(":+ '\"")

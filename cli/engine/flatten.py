@@ -19,13 +19,16 @@ that IS the exposure.
 
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable
 
 from nautilus_trader.model import AccountId, AccountType, ClientOrderId, OrderSide, OrderType, Quantity, TimeInForce
 
+from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 
 logger = get_logger("engine.flatten")
@@ -1003,3 +1006,218 @@ def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> Sw
         outcomes=outcomes,
         final=final,
     )
+
+
+def _utc_now():
+    return datetime.now(timezone.utc)
+
+
+def _snapshot_payload(snapshot: Snapshot | None) -> dict | None:
+    if snapshot is None:
+        return None
+    return {
+        "open_orders": len(snapshot.orders),
+        "positions": [{"symbol": r.symbol, "side": r.side, "quantity": r.quantity} for r in snapshot.positions],
+        "balances": [{"code": r.code, "free": r.free} for r in snapshot.balances],
+    }
+
+
+def judge_final(final: Snapshot, listing: dict, prices: dict) -> list[dict]:
+    """Everything in the final snapshot that says the account is not flat.
+
+    A balance the listing cannot route, and a pair whose constraints cannot be read here, both
+    count as residuals: neither is evidence of flatness, and the safe direction is to say so.
+
+    Only FLAT is skipped, never a whitelist of LONG/SHORT: a side this code could not close from is
+    exposure it could not act on, and reading it as flat would report the one row nothing was sent
+    for as nothing to do.
+    """
+    residuals: list[dict] = []
+    if final.orders:
+        residuals.append({"kind": "order", "count": len(final.orders), "reason": "resting_order"})
+    for row in final.positions:
+        if row.side == "FLAT":
+            continue
+        residual = {"kind": "position", "symbol": row.symbol, "side": row.side, "quantity": row.quantity}
+        if row.side not in ("LONG", "SHORT"):
+            residual["reason"] = "unrecognised_position_side"
+        elif row.symbol not in listing:
+            # Nothing was sent for it and nothing could be: this is where that reaches the record.
+            residual["reason"] = "pair_not_listed"
+        residuals.append(residual)
+    from cli.engine.instruments import EUR_CODES
+
+    bases = listed_bases(listing)
+    for row in final.balances:
+        if row.code.upper() in EUR_CODES or row.free <= 0.0:
+            continue
+        base = resolve_base(row.code, bases)
+        symbol = choose_pair(base, listing) if base else None
+        if symbol is None:
+            residuals.append({"kind": "balance", "code": row.code, "free": row.free, "reason": "no_eur_or_btc_pair"})
+            continue
+        try:
+            constraints = constraints_for(symbol, listing)
+        except FlattenUnreachable as exc:
+            residuals.append({"kind": "balance", "code": row.code, "free": row.free, "reason": f"unjudgeable: {exc}"})
+            continue
+        if classify_balance(row.free, constraints, prices.get(symbol)) == "residual":
+            residuals.append(
+                {"kind": "balance", "code": row.code, "free": row.free, "symbol": symbol, "reason": "sellable_balance"}
+            )
+    return residuals
+
+
+def exit_code(result: SweepResult, residuals: list) -> int:
+    """0 flat, 2 partial. Derived from the final snapshot plus the two write-side failures -- never
+    from what an individual leg answered, which the journal carries instead."""
+    if result.post_write_failure is not None or not result.cancel_ok or residuals:
+        return 2
+    return 0
+
+
+def journal_path(state_dir, stamp) -> Path:
+    """ISO-8601 BASIC form: an operator types this path mid-incident, and the extended form's `:`
+    and `+` need shell quoting to do it. The body carries the extended timestamp.
+
+    The stamp is converted to UTC before it is formatted, so the `Z` in the name is never a claim
+    about a zone the caller happened to be in while `started_at` carried the truth."""
+    from cli.engine.execgate import exec_dir
+
+    return exec_dir(state_dir) / f"flatten-{stamp.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}.json"
+
+
+def write_journal(state_dir, stamp, payload: dict) -> Path | None:
+    """Its own artifact, never the engine's `exec-<HH>.json` (an unlocked single-writer
+    read-modify-write this process must not join). Refuses to overwrite: a second run in the same
+    second must not destroy the first one's incident record."""
+    base = journal_path(state_dir, stamp)
+    for suffix in ("", *(f"-{n}" for n in range(2, 100))):
+        candidate = base.with_name(f"{base.stem}{suffix}.json")
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            with candidate.open("x", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True, default=str)
+            return candidate
+        except FileExistsError:
+            continue
+        except OSError:
+            logger.critical(
+                "the flatten journal could not be written to %s -- the record follows on stdout", candidate, exc_info=True
+            )
+            print(json.dumps(payload, indent=2, sort_keys=True, default=str))
+            return None
+    logger.critical("the flatten journal could not be given a free name under %s", base.parent)
+    return None
+
+
+def run_flatten(
+    client: Any,
+    *,
+    state_dir,
+    execute: bool,
+    now: Callable[[], Any] = _utc_now,
+    venue_reader: Callable[..., Any] = read_system_status,
+    tty_available: Callable[[], bool] = terminal_available,
+    prompt: Callable[[str], str] = read_confirm,
+    echo: Callable[[str], None] = print,
+) -> int:
+    """The whole button. Returns the process exit code; raises nothing.
+
+    0 flat (or the default dry run completed) · 1 refused with nothing sent · 2 partial:
+    the final snapshot is not flat, or a write-side failure means it cannot be called flat ·
+    3 the venue could not be reached or read BEFORE the first write, which is the cancel.
+    """
+    stamp = now()
+    rec = Recorder()
+    record: dict = {
+        "schema_version": 1,
+        "mode": "execute" if execute else "dry-run",
+        "started_at": stamp.isoformat(),
+        "state_dir": str(state_dir),
+        "api_key_masked": getattr(client, "api_key_masked", None),
+        "confirm": "not-required",
+        "kill_file": None,
+        "requests": rec.entries,
+    }
+
+    def _finish(code: int, message: str | None = None) -> int:
+        if message:
+            echo(message)
+        record["exit_code"] = code
+        record["finished_at"] = now().isoformat()
+        path = write_journal(state_dir, stamp, record)
+        if path is not None:
+            echo(f"the record of this run is {path}")
+        return code
+
+    if execute:
+        try:
+            record["kill_file"] = check_kill_file(state_dir)
+        except FlattenRefused as exc:
+            return _finish(1, str(exc))
+        if not tty_available():
+            return _finish(1, "there is no controlling terminal to read the confirmation from -- nothing was sent")
+
+    try:
+        status = check_venue(venue_reader, stamp)
+    except FlattenUnreachable as exc:
+        record["venue_status"] = {"status": "not-online", "ok": False}
+        return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), echo)
+    record["venue_status"] = {"status": status.status, "ok": status.ok}
+
+    try:
+        snapshot = read_snapshot(client, rec)
+        listing = read_listing(client, rec)
+        plan = build_plan(client, rec, snapshot, listing)
+    except FlattenUnreachable as exc:
+        record["error"] = str(exc)
+        return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), echo)
+
+    record["snapshot_before"] = _snapshot_payload(snapshot)
+    render_plan(plan, echo)
+
+    if not execute:
+        echo("nothing was sent: this run reads and prints only")
+        return 0
+
+    try:
+        reply = prompt(CONFIRM_PROMPT)
+    except OSError as exc:
+        # `tty_available()` passed a moment ago; between then and here the terminal can still go.
+        # This function promises to raise nothing, and a traceback where the refusal contract
+        # promises exit 1 leaves the operator with no journal and no code to read.
+        return _finish(1, f"the confirmation could not be read from the terminal -- nothing was sent: {exc}")
+    if not matches_confirm(reply):
+        record["confirm"] = "mismatch"
+        return _finish(1, "the confirmation did not match -- nothing was sent")
+    record["confirm"] = "matched"
+
+    result = sweep(client, rec, plan, listing, stamp=stamp)
+    # `result.final`, never `snapshot`: the pre-sweep one is the witness this sweep has just acted
+    # on, and judged against it every position the closers cleared reads as a residual while an
+    # order that outlived the cancel goes unnamed.
+    residuals = judge_final(result.final, listing, plan.prices) if result.final is not None else []
+    code = exit_code(result, residuals)
+    record["cancel"] = {"ok": result.cancel_ok, "error": result.cancel_error, "orders_after": result.orders_after_cancel}
+    record["post_write_failure"] = result.post_write_failure
+    record["legs"] = [asdict(outcome) for outcome in result.outcomes]
+    record["snapshot_after"] = _snapshot_payload(result.final)
+    record["residuals"] = residuals
+    if code == 0:
+        echo("the account reads flat: no resting order, no open position, no sellable balance left")
+    else:
+        echo("the account does NOT read flat -- what is left:")
+        for row in residuals:
+            echo(f"  {row}")
+        if result.post_write_failure:
+            echo(f"  a read after the cancel failed: {result.post_write_failure}")
+        if not result.cancel_ok:
+            echo(f"  the account-wide cancel failed: {result.cancel_error}")
+    return _finish(code)
+
+
+def _dry_exit(code: int, message: str, echo: Callable[[str], None]) -> int:
+    """A dry run leaves no artifact: it changed nothing, and the terminal is its whole record."""
+    echo(message)
+    return code
