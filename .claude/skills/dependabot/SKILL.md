@@ -106,27 +106,33 @@ git push --force-with-lease origin "$(git branch --show-current)"
 # Identify the PR number for this branch (or use the number already in the sorted list)
 PR_NUMBER=<the number for this PR>
 
-# coverage.yml now runs on pull_request into develop/main (dependabot targets develop), so a
+# coverage.yml runs on pull_request into develop/main (dependabot targets develop), so a
 # Dependabot PR DOES report a "Full test suite" check — wait for it, and merge only when green.
 # coverage.yml sets fail-on-error: false on the Coveralls upload step, so a red "Full
 # test suite" check is always a real pytest failure — never an upload/secrets artifact.
-# Poll with SHORT, per-call-timeout commands re-issued until resolution or ~10 min of
-# budget is spent — never one long foreground while-loop (agent-ops.md): run the block
-# below as its OWN command, read the state, and repeat after ~30 s if still pending.
-state=$(timeout 30 gh pr view "$PR_NUMBER" --json statusCheckRollup | python3 -c '
+#
+# Poll the check-runs OF THE PUSHED SHA. **Never `gh pr view --json statusCheckRollup` here**:
+# after a force push it keeps serving the PREVIOUS head's results, and this loop force-pushes
+# every PR because §2a rebases it. Measured on PR #358, 2026-08-31 — seconds after the push the
+# rollup read `success` on two green checks while the pushed SHA's own check-runs read `queued`.
+# Reading the rollup merges a PR whose CI never ran, and the local suite in §2b is a reason to
+# EXPECT green, never a reading of the gate that protects develop.
+#
+# Poll with SHORT, per-call-timeout commands re-issued until resolution or ~10 min of budget is
+# spent — never one long foreground while-loop (agent-ops.md): run the block below as its OWN
+# command, read the state, and repeat after ~45 s if still pending. `queued` and `in_progress`
+# are PENDING, not green.
+SHA=$(git rev-parse HEAD)
+state=$(timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
+        --jq '[.check_runs[] | {s: .status, c: (.conclusion // "")}]' | python3 -c '
 import sys, json
-rollup = (json.load(sys.stdin) or {}).get("statusCheckRollup") or []
-if not rollup:
+runs = json.load(sys.stdin)
+if not runs:
     print("none"); raise SystemExit
-def cls(item):
-    c = (item.get("conclusion") or item.get("state") or "").upper()
-    if c in ("FAILURE", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE", "ERROR"):
-        return "failed"
-    if c in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-        return "success"
-    return "pending"
-states = {cls(i) for i in rollup}
-print("failed" if "failed" in states else "pending" if "pending" in states else "success")
+if any(r["s"] in ("queued", "in_progress") for r in runs):
+    print("pending"); raise SystemExit
+bad = {"failure", "cancelled", "timed_out", "action_required", "startup_failure"}
+print("failed" if any(r["c"] in bad for r in runs) else "success")
 ')
 
 # Merge only when CI passed or reported no checks. On a failure — or when the
@@ -172,7 +178,8 @@ Only pause for user input when:
 # List all open PRs (filter for dependabot/ head branches in the output)
 gh pr list
 
-# View one PR's full state including check rollup, head branch, and title
+# View one PR's head branch, base and title. The rollup is included for orientation only —
+# it is NOT the merge gate, and it lies after a force push (see the check-runs command below).
 gh pr view <number> --json statusCheckRollup,headRefName,baseRefName,title
 
 # Check out a PR's head branch by number
@@ -181,10 +188,12 @@ gh pr checkout <number>
 # Merge with squash + delete head branch
 gh pr merge <number> --squash --delete-branch
 
-# CI status snapshot (one-off)
-# Per-item alternation — `[.statusCheckRollup[].conclusion // ...state]` collects ALL non-null
-# conclusions first and only falls back when there are NONE, hiding every pending item.
-gh pr view <number> --json statusCheckRollup -q '[.statusCheckRollup[] | .conclusion // .state]'
+# CI status snapshot for a SPECIFIC commit — the only safe form after a force push.
+gh api "repos/zhaow-de/zcrypto-kraken/commits/<sha>/check-runs" \
+  -q '.check_runs[] | "\(.name): \(.status)/\(.conclusion // "-")  head=\(.head_sha[0:8])"'
+
+# `gh pr view --json statusCheckRollup` is fine ONLY when nothing has been force-pushed since the
+# checks ran — this skill rebases and force-pushes every PR, so it is never fine inside this loop.
 ```
 
 ## Notes
