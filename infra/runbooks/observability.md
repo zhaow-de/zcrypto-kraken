@@ -1,8 +1,8 @@
 # Observability — the telemetry planes themselves
 
-You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack**, because **a guard in the code pointed you here**, or because Grafana Cloud itself is dark and you opened [`#grafana-cloud-dark`](observability.md#grafana-cloud-dark) deliberately. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-These sections cover the instruments, not the things they measure: the four `grafana-alloy` containers that ship every metric and every journal line to Grafana Cloud, the node-exporter collectors inside them, and the direct-ship path (`cli/logging/ship.py`) by which the capture daemon, the engine and the liquidations poller push their own logs to Loki without touching Alloy at all. A rule here firing means a *signal* is missing or dishonest — read every other rule's silence as meaningless until it clears. The healthchecks.io dead-man checks are a separate, independent failure domain and are **not** part of this stack; the map of which check watches which daemon is in the last section.
+These sections cover the instruments, not the things they measure: the four `grafana-alloy` containers that ship every metric and every journal line to Grafana Cloud, the node-exporter collectors inside them, and the direct-ship path (`cli/logging/ship.py`) by which the capture daemon, the engine and the liquidations poller push their own logs to Loki without touching Alloy at all. A rule here firing means a *signal* is missing or dishonest — read every other rule's silence as meaningless until it clears. The healthchecks.io dead-man checks are a separate, independent failure domain and are **not** part of this stack; the map of which check watches which daemon is in [`#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog).
 
 `README.md` beside this file is the index, and states what belongs in a runbook at all.
 
@@ -365,3 +365,66 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 ### Retire when
 
 `zcrypto-hcio-watchdog` is absent from `infra/grafana/alerts.yaml`, or `prometheus.scrape "healthchecks"` is absent from `infra/ansible/roles/ops/files/config.alloy` — at which point `hc_checks_down_total` is no longer collected and the rule can only read its own fallback.
+
+______________________________________________________________________
+
+<a name="grafana-cloud-dark"></a>
+
+## grafana-cloud-dark — PROCEDURE
+
+### What you are seeing
+
+Grafana Cloud itself is unreadable — the boards, the alert rules, and `infra/scripts/grafana-query.py` with them. **Every other section in this file ends in a verify-by-value through the stack that is gone**, and so does `infra/scripts/ops-postverify.sh`, whose every check is a `grafana-query.py` call. Nothing on this page asks you to read a dashboard.
+
+**No Grafana alert can tell you this** — a rule cannot page about the system that evaluates it. What tells you is the healthchecks.io half of the mutual watchdog, `zcrypto-grafana-watchdog`, and **which of its two routes you got is the first fact of the incident**:
+
+- **A `/fail` on the check** ⇒ the ops timer ran and its probe of `https://zcrypto2026.grafana.net/api/health` (`ops_grafana_watchdog_probe_url`, `infra/ansible/roles/ops/defaults/main.yml`) failed. healthchecks.io moves a check down on receipt of a `/fail`, so no `timeout` + `grace` term applies. The pinger is alive and Grafana is not reachable from ops — this page.
+- **Silence** ⇒ nothing pinged at all, and the check went down on staleness at its own `timeout` 600 s + `grace` 600 s = 20 min from its last ping. The timer fires `OnCalendar=*:0/5:41`, so silence is the ops host or the timer, **not** Grafana: work [`observability.md#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog) instead and leave this page.
+
+Those two check settings were read from the healthchecks.io management API on 2026-08-31. **Re-read them** — they are settings on a third party's dashboard and this file does not change when one does.
+
+**Time from the outage to the phone**, measured by [`drills-telemetry.md#drill-c-prime`](drills-telemetry.md#drill-c-prime): PENDING-DRILL-CPRIME-PAGE-BOUND
+
+### What it means
+
+**The live trade path runs unwatched.** The engine keeps cycling and, if armed, keeps submitting. `zcrypto-engine-dark-with-exposure` — the one rule that pages on an open position while the engine is not reporting — is a Grafana rule and cannot fire; [`engine.md#zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) is unreachable as a signal for the duration. Its replacement is a host-local read, step 3 below.
+
+**Nothing else stops either.** Capture keeps capturing, the ops timers keep running, the archive keeps filling. What is gone is every Grafana instrument at once — including both Grafana-side watchdogs: `zcrypto-hcio-watchdog` cannot report a dead-man being down, and `zcrypto-alloy-dark-*` cannot report a shipper going dark.
+
+**There is no Grafana green to read.** Absence of pages is not an all-clear here, for the whole outage.
+
+**The dead-man domain is what is left standing, and that is its entire reason to exist.** The checks reach the phone through healthchecks.io's own Slack integration, which no Grafana notification template touches. They watch **liveness** and nothing else — no thresholds, no rates, no log content. Which check watches which daemon, and what each one withholds its ping for, is [`observability.md#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog).
+
+**Two holes in that cover, named so you do not assume it is total**: the NAS archive-pull loop has no check at all (that map records the asymmetry), and no check reads a position, a resting order or the execution gate — the engine's check pings on a completed *cycle*.
+
+**What a Cloud outage loses permanently, per plane** — a stopped shipper and a dark destination lose opposite planes, so this statement carries a measured half and a derived half, each labelled: PENDING-DRILL-C-PLANE-LOSS
+
+**The direct-shipped daemon logs are on neither of those planes.** The capture daemon, the engine and the liquidations poller push to Loki themselves, so what they lose is bounded by `ship.py`'s ring and counted by `zcrypto_logship_dropped_lines_total` — read that counter's level on return, not the shipper's Alloy.
+
+### What to do
+
+1. **Confirm the stack is dark rather than unreachable from one place.** Run the watchdog's own probe from ops and from the workstation: `ssh hp`, then `curl -fsS -m 10 -o /dev/null -w '%{http_code}\n' https://zcrypto2026.grafana.net/api/health`. Failing from both is the outage. Failing from ops alone is ops egress with Grafana healthy — a fault in the watchdog's route, and this is the wrong page for it.
+
+2. **Read the dead-man domain directly — the one read that never passes through Grafana.** `uv run python infra/scripts/ops-daily.py report --since 24h`: its dead-man half fetches `https://healthchecks.io/api/v3/checks/` with the vaulted read-only key (`healthchecks_readonly_api_key`, `group_vars/all/vault.yml`) and is unaffected. **Expect exit 2 and a `## Sources that could not be read` block naming the Grafana ones** — that is the outage being reported, not a fleet finding, and every other part of the report still stands. **Its `## Dead-men` line prints how many checks were read, never which are down**: for the names, statuses and last ping times, open `https://healthchecks.io` itself.
+
+3. **Then read each host by hand.** Every command here is host-local and needs no telemetry stack:
+
+   - **Capture primary** — `ssh zcrypto`, then `sudo docker ps --format '{{.Names}} {{.Status}}'`, `sudo docker logs zcrypto-capture --since 1h`, and the read that proves it is really writing: `sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | wc -l` > 0.
+   - **Capture secondary** — `ssh red`, the same three.
+   - **Engine**, on the primary — `sudo docker exec zcrypto-engine zcrypto engine exec-status`. This is the only place the gate's `reasons` and the two arming keys are visible separately, it re-evaluates the gate on the spot, and it is what stands in for the dark position alert. Then `sudo docker logs zcrypto-engine --since 1h` for the cycle.
+   - **Ops** — `ssh hp`, then `sudo docker ps --format '{{.Names}} {{.Status}}'` and `sudo systemctl list-timers 'zcrypto-*' --all --no-pager` for each unit's last and next run. **Not `ops-postverify.sh`**: every check in it will read FAIL because the query behind it cannot run, and a FAIL there would be read as a fleet fault.
+   - **NAS** — `ssh nas`, then `sudo /usr/local/bin/docker logs zcrypto-archive-pull --since 1h`. `docker` is off the non-interactive ssh PATH on that host, so the absolute path is not optional.
+
+4. **Change nothing you cannot verify.** A converge, a re-pin, a restart or a prune each end in a verify-by-value that this outage has taken away, and `.claude/rules/fleet-deploys.md` requires that verification. Unless a host-local read above found a real fault, the action is to wait — and to write what you read into the incident record, because none of it is recoverable from Grafana afterwards.
+
+5. **On return, re-verify by VALUE what the rules could not see.** A rule reading a *change* across a window is blind to a condition already present in a series' first sample after the gap, so its staying Normal proves nothing about the outage. `grep -nE 'delta\(|increase\(|resets\(' infra/grafana/alerts.yaml` names every rule of that shape. Read each subject's level rather than the rule's state, starting with the ones whose miss is permanent:
+
+   - `zcrypto-reconcile-residual-gap` — permanent, unrecoverable L2 loss, the highest-severity rule in the system. Its authority is the ops ledger, which never went dark: `ssh hp "sudo cat /var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl"`.
+   - `zcrypto-gate-mismatch` and `zcrypto-gate-streak-reset` — the go-live gate's own evidence; a mismatch or a streak reset inside the gap shows in the counter's level and in no page.
+   - `zcrypto-ops-verify-replay-new-breakage` and `zcrypto-ops-verify-replay-backlog-stuck` — both read `delta()` over a window wider than a day, so a short outage hides inside one evaluation.
+
+6. **A page arriving on the way back is not proof of an event during the gap.** A first-sample rule can fire spuriously on return; which ones do is what [`drills-telemetry.md#drill-c`](drills-telemetry.md#drill-c) measures on the shipper side. Read the subject by value before acting on any of them.
+
+### Retire when
+
+`infra/grafana/alerts.yaml` carries no rules, or no host's `config.alloy` (`infra/ansible/roles/{capture,ops}/files/config.alloy`, `infra/nas/config.alloy`) still declares `prometheus.remote_write "grafana"` — at which point Grafana Cloud is no longer this fleet's telemetry destination and there is no outage of it to work.

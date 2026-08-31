@@ -32,7 +32,7 @@ A bound is derived or it is not written. Nothing below is an estimate.
 
 What a restarted shipper recovers **per plane**, and which rules misfire on the way back. Logs and metrics behave differently and the difference is the whole point: Alloy's journal reader replays the outage from its positions file under a `max_age = 48h` ceiling, while nothing scraped means the metrics window is simply **absent** — no backfill exists for it.
 
-**A stopped shipper is not a dark destination.** Under a Grafana Cloud outage the two planes invert: `prometheus.remote_write` buffers to its WAL and replays, `loki.write` has no WAL and drops. So this drill measures one half of the permanent-loss statement the Grafana-Cloud-dark procedure needs and derives nothing about the other.
+**A stopped shipper is not a dark destination.** Under a Grafana Cloud outage the two planes invert: `prometheus.remote_write` buffers to its WAL and replays, `loki.write` has no WAL and drops. So this drill measures one half of the permanent-loss statement [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark) needs and derives nothing about the other.
 
 ### Preconditions
 
@@ -80,9 +80,7 @@ Then read the recovery by value — `sudo docker ps --format '{{.Names}} {{.Stat
 
 Two entries, `C-ops` and `C-secondary`. Beyond the standard clauses each carries: what the restarted shipper recovered **per plane** (journal replay against the `max_age = 48h` ceiling; the metrics window absent), and which rules misfired on return — `delta()`/`increase()` reads are blind to a condition already present in a series' first sample after a gap, and a first-sample rule can page spuriously on the way back.
 
-The measured half — what a **restarted shipper** replays — belongs in the Grafana-Cloud-dark procedure in `observability.md`, labelled *measured*, beside the Cloud-dark half derived from `config.alloy` and labelled *derived*. Land it there in the same sitting.
-
-PENDING-ANCHOR-GRAFANA-CLOUD-DARK
+The measured half — what a **restarted shipper** replays — belongs in [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark), labelled *measured*, beside the Cloud-dark half derived from `config.alloy` and labelled *derived*. Land it there in the same sitting.
 
 ### Retire when
 
@@ -136,9 +134,7 @@ Route 1: `sudo systemctl start zcrypto-grafana-watchdog.timer`, then confirm the
 
 One entry per route — `C′-staleness` and `C′` for the `/fail` route — each with its own page bound, because the two numbers are what an operator uses to tell "the pinger died" from "Grafana died" while looking at neither.
 
-The page bound belongs in the Grafana-Cloud-dark procedure in `observability.md`, which is the procedure a responder opens for the duration of an outage: for the duration you have the dead-man domain, the daily pass's direct healthchecks read, `docker logs` on the hosts, and `exec-status` on the engine host.
-
-PENDING-ANCHOR-GRAFANA-CLOUD-DARK
+The page bound belongs in [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark), which is the procedure a responder opens for the duration of an outage: for the duration you have the dead-man domain, the daily pass's direct healthchecks read, `docker logs` on the hosts, and `exec-status` on the engine host.
 
 ### Retire when
 
