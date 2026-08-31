@@ -591,3 +591,115 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
     if classify_balance(leg.quantity, constraints, price) == "residual":
         return SizedLeg(**base, send=True, reason=None)
     return SizedLeg(**base, send=False, reason="dust_below_venue_minimum")
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    orders: list
+    positions: list
+    balances: list
+
+
+@dataclass(frozen=True)
+class Plan:
+    margin: list
+    spot: list
+    unsellable: list
+    unclosable: list
+    prices: dict
+    constraints: dict
+    n_open_orders: int
+
+
+def read_snapshot(client: Any, rec: Recorder) -> Snapshot:
+    """Orders, then positions, then balances -- in that order, so an order that fills between two
+    of the reads lands in one that FOLLOWS rather than falling out of both."""
+    return Snapshot(
+        orders=read_open_orders(client, rec),
+        positions=read_positions(client, rec),
+        balances=read_balances(client, rec),
+    )
+
+
+def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: dict[str, Any]) -> Plan:
+    """Every leg, sized, with its reference price -- and every book read taken HERE, before the
+    first write.
+
+    `BTC/EUR` is priced whenever a SPOT leg routes through a `/BTC` pair, because the second spot
+    pass sells the BTC those legs produce and no read may happen after the first write. A leg with
+    no price here -- one that surfaces only in a later pass, a margin leg's `/BTC` proceeds
+    included, and equally one whose OWN book read failed -- is sized on the quantity floor alone,
+    which is the safe direction: an unpriced balance is sold, never skipped as dust.
+
+    A failing book read is the one pre-write read failure that does not abort (spec D2). Aborting
+    here would return exit 3 with the kill file already latched and the engine already stopped: no
+    order cancelled, no position closed, no balance sold, over one illiquid pair's empty side.
+    """
+    margin_raw, unclosable = margin_legs(snapshot.positions, listing)
+    spot_raw, unsellable = spot_legs(snapshot.balances, listing)
+
+    wanted: dict[str, str] = {}
+    for leg in [*margin_raw, *spot_raw]:
+        # One book read per pair, and the FIRST leg on a pair fixes which side it is priced from --
+        # margin legs first. Where a margin leg and a spot leg share a pair the loser is priced one
+        # spread away, which moves the printed estimate and the dust boundary and nothing else: no
+        # order this module sends carries a price.
+        wanted.setdefault(leg.symbol, leg.side)
+    if any(leg.symbol.endswith("/BTC") for leg in spot_raw) and "BTC/EUR" in listing:
+        wanted.setdefault("BTC/EUR", "SELL")
+
+    constraints = {symbol: constraints_for(symbol, listing) for symbol in wanted}
+    prices: dict[str, float] = {}
+    for symbol, side in wanted.items():
+        try:
+            prices[symbol] = read_book_price(client, rec, constraints[symbol], side)
+        except FlattenUnreachable as exc:
+            # Spec D2's ONE exception to abort-on-a-pre-write-read-failure. A thin pair with an
+            # empty side, or one rate-limited request, must not cost the account its cancel and
+            # every other leg its close: the price is never an order price here (every order is
+            # MARKET), so the leg is sized on the quantity floor alone and sent.
+            logger.error("%s: no reference price -- sized on the quantity floor alone: %s", symbol, exc)
+
+    return Plan(
+        margin=[size_leg(leg, constraints[leg.symbol], prices.get(leg.symbol)) for leg in margin_raw],
+        spot=[size_leg(leg, constraints[leg.symbol], prices.get(leg.symbol)) for leg in spot_raw],
+        unsellable=unsellable,
+        unclosable=unclosable,
+        prices=prices,
+        constraints=constraints,
+        n_open_orders=len(snapshot.orders),
+    )
+
+
+def _leg_line(sized: SizedLeg) -> str:
+    head = f"  {sized.leg.kind:<6} {sized.leg.symbol} {sized.leg.side} {sized.qty:.8f}".rstrip()
+    if not sized.send:
+        return f"{head} -- below the venue minimum: not sent"
+    tail = "market, reduce-only" if sized.leg.kind == "margin" else "market"
+    if sized.estimate is not None:
+        tail += f", about {sized.estimate:.8f} {sized.quote}, fee about {sized.fee_estimate:.8f} {sized.quote}"
+    else:
+        tail += ", no reference price read"
+    return f"{head} -- {tail}"
+
+
+def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
+    """What an operator reads before typing the word. Estimates stay in each leg's own quote
+    currency and no grand total is printed -- summing a BTC-quoted leg into a euro figure would
+    need an FX rate this command has no mandate to invent."""
+    echo(f"{plan.n_open_orders} resting order(s) will be cancelled account-wide")
+    if not plan.margin:
+        echo("no margin position to close")
+    for sized in plan.margin:
+        echo(_leg_line(sized))
+    if not plan.spot:
+        echo("no non-EUR spot balance to sell")
+    for sized in plan.spot:
+        echo(_leg_line(sized))
+    for row in plan.unsellable:
+        echo(f"  balance {row['code']} {row['free']:.8f} -- neither a EUR nor a BTC pair: it cannot be sold from here")
+    for row in plan.unclosable:
+        # The row's own `note`, not one hard-coded sentence: two different classes land here (a pair
+        # the listing does not carry, a side no closer can be derived from) and printing either as
+        # the other tells the operator the wrong thing to go and do on Kraken.
+        echo(f"  {row['symbol']} {row['side']} {row['quantity']:.8f} -- {row['note']}: it cannot be closed here")

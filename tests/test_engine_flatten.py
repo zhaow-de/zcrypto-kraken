@@ -695,3 +695,225 @@ def test_a_price_at_its_own_tick_is_not_degraded():
     sized = flatten.size_leg(leg, _BTC, 60000.0)
     assert sized.reference_price == 60000.0
     assert sized.estimate == pytest.approx(30000.0)
+
+
+# --- the snapshot and the plan ------------------------------------------------------------------
+
+
+def _client_with(*, orders=None, positions=None, balances=None, symbols=(), books=None):
+    rows = [_Instrument(s) for s in symbols]
+    return FakeClient(
+        instruments=rows,
+        orders=[orders or []],
+        positions=[positions or []],
+        balances=[balances or []],
+        books=books or {},
+    )
+
+
+def test_the_snapshot_reads_orders_then_positions_then_balances():
+    """Order matters: an order that fills between the reads must land in a read that FOLLOWS, so
+    it cannot vanish from both."""
+    client = _client_with(symbols=("BTC/EUR",))
+    flatten.read_snapshot(client, flatten.Recorder())
+    assert names(client) == ["request_order_status_reports", "request_position_status_reports", "request_account_state"]
+
+
+def test_the_plan_reads_one_book_per_leg_pair_and_the_btc_euro_pair_when_a_leg_routes_through_btc():
+    """Every book read happens before the first write, so a shape the venue changed aborts with
+    nothing half-done -- which means pass two's BTC sell needs its price taken here, not later."""
+    client = _client_with(
+        balances=[_Balance("ETH", 2.0)],
+        symbols=("ETH/BTC", "BTC/EUR"),
+        books={"ETH/BTC.KRAKEN": _Book(0.03, 0.031), "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    snapshot = flatten.read_snapshot(client, rec)
+    plan = flatten.build_plan(client, rec, snapshot, listing)
+    assert sorted(plan.prices) == ["BTC/EUR", "ETH/BTC"]
+    assert plan.prices["ETH/BTC"] == 0.03
+
+
+def test_no_btc_euro_book_is_read_when_no_leg_routes_through_btc():
+    client = _client_with(
+        balances=[_Balance("ADA", 1200.0)], symbols=("ADA/EUR", "BTC/EUR"), books={"ADA/EUR.KRAKEN": _Book(0.4, 0.41)}
+    )
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    assert sorted(plan.prices) == ["ADA/EUR"]
+
+
+def test_a_short_leg_prices_off_the_ask_and_a_long_off_the_bid():
+    """Both halves the name claims, so neither side of the mapping can be wired to the other."""
+    client = _client_with(
+        positions=[_Position("BTC/EUR", "SHORT", 0.5), _Position("ETH/EUR", "LONG", 1.0)],
+        symbols=("BTC/EUR", "ETH/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ETH/EUR.KRAKEN": _Book(3000.0, 3001.0)},
+    )
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    assert plan.prices["BTC/EUR"] == 60010.0  # SHORT -> the closer BUYs -> priced off the ask
+    assert plan.prices["ETH/EUR"] == 3000.0  # LONG -> the closer SELLs -> priced off the bid
+
+
+def test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg():
+    """The abort that would cost everything: the kill file is latched and the engine stopped by the
+    time this runs, so raising here returns exit 3 with nothing cancelled, closed or sold. The ADA
+    book is absent, so its read raises where the BTC one answers -- and the ADA leg is still sized
+    and still sent, on the quantity floor alone."""
+    client = _client_with(
+        positions=[_Position("BTC/EUR", "LONG", 0.5)],
+        balances=[_Balance("ADA", 1200.0)],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    assert plan.prices == {"BTC/EUR": 60000.0}
+    assert [sized.leg.symbol for sized in plan.spot] == ["ADA/EUR"]
+    assert plan.spot[0].send is True and plan.spot[0].reference_price is None
+    assert [sized.leg.symbol for sized in plan.margin] == ["BTC/EUR"]
+
+
+def test_a_book_that_prices_at_zero_leaves_the_leg_unpriced_and_still_sold():
+    """The degradation is what makes refusing a zero price safe: the leg is sized on the quantity
+    floor alone and SENT, exactly as one whose book read raised. Carried instead, the zero would
+    make it dust -- not sent, not a residual, and the run would report flat while still holding
+    it."""
+    zero = _Book(0.4, 0.41)
+    zero.bids = [_Level(0.0)]
+    client = _client_with(balances=[_Balance("ADA", 1200.0)], symbols=("ADA/EUR",), books={"ADA/EUR.KRAKEN": zero})
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    assert plan.prices == {}
+    (sized,) = plan.spot
+    assert sized.send is True and sized.reference_price is None
+
+
+def test_a_missing_constraint_on_a_leg_s_pair_aborts_the_plan():
+    rows = [_Instrument("ADA/EUR")]
+    rows[0].min_quantity = None
+    client = FakeClient(instruments=rows, balances=[[_Balance("ADA", 1200.0)]], books={"ADA/EUR.KRAKEN": _Book(0.4, 0.41)})
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    with pytest.raises(flatten.FlattenUnreachable):
+        flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+
+
+def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_cannot_touch():
+    """What the operator reads has to include what the sweep will NOT do -- a balance no pair can
+    carry and a position whose pair the listing does not have are both still there afterwards."""
+    client = _client_with(
+        orders=[object()],
+        positions=[_Position("BTC/EUR", "LONG", 0.5), _Position("GONE/EUR", "LONG", 1.0)],
+        balances=[_Balance("ADA", 1200.0), _Balance("DOT", 0.001), _Balance("WEIRD", 3.0)],
+        symbols=("BTC/EUR", "ADA/EUR", "DOT/EUR"),
+        books={
+            "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0),
+            "ADA/EUR.KRAKEN": _Book(0.4, 0.41),
+            "DOT/EUR.KRAKEN": _Book(4.0, 4.01),
+        },
+    )
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    lines: list[str] = []
+    flatten.render_plan(plan, lines.append)
+    text = "\n".join(lines)
+    assert "BTC/EUR" in text and "SELL" in text
+    assert "ADA/EUR" in text
+    assert "DOT/EUR" in text and "not sent" in text
+    assert "WEIRD" in text
+    assert "GONE/EUR" in text and "cannot be closed here" in text
+    assert "1 resting order" in text
+
+
+def test_the_rendered_plan_prints_no_cross_currency_total():
+    """A BTC-quoted estimate and a EUR one are not summable without an FX rate this command has no
+    mandate to invent, so no grand total is printed at all."""
+    client = _client_with(
+        balances=[_Balance("ETH", 2.0)],
+        symbols=("ETH/BTC", "BTC/EUR"),
+        books={"ETH/BTC.KRAKEN": _Book(0.03, 0.031), "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    lines: list[str] = []
+    flatten.render_plan(plan, lines.append)
+    assert not any("total" in line.lower() for line in lines)
+
+
+def test_a_snapshot_read_that_answers_nothing_aborts_instead_of_becoming_an_empty_snapshot():
+    """`read_snapshot` composes three aborting reads and must not soften any of them: a `Snapshot`
+    carrying `positions=[]` because the venue answered `None` is the shape that confirms itself all
+    the way to exit 0 over open leverage. The abort also STOPS the sequence -- the balance read must
+    not run and hand the operator a plan built from half a snapshot."""
+    client = FakeClient(positions=[None], balances=[[_Balance("ADA", 1200.0)]])
+    with pytest.raises(flatten.FlattenUnreachable):
+        flatten.read_snapshot(client, flatten.Recorder())
+    assert names(client) == ["request_order_status_reports", "request_position_status_reports"]
+
+
+def test_a_venue_that_answers_empty_is_a_plan_with_no_legs_that_says_so_in_words():
+    """The other half of the same distinction: `[]` is a real answer and must NOT abort. What the
+    operator then reads has to say so in words -- a render that printed only the order line leaves
+    'no positions' indistinguishable from 'the position section is missing'. No book is read either,
+    since there is no leg to price."""
+    client = _client_with(symbols=("BTC/EUR",))
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    assert (plan.margin, plan.spot, plan.unsellable, plan.unclosable, plan.prices) == ([], [], [], [], {})
+    assert plan.n_open_orders == 0
+    assert "request_book_snapshot" not in names(client)
+    lines: list[str] = []
+    flatten.render_plan(plan, lines.append)
+    assert "no margin position to close" in lines
+    assert "no non-EUR spot balance to sell" in lines
+
+
+def test_a_margin_and_a_spot_leg_on_one_pair_share_one_book_read_taken_on_the_margin_side():
+    """One read per PAIR, not per leg: every book read is pre-write, and a second request on a pair
+    already read is one more chance to be rate-limited before the cancel goes out. The margin leg
+    fixes the side, so the shared price is the ask its BUY closer would cross -- one spread from the
+    bid the spot leg would have taken, which moves the printed estimate and nothing that is sent."""
+    client = _client_with(
+        positions=[_Position("BTC/EUR", "SHORT", 0.5)],
+        balances=[_Balance("BTC", 0.5)],
+        symbols=("BTC/EUR",),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    assert names(client).count("request_book_snapshot") == 1
+    assert plan.prices == {"BTC/EUR": 60010.0}
+    assert [sized.leg.symbol for sized in plan.margin] == ["BTC/EUR"]
+    assert [sized.leg.symbol for sized in plan.spot] == ["BTC/EUR"]
+
+
+def test_each_leg_is_sized_with_the_price_and_the_constraints_of_its_own_pair():
+    """Defence in depth behind `_tick_floored`: a price handed another pair's constraints floors to
+    nothing and the leg degrades to unpriced -- safe, but silently estimate-less. The fixture makes
+    the two pairs discriminate: 0.03 BTC survives ETH/BTC's 1e-7 tick and is erased by BTC/EUR's
+    0.1, so a leg sized against the wrong row loses both its estimate and its quote."""
+    client = _client_with(
+        balances=[_Balance("ETH", 2.0)],
+        symbols=("ETH/BTC", "BTC/EUR"),
+        books={"ETH/BTC.KRAKEN": _Book(0.03, 0.031), "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
+    )
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    (sized,) = plan.spot
+    assert sized.leg.symbol == "ETH/BTC"
+    assert sized.reference_price == 0.03
+    assert sized.quote == "BTC"
+    assert sized.estimate == pytest.approx(0.06)
+    assert plan.constraints["ETH/BTC"].tick_size == 0.0000001
