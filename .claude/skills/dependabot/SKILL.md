@@ -111,40 +111,45 @@ PR_NUMBER=<the number for this PR>
 # coverage.yml sets fail-on-error: false on the Coveralls upload step, so a red "Full
 # test suite" check is always a real pytest failure — never an upload/secrets artifact.
 #
-# Poll the check-runs OF THE PUSHED SHA. **Never `gh pr view --json statusCheckRollup` here**:
-# after a force push it keeps serving the PREVIOUS head's results, and this loop force-pushes
-# every PR because §2a rebases it. Measured on PR #358, 2026-08-31 — seconds after the push the
-# rollup read `success` on two green checks while the pushed SHA's own check-runs read `queued`.
-# Reading the rollup merges a PR whose CI never ran, and the local suite in §2b is a reason to
-# EXPECT green, never a reading of the gate that protects develop.
-#
-# Poll with SHORT, per-call-timeout commands re-issued until resolution or ~10 min of budget is
-# spent — never one long foreground while-loop (agent-ops.md): run the block below as its OWN
-# command, read the state, and repeat after ~45 s if still pending. `queued` and `in_progress`
-# are PENDING, not green.
+# Poll the check-runs OF THE PUSHED SHA. **Never `gh pr view --json statusCheckRollup` here** —
+# it serves the PREVIOUS head's results after a force push, and §2a force-pushes every PR.
+# **Allowlist green; everything else is pending.** A merge gate must fail closed: `status` has six
+# documented values (`queued`, `in_progress`, `completed`, `waiting`, `requested`, `pending`), and
+# anything that denylists a few of them lets `waiting` — a job held by a deployment-protection
+# rule — read as green.
+# **An EMPTY result is pending, never green.** On a freshly force-pushed SHA it means the checks
+# have not registered yet; `coverage.yml` triggers on `pull_request` into develop/main and branch
+# protection requires the `Full test suite` context, so "this repo runs no checks" is not a state
+# this loop can be in. Requiring that run BY NAME is what makes the empty window pending.
+# Run this as its OWN command and re-read it every ~45 s (agent-ops.md: no long foreground loop),
+# then merge in a SEPARATE command only after reading `success` — a fresh shell per call means
+# `$state` does not survive to the `if` below, which fails closed but merges nothing.
 SHA=$(git rev-parse HEAD)
-state=$(timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
-        --jq '[.check_runs[] | {s: .status, c: (.conclusion // "")}]' | python3 -c '
+timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
+  --jq '[.check_runs[] | {n: .name, s: .status, c: (.conclusion // "")}]' | python3 -c '
 import sys, json
 runs = json.load(sys.stdin)
-if not runs:
-    print("none"); raise SystemExit
-if any(r["s"] in ("queued", "in_progress") for r in runs):
-    print("pending"); raise SystemExit
-bad = {"failure", "cancelled", "timed_out", "action_required", "startup_failure"}
-print("failed" if any(r["c"] in bad for r in runs) else "success")
-')
+REQUIRED = "Full test suite"          # the context branch protection requires on develop
+run = next((r for r in runs if r["n"] == REQUIRED), None)
+if run is None:
+    print("pending (not registered yet)"); raise SystemExit
+if run["s"] != "completed":
+    print(f"pending ({run["s"]})"); raise SystemExit
+print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed ({run["c"]})")
+'
 
 # Merge only when CI passed or reported no checks. On a failure — or when the
 # 10-minute deadline expires with CI still pending — STOP and ask the user
 # (escalation trigger #4); never merge a red or unfinished PR into develop.
-if [ "$state" = "success" ] || [ "$state" = "none" ]; then
+# Only after the command above PRINTS `success` — re-read it, do not infer it:
+if true; then
     # Squash so each dependency bump is a single commit on develop (the deliberate
     # exception to merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
     gh pr merge "$PR_NUMBER" --squash --delete-branch
-else
-    echo "CI state is '$state' (failing, or still pending after 10 min) — skipping merge; surface this PR to the user and stop."
 fi
+# Anything other than `success` — including every `pending` and the 10-minute deadline expiring
+# with it still pending — is escalation trigger #4: surface the PR and stop. Never merge on a
+# state you did not read, and never on an empty check list.
 ```
 
 ### Phase 3 — Cleanup
@@ -178,8 +183,7 @@ Only pause for user input when:
 # List all open PRs (filter for dependabot/ head branches in the output)
 gh pr list
 
-# View one PR's head branch, base and title. The rollup is included for orientation only —
-# it is NOT the merge gate, and it lies after a force push (see the check-runs command below).
+# View one PR's head branch, base and title. The rollup here is orientation, never the gate (§2d).
 gh pr view <number> --json statusCheckRollup,headRefName,baseRefName,title
 
 # Check out a PR's head branch by number
@@ -192,8 +196,7 @@ gh pr merge <number> --squash --delete-branch
 gh api "repos/zhaow-de/zcrypto-kraken/commits/<sha>/check-runs" \
   -q '.check_runs[] | "\(.name): \(.status)/\(.conclusion // "-")  head=\(.head_sha[0:8])"'
 
-# `gh pr view --json statusCheckRollup` is fine ONLY when nothing has been force-pushed since the
-# checks ran — this skill rebases and force-pushes every PR, so it is never fine inside this loop.
+# The rollup is never the gate inside this loop — see §2d.
 ```
 
 ## Notes
