@@ -338,8 +338,6 @@ Confirm the stop landed, by value: `sudo systemctl is-active zcrypto-panel-mater
 
 **A dead-man that does NOT page is this drill's finding, not a failed induction, and is recorded `fail`.** Re-running to obtain a page destroys the answer. It is `fail` rather than `blocked` only once the stop is confirmed inactive by value above; an induction that did not land is `blocked`.
 
-**Run 2026-08-31 — `pass`.** The dead-man alone caught it. Check down at 11:24:03Z, exactly `timeout` 7200 s + `grace` 3600 s after the last clean ping at 08:24:03Z and 2 h 48 m 59 s after the stop; hc.io's native page landed the same second, and `zcrypto-hcio-watchdog` trailed it — `Pending` 11:25:40Z, `Alerting` 11:30:40Z, Slack 11:31:13Z — the reverse of drill K, where it led. **No staleness rule is owed**, and `ops-node.md`'s no-staleness-rule paragraph is re-tensed to say so. Restored 11:31:22Z; the next ping landed 11:35:01Z and everything read clear by 11:36:56Z. **Anchor the bound on the check's `last_ping`, not on the timer's `LastTriggerUSec`** — the unit pings on completion, 1 m 48 s later here, and using the trigger predicted the page two minutes early.
-
 On `fail`, the entry's *follow-ups* clause names the owed staleness rule on `ops_panel_last_success_timestamp` and it is registered where work is registered — **a rule found owed is a change to `infra/grafana/alerts.yaml`, never a closure written into a runbook.**
 
 Restore either way:
@@ -351,6 +349,8 @@ sudo systemctl start zcrypto-panel-materialize.timer
 Then confirm the next ping lands and the check reads green by value.
 
 ### Record
+
+**Run 2026-08-31 — `pass`.** The dead-man alone caught it. Check down at 11:24:03Z, exactly `timeout` 7200 s + `grace` 3600 s after the last clean ping at 08:24:03Z and 2 h 48 m 59 s after the stop; hc.io's native page landed the same second, and `zcrypto-hcio-watchdog` trailed it — `Pending` 11:25:40Z, `Alerting` 11:30:40Z, Slack 11:31:13Z — where at drill K it led the other five rules, there being no native page there at all. **No staleness rule is owed**, and `ops-node.md`'s no-staleness-rule paragraph is re-tensed to say so. Restored 11:31:22Z; the next ping landed 11:35:01Z and everything read clear by 11:36:56Z. **Anchor the bound on the check's `last_ping`, not on the timer's `LastTriggerUSec`** — the unit pings on completion, 1 m 48 s later here, and using the trigger predicted the page two minutes early.
 
 Entry `O`, with the measured time-to-page against the 3 h bound, or the non-page recorded as the finding. Either outcome — `pass` or `fail`, and never `blocked` — re-tenses the no-staleness-rule paragraph in [`ops-node.md#zcrypto-ops-panel-exit-nonzero`](ops-node.md#zcrypto-ops-panel-exit-nonzero) in the same change: it is written in the future tense about this run. On `blocked` the induction never landed, that future tense is still true, and re-tensing it would record an answer nobody obtained.
 
