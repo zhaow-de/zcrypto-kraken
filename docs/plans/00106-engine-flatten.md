@@ -10,6 +10,8 @@
 
 **Spec:** `docs/specs/00106-engine-flatten-design.md` — read it in full before Task 1. It is binding; where this plan and the spec disagree, the spec wins and the disagreement is a finding to report.
 
+> **Executed and closed — do not implement from a code fence here.** Fences written before the adapter's real shape was measured show the pre-correction world: `_Book` carrying *attributes* `bids`/`asks`, and a synchronous `read_book_price(...)`. On the adapter both are the other way round — `bids()`/`asks()` are methods and every read is awaited. `cli/engine/flatten.py` and `tests/test_engine_flatten.py` are what shipped; read those.
+
 ______________________________________________________________________
 
 ## Global Constraints
