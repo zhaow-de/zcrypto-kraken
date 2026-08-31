@@ -135,7 +135,9 @@ TABLE: dict[str, dict[str, Standin]] = {
     # The red button drives the venue's HTTP client directly rather than the node, so all but one
     # of its doubles stand in for something the venue hands over. `typing.Any` is what the client's
     # signatures promise, which is why the real answer classes are named per row rather than read
-    # off a signature -- the offers guard is what keeps each name honest against the real class.
+    # off a signature -- the offers guard is what keeps each name, and its KIND, honest against the
+    # real class: `_Book` once restated OrderBook's `bids`/`asks` METHODS as plain lists and every
+    # name-only check agreed.
     "test_engine_flatten.py": {
         "FakeClient": Standin(LIBRARY, "nautilus_trader.adapters.kraken.KrakenSpotHttpClient", (_BINDS_FLATTEN, _OFFERS_FLATTEN)),
         # `request_instruments()`'s row. Measured against the installed adapter's public listing

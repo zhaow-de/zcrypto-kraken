@@ -9,6 +9,7 @@ command bodies that need it -- `zcrypto --help` must never pay the nautilus impo
 
 from __future__ import annotations
 
+import asyncio
 import faulthandler
 import json
 import math
@@ -1950,7 +1951,11 @@ def flatten(
     # `raise typer.Exit(code=...)`, never `return`: a returned int is discarded and the process
     # exits 0, which turns every refusal and every not-flat account into a clean-looking run.
     # `echo` is handed the plain callable -- `run_flatten` wraps it in its own dead-stdout guard.
-    raise typer.Exit(code=run_flatten(client, state_dir=state_dir, execute=execute, echo=typer.echo))
+    # `asyncio.run` is where the loop the client needs comes from, and this is the only place it is
+    # opened: every one of its seven methods raises `RuntimeError: no running event loop` outside
+    # one, so called synchronously this command exits 3 on its very first read -- `--execute`
+    # included. Same boundary placement as `cli/liquidations/command.py` and `cli/capture`.
+    raise typer.Exit(code=asyncio.run(run_flatten(client, state_dir=state_dir, execute=execute, echo=typer.echo)))
 
 
 def _newest_venue_record(journal_dir: Path) -> dict | None:

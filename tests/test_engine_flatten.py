@@ -6,6 +6,7 @@ venue -- never only about a return value."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -29,9 +30,23 @@ class _Level:
 
 
 class _Book:
+    """`request_book_snapshot()`'s answer. `bids`/`asks` are METHODS, exactly as they are on the
+    real `OrderBook` -- restated as plain lists they made every test agree with a module that read
+    `book.bids` and got a bound method, which is the shape the venue never sends.
+
+    The level lists are held on `_bids`/`_asks` so a test can install an adversarial side without
+    re-declaring the method; `_BOOK_PLUMBING` exempts exactly those two from the offers guard.
+    """
+
     def __init__(self, bid: float, ask: float) -> None:
-        self.bids = [_Level(bid)]
-        self.asks = [_Level(ask)]
+        self._bids = [_Level(bid)]
+        self._asks = [_Level(ask)]
+
+    def bids(self, depth=None):
+        return self._bids
+
+    def asks(self, depth=None):
+        return self._asks
 
 
 class _Instrument:
@@ -78,7 +93,15 @@ def _norm(value: Any) -> Any:
 
 class FakeClient:
     """Answers from a script and records every call. `raises` maps a method name to an exception
-    instance the next call to it will raise."""
+    instance the next call to it will raise.
+
+    Every request method is `async def`, as every one of the real client's seven is: they schedule
+    onto the running loop and answer with an awaitable, and outside a loop each raises
+    `RuntimeError: no running event loop`. Restated synchronously here they let the whole module be
+    written as blocking code that cannot make a single call live --
+    `test_every_client_call_the_red_button_makes_needs_a_running_loop` is the pin that says so
+    against the real class, since `inspect.iscoroutinefunction` answers False for all seven.
+    """
 
     api_key_masked = "kr***xy"
     # The secret itself, distinct from its masked form, so a journal test can assert on the VALUE
@@ -108,7 +131,7 @@ class FakeClient:
     def _next(self, queue):
         return queue.pop(0) if len(queue) > 1 else queue[0]
 
-    def request_instruments(self, pairs=None):
+    async def request_instruments(self, pairs=None):
         self.calls.append(("request_instruments", {"pairs": pairs}))
         self._maybe_raise("request_instruments")
         return self._instruments
@@ -116,32 +139,32 @@ class FakeClient:
     def _record(self, name, account_id, kw):
         self.calls.append((name, {"account_id": _norm(account_id), **{k: _norm(v) for k, v in kw.items()}}))
 
-    def request_order_status_reports(self, account_id, **kw):
+    async def request_order_status_reports(self, account_id, **kw):
         self._record("request_order_status_reports", account_id, kw)
         self._maybe_raise("request_order_status_reports")
         return self._next(self._orders)
 
-    def request_position_status_reports(self, account_id, **kw):
+    async def request_position_status_reports(self, account_id, **kw):
         self._record("request_position_status_reports", account_id, kw)
         self._maybe_raise("request_position_status_reports")
         return self._next(self._positions)
 
-    def request_account_state(self, account_id, **kw):
+    async def request_account_state(self, account_id, **kw):
         self._record("request_account_state", account_id, kw)
         self._maybe_raise("request_account_state")
         return _AccountState(self._next(self._balances))
 
-    def request_book_snapshot(self, instrument_id, depth=None):
+    async def request_book_snapshot(self, instrument_id, depth=None):
         self.calls.append(("request_book_snapshot", {"instrument_id": str(instrument_id), "depth": depth}))
         self._maybe_raise("request_book_snapshot")
         return self._books[str(instrument_id)]
 
-    def cancel_all_orders(self):
+    async def cancel_all_orders(self):
         self.calls.append(("cancel_all_orders", {}))
         self._maybe_raise("cancel_all_orders")
         return {"ok": True}
 
-    def submit_order(self, account_id, instrument_id, client_order_id, order_side, order_type, quantity, time_in_force, **kw):
+    async def submit_order(self, account_id, instrument_id, client_order_id, order_side, order_type, quantity, time_in_force, **kw):
         params = {
             "instrument_id": str(instrument_id),
             "client_order_id": str(client_order_id),
@@ -164,6 +187,16 @@ def names(client: FakeClient) -> list[str]:
     return [name for name, _ in client.calls]
 
 
+def _sync(coro):
+    """Drive one of the module's coroutines to completion.
+
+    Production opens exactly one loop, at the CLI boundary (`cli/engine/command.py`'s `flatten`),
+    because every client call needs a running one. A unit test calling a single function opens its
+    own here; the whole-button tests below go through `_run`, which drives `run_flatten` in one loop
+    exactly as the command does."""
+    return asyncio.run(coro)
+
+
 # --- the read layer -----------------------------------------------------------------------------
 
 
@@ -175,7 +208,7 @@ def test_the_listing_is_keyed_by_symbol_and_a_missing_constraint_aborts_the_pair
     client = FakeClient(instruments=listing_rows)
     rec = flatten.Recorder()
 
-    listing = flatten.read_listing(client, rec)
+    listing = _sync(flatten.read_listing(client, rec))
     assert set(listing) == {"BTC/EUR", "ADA/EUR"}
 
     good = flatten.constraints_for("BTC/EUR", listing)
@@ -198,7 +231,7 @@ def test_a_zero_quantization_step_aborts_rather_than_dividing_by_it(field):
     client = FakeClient(instruments=rows)
     rec = flatten.Recorder()
     with pytest.raises(flatten.FlattenUnreachable) as exc:
-        flatten.constraints_for("BTC/EUR", flatten.read_listing(client, rec))
+        flatten.constraints_for("BTC/EUR", _sync(flatten.read_listing(client, rec)))
     assert "positive step" in str(exc.value)
 
 
@@ -206,20 +239,20 @@ def test_an_empty_listing_aborts():
     """An empty listing is not an account with nothing to sell -- it is a read that told us
     nothing, and every pair lookup after it would silently answer 'no pair'."""
     with pytest.raises(flatten.FlattenUnreachable):
-        flatten.read_listing(FakeClient(instruments=[]), flatten.Recorder())
+        _sync(flatten.read_listing(FakeClient(instruments=[]), flatten.Recorder()))
 
 
 def test_positions_are_read_by_named_fields_and_a_missing_one_aborts():
     """`position_side` and `quantity` are the two fields a close is built from; a row missing
     either is a shape this process may not reason about."""
     rows = [_Position("BTC/EUR", "LONG", 0.5), _Position("ETH/EUR", "FLAT", 0.0)]
-    read = flatten.read_positions(FakeClient(positions=[rows]), flatten.Recorder())
+    read = _sync(flatten.read_positions(FakeClient(positions=[rows]), flatten.Recorder()))
     assert [(r.symbol, r.side, r.quantity) for r in read] == [("BTC/EUR", "LONG", 0.5), ("ETH/EUR", "FLAT", 0.0)]
 
     broken = _Position("BTC/EUR", "LONG", 0.5)
     del broken.position_side
     with pytest.raises(flatten.FlattenUnreachable) as exc:
-        flatten.read_positions(FakeClient(positions=[[broken]]), flatten.Recorder())
+        _sync(flatten.read_positions(FakeClient(positions=[[broken]]), flatten.Recorder()))
     assert "position_side" in str(exc.value)
 
 
@@ -233,7 +266,7 @@ def test_a_position_read_that_answers_nothing_aborts_rather_than_reading_as_flat
     case -- the `[[]]` default applies only when no script is given and cannot mask this."""
     client = FakeClient(positions=[None])
     with pytest.raises(flatten.FlattenUnreachable) as exc:
-        flatten.read_positions(client, flatten.Recorder())
+        _sync(flatten.read_positions(client, flatten.Recorder()))
     assert "answered nothing" in str(exc.value)
     # The read went out and its answer is what was refused -- not a refusal before reaching the venue.
     assert names(client) == ["request_position_status_reports"]
@@ -245,7 +278,7 @@ def test_the_position_read_is_scoped_to_margin_with_spot_reports_off():
     report is a live property no fake can show; spec 00106 D8.2's read-only dry-run establishes
     that, and until it runs the parameters are all that is pinned here."""
     client = FakeClient(positions=[[]])
-    flatten.read_positions(client, flatten.Recorder())
+    _sync(flatten.read_positions(client, flatten.Recorder()))
     _, params = client.calls[0]
     assert params["account_type"] == "MARGIN"
     assert params["use_spot_position_reports"] is False
@@ -256,14 +289,14 @@ def test_balances_are_read_from_the_cash_account():
     """Under MARGIN the account reports one EUR figure, not per-asset balances (the same record,
     observation 2), so the spot enumeration reads CASH."""
     client = FakeClient(balances=[[_Balance("XXBT", 0.5), _Balance("ZEUR", 100.0)]])
-    read = flatten.read_balances(client, flatten.Recorder())
+    read = _sync(flatten.read_balances(client, flatten.Recorder()))
     assert [(r.code, r.free) for r in read] == [("XXBT", 0.5), ("ZEUR", 100.0)]
     assert client.calls[0][1]["account_type"] == "CASH"
 
 
 def test_the_open_order_read_asks_for_open_only():
     client = FakeClient(orders=[[]])
-    flatten.read_open_orders(client, flatten.Recorder())
+    _sync(flatten.read_open_orders(client, flatten.Recorder()))
     assert client.calls[0][1]["open_only"] is True
 
 
@@ -271,9 +304,9 @@ def test_the_book_read_takes_the_bid_for_a_sell_and_the_ask_for_a_buy():
     listing = {"BTC/EUR": _Instrument("BTC/EUR")}
     client = FakeClient(instruments=[listing["BTC/EUR"]], books={"BTC/EUR.KRAKEN": _Book(bid=60000.0, ask=60010.0)})
     rec = flatten.Recorder()
-    constraints = flatten.constraints_for("BTC/EUR", flatten.read_listing(client, rec))
-    assert flatten.read_book_price(client, rec, constraints, "SELL") == 60000.0
-    assert flatten.read_book_price(client, rec, constraints, "BUY") == 60010.0
+    constraints = flatten.constraints_for("BTC/EUR", _sync(flatten.read_listing(client, rec)))
+    assert _sync(flatten.read_book_price(client, rec, constraints, "SELL")) == 60000.0
+    assert _sync(flatten.read_book_price(client, rec, constraints, "BUY")) == 60010.0
     assert client.calls[-1][1]["depth"] == flatten.BOOK_DEPTH
 
 
@@ -281,12 +314,12 @@ def test_an_empty_book_side_aborts_rather_than_guessing_a_price():
     """A price is what sizes the dust boundary; an absent one must not be defaulted."""
     listing = {"BTC/EUR": _Instrument("BTC/EUR")}
     book = _Book(bid=60000.0, ask=60010.0)
-    book.bids = []
+    book._bids = []
     client = FakeClient(instruments=[listing["BTC/EUR"]], books={"BTC/EUR.KRAKEN": book})
     rec = flatten.Recorder()
-    constraints = flatten.constraints_for("BTC/EUR", flatten.read_listing(client, rec))
+    constraints = flatten.constraints_for("BTC/EUR", _sync(flatten.read_listing(client, rec)))
     with pytest.raises(flatten.FlattenUnreachable):
-        flatten.read_book_price(client, rec, constraints, "SELL")
+        _sync(flatten.read_book_price(client, rec, constraints, "SELL"))
 
 
 def test_a_non_positive_book_price_aborts_the_read_rather_than_pricing_a_leg_at_nothing():
@@ -296,13 +329,13 @@ def test_a_non_positive_book_price_aborts_the_read_rather_than_pricing_a_leg_at_
     The other side of the same book is the true negative -- a check refusing every price fails it."""
     listing = {"BTC/EUR": _Instrument("BTC/EUR")}
     book = _Book(bid=60000.0, ask=60010.0)
-    book.bids = [_Level(0.0)]
+    book._bids = [_Level(0.0)]
     client = FakeClient(instruments=[listing["BTC/EUR"]], books={"BTC/EUR.KRAKEN": book})
     rec = flatten.Recorder()
-    constraints = flatten.constraints_for("BTC/EUR", flatten.read_listing(client, rec))
+    constraints = flatten.constraints_for("BTC/EUR", _sync(flatten.read_listing(client, rec)))
     with pytest.raises(flatten.FlattenUnreachable):
-        flatten.read_book_price(client, rec, constraints, "SELL")
-    assert flatten.read_book_price(client, rec, constraints, "BUY") == 60010.0
+        _sync(flatten.read_book_price(client, rec, constraints, "SELL"))
+    assert _sync(flatten.read_book_price(client, rec, constraints, "BUY")) == 60010.0
 
 
 def test_the_recorder_keeps_every_call_with_its_parameters_and_answer():
@@ -310,7 +343,7 @@ def test_the_recorder_keeps_every_call_with_its_parameters_and_answer():
     that drops the answer leaves an operator with a list of intentions."""
     client = FakeClient(orders=[[]])
     rec = flatten.Recorder()
-    flatten.read_open_orders(client, rec)
+    _sync(flatten.read_open_orders(client, rec))
     assert rec.entries[0]["call"] == "request_order_status_reports"
     assert rec.entries[0]["params"]["open_only"] is True
     assert "answer" in rec.entries[0]
@@ -321,7 +354,7 @@ def test_a_raising_read_is_recorded_with_its_error_and_re_raised():
     client.raises["request_order_status_reports"] = RuntimeError("connection reset")
     rec = flatten.Recorder()
     with pytest.raises(flatten.FlattenUnreachable):
-        flatten.read_open_orders(client, rec)
+        _sync(flatten.read_open_orders(client, rec))
     assert "connection reset" in rec.entries[0]["error"]
 
 
@@ -345,7 +378,11 @@ def test_a_huge_answer_is_truncated_in_the_journal_and_says_that_it_was():
     one JSON string field. The cap keeps the incident artifact openable; the suffix is what stops a
     reader mistaking a truncated repr for the venue's whole answer."""
     rec = flatten.Recorder()
-    rec.call("request_instruments", {"pairs": None}, lambda: "x" * (flatten._ANSWER_REPR_LIMIT * 2))
+
+    async def _huge():
+        return "x" * (flatten._ANSWER_REPR_LIMIT * 2)
+
+    _sync(rec.call("request_instruments", {"pairs": None}, _huge))
     answer = rec.entries[0]["answer"]
     assert len(answer) < flatten._ANSWER_REPR_LIMIT * 2
     assert answer.endswith("chars total]")
@@ -732,7 +769,7 @@ def test_the_snapshot_reads_orders_then_positions_then_balances():
     """Order matters: an order that fills between the reads must land in a read that FOLLOWS, so
     it cannot vanish from both."""
     client = _client_with(symbols=("BTC/EUR",))
-    flatten.read_snapshot(client, flatten.Recorder())
+    _sync(flatten.read_snapshot(client, flatten.Recorder()))
     assert names(client) == ["request_order_status_reports", "request_position_status_reports", "request_account_state"]
 
 
@@ -745,9 +782,9 @@ def test_the_plan_reads_one_book_per_leg_pair_and_the_btc_euro_pair_when_a_leg_r
         books={"ETH/BTC.KRAKEN": _Book(0.03, 0.031), "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    snapshot = flatten.read_snapshot(client, rec)
-    plan = flatten.build_plan(client, rec, snapshot, listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    snapshot = _sync(flatten.read_snapshot(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, snapshot, listing))
     assert sorted(plan.prices) == ["BTC/EUR", "ETH/BTC"]
     assert plan.prices["ETH/BTC"] == 0.03
 
@@ -757,8 +794,8 @@ def test_no_btc_euro_book_is_read_when_no_leg_routes_through_btc():
         balances=[_Balance("ADA", 1200.0)], symbols=("ADA/EUR", "BTC/EUR"), books={"ADA/EUR.KRAKEN": _Book(0.4, 0.41)}
     )
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     assert sorted(plan.prices) == ["ADA/EUR"]
 
 
@@ -770,8 +807,8 @@ def test_a_short_leg_prices_off_the_ask_and_a_long_off_the_bid():
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ETH/EUR.KRAKEN": _Book(3000.0, 3001.0)},
     )
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     assert plan.prices["BTC/EUR"] == 60010.0  # SHORT -> the closer BUYs -> priced off the ask
     assert plan.prices["ETH/EUR"] == 3000.0  # LONG -> the closer SELLs -> priced off the bid
 
@@ -788,8 +825,8 @@ def test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg()
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     assert plan.prices == {"BTC/EUR": 60000.0}
     assert [sized.leg.symbol for sized in plan.spot] == ["ADA/EUR"]
     assert plan.spot[0].send is True and plan.spot[0].reference_price is None
@@ -802,11 +839,11 @@ def test_a_book_that_prices_at_zero_leaves_the_leg_unpriced_and_still_sold():
     make it dust -- not sent, not a residual, and the run would report flat while still holding
     it."""
     zero = _Book(0.4, 0.41)
-    zero.bids = [_Level(0.0)]
+    zero._bids = [_Level(0.0)]
     client = _client_with(balances=[_Balance("ADA", 1200.0)], symbols=("ADA/EUR",), books={"ADA/EUR.KRAKEN": zero})
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     assert plan.prices == {}
     (sized,) = plan.spot
     assert sized.send is True and sized.reference_price is None
@@ -817,9 +854,9 @@ def test_a_missing_constraint_on_a_leg_s_pair_aborts_the_plan():
     rows[0].min_quantity = None
     client = FakeClient(instruments=rows, balances=[[_Balance("ADA", 1200.0)]], books={"ADA/EUR.KRAKEN": _Book(0.4, 0.41)})
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
+    listing = _sync(flatten.read_listing(client, rec))
     with pytest.raises(flatten.FlattenUnreachable):
-        flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+        _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
 
 
 def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_cannot_touch():
@@ -837,8 +874,8 @@ def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_can
         },
     )
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     lines: list[str] = []
     flatten.render_plan(plan, lines.append)
     text = "\n".join(lines)
@@ -859,8 +896,8 @@ def test_the_rendered_plan_prints_no_cross_currency_total():
         books={"ETH/BTC.KRAKEN": _Book(0.03, 0.031), "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     lines: list[str] = []
     flatten.render_plan(plan, lines.append)
     assert not any("total" in line.lower() for line in lines)
@@ -873,7 +910,7 @@ def test_a_snapshot_read_that_answers_nothing_aborts_instead_of_becoming_an_empt
     not run and hand the operator a plan built from half a snapshot."""
     client = FakeClient(positions=[None], balances=[[_Balance("ADA", 1200.0)]])
     with pytest.raises(flatten.FlattenUnreachable):
-        flatten.read_snapshot(client, flatten.Recorder())
+        _sync(flatten.read_snapshot(client, flatten.Recorder()))
     assert names(client) == ["request_order_status_reports", "request_position_status_reports"]
 
 
@@ -884,8 +921,8 @@ def test_a_venue_that_answers_empty_is_a_plan_with_no_legs_that_says_so_in_words
     since there is no leg to price."""
     client = _client_with(symbols=("BTC/EUR",))
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     assert (plan.margin, plan.spot, plan.unsellable, plan.unclosable, plan.prices) == ([], [], [], [], {})
     assert plan.n_open_orders == 0
     assert "request_book_snapshot" not in names(client)
@@ -907,8 +944,8 @@ def test_a_margin_and_a_spot_leg_on_one_pair_share_one_book_read_taken_on_the_ma
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     assert names(client).count("request_book_snapshot") == 1
     assert plan.prices == {"BTC/EUR": 60010.0}
     assert [sized.leg.symbol for sized in plan.margin] == ["BTC/EUR"]
@@ -926,8 +963,8 @@ def test_each_leg_is_sized_with_the_price_and_the_constraints_of_its_own_pair():
         books={"ETH/BTC.KRAKEN": _Book(0.03, 0.031), "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     (sized,) = plan.spot
     assert sized.leg.symbol == "ETH/BTC"
     assert sized.reference_price == 0.03
@@ -1141,8 +1178,8 @@ def _sweep_client(*, orders, positions, balances, symbols, books):
 
 def _plan_of(client):
     rec = flatten.Recorder()
-    listing = flatten.read_listing(client, rec)
-    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    listing = _sync(flatten.read_listing(client, rec))
+    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
     return rec, listing, plan
 
 
@@ -1159,7 +1196,7 @@ def test_the_full_sequence_calls_the_venue_in_the_order_the_design_fixes():
     )
     rec, listing, plan = _plan_of(client)
     before = len(client.calls)
-    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     assert names(client)[before:] == [
         "cancel_all_orders",
         "request_order_status_reports",
@@ -1186,7 +1223,7 @@ def test_a_margin_closer_carries_reduce_only_market_ioc_leverage_and_the_margin_
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec, listing, plan = _plan_of(client)
-    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     (sent,) = client.submitted
     assert sent["order_side"] == "BUY"  # a SHORT closes with a BUY, never a SELL
     assert sent["order_type"] == "MARKET"
@@ -1207,7 +1244,7 @@ def test_a_spot_sell_carries_no_reduce_only_and_no_leverage():
         books={"ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
     )
     rec, listing, plan = _plan_of(client)
-    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     (sent,) = client.submitted
     assert sent["order_side"] == "SELL"
     assert sent["account_type"] == "CASH"
@@ -1231,7 +1268,7 @@ def test_a_fill_during_the_confirm_is_closed_at_the_post_cancel_size_not_the_sna
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec, listing, plan = _plan_of(client)
-    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    result = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     assert client.submitted[0]["quantity"] == 0.9
     assert result.final.positions[0].quantity == 0.9
 
@@ -1249,7 +1286,7 @@ def test_a_rejected_margin_leg_is_journaled_and_the_sweep_continues_to_the_spot_
     )
     client.raises["submit_order"] = RuntimeError("EOrder:Insufficient margin")
     rec, listing, plan = _plan_of(client)
-    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    result = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     margin_outcome = next(o for o in result.outcomes if o.kind == "margin")
     assert margin_outcome.sent is True and "Insufficient margin" in margin_outcome.error
     assert margin_outcome.reason is None  # 0.5 clears _Instrument's 0.0001 ordermin
@@ -1274,7 +1311,7 @@ def test_a_rejected_sub_ordermin_closer_is_labelled_from_the_arithmetic_not_from
     )
     client.raises["submit_order"] = RuntimeError("EOrder:Insufficient margin")
     rec, listing, plan = _plan_of(client)
-    (outcome,) = flatten.sweep(client, rec, plan, listing, stamp=_STAMP).outcomes
+    (outcome,) = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP)).outcomes
     assert outcome.sent is True  # it was sent: a sub-ordermin closer is the venue's to refuse
     assert outcome.reason == "unclosable_below_minimum"
     assert "Insufficient margin" in outcome.error
@@ -1291,7 +1328,7 @@ def test_a_failing_cancel_does_not_stop_the_closes():
     )
     client.raises["cancel_all_orders"] = RuntimeError("EGeneral:Temporary lockout")
     rec, listing, plan = _plan_of(client)
-    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    result = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     assert result.cancel_ok is False and "lockout" in result.cancel_error
     assert len(client.submitted) == 1
 
@@ -1315,7 +1352,7 @@ def test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order():
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
     )
     rec, listing, plan = _plan_of(client)
-    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    result = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     assert "cancel_all_orders" in names(client)
     assert client.submitted == []
     assert result.post_write_failure is not None
@@ -1338,7 +1375,7 @@ def test_the_second_spot_pass_sells_the_btc_the_first_pass_produced():
         books={"ETH/BTC.KRAKEN": _Book(0.03, 0.031), "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec, listing, plan = _plan_of(client)
-    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     assert [s["instrument_id"] for s in client.submitted] == ["ETH/BTC.KRAKEN", "BTC/EUR.KRAKEN"]
 
 
@@ -1363,7 +1400,7 @@ def test_a_leg_below_the_venue_minimum_is_recorded_and_never_reaches_the_venue()
         books={"DOT/EUR.KRAKEN": _Book(4.0, 4.01)},
     )
     rec, listing, plan = _plan_of(client)
-    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    result = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     assert [s["instrument_id"] for s in client.submitted] == ["ADA/EUR.KRAKEN"]
 
     ada = next(o for o in result.outcomes if o.symbol == "ADA/EUR")
@@ -1401,7 +1438,7 @@ def test_every_order_in_one_run_carries_its_own_client_order_id_across_all_three
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ETH/BTC.KRAKEN": _Book(0.03, 0.031)},
     )
     rec, listing, plan = _plan_of(client)
-    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    result = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     ids = [s["client_order_id"] for s in client.submitted]
     assert len(ids) == 3, ids
     assert len(set(ids)) == 3, ids
@@ -1422,7 +1459,7 @@ def test_the_journal_records_the_scoping_of_the_order_that_actually_went_out():
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
     )
     rec, listing, plan = _plan_of(client)
-    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     journalled = [entry["params"] for entry in rec.entries if entry["call"] == "submit_order"]
     assert [p["account_type"] for p in journalled] == ["MARGIN", "CASH"]
     for params, sent in zip(journalled, client.submitted, strict=True):
@@ -1460,7 +1497,7 @@ def test_the_submit_call_carries_the_library_s_own_types_and_binds_against_the_r
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec, listing, plan = _plan_of(client)
-    flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     ((positional, kwargs),) = client.submitted_raw
 
     account_id, _instrument_id, client_order_id, order_side, order_type, quantity, time_in_force = positional
@@ -1504,7 +1541,7 @@ def test_a_failing_read_that_nothing_consumes_does_not_cost_the_spot_passes():
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
     )
     rec, listing, plan = _plan_of(client)
-    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    result = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     assert [s["instrument_id"] for s in client.submitted] == ["BTC/EUR.KRAKEN", "ADA/EUR.KRAKEN"]
     assert result.post_write_failure is None
     assert result.final is not None
@@ -1526,7 +1563,7 @@ def test_a_failing_post_cancel_order_count_does_not_cost_the_closes():
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0)},
     )
     rec, listing, plan = _plan_of(client)
-    result = flatten.sweep(client, rec, plan, listing, stamp=_STAMP)
+    result = _sync(flatten.sweep(client, rec, plan, listing, stamp=_STAMP))
     assert result.orders_after_cancel is None
     assert [s["instrument_id"] for s in client.submitted] == ["BTC/EUR.KRAKEN"]
     assert result.post_write_failure is None and result.final is not None
@@ -1544,7 +1581,7 @@ def test_a_leg_side_this_module_cannot_map_sends_nothing_and_is_named():
     client = FakeClient()
     leg = flatten.Leg("margin", "BTC", "BTC/EUR", "SIDEWAYS", 0.5, "MARGIN", "position_status_report.quantity")
     sized = flatten.size_leg(leg, _BTC, 60000.0)
-    outcome = flatten._send(client, flatten.Recorder(), sized, _BTC, _STAMP, 1, "margin")
+    outcome = _sync(flatten._send(client, flatten.Recorder(), sized, _BTC, _STAMP, 1, "margin"))
     assert client.submitted == []
     assert outcome.sent is True and "SIDEWAYS" in outcome.error
 
@@ -1570,15 +1607,17 @@ def _armed(tmp_path: Path) -> Path:
 
 
 def _run(client, tmp_path, *, execute=True, reply="FLATTEN", venue=_online, tty=True, lines=None, prompt=None, echo=None):
-    return flatten.run_flatten(
-        client,
-        state_dir=tmp_path,
-        execute=execute,
-        now=lambda: _STAMP,
-        venue_reader=venue,
-        tty_available=lambda: tty,
-        prompt=prompt if prompt is not None else (lambda _: reply),
-        echo=echo if echo is not None else (lines.append if lines is not None else (lambda _: None)),
+    return _sync(
+        flatten.run_flatten(
+            client,
+            state_dir=tmp_path,
+            execute=execute,
+            now=lambda: _STAMP,
+            venue_reader=venue,
+            tty_available=lambda: tty,
+            prompt=prompt if prompt is not None else (lambda _: reply),
+            echo=echo if echo is not None else (lines.append if lines is not None else (lambda _: None)),
+        )
     )
 
 
@@ -1963,7 +2002,7 @@ def test_the_recorded_instrument_id_is_converted_where_the_fake_cannot_show_it()
     )
     leg = flatten.Leg("spot", "BTC", "BTC/EUR", "SELL", 0.5, "CASH", "account_state.balances")
     rec = flatten.Recorder()
-    flatten.submit_leg(FakeClient(), rec, flatten.size_leg(leg, constraints, 60000.0), constraints, "FLT-20260830T120000Z-1")
+    _sync(flatten.submit_leg(FakeClient(), rec, flatten.size_leg(leg, constraints, 60000.0), constraints, "FLT-20260830T120000Z-1"))
     (entry,) = rec.entries
     assert entry["params"]["instrument_id"] == "BTC/EUR.KRAKEN"
     json.dumps(rec.entries)  # no `default=`: what `write_journal` would have to fall back on
@@ -2181,7 +2220,11 @@ def _stub_the_button(monkeypatch, seen, *, code: int) -> None:
 
     monkeypatch.setattr(kraken_adapter, "KrakenSpotHttpClient", _FakeClient)
 
-    def _fake_run_flatten(client: Any, **kwargs: Any) -> int:
+    async def _fake_run_flatten(client: Any, **kwargs: Any) -> int:
+        # `async def`, because `run_flatten` is: called synchronously the command hands
+        # `typer.Exit` a coroutine object instead of a code, and awaiting it is what proves the
+        # loop the client needs was opened. `get_running_loop()` raises here if it was not.
+        seen["loop"] = asyncio.get_running_loop()
         seen["client"] = client
         seen.update(kwargs)
         return code
@@ -2203,6 +2246,23 @@ def test_the_code_run_flatten_returns_is_the_code_the_process_exits_with(monkeyp
     _stub_the_button(monkeypatch, seen, code=code)
     result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
     assert result.exit_code == code
+
+
+def test_the_command_opens_the_event_loop_every_venue_call_needs(monkeypatch, tmp_path):
+    """The loop is the command's job, and nothing below it can supply one. Every one of the
+    client's seven methods raises `RuntimeError: no running event loop` outside one
+    (`test_every_client_call_the_red_button_makes_needs_a_running_loop`), so a body that calls
+    `run_flatten` synchronously exits on its very first read having sent nothing and said nothing
+    -- `--execute` included, on the day the account has to be emptied.
+
+    The stub is `async def`, as `run_flatten` is, and records the loop it was awaited in. Called
+    synchronously it is never awaited at all: `seen` stays empty and `typer.Exit` is handed a
+    coroutine object where the exit code belongs. Both assertions move."""
+    seen: dict[str, Any] = {}
+    _stub_the_button(monkeypatch, seen, code=0)
+    result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path), "--execute"])
+    assert result.exit_code == 0
+    assert seen.get("loop") is not None, "run_flatten was not awaited inside a running loop"
 
 
 @pytest.mark.parametrize(("argv", "execute"), [([], False), (["--execute"], True)])
@@ -2236,6 +2296,146 @@ def test_the_client_is_built_key_first_then_secret(monkeypatch, tmp_path):
     assert seen["client"] is not None  # the client the command built is the one run_flatten got
 
 
+# --- the venue client's contract ------------------------------------------------------------------
+
+# The opt-in that lets the ONE network-touching pin below run. An explicit variable, never
+# reachability: gated on reachability it would run in CI, be a flake source there, and go silently
+# green-by-skip the day Kraken blocks the runner -- a skip read as coverage. Set it to "1" to run.
+_VENUE_CONTRACT_OPT_IN = "ZCRYPTO_VENUE_CONTRACT"
+
+
+def _real_client():
+    """A real `KrakenSpotHttpClient` on credentials that authenticate nothing. Constructing it
+    reaches no endpoint, and with no loop running neither can any call made on it."""
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
+    return KrakenSpotHttpClient("dummy-key", "dummy-secret")
+
+
+def _real_calls(client):
+    """The seven calls `cli/engine/flatten.py` makes, with the arguments it sends, as zero-arg
+    thunks. Built from the module's own constants so a changed scoping value cannot leave this pin
+    testing a call the button no longer makes."""
+    from nautilus_trader.model import AccountType, ClientOrderId, InstrumentId, OrderSide, OrderType, Quantity, TimeInForce
+
+    account = flatten._ACCOUNT
+    instrument_id = InstrumentId.from_str("BTC/EUR.KRAKEN")
+    return {
+        "request_instruments": lambda: client.request_instruments(),
+        "request_order_status_reports": lambda: client.request_order_status_reports(account, open_only=True),
+        "request_position_status_reports": lambda: client.request_position_status_reports(
+            account, account_type=AccountType.MARGIN, use_spot_position_reports=False, quote_currency=flatten.QUOTE_CURRENCY
+        ),
+        "request_account_state": lambda: client.request_account_state(account, account_type=AccountType.CASH),
+        "request_book_snapshot": lambda: client.request_book_snapshot(instrument_id, depth=flatten.BOOK_DEPTH),
+        "submit_order": lambda: client.submit_order(
+            account,
+            instrument_id,
+            ClientOrderId("FLT-20260830T120000Z-1"),
+            OrderSide.SELL,
+            OrderType.MARKET,
+            Quantity(1.0, 8),
+            TimeInForce.IOC,
+            reduce_only=False,
+            account_type=AccountType.CASH,
+        ),
+        "cancel_all_orders": lambda: client.cancel_all_orders(),
+    }
+
+
+def test_every_client_call_the_red_button_makes_needs_a_running_loop():
+    """The defect this pin exists for: the whole module was written as blocking code, so every
+    invocation -- `--execute` included -- died on its first read and exited 3 with nothing sent.
+
+    Each of the seven raises before anything is scheduled, which is why the two venue-MUTATING
+    calls are safe to make here: with no running loop nothing can be scheduled onto one, so no
+    request can leave, and the credentials authenticate nothing either. That is also the whole
+    reason this pin needs no network and no opt-in.
+
+    `inspect.iscoroutinefunction` is asserted False beside it, because it is the trap: all seven are
+    compiled, it answers False for every one, and a reader who trusts it concludes they are ordinary
+    synchronous methods. The shape is measured by CALLING.
+    """
+    import inspect
+
+    client = _real_client()
+    for name, call in _real_calls(client).items():
+        assert not inspect.iscoroutinefunction(getattr(client, name)), f"{name} is no longer the compiled shape this pins"
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            call()
+
+
+@pytest.mark.skipif(
+    os.environ.get(_VENUE_CONTRACT_OPT_IN) != "1",
+    reason=f"reaches Kraken's public listing endpoint -- set {_VENUE_CONTRACT_OPT_IN}=1 to run it",
+)
+def test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_await():
+    """The half no introspection can reach. `iscoroutinefunction` is False, so nothing short of
+    calling inside a loop shows that the answer is a `Future` and not the value -- and treated as
+    the value it would be journalled, counted and judged as the account's state.
+
+    Only the read-only public listing call. Nothing that moves money is ever driven against the
+    live venue from a test.
+    """
+    import inspect
+
+    async def _probe():
+        answer = _real_client().request_instruments()
+        assert inspect.isawaitable(answer), f"request_instruments answered {type(answer).__name__}, not an awaitable"
+        return await answer
+
+    assert isinstance(asyncio.run(_probe()), list)
+
+
+def _real_order_book(bid: float, ask: float):
+    """A real `nautilus_trader.model.OrderBook` with one level a side. Constructible entirely
+    offline, which is what makes the read below a delegation rather than a restatement."""
+    from nautilus_trader.model import BookOrder, BookType, InstrumentId, OrderBook, OrderSide, Price, Quantity
+
+    book = OrderBook(InstrumentId.from_str("BTC/EUR.KRAKEN"), BookType.L2_MBP)
+    book.add(BookOrder(OrderSide.BUY, Price(bid, 1), Quantity(1.0, 8), 0), 0, 0, 1)
+    book.add(BookOrder(OrderSide.SELL, Price(ask, 1), Quantity(1.0, 8), 0), 0, 0, 2)
+    return book
+
+
+def test_the_book_read_takes_its_side_from_the_real_order_book_type():
+    """Driven against the library's own `OrderBook`, so nothing here restates the venue's shape.
+
+    `bids`/`asks` are METHODS on it. Read as attributes -- which is all `_required`'s absent-only
+    check does -- they hand back the bound method, and `list()` of that raises a bare TypeError
+    where the exit-code contract promises a named unreachable. Both sides are read, so a
+    read that took one side for both would fail rather than pass on a symmetric fixture.
+    """
+    listing = {"BTC/EUR": _Instrument("BTC/EUR")}
+    client = FakeClient(instruments=[listing["BTC/EUR"]], books={"BTC/EUR.KRAKEN": _real_order_book(60000.0, 60010.0)})
+    rec = flatten.Recorder()
+    constraints = flatten.constraints_for("BTC/EUR", _sync(flatten.read_listing(client, rec)))
+
+    assert _sync(flatten.read_book_price(client, rec, constraints, "SELL")) == 60000.0
+    assert _sync(flatten.read_book_price(client, rec, constraints, "BUY")) == 60010.0
+
+
+def test_a_book_whose_side_is_a_plain_sequence_is_named_rather_than_raising_a_traceback():
+    """The shape the fakes used to have, and the venue never sends. `run_flatten` promises to raise
+    nothing: an uncaught TypeError out of the book read reaches the operator as a traceback carrying
+    Python's own exit 1 -- the code this command defines as "refused with nothing sent" -- on a run
+    that may have sent everything."""
+
+    class _SequenceSided:
+        def __init__(self) -> None:
+            self.bids = [_Level(60000.0)]
+            self.asks = [_Level(60010.0)]
+
+    listing = {"BTC/EUR": _Instrument("BTC/EUR")}
+    client = FakeClient(instruments=[listing["BTC/EUR"]], books={"BTC/EUR.KRAKEN": _SequenceSided()})
+    rec = flatten.Recorder()
+    constraints = flatten.constraints_for("BTC/EUR", _sync(flatten.read_listing(client, rec)))
+
+    with pytest.raises(flatten.FlattenUnreachable) as exc:
+        _sync(flatten.read_book_price(client, rec, constraints, "SELL"))
+    assert "bids" in str(exc.value)
+
+
 # --- stub fidelity ------------------------------------------------------------------------------
 
 
@@ -2243,6 +2443,11 @@ def test_the_client_is_built_key_first_then_secret(monkeypatch, tmp_path):
 # restatements of anything the real client offers. The guard below re-checks that claim in the
 # other direction too, so an entry the real client DOES carry reads as red rather than as a
 # standing exemption.
+# `_Book`'s two level lists. They exist so a test can install an adversarial side -- an empty one,
+# a zero-priced one -- without re-declaring `bids()`/`asks()`, which are what the real `OrderBook`
+# carries and what production calls.
+_BOOK_PLUMBING = frozenset({"_asks", "_bids"})
+
 _FAKE_CLIENT_PLUMBING = frozenset(
     {
         "calls",
@@ -2283,7 +2488,7 @@ def _nautilus_standins():
         ("_Position", _Position("BTC/EUR", "LONG", 0.5), PositionStatusReport, frozenset()),
         ("_AccountState", _AccountState([]), AccountState, frozenset()),
         ("_Balance", _Balance("ADA", 1200.0), AccountBalance, frozenset()),
-        ("_Book", _Book(60000.0, 60010.0), OrderBook, frozenset()),
+        ("_Book", _Book(60000.0, 60010.0), OrderBook, _BOOK_PLUMBING),
         ("_Level", _Level(60000.0), BookLevel, frozenset()),
     ]
 
@@ -2295,6 +2500,10 @@ def test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lac
     the live account is the only place the read comes back wrong. On this module that is the whole
     button reading a shape the venue never sends.
 
+    Offering the right name as the wrong KIND fails nothing either, and is the half this file
+    learned the hard way: `_Book` restated `OrderBook`'s `bids`/`asks` methods as plain lists, every
+    hasattr check passed, and production read a bound method as the book's side.
+
     Every violation is collected rather than raised at the first: one red run should name all of
     them, not send the reader round the loop once per stub."""
     violations = []
@@ -2303,8 +2512,18 @@ def test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lac
         assert offered, f"{label} offers nothing outside its plumbing list -- the check is vacuous"
         stale = sorted(name for name in plumbing if hasattr(real, name))
         extra = sorted(name for name in offered if not hasattr(real, name))
+        # The name alone is not the shape. `OrderBook.bids` exists and is a METHOD; restated as a
+        # plain list it satisfied every hasattr here while production read `book.bids` through an
+        # absent-only check, got the bound method back, and shipped ten green tasks on a button that
+        # could not price a single leg. `callable` separates a `method_descriptor` on the real class
+        # from a `getset_descriptor`, which is exactly the distinction that was missed.
+        kinds = sorted(
+            name for name in offered if hasattr(real, name) and callable(getattr(stub, name)) != callable(getattr(real, name))
+        )
         if extra:
             violations.append(f"{label} offers {extra}, which {real.__name__} does not carry")
+        if kinds:
+            violations.append(f"{label} offers {kinds} as the wrong KIND -- {real.__name__} disagrees on callable()")
         if stale:
             violations.append(f"{label}'s plumbing list exempts {stale}, which {real.__name__} DOES carry -- check them instead")
     assert violations == [], "; ".join(violations)

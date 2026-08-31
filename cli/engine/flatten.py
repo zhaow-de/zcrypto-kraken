@@ -12,6 +12,16 @@ layer below names the fields it requires and ABORTS on an absent one rather than
 the venue changed is a finding. Before the first write that abort is exit 3; after it, exit 2 --
 the account may already have moved.
 
+The client is ASYNC: every one of the seven methods this module calls schedules onto a running
+asyncio loop and answers with an awaitable, and outside a loop each raises `RuntimeError: no
+running event loop` before any request leaves. They are compiled, so `inspect.iscoroutinefunction`
+is False on all seven and cannot be used to decide anything here -- the shape is measured by
+calling. Hence `Recorder.call` awaits, everything reaching it is async, and the one loop is opened
+at the CLI boundary (`cli/engine/command.py`'s `flatten`). A branch that awaited only when the
+answer happened to be awaitable would let a synchronous fake keep passing, which is the defect that
+kept this module unrunnable through ten green tasks -- there is one path.
+`test_every_client_call_the_red_button_makes_needs_a_running_loop` pins it against the real class.
+
 MARKET is used deliberately, overriding spec 00090 D6's rejection of it for the probe machine: in
 a crash the price is not the variable, time is, and a bounded IOC in a fast market leaves residue
 that IS the exposure.
@@ -114,11 +124,11 @@ class Recorder:
     def __init__(self) -> None:
         self.entries: list[dict] = []
 
-    def call(self, name: str, params: dict, fn: Callable[[], Any]) -> Any:
+    async def call(self, name: str, params: dict, fn: Callable[[], Any]) -> Any:
         entry: dict = {"call": name, "params": dict(params)}
         self.entries.append(entry)
         try:
-            answer = fn()
+            answer = await fn()
         except Exception as exc:  # noqa: BLE001 -- every transport failure is recorded, then classified
             entry["error"] = f"{type(exc).__name__}: {exc}"
             raise
@@ -176,7 +186,7 @@ def _journalled(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {key: str(value) if isinstance(value, AccountType) else value for key, value in kwargs.items()}
 
 
-def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
+async def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
     """Every order resting at the venue. Only the LIST is load-bearing here -- its length decides
     the exit code -- so no per-row field is required: an unparseable row must not abort a sweep
     whose whole answer is 'something is still working'."""
@@ -184,7 +194,7 @@ def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
     kwargs: dict[str, Any] = {"open_only": True}
     params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
-        rows = rec.call(
+        rows = await rec.call(
             "request_order_status_reports",
             params,
             lambda: client.request_order_status_reports(_ACCOUNT, **kwargs),
@@ -198,7 +208,7 @@ def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
     return list(rows)
 
 
-def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
+async def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
     kwargs: dict[str, Any] = {
         "account_type": AccountType.MARGIN,
         "use_spot_position_reports": False,
@@ -206,7 +216,7 @@ def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
     }
     params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
-        rows = rec.call(
+        rows = await rec.call(
             "request_position_status_reports",
             params,
             lambda: client.request_position_status_reports(_ACCOUNT, **kwargs),
@@ -234,11 +244,11 @@ def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
     return out
 
 
-def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
+async def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
     kwargs: dict[str, Any] = {"account_type": AccountType.CASH}
     params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
-        state = rec.call(
+        state = await rec.call(
             "request_account_state",
             params,
             lambda: client.request_account_state(_ACCOUNT, **kwargs),
@@ -258,11 +268,11 @@ def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
     return out
 
 
-def read_listing(client: Any, rec: Recorder) -> dict[str, Any]:
+async def read_listing(client: Any, rec: Recorder) -> dict[str, Any]:
     """ONE no-argument call for the whole listing. A per-pair request would error on an unknown
     pair and abort the sweep over an unrelated holding; pairlessness is read from this map."""
     try:
-        rows = rec.call("request_instruments", {"pairs": None}, lambda: client.request_instruments())
+        rows = await rec.call("request_instruments", {"pairs": None}, lambda: client.request_instruments())
     except FlattenUnreachable:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -299,12 +309,12 @@ def constraints_for(symbol: str, listing: dict[str, Any]) -> PairConstraints:
     )
 
 
-def read_book_price(client: Any, rec: Recorder, constraints: PairConstraints, side: str) -> float:
+async def read_book_price(client: Any, rec: Recorder, constraints: PairConstraints, side: str) -> float:
     """Best bid for a sell, best ask for a buy. Used for the printed estimate and for the dust
     boundary -- never as an order price, since every order this module sends is MARKET."""
     params = {"instrument_id": str(constraints.instrument_id), "depth": BOOK_DEPTH}
     try:
-        book = rec.call(
+        book = await rec.call(
             "request_book_snapshot",
             params,
             lambda: client.request_book_snapshot(constraints.instrument_id, depth=BOOK_DEPTH),
@@ -314,8 +324,16 @@ def read_book_price(client: Any, rec: Recorder, constraints: PairConstraints, si
     except Exception as exc:  # noqa: BLE001
         raise FlattenUnreachable(f"{constraints.symbol}: the book could not be read: {exc}") from exc
     what = f"{constraints.symbol}'s book"
-    levels = _required(book, "bids" if side == "SELL" else "asks", what)
-    levels = list(levels)
+    # `OrderBook.bids`/`.asks` are METHODS on the real type (`nautilus_trader.model.OrderBook`), not
+    # sequences. `_required` rejects only `None`, so reading the attribute alone hands back the bound
+    # method itself; `list()` of that raises a bare TypeError, which nothing between here and the
+    # operator catches -- a traceback where the exit-code contract promises a named unreachable.
+    field = "bids" if side == "SELL" else "asks"
+    read_side = _required(book, field, what)
+    try:
+        levels = list(read_side())
+    except TypeError as exc:
+        raise FlattenUnreachable(f"{what}: {field} is not the callable the venue's book type carries") from exc
     if not levels:
         raise FlattenUnreachable(f"{what}: the {'bid' if side == 'SELL' else 'ask'} side is empty")
     price = _as_float(_required(levels[0], "price", what), "price", what)
@@ -616,17 +634,17 @@ class Plan:
     n_open_orders: int
 
 
-def read_snapshot(client: Any, rec: Recorder) -> Snapshot:
+async def read_snapshot(client: Any, rec: Recorder) -> Snapshot:
     """Orders, then positions, then balances -- in that order, so an order that fills between two
     of the reads lands in one that FOLLOWS rather than falling out of both."""
     return Snapshot(
-        orders=read_open_orders(client, rec),
-        positions=read_positions(client, rec),
-        balances=read_balances(client, rec),
+        orders=await read_open_orders(client, rec),
+        positions=await read_positions(client, rec),
+        balances=await read_balances(client, rec),
     )
 
 
-def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: dict[str, Any]) -> Plan:
+async def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: dict[str, Any]) -> Plan:
     """Every leg, sized, with its reference price -- and every book read taken HERE, before the
     first write.
 
@@ -657,7 +675,7 @@ def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: dict[str
     prices: dict[str, float] = {}
     for symbol, side in wanted.items():
         try:
-            prices[symbol] = read_book_price(client, rec, constraints[symbol], side)
+            prices[symbol] = await read_book_price(client, rec, constraints[symbol], side)
         except FlattenUnreachable as exc:
             # Spec D2's ONE exception to abort-on-a-pre-write-read-failure. A thin pair with an
             # empty side, or one rate-limited request, must not cost the account its cancel and
@@ -828,7 +846,7 @@ def mint_client_order_id(stamp, index: int) -> str:
 ORDER_SIDES = {"SELL": OrderSide.SELL, "BUY": OrderSide.BUY}
 
 
-def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: PairConstraints, client_order_id: str) -> Any:
+async def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: PairConstraints, client_order_id: str) -> Any:
     """One MARKET IOC order. The quantity is minted at the precision the venue's own lot step
     implies, so the floored value is exactly representable and nothing is rounded UP past the
     position the report reported.
@@ -860,7 +878,7 @@ def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: PairCon
         "time_in_force": str(time_in_force),
         **_journalled(kwargs),
     }
-    return rec.call(
+    return await rec.call(
         "submit_order",
         params,
         lambda: client.submit_order(
@@ -886,7 +904,7 @@ def _sized_with_constraints(legs: list, listing: dict, plan: Plan) -> list:
     return out
 
 
-def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, index: int, pass_name: str) -> LegOutcome:
+async def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, index: int, pass_name: str) -> LegOutcome:
     """Never raises: a rejection is journaled and the sweep continues, and is never retried.
 
     `sent` stays True on every failure raised inside the send -- the purely local ones, the minting
@@ -919,7 +937,7 @@ def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, ind
     client_order_id = mint_client_order_id(stamp, index)
     reason = "no_reference_price" if sized.reference_price is None else None
     try:
-        answer = submit_leg(client, rec, sized, constraints, client_order_id)
+        answer = await submit_leg(client, rec, sized, constraints, client_order_id)
     except Exception as exc:  # noqa: BLE001 -- one leg's rejection must not end the sweep
         if sized.leg.kind == "margin" and sized.qty < constraints.ordermin:
             reason = "unclosable_below_minimum"
@@ -930,7 +948,7 @@ def _send(client, rec, sized: SizedLeg, constraints: PairConstraints, stamp, ind
     return LegOutcome(**base, client_order_id=client_order_id, sent=True, reason=reason, answer=repr(answer), error=None)
 
 
-def _read_for_the_record(what: str, read: Callable[[], Any]) -> Any:
+async def _read_for_the_record(what: str, read: Callable[[], Any]) -> Any:
     """A POST-WRITE read whose answer nothing but the journal consumes: run it, or name the failure
     and step over it.
 
@@ -948,13 +966,13 @@ def _read_for_the_record(what: str, read: Callable[[], Any]) -> Any:
     account flat.
     """
     try:
-        return read()
+        return await read()
     except FlattenUnreachable as exc:
         logger.error("%s could not be read -- it is journaled and the sweep goes on: %s", what, exc)
         return None
 
 
-def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> SweepResult:
+async def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> SweepResult:
     """From the account-wide cancel to the final snapshot. Re-runnable: a second run finds less to
     do and does it, so nothing here is one-shot.
 
@@ -970,7 +988,7 @@ def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> Sw
     outcomes: list[LegOutcome] = []
     cancel_ok, cancel_error = True, None
     try:
-        rec.call("cancel_all_orders", {}, client.cancel_all_orders)
+        await rec.call("cancel_all_orders", {}, client.cancel_all_orders)
     except Exception as exc:  # noqa: BLE001 -- the closes do not depend on the cancel
         cancel_ok, cancel_error = False, f"{type(exc).__name__}: {exc}"
         logger.error("the account-wide cancel failed: %s", exc)
@@ -979,21 +997,21 @@ def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp) -> Sw
     try:
         # Journal-only, both of them: `orders_after_cancel` is written into the record and read by
         # no decision -- the exit code judges the FINAL snapshot's orders, never this count.
-        rows = _read_for_the_record("the orders still resting after the cancel", lambda: read_open_orders(client, rec))
+        rows = await _read_for_the_record("the orders still resting after the cancel", lambda: read_open_orders(client, rec))
         orders_after = len(rows) if rows is not None else None
-        margin_now, _ = margin_legs(read_positions(client, rec), listing)
+        margin_now, _ = margin_legs(await read_positions(client, rec), listing)
         for sized, constraints in _sized_with_constraints(margin_now, listing, plan):
             index += 1
-            outcomes.append(_send(client, rec, sized, constraints, stamp, index, "margin"))
+            outcomes.append(await _send(client, rec, sized, constraints, stamp, index, "margin"))
 
-        _read_for_the_record("what the closes left behind", lambda: read_positions(client, rec))
+        await _read_for_the_record("what the closes left behind", lambda: read_positions(client, rec))
         for pass_name in ("spot-1", "spot-2"):
-            legs, _ = spot_legs(read_balances(client, rec), listing)
+            legs, _ = spot_legs(await read_balances(client, rec), listing)
             for sized, constraints in _sized_with_constraints(legs, listing, plan):
                 index += 1
-                outcomes.append(_send(client, rec, sized, constraints, stamp, index, pass_name))
+                outcomes.append(await _send(client, rec, sized, constraints, stamp, index, pass_name))
 
-        final = read_snapshot(client, rec)
+        final = await read_snapshot(client, rec)
     except FlattenUnreachable as exc:
         post_write_failure = str(exc)
         logger.error("a read after the first write failed: %s", exc)
@@ -1149,7 +1167,7 @@ class _Echo:
             logger.error("a line for the operator could not be written (%s): %s", exc, message)
 
 
-def run_flatten(
+async def run_flatten(
     client: Any,
     *,
     state_dir,
@@ -1209,9 +1227,9 @@ def run_flatten(
     record["venue_status"] = {"status": status.status, "ok": status.ok}
 
     try:
-        snapshot = read_snapshot(client, rec)
-        listing = read_listing(client, rec)
-        plan = build_plan(client, rec, snapshot, listing)
+        snapshot = await read_snapshot(client, rec)
+        listing = await read_listing(client, rec)
+        plan = await build_plan(client, rec, snapshot, listing)
     except FlattenUnreachable as exc:
         record["error"] = str(exc)
         return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), say)
@@ -1242,7 +1260,7 @@ def run_flatten(
         return _finish(1, "the confirmation did not match -- nothing was sent")
     record["confirm"] = "matched"
 
-    result = sweep(client, rec, plan, listing, stamp=stamp)
+    result = await sweep(client, rec, plan, listing, stamp=stamp)
     # `result.final`, never `snapshot`: the pre-sweep one is the witness this sweep has just acted
     # on, and judged against it every position the closers cleared reads as a residual while an
     # order that outlived the cancel goes unnamed.
