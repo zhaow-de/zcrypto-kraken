@@ -40,7 +40,8 @@ Every task's requirements implicitly include this section. Read all of it — ta
 
 ### Verification scope
 
-- Run the tests the diff can reach: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py -q`. The full suite is CI's; do not run it locally.
+- Run the tests the diff can reach: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py -q`. The full suite is CI's; do not run it locally.
+- `tests/test_nautilus_interface_pin.py::test_the_pin_covers_every_nautilus_name_cli_imports` walks `cli/**/*.py` with `ast` and fails on any `from nautilus_trader… import X` absent from `PINNED_SYMBOLS`. **Every task that adds a nautilus import widens that list in the same commit** — Task 1 for the `nautilus_trader.model` names, Task 9 for `KrakenSpotHttpClient`. It is not in any other task's verification command, so an unpinned import surfaces first in CI, after the branch was reported finished.
 - `tests/test_ops_daily.py` extracts every backticked and fenced command from `infra/runbooks/*.md` and classifies it. **`zcrypto-flatten` must never classify AUTONOMOUS.** If a runbook edit turns that file red, never fix it by widening the classifier's allowlist for this command.
 - No host-touching step (ssh, sudo, ansible, vault) appears anywhere in this plan. Every task runs entirely in the repo. The converge that puts the wrapper on the engine host and the live read-only dry-run through it are attended human steps, registered in the topic at closeout and out of scope here.
 
@@ -102,8 +103,9 @@ ______________________________________________________________________
 | `cli/engine/flatten.py` | Create. The whole button: read layer, leg enumeration, sizing, gates, confirm, write sequence, exit-code derivation, journal. Kept as one module a reviewer can hold at once; it shares no code path with `cli/engine/executor.py` by design. |
 | `cli/engine/command.py` | Modify. Add the `flatten` sub-command on `engine_app`: credentials, lazy import of `cli.engine.flatten`, `typer.Exit(code)`. |
 | `tests/test_engine_flatten.py` | Create. The fake-client suite: every fixture spec `00106` D8.1 names. |
-| `tests/test_engine_flatten_wrapper.py` | Create. Renders the wrapper template and executes it against fake `docker`/`systemctl`/`id`/`chown` on `PATH`. |
+| `tests/test_engine_flatten_wrapper.py` | Create. Renders the wrapper template and executes it against fake `docker`/`systemctl`/`id`/`chown`/`sleep` on `PATH`. |
 | `tests/test_engine_executor.py` | Modify. Widen `_VENUE_MUTATING_NAMES` and its allowlist. |
+| `tests/test_nautilus_interface_pin.py` | Modify. `PINNED_SYMBOLS` gains the three nautilus names this branch newly imports under `cli/`. |
 | `tests/test_ops_daily.py` | Modify. Add `zcrypto-flatten` to `_DESTRUCTIVE`. |
 | `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2` | Create. The host wrapper. |
 | `infra/ansible/roles/engine/tasks/main.yml` | Modify. One template task installing the wrapper. |
@@ -120,6 +122,7 @@ ______________________________________________________________________
 **Files:**
 
 - Create: `cli/engine/flatten.py`
+- Modify: `tests/test_nautilus_interface_pin.py` (`PINNED_SYMBOLS`)
 - Test: `tests/test_engine_flatten.py`
 
 **Interfaces:**
@@ -306,7 +309,9 @@ def test_the_listing_is_keyed_by_symbol_and_a_missing_constraint_aborts_the_pair
 
     with pytest.raises(flatten.FlattenUnreachable) as exc:
         flatten.constraints_for("ADA/EUR", listing)
-    assert "lot_step" in str(exc.value)
+    # The venue's own field name: an absent field is caught by `_required`, which never sees the
+    # friendly label `_as_float` would have used.
+    assert "size_increment" in str(exc.value)
 
 
 def test_an_empty_listing_aborts():
@@ -331,9 +336,10 @@ def test_positions_are_read_by_named_fields_and_a_missing_one_aborts():
 
 
 def test_the_position_read_is_scoped_to_margin_with_spot_reports_off():
-    """Under the MARGIN spot account type a SPOT buy opens an OpenPositions row
-    (docs/reference/adapter-verification/2.0.0rc4.dev20260825.md observation 3), so the parameters
-    that keep spot holdings out of this read are asserted, not assumed."""
+    """The three parameters that scope this read are asserted rather than assumed: MARGIN, spot
+    position reports off, and the euro quote. Whether they actually keep a spot holding out of the
+    report is a live property no fake can show; spec 00106 D8.2's read-only dry-run establishes
+    that, and until it runs the parameters are all that is pinned here."""
     client = FakeClient(positions=[[]])
     flatten.read_positions(client, flatten.Recorder())
     _, params = client.calls[0]
@@ -695,15 +701,24 @@ def step_precision(step: float) -> int:
     return max(0, -Decimal(str(step)).as_tuple().exponent)
 ```
 
+In the **same** step, pin the two nautilus names this module's import adds that `PINNED_SYMBOLS` does not already carry. In `tests/test_nautilus_interface_pin.py`, insert into `PINNED_SYMBOLS` in the list's existing alphabetical order — after `("nautilus_trader.model", "OrderStatus")` and before `("nautilus_trader.model", "StrategyId")`:
+
+```python
+    ("nautilus_trader.model", "OrderType"),
+    ("nautilus_trader.model", "Quantity"),
+```
+
+The other five names in the import (`AccountId`, `AccountType`, `ClientOrderId`, `OrderSide`, `TimeInForce`) are pinned already. Without these two, `test_the_pin_covers_every_nautilus_name_cli_imports` goes red the moment `cli/engine/flatten.py` lands.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `uv run pytest tests/test_engine_flatten.py -q`
+Run: `uv run pytest tests/test_engine_flatten.py tests/test_nautilus_interface_pin.py -q`
 Expected: PASS, all tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add cli/engine/flatten.py tests/test_engine_flatten.py
+git add cli/engine/flatten.py tests/test_engine_flatten.py tests/test_nautilus_interface_pin.py
 git commit -m "feat(engine): the flatten read layer -- named fields, and an abort where a shape changed"
 ```
 
@@ -820,7 +835,7 @@ def test_an_unresolvable_code_is_reported_in_the_same_class_never_ignored():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/test_engine_flatten.py -q -k "leg or pair or balance or side"`
+Run: `uv run pytest tests/test_engine_flatten.py -q -k "row or leg or pair or balance or side or code"`
 Expected: FAIL with `AttributeError: module 'cli.engine.flatten' has no attribute 'margin_legs'`.
 
 - [ ] **Step 3: Implement**
@@ -1099,7 +1114,7 @@ def test_the_send_decision_and_the_residual_verdict_cannot_disagree():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/test_engine_flatten.py -q -k "costmin or dust or residual or size_leg or margin_leg or floors"`
+Run: `uv run pytest tests/test_engine_flatten.py -q -k "costmin or ordermin or dust or residual or floor or leg"`
 Expected: FAIL — `module 'cli.engine.flatten' has no attribute 'costmin_for'`.
 
 - [ ] **Step 3: Implement**
@@ -1348,7 +1363,7 @@ def test_the_rendered_plan_prints_no_cross_currency_total():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/test_engine_flatten.py -q -k "snapshot or plan or book"`
+Run: `uv run pytest tests/test_engine_flatten.py -q -k "snapshot or plan or book or prices_off"`
 Expected: FAIL — `module 'cli.engine.flatten' has no attribute 'read_snapshot'`.
 
 - [ ] **Step 3: Implement**
@@ -1654,7 +1669,7 @@ def test_the_terminal_check_answers_false_with_no_controlling_terminal(tmp_path)
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/test_engine_flatten.py -q -k "kill_file or venue or confirm or terminal or prompt"`
+Run: `uv run pytest tests/test_engine_flatten.py -q -k "kill_file or venue or confirm or terminal or prompt or exact_word"`
 Expected: FAIL — `module 'cli.engine.flatten' has no attribute 'check_kill_file'`.
 
 - [ ] **Step 3: Implement**
@@ -2269,6 +2284,30 @@ def test_a_residual_position_after_the_closes_exits_two(tmp_path):
     assert client.submitted != []
 
 
+def test_a_fill_during_the_confirm_leaves_its_residual_in_the_final_snapshot_and_exits_two(tmp_path):
+    """The close is sized from the post-cancel read, and what that read shows is what gets closed --
+    but the account still has to be JUDGED afterwards, so a position the sweep could not finish
+    reads 2 rather than flat."""
+    _armed(tmp_path)
+    grown = [_Position("BTC/EUR", "LONG", 0.9)]
+    client = _flat_client(positions=[[_Position("BTC/EUR", "LONG", 0.5)], grown, grown, grown])
+    assert _run(client, tmp_path) == 2
+    assert client.submitted[0]["quantity"] == 0.9
+
+
+def test_a_broken_shape_on_the_post_cancel_re_read_exits_two_with_no_order_sent(tmp_path):
+    """The first-write boundary is the cancel: past it, neither 0 nor 3 is a claim this run can
+    make. `test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order` pins the same
+    fixture at sweep level; this one pins the code it composes to."""
+    _armed(tmp_path)
+    broken = _Position("BTC/EUR", "LONG", 0.5)
+    del broken.quantity
+    client = _flat_client(positions=[[_Position("BTC/EUR", "LONG", 0.5)], [broken]])
+    assert _run(client, tmp_path) == 2
+    assert "cancel_all_orders" in names(client)
+    assert client.submitted == []
+
+
 def test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two(tmp_path):
     """The engine's own machine produces sub-ordermin remainders by design, and a remainder left
     open is exposure -- so it is sent, and only Kraken's own settle-position can clear what the
@@ -2387,7 +2426,7 @@ def test_the_journal_filename_needs_no_shell_quoting(tmp_path):
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/test_engine_flatten.py -q -k "run or journal or exits or refusal"`
+Run: `uv run pytest tests/test_engine_flatten.py -q -k "run or journal or exits or refusal or sized_and_sent"`
 Expected: FAIL — `module 'cli.engine.flatten' has no attribute 'run_flatten'`.
 
 - [ ] **Step 3: Implement**
@@ -2603,8 +2642,9 @@ ______________________________________________________________________
 
 **Files:**
 
-- Modify: `cli/engine/command.py` (append a new command beside `exec-status`, near the end of the file)
+- Modify: `cli/engine/command.py` (a new `flatten` command on `engine_app`, placed immediately after `exec_status` and its `_echo_gate_verdict` helper — other commands follow it in the file; the position is convention, nothing depends on it)
 - Modify: `README.md` (the `zcrypto engine` subcommand table, after the `exec-status` row)
+- Modify: `tests/test_nautilus_interface_pin.py` (`PINNED_SYMBOLS`)
 - Test: `tests/test_engine_flatten.py`
 
 **Interfaces:**
@@ -2655,7 +2695,7 @@ def test_the_command_never_names_a_credential_value(monkeypatch, tmp_path):
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/test_engine_flatten.py -q -k "subcommand or state_dir_is_required or credentials"`
+Run: `uv run pytest tests/test_engine_flatten.py -q -k "subcommand or state_dir_is_required or credential"`
 Expected: FAIL — `zcrypto engine flatten --help` exits non-zero because no such command exists.
 
 - [ ] **Step 3: Implement**
@@ -2711,6 +2751,12 @@ _API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 _API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 ```
 
+And pin the adapter name this command newly imports under `cli/`. In `tests/test_nautilus_interface_pin.py`, insert into `PINNED_SYMBOLS` in the list's existing alphabetical order — after `("nautilus_trader.adapters.kraken", "KrakenProductType")`:
+
+```python
+    ("nautilus_trader.adapters.kraken", "KrakenSpotHttpClient"),
+```
+
 - [ ] **Step 4: Update the README in the same change**
 
 In `README.md`'s `zcrypto engine` subcommand table, add this row directly below the `exec-status` row (note the escaped pipes inside the code span):
@@ -2721,13 +2767,13 @@ In `README.md`'s `zcrypto engine` subcommand table, add this row directly below 
 
 - [ ] **Step 5: Run the tests**
 
-Run: `uv run pytest tests/test_engine_flatten.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py -q`
+Run: `uv run pytest tests/test_engine_flatten.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py -q`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add cli/engine/command.py README.md tests/test_engine_flatten.py
+git add cli/engine/command.py README.md tests/test_engine_flatten.py tests/test_nautilus_interface_pin.py
 git commit -m "feat(engine): register zcrypto engine flatten and document it"
 ```
 
@@ -2800,7 +2846,10 @@ def _render(**overrides) -> str:
 
 def _harness(tmp_path, *, state_dir=None, unit_active_calls=0):
     """A bin/ of fakes on PATH. `systemctl is-active` succeeds for the first `unit_active_calls`
-    probes, so a unit that never goes inactive can be modelled."""
+    probes, so a unit that never goes inactive can be modelled.
+
+    `sleep` is faked to a no-op: the wrapper's stop-wait polls once a second for its whole bound, and
+    the property under test is the refusal, never the wall clock spent reaching it."""
     state = state_dir or (tmp_path / "state")
     (state / "exec").mkdir(parents=True, exist_ok=True)
     bin_dir = tmp_path / "bin"
@@ -2809,6 +2858,7 @@ def _harness(tmp_path, *, state_dir=None, unit_active_calls=0):
     counter = tmp_path / "is-active-count"
 
     (bin_dir / "id").write_text('#!/bin/sh\necho 0\n')
+    (bin_dir / "sleep").write_text("#!/bin/sh\nexit 0\n")
     (bin_dir / "chown").write_text(_FAKE)
     (bin_dir / "docker").write_text(_FAKE)
     (bin_dir / "systemctl").write_text(
@@ -2823,7 +2873,7 @@ def _harness(tmp_path, *, state_dir=None, unit_active_calls=0):
         "fi\n"
         "exit 0\n"
     )
-    for name in ("id", "chown", "docker", "systemctl"):
+    for name in ("id", "sleep", "chown", "docker", "systemctl"):
         p = bin_dir / name
         p.chmod(p.stat().st_mode | stat.S_IXUSR)
 
@@ -2849,24 +2899,39 @@ def _log(log: Path) -> list[str]:
     return log.read_text().splitlines() if log.exists() else []
 
 
-def test_the_rendered_invocation_overrides_the_image_entrypoint_before_the_image():
+def _docker_argv(log: Path) -> list[str]:
+    """The argv the fake `docker` was actually invoked with. Every assertion about what the container
+    is told to run reads THIS and never the rendered text: a value the wrapper holds in a shell
+    variable is not a token of the render, so a text assertion hunting for one silently pins
+    nothing."""
+    (line,) = [entry for entry in _log(log) if "docker" in entry]
+    return line.split()
+
+
+def test_the_rendered_invocation_overrides_the_image_entrypoint_before_the_image(tmp_path):
     """The image's own ENTRYPOINT is the capture daemon's shell script. Without the override the
     words `engine flatten` are appended to THAT, and the container starts capture on a host whose
     engine was just stopped with positions open."""
-    argv = _render().split()
+    script, _state, log, env = _harness(tmp_path)
+    assert _run(script, env).returncode == 0
+    argv = _docker_argv(log)
+    image = f"{CONTEXT['engine_image']}@{DIGEST}"
     assert "--entrypoint" in argv
     assert argv[argv.index("--entrypoint") + 1] == "zcrypto"
-    image = f"{CONTEXT['engine_image']}@{DIGEST}"
     assert image in argv
     assert argv.index("--entrypoint") < argv.index(image)
     assert argv[argv.index(image) + 1 : argv.index(image) + 3] == ["engine", "flatten"]
 
 
-def test_the_container_runs_as_the_engine_account_and_names_the_state_dir():
-    rendered = _render()
-    assert '--user "998:998"' in rendered or "--user 998:998" in rendered
-    assert "--state-dir" in rendered
-    assert "/var/lib/zcrypto-engine" in rendered
+def test_the_container_runs_as_the_engine_account_and_names_the_state_dir(tmp_path):
+    """`--user` is what keeps the journal out of root's ownership inside the engine's own control
+    directory, and `--state-dir` is what keeps the button off a config mount."""
+    script, state, log, env = _harness(tmp_path)
+    assert _run(script, env).returncode == 0
+    argv = _docker_argv(log)
+    assert argv[argv.index("--user") + 1] == "998:998"
+    assert argv[argv.index("--state-dir") + 1] == str(state)
+    assert f"{state}:{state}" in argv  # mounted at the path it is named at
 
 
 def test_the_default_invocation_writes_no_kill_file_stops_nothing_and_passes_no_execute(tmp_path):
@@ -3097,7 +3162,9 @@ And add `"zcrypto-flatten"` to the `_DESTRUCTIVE` tuple, with the reason on the 
 - [ ] **Step 2: Run the test**
 
 Run: `uv run pytest tests/test_ops_daily.py -q`
-Expected: PASS — `zcrypto-flatten` is not an enumerated command head, so it already classifies as prepared. If `test_most_read_only_diagnostics_are_autonomous_on_ops` goes red after the runbook edit below, **do not widen the classifier's allowlist for this command**; report it instead.
+Expected: PASS — `zcrypto-flatten` is not an enumerated command head, so it already classifies as prepared.
+
+The runbook edit below cannot move `test_most_read_only_diagnostics_are_autonomous_on_ops`: `_runbook_commands()` keeps only spans whose first word is one of its enumerated heads, so prose spans such as `--execute` or a journal path are never collected at all, and the two spans it does collect (`sudo zcrypto-flatten`, `sudo zcrypto-flatten --execute`) carry the `zcrypto-flatten` token that Step 1 just added to `_DESTRUCTIVE` — which puts them outside that test's denominator entirely. If it goes red anyway, something other than this section moved: **never widen the classifier's allowlist for `zcrypto-flatten`** — it is a destructive command, not a read head — and never narrow the extraction, which games the floor by shrinking its denominator.
 
 - [ ] **Step 3: Write the runbook section**
 
@@ -3181,6 +3248,29 @@ In `infra/runbooks/README.md`, in the `### [engine-procedures.md]` block, append
 Run: `uv run pytest tests/test_ops_daily.py tests/test_infra_alert_rules.py tests/test_code_prose_citations.py -q`
 Expected: PASS. `test_every_runbook_anchor_is_defined_in_exactly_one_file` covers the new anchor.
 
+Then prove the new pin actually bites, since it is green from birth: construct the defect it names — an enumerated read shape that admits the wrapper — and watch both it and the corpus guard trip.
+
+```bash
+python - <<'PY'
+import pathlib
+path = pathlib.Path("infra/scripts/ops_daily.py")
+text = path.read_text()
+anchor = "_READ_SHAPES = (\n"
+assert anchor in text, "the shape table moved -- find it before trusting this probe"
+path.write_text(text.replace(anchor, anchor + '    _Shape(("zcrypto-flatten",), {"--execute": None}),\n', 1))
+PY
+uv run pytest tests/test_ops_daily.py -q -k "red_button or destructive_token"
+```
+
+Expected: FAIL, both `test_the_red_button_is_never_autonomous` and `test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous` red — the first because the button now matches a read shape, the second because the runbook span carrying the token now classifies autonomous. A pass here means neither guard reads the classifier and the task is not done.
+
+```bash
+git checkout -- infra/scripts/ops_daily.py
+uv run pytest tests/test_ops_daily.py -q -k "red_button or destructive_token"
+```
+
+Expected: PASS again, and `git status --porcelain` shows only this task's own edits.
+
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -3196,7 +3286,7 @@ ______________________________________________________________________
 
 Every probe below runs from the repo root with a **clean worktree** (`mutate-probe.sh` refuses a dirty one, exit 3). **Never pass `--sandbox`** — it refuses pytest. A `KILLED` verdict is what each probe must return; a `SURVIVED` verdict means the guard is blind to the defect it names and the task is not done until a test that bites is added and the probe re-run.
 
-Each probe's `--control` renames the symbol under proof so the probe fails outright; the harness scores nothing until that control has been seen to fail.
+Each probe's `--control` breaks the thing under proof outright — usually by renaming its symbol, and where the target is a shell template by removing the flag or the exit status the test actually reads — so the probe fails; the harness scores nothing until that control has been seen to fail (`mutate-probe.sh` exits 5 otherwise).
 
 - [ ] **Step 1: Confirm the tree is clean**
 
@@ -3244,7 +3334,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
 
 # The image entrypoint override is really required, and really before the image.
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2 \
-  --control 's|^  --entrypoint zcrypto \\\\|  --entrypoint zcrypto|' \
+  --control 's|^  --entrypoint zcrypto \\$|  --env ENTRYPOINT_OVERRIDE_REMOVED=1 \\|' \
   --mutation 's|--entrypoint zcrypto|--entrypoint sh|' \
   -- uv run pytest tests/test_engine_flatten_wrapper.py::test_the_rendered_invocation_overrides_the_image_entrypoint_before_the_image -q
 
@@ -3255,19 +3345,22 @@ infra/scripts/mutate-probe.sh --file infra/ansible/roles/engine/templates/zcrypt
   -- uv run pytest tests/test_engine_flatten_wrapper.py::test_execute_writes_the_kill_file_before_it_stops_the_unit -q
 
 # The still-active refusal really refuses.
+# The control turns both indented refusals into a success, so the test's `returncode == 1` fails —
+# a shell-portable break, unlike disabling `set -eu`, whose fatality on a bad option is dash's
+# behaviour and not something a test may rely on.
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2 \
-  --control 's/^set -eu/set -eu_DISABLED/' \
+  --control 's/^    exit 1$/    exit 0/' \
   --mutation 's/^  if systemctl is-active --quiet "\$UNIT"; then$/  if false; then/' \
   -- uv run pytest tests/test_engine_flatten_wrapper.py::test_execute_refuses_to_start_the_container_while_the_unit_is_still_active -q
 
 # The widened structural guard really names the account-wide cancel.
 infra/scripts/mutate-probe.sh --file tests/test_engine_executor.py \
-  --control 's/^_VENUE_MUTATING_NAMES = .*/_VENUE_MUTATING_NAMES = ()/' \
+  --control 's/^_VENUE_MUTATING_MODULES = .*/_VENUE_MUTATING_MODULES = frozenset()/' \
   --mutation 's/, ".cancel_all_orders"//' \
   -- uv run pytest tests/test_engine_executor.py::test_the_venue_mutating_names_have_exactly_one_module -q
 ```
 
-For the last probe the mutation removes the name and the probe would still pass (no module names it today), so it is expected to report **SURVIVED**. That is the correct reading and the reason the guard was proven by construction in the earlier task instead: record the SURVIVED verdict and the construction proof together rather than inventing a fixture. Every other probe must report `KILLED`.
+For the last probe the mutation removes the name and the probe would still pass (no module names it today), so it is expected to report **SURVIVED**. That is the correct reading and the reason the guard was proven by construction in the earlier task instead: record the SURVIVED verdict and the construction proof together rather than inventing a fixture. Its control empties the module allowlist instead of the name tuple — emptying the tuple leaves the walk with nothing to match, so the probe would PASS under the control and `mutate-probe.sh` would refuse to score anything (exit 5). Every other probe must report `KILLED`.
 
 - [ ] **Step 3: Adjust any sed that does not apply**
 
@@ -3336,7 +3429,7 @@ Name the CLASS of commits the entry covers ("every commit on this branch"), neve
 - [ ] **Step 5: Run the gate and the reachable tests**
 
 Run: `uv run pre-commit run -a` to green, re-staging what the hooks rewrite.
-Run: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py -q`
+Run: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py -q`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -3368,7 +3461,7 @@ Run at the end of writing this plan, against the spec with fresh eyes.
 | D5 the sequence and its ordering | Task 6 (gates), Task 7 (the write order test), Task 8 (`run_flatten`) |
 | D6 the four exit codes, and the journal's contents and path | Task 8 |
 | D7 the widened guard with its reason in the docstring; clean help | Task 5; Task 9 |
-| D8.1 every named unit fixture | Tasks 1–8 (each fixture appears in exactly one task) |
+| D8.1 every named unit fixture | Tasks 1–8. Two fixtures appear twice on purpose — the post-cancel broken re-read and the fill during the confirm are pinned at `sweep` level in Task 7 (what reached the venue) and end to end in Task 8 (the exit code D8.1 names for them) |
 | D8.2 the live read-only dry-run through the wrapper | Out of scope for the branch by construction (host-touching); registered in the topic at Task 13 and named as a live limit in the runbook at Task 11 |
 | D8.3 drill B as the end-to-end proof | Named as a live limit in the runbook at Task 11; the drill itself stays the topic's |
 | Runbook section, four parts, index row | Task 11 |
