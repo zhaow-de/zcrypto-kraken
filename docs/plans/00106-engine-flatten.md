@@ -41,7 +41,7 @@ Every task's requirements implicitly include this section. Read all of it — ta
 
 ### Verification scope
 
-- Run the tests the diff can reach: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_engine_command.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py tests/test_infra_shell_templates_render.py -q`. `tests/test_engine_command.py` is the existing suite over the module Task 9 modifies. The full suite is CI's; do not run it locally.
+- Run the tests the diff can reach: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_engine_command.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py tests/test_infra_shell_templates_render.py tests/test_panel_regenerate.py tests/test_infra_alert_rules.py -q`. `tests/test_engine_command.py` is the existing suite over the module Task 9 modifies. The full suite is CI's; do not run it locally.
 - `tests/test_infra_shell_templates_render.py` holds a two-way completeness registry over `roles/*/templates/*.sh.j2` **and** renders each one through Ansible's own `Templar` under the role's `defaults/main.yml` plus a fixed `RUNTIME_FACTS` dict. Creating the wrapper template turns two of its tests red until the task that creates it registers the name and adds the engine uid/gid — which the engine role sets by `set_fact` from `getent` and carries in no defaults file. It is the only test in the repo that renders a template under the role's OWN variables.
 - `tests/test_nautilus_interface_pin.py::test_the_pin_covers_every_nautilus_name_cli_imports` walks `cli/**/*.py` with `ast` and fails on any `from nautilus_trader… import X` absent from `PINNED_SYMBOLS`. **Every task that adds a nautilus import widens that list in the same commit** — Task 1 for the `nautilus_trader.model` names, Task 9 for `KrakenSpotHttpClient`. It is not in any other task's verification command, so an unpinned import surfaces first in CI, after the branch was reported finished.
 - `tests/test_ops_daily.py` extracts every backticked and fenced command from `infra/runbooks/*.md` and classifies it. **`zcrypto-flatten` must never classify AUTONOMOUS.** If a runbook edit turns that file red, never fix it by widening the classifier's allowlist for this command.
@@ -83,7 +83,7 @@ Every one of these is binding on the implementer. Do not re-litigate them mid-ta
 1. **One predicate serves both the dust classification and the final-snapshot judgement** (`classify_balance`). This makes it structurally impossible for the sweep to skip a balance as dust and then report the same balance as a residual.
 1. **Asset codes are resolved against the listing, never by string surgery alone.** A balance currency code is mapped to a base by trying, in order: the code itself; the explicit alias table `{"XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE"}` (the adapter's own `normalize_spot_symbol` renames, recorded in `cli/engine/instruments.py`'s docstring); the code with a single leading `X` or `Z` stripped — accepting the first that is a base the listing actually lists. A code that resolves to no listed base is treated exactly as an asset with neither pair: journaled `no_eur_or_btc_pair` with the unresolved code in a `note`, and read as a residual (exit 2). It is never silently ignored.
 1. **No settle wait.** The final snapshot is taken immediately after the last order. A fill that has not yet settled shows as a residual and the run exits 2 — the safe direction. The runbook tells the operator that an exit 2 whose journal shows every leg answered `ok` may be a settle race, and that the resolution is to run it again.
-1. **`--execute` writes a journal on every exit-1 refusal `run_flatten` itself makes** — the absent kill file, the missing terminal, a terminal that vanished between that check and the confirm's own read, the confirm that did not match: the refusal and its reason are the record. The one exit-1 refusal that writes none is the credentials refusal, which `cli/engine/command.py` raises through `_abort` before `run_flatten` is called and before a client exists — there is no run to record, and the refusal names the variables in the log instead. **The default dry run writes none**: it prints and stops, so an accidental invocation leaves no artifact.
+1. **`--execute` writes a journal on every exit-1 refusal `run_flatten` itself makes** — the absent kill file, the missing terminal, a terminal that vanished between that check and the confirm's own read, the confirm that did not match: the refusal and its reason are the record. The one exit-1 refusal that writes none is the credentials refusal, which `cli/engine/command.py` raises through `_abort` before `run_flatten` is called and before a client exists — there is no run to record, and the refusal names the variables in the log instead. **The default dry run writes none**: it prints and stops, so an accidental invocation leaves no artifact. Spec D2 carves that mode out of its own "journaled" rule: on a dry run's exit-3 abort the record is the abort message `_dry_exit` echoes, which names the field that could not be read, and nothing else.
 1. **The journal filename uses ISO-8601 basic format**: `flatten-<YYYYMMDD>T<HHMMSS>Z.json`. Shell-safe with no quoting, which matters at 03:00. The extended-format timestamp lives in the body. The writer opens with mode `"x"` and appends `-2`, `-3`, … on collision, so a second run in the same second cannot destroy the first run's incident record.
 1. **A journal that cannot be written never changes the exit code.** It is logged at CRITICAL and the payload is printed to stdout instead. The exit code describes the account, not our disk.
 1. **The controlling-terminal check runs immediately after the kill-file gate, before any venue read** (converge.sh's order). Refusing early costs nothing; the typed word is still read at the confirm point.
@@ -96,6 +96,7 @@ Every one of these is binding on the implementer. Do not re-litigate them mid-ta
 1. **The owed live read-only dry-run is registered in the topic only**, never in `docs/reference/adapter-verification/<version>.md`'s "Owed checks not discharged" section. `infra/runbooks/engine-procedures.md`'s `engine-probe-window` step 3 refuses to **arm** on an open item there, so putting a flatten check in that section would block arming on something unrelated to arming.
 1. **`_VENUE_MUTATING_NAMES` gains `.cancel_all_orders`** alongside allowlisting `flatten.py`. The guard's own docstring says a second module learning to cancel is the same escape; account-wide cancel is the most destructive cancel there is and belongs on the list it protects.
 1. **`"zcrypto-flatten"` joins `_DESTRUCTIVE` in `tests/test_ops_daily.py`**, so the unattended daily pass's classifier is asserted never to call the red button autonomous.
+1. **The cancel's failure is detected as a RAISE, and as nothing else.** Spec D6 row 2 also names `cancel_all_orders()` *answering* an error; what such an answer looks like is unmeasured until the live read-only dry run establishes the read shapes, and a guess at it would pin this run's verdict to message text nothing here has read — the same reason a rejection gains no label from its words. The answer itself is journaled verbatim among `record["requests"]`, and an order that outlived such a cancel is still read back by the final snapshot and still exits 2 — so the exit code is right either way, and `record["cancel"]["ok"]` is the only field an error answer can leave reading true.
 1. **A venue rejection carries the venue's own words, and the only label it can gain is one this code had already earned before sending.** Six LEG reason labels exist and no more: `dust_below_venue_minimum`, `unclosable_below_minimum`, `no_eur_or_btc_pair`, `no_reference_price`, `pair_not_listed`, `unrecognised_position_side` — each one a decision *this code* made before sending. `judge_final` additionally writes `resting_order`, `sellable_balance` and `unjudgeable: <exc>` into `record["residuals"]`: those describe the FINAL SNAPSHOT, not a pre-send decision, and the runbook's exit-2 list says so. What the venue answers is journaled verbatim as the leg's `error`; the spec's D3 says so, and inferring a label from a rejection message would pin the journal to message text nothing here has measured. The one label a rejection attaches is `unclosable_below_minimum`, and only on a margin leg whose sized quantity this code had already read as below the pair's `ordermin` (spec D4): it is the only thing that routes an operator to Kraken's own settle-position, which an unlabelled `EOrder:` string never does. The rejection text is never read to decide it — so the venue's verbatim words stay beside the label, and the runbook makes reading them the operator's first step, because a refusal for a passing reason wears the same label as a refusal about the size.
 
 ### Every path that can raise before the first write, and what it does
@@ -109,10 +110,10 @@ Every one of these is binding on the implementer. Do not re-litigate them mid-ta
 | `prompt(...)` — the terminal disappeared between the check and the read | refuse, exit 1 | Same class, caught so the operator gets the refusal and its journal rather than a traceback. |
 | `check_venue` — not `online` | abort, exit 3 | Account-wide and unconditional: no leg can be closed at a venue that is not accepting orders. |
 | `read_open_orders` / `read_positions` / `read_balances` / `read_listing` — transport failure, or `None`/empty where the answer is load-bearing | abort, exit 3 | Account-wide reads with no row to degrade: without them there is no plan to build and no exit code to derive. An empty listing in particular would make every pair read as pairless. |
-| the same four reads — an absent or unreadable **named field** on a row | abort, exit 3 | Spec D2's ruling, kept: an absent field is the venue's answer SHAPE, which is not one row's data. |
+| `read_positions` / `read_balances` — an absent or unreadable **named field** on a row | abort, exit 3 | Spec D2's ruling, kept: an absent field is the venue's answer SHAPE, which is not one row's data. The other two of the four require no per-row field: `read_open_orders` reads only the list's length, and `read_listing` skips a row carrying no `id` rather than letting one unrelated listing row abort the button (Global Constraint 1). |
 | `constraints_for` — a leg's own pair missing `min_quantity`/`size_increment`/`price_increment`, or publishing a non-positive step | abort, exit 3 | The same D2 ruling, and scoped by Global Constraint 1 to the pairs a leg actually routes to, so an unrelated listing row can never reach it. |
 | `margin_legs` — `position_side` present but none of LONG/SHORT/FLAT | **degrade**: the row goes to `unclosable` under `unrecognised_position_side` | The field is there and the row is nameable; only the VALUE is unusable. The installed build carries a fourth `PositionSide` member and which ones the adapter emits is unmeasured, so this is a live path, not a hypothetical (spec D3). |
-| `read_book_price` inside `build_plan` — the request errors or the required side is empty | **degrade**: that leg is priced `None` | Spec D2's one exception. A price is never an order price here — every order is MARKET — so the leg is sized on `ordermin`/`lot_step` alone and sent, and no other leg loses its cancel, close or sale (spec D3). |
+| `read_book_price` inside `build_plan` — the request errors, the required side is empty, or its top level answers a price at or below zero | **degrade**: that leg is priced `None` | Spec D2's one exception. A price is never an order price here — every order is MARKET — so the leg is sized on `ordermin`/`lot_step` alone and sent, and no other leg loses its cancel, close or sale (spec D3). The non-positive price is REFUSED rather than carried, and belongs to the same family as the rows above: a notional read as nothing is below every `costmin`, so `size_leg` would list every basket leg as `dust_below_venue_minimum` and `judge_final` — one predicate, same price — would agree, and the run would report the account flat at exit 0 with the whole spot book still held. |
 | `spot_legs`, `resolve_base`, `choose_pair`, `size_leg`, `classify_balance`, `render_plan` | cannot raise | Each pairless or unresolvable case is already routed to `unsellable`; `size_order`'s floors are total, and `_as_step` has already excluded the zero step that would divide. |
 
 ______________________________________________________________________
@@ -163,7 +164,7 @@ ______________________________________________________________________
   - `read_balances(client, rec) -> list[BalanceRow]`
   - `read_listing(client, rec) -> dict[str, Any]` — keyed `"<BASE>/<QUOTE>"` (e.g. `"BTC/EUR"`), value the raw instrument object.
   - `constraints_for(symbol: str, listing: dict[str, Any]) -> PairConstraints` — raises `FlattenUnreachable` on a required field that is absent, unreadable, or a non-positive quantization step.
-  - `read_book_price(client, rec, constraints, side) -> float` — `side` `"SELL"` takes the best bid, `"BUY"` the best ask.
+  - `read_book_price(client, rec, constraints, side) -> float` — `side` `"SELL"` takes the best bid, `"BUY"` the best ask; an empty side, and a top level answering a price at or below zero, both raise `FlattenUnreachable`, which `build_plan` degrades to an unpriced leg.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -426,6 +427,22 @@ def test_an_empty_book_side_aborts_rather_than_guessing_a_price():
     constraints = flatten.constraints_for("BTC/EUR", flatten.read_listing(client, rec))
     with pytest.raises(flatten.FlattenUnreachable):
         flatten.read_book_price(client, rec, constraints, "SELL")
+
+
+def test_a_non_positive_book_price_aborts_the_read_rather_than_pricing_a_leg_at_nothing():
+    """Zero passes every is-it-absent check and then makes every notional read as nothing: below
+    every `costmin`, so each basket leg would be listed as dust and not sent, and the one predicate
+    judging the final snapshot would agree the account is flat with the whole spot book still held.
+    The other side of the same book is the true negative -- a check refusing every price fails it."""
+    listing = {"BTC/EUR": _Instrument("BTC/EUR")}
+    book = _Book(bid=60000.0, ask=60010.0)
+    book.bids = [_Level(0.0)]
+    client = FakeClient(instruments=[listing["BTC/EUR"]], books={"BTC/EUR.KRAKEN": book})
+    rec = flatten.Recorder()
+    constraints = flatten.constraints_for("BTC/EUR", flatten.read_listing(client, rec))
+    with pytest.raises(flatten.FlattenUnreachable):
+        flatten.read_book_price(client, rec, constraints, "SELL")
+    assert flatten.read_book_price(client, rec, constraints, "BUY") == 60010.0
 
 
 def test_the_recorder_keeps_every_call_with_its_parameters_and_answer():
@@ -783,7 +800,15 @@ def read_book_price(client: Any, rec: Recorder, constraints: PairConstraints, si
     levels = list(levels)
     if not levels:
         raise FlattenUnreachable(f"{what}: the {'bid' if side == 'SELL' else 'ask'} side is empty")
-    return _as_float(_required(levels[0], "price", what), "price", what)
+    price = _as_float(_required(levels[0], "price", what), "price", what)
+    if price <= 0.0:
+        # `_required` rejects only `None` and `_as_float` only the non-finite, so a zero would flow
+        # into `plan.prices` and make every notional read as nothing -- below every `costmin`, so
+        # `size_leg` lists every basket leg as dust and `judge_final`, one predicate at the same
+        # price, agrees: the account reported flat at exit 0 with the whole spot book still held.
+        # Refused here, the leg degrades to unpriced, which is the direction that SELLS it.
+        raise FlattenUnreachable(f"{what}: the top of the {'bid' if side == 'SELL' else 'ask'} side is {price!r}, not a price")
+    return price
 
 
 def step_precision(step: float) -> int:
@@ -1507,6 +1532,22 @@ def test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg()
     assert [sized.leg.symbol for sized in plan.spot] == ["ADA/EUR"]
     assert plan.spot[0].send is True and plan.spot[0].reference_price is None
     assert [sized.leg.symbol for sized in plan.margin] == ["BTC/EUR"]
+
+
+def test_a_book_that_prices_at_zero_leaves_the_leg_unpriced_and_still_sold():
+    """The degradation is what makes refusing a zero price safe: the leg is sized on the quantity
+    floor alone and SENT, exactly as one whose book read raised. Carried instead, the zero would
+    make it dust -- not sent, not a residual, and the run would report flat while still holding
+    it."""
+    zero = _Book(0.4, 0.41)
+    zero.bids = [_Level(0.0)]
+    client = _client_with(balances=[_Balance("ADA", 1200.0)], symbols=("ADA/EUR",), books={"ADA/EUR.KRAKEN": zero})
+    rec = flatten.Recorder()
+    listing = flatten.read_listing(client, rec)
+    plan = flatten.build_plan(client, rec, flatten.read_snapshot(client, rec), listing)
+    assert plan.prices == {}
+    (sized,) = plan.spot
+    assert sized.send is True and sized.reference_price is None
 
 
 def test_a_missing_constraint_on_a_leg_s_pair_aborts_the_plan():
@@ -2515,6 +2556,9 @@ def test_every_refusal_exits_one_with_no_request_and_no_write(tmp_path, setup, r
     assert "submit_order" not in names(client)
     if setup == "kill-absent":
         assert client.calls == []  # refused before a single request
+    # Every exit-1 refusal `run_flatten` itself makes leaves the record: the refusal and its reason
+    # are what the artifact exists for, and an unrecorded refusal is one nobody can reconstruct.
+    assert len(list(_exec_dir(tmp_path).glob("flatten-*.json"))) == 1
 
 
 @pytest.mark.parametrize("execute", [True, False])
@@ -2863,10 +2907,13 @@ def exit_code(result: SweepResult, residuals: list) -> int:
 
 def journal_path(state_dir, stamp) -> Path:
     """ISO-8601 BASIC form: an operator types this path mid-incident, and the extended form's `:`
-    and `+` need shell quoting to do it. The body carries the extended timestamp."""
+    and `+` need shell quoting to do it. The body carries the extended timestamp.
+
+    The stamp is converted to UTC before it is formatted, so the `Z` in the name is never a claim
+    about a zone the caller happened to be in while `started_at` carried the truth."""
     from cli.engine.execgate import exec_dir
 
-    return exec_dir(state_dir) / f"flatten-{stamp:%Y%m%dT%H%M%SZ}.json"
+    return exec_dir(state_dir) / f"flatten-{stamp.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}.json"
 
 
 def write_journal(state_dir, stamp, payload: dict) -> Path | None:
@@ -2988,7 +3035,7 @@ def run_flatten(
         for row in residuals:
             echo(f"  {row}")
         if result.post_write_failure:
-            echo(f"  a read after the first order failed: {result.post_write_failure}")
+            echo(f"  a read after the cancel failed: {result.post_write_failure}")
         if not result.cancel_ok:
             echo(f"  the account-wide cancel failed: {result.cancel_error}")
     return _finish(code)
@@ -3148,7 +3195,7 @@ And pin the adapter name this command newly imports under `cli/`. In `tests/test
 In `README.md`'s `zcrypto engine` subcommand table, add this row directly below the `exec-status` row:
 
 ```markdown
-| `flatten --state-dir <PATH> [--execute]` | Close every open position and sell every non-EUR balance at **market**, account-wide — the emergency halt, run on the engine host through `sudo zcrypto-flatten` and never by hand. Without `--execute` it reads the account, prints every leg with its side, quantity, pair and estimate at the taker rate, lists every balance below the venue minimum and every balance no EUR or BTC pair can carry, and **sends nothing**. With `--execute` it refuses unless the engine's kill file is already present, refuses without a controlling terminal, prints the same plan, and reads a typed `FLATTEN` from the terminal (never from stdin; there is deliberately no flag that skips it) before it cancels every resting order account-wide, closes each margin position with a reduce-only market IOC order sized from a fresh post-cancel read, and sells each non-EUR balance at market in two passes so a BTC-quoted leg's proceeds are sold too. Dust — a balance below the venue's quantity or notional minimum — is listed and not sent, and does not make the account not-flat; a margin remainder is never dust and is sent regardless, since a remainder left open is exposure. Every request and every venue answer is written to `<state-dir>/exec/flatten-<timestamp>.json`, its own artifact. Exit **0** the final read shows no resting order, no open position and nothing sellable left; **1** refused with nothing sent (no kill file, no terminal, confirmation did not match, credentials absent); **2** something is still open, or the cancel failed, or a read after the first order failed — never 0 and never 3, because the account may already have moved; **3** the venue could not be reached or read before anything was sent. Re-runnable: a second run finds less to do and does it. |
+| `flatten --state-dir <PATH> [--execute]` | Close every open position and sell every non-EUR balance at **market**, account-wide — the emergency halt, run on the engine host through `sudo zcrypto-flatten` and never by hand. Without `--execute` it reads the account, prints every leg with its side, quantity, pair and estimate at the taker rate, lists every balance below the venue minimum and every balance no EUR or BTC pair can carry, and **sends nothing**. With `--execute` it refuses unless the engine's kill file is already present, refuses without a controlling terminal, prints the same plan, and reads a typed `FLATTEN` from the terminal (never from stdin; there is deliberately no flag that skips it) before it cancels every resting order account-wide, closes each margin position with a reduce-only market IOC order sized from a fresh post-cancel read, and sells each non-EUR balance at market in two passes so a BTC-quoted leg's proceeds are sold too. Dust — a balance below the venue's quantity or notional minimum — is listed and not sent, and does not make the account not-flat; a margin remainder is never dust and is sent regardless, since a remainder left open is exposure. Every request and every venue answer is written to `<state-dir>/exec/flatten-<timestamp>.json`, its own artifact. Exit **0** the final read shows no resting order, no open position and nothing sellable left; **1** refused with nothing sent (no kill file, no terminal, confirmation did not match, credentials absent); **2** something is still open, or the cancel failed, or a read after the cancel failed — never 0 and never 3, because the account may already have moved; **3** the venue could not be reached or read before anything was sent. Re-runnable: a second run finds less to do and does it. |
 ```
 
 - [ ] **Step 5: Run the tests**
@@ -3670,7 +3717,7 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 | -- | -- | -- |
 | **0** | the final read shows no resting order, no open position and nothing sellable left | go to step 4 |
 | **1** | refused with nothing sent — no kill file, no terminal, the word did not match, or no credentials in the container | nothing was sent; fix what it named and run it again |
-| **2** | something is still open, or the account-wide cancel failed, or a read after the first order failed | go to step 5 |
+| **2** | something is still open, or the account-wide cancel failed, or a read after the cancel failed | go to step 5 |
 | **3** | the venue could not be reached or read **before anything was sent** | nothing was sent; the account is as it was |
 
 4. **Confirm it by eye on Kraken.** Open orders and open positions on Kraken's own pages. The engine stays stopped and the kill file stays in place until you decide otherwise — that is what stops anything re-opening.
@@ -3681,11 +3728,11 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 - **A leg reads `unclosable_below_minimum`?** That label is what *this command* read before it sent anything: the position was smaller than the pair's minimum order size. It is never read off the venue's answer, so **read the `error` beside it in the record first.** No `error` at all means the quantity floored to nothing and there was never an order to send. An `error` naming a rate limit, a temporary lockout or any other passing condition is a refusal that may not be about the size at all — **run the command again**, and judge the label on what the second run answers. An `error` that keeps saying the order is too small is the real case: no order can clear that remainder; only Kraken's own settle-position action in the web UI can, and the adapter cannot send it.
 - **A balance reads `no_eur_or_btc_pair`?** The venue lists no EUR and no BTC pair for it, so this command cannot sell it. Sell it by hand on Kraken against whatever pair exists.
 - **A leg reads `dust_below_venue_minimum`?** Nothing is wrong. The venue would reject that order, and a balance that small is not exposure.
-- **A leg reads `no_reference_price`?** It surfaced after the plan was priced, and no book is read once the first order has gone out — so it was sent with no estimate behind it. The order still went out; the label asks nothing of you, and what the venue answered beside it is the answer.
+- **A leg reads `no_reference_price`?** No book price backed it: either it surfaced after the plan was priced — no book is read once the cancel has gone out — or its own book could not be read, or answered no usable price. It was sent anyway, sized on the venue's quantity floor alone. The order still went out; the label asks nothing of you, and what the venue answered beside it is the answer.
 - **A position reads `pair_not_listed`?** The venue's listing carries no pair for it, so nothing could be sized and no order was sent — everything else was still cancelled, closed and sold. Close that position by hand on Kraken.
 - **A position reads `unrecognised_position_side`?** The venue answered a side this command cannot derive a close from, so nothing was sent for that row — everything else was still cancelled, closed and sold. Read the row on Kraken's own positions page and close it there; the side it shows is the finding.
 - **A residual reads `resting_order`, `sellable_balance` or `unjudgeable: …`?** These describe the final read rather than a decision made before sending: an order still working, a balance still above the venue's minimums, and a balance whose pair's constraints could not be read back. The first two mean the sweep did not finish the job — run it again. The third means that balance could not be judged at all: check it by hand on Kraken.
-- **The record says a read after the first order failed?** The account may have moved and the run stopped where it stood. Read Kraken's own pages, then run it again.
+- **The record says a read after the cancel failed?** The account may have moved and the run stopped where it stood. Read Kraken's own pages, then run it again.
 
 6. **Do not clear the kill file to restart the engine until you have decided the reason no longer holds.** Clearing it is the same procedure as for any other latched halt, in [`engine.md`](engine.md#zcrypto-engine-exec-kill-tripped).
 
@@ -3766,6 +3813,13 @@ infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
   --control 's/^def build_plan/def build_plan_DISABLED/' \
   --mutation 's|^            logger.error("%s: no reference price.*$|            raise|' \
   -- uv run pytest tests/test_engine_flatten.py::test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg -q
+
+# A top-of-book price of zero is refused rather than carried. Carried, it makes every notional read
+# as nothing: every basket leg listed as dust, `judge_final` agreeing, exit 0 over a full spot book.
+infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
+  --control 's/^def read_book_price/def read_book_price_DISABLED/' \
+  --mutation 's/^    if price <= 0.0:$/    if False:/' \
+  -- uv run pytest tests/test_engine_flatten.py::test_a_non_positive_book_price_aborts_the_read_rather_than_pricing_a_leg_at_nothing -q
 
 # The cancel's own failure really reaches the exit code.
 infra/scripts/mutate-probe.sh --file cli/engine/flatten.py \
@@ -3922,7 +3976,7 @@ Name the CLASS of commits the entry covers ("every commit on this branch"), neve
 - [ ] **Step 5: Run the gate and the reachable tests**
 
 Run: `uv run pre-commit run -a` to green, re-staging what the hooks rewrite.
-Run: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_engine_command.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py tests/test_infra_shell_templates_render.py -q`
+Run: `uv run pytest tests/test_engine_flatten.py tests/test_engine_flatten_wrapper.py tests/test_engine_executor.py tests/test_engine_command.py tests/test_nautilus_interface_pin.py tests/test_cli.py tests/test_cli_help_hygiene.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_ops_daily.py tests/test_infra_shell_templates_render.py tests/test_panel_regenerate.py tests/test_infra_alert_rules.py -q`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
