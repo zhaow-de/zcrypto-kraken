@@ -356,7 +356,7 @@ Then confirm the next ping lands and the check reads green by value.
 
 ### Record
 
-**Established here:** the dead-man alone does catch this timer's death, so **no staleness rule is owed** — `ops-node.md`'s paragraph is re-tensed to say so, and records the cost the gap carries. **Anchor the bound on the check's `last_ping`, never the timer's `LastTriggerUSec`**: the unit pings on completion, so the trigger predicts the page early. `Persistent=true` also fires a catch-up the instant the timer is started, so `LastTriggerUSec` is not evidence of health — the returning ping is.
+**Established here:** the dead-man alone does catch this timer's death, so **no staleness rule is owed** — `ops-node.md`'s paragraph is re-tensed to say so, and records the cost the gap carries. **Anchor the bound on the check's `last_ping`, never the timer's `LastTriggerUSec`**: the unit pings on completion, so the trigger predicts the page early. **Restoring an `OnCalendar` timer fires a run immediately, and `Persistent=` does not predict it** — drill O's timer carries `Persistent=true` and drill C′'s carries `Persistent=no`, and both triggered on `systemctl start` with a ping seconds later. Whatever the mechanism, the operational rule is the same for either: `LastTriggerUSec` after a restore is never evidence of a healthy schedule, and the returning ping is.
 
 Entry `O`, with the measured time-to-page against the 3 h bound, or the non-page recorded as the finding. Either outcome — `pass` or `fail`, and never `blocked` — re-tenses the no-staleness-rule paragraph in [`ops-node.md#zcrypto-ops-panel-exit-nonzero`](ops-node.md#zcrypto-ops-panel-exit-nonzero) in the same change: it is written in the future tense about this run. On `blocked` the induction never landed, that future tense is still true, and re-tensing it would record an answer nobody obtained.
 
@@ -537,6 +537,7 @@ The proofs, and what each rests on:
 | O | timer death with no staleness rule | drilled 2026-08-31 — the dead-man alone catches it, so no rule is owed |
 | I | disk watermark breach to page | drilled 2026-08-31 — breach, withheld ping and page proven end to end on a throwaway check |
 | C | the ingest plane goes dark | drilled 2026-08-31, both halves — recovery per plane depends on the host's journal-writing workload |
+| C′ | Grafana Cloud dark | drilled 2026-08-31, **staleness route only** — the `/fail` route is a converge and remains unproven |
 | Q | does the page reach a phone | drilled 2026-08-31, machine half only on all three receivers; the device and mobile/DND readings remain owed |
 
 **Two scenarios from the original matrix are in no tier at all — they were considered and deliberately dropped.**
