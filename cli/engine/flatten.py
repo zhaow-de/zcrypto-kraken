@@ -326,3 +326,150 @@ def step_precision(step: float) -> int:
     `lot_decimals` alongside the step and the two agree across the basket, so deriving one from the
     other keeps a minted Quantity exactly representable at the floored value."""
     return max(0, -Decimal(str(step)).as_tuple().exponent)
+
+
+# Kraken's legacy codes, renamed by the adapter's own `normalize_spot_symbol` before an
+# InstrumentId is built (`cli/engine/instruments.py`'s module docstring). The `X`/`Z` strip below
+# handles the mechanical prefixes; these two renames it cannot derive.
+ASSET_ALIASES = {"XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE"}
+
+
+@dataclass(frozen=True)
+class Leg:
+    kind: str  # margin | spot
+    base: str
+    symbol: str
+    side: str  # BUY | SELL
+    quantity: float
+    account_type: str  # MARGIN | CASH
+    source: str  # what the quantity came from, for the journal
+
+
+def listed_bases(listing: dict[str, Any]) -> frozenset[str]:
+    return frozenset(symbol.split("/")[0] for symbol in listing)
+
+
+def resolve_base(code: str, bases: frozenset[str]) -> str | None:
+    """Map one balance currency code onto a base the listing actually lists. The LISTING is the
+    authority -- a spelling rule alone would invent a base the venue does not trade."""
+    upper = code.upper()
+    for candidate in (upper, ASSET_ALIASES.get(upper), upper[1:] if len(upper) > 3 and upper[0] in ("X", "Z") else None):
+        if candidate and candidate in bases:
+            return candidate
+    return None
+
+
+def choose_pair(base: str, listing: dict[str, Any]) -> str | None:
+    """EUR first, BTC second, nothing third. Read from the ONE listing taken at the snapshot, never
+    from a per-pair request that would error on an unknown pair."""
+    for quote in ("EUR", "BTC"):
+        symbol = f"{base}/{quote}"
+        if symbol in listing:
+            return symbol
+    return None
+
+
+def margin_legs(positions: list[PositionRow], listing: dict[str, Any]) -> tuple[list[Leg], list[dict]]:
+    """One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
+
+    A FLAT row is not a leg. Every other row this code cannot act on -- a side that is none of the
+    three (the installed `PositionSide` carries a fourth member and which ones the adapter emits is
+    unmeasured), a pair the listing does not carry -- is NAMED rather than raised on and never read
+    as flat: nothing can be sized for it, and one such row must not abort a button that has not yet
+    cancelled an order, closed another position or sold a single balance. `judge_final` reads both
+    classes back out of the final snapshot, so neither can leave the run reading 0.
+    """
+    sides = {"LONG": "SELL", "SHORT": "BUY"}
+    out = []
+    unclosable: list[dict] = []
+    for row in positions:
+        if row.side == "FLAT":
+            continue
+        side = sides.get(row.side)
+        if side is None:
+            unclosable.append(
+                {
+                    "symbol": row.symbol,
+                    "side": row.side,
+                    "quantity": row.quantity,
+                    "reason": "unrecognised_position_side",
+                    "note": "the venue answered a side this command cannot derive a close from",
+                }
+            )
+            continue
+        if row.symbol not in listing:
+            unclosable.append(
+                {
+                    "symbol": row.symbol,
+                    "side": row.side,
+                    "quantity": row.quantity,
+                    "reason": "pair_not_listed",
+                    "note": "the listing carries no such pair, so nothing can be sized against it",
+                }
+            )
+            continue
+        out.append(
+            Leg(
+                kind="margin",
+                base=row.symbol.split("/")[0],
+                symbol=row.symbol,
+                side=side,
+                quantity=row.quantity,
+                account_type="MARGIN",
+                source="position_status_report.quantity",
+            )
+        )
+    return out, unclosable
+
+
+def spot_legs(balances: list[BalanceRow], listing: dict[str, Any]) -> tuple[list[Leg], list[dict]]:
+    """One SELL leg per non-EUR free balance above zero, plus the balances no pair can carry.
+
+    `EUR_CODES` is imported rather than restated so the euro's two venue spellings have one home.
+    """
+    from cli.engine.instruments import EUR_CODES
+
+    bases = listed_bases(listing)
+    legs: list[Leg] = []
+    unsellable: list[dict] = []
+    for row in balances:
+        if row.code.upper() in EUR_CODES:
+            continue
+        if row.free <= 0.0:
+            continue
+        base = resolve_base(row.code, bases)
+        if base is None:
+            unsellable.append(
+                {
+                    "base": row.code,
+                    "code": row.code,
+                    "free": row.free,
+                    "reason": "no_eur_or_btc_pair",
+                    "note": "no listed base matched the code",
+                }
+            )
+            continue
+        symbol = choose_pair(base, listing)
+        if symbol is None:
+            unsellable.append(
+                {
+                    "base": base,
+                    "code": row.code,
+                    "free": row.free,
+                    "reason": "no_eur_or_btc_pair",
+                    "note": "the listing carries neither a EUR nor a BTC pair for it",
+                }
+            )
+            continue
+        legs.append(
+            Leg(
+                kind="spot",
+                base=base,
+                symbol=symbol,
+                side="SELL",
+                quantity=row.free,
+                account_type="CASH",
+                source="account_state.free",
+            )
+        )
+    return legs, unsellable

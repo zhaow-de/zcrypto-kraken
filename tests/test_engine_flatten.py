@@ -332,3 +332,139 @@ def test_a_huge_answer_is_truncated_in_the_journal_and_says_that_it_was():
     answer = rec.entries[0]["answer"]
     assert len(answer) < flatten._ANSWER_REPR_LIMIT * 2
     assert answer.endswith("chars total]")
+
+
+# --- leg enumeration ----------------------------------------------------------------------------
+
+
+def _listing(*symbols: str) -> dict[str, Any]:
+    return {s: _Instrument(s) for s in symbols}
+
+
+def test_a_long_row_becomes_a_sell_and_a_short_row_a_buy():
+    """The side comes from `position_side` and never from a sign: PositionStatusReport carries an
+    UNSIGNED quantity, so a sign-derived side would close in the wrong direction on a short."""
+    legs, unclosable = flatten.margin_legs(
+        [
+            flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "LONG", 0.5),
+            flatten.PositionRow("ETH/EUR", "ETH/EUR.KRAKEN", "SHORT", 2.0),
+        ],
+        _listing("BTC/EUR", "ETH/EUR"),
+    )
+    assert unclosable == []
+    assert [(leg.symbol, leg.side, leg.quantity) for leg in legs] == [("BTC/EUR", "SELL", 0.5), ("ETH/EUR", "BUY", 2.0)]
+    assert all(leg.account_type == "MARGIN" and leg.kind == "margin" for leg in legs)
+
+
+def test_a_flat_row_is_not_a_leg():
+    rows = [flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "FLAT", 0.0)]
+    assert flatten.margin_legs(rows, _listing("BTC/EUR")) == ([], [])
+
+
+def test_an_unrecognised_position_side_is_named_and_never_read_as_flat_or_aborted_on():
+    """Two failures at once are refused here. Reading an unknown side as 'nothing to do' would call
+    an open position flat; RAISING on it would abort the sweep before the cancel, costing every
+    other leg. The installed build's `PositionSide` carries a fourth member, `NO_POSITION_SIDE`,
+    and which members the Kraken adapter emits is unmeasured -- so the row is named and the rest of
+    the account is still flattened."""
+    legs, unclosable = flatten.margin_legs(
+        [
+            flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "NO_POSITION_SIDE", 1.0),
+            flatten.PositionRow("ETH/EUR", "ETH/EUR.KRAKEN", "SHORT", 2.0),
+        ],
+        _listing("BTC/EUR", "ETH/EUR"),
+    )
+    assert [leg.symbol for leg in legs] == ["ETH/EUR"]
+    assert unclosable == [
+        {
+            "symbol": "BTC/EUR",
+            "side": "NO_POSITION_SIDE",
+            "quantity": 1.0,
+            "reason": "unrecognised_position_side",
+            "note": "the venue answered a side this command cannot derive a close from",
+        }
+    ]
+
+
+def test_a_margin_row_on_a_pair_the_listing_does_not_carry_is_named_and_never_aborts():
+    """The pairless class the whole button turns on: aborting one row among many would cancel
+    nothing, close nothing and sell nothing, leaving the operator the entire account by hand."""
+    legs, unclosable = flatten.margin_legs(
+        [
+            flatten.PositionRow("GONE/EUR", "GONE/EUR.KRAKEN", "LONG", 1.0),
+            flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "SHORT", 0.5),
+        ],
+        _listing("BTC/EUR"),
+    )
+    assert [leg.symbol for leg in legs] == ["BTC/EUR"]
+    assert unclosable == [
+        {
+            "symbol": "GONE/EUR",
+            "side": "LONG",
+            "quantity": 1.0,
+            "reason": "pair_not_listed",
+            "note": "the listing carries no such pair, so nothing can be sized against it",
+        }
+    ]
+
+
+def test_euro_balances_in_either_spelling_are_not_legs():
+    legs, unsellable = flatten.spot_legs([flatten.BalanceRow("EUR", 100.0), flatten.BalanceRow("ZEUR", 50.0)], _listing("BTC/EUR"))
+    assert legs == [] and unsellable == []
+
+
+def test_a_zero_or_negative_balance_is_not_a_leg():
+    legs, unsellable = flatten.spot_legs(
+        [flatten.BalanceRow("ADA", 0.0), flatten.BalanceRow("DOT", -1.0)], _listing("ADA/EUR", "DOT/EUR")
+    )
+    assert legs == [] and unsellable == []
+
+
+def test_a_classic_asset_code_resolves_through_the_listing_not_through_string_surgery():
+    """`XXBT` is the venue's classic spelling of BTC; a sweep that failed to resolve it would leave
+    a real BTC balance unsold and call the account flat."""
+    legs, unsellable = flatten.spot_legs([flatten.BalanceRow("XXBT", 0.5)], _listing("BTC/EUR"))
+    assert unsellable == []
+    assert [(leg.base, leg.symbol, leg.side) for leg in legs] == [("BTC", "BTC/EUR", "SELL")]
+
+
+def test_an_x_prefixed_code_resolves_by_stripping_one_prefix_when_the_listing_lists_it():
+    legs, _ = flatten.spot_legs([flatten.BalanceRow("XXRP", 100.0)], _listing("XRP/EUR"))
+    assert [leg.symbol for leg in legs] == ["XRP/EUR"]
+
+
+def test_the_eur_pair_wins_over_the_btc_pair():
+    legs, _ = flatten.spot_legs([flatten.BalanceRow("ETH", 2.0)], _listing("ETH/EUR", "ETH/BTC"))
+    assert [leg.symbol for leg in legs] == ["ETH/EUR"]
+
+
+def test_an_asset_with_only_a_btc_pair_sells_against_btc():
+    legs, _ = flatten.spot_legs([flatten.BalanceRow("ETH", 2.0)], _listing("ETH/BTC"))
+    assert [leg.symbol for leg in legs] == ["ETH/BTC"]
+
+
+def test_an_asset_with_neither_pair_is_unsellable_and_never_silently_dropped():
+    legs, unsellable = flatten.spot_legs([flatten.BalanceRow("WEIRD", 3.0)], _listing("BTC/EUR"))
+    assert legs == []
+    assert unsellable == [
+        {"base": "WEIRD", "code": "WEIRD", "free": 3.0, "reason": "no_eur_or_btc_pair", "note": "no listed base matched the code"}
+    ]
+
+
+def test_an_unresolvable_code_is_reported_in_the_same_class_never_ignored():
+    """A code the listing cannot map is not evidence of nothing held -- it is a balance this
+    process could not route, and it reads as a residual exactly like a pairless one."""
+    _, unsellable = flatten.spot_legs([flatten.BalanceRow("ZZZQ", 1.0)], _listing("BTC/EUR"))
+    assert [u["reason"] for u in unsellable] == ["no_eur_or_btc_pair"]
+    assert "ZZZQ" in unsellable[0]["code"]
+
+
+def test_a_base_listed_only_against_a_third_quote_is_a_residual_not_a_leg():
+    """The listing knows the base, so `resolve_base` answers -- and `choose_pair` still finds no
+    route, because this command sells into EUR or BTC and nothing else. Read as a leg it would be
+    sized against a pair that does not exist; dropped silently it would leave the operator holding
+    it with the run reporting flat."""
+    legs, unsellable = flatten.spot_legs([flatten.BalanceRow("ADA", 5.0)], _listing("ADA/USD"))
+    assert legs == []
+    assert [(u["base"], u["code"], u["free"], u["reason"]) for u in unsellable] == [("ADA", "ADA", 5.0, "no_eur_or_btc_pair")]
+    assert unsellable[0]["note"] != "no listed base matched the code"
