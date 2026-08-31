@@ -542,6 +542,7 @@ The proofs, and what each rests on:
 | C | the ingest plane goes dark | drilled 2026-08-31, both halves — recovery per plane depends on the host's journal-writing workload |
 | N | NAS archive-pull stall | re-drilled 2026-08-31 on the post-`T0048` path — the dead-man catches it at ~2 h 31 m; four collateral pages, not three |
 | C′ | Grafana Cloud dark | drilled 2026-08-31, **staleness route only** — the `/fail` route is a converge and remains unproven |
+| R | the capture secondary's daemon stopped | drilled 2026-08-31 — the dead-man pages at 19 min 50 s and is the SOLE detector; the silence rules returned 0 rows throughout. **P is a different scenario on the same page and remains unproven** — its restore is a converge |
 | Q | does the page reach a phone | drilled 2026-08-31, machine half only on all three receivers; the device and mobile/DND readings remain owed |
 
 **Two scenarios from the original matrix are in no tier at all — they were considered and deliberately dropped.**
