@@ -617,3 +617,28 @@ def test_the_send_decision_and_the_residual_verdict_cannot_disagree():
         leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", free, "CASH", "account_state.free")
         sized = flatten.size_leg(leg, _ADA, 0.40)
         assert sized.send is (flatten.classify_balance(free, _ADA, 0.40) == "residual")
+
+
+def test_the_estimate_is_computed_at_the_tick_floored_price_never_the_raw_book_one():
+    """A book price is floored to the tick before anything reads it, so the printed estimate cannot
+    contradict the verdict printed beside it. 10 units at a raw 0.049 EUR is 0.49 EUR -- ABOVE the
+    0.45 EUR costmin -- while the tick-floored 0.04 makes it 0.40, which is what the dust verdict is
+    computed from. Printed raw, the operator reads `dust_below_venue_minimum` next to a notional
+    over the minimum it names."""
+    coarse_tick = flatten.PairConstraints("ADA/EUR", "ADA/EUR.KRAKEN", ordermin=1.0, lot_step=1.0, tick_size=0.01)
+    leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 10.0, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, coarse_tick, 0.049)
+    assert sized.reference_price == 0.04
+    assert sized.estimate == pytest.approx(0.40)
+    assert sized.reason == "dust_below_venue_minimum"
+    assert sized.estimate < flatten.costmin_for("ADA/EUR")
+
+
+def test_a_spot_quantity_is_floored_to_the_lot_step_before_it_is_sent():
+    """The order quantity is the floored one on the spot path too, not only the margin one: a free
+    balance carries more precision than the venue accepts, and flooring may only reduce it."""
+    leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.123456789, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, _ADA, 0.40)
+    assert sized.send is True
+    assert sized.qty == 1200.12345678
+    assert sized.qty < leg.quantity
