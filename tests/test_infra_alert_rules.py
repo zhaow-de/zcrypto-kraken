@@ -1212,11 +1212,18 @@ def _replay_dark_with_exposure(published, up_at, *, lookback, hold_for, span, a_
     `published` is the position gauge's samples as `(t, value)` -- the engine that publishes them is
     the one that goes dark, so after darkness there are none. `up_at(t)` returns 1, 0, or `None` for
     a series that is not there at all: the engine dying leaves `up` PRESENT at 0 (a static scrape
-    target is never removed), while the primary's Alloy going dark takes the series away."""
+    target is never removed), while the primary's Alloy going dark takes the series away.
+
+    Node A is modelled as what it says: `last_over_time` returns the LAST sample in the window, never
+    the largest, so a position closed before the engine went dark reads 0 here. Modelling it as a max
+    over the window makes `max_over_time` -- the wrong reach `alerts.yaml` names beside this rule --
+    indistinguishable from the real one, and the closed-then-dark history below is the fixture where
+    the two forms differ."""
 
     def a(t: int) -> float:
         window = lookback if a_form == "lookbacked" else _STALENESS
-        return max((abs(v) for at, v in published if t - window < at <= t), default=0.0)
+        inside = [v for at, v in published if t - window < at <= t]
+        return abs(inside[-1]) if inside else 0.0
 
     def b(t: int) -> float:
         u = up_at(t)
@@ -1241,20 +1248,29 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 
     The true positive is the event the rule exists for, and the page must outlast a full daily ops
     pass: it is still firing one evaluation before the lookback sheds the last position reading. The
-    two false positives are the discriminator -- a dark engine with nothing exposed is
-    `zcrypto-engine-cycle-stale`'s page, not this one, and a scraping engine with a position open is
-    a normal armed window."""
+    three false positives are the discriminator -- a dark engine with nothing exposed is
+    `zcrypto-engine-cycle-stale`'s page, not this one; a scraping engine with a position open is a
+    normal armed window; and a position CLOSED before the engine went dark is the one `last_over_time`
+    reads as 0 while `max_over_time` would keep paging on it for the rest of the day."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
     dark_at = 3600
+    closed_at = 1800
     span = dark_at + lookback + 2 * 3600
     open_then_dark = [(t, 0.5) for t in range(0, dark_at, _EVAL_INTERVAL)]
     flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
     open_throughout = [(t, 0.5) for t in range(0, span, _EVAL_INTERVAL)]
+    # The executor's fill hook calls `set_position` with the sum over `positions_open`, so a full
+    # close publishes an explicit 0 rather than stopping the series -- which is what makes this
+    # history a published 0 that `last_over_time` can read, and not an absence.
+    closed_then_dark = [(t, 0.5 if t < closed_at else 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
 
     def goes_dark(t):  # the container dies; the static target keeps publishing `up = 0`
         return 1 if t < dark_at else 0
+
+    def alloy_goes_dark(t):  # the plane goes dark; the series is REMOVED, not set to 0
+        return 1 if t < dark_at else None
 
     firing = _replay_dark_with_exposure(open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
     assert firing, "a position open at last report and no engine scrape does not page -- the rule cannot fire"
@@ -1274,6 +1290,18 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 
     quiet_scraping = _replay_dark_with_exposure(open_throughout, lambda t: 1, lookback=lookback, hold_for=hold_for, span=span)
     assert not quiet_scraping, f"a healthy engine holding a position pages: {sorted(quiet_scraping)[:3]}"
+
+    quiet_closed = _replay_dark_with_exposure(closed_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    assert not quiet_closed, (
+        f"a position CLOSED before the engine went dark still pages -- that is `max_over_time` behaviour, and it "
+        f"keeps this page up for the rest of the day over money that is not at risk: {sorted(quiet_closed)[:3]}"
+    )
+
+    # The SECOND darkness route, which the rule fires on deliberately: the primary's Alloy takes the
+    # series away and `or on() vector(0)` supplies the 0. Replayed because it is half of what this
+    # rule does and because control 2 below rests on the two routes reaching `$B < 1` differently.
+    alloy_route = _replay_dark_with_exposure(open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    assert alloy_route, "a position open with the primary's whole plane dark does not page -- the accepted double-page is gone"
 
     # The two controls the verdict rests on. Each replays the TRUE POSITIVE through a defective form
     # of one node and asserts it does not fire, so the replay is shown to move on each defect rather
@@ -1298,6 +1326,17 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     )
     assert not presence_counting, (
         f"a presence count fires on a dead exporter, so this replay is not proving the value read: {sorted(presence_counting)[:3]}"
+    )
+    # And that control's silence is a property of the EXPORTER route alone, not of the presence form:
+    # on the Alloy route the series really is gone, so the count falls through its own fallback and
+    # fires. Asserting it here is what makes the sentence above checkable -- a replay that modelled
+    # the dead exporter as an absent series would turn the control green for the wrong reason.
+    presence_on_alloy_route = _replay_dark_with_exposure(
+        open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, span=span, b_form="presence"
+    )
+    assert presence_on_alloy_route, (
+        "the presence form stays quiet even when the series is ABSENT, so this replay is not modelling the "
+        "`or on() vector(0)` fallback and control 2 proves nothing"
     )
 
 
