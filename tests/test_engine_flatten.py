@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import pty
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2153,13 +2154,23 @@ def test_a_terminal_that_dies_between_the_check_and_the_prompt_refuses_and_journ
 
 _runner = CliRunner()
 
+# `--help` renders through Rich, which UNDER COLOUR styles an option's leading `--` as its own span:
+# `\x1b[1;36m-\x1b[0m\x1b[1;36m-execute\x1b[0m`. The literal `--execute` is then not a substring of
+# the output at all. Colour is on in CI and off in a plain shell, which is the whole reason a green
+# local run and a red CI run disagreed here -- not width, and not a dependency version.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    return _ANSI.sub("", text)
+
 
 def test_the_subcommand_is_registered_and_its_help_says_what_pressing_it_does():
     result = _runner.invoke(app, ["engine", "flatten", "--help"])
     assert result.exit_code == 0
-    assert "--execute" in result.output
-    assert "--state-dir" in result.output
-    assert "market" in result.output
+    assert "--execute" in _plain(result.output)
+    assert "--state-dir" in _plain(result.output)
+    assert "market" in _plain(result.output)
 
 
 def test_the_help_gives_exit_one_the_same_words_the_module_contract_does():
@@ -2175,7 +2186,7 @@ def test_the_help_gives_exit_one_the_same_words_the_module_contract_does():
     assert result.exit_code == 0
     clause = "1 refused with nothing sent"
     assert clause in " ".join(flatten.run_flatten.__doc__.split())
-    assert clause in " ".join(result.output.split())
+    assert clause in " ".join(_plain(result.output).split())
 
 
 def test_the_state_dir_is_required_so_the_button_never_depends_on_a_config_mount():
