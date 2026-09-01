@@ -207,7 +207,7 @@ Sustained saturation, not a transient burst. Nothing is lost by load alone — t
 | `zcrypto-verified-replay.timer` | `05:23:00` | yes |
 | `zcrypto-grafana-watchdog.timer` | `*:0/5:41` | no |
 
-*The thread count is unverified.* The comment cites specs 00050 and 00054 for "24 threads"; no file in `infra/ansible/` records a CPU count — the figure is recorded in `docs/specs/00050-redundant-capture-design.md` and `docs/specs/00054-ops5-offload-design.md`. The threshold is 20 either way — but if you are about to reason about the ratio, run `nproc` on the host and use that.
+*The thread count is unverified.* The comment cites specs 00050 and 00054 for "24 threads"; no file in `infra/ansible/` records a CPU count for THIS host — the figure is recorded in `docs/specs/00050-redundant-capture-design.md` and `docs/specs/00054-ops5-offload-design.md`. The threshold is 20 either way — but if you are about to reason about the ratio, run `nproc` on the host and use that.
 
 **Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the six timers are `Persistent=true`, so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 

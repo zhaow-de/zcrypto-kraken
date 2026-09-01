@@ -1536,7 +1536,7 @@ rules:
       # RATE at which it needs healing is the only thing that reveals it.
       #
       # Reads `healable`, not `healed`: `healed_gap_seconds` counts minted repair only, so it reads 0
-      # wherever minting is off -- T0039's soak ran that way, `ops_reconcile_mint` is true today, and
+      # wherever minting is off -- T0039's soak ran that way and `ops_reconcile_mint` selects the mode, so
       # this signal must not depend on the mode. `healable` counts the
       # seconds the secondary WITNESSED and could cover, in both modes.
       #
@@ -2281,12 +2281,12 @@ rules:
       # The container selector is ENUMERATED, not host-wide, and the enumeration was measured rather
       # than guessed (`sum by (container) (count_over_time({host="ops"}[7d]))`): alloy, liquidations,
       # zcrypto-archive-pull, zcrypto-panel-materialize, zcrypto-verified-replay, zcrypto-verify-replay.
-      # `zcrypto-.*` rather than the four unit names so a fifth unit is watched the day its journal
-      # keep-regex admits it. The bound matters twice: a host-wide selector cannot say WHICH service
+      # `zcrypto-.*` rather than an enumerated unit list, so a new unit is watched the day the journal
+      # keep-regex admits it -- tape-bars arrived exactly that way. The bound matters twice: a host-wide selector cannot say WHICH service
       # errored, and under a storm it is a distinct-line cardinality hazard in Loki query cost as well
       # as in Slack message length. The cost is stated: a container outside this list ships errors
       # nothing watches -- but nothing ships from this host without an Alloy or compose change, and
-      # that change is where the list is extended. A 30d read shows several dead container labels
+      # that change is where the list is extended. A read over the full 14 d retained shows several dead container labels
       # (`alloy-alloy`, `zcrypto-ops-liquidations`, docker's random names) from the retired
       # docker-socket path; none has produced a line in 7d and the enumeration deliberately omits them.
       #
