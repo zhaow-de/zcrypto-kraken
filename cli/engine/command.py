@@ -1990,6 +1990,11 @@ def _intent_floor_check(index: int, intent, entry: dict) -> tuple[str, list[str]
     """
     refusals: list[str] = []
     head = f"  [{index}] {intent.symbol} {intent.side} {intent.action} {intent.mode}"
+    if intent.mode == "rest-hold":
+        # The two fields that decide whether this order can FILL, in words, on the only surface an
+        # operator reads before placing it. `offset_pct` is a percent: `0.05` here is fifteen euro
+        # off a thirty-thousand euro bid, and the whole point of printing it is that it looks wrong.
+        head += f" ({intent.offset_pct:g}% passive of the touch, holding {intent.hold_minutes} min)"
     if intent.notional_eur is not None:
         quote = entry["costmin_quote"]
         if quote != "EUR":

@@ -20,7 +20,7 @@ PLAN_TTL = timedelta(minutes=60)
 
 _SIDES = frozenset({"buy", "sell"})
 _ACTIONS = frozenset({"open", "close"})
-_MODES = frozenset({"execute", "rest-cancel"})
+MODES = frozenset({"execute", "rest-cancel", "rest-hold"})
 _MIN_LEVERAGE = 2
 _MAX_LEVERAGE = 10
 # Exact legal key sets, checked before any field-specific validation (cli/config.py's own
@@ -29,7 +29,8 @@ _MAX_LEVERAGE = 10
 # catch it, so it would otherwise parse cleanly as a spot intent with the operator's intended
 # leverage silently dropped. Owner ruling: refuse the whole plan on any unrecognized key instead.
 _PLAN_KEYS = frozenset({"plan_id", "created_at", "intents"})
-_INTENT_KEYS = frozenset({"symbol", "side", "action", "mode", "notional_eur", "qty", "leverage"})
+_INTENT_KEYS = frozenset({"symbol", "side", "action", "mode", "notional_eur", "qty", "leverage", "offset_pct", "hold_minutes"})
+_MAX_HOLD_MINUTES = 60
 # Sec 10's 250% floor at rung scale: required margin (notional / leverage, summed over margin
 # intents) times this multiplier must fit under the account's free collateral.
 _MARGIN_FLOOR_MULTIPLIER = 2.5
@@ -44,10 +45,12 @@ class ProbeIntent:
     symbol: str
     side: str  # "buy" | "sell"
     action: str  # "open" | "close"
-    mode: str  # "execute" | "rest-cancel"
+    mode: str  # one of MODES
     notional_eur: float | None  # exactly one of notional_eur / qty
     qty: float | None  # the disposal's explicit base quantity (close + spot only)
     leverage: int | None  # None = spot; margin requires 2..10 (the committed band)
+    offset_pct: float | None = None  # rest-hold only: PERCENT passive of the touch -- 5.0 is five percent
+    hold_minutes: int | None = None  # rest-hold only: how long the order rests, 1.._MAX_HOLD_MINUTES
 
 
 @dataclass(frozen=True)
@@ -90,8 +93,8 @@ def _parse_intent(raw: object) -> ProbeIntent:
         raise ProbePlanError(f"probe plan intent action must be one of {sorted(_ACTIONS)}, got {action!r}")
 
     mode = raw.get("mode")
-    if mode not in _MODES:
-        raise ProbePlanError(f"probe plan intent mode must be one of {sorted(_MODES)}, got {mode!r}")
+    if mode not in MODES:
+        raise ProbePlanError(f"probe plan intent mode must be one of {sorted(MODES)}, got {mode!r}")
 
     has_notional = raw.get("notional_eur") is not None
     has_qty = raw.get("qty") is not None
@@ -112,12 +115,47 @@ def _parse_intent(raw: object) -> ProbeIntent:
             )
         leverage = leverage_raw
 
+    offset_raw = raw.get("offset_pct")
+    hold_raw = raw.get("hold_minutes")
+    offset_pct: float | None = None
+    hold_minutes: int | None = None
+    if mode == "rest-hold":
+        if offset_raw is None or hold_raw is None:
+            raise ProbePlanError(
+                "probe plan intent mode 'rest-hold' requires both offset_pct and hold_minutes, got "
+                f"offset_pct={offset_raw!r} hold_minutes={hold_raw!r}"
+            )
+        if action != "open":
+            raise ProbePlanError(f"probe plan intent mode 'rest-hold' requires action == 'open', got {action!r}")
+        # PERCENT, not a fraction: 5.0 is five percent. `_REST_CANCEL_OFFSET` is the fraction 0.05,
+        # and an intent copying that shape would rest five hundredths of a percent off the touch --
+        # which fills, on the one mode built never to.
+        offset_pct = _parse_positive_number(offset_raw, "offset_pct")
+        if not isinstance(hold_raw, int) or not (1 <= hold_raw <= _MAX_HOLD_MINUTES):
+            raise ProbePlanError(f"probe plan intent hold_minutes must be an int in [1, {_MAX_HOLD_MINUTES}], got {hold_raw!r}")
+        hold_minutes = hold_raw
+    elif offset_raw is not None or hold_raw is not None:
+        raise ProbePlanError(
+            "probe plan intent offset_pct/hold_minutes are legal only on mode 'rest-hold', got "
+            f"mode={mode!r} offset_pct={offset_raw!r} hold_minutes={hold_raw!r}"
+        )
+
     if qty is not None and (action != "close" or leverage is not None):
         raise ProbePlanError(
             f"probe plan intent qty requires action == 'close' and no leverage, got action={action!r} leverage={leverage!r}"
         )
 
-    return ProbeIntent(symbol=symbol, side=side, action=action, mode=mode, notional_eur=notional_eur, qty=qty, leverage=leverage)
+    return ProbeIntent(
+        symbol=symbol,
+        side=side,
+        action=action,
+        mode=mode,
+        notional_eur=notional_eur,
+        qty=qty,
+        leverage=leverage,
+        offset_pct=offset_pct,
+        hold_minutes=hold_minutes,
+    )
 
 
 def parse_plan(text: str) -> ProbePlan:
