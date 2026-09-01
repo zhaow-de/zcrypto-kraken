@@ -53,7 +53,9 @@ The rule's own comment argues the opposite as its justification: "the counter ca
 
 The contrast already exists in the same file: `zcrypto-capture-venue-not-online` reads its process-lifetime counter **by absolute value**, for this exact reason.
 
-**What this changes about clearing, stated because it is a real cost.** An absolute-value rule stays firing until the counting process restarts — there is no window for it to fall out of. Under D1 that is the behaviour we want: a non-zero counter now means a genuine fabricated hour exists, and that condition does not stop being true merely because six hours passed. It does mean the rule is a latch, and the runbook entry must say so, or an operator will wait for a self-clear that never comes.
+**What this changes about clearing, stated because it is a real cost.** An absolute-value rule stays firing until the counting process restarts — there is no window for it to fall out of. Under D1 that is the behaviour we want: a non-zero counter now means the past hour that opened held no captured data — a fabrication, or one of the benign restart shapes only a peer comparison separates from it — and that condition does not stop being true merely because six hours passed.
+
+It does mean the rule is a latch, with **two** costs the runbook entry must carry or an operator is misled about both. The first: it does not self-clear, so an operator waiting for a window to pass waits until capture restarts. The second: `max by (host)` yields one alert instance per host, so a further step changes `$v` and no label, Grafana sees no transition, and no second page is raised for that host while the first stands. The entry therefore records the standing value and rules any higher value a new event.
 
 ### D3 — The two sibling counters were examined for the same defect; NEITHER is converted
 
