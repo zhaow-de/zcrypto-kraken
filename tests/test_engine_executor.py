@@ -2298,6 +2298,29 @@ def test_quote_silence_still_revokes_a_resting_rest_hold_order(tmp_path):
     assert _intent_entry(tmp_path, 0)["reasons"] == ["quote_silence"]
 
 
+def test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase(tmp_path):
+    """Any age bound on a resting order reads `placed_at`, so it must track the ORDER: a post-only
+    rejection's reprice replaces the order, and the replacement's age starts with it -- an
+    intent-scoped stamp would age the new order from the old one's placement. The second half is
+    `_enter`'s `resting` test doing its job: `cancelling` is a phase this intent passes through,
+    never a placement."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    assert ex._active.placed_at == NOW
+
+    clock.now = NOW + timedelta(minutes=7)
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+    assert len(client.submitted) == 2  # the rejection repriced: nothing was ever resting
+    assert ex._active.placed_at == clock.now, "the replacement order's age starts with it"
+
+    replaced_at = clock.now
+    clock.now = NOW + timedelta(minutes=8)
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert ex._active.phase == "cancelling"
+    assert ex._active.placed_at == replaced_at, "entering `cancelling` is not a placement"
+
+
 def test_a_disposal_intent_over_the_plan_cap_is_refused_naming_the_cap(tmp_path):
     """D8's sizing-time half: a `qty` intent's EUR notional exists only here (`qty x the chosen
     limit price`), so `plan_refusals` counted it as 0.00 at the plan wall. 0.01 BTC at 30001 is
