@@ -1400,52 +1400,60 @@ _RETENTION_SECONDS = 14 * 24 * 3600
 
 
 def test_no_rule_queries_past_the_platforms_retention() -> None:
-    """No query may reach further back than the platform retains, by any route.
+    """No rule may reach further back than the platform retains.
 
-    Reach is measured per selector: a composite duration like `[15d12h]` is summed whole, and an
-    `offset` attached to a selector adds to it, because `[7d] offset 10d` reaches 17 days back
-    while neither half does. A BARE offset on an instant selector (`node_load1 offset 30d`) is
-    checked too -- it is the natural "compare against N days ago" shape and reaches just as far.
-    Anything that parses as a duration but cannot be read ASSERTS: an unreadable form is a hole in
-    this guard, not a pass. LogQL line filters are blanked first, so `|= "queue[3] full"` is text
-    rather than a range, and a negative offset is ignored because it reaches forward.
+    This does NOT model PromQL's reach semantics, and three review rounds are why: subqueries
+    compose an outer window with an inner range, an `offset` adds to whichever selector it binds,
+    and an `@` anchor is unbounded -- every attempt to compute the true reach shipped with a hole
+    that let a too-wide window through. So it computes an UPPER BOUND instead: every duration in
+    the rule, summed, plus `relativeTimeRange.from`. A sum cannot under-estimate reach however the
+    parts compose, so a rule within the bound is certainly within retention.
+
+    The cost is over-flagging, which is the safe direction and free today -- the widest rule in the
+    file bounds at 3d against a 14d ceiling. A rule that legitimately trips this wants a human, not
+    a cleverer parser. Absolute `@` anchors are flagged outright because nothing bounds them, and a
+    duration-shaped token that will not parse ASSERTS rather than being skipped.
     """
     unit = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "y": 31536000}
+    # One pass over all three literal syntaxes, so a quote inside a backtick literal cannot pair
+    # with a later one and blank the code between them.
+    literal = re.compile(r"`[^`]*`|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'")
+    # Grab each numeric-led token WHOLE -- `15d12h` must not be read as `15d` with a tail, or the
+    # composite slips past both the parser and the assert that is supposed to catch what it cannot read.
+    token = re.compile(r"(?<![A-Za-z0-9_])\d[A-Za-z0-9._]*")
     component = re.compile(r"(\d+(?:\.\d+)?)(ms|[smhdwy])")
+    anchored = re.compile(r"@\s*\d")
 
-    def duration(token: str, where: str) -> float:
-        if token.startswith("-"):
-            return 0.0  # a negative offset reaches forward, never past retention
-        parts = component.findall(token)
-        assert parts and "".join(n + u for n, u in parts) == token, (
-            f"{where}: cannot parse duration {token!r} -- extend this parser rather than letting "
-            "an unreadable form pass as within retention"
-        )
-        return sum(float(n) * unit[u] for n, u in parts)
-
-    # An offset may sit straight after the `]`, after an `@ <ts>` anchor, or after whitespace.
-    trailing_offset = re.compile(r"^\s*(?:@\s*\S+\s*)?offset\s+(-?[0-9][A-Za-z0-9.]*)")
     over = []
     for rule in _rules():
+        reach = 0.0
         for node in rule.get("data", []):
             frm = (node.get("relativeTimeRange") or {}).get("from")
-            if isinstance(frm, (int, float)) and frm > _RETENTION_SECONDS:
-                over.append(f"{rule['uid']}: relativeTimeRange.from={frm}s")
+            if isinstance(frm, (int, float)) and not isinstance(frm, bool) and frm > 0:
+                reach += float(frm)
             expr = (node.get("model") or {}).get("expr") or ""
-            # A LogQL line filter can hold anything; blank string literals so their text is not code.
-            code = re.sub(r"`[^`]*`", "``", re.sub(r'"(?:[^"\\]|\\.)*"', '""', expr))
-            claimed = []
-            for match in re.finditer(r"\[([^\]:]+)(?::[^\]]*)?\]", code):
-                span = duration(match.group(1).strip(), f"{rule['uid']} selector")
-                tail = trailing_offset.match(code[match.end() :])
-                if tail:
-                    span += duration(tail.group(1), f"{rule['uid']} offset")
-                    claimed.append(match.end() + tail.end())
-                if span > _RETENTION_SECONDS:
-                    over.append(f"{rule['uid']}: {match.group(0)}{tail.group(0) if tail else ''} reaches {span / 86400:.2f}d back")
-            for match in re.finditer(r"\boffset\s+(-?[0-9][A-Za-z0-9.]*)", code):
-                if match.end() in claimed:
-                    continue  # already counted against its selector
-                if duration(match.group(1), f"{rule['uid']} bare offset") > _RETENTION_SECONDS:
-                    over.append(f"{rule['uid']}: bare {match.group(0)}")
-    assert not over, f"windows wider than the {_RETENTION_SECONDS // 86400}d retention: {over}"
+            assert isinstance(expr, str), f"{rule['uid']}: expr is {type(expr).__name__}, not a string"
+            code = literal.sub('""', expr)
+            if anchored.search(code):
+                over.append(f"{rule['uid']}: absolute @ anchor -- nothing bounds how far back it evaluates")
+            for raw in token.findall(code):
+                parts = component.findall(raw)
+                if not parts:
+                    # A plain number (threshold, quantile, timestamp) is not a duration; a token
+                    # carrying letters but no readable unit is a form this cannot bound.
+                    assert not re.search(r"[A-Za-z]", raw), (
+                        f"{rule['uid']}: cannot read {raw!r} as a duration -- extend this parser "
+                        "rather than letting an unreadable form pass as within retention"
+                    )
+                    continue
+                assert "".join(n + u for n, u in parts) == raw, (
+                    f"{rule['uid']}: cannot read {raw!r} as a duration -- extend this parser "
+                    "rather than letting an unreadable form pass as within retention"
+                )
+                reach += sum(float(n) * unit[u] for n, u in parts)
+        if reach > _RETENTION_SECONDS:
+            over.append(f"{rule['uid']}: durations sum to {reach / 86400:.2f}d")
+    assert not over, (
+        f"reach past the {_RETENTION_SECONDS // 86400}d retention (this is an upper bound; if a "
+        f"rule is genuinely within it, say so here rather than loosening the bound): {over}"
+    )
