@@ -35,7 +35,9 @@ The knowledge was available: the rollout skill documented this replay as healthy
 
 ### D1 — The predicate gains the test D5 already specified: the hour must hold no data
 
-Count only when the opened past hour has **no parts on disk**. The writer already reads exactly this evidence three lines later — `_open_hour` seeds its de-dup set from `self._parts_for(self._hour_dir(hour), ...)` — so the fix reorders a read it already performs rather than adding a new one.
+Count only when the opened past hour has **no `.part` files on disk**. The writer already reads exactly this evidence three lines later — `_open_hour` seeds its de-dup set from `self._parts_for(self._hour_dir(hour), ...)`, which defaults to `marker=".part"` — so the fix reorders a read it already performs rather than adding a new one.
+
+**`.part` specifically, and `.held` must NOT count as captured.** Held spills (`<HH>.held####.parquet`) are rows the oracle never confirmed, quarantined outside the canonical tree. An hour holding only `.held` files is the **dangerous** case, not a benign one: the alert's own summary says a fabricated final "can pull a quarantined `.held` sidecar in with it", which is precisely the redemption path `_redeem_held` performs. Testing `.held` as evidence of capture would blind the detector to its worst case.
 
 This restores the predicate to its specified meaning: a past hour that was **never captured**, which is the only shape that can fabricate a certified final. A restart that re-opens an hour it already has parts for is, by construction, not fabricating anything.
 
@@ -49,12 +51,14 @@ The rule's own comment argues the opposite as its justification: "the counter ca
 
 The contrast already exists in the same file: `zcrypto-capture-venue-not-online` reads its process-lifetime counter **by absolute value**, for this exact reason.
 
+**What this changes about clearing, stated because it is a real cost.** An absolute-value rule stays firing until the counting process restarts — there is no window for it to fall out of. Under D1 that is the behaviour we want: a non-zero counter now means a genuine fabricated hour exists, and that condition does not stop being true merely because six hours passed. It does mean the rule is a latch, and the runbook entry must say so, or an operator will wait for a self-clear that never comes.
+
 ### D3 — Two sibling rules carry the same defect and are fixed with it
 
 - **`zcrypto-capture-hour-finalized-early`** — shipped in the same commit and image; `_count_if_early` is reachable from `_sweep`, which runs on the restart path, so it is start-correlated identically.
-- **`zcrypto-capture-rows-quarantined`** — a mirror mechanism: one of the two causes its own comment names increments inside `close()`, in the dying process, with a 60 s scrape and no `stop_grace_period` override, so that increment is usually **never scraped at all**.
+Fixing only the subject rule would leave a sibling asserting coverage it does not have.
 
-Fixing only the subject rule would leave two rules asserting coverage they do not have.
+**`zcrypto-capture-rows-quarantined` is exposed too, and absolute value does NOT fix it — so it is deliberately OUT of scope here.** Its mechanism is different in kind: one of the two causes its own comment names increments inside `close()`, in the dying process, with a 60 s scrape and no `stop_grace_period` override, so the increment is usually **never scraped at all**. A value that is never published cannot be read by any expression, absolute or windowed. Its fix is a different question — persist the count across restart, widen the shutdown grace so the last scrape lands, or rule that the CRITICAL log line is the real detector and the metric is decoration. Bundling it here would ship a change that looks like a fix and is not. **This needs its own decision and is not registered by this spec** — a deferral whose only home is a spec is not tracked.
 
 ### D4 — The file's existing generalisation about this class is wrong and is corrected
 
@@ -70,7 +74,15 @@ That covers only lazily-materialising series. It misses **eagerly-published coun
 
 It is process-lifetime state and will clear on the next restart. Nothing is repaired by hand — the runbook's own instruction is "Do not attempt to repair the hour by hand", and there is no hour to repair. What changes is the record: the value is a known benign artifact of the 16:15:21Z re-pin, and `fleet-pins.md`'s row for that digest already says so.
 
-### D7 — Verification
+### D7 — Landing order: the writer converges BEFORE the rule is pushed
+
+D2 and D6 collide, and the collision would page on landing. `zcrypto-red`'s counter reads `1` today and D6 leaves it alone; an absolute-value rule pushed while that `1` stands fires immediately on a value we have already established is benign — a spurious CRITICAL on the capture pair, which is the one place a false page is most expensive.
+
+So the order is fixed: **land D1, converge the capture hosts (which restarts the process and resets the counter to 0), verify both read 0 by value, and only then push D2/D3's rule change.** This is the same shape as the standing rule that a schema-widening deploy converges every reader before the writer — here the writer's correction must reach the host before the reader is allowed to believe it.
+
+Pushing the rule first is not a smaller step. It is the one ordering that guarantees a page for a non-event.
+
+### D8 — Verification
 
 The guard is unproven until the defect it names is constructed and seen to trip it, on a fixture where defect and correct behaviour **differ**:
 
