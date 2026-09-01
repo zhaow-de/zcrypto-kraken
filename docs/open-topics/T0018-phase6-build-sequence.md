@@ -1,5 +1,6 @@
 ---
 status: partial
+ripe_when: 'the first armed session whose resting order survives a restart — then read `zcrypto_exec_external_events_total{disposition="matched"}` by VALUE; owned by nothing else and invisible to rung 1s exit bar'
 ---
 
 # Phase-6 build sequence and its cross-iteration constraints
