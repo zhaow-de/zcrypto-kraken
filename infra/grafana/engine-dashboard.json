@@ -24,7 +24,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure. A resting order is the one execution number that can appear without any trading: the `rest-hold` mode places a real order at the venue on purpose and leaves it there for a drill to act on. Read the mode label before reading activity as trading."
+        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure. A resting order is one execution number that can appear without any trading: the `rest-hold` mode places a real order at the venue on purpose and leaves it there for a drill to act on. Read the mode label before reading activity as trading."
       }
     },
     {

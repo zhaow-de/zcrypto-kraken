@@ -131,7 +131,9 @@ def _parse_intent(raw: object) -> ProbeIntent:
         # and an intent copying that shape would rest five hundredths of a percent off the touch --
         # which fills, on the one mode built never to.
         offset_pct = _parse_positive_number(offset_raw, "offset_pct")
-        if not isinstance(hold_raw, int) or not (1 <= hold_raw <= _MAX_HOLD_MINUTES):
+        # bool first, for the reason `_parse_positive_number` above spells out: `True` is an int and
+        # passes the range check, so without this arm `hold_minutes: true` parses as a 1-minute hold.
+        if isinstance(hold_raw, bool) or not isinstance(hold_raw, int) or not (1 <= hold_raw <= _MAX_HOLD_MINUTES):
             raise ProbePlanError(f"probe plan intent hold_minutes must be an int in [1, {_MAX_HOLD_MINUTES}], got {hold_raw!r}")
         hold_minutes = hold_raw
     elif offset_raw is not None or hold_raw is not None:
