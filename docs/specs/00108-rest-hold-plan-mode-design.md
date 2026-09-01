@@ -4,7 +4,7 @@ Resolves the `rest-hold` build item of [[T0018]], registered in spec `00105` D4.
 
 **What it is.** A third plan mode beside `execute` and `rest-cancel`, whose order is placed passively, is **not** cancelled when the venue acknowledges it, and rests for a duration the plan author declares. It exists because five drill sections of `infra/runbooks/drills-order-path.md` — A1, A2, E (with its E′ leg), F2 and G — have no subject without it: `rest-cancel` cancels inside the `OrderAccepted` handler, so nothing is resting by the time any induction lands, and that page forbids substitution outright ("an order cancelled a second after it was placed exercises none of what these drills measure").
 
-**The defect this spec exists to prevent.** The one-line version of this change — adding `"rest-hold"` to the mode vocabulary — parses cleanly and then runs the new mode with **full `execute` semantics**: joining the touch, repricing as it moves, and at the fifteen-minute time box crossing the spread with up to three marketable IOCs. On the live trade path. Nothing goes red, because no test pins the vocabulary's membership and every mode branch in the executor is written against the *name* `rest-cancel` rather than against a property. A mode whose entire purpose is *never fills, keeps resting* would, written the obvious way, become the most aggressive order path in the system.
+**The defect this spec exists to prevent.** The one-line version of this change — adding `"rest-hold"` to the mode vocabulary — parses cleanly and then runs the new mode with **full `execute` semantics**: joining the touch, repricing as it moves, and at the fifteen-minute time box crossing the spread with up to three marketable IOCs. On the live trade path. Nothing goes red, because no test pins the vocabulary's membership, and every mode branch in the executor is written `== "rest-cancel"` or `!= "rest-cancel"` — so a third name falls into the `execute` arm at every one of them. A mode whose entire purpose is *never fills, keeps resting* would, written the obvious way, become the most aggressive order path in the system.
 
 ## The measured basis
 
@@ -14,7 +14,7 @@ Read from the repo on 2026-09-01 at `develop` `904862a8`:
 | --- | --- | --- |
 | The mode vocabulary is enumerated in exactly one machine-readable place and validated by membership alone | `cli/engine/probeplan.py:23` `_MODES = frozenset({"execute", "rest-cancel"})`; validated at `:92-94` | a third mode is one token away from parsing — and from running as `execute` |
 | **No test pins the vocabulary's membership** | absence, over `tests/` — `grep -rn "_MODES" tests/` returns nothing | the miswiring above ships green; D8 makes pinning it the first test |
-| The executor consults `mode` at exactly **four** sites, every one written `== "rest-cancel"` or `!= "rest-cancel"` | `cli/engine/executor.py:1111`, `:1237`, `:1965`, `:2050` | a third mode inherits the `execute` arm at all four; D2 rewrites each to decide on a property |
+| The executor consults `mode` at exactly **four** sites, every one written `== "rest-cancel"` or `!= "rest-cancel"` | `cli/engine/executor.py:1111`, `:1237`, `:1965`, `:2050` | a third mode inherits the `execute` arm at all four; D2 makes each explicit about all three modes and turns the two money-line arms around, so the default is the one that cannot cross |
 | `falling_back` is set `mode != "rest-cancel"` at the time box | `executor.py:1111`, under the comment "A rest-cancel drill must never execute" | left as-is, a `rest-hold` order fires up to `_MAX_IOC_ATTEMPTS` marketable IOCs at expiry — **the live-money line in this change** |
 | `_TIME_BOX = timedelta(minutes=15)`, armed once in `_start_intent` and never re-armed | `executor.py:67`, `:1177` `timebox_at=now + _TIME_BOX`, enforced at `:1108` | too short for E′ (a human phone leg) and A1 (a reboot plus its verify list); D3 replaces it per intent |
 | `rest-cancel` cancels inside the `OrderAccepted` handler | `executor.py:1965-1969` — "rest, be acknowledged, come straight back off the book" | there is no window in which an induction can act; this is why no existing mode serves the drills |
@@ -57,9 +57,14 @@ The refusals:
 - `offset_pct` not strictly positive — zero or negative prices the order at or through the touch, which the post-only submission path rejects.
 - `action` other than `open`. No drill needs a resting close, and a resting reduce-only order is a different animal that should be specified when something wants it.
 
-### D2 — Every mode branch decides on a property, never on a name
+### D2 — Every mode branch is explicit, and the two that cost money default to the passive arm
 
-The four existing sites become explicit about all three modes, and a fifth is added by D5. This is the change that stops the defect in the preamble:
+The four existing sites become explicit about all three modes, and a fifth is added by D5. **The branches still test the mode NAME** — there is no property to test, and minting a `crosses_at_the_box` attribute over a three-element vocabulary is an abstraction with one reader. What stops the preamble's defect is two deliverables that only work together:
+
+1. **The vocabulary is pinned** (D8's first test). A fourth mode cannot arrive without an edit to `MODES`, and that edit is the moment a reviewer is sent to the rows below.
+2. **The two arms where a wrong inheritance would cost money default passive.** `falling_back` is turned around to `mode == "execute"`, so anything that is not `execute` never crosses; cancel-on-ack is already `== "rest-cancel"` and deliberately stays that way, so anything else is left resting. A fourth mode added and nowhere else inherits *no cross at the box*, and an order that rests rather than one that fills.
+
+Stated as the residual risk rather than as a guarantee: the price site's `else` still joins the touch and the unrequested-cancel arm still reprices, so a fourth mode inherits `execute`'s pricing and its re-place behaviour at those two. Neither crosses the spread; both can fill a passive order. The vocabulary pin is the whole mechanism forcing those two rows to be read.
 
 | site | today | with `rest-hold` |
 | --- | --- | --- |
