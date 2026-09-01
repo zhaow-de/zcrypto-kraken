@@ -79,9 +79,11 @@ Nothing in this mode weakens an existing bound:
 - **`_ACK_WAIT`** is unchanged.
 - **The restart adopt pass** is unchanged. A `rest-hold` order is `action: open` and therefore a non-reducer, so the pass attaches it and then cancels it. That is drill G's expectation, and a reducer classification would be a finding rather than a convenience.
 
-### D5 — No reprice
+### D5 — No touch-following, and no guard needed for it
 
-A `rest-hold` order is priced once, at placement, and does not follow the touch. A reprice is a cancel and a new order, which breaks exactly the continuity these drills measure — and a drill wants a stable subject, not one chasing the market. The `execute` reprice ladder is untouched.
+A `rest-hold` order is priced once, at placement, from the touch at that moment, and nothing moves it afterwards. That is the property the drills need: a stable subject rather than one chasing the market, since a reprice is a cancel and a new order and would break exactly the continuity being measured.
+
+**This decision adds no code.** `_reprice` is not a touch-follower — its own docstring names its two callers as "the venue's synchronous post-only rejection and its accept-then-cancel", both *crossing* surfaces — so a passive order never reaches the ladder at all. A wide `offset_pct` cannot cross; a tight one that does is repriced passively by the existing path and then rests, which is the correct handling rather than a special case. A "never reprice" guard here would be a guard for a door with no production caller, which `.claude/rules/spec-plan-locations.md` forbids. The decision is recorded because the property is load-bearing for the drills and the next reader should know it is inherited rather than enforced.
 
 ### D6 — The gauge, its panel, and the two things it cannot see
 
