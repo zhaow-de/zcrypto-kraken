@@ -1400,8 +1400,24 @@ _RETENTION_SECONDS = 14 * 24 * 3600
 
 
 def test_no_rule_queries_past_the_platforms_retention() -> None:
-    """A window wider than retention is truncated in silence, so its threshold is mis-derived."""
-    unit = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+    """A window wider than retention is truncated in silence, so its threshold is mis-derived.
+
+    Every bracketed token is parsed WHOLE and its components summed: a composite duration like
+    `[15d12h]` is 15.5 days and must not slip past a per-component check, and `[7d] offset 10d`
+    reaches 17 days back even though neither half does. Anything unparseable ASSERTS rather than
+    being skipped -- a duration form this cannot read is a hole in the ratchet, not a pass.
+    """
+    unit = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "y": 31536000}
+    component = re.compile(r"(\d+(?:\.\d+)?)(ms|[smhdwy])")
+
+    def duration(token: str, where: str) -> float:
+        parts = component.findall(token)
+        assert parts and "".join(n + u for n, u in parts) == token, (
+            f"{where}: cannot parse duration {token!r} -- extend this parser rather than letting "
+            "an unreadable form pass as within retention"
+        )
+        return sum(float(n) * unit[u] for n, u in parts)
+
     over = []
     for rule in _rules():
         for node in rule.get("data", []):
@@ -1409,10 +1425,14 @@ def test_no_rule_queries_past_the_platforms_retention() -> None:
             if isinstance(frm, (int, float)) and frm > _RETENTION_SECONDS:
                 over.append(f"{rule['uid']}: relativeTimeRange.from={frm}s")
             expr = (node.get("model") or {}).get("expr") or ""
-            for tok, num, suf in ((m.group(0), m.group(1), m.group(2)) for m in re.finditer(r"\[(\d+)([smhdw])[\]:]", expr)):
-                if int(num) * unit[suf] > _RETENTION_SECONDS:
-                    over.append(f"{rule['uid']}: selector {tok}")
-            for m in re.finditer(r"offset\s+(\d+)([smhdw])", expr):
-                if int(m.group(1)) * unit[m.group(2)] > _RETENTION_SECONDS:
-                    over.append(f"{rule['uid']}: offset {m.group(0)}")
+            # A range and an offset on the same selector compound: measure how far back the pair reaches.
+            for match in re.finditer(r"\[([^\]:]+)(?::[^\]]*)?\](?:\s*offset\s+(\S+?))?(?=[\s)\],]|$)", expr):
+                span = duration(match.group(1), f"{rule['uid']} selector")
+                if match.group(2):
+                    span += duration(match.group(2).rstrip(")"), f"{rule['uid']} offset")
+                if span > _RETENTION_SECONDS:
+                    over.append(f"{rule['uid']}: {match.group(0).strip()} reaches {span / 86400:.2f}d back")
+            for match in re.finditer(r"(?<!\])\s offset\s+(\S+?)(?=[\s)\],]|$)", expr):
+                if duration(match.group(1).rstrip(")"), f"{rule['uid']} bare offset") > _RETENTION_SECONDS:
+                    over.append(f"{rule['uid']}: offset {match.group(1)}")
     assert not over, f"windows wider than the {_RETENTION_SECONDS // 86400}d retention: {over}"

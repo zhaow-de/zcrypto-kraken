@@ -1060,7 +1060,7 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # The NAS Atom has 4 cores (infra/nas/README.md) -- 1-min load above that is
+            # The NAS Atom has 4 cores -- 1-min load above that is
             # sustained saturation, not a transient burst.
             - evaluator: {type: gt, params: [4]}
     noDataState: Alerting
@@ -1234,8 +1234,8 @@ rules:
   # armed before its metric exists evaluates against nothing and sits silent forever, looking healthy
   # -- the same class of failure as T0034. Alloy's keep-regex on the WRITER's host must carry
   # `zcrypto_reconcile_.*` or the series never ship -- the overlay writer runs on ops
-  # (infra/ansible/roles/ops/files/config.alloy); the NAS's copy of the family went at the spec
-  # 00054 D2 cutover.
+  # (infra/ansible/roles/ops/files/config.alloy); the NAS still lists the family in its own
+  # keep-regex but has published none of it since the spec 00054 D2 cutover.
 
   - uid: zcrypto-reconcile-exporter-stale
     title: "Reconciler · exporter stale"
@@ -2226,10 +2226,10 @@ rules:
       # `NAS · load high` above scopes itself with `{host="nas"}` (see that rule's own comment) --
       # the two rules partition the metric between the two hosts.
       #
-      # Threshold: the ops box has 24 threads (infra/ansible/roles/ops/defaults/main.yml), so the NAS
+      # Threshold: the ops box has 24 threads (specs 00050 and 00054; the role defaults record no CPU count), so the NAS
       # rule's `gt 4` (100% of its 4 cores) would not mean the same thing here. `gt 20` is ~83% of 24
       # threads rather than 100%: ops runs several concurrent services (Alloy, the ops timers, and
-      # soon the overlay writer) whose transient overlaps are normal, so full-saturation would be
+      # the overlay writer among them) whose transient overlaps are normal, so full-saturation would be
       # noisier than the NAS's single-purpose box; 20 keeps the same "sustained saturation, not a
       # transient burst" intent with headroom for that cross-service scheduling noise.
       - refId: A
@@ -2314,7 +2314,7 @@ rules:
       #   live Loki before this shipped.
       #
       # The `level` label reaches this rule via TWO independent paths (00068 T6/T7/T8 review): the
-      # four zcrypto-* units and Alloy's own logs get it from config.alloy's parse stages at ingest;
+      # `zcrypto-*` units and Alloy's own logs get it from config.alloy's parse stages at ingest;
       # the liquidations poller now direct-ships (spec 00068 D3/T6) and stamps `level` itself at the
       # source (cli/logging/ship.py: `level` = `record.levelname`, always present) -- Alloy is not in
       # that path at all. T0060: before this branch's fix both config.alloy stages' selectors were
@@ -2534,7 +2534,7 @@ rules:
       # line rather than something the rule already knows. It does not change when this rule fires:
       # `count_over_time` yields no series at all for a silent container (never a zero), so one live
       # unit still leaves every series >= 1 and the `lt 1` false, exactly as the bare `sum()` did.
-      # And it is INERT at fire time for the same reason as its siblings -- all four units going
+      # And it is INERT at fire time for the same reason as its siblings -- all the `zcrypto-*` units going
       # quiet empties the left arm and the unlabelled `or on() vector(0)` is what crosses the
       # threshold -- so the summary names host and containers literally.
       - refId: A
@@ -2601,7 +2601,7 @@ rules:
       #
       # Scoping: `container="zcrypto-archive-pull"` can ONLY come from the journal path -- not
       # because a docker-discovery drop rule filters it out (there is no docker path left at all,
-      # discovery.docker retired fleet-wide, 00068 D6/D8), but because these four units run their
+      # discovery.docker retired fleet-wide, 00068 D6/D8), but because these units run their
       # work as an ephemeral `docker run --rm` ATTACHED to the unit (T0060, config.alloy) -- their
       # stdout is journal-stamped as part of the unit's own log stream, never a separately
       # discoverable container. So 26h of silence from this stream isolates the journal transport
@@ -2648,7 +2648,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one journal-path log line from zcrypto-archive-pull on the ops node in 26h -- the half-hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The four systemd units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed. Runbook: infra/runbooks/observability.md#zcrypto-ops-journal-transport-dead"
+      summary: "Not one journal-path log line from zcrypto-archive-pull on the ops node in 26h -- the half-hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The `zcrypto-*` units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed. Runbook: infra/runbooks/observability.md#zcrypto-ops-journal-transport-dead"
       __dashboardUid__: "zcrypto-logs"
       __panelId__: "103"
     labels:
@@ -3231,9 +3231,9 @@ rules:
     # per-pair rule mints 24 instances (12 pairs x 2 hosts) on every error where that rule mints one
     # or two. Both halves matter, so the stronger instrument wins on these two specifically.
     #
-    # What still covers a correlated datasource outage, measured rather than assumed: of the 22
-    # rules in `zcrypto-capture`, only SIX carry `for: 0s` and can therefore fire on a ~1 min error
-    # at all -- the other 16 absorb it, which is why `zcrypto-capture-venue-not-online` (for: 5m)
+    # What still covers a correlated datasource outage, measured rather than assumed: in `zcrypto-capture` only SIX rules
+    # carry `for: 0s` and can therefore fire on a ~1 min error at all -- every other rule in the group
+    # absorbs it (the group grows; the six is the load-bearing half, not the complement), which is why `zcrypto-capture-venue-not-online` (for: 5m)
     # logged zero error firings over the same window. Four of those six keep `Alerting`, so an
     # outage is still reported; what is removed is a fabricated blackout claim inside that report.
     #

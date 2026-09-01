@@ -235,7 +235,7 @@ One of four **critical** Grafana alerts on the ops node's log plane. All four ar
 
 Each is `count_over_time(...) or on() vector(0)` below 1. The `by (host)` / `by (host, container)` groupings are inert at fire time — the unlabelled fallback is what crosses the threshold — so each summary names its subject literally.
 
-**Two corrections to the rule text, so you do not mis-size the problem.** `zcrypto-ops-journal-transport-dead`'s summary is correct — it already says **half-hourly** — but its inline comment in `alerts.yaml` still calls `zcrypto-archive-pull` "the hourly unit". The timer is `OnCalendar=*-*-* *:12,42:00`, half-hourly since T0058 doubled it. The 26 h threshold is unaffected and still correct. And `zcrypto-ops-unit-parse-dead`'s scope is the journal keep-regex in `roles/ops/files/config.alloy`, which keeps **five** units — `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize`, `tape-bars`.
+**One correction to the rule text, and one scope note, so you do not mis-size the problem.** `zcrypto-ops-journal-transport-dead`'s summary is correct — it already says **half-hourly** — but its inline comment in `alerts.yaml` still calls `zcrypto-archive-pull` "the hourly unit". The timer is `OnCalendar=*-*-* *:12,42:00`, half-hourly since T0058 doubled it. The 26 h threshold is unaffected and still correct. And `zcrypto-ops-unit-parse-dead`'s scope is the journal keep-regex in `roles/ops/files/config.alloy`, which keeps **five** units — `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize`, `tape-bars`.
 
 ### What it means
 
