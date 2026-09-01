@@ -1196,9 +1196,16 @@ rules:
       # 15-68 s the same window. Bare `sum` makes BOTH arms `{}`, so the instance is present on both
       # sides of the transition and the clear is an ordinary Alerting -> Normal. Nothing else moves:
       # one host runs this container, so the sum is over one series either way, and the `lt 1`
-      # evaluator sees the identical value. Twelve sibling dead-men share the defect and are
+      # evaluator sees the identical value. SEVEN sibling dead-men share the defect and are
       # deliberately NOT changed here -- this rule is the pilot, because it is the one with a measured
       # baseline; roll the rest only once a drill-N induction proves a resolved notice actually lands.
+      # The discriminator is BOTH arms, not the evaluator: the defect needs a LABELLED healthy arm and
+      # an UNLABELLED fire arm. The seven are engine-log-dead, ops-log-pipeline-dead,
+      # ops-poller-log-dead, ops-unit-parse-dead, ops-journal-transport-dead, capture-log-dead-primary
+      # and capture-log-dead-secondary. The five `alloy-dark-*` dead-men are `count(up{...}) or on()
+      # vector(0)` -- unlabelled on BOTH arms, so their instance is `{}` throughout and they already
+      # resolve normally. Counting by `lt` alone yields twelve and sends a rollout after five rules
+      # that need nothing.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 10800, to: 0}
