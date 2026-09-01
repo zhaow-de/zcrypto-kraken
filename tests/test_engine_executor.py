@@ -2326,6 +2326,34 @@ def test_the_resting_order_age_is_published_under_its_own_mode_and_returns_to_ze
     assert dict(metrics.resting_ages[-len(MODES) :])["rest-hold"] == 0.0
 
 
+def test_an_outstanding_cancel_zeroes_the_resting_age_though_the_order_may_still_be_at_the_venue(tmp_path):
+    """The publish reads a THREE-part condition -- `_active` is set, its phase is `resting`, and
+    `placed_at` is stamped -- and this fixture satisfies exactly the phase one's negation: the kill
+    file revoked the order, so the intent is live and `placed_at` still holds NOW, but the phase is
+    `cancelling` and a cancel is outstanding at the venue. Zero is the declared reading: the gauge is
+    the engine's BELIEF about an order it is still holding, and it has already asked for this one
+    back. Without the phase term the age would keep climbing through a cancel and past a revocation,
+    which is the opposite of what the panel's zero is supposed to mean.
+
+    The third term cannot be fixtured and is not meant to be: `_enter` is the only writer of the
+    `resting` phase and it stamps `placed_at` in the same breath, so a resting order with no
+    placement time is unreachable. It guards the `None` deref in the arithmetic below it."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=30)
+    ex.on_quote(_quote())  # a live quote: what revokes here is the gate, not silence
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [client.submitted[0][0].client_order_id]
+    assert ex._active is not None and ex._active.placed_at == NOW, "the other two terms still hold"
+    assert ex._active.phase == "cancelling"
+    assert dict(metrics.resting_ages[-len(MODES) :]) == dict.fromkeys(MODES, 0.0)
+
+
 def test_a_raise_inside_the_resting_age_publish_never_ends_the_running_plan(tmp_path, monkeypatch):
     """`on_timer`'s catch-all drops the plan and nulls `_active`, so an exception raised anywhere in
     the publish would leave a live order at the venue with nothing tracking it: `_poll` is
