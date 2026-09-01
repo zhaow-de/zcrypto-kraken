@@ -48,7 +48,7 @@ The whole host is one small root filesystem (a 25 GB Linode) — Alloy, Caddy's 
 
 1. `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; `df -h /`.
 2. `du -sh /var/log/* /var/lib/alloy* 2>/dev/null | sort -rh | head` — journald and Alloy's own WAL are the usual growth points on a host this small.
-3. Check for a stuck ACME renewal loop (Caddy re-requesting a cert repeatedly leaves debug artifacts) once the Caddy role (spec 00075, later phase) is live.
+3. Check for a stuck ACME renewal loop — Caddy re-requesting a cert repeatedly leaves debug artifacts: `sudo du -sh /var/lib/caddy` and `sudo journalctl -u caddy --no-pager -n 200 | grep -i acme`.
 4. Reclaim space (`journalctl --vacuum-size=200M` is the usual first move) rather than resizing the disk — everything on this host is re-issuable, so growing the volume is a last resort, not a routine response.
 
 ### Retire when
