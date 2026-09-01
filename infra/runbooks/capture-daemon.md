@@ -16,7 +16,7 @@ A **warning** Grafana alert, `Capture · book desync stuck on a pair`, one insta
 
 ### What it means
 
-**Recovery is a bounded ladder, not one attempt.** The rule's comment and summary used to say "a SINGLE fire-and-forget resubscribe" that "the transition guard will not retry"; that stopped being true when the ladder landed (`cli/capture/desync_recovery.py`, spec 00072) and both now describe the ladder. So a pair that reaches this page is one the whole ladder failed to recover — a restart is the next rung, not a first retry.
+**Recovery is a bounded ladder, not one attempt.** So a pair that reaches this page is one the whole ladder failed to recover — a restart is the next rung, not a first retry.
 
 What actually runs, driven by `_desync_recovery_loop` in `cli/capture/command.py` on a `DESYNC_RECOVERY_INTERVAL_SECONDS = 5` tick:
 
@@ -30,7 +30,7 @@ Time to terminal is **20 + 5 + 10 + 20 = 55 s** from the desync.
 
 **So a pair still desynced at 15 minutes is POST-ladder.** It has already spent rung 1, three retries and a full reconnect with a fresh snapshot, and has been sitting in the hour-long cooldown for about fourteen minutes. That is a pair a reconnect did not fix — a materially more serious thing than "one attempt did not take".
 
-The cooldown is not permanent. When it expires the ladder re-arms, and because `desynced_at` is deliberately not reset the pair retries on the very next tick — three more retries, then one more reconnect. The daemon will therefore try again roughly an hour after the escalation with no help from you. A pair that heals and re-desyncs *inside* that hour keeps the escalation record and gets rungs 1 and 2 only, never a second reconnect.
+The cooldown is not permanent. When it expires the ladder re-arms, and because `desynced_at` is deliberately not reset the pair retries on the very next tick — three more retries, then one more reconnect. The daemon will therefore try again roughly an hour after the escalation with no help from you. A pair that heals and re-desyncs *inside* that hour keeps the escalation record (`note_recovered` deliberately does not clear it), so `due()` returns `Action.NONE` for the rest of the cooldown: it gets the transition resubscribe and **nothing else** — no retries, no second reconnect — until the cooldown expires and the full ladder re-arms.
 
 **The blast radius is the whole host, not the pair.** `GapMonitor.is_healthy()` is False while any pair has an open gap, and the healthchecks.io ping (`HEALTHCHECK_INTERVAL_SECONDS = 60`) is gated on it — so this one pair withholds the host's dead-man for all 12. That check (`zcrypto-capture` or `zcrypto-capture-red`) has already gone down and stays down, and **nothing worse on this host will produce a new dead-man page while it is saturated.** This rule is what names the pair; the dead-man only says the host went quiet.
 
@@ -64,9 +64,9 @@ ______________________________________________________________________
 One of two **warning** Grafana alerts, both 24-hour `increase()` reads held `for: 30m`, both on the integrity board's "Recovery ladder — 24h increase" panel:
 
 - **`zcrypto-capture-resubscribe-rate`** — `Capture · book resubscribe rate re-elevating`: `increase(zcrypto_capture_resubscribes_total{host=~"zcrypto|zcrypto-red"}[1d]) > 1.5`. A host resubscribed a book more than once in a day.
-- **`zcrypto-capture-resubscribe-failing`** — `Capture · book resubscribe is failing (recovery degraded)`: `increase(zcrypto_capture_resubscribe_errors_total[1d]) + increase(zcrypto_capture_resubscribe_ack_timeouts_total[1d]) > 1.5`. The recovery leg itself is being refused or ignored.
+- **`zcrypto-capture-resubscribe-failing`** — `Capture · book resubscribe is failing (recovery degraded)`: `sum by (host) (increase(zcrypto_capture_resubscribe_errors_total{host=~"zcrypto|zcrypto-red"}[1d]) + increase(zcrypto_capture_resubscribe_ack_timeouts_total{host=~"zcrypto|zcrypto-red"}[1d])) > 1.5`. The recovery leg itself is being refused or ignored.
 
-**Which host.** The rate rule carries `host` per series. The failing rule wraps its sum in a bare `sum()`, which collapses both hosts into one unlabelled series — so its page names no host even though the summary reads as though it does. The `by (host)` fix is being made in the same change as this section. **If the page in your hand carries a `host` label, act on that host; if it carries none, read both.**
+**Which host.** Both rules carry `host` per series, so **the page names the host — act on that one.**
 
 Neither counter carries a `pair` label. The threshold is 1.5 rather than 1 because `increase()` extrapolates to the window edges and returns ~1.0007 for a single increment: 1.5 is silent at one and fires at two.
 
@@ -87,7 +87,7 @@ While the failing leg is broken a desynced book cannot heal at all, so expect `z
 
 ### What to do
 
-1. **Find the pair — neither counter names one.** `uv run python infra/scripts/grafana-query.py 'zcrypto_capture_book_desynced'` for any series currently at 1, then the log for the rest: `sudo docker logs zcrypto-capture 2>&1 | grep -E "checksum desync|resubscribe"` on the named host, **or on both hosts if the failing page carried no `host` label**. The lines carry the pair, and the rejected-reply line carries Kraken's own answer verbatim.
+1. **Find the pair — neither counter names one.** `uv run python infra/scripts/grafana-query.py 'zcrypto_capture_book_desynced'` for any series currently at 1, then the log for the rest: `sudo docker logs zcrypto-capture 2>&1 | grep -E "checksum desync|resubscribe"` on the host the page names. The lines carry the pair, and the rejected-reply line carries Kraken's own answer verbatim.
 2. **Rule the venue out.** A venue event legitimately produces both of these — check `zcrypto-capture-venue-not-online` and `capture.md#zcrypto-capture-venue-not-online` before concluding anything about the daemon.
 3. **Read the reconnect counter beside them**: `zcrypto_capture_reconnects_total{host="<host>"}`. Resubscribes rising in step with reconnects is a connection story; resubscribes rising alone is a book story.
 4. **Rate firing with no pair currently desynced: there is nothing to restart.** A flapper heals itself each time. Record the pair and the venue reply. Two or more distinct days of this is a regression to file as work — not a runbook loop.

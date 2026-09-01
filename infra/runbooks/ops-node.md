@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-Everything below is produced on one host — `zcrypto-ops`, reached as `ssh hp`. Six systemd timers run there (`infra/ansible/roles/ops/`), each firing a `Type=oneshot` unit that runs an ephemeral, digest-pinned `docker run --rm --pull never` and then publishes a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
+Everything below is produced on one host — `zcrypto-ops`, reached as `ssh hp`. Six systemd timers run there (`infra/ansible/roles/ops/`); **five** fire a `Type=oneshot` unit that runs an ephemeral, digest-pinned `docker run --rm --pull never` and then publishes a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
 
 `README.md` beside this file is the index, and states what belongs in a runbook at all.
 
@@ -118,7 +118,7 @@ Two Grafana alerts on `zcrypto-verified-replay.service`, the daily verified-path
 
 **`last_success` bumps only when the run is clean AND fully caught up** (`ops_verified_replay_days_behind` at 0). Read `days_behind` on the same panel — it is the discriminator:
 
-- **`days_behind > 0`, exit code 0** — the loop stopped short without advancing, for one of four reasons, each logged verbatim: the day's directory under `/mnt/zhao-crypto/engine-journal/<day>/` holds no `cycle-*.json` or `failed-cycle-*.json` (`journal has not caught up`); the **successor** day holds none either, so the day may be only partly pulled (`journal freshness unproven` — this successor-day probe is the only journal-freshness check there is, because `.pull-status` carries `capture_ok`/`secondary_ok` and nothing about the journal); or the 30-day budget ran out (`capped at 30 day(s)`).
+- **`days_behind > 0`, exit code 0** — the loop stopped short, for one of three reasons, each logged verbatim — **the first two stop *without advancing the watermark*, the third advances and resumes tomorrow**: the day's directory under `/mnt/zhao-crypto/engine-journal/<day>/` holds no `cycle-*.json` or `failed-cycle-*.json` (`journal has not caught up`); the **successor** day holds none either, so the day may be only partly pulled (`journal freshness unproven` — this successor-day probe is the only journal-freshness check there is, because `.pull-status` carries `capture_ok`/`secondary_ok` and nothing about the journal); or the 30-day budget ran out (`capped at 30 day(s)`).
 - **Exit code non-zero** — either a day genuinely mismatched, or the run was **refused** before it started.
 
 **A refused run touches neither the watermark nor the textfile**, exits 1, and names the file in its own error line: the watermark is not a `YYYY-MM-DD` day, is a shape-valid but nonexistent calendar date, is beyond yesterday (clock skew or a manual edit), or the seed could not be persisted. An **empty** watermark file is the one to know: it once parsed as *tomorrow*, skipped the loop forever, and read fully healthy while doing so — hence the refusal.
@@ -129,7 +129,7 @@ The healthchecks.io dead-man for this timer is fed only on a clean, fully-caught
 
 ### What to do
 
-1. **`ssh hp`, then read the unit and its last three days**: `systemctl status zcrypto-verified-replay.service`, then `sudo journalctl -u zcrypto-verified-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it. Grep for the four stop messages above and for `ERROR: watermark`.
+1. **`ssh hp`, then read the unit and its last three days**: `systemctl status zcrypto-verified-replay.service`, then `sudo journalctl -u zcrypto-verified-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it. Grep for the three stop messages above and for `ERROR: watermark`.
 2. **Read the watermark and the journal tree.** `cat /var/lib/zcrypto-ops/.verified-replay-watermark`; `ls /mnt/zhao-crypto/engine-journal/ | tail -3`. The day after the watermark **and** its successor must each hold `cycle-*.json` or `failed-cycle-*.json`.
 3. **Journal not arriving is a NAS-side finding**, not this unit's. Nothing here can fix a stalled journal pull, and the fail-closed stop is correct behaviour.
 4. **Repair a refused run with a tmp+mv write, matching the script** — an in-place truncate is what minted the zero-byte watermark in the first place:
@@ -207,7 +207,7 @@ Sustained saturation, not a transient burst. Nothing is lost by load alone — t
 | `zcrypto-verified-replay.timer` | `05:23:00` | yes |
 | `zcrypto-grafana-watchdog.timer` | `*:0/5:41` | no |
 
-*The thread count is unverified.* The comment sources "24 threads" to `infra/ansible/roles/ops/defaults/main.yml`, and that file records no CPU count; nothing in the repo does. The threshold is 20 either way — but if you are about to reason about the ratio, run `nproc` on the host and use that.
+*The thread count is unverified.* The comment sources "24 threads" to `infra/ansible/roles/ops/defaults/main.yml`, which records no CPU count — the figure is recorded in `docs/specs/00050-redundant-capture-design.md` and `docs/specs/00054-ops5-offload-design.md`. The threshold is 20 either way — but if you are about to reason about the ratio, run `nproc` on the host and use that.
 
 **Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the six timers are `Persistent=true`, so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 
