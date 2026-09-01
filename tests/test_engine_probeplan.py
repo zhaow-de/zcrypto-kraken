@@ -293,6 +293,17 @@ def test_a_non_positive_offset_is_refused(offset):
         probeplan._parse_intent(_rest_hold_intent() | {"offset_pct": offset})
 
 
+@pytest.mark.parametrize("offset", ["5.0", "abc"])
+def test_a_non_numeric_offset_is_refused(offset):
+    """`_parse_positive_number`'s type half, which this mode is the first caller to depend on: a
+    bool is caught by the half beside it, and no numeric fixture can reach this one. Dropped,
+    `"5.0"` becomes five percent silently, and `"abc"` raises ValueError -- which
+    `Executor._read_plan`'s `except (ProbePlanError, OSError)` does not catch, so the plan is
+    neither journaled nor deleted and every later tick re-reads it."""
+    with pytest.raises(probeplan.ProbePlanError, match="offset_pct"):
+        probeplan._parse_intent(_rest_hold_intent() | {"offset_pct": offset})
+
+
 def test_a_rest_hold_close_is_refused():
     """No drill needs a resting close, and a resting reduce-only order is a different animal that
     should be specified when something wants it."""
