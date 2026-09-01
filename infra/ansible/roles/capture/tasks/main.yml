@@ -348,6 +348,14 @@
     daemon_reload: true
     enabled: true
     state: started
+  # The three tasks above CREATE this unit, and under --check they write nothing, so systemd cannot
+  # find it and the preview fails -- on exactly the first-install hosts a preview matters most for.
+  # converge.sh exits 4 on a failed preview and never reaches the confirm, so without this guard the
+  # documented converge path is unusable for both capture hosts (measured 2026-09-01: neither had the
+  # unit, `de9025f2` added the task 2026-08-29, and the last capture converge was 2026-08-28 -- so no
+  # preview had ever included it). `check_mode: false` is the WRONG fix here: it would start a timer
+  # on a live host during a read-only pass.
+  when: not ansible_check_mode
 
 - name: install the segment-prune script
   ansible.builtin.copy:
