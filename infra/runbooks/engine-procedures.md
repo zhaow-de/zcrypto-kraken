@@ -409,3 +409,72 @@ Three standing conditions once it IS armed, each of which silently changes what 
 ### Retire when
 
 `tracking_band_bps` is absent from `cli/config.py` — i.e. the trip was replaced rather than merely disarmed.
+
+______________________________________________________________________
+
+<a name="engine-flatten"></a>
+
+## engine-flatten — PROCEDURE
+
+### What you are seeing
+
+**Nothing fired.** You are here because the book has to be flat within minutes — a crash, a provider-level event, an engine that is dead with positions open — and you have decided to close everything at market rather than wait.
+
+Real money moves, at whatever price the market gives. This closes the **whole account**: every resting order, every margin position, every non-EUR balance, including coin the engine never bought.
+
+### What it means
+
+`sudo zcrypto-flatten` runs one command in a one-off container built from the same image digest the engine runs, so the venue adapter pressing the button is the one that was verified. With `--execute` it first writes the engine's kill file, then stops the engine unit and waits for it to be gone, and only then reads the account and asks you to type a word.
+
+**What it does**: writes the kill file · stops the engine · cancels every resting order account-wide · closes every margin position with a reduce-only market order · sells every non-EUR balance at market, in two passes so a coin with no EUR pair is sold to BTC and the BTC is then sold to EUR · writes a record of every request and every answer.
+
+**What it does not do**: it does not clear the kill file, does not restart the engine, does not touch the engine's execution ledger, and does not close anything partially — it is the whole account or nothing.
+
+**Two limits it carries today.** The reduce-only market close on a margin position has never been sent live from this repository on any order type; the red-button drill in the go-live drill program is where that is first proven, and until its entry reads a pass, treat a margin close as unverified and read Kraken's own positions page afterwards by eye. And the five account reads have been proven against the live venue only once the read-only dry-run recorded in `docs/reference/adapter-verification/` has been run through this wrapper; until that row exists, a live `--execute` is being run against read shapes nothing has confirmed.
+
+### What to do
+
+1. **Read the plan first. It sends nothing.**
+
+```
+sudo zcrypto-flatten
+```
+
+It prints every resting order it would cancel, every position it would close with its side and quantity, every balance it would sell with an estimate at the taker rate, every balance below the venue's minimum that it will list and not send, and every balance no EUR or BTC pair can carry. It exits 0 and changes nothing — 3 if the venue could not be read, 1 if the plan could not be printed, both of them having changed nothing either. Its reads run beside the still-running engine and share the trade key with it, so one engine order or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary.
+
+2. **Press it.**
+
+```
+sudo zcrypto-flatten --execute
+```
+
+The kill file is written, the engine is stopped, the plan is printed again from a fresh read, and it asks you to type `FLATTEN`. Anything else aborts and nothing is sent. It reads the word from the terminal, never from a pipe, and there is no flag that skips it.
+
+3. **Read the exit code.** It is the whole verdict, and it never reads a single leg's answer.
+
+| code | what it means | what to do |
+| -- | -- | -- |
+| **0** | the final read shows no resting order, no open position and nothing sellable left | go to step 4 |
+| **1** | refused with nothing sent — no kill file, no terminal, the word did not match, the plan could not be shown, or no credentials in the container | nothing was sent; fix what it named and run it again |
+| **2** | something is still open, or the account-wide cancel failed, or a read after the cancel failed | go to step 5 |
+| **3** | the venue could not be reached or read **before anything was sent** | nothing was sent; the account is as it was |
+
+4. **Confirm it by eye on Kraken.** Open orders and open positions on Kraken's own pages. The engine stays stopped and the kill file stays in place until you decide otherwise — that is what stops anything re-opening.
+
+5. **On exit 2, read the record.** It is `/var/lib/zcrypto-engine/exec/flatten-<timestamp>.json`, and the command prints its path. Each leg carries what was sent and what the venue answered.
+
+- **Every leg answered without an error, and something is still listed?** The venue may simply not have settled yet — the final read is taken immediately. **Run it again**; a second run finds less to do and does it. A second exit 2 naming the same residual is real.
+- **A leg reads `unclosable_below_minimum`?** That label is what *this command* read before it sent anything: the position was smaller than the pair's minimum order size. It is never read off the venue's answer, so **read the `error` beside it in the record first.** No `error` at all means the quantity floored to nothing and there was never an order to send. An `error` naming a rate limit, a temporary lockout or any other passing condition is a refusal that may not be about the size at all — **run the command again**, and judge the label on what the second run answers. An `error` that keeps saying the order is too small is the real case: no order can clear that remainder; only Kraken's own settle-position action in the web UI can, and the adapter cannot send it.
+- **A balance reads `no_eur_or_btc_pair`?** The venue lists no EUR and no BTC pair for it, so this command cannot sell it. Sell it by hand on Kraken against whatever pair exists.
+- **A leg reads `dust_below_venue_minimum`?** Nothing is wrong. The venue would reject that order, and a balance that small is not exposure.
+- **A leg reads `no_reference_price`?** No book price backed it: either it surfaced after the plan was priced — no book is read once the cancel has gone out — or its own book could not be read, or answered no usable price. It was sent anyway, sized on the venue's quantity floor alone. The order still went out; the label asks nothing of you, and what the venue answered beside it is the answer.
+- **A position reads `pair_not_listed`?** The venue's listing carries no pair for it, so nothing could be sized and no order was sent — everything else was still cancelled, closed and sold. Close that position by hand on Kraken.
+- **A position reads `unrecognised_position_side`?** The venue answered a side this command cannot derive a close from, so nothing was sent for that row — everything else was still cancelled, closed and sold. Read the row on Kraken's own positions page and close it there; the side it shows is the finding.
+- **A residual reads `resting_order`, `sellable_balance` or `unjudgeable: …`?** These describe the final read rather than a decision made before sending: an order still working, a balance still above the venue's minimums, and a balance whose pair's constraints could not be read back. The first two mean the sweep did not finish the job — run it again. The third means that balance could not be judged at all: check it by hand on Kraken.
+- **The record says a read after the cancel failed?** The account may have moved and the run stopped where it stood. Read Kraken's own pages, then run it again.
+
+6. **Do not clear the kill file to restart the engine until you have decided the reason no longer holds.** Clearing it is the same procedure as for any other latched halt, in [`engine.md`](engine.md#zcrypto-engine-exec-kill-tripped).
+
+### Retire when
+
+`flatten` is no longer a subcommand of `zcrypto engine` in `cli/engine/command.py`, or `/usr/local/sbin/zcrypto-flatten` is no longer rendered by the engine role.

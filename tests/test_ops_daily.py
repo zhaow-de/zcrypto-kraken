@@ -388,6 +388,8 @@ _DESTRUCTIVE = (
     "docker stop",
     "docker rm",
     "converge.sh",
+    # Closes every position and sells every non-EUR balance at market; never a read-only diagnostic.
+    "zcrypto-flatten",
     # Destructive OR banned: a command CLAUDE.md forbids (an unscoped inspect, `docker exec … env`,
     # `docker compose config` -- each prints the container environment, and on the engine host that
     # is the live trade key) is not a read-only diagnostic either; counting it as one would make the
@@ -470,6 +472,40 @@ def test_most_read_only_diagnostics_are_autonomous_on_ops():
         f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous; "
         f"refused sample: {sorted(c for c in reads if c not in autonomous)[:12]}"
     )
+
+
+def test_the_red_button_is_never_autonomous():
+    """The unattended daily pass reads these runbooks and classifies every command in them. This
+    one closes the whole book at market; nothing may ever run it without a person."""
+    for command in ("sudo zcrypto-flatten", "sudo zcrypto-flatten --execute"):
+        assert ops_daily.classify_action(f"`{command}`", host="zcrypto") is not ops_daily.Tier.AUTONOMOUS
+
+
+# Every wrapping of the red button an operator or a runbook would really produce, each paired with a
+# read command wearing the SAME wrapper. The pair is the whole point: `is not AUTONOMOUS` is what a
+# classifier broken into refusing everything also answers, and it is what a typo in the button's
+# spelling answers too. The read half fails in both of those worlds, so only a live classifier
+# reading a command it genuinely parses can make a row pass.
+_RED_BUTTON_WRAPPINGS = (
+    ("sudo zcrypto-flatten", "sudo docker logs zcrypto-engine --since 1h"),
+    ("sudo zcrypto-flatten --execute", "sudo docker logs zcrypto-engine --since 1h"),
+    ("sudo /usr/local/sbin/zcrypto-flatten --execute", "sudo docker logs zcrypto-engine --since 1h"),
+    (
+        "sudo docker exec zcrypto-engine zcrypto engine flatten --state-dir /var/lib/zcrypto-engine --execute",
+        "sudo docker exec zcrypto-engine zcrypto engine exec-status",
+    ),
+    ("ssh zcrypto sudo zcrypto-flatten --execute", "ssh zcrypto sudo docker logs zcrypto-engine --since 1h"),
+    ("zcrypto engine flatten --state-dir /var/lib/zcrypto-engine", "zcrypto engine exec-status"),
+)
+
+
+@pytest.mark.parametrize(("button", "read"), _RED_BUTTON_WRAPPINGS)
+def test_no_wrapping_of_the_red_button_reaches_autonomous(button, read):
+    """The button is refused through every wrapper the fleet's commands are really spelled with --
+    the host wrapper, its absolute path, a one-off `docker exec` into the engine, an `ssh` that
+    retargets the host, and the in-container form with its state directory."""
+    assert ops_daily.classify_action(f"`{button}`", host="zcrypto") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(f"`{read}`", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
 
 
 def test_the_classify_subcommand_is_what_the_skill_calls(capsys):

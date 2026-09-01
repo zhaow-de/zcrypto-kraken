@@ -501,6 +501,16 @@
   register: engine_unit_install
   notify: restart engine service
 
+# The emergency halt an operator runs by hand. Not a service: nothing starts it, and it notifies no
+# handler — installing it must never restart the engine.
+- name: install the engine flatten wrapper
+  ansible.builtin.template:
+    src: zcrypto-flatten.sh.j2
+    dest: /usr/local/sbin/zcrypto-flatten
+    owner: root
+    group: root
+    mode: "0750"
+
 - name: enable + start the engine service (boot resume)
   ansible.builtin.systemd_service:
     name: zcrypto-engine.service

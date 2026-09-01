@@ -9,6 +9,7 @@ command bodies that need it -- `zcrypto --help` must never pay the nautilus impo
 
 from __future__ import annotations
 
+import asyncio
 import faulthandler
 import json
 import math
@@ -63,6 +64,13 @@ logger = get_logger("engine.command")
 
 CANONICAL_DIR = Path("data/ohlc-full")
 DEFAULT_NAVS = (500.0, 1000.0, 2500.0, 5000.0, 10000.0)
+# The two variables carrying the trade credentials, rendered onto the engine host by the deploy.
+# Named here so a refusal can say WHICH is missing without ever touching a value.
+# `cli/engine/node.py` defines the same two names for the same reason. The copy is deliberate and
+# not shared: importing them would pull nautilus into this module's scope and defeat the lazy
+# import that keeps `zcrypto --help` off the ~1 s adapter load. `engine.env.j2` renders both.
+_API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
+_API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 _REFDATA_GLOB = "kraken-refdata-*.json"
 _urlopen = urllib.request.urlopen  # module-level so tests can stub the gate-export healthcheck ping
 
@@ -1908,6 +1916,46 @@ def _echo_gate_verdict(verdict: GateVerdict) -> None:
     typer.echo(f"reasons={','.join(verdict.reasons) or '-'}")
     for key, value in sorted(verdict.inputs.items()):
         typer.echo(f"  {key}={value}")
+
+
+@engine_app.command()
+def flatten(
+    state_dir: Path = typer.Option(
+        ...,
+        "--state-dir",
+        help="Engine state directory holding the control files and receiving this run's record. Required: this command must not depend on a config file when the environment is what broke.",
+    ),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Actually send. Without it the account is read, the plan is printed and nothing is sent.",
+    ),
+) -> None:
+    """Close every open position and sell every non-EUR balance at market, account-wide.
+
+    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, 1 refused with nothing sent, 2 something is still open, 3 the venue could not be read before anything was sent."""
+    # Imported HERE, not at module scope: `cli.engine.flatten` pulls nautilus (~1 s) and
+    # `zcrypto --help` must never pay it -- the same reason `cli.engine.node` is lazy above.
+    from cli.engine.flatten import run_flatten
+
+    key = os.environ.get(_API_KEY_VAR)
+    secret = os.environ.get(_API_SECRET_VAR)
+    missing = [name for name, value in ((_API_KEY_VAR, key), (_API_SECRET_VAR, secret)) if not value]
+    if missing:
+        # The refusal names the VARIABLES and never their contents.
+        raise _abort(f"the trade credentials are not in this environment: {', '.join(missing)}")
+
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
+    client = KrakenSpotHttpClient(key, secret)
+    # `raise typer.Exit(code=...)`, never `return`: a returned int is discarded and the process
+    # exits 0, which turns every refusal and every not-flat account into a clean-looking run.
+    # `echo` is handed the plain callable -- `run_flatten` wraps it in its own dead-stdout guard.
+    # `asyncio.run` is where the loop the client needs comes from, and this is the only place it is
+    # opened: every one of its seven methods raises `RuntimeError: no running event loop` outside
+    # one, so called synchronously this command exits 3 on its very first read -- `--execute`
+    # included. Same boundary placement as `cli/liquidations/command.py` and `cli/capture`.
+    raise typer.Exit(code=asyncio.run(run_flatten(client, state_dir=state_dir, execute=execute, echo=typer.echo)))
 
 
 def _newest_venue_record(journal_dir: Path) -> dict | None:

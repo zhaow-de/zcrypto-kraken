@@ -79,6 +79,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 - [`engine-probe-window`](engine-procedures.md#engine-probe-window) — PROCEDURE: the attended live-order probe window, and the only sanctioned way to run one. Nothing fires this; you open it deliberately, and real money moves.
 - [`engine-tracking-band`](engine-procedures.md#engine-tracking-band) — PROCEDURE: the weekly tracking-error trip — what its verdict tile is saying, and what has to be true before a band is set. Nothing fires this; a breach pages through the kill-switch alert above.
+- [`engine-flatten`](engine-procedures.md#engine-flatten) — PROCEDURE: the emergency halt — one command that stops the engine and closes the whole account at market. Nothing fires this; you open it deliberately, and real money moves at whatever price the market gives.
 
 ### [`order-semantics-verification.md`](order-semantics-verification.md) — the adapter's order semantics on a new nautilus version
 

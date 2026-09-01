@@ -152,17 +152,24 @@ def test_a_below_costmin_result_names_the_floor():
 # either. `cli/engine/node.py` seals that surface by DEFINING those names to raise, and a definition
 # is the opposite of a reach; matching the bare word would make the seal itself the offender and the
 # only way back would be an allowance, which is how a guard stops being one.
-_VENUE_MUTATING_NAMES = (".submit_order", ".cancel_order", ".order_factory")
+_VENUE_MUTATING_NAMES = (".submit_order", ".cancel_order", ".cancel_all_orders", ".order_factory")
+# The engine's order machine and the red button, and nothing else. `cli/engine/flatten.py` is a
+# second venue-mutating module BY DESIGN (spec 00106 D7): the button has to work when the machine
+# is what broke, so the two deliberately share no code path, and the price of that is a second
+# entry here rather than a guard that reuse would have satisfied.
+_VENUE_MUTATING_MODULES = frozenset({"cli/engine/executor.py", "cli/engine/flatten.py"})
 
 
 def test_the_venue_mutating_names_have_exactly_one_module():
-    """D4's structural pin: all venue-mutating calls live in cli/engine/executor.py. A text walk,
-    not an import walk -- a reference in a comment is still a reference a refactor can activate.
-    `cancel_order` is on the list because the maker-first ladder cancels: a cancel reaches the venue
-    exactly as a submit does, so a second module learning to cancel is the same escape."""
+    """D4's structural pin, widened by spec 00106 D7: all venue-mutating calls live in
+    cli/engine/executor.py or cli/engine/flatten.py. A text walk, not an import walk -- a reference
+    in a comment is still a reference a refactor can activate. `cancel_order` is on the list because
+    the maker-first ladder cancels: a cancel reaches the venue exactly as a submit does, so a second
+    module learning to cancel is the same escape. `cancel_all_orders` is on it because an
+    account-wide cancel is the largest cancel there is."""
     offenders = []
     for path in sorted(Path("cli").rglob("*.py")):
-        if path.as_posix() == "cli/engine/executor.py":
+        if path.as_posix() in _VENUE_MUTATING_MODULES:
             continue
         text = path.read_text()
         if any(name in text for name in _VENUE_MUTATING_NAMES):
