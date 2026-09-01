@@ -1,5 +1,6 @@
 ---
 status: partial
+ripe_when: 'the engine converge carrying 00106 and the rest-hold plan mode — the host wrapper exists only after it, so the live read-only dry-run and the first real press both follow inside that same attended window'
 ---
 
 # `zcrypto engine flatten` — the red button
