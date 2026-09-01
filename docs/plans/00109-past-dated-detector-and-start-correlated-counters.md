@@ -18,7 +18,8 @@
 - **Landing order is fixed** (spec 00109 D7): the predicate lands and BOTH capture hosts re-pin to an image carrying it — verified by digest, not by reading the counter — BEFORE the rule change is pushed to Grafana. This plan lands repo changes only; the Grafana push is an attended step in the next converge wave and is explicitly NOT a task here. Task 6 lands that imperative where the pushing agent will meet it.
 - **Capture path**: `cli/capture/segment_writer.py` is on the unbackfillable L2 path. Review floor is Fable.
 - **Only ONE rule converts.** `zcrypto-capture-hour-finalized-early` is examined and deliberately kept on `increase()` (spec 00109 D3): `_count_if_early` also runs from `_finalize_hour` on the ordinary rotation path, so its counter steps at every boundary under any lagging clock and is not start-correlated. Nothing in this plan touches that rule, its runbook entry, or its panel series.
-- `zcrypto-capture-rows-quarantined` is **out of scope** (spec 00109 D3) — absolute value does not fix it, and Task 7 Step 3 owes it a registration or an explicit drop before this branch merges.
+- `zcrypto-capture-rows-quarantined` is **out of scope** (spec 00109 D3) — **not** because the counter is invisible: both causes its rule names spill at `close()`, in a dying process nothing scrapes, while its other increment site (`_hold`'s `flush_rows` cap) is on the live path and `increase()` already reads it correctly. Absolute value changes nothing at either site, which is the reason, and it is the reason Task 7 Step 3's explicit-drop branch must record. Task 7 Step 3 still owes it a registration or an explicit drop before this branch merges.
+- **The falsified "hard zero" sentence has ONE enumeration and it is a command, not a list**: `grep -rni "hard.zero" infra/` — measured today, six hits in four files. Task 4 owns the two `infra/grafana/` files, Task 5 the two `infra/runbooks/` ones. Re-run it after both tasks: no surviving hit may still assert the baseline. Nothing else in this plan restates that set.
 
 ---
 
@@ -142,8 +143,10 @@ git commit -m "test(capture): a restart re-opening a captured hour must count no
 ### Task 2: Narrow the predicate
 
 **Files:**
-- Modify: `cli/capture/segment_writer.py` (the first-event branch in `_enter_hour`, ~line 499)
+- Modify: `cli/capture/segment_writer.py` — the first-event branch in `_enter_hour` (~line 499), **and** the `ts_past_dated_hour` attribute's own comment in the constructor, which today reads `# oracle-bearing first stamps that opened an hour behind the clock (`_enter_hour`)`: the pre-D1 predicate verbatim, on the definition a maintainer reads first.
 - Modify: `cli/capture/command.py` — the `zcrypto_capture_ts_past_dated_hour_total` HELP string, which today reads `"First events that opened a stream's hour already behind the wall clock."` — the pre-D1 predicate verbatim. Prometheus HELP text is operator-visible and is what any by-value verification reads, so the published definition moves in the same commit as the code, or it describes a predicate that no longer exists.
+
+**Three descriptions of the predicate live in `cli/`, and all three move together**: the branch comment, the attribute comment, the HELP string. That is the whole set — `grep -rn "behind the wall clock\|behind the clock" cli/` finds it.
 
 **Interfaces:**
 - Consumes: `self._parts_for(hour_dir, hh, *, marker=".part")`, `self._hour_dir(hour)` — both already defined in this class.
@@ -175,12 +178,18 @@ with:
 
 - [ ] **Step 2: Move the metric's published definition with it**
 
-In `cli/capture/command.py`, the counter's HELP string states the old predicate. Narrow it to match — e.g. `"First events that opened a stream's hour already behind the wall clock, where that hour held no captured parts."` Keep the tokens out of the string itself; the spec citation belongs in the comment above it, which already carries one.
+In `cli/capture/command.py`, the counter's HELP string states the old predicate. Narrow it to match — e.g. `"First events that opened a stream's hour already behind the wall clock, where that hour held no captured parts."` Keep the tokens out of the string itself; the spec citation belongs in the comment above it, which today cites the superseded `00103` D5 — re-tense it to `00109` D1 (`code-prose.md`: a closed citation is re-tensed, never left pointing at the ruling it lost).
+
+Narrow `segment_writer.py`'s attribute comment the same way and in the same commit — "…that opened an hour behind the clock **and held no captured parts**". It is the counter's definition; left alone it states the predicate this commit removes.
 
 - [ ] **Step 3: Run the T0037 family together**
 
 Run: `uv run pytest tests/test_capture_segment_writer.py -k t0037 -v`
 Expected: **29 collected, all pass** — 26 today (measured: `-k t0037` collects 26, 69 deselected) plus Task 1's three. Confirm the count before reading the result: this selection is the whole T0037 family, far larger than the five past-dated tests, so "more tests than the plan said" must never be waved through as harmless. Of the five, `test_t0037_past_dated_first_stamp_counted` stays a true positive because hour 10 never received an event and so holds no parts.
+
+Step 2 rewrote a Prometheus HELP string — an operator-visible surface (`.claude/rules/operator-facing-text.md`) — so run its guard too, and as its OWN command: a shared `-k t0037` would deselect every test in that file and report a green nobody ran. Tasks 4, 5 and 6 each run it for their own surfaces.
+
+Run: `uv run pytest tests/test_internal_terms_not_operator_visible.py -q`
 
 - [ ] **Step 4: Commit**
 
@@ -205,17 +214,21 @@ infra/scripts/mutate-probe.sh \
   --mutation 's/and not self\._parts_for/and self._parts_for/' \
   -- uv run pytest tests/test_capture_segment_writer.py -k t0037 -q
 
-# (b) the MARKER — `.held` accepted as capture evidence, which no other check would catch
+# (b) the MARKER as EVIDENCE — the WIDENING: `.held` accepted as capture too, which no other check catches
 infra/scripts/mutate-probe.sh \
   --file cli/capture/segment_writer.py \
   --control 's/self\.ts_past_dated_hour += 1/self.ts_past_dated_hour += 0/' \
-  --mutation 's/and not self\._parts_for(self\._hour_dir(hour), f"{hour:%H}")/and not self._parts_for(self._hour_dir(hour), f"{hour:%H}", marker=".held")/' \
+  --mutation 's/and not self\._parts_for(self\._hour_dir(hour), f"{hour:%H}")/and not (self._parts_for(self._hour_dir(hour), f"{hour:%H}") or self._parts_for(self._hour_dir(hour), f"{hour:%H}", marker=".held"))/' \
   -- uv run pytest tests/test_capture_segment_writer.py -k t0037 -q
 ```
 
 The `and not ` prefix on (b) is load-bearing, not decoration: `sed -i` rewrites **every** matching line, and after Step 1 the call `self._parts_for(self._hour_dir(hour), f"{hour:%H}")` appears twice in this file — once in the predicate and once in `_open_hour`'s de-dup seed. An expression anchored on the call alone mutates both and measures a different change.
 
-Expected for each: control FAILS (rc 5 if it does not — the harness is not discriminating and nothing below counts), then **KILLED**. Mutation (a) is killed by the re-open test and the positive test together; (b) is killed by `test_t0037_a_held_only_past_hour_still_counts` alone, which is why that test exists. A SURVIVED verdict on (b) means the marker is asserted but not proven. Check rc 6 ("no-op sed") before anything else if a mutation reports nothing changed — Step 1's exact formatting is what these expressions match, so re-anchor them to the code as committed rather than editing the code to fit them.
+Expected for each: control FAILS (rc 5 if it does not — the harness is not discriminating and nothing below counts), then **KILLED**. Mutation (a) is killed by the re-open test and the positive test together; (b) is killed by `test_t0037_a_held_only_past_hour_still_counts` **alone**, which is why that test exists. A SURVIVED verdict on (b) means the marker is asserted but not proven.
+
+**(b) is the widening, not a marker SWAP, and the difference is the whole point of the probe.** Measured against this tree by patching each predicate onto `_enter_hour` and replaying the three fixtures: a swap (`.held` read instead of `.part`) makes the re-open fixture read 1 against its `== 0` *and* the held-only fixture read 0 against its `== 1` — so the re-open test kills it on its own and a KILLED verdict says nothing about the held-only test. The widening (`not (parts or held)`) leaves the re-open fixture at 0 and the positive at 1, and fails the held-only fixture only. That is the defect D1's marker choice actually risks — a later "simplification" accepting any parquet as capture evidence — and the one mutation this test uniquely kills.
+
+Check rc 6 ("no-op sed") before anything else if a mutation reports nothing changed — Step 1's exact formatting is what these expressions match, so re-anchor them to the code as committed rather than editing the code to fit them.
 
 ---
 
@@ -265,22 +278,29 @@ In `zcrypto-capture-ts-past-dated-hour`, replace `increase(zcrypto_capture_ts_pa
 
 - [ ] **Step 2: Rewrite every string in that rule block the change falsifies**
 
-Four surfaces in the same block, all of them read by a person rather than by a test — no guard in `tests/test_infra_alert_rules.py` couples any rule's summary, unit or `relativeTimeRange` to its selector for these, so nothing catches drift here:
+Six surfaces in the same block, every one of them read by a person rather than by a test — no guard in `tests/test_infra_alert_rules.py` couples any rule's title, summary, unit or `relativeTimeRange` to its selector for these, so nothing catches drift here:
 
-1. `unit:` — today `"first events that opened an hour already in the past, last 6 hours"`. The Slack template renders the unit immediately after the measured value, so a process-lifetime latch would page as "measured 1 … last 6 hours". Restate it windowlessly, naming the capture process as the scope.
-2. `summary:` — drop "The baseline is a hard zero over the fleet's whole life", which spec D5 rules false, and put the corrected statement in its place: the counter has now stepped once, benignly, on a re-pin. Say the value is cumulative since the capture process started and clears only when that process restarts — a deployed artifact stands alone, so a pointer to the runbook is not enough.
-3. The rule's own justification comment, today *"A STEP, not a rate. The counter can advance at most once per stream per process -- one first event each -- so `increase() > 0` over a long window is the whole detection"*. That is the sentence spec D2 identifies as the defect; left standing it is a written argument for reverting Step 1. Replace it with why `increase()` fails here: the step is bound to process start, the reset is never scraped, so the series never re-enters the window below its step.
-4. The summary's predicate description, which must now match D1 — the hour opened was one holding **no captured parts**, not merely one in the past.
+1. `title:` — today `"Capture · a stream opened an archive hour that was already in the past"`: the pre-D1 predicate stated as the alert's NAME. For a Grafana provisioned rule the title IS `alertname`, and `infra/grafana/notification-templates/zcrypto-slack.tmpl` renders `.CommonLabels.alertname` as the message's first line — the phone headline, read before anything else. Retitle to the narrowed predicate — a past hour that held **no captured data** — keeping it a name rather than a sentence. Nothing else in the tree carries this string and no test pins this rule's title (`tests/test_infra_alert_rules.py` pins only `_DARK_WITH_EXPOSURE_TITLE`), so the retitle reaches nothing but the page.
+2. `unit:` — today `"first events that opened an hour already in the past, last 6 hours"`. The Slack template renders the unit immediately after the measured value, so a process-lifetime latch would page as "measured 1 … last 6 hours". Restate it windowlessly, naming the capture process as the scope.
+3. `summary:` — two corrections in one rewrite. Drop "The baseline is a hard zero over the fleet's whole life", which spec D5 rules false; and make the predicate match D1 — the hour opened was one holding **no captured parts**, not merely one in the past. The summary then carries CURRENT meaning only: cumulative since the capture process started, clears only when that process restarts, do not repair by hand, runbook link — a deployed artifact stands alone, so a pointer to the runbook is not enough. **No dated history in it.** By D7 the benign `1` is gone before this rule's first evaluation, so a summary saying "it has stepped once, benignly" would tell every later page to dismiss itself; that record's home is the runbook note (Task 5 Step 1).
+4. The rule's justification comment — the WHOLE paragraph from *"A STEP, not a rate…"* through *"…already certified on disk"*, not its first sentence alone. Its head is the argument spec D2 identifies as the defect, and left standing it is a written case for reverting Step 1; its tail (*"Kraken's ts is measured strictly non-decreasing in production, so the baseline is a hard zero…"*) is the same falsified claim as the summary, and replacing only the quoted head leaves it inside the block. Replace the paragraph with why `increase()` fails here: the step is bound to process start, the reset is never scraped, so the series never re-enters the window below its step.
+5. The block's FIRST comment paragraph, which opens `# T0037's past-dated residual (spec 00103 D5)` — the rule keeps citing the ruling this spec supersedes as its provenance. **The citation only**: re-tense it to `00109` D1 (`code-prose.md`: a closed citation is re-tensed, never left pointing at the ruling it lost). The paragraph's own account of the harm — "committing a manifest-certified 'complete' final for a period nothing was captured in" — is already D1's predicate and is left alone.
+6. `relativeTimeRange` on the Prometheus node — `{from: 21600, to: 0}`, the six-hour horizon the `[6h]` selector needed. An instant `max by (host)(…)` reads no range, and `tests/test_infra_alert_rules.py`'s dark-with-exposure guard states the standing convention in its own docstring: `relativeTimeRange` is what a maintainer reads for the node's real horizon. Set it to `{from: 600, to: 0}`, matching `zcrypto-capture-venue-not-online` — the absolute-value rule this one now copies.
 
-Keep the internal-token guard in mind: `summary` and `unit` are phone-read operator surfaces.
+Keep the internal-token guard in mind: `title`, `summary` and `unit` are phone-read operator surfaces.
 
 - [ ] **Step 3: Move panel 110's past-dated series in the same commit**
 
 `infra/grafana/data-integrity-dashboard.json`, panel 110 ("Hour-rotation residuals — early closes, past-dated opens & clock offset") — the panel BOTH capture rotation rules link. Its refId B is `increase(zcrypto_capture_ts_past_dated_hour_total{host=~"$capture_host"}[6h])`, legend `{{host}} past-dated hour opens (6h)`.
 
-Change refId B to `max by (host) (zcrypto_capture_ts_past_dated_hour_total{host=~"$capture_host"})`, drop `(6h)` from its legend, and correct the panel `description`, which asserts of this counter that "its baseline is a hard zero over the fleet's whole life" — the same falsified sentence as the summary — and describes the series as a windowed count. **Leave refId A, C and D and the early-close half of the description alone**: that rule keeps `increase(...[6h])` and its chart must keep matching it.
+Change refId B to `max by (host) (zcrypto_capture_ts_past_dated_hour_total{host=~"$capture_host"})`, drop `(6h)` from its legend, and correct the TWO sentences of the panel `description` that are about this counter:
 
-Give refId B a threshold step in `0 < bar <= 1` so the panel's red line agrees with a rule that fires on any value above zero.
+1. its definition — *"Past-dated opens count streams whose FIRST event was stamped into an hour already gone — that publishes an hour marked complete for a period nothing was captured"* — which must gain D1's conjunct: an hour already gone **that held no captured parts on disk**. This is the same correction item 3 makes on the summary, and it is the one an operator following the rule's own `__dashboardUid__`/`__panelId__` link reads for confirmation;
+2. *"its baseline is a hard zero over the fleet's whole life"* — the falsified sentence, corrected as on the summary, and with no dated history put in its place for the reason item 3 gives.
+
+**The description carries no window wording to fix** (measured: `6h`, `six hour`, `last 6`, `window`, `over the last` all return nothing) — the `(6h)` this step drops is in `legendFormat` only. **Leave refId A, C and D and the early-close half of the description alone**: that rule keeps `increase(...[6h])` and its chart must keep matching it.
+
+refId B's existing `byFrameRefID` override — `custom.thresholdsStyle: line`, `thresholds.steps` red at `0.001` — already puts the red line inside `0 < bar <= 1` and agrees with `> 0` in the old form and the new. Leave it; adding one produces a second override on the same refId.
 
 - [ ] **Step 4: Check the pairing — knowing it is blind here**
 
@@ -296,7 +316,7 @@ Expected: hits only in `infra/grafana/data-integrity-dashboard.json` (no other d
 
 - [ ] **Step 5: Correct the file's generalisation comment**
 
-`alerts.yaml` already states, beside `venue-not-online`: *"The sibling `increase()` rules work because their counters already exist at 0 and only step; that idiom does not transfer to a label that materialises on the event."* Replace with a statement that also covers the two cases it misses — an eagerly-published counter on a host **new to the metric** (its first sample already carries the step), and a **start-correlated** step (the reset is never scraped, because the increment lands seconds after start and scrapes are 60 s apart). This is the third comment site in this task; Steps 2 and 5 together are the whole set.
+`alerts.yaml` already states, beside `venue-not-online`: *"The sibling `increase()` rules work because their counters already exist at 0 and only step; that idiom does not transfer to a label that materialises on the event."* Replace with a statement that also covers the two cases it misses — an eagerly-published counter on a host **new to the metric** (its first sample already carries the step), and a **start-correlated** step (the reset is never scraped, because the increment lands seconds after start and scrapes are 60 s apart). This is the third and last comment site in this task — Step 2's items 4 and 5 are the other two, both inside the past-dated rule's own block.
 
 - [ ] **Step 6: Run the guards and commit**
 
@@ -315,22 +335,27 @@ git commit -m "fix(obs): a start-correlated counter is the one increase() cannot
 
 **Files:**
 - Modify: `infra/runbooks/capture.md` — the `zcrypto-capture-ts-past-dated-hour` entry, **and** the KNOWN LIMITATION decision table's row 4, whose "Past-dated firing ⇒ … with a hard-zero baseline" carries the same falsified claim.
+- Modify: `infra/runbooks/README.md` — this alert's index row, which ends "**Hard-zero baseline.**" and describes the pre-D1 predicate ("dated into an hour already gone", with no no-capture conjunct). It is not decoration: it is the index the summary's runbook path resolves through, so an operator reads it BEFORE `capture.md`, and `tests/test_infra_alert_rules.py` checks that row's routing only, never its prose. Drop the baseline claim, state the narrowed predicate, and say the value is cumulative per capture process.
 
-**The family is two sites in this one file, and no more.** The `zcrypto-capture-hour-finalized-early` entry and its four six-hour-window statements are correct and are NOT touched — that rule keeps `increase(...[6h])` (spec 00109 D3). Panel 110's copy of the falsified baseline sentence moves in Task 4, with the expression it describes.
+**The family is three sites in two files** — `capture.md`'s entry and its decision-table row 4, plus `README.md`'s index row. Global Constraints' grep is what closes the set; do not re-derive it here. The `zcrypto-capture-hour-finalized-early` entry and its four six-hour-window statements are correct and are NOT touched — that rule keeps `increase(...[6h])` (spec 00109 D3). Panel 110's copy of the falsified baseline sentence moves in Task 4, with the expression it describes.
 
 - [ ] **Step 1: Correct the two false statements**
 
 The entry says the baseline is "a hard zero over the fleet's whole life" and "**This has never fired.** Treat the response as unrehearsed rather than routine." Both are now false: it counted on `zcrypto-red` at 2026-09-01T16:15:25Z, benignly, on the first replayed print after a re-pin. Rewrite in place — not as an appended correction, which reads second and less confidently. Fix the decision table's row 4 in the same pass.
 
-**Record the known `1` here** (spec 00109 D6), as a dated note beside the corrected baseline: the value standing on `zcrypto-red` is that re-pin's artifact under the old, wide predicate, not a fabricated hour. Nothing else carries this — the pins map holds no row for that re-pin — so an operator meeting the value has no other provenance, and this entry is what a page links.
+**Record the known `1` here** (spec 00109 D6), as a dated note beside the corrected baseline: the value standing on `zcrypto-red` is that re-pin's artifact under the old, wide predicate, not a fabricated hour. The pins map names the digest a re-pin moved to and never what a counter's value MEANS, so an operator meeting the value has no other provenance, and this entry is what a page links.
 
 **Keep the `<a name="zcrypto-capture-ts-past-dated-hour"></a>` anchor byte-identical.** The alert summary links it and `infra/runbooks/README.md` routes to it; a renamed or split heading breaks the link a paged operator taps.
 
-- [ ] **Step 2: Add what the plan promised and never delivered — both shapes**
+- [ ] **Step 2: Add what the plan promised and never delivered — the three shapes that reach the page**
 
-`00103`'s plan said the runbook carried a benign-restart carve-out. It never did. State the discriminator an operator can act on: a count with `.part` files present for that hour is a re-open, not a fabrication — and under D1 that no longer counts at all, so a non-zero value now means the hour genuinely held no capture.
+`00103`'s plan said the runbook carried a benign-restart carve-out. It never did. State the meaning exactly first, because the loose version misleads: a non-zero value means the hour held no **confirmed** capture **on disk at the moment it opened** — not that nothing was ever captured for it. A re-open of an hour that already has `.part` files no longer counts at all under D1, so that shape never pages; three others do, and only one of them is the fabrication. Each measurement below was replayed against this tree with the narrowed predicate patched onto `_enter_hour`.
 
-**Name the second shape too, because it is the likeliest first page this change produces.** An hour for which capture was simply not running — an attended reboot, a host outage — also holds no parts, so the first replayed stamp after the restart counts, correctly by D1's definition and yet not a bogus timestamp. Measured against this tree with the narrowed predicate: hour 14 finalized, nothing written for hour 15, a new oracle-bearing writer at 16:15 whose first event is stamped 15:40 → the hour opens and the counter reads 1. Tell the operator to read the container's `StartedAt` and the gap in the hour's own directory against the peer machine: a gap on both, spanning the hour, means a replay backfill of a known outage rather than a bad stamp.
+1. **Capture was not running for that hour** — an attended reboot, a host outage. The hour holds no parts, so the first replayed stamp after the restart counts, correctly by D1's definition and yet not a bogus timestamp. Measured: hour 14 finalized, nothing written for hour 15, a new oracle-bearing writer at 16:15 whose first event is stamped 15:40 → tree `['14.parquet']`, no parts for 15, the hour opens, counter **1**.
+2. **A non-graceful stop lost the unflushed buffer** — and this is the likeliest first page the change produces. There is no timed flush (`DEFAULT_FLUSH_ROWS = 5_000`), so a thin stream's whole hour can sit in RAM; SIGTERM reaches `close()` and spills it, but an OOM kill, SIGKILL, kernel panic or power loss does not, and `command.py`'s own shutdown comment says what is lost. The replay then re-opens an hour that has no parts *because the crash lost them*, and the replay is restoring exactly those rows. Measured: hour 14 finalized, two hour-15 rows buffered below `flush_rows`, the writer dropped without `close()`, a new oracle-bearing writer at 16:15 whose first event is the replayed 15:47 print → tree `['14.parquet']`, no parts for 15, counter **1**; the identical fixture with `close()` first → `15.part0000.parquet` on disk, counter **0**.
+3. **The hour held only a quarantined `.held` spill** — D1's headline case, counted on purpose (Global Constraints), because those rows were never corroborated and the hour is about to be certified from rows nothing confirmed. **Its evidence destroys itself, so say so:** opening the hour calls `_redeem_held`, which renames the spill into an ordinary `.part`, and the next rotation merges it into a certified `<HH>.parquet`. Measured: tree `['14.parquet', '15.held0000.parquet']` before the append, `['14.parquet', '15.part0000.parquet']` after it, counter **1**. An operator arriving minutes later finds a full, certified hour and files a real fabrication as a detector fault unless the entry warns them. **Redemption is silent** — the writer logs it nowhere; `_redeem_held`'s only log line is its `could not redeem` failure path — so neither the disk nor the log distinguishes a redeemed hour afterwards. Name the two checks that do survive: the writer's `first stamp opened a past hour` line, which carries the pair, kind and hour, and the peer machine's copy of that hour (step 3), taken **before** anything else touches the tree. `zcrypto_capture_rows_quarantined_total` on that host corroborates only when the spill happened to be scraped before the stop, which a `close()` spill usually is not (spec 00109 D3).
+
+**The discriminator, because shapes 1 and 2 look identical on this host's disk.** Read `RestartCount` and `StartedAt` (step 1 already gets them) and compare the hour against the peer (step 3). A gap on **both** machines spanning the hour is an outage backfill — shape 1. A restart on **this host only**, with the peer's copy of the hour intact and matching what this host now holds, is a crash replay — shape 2; a single-host crash leaves no gap on the peer, so "a gap on both" as the sole test misfiles it as a bad stamp. Neither is a fabrication. What is: a hole the peer cannot fill — and for shape 3 that comparison is the whole of the disk evidence, since the redemption renamed the rest away.
 
 - [ ] **Step 3: State that the rule is a latch** (spec 00109 D2)
 
@@ -353,15 +378,25 @@ git commit -m "docs(runbooks): the past-dated baseline is not a hard zero, and t
 **Files:**
 - Modify: `.claude/rules/fleet-deploys.md` — the "Alert-rule lifecycle" section
 
-Spec D7 rules on how an operation must be performed, and today it lands nowhere the operator meets it: Global Constraints are read by this plan's implementer, and the topic note in Task 7 is read by whoever picks the topic up. Neither is the daily pass, which prepares `grafana-push.sh` after a merged rule fix precisely because it changes what pages — and this PR merges exactly such a fix days before the capture image can carry D1 through its bake.
+Spec D7 rules on how an operation must be performed, and today it lands nowhere the operator meets it: Global Constraints are read by this plan's implementer, and the topic note in Task 7 is read by whoever picks the topic up. Neither is the daily pass, which prepares `grafana-push.sh` after a merged rule fix precisely because it changes what pages — and this PR merges exactly such a fix days before the capture image can carry D1 through its bake. **The constraint is on the whole push, not on one rule**: the script has no per-rule mode.
 
-- [ ] **Step 1: Add one bullet under "Alert-rule lifecycle"**
+- [ ] **Step 1: The sign-off gate — before any edit to the file**
 
-State the constraint, not its history: `zcrypto-capture-ts-past-dated-hour`'s absolute-value form is not pushed until **both** capture hosts run an image carrying the narrowed past-dated predicate, verified by digest; pushing earlier fires a CRITICAL on the capture pair against a standing benign value. Removing the bullet once the push has happened is its natural retirement, and it belongs in the same section as the existing push-ordering imperatives.
+`.claude/rules/fleet-deploys.md` is in the **protected set** (`.claude/skills/zcrypto-refine-rules/SKILL.md`): every edit to it takes the user's explicit per-edit sign-off, and a plan's authority is not that sign-off — the point of the rule is that the corpus policing a change cannot be altered by that change. The owner signed off on this task's bullet on 2026-09-01 after reading it verbatim; Step 2's text has since been rewritten (it now forbids running the script rather than pushing one rule), and **sign-off attaches to text, so the rewritten bullet needs the word again before it lands**. Show it verbatim, land exactly what is approved, and change nothing else in the file.
 
-Put the same sentence in the PR body, where the merging reviewer sees it.
+**Under unattended execution this task stops here** — park it, report the branch as complete without it, and leave the imperative to the attended session. Every other task in this plan is landable without it.
 
-- [ ] **Step 2: Verify and commit**
+- [ ] **Step 2: Add one bullet under "Alert-rule lifecycle"**
+
+State the constraint, not its history, and word it against the tool that exists. `infra/scripts/grafana-push.sh` pushes every dashboard and every rule in `alerts.yaml` in one run — its only selection env vars are `GRAFANA_URL`, the two datasource uids, the folder uid and `GRAFANA_PRUNE` — so an agent told "do not push THIS rule" has only two moves, and neither is what we want: freeze every other rule and dashboard change for the days the bake takes, or push and ship this rule early. The bullet:
+
+> - **Do not run `grafana-push.sh` at all while either capture host lacks the narrowed past-dated predicate** — it upserts every rule in `alerts.yaml`, so there is no "push only the others"; pushing early latches a CRITICAL on the capture pair against a standing benign value. The gate is checkable from repo state: each capture row in `docs/reference/fleet-pins.md` names its build revision, and `git merge-base --is-ancestor <the predicate's commit> <that revision>` decides it per host. A rule that must ship inside the window: revert `zcrypto-capture-ts-past-dated-hour` to its `increase(...[6h])` form on `develop`, push, and re-land the absolute-value form once both rows pass.
+
+It belongs in the same section as the existing push-ordering imperatives. Its retirement is registered as a T0037 next step in Task 7 Step 4 — a one-rollout imperative in the always-loaded corpus outlives its rollout unless something schedules its removal, and this file is protected, so a later agent cannot quietly drop it either.
+
+Put the same constraint in the PR body, where the merging reviewer sees it.
+
+- [ ] **Step 3: Verify and commit**
 
 Run: `uv run pytest tests/test_internal_terms_not_operator_visible.py -q`
 
@@ -387,11 +422,11 @@ Load the `iteration-closeout` skill for the entry format and phase routing. One 
 
 - [ ] **Step 2: Record the by-value evidence D8 owes**
 
-Spec D8's third and fourth bullets are measurements, and no repo check can discharge them. Write into the entry what was measured and when — the standing values on `zcrypto-red` (`max by (host) (...)` reading 1 against `increase(...[6h])` reading 0, and the sibling counter at 0 as the silent control) — and state that the two-host control is owed once the primary carries the image. Without this, nobody after the branch can tell whether the proof was ever taken.
+Spec D8's third and fourth bullets are measurements, and no repo check can discharge them. Write into the entry what was measured and when — the standing values on `zcrypto-red` (`max by (host) (...)` reading 1 against `increase(...[6h])` reading 0, and the sibling counter at 0 as the same-host silent control) — **and both hosts' values under the absolute-value form at the wave**, which D7's own gate guarantees are available by then: it holds the push until both hosts carry D1, and D1 ships in the binary that publishes these counters. Nothing is owed after the wave. Without this, nobody after the branch can tell whether the proof was ever taken.
 
 - [ ] **Step 3: Settle the out-of-scope deferral**
 
-`zcrypto-capture-rows-quarantined`'s exposure is stated in the spec, in Global Constraints and in this Self-review, and **three prose homes are not a registration**. A new topic file needs the user's explicit word, so ask for it at closeout in the same breath as the summary; if it is declined, write the explicit drop and its reason into the closeout entry instead. Do not let this merge as prose.
+`zcrypto-capture-rows-quarantined`'s exposure is stated in the spec, in Global Constraints and in this Self-review, and **three prose homes are not a registration**. A new topic file needs the user's explicit word, so ask for it at closeout in the same breath as the summary; if it is declined, write the explicit drop into the closeout entry instead, **with the reason as Global Constraints states it** — per increment site, not "absolute value does not fix it" unqualified, which reads as a claim about the whole counter and is not one. Do not let this merge as prose.
 
 - [ ] **Step 4: Update T0037, frontmatter included**
 
@@ -399,7 +434,7 @@ Name the fields, because the PR touching a topic carries its whole update:
 
 - `ripe_when:` — today it describes the `00103` sequence "deploy the detectors, read each family by value on both hosts, push the alert rules". D7 supersedes that order (re-pin both hosts, verified by digest → push → read by value); rewrite it and re-sync the echoing bullet in `docs/open-topics/README.md` through the `topic-ops` skill.
 - `## Done so far` — its past-dated bullet describes the detector as "gated on the oracle", which is now half the predicate. Add the disk-evidence half.
-- `## Suggested next steps` — the residuals stay detection-based, which remains true; note the landing-order constraint so the Grafana push is not taken early.
+- `## Suggested next steps` — the residuals stay detection-based, which remains true; add the landing-order constraint so the Grafana push is not taken early, **and its own close-out in the same line**: once both capture rows pass the gate, re-land the absolute-value expression if the bullet's escape hatch was taken, push, then remove the landing-order bullet from `.claude/rules/fleet-deploys.md` (a protected-file edit, so it takes the same sign-off Task 6 Step 1 describes). Nothing else schedules either the re-land or the removal, and a plan sentence is not a registration.
 
 - [ ] **Step 5: Commit**
 
@@ -412,7 +447,7 @@ git commit -m "docs(capture): iter-<N> closeout -- the detector's predicate now 
 
 ## Self-review
 
-**Spec coverage.** D1 → Tasks 1–3 (Task 1 Steps 3 and 4 pin the `.held` marker and the floor the `.part`-only test rests on). D2 → Task 4 Steps 1–2 (expression and the strings it falsifies) + Task 5 Step 3 (the latch on the operator surface). D3 → Task 4's scope, which converts one rule and states why the sibling keeps `increase()`; the `rows_quarantined` half is out of scope and Task 7 Step 3 owes it a registration or an explicit drop. D4 → Task 4 Step 5. D5 → Task 5 (both sites in `capture.md`) + Task 4 Step 3 (panel 110's copy of the same sentence). D6 → Task 5 Step 1, as a dated note in the runbook — the pins map holds no row for that re-pin, and this plan does not author one. D7 → Task 6, on the operating surface, plus the PR body; the Grafana push itself is deliberately not a task here. D8 → Tasks 1–5's verification steps for the code guard, and Task 7 Step 2 for the two bullets that are measurements rather than repo checks.
+**Spec coverage.** D1 → Tasks 1–3 (Task 1 Steps 3 and 4 pin the `.held` marker and the floor the `.part`-only test rests on). D2 → Task 4 Steps 1–2 (expression and the strings it falsifies) + Task 5 Step 3 (the latch on the operator surface). D3 → Task 4's scope, which converts one rule and states why the sibling keeps `increase()`; the `rows_quarantined` half is out of scope and Task 7 Step 3 owes it a registration or an explicit drop. D4 → Task 4 Step 5. D5 → Task 5 (three sites in two runbook files) + Task 4 Steps 2–3 (the rule block's copies and panel 110's), the set closed by Global Constraints' grep rather than by any list. D6 → Task 5 Step 1, as a dated note in the runbook — the pins map names digests, not what a value means, and this plan authors no pins row. D7 → Task 6, on the operating surface, plus the PR body; the Grafana push itself is deliberately not a task here, and Task 6 Step 1 is a sign-off gate rather than an edit because that file is protected. D8 → Tasks 1–5's verification steps for the code guard, and Task 7 Step 2 for the two bullets that are measurements rather than repo checks.
 
 **Placeholder scan.** One deliberate: `iter-<N>` in Task 7's commit message, which is not knowable until closeout.
 
