@@ -745,6 +745,16 @@
         mode: "0644"
       notify: reload alloy
 
+    # The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
+    # it -- the container binds `conf/`, not its parent -- so it is inert, but it is NOT harmless: a
+    # stale file at the path an operator would guess returns plausible DATA instead of an error, and
+    # on 2026-09-01 that produced a confidently-wrong "three metric families are dark" report against
+    # a host whose config was in fact current. Removing it fleet-wide so the guess cannot be answered.
+    - name: remove the pre-conf layout's stale alloy config
+      ansible.builtin.file:
+        path: "{{ ops_alloy_dir }}/config.alloy"
+        state: absent
+
     # Renders straight from the vault (group_vars/observed/vault.yml) -- the NAS's copy is rendered
     # the same way by the `nas` role since T0056, so no hand-placed, out-of-band secrets file
     # exists anywhere in the fleet any more. no_log +

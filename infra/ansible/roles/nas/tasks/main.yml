@@ -75,6 +75,14 @@
     mode: "0644"
   register: nas_deploy_alloy_config
 
+# Same pre-`conf/` leftover the capture and ops roles remove: a config.alloy one directory above the
+# deployed one, mounted by nothing. Inert, but it answers a wrong-path guess with plausible data
+# instead of an error, which is how a current host got reported as stale on 2026-09-01.
+- name: remove the pre-conf layout's stale alloy config
+  ansible.builtin.file:
+    path: "{{ nas_stack_dir }}/config.alloy"
+    state: absent
+
 # A value --hash-scope would reject stops all five verified pulls -- refuse it here, before it
 # reaches a running container (spec 00102).
 - name: refuse an archive-pull hash scope the CLI would reject
