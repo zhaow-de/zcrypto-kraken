@@ -65,7 +65,7 @@ from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_or
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
 from cli.engine.node import ShadowStrategy
-from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent
+from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
@@ -843,6 +843,10 @@ class RecordingMetrics:
         self.realized = []
         self.external = []
         self.tracking = []
+        self.resting_ages = []
+
+    def set_resting_age(self, mode, seconds):
+        self.resting_ages.append((mode, seconds))
 
     def set_tracking_state(self, state):
         self.tracking.append(state)
@@ -2296,6 +2300,53 @@ def test_quote_silence_still_revokes_a_resting_rest_hold_order(tmp_path):
     assert client.canceled == [client.submitted[0][0].client_order_id]
     ex.on_order_event(_canceled(client.last_order_id))
     assert _intent_entry(tmp_path, 0)["reasons"] == ["quote_silence"]
+
+
+def test_the_resting_order_age_is_published_under_its_own_mode_and_returns_to_zero(tmp_path):
+    """A mode that deliberately leaves an order resting for up to an hour ships with the instrument
+    that shows it. The label is what keeps the panel legible across the eras: a drill's artifact and
+    a rung-1 trading order are the same shape, and only the mode tells them apart."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+
+    clock.now = NOW + timedelta(seconds=120)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+
+    published = dict(metrics.resting_ages[-len(MODES) :])
+    assert published["rest-hold"] == pytest.approx(120.0, abs=6)
+    # The true positive: without a second label asserted zero, a gauge stuck at the resting value
+    # for every mode would pass.
+    assert published["execute"] == 0.0
+
+    ex.on_order_event(_canceled(client.last_order_id))  # the venue takes it off the book
+    ex.on_timer(NOW + timedelta(seconds=125))
+    assert dict(metrics.resting_ages[-len(MODES) :])["rest-hold"] == 0.0
+
+
+def test_a_raise_inside_the_resting_age_publish_never_ends_the_running_plan(tmp_path, monkeypatch):
+    """`on_timer`'s catch-all drops the plan and nulls `_active`, so an exception raised anywhere in
+    the publish would leave a live order at the venue with nothing tracking it: `_poll` is
+    unreachable with no `_active`, the adopt pass has already run, and a kill file would then sweep
+    nothing. The publish is wrapped WHOLE -- `_set_resting_age`'s own try/except is a helper-level
+    guard and does not cover the loop, the phase read or the arithmetic around it."""
+
+    def _boom(mode, seconds):
+        raise RuntimeError("the resting-age publish is broken")
+
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+    monkeypatch.setattr("cli.engine.executor._set_resting_age", _boom)
+
+    clock.now = NOW + timedelta(seconds=10)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+
+    assert ex._plan is not None and ex._active is not None
+    assert ex._active.phase == "resting"
+    assert client.canceled == []
 
 
 def test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase(tmp_path):

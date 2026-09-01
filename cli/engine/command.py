@@ -626,6 +626,15 @@ class _ExecutionMetrics:
         self.position = Gauge(
             "zcrypto_exec_position", "Net position quantity by symbol, in base units.", ["symbol"], registry=registry
         )
+        self.resting_order_age = Gauge(
+            "zcrypto_exec_resting_order_age_seconds",
+            "How long the engine's current resting order has been at the venue, in seconds, by plan "
+            "mode; zero when none rests. This is the engine's own belief, not a venue read: if a "
+            "cancel could not reach the venue the engine gives up on the order and this reads zero "
+            "while it may still rest at Kraken. Nothing is published while the engine is down.",
+            ["mode"],
+            registry=registry,
+        )
         self.realized_pnl = Gauge("zcrypto_exec_realized_pnl_eur", "Realized profit and loss, in EUR.", registry=registry)
         self.external_events = Counter(
             "zcrypto_exec_external_events_total",
@@ -651,6 +660,9 @@ class _ExecutionMetrics:
 
     def inc_order(self, outcome: str) -> None:
         self.orders.labels(outcome=outcome).inc()
+
+    def set_resting_age(self, mode: str, seconds: float) -> None:
+        self.resting_order_age.labels(mode=mode).set(seconds)
 
     def inc_external(self, disposition: str) -> None:
         self.external_events.labels(disposition=disposition).inc()

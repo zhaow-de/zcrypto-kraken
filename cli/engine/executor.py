@@ -48,7 +48,7 @@ from cli.engine.execledger import (
 from cli.engine.feeders import CycleStages
 from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, from_json
-from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
+from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
 from cli.engine.venueledger import read_venue_record, validate_venue_record
@@ -199,6 +199,15 @@ def _inc_order(outcome: str) -> None:
         return
     try:
         _metrics.inc_order(outcome)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _set_resting_age(mode: str, seconds: float) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_resting_age(mode, seconds)
     except Exception:
         logger.exception("executor metrics hook raised -- continuing")
 
@@ -660,6 +669,7 @@ class ProbeExecutor:
             if self._plan is None:
                 self._pickup(now)
             self._pump(now)
+            self._publish_resting_age(now)
         except Exception:
             # Refusal by default: whatever broke, stop running this plan. Anything already resting
             # at the venue stays in the ledger as an open row for reconciliation to pick up.
@@ -667,6 +677,29 @@ class ProbeExecutor:
             self._plan = None
             self._active = None
             self._index = 0
+
+    def _publish_resting_age(self, now: datetime) -> None:
+        """Eagerly zero for every mode, then set the one that is resting: the board's convention is
+        that execution numbers read flat zero rather than absent, and a panel over an absent series
+        cannot distinguish 'nothing rests' from 'the engine stopped publishing'.
+
+        Wrapped WHOLE, not just at the metrics call. `_set_resting_age`'s try/except is a
+        helper-level guard; everything computed around it -- the mode loop, the phase read, the age
+        arithmetic -- would otherwise raise into `on_timer`'s catch-all, which drops the plan and
+        nulls `_active`. A live order would then rest at the venue with nothing left to end it:
+        `_poll` is unreachable with no `_active`, the adopt pass has already run, and a kill file
+        would sweep nothing. A telemetry defect may never end a plan.
+        """
+        try:
+            active = self._active
+            resting = active is not None and active.phase == "resting" and active.placed_at is not None
+            for mode in MODES:
+                age = 0.0
+                if resting and active.intent.mode == mode:
+                    age = max(0.0, (now - active.placed_at).total_seconds())
+                _set_resting_age(mode, age)
+        except Exception:
+            logger.exception("executor resting-age publish raised -- continuing")
 
     def _adopt_resting_orders(self, now: datetime) -> None:
         """The startup pass (D10), run once on the first tick: decide, per resting order this

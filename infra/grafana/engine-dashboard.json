@@ -24,7 +24,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure."
+        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure. A resting order is the one execution number that can appear without any trading: the `rest-hold` mode places a real order at the venue on purpose and leaves it there for a drill to act on. Read the mode label before reading activity as trading."
       }
     },
     {
@@ -2251,6 +2251,39 @@
       }
     },
     {
+      "id": 67,
+      "type": "timeseries",
+      "title": "Resting order age — by plan mode",
+      "description": "How long the engine's current resting order has been at the venue. A rest-hold series is a drill's deliberate artifact, not trading; an execute series is a real trading order and should be short-lived, since its own time box is fifteen minutes. Zero means the engine believes nothing rests — which is not the same as the venue holding nothing, if a cancel never reached it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 84
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max by (mode) (zcrypto_exec_resting_order_age_seconds{host=~\"$host\"})",
+          "refId": "A",
+          "legendFormat": "{{mode}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
       "id": 70,
       "type": "row",
       "title": "Venue truth — what the exchange said",
@@ -2260,7 +2293,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 90
       }
     },
     {
@@ -2276,7 +2309,7 @@
         "h": 6,
         "w": 8,
         "x": 0,
-        "y": 85
+        "y": 91
       },
       "targets": [
         {
@@ -2338,7 +2371,7 @@
         "h": 6,
         "w": 8,
         "x": 8,
-        "y": 85
+        "y": 91
       },
       "targets": [
         {
@@ -2405,7 +2438,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 85
+        "y": 91
       },
       "targets": [
         {
