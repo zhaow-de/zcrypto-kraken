@@ -170,7 +170,7 @@ Paste that verbatim. The two guards read different operands — the converge ass
 satisfies both while those two strings coincide. They are not automatically the same string: the
 image bakes its version from the pyproject it was *built* from, so a controller tree ahead of the
 deployed image makes the converge assert refuse a version the running engine does not have. That is
-what `engine.md`'s pre-probe step 2 is for — converge from the revision the running digest was built
+what `engine-procedures.md`'s pre-probe step 2 is for — converge from the revision the running digest was built
 from, and the two operands agree by construction. Reaching for `-e arming_override=...` because
 "the record obviously contains it" is the wrong move here; reconcile the tree instead.
 Keeping them coincident is `tests/test_nautilus_adapter.py::test_pinned_version`'s job, and it is
@@ -332,8 +332,9 @@ closing `SELL` plan → `market sell @ <px> filled` → verdict `PASS`.
 - A note about the closing quantity being "floored … dust will remain" means a sliver of BTC stays
   in the wallet. Below the leg's `ordermin` that is terminal dust, not a position — record it, do not
   chase it.
-- A spot buy under `spot_account_type=MARGIN` was measured *not* to show an OpenPositions row —
-  the adapter reported margin positions there. On a build that has not been probed that is a thing
+- Whether a spot buy under `spot_account_type=MARGIN` shows an OpenPositions row is **per build, and the two
+  probed builds disagree**: 1.230.0 showed none, while `2.0.0rc4.dev20260825` recorded `open positions=1`.
+  Read it on the build in front of you and record it. On a build that has not been probed that is a thing
   to check and record, not a thing to expect; either way it is not by itself a failure, and probe 5
   is judged on the fill and the flat close. The harness prints this reminder inline.
 
@@ -409,7 +410,7 @@ That is the outcome that says the probes cost the engine nothing.
 — so this check is almost always **deferred, not done**, and the write-up happens first. Carry it
 across that gap explicitly: give the version's record an **`## Owed checks not discharged by this pass`** section naming the exact boundary (`HH:00 UTC` on the run's date) and what would satisfy it,
 then come back at that boundary, take the reading, and **write it into that same section** as its
-outcome. The record is the registration; the arming step in [`engine.md`](engine.md) refuses to arm
+outcome. The record is the registration; the arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) refuses to arm
 while any item in it is open, which is what makes the deferral bite instead of evaporating. The same
 applies to any reading this section asks for that the run could not take — an `unmatched` delta with
 no before-reading, for instance, is an absolute number and not the rise this section wants.
@@ -429,7 +430,7 @@ client order id. **Then sweep the homes of "<version> is unverified" in the SAME
 
 1. **Add the version to `cli/engine/order-semantics-verified.json`**, exactly as the interpreter spells it (§2.1). This clears BOTH guards at once, since they share the file — and it is the act that says the re-run happened, a reviewed diff rather than a memory. Never add a version without the `docs/reference/adapter-verification/<version>.md` doc recording its PASS.
 2. **`tests/test_engine_execgate.py`**, which pins the record's exact contents and therefore **FAILS deliberately the moment you do (1)**. That failure is the routing for the rest of this list: its assertion message enumerates the sweep and points back here. Update it deliberately, never by pasting whatever the diff shows.
-3. **The arming step in [`engine.md`](engine.md)** — pre-probe step 3, which names the verified version and its record.
+3. **The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window)** — pre-probe step 3, which names the verified version and its record, and step 4's live-orders-boot caveat, which is version-scoped in the same way.
 4. **The previous version's `docs/reference/adapter-verification/` record**, cross-linked so the series reads as one and neither file claims to be current.
 
 **What is deliberately NOT on this list, and why.** `tests/test_nautilus_adapter.py` used to assert a hardcoded version and go red at every bump; that red was the routing. It no longer does: it now checks only that the installed version equals the version `pyproject.toml` pins, which stays green across bumps and carries no version string to sweep. The pin moves on a nightly cadence, and a test that goes red on every routine move stops being read and starts being repaired — so the routing moved to where it cannot be repaired away:
@@ -437,7 +438,7 @@ client order id. **Then sweep the homes of "<version> is unverified" in the SAME
 - **At a bump, nothing goes red, and nothing is supposed to.** The repo sitting on a bumped version while disarmed is the blessed state. The debt is collected at arming, by the converge assert and the runtime gate, each of which blocks the money rather than a test run. §1.6 is what keeps that from ambushing you.
 - **At the write-up, item (2) still goes red**, because the thing you just changed is the thing it pins. One deliberate failure, at the one moment a human is already editing the record — which is what a tripwire is for.
 
-Paste the table; keep the JSON in the session scratchpad as the 2026-07-10 run did
+Paste the table; leave the evidence JSON where `--evidence-dir` put it (`$EVID`, outside the repo tree) and never commit it
 ("the raw evidence JSONs are preserved in the session scratchpad").
 
 The memo update must state the exact version the verification now binds to, and every observation

@@ -33,9 +33,7 @@ This does **not** by itself mean data is being lost. A venue in `maintenance` or
 
 ### Retire when
 
-Both `zcrypto-capture-venue-not-online` and `zcrypto-capture-venue-state-recurrence` are absent from `infra/grafana/alerts.yaml` — i.e. the rules were deliberately removed. (The pre-drain decision landed 2026-08-06 and this procedure was rewritten then, per this clause's own instruction; the alerts stay.)
-
-______________________________________________________________________
+Both `zcrypto-capture-venue-not-online` and `zcrypto-capture-venue-state-recurrence` are absent from `infra/grafana/alerts.yaml` — i.e. the rules were deliberately removed. \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
 <a name="zcrypto-capture-venue-state-recurrence"></a>
 
@@ -206,7 +204,7 @@ A **critical** Grafana alert, one instance per capture machine. That machine's c
 
 10 seconds is a structural bar, not a fitted one: orders of magnitude above a disciplined clock's steady state, and 30× below the five-minute margin at which the clock witness can start seconding a bogus stamp. So there is room, and the correct posture is prompt rather than frantic.
 
-**No ansible role configures a time daemon, but chrony IS running on these machines** (`systemctl is-active chrony`), so the clock is disciplined — do not read this section as "nothing corrects the clock". What is unmanaged is the CONFIGURATION: nothing in this repo pins chrony's sources or step limits, so a chrony that stops or is reconfigured out from under us is a change no converge would notice. That is why an unattended clock here can drift monotonically rather than being pulled back, and it is the thing to check first.
+**chrony is MANAGED, and re-converging it is the repair.** `infra/ansible/roles/chrony` installs it, templates `/etc/chrony/chrony.conf`, enables and starts the service, and verifies with `chronyc -N sources`; `site.yml` applies it to the capture hosts under `tags: [chrony]`. Its `defaults/main.yml` pins both the sources (`chrony_nts_servers`, rendered `server … iburst nts`) and the step limit (`chrony_makestep`, deployed as `makestep 1.0 3`). So a chrony that has stopped, died or been hand-edited is fixed by re-converging that role — **`--tags chrony`** — and the converge re-asserts the config and reports its sources. Check `systemctl is-active chrony` and `chronyc -N sources` first; a stopped daemon, not an unmanaged one, is what lets the clock drift. **`makestep 1.0 3` also means chrony itself STEPS on the first three updates after a restart**, which is exactly the precondition residual (b) below warns about.
 
 ### What to do
 
@@ -360,7 +358,7 @@ The page was not merely noisy, it was **false**: its summary asserts that every 
 
 ### How to recognise it
 
-**Several `zcrypto-capture-*` rules firing and auto-resolving within about a minute, with no host-side symptom, is a datasource error rather than a fleet event** — and these two rules are deliberately absent from that storm. Only six rules in the `zcrypto-capture` group carry `for: 0s` and can fire on a hiccup that short; the other sixteen absorb it in their pending period, which is why `zcrypto-capture-venue-not-online` has never once fired this way. Four of those six still carry `execErrState: Alerting`, so the storm still happens — it just no longer contains a claim that capture went dark.
+**Several `zcrypto-capture-*` rules firing and auto-resolving within about a minute, with no host-side symptom, is a datasource error rather than a fleet event** — and these two rules are deliberately absent from that storm. Only six rules in the `zcrypto-capture` group carry `for: 0s` and can fire on a hiccup that short; the other twenty absorb it in their pending period (a count of a group that grows — the load-bearing half is that only six carry `for: 0s`), which is why `zcrypto-capture-venue-not-online` has never once fired this way. Four of those six still carry `execErrState: Alerting`, so the storm still happens — it just no longer contains a claim that capture went dark.
 
 ### What to do
 

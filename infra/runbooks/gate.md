@@ -52,7 +52,7 @@ A **critical** Grafana alert, `Gate · mismatch in the last day`: `increase(zcry
 
 ### What it means
 
-`zcrypto_gate_mismatch_total` is **every not-clean journaled cycle in the whole retained journal**: replay hash mismatches, records that failed validation or could not be read, *compare* mismatches (the replay recomputed different targets), and `failed-cycle-*.json` sidecars. The rule's own summary says "replay mismatch/validation failure" and the README says the dead-man pings clean iff `mismatch_total == 0` — **both are narrower than the code**, which sums `counts.mismatches + counts.validation_failures + counts.sidecar_count` and gates the ping on the streak instead; read the list above, not the summary.
+`zcrypto_gate_mismatch_total` is **every not-clean journaled cycle in the whole retained journal**: replay hash mismatches, records that failed validation or could not be read, *compare* mismatches (the replay recomputed different targets), and `failed-cycle-*.json` sidecars. The rule's own summary says "replay mismatch/validation failure", which is **narrower than the code**, which sums `counts.mismatches + counts.validation_failures + counts.sidecar_count` and gates the ping on the streak instead; read the list above, not the summary.
 
 **The metric is a per-run RECOUNT over the whole journal, not a monotonic counter**, and three consequences follow that change how you read this page:
 
