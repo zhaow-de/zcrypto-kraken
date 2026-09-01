@@ -259,11 +259,16 @@ def test_a_rest_hold_intent_without_both_fields_is_refused():
 
 
 def test_the_two_fields_are_refused_on_every_other_mode():
-    """A hold on an `execute` intent reads as a request the executor will silently ignore."""
+    """A hold on an `execute` intent reads as a request the executor will silently ignore. Each
+    field alone is that same request: an intent carrying only `offset_pct` is what an `or` turned
+    into an `and` lets through, so the halves are refused separately as well as together."""
     for mode in ("execute", "rest-cancel"):
-        raw = _rest_hold_intent() | {"mode": mode}
-        with pytest.raises(probeplan.ProbePlanError, match="only on mode 'rest-hold'"):
-            probeplan._parse_intent(raw)
+        for dropped in ((), ("offset_pct",), ("hold_minutes",)):
+            raw = _rest_hold_intent() | {"mode": mode}
+            for key in dropped:
+                del raw[key]
+            with pytest.raises(probeplan.ProbePlanError, match="only on mode 'rest-hold'"):
+                probeplan._parse_intent(raw)
 
 
 @pytest.mark.parametrize("hold", [0, -1, 61, 600])
