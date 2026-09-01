@@ -910,6 +910,8 @@ Check `docs/open-topics/README.md`'s T0018 bullet before staging it: it does not
 - [ ] **Step 5: Verify the whole reachable set**
 
 Run: `uv run pytest tests/test_engine_executor.py tests/test_engine_node.py tests/test_engine_probeplan.py tests/test_engine_metrics.py tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_infra_alloy_series.py tests/test_dashboards_cover_metrics.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py -q`
+Then, because the Global Constraints' colour rule is otherwise enforced by nothing that runs, re-run the one file in that set carrying CLI-output assertions under forced colour: `FORCE_COLOR=1 uv run pytest tests/test_engine_command.py -q`. Both must pass — CI forces colour on and this bare run leaves it off, so one green says nothing about the other environment.
+
 Expected: PASS. `test_engine_node.py` is in the list because it constructs a `ProbeIntent` by hand (`:710`) and no earlier step runs it: a change to that dataclass's shape is invisible on this branch until CI otherwise. `test_engine_stub_fidelity.py` is in the list because it globs sibling `test_engine_*.py` files and classifies their doubles — `RecordingMetrics` grew a method in Task 4 Step 3, and any new double must be classified in the same change. `test_internal_terms_not_operator_visible.py` covers the new metric HELP, the panel title and description, and the `--check` line.
 
 - [ ] **Step 6: The iterations-history entry**
