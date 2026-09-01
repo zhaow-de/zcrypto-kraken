@@ -196,7 +196,7 @@ Sustained saturation, not a transient burst. Nothing is lost by load alone — t
 
 **Two corrections to the rule's own comment, which the responder would otherwise reason from.**
 
-*The timer count is stale.* The comment says "Alloy, the four timers, and soon the overlay writer". Counted from `infra/ansible/roles/ops/` today there are **six** timers, and the overlay writer is one of them rather than pending:
+*The load on this box is six timers plus Alloy, and the count grows.* Counted from `infra/ansible/roles/ops/` — the overlay writer is one of them, not a pending addition. Count them there rather than trusting any number written here:
 
 | Timer | Schedule (UTC) | `Persistent=` |
 | -- | -- | -- |
