@@ -449,7 +449,7 @@
             "type": "loki",
             "uid": "grafanacloud-logs"
           },
-          "expr": "sum by (host) (count_over_time({container=\"archive-pull\"} |= \"pull complete\" |= \"failed=0\" [3h])) or on() vector(0)",
+          "expr": "sum(count_over_time({container=\"archive-pull\"} |= \"pull complete\" |= \"failed=0\" [3h])) or on() vector(0)",
           "refId": "H",
           "legendFormat": "dead-man \u00b7 archive-pull success line (3h)",
           "queryType": "range",
