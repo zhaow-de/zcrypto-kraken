@@ -271,10 +271,16 @@ def test_the_two_fields_are_refused_on_every_other_mode():
                 probeplan._parse_intent(raw)
 
 
-@pytest.mark.parametrize("hold", [0, -1, 61, 600])
+@pytest.mark.parametrize("hold", [0, -1, 61, 600, 45.5, "45"])
 def test_a_hold_outside_the_cap_is_refused(hold):
     """The cap is what keeps a plan from resting an order indefinitely -- the one bound on this
-    mode that does not depend on anything else in the system still working."""
+    mode that does not depend on anything else in the system still working.
+
+    The last two fixtures hold the TYPE half of that guard in place, which the int cases cannot
+    reach: 45.5 is in range as a number, so only `isinstance` can refuse it, and "45" additionally
+    pins that the refusal is a ProbePlanError -- `1 <= "45"` raises TypeError, which
+    `Executor._read_plan`'s `except (ProbePlanError, OSError)` does not catch, so the malformed
+    plan would be neither journaled nor deleted and every later tick would re-read it."""
     with pytest.raises(probeplan.ProbePlanError, match="hold_minutes"):
         probeplan._parse_intent(_rest_hold_intent() | {"hold_minutes": hold})
 
