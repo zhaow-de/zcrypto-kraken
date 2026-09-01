@@ -65,7 +65,7 @@ from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_or
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
 from cli.engine.node import ShadowStrategy
-from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent
+from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
@@ -843,6 +843,10 @@ class RecordingMetrics:
         self.realized = []
         self.external = []
         self.tracking = []
+        self.resting_ages = []
+
+    def set_resting_age(self, mode, seconds):
+        self.resting_ages.append((mode, seconds))
 
     def set_tracking_state(self, state):
         self.tracking.append(state)
@@ -2206,6 +2210,194 @@ def test_a_rest_cancel_drill_that_reaches_the_time_box_still_never_falls_back(tm
 
     assert len(client.submitted) == 1
     assert _intent_outcome(tmp_path) == "rest_cancel_ok"
+
+
+def test_a_rest_hold_order_never_crosses_the_spread_when_its_hold_elapses(tmp_path):
+    """The mode exists to rest, so the one thing it must never do is what the time box does for
+    `execute`: cancel and then cross with a marketable IOC. The defect is a single character --
+    `!=` where `==` belongs at the fallback -- and it puts the most aggressive order on the path
+    from the intent built least to want it."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=1)])
+    _advance_with_quotes(ex, client, clock, minutes=3)
+    assert client.canceled == [client.submitted[0][0].client_order_id]
+
+    ex.on_order_event(_canceled(client.last_order_id))
+    assert len(client.submitted) == 1, "a second order means it fell back and crossed"
+    assert client.submitted[0][0].post_only is True
+    assert _intent_outcome(tmp_path) == "rest_hold_expired"
+
+
+def test_a_rest_hold_order_is_not_cancelled_when_the_venue_acknowledges_it(tmp_path):
+    """`rest-cancel`'s defining behaviour, inverted. Without this the drills have no subject: an
+    order cancelled on the ack leaves no window for any induction to act in."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+    assert client.canceled == []
+    assert ex._active.phase == "resting"
+
+
+def test_an_unrequested_cancel_ends_a_rest_hold_intent_instead_of_re_placing_it(tmp_path):
+    """Spec 00108 D5. `_on_cancel_ack`'s unrequested arm reprices for ANY venue-originated cancel while
+    the phase is not `ioc` -- it tests nothing about crossing -- so without this branch the venue's
+    (or the operator's) cancel of a resting drill order silently puts a fresh one back at a new
+    price, swapping the drill's subject mid-induction."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+
+    ex.on_order_event(_canceled(client.last_order_id))  # unrequested: the venue's own doing
+
+    assert len(client.submitted) == 1, "a second order means the venue's cancel was undone"
+    assert _intent_outcome(tmp_path) == "rest_hold_venue_canceled"
+    assert _record(tmp_path)["submitted"][0]["state"] == "venue_canceled"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [({"side": "buy"}, 28500.0), ({"side": "sell", "leverage": 3}, 33180.0)],
+    ids=["buy-off-the-bid", "sell-off-the-ask"],
+)
+def test_a_rest_hold_order_is_priced_the_declared_percent_passive_of_the_touch(tmp_path, overrides, expected):
+    """5.0 means five percent. The dangerous misreading is the quiet one: an author copying
+    `_REST_CANCEL_OFFSET`'s fractional 0.05 would rest five hundredths of a percent off the touch
+    and fill. The arithmetic here is `rest-cancel`'s own, with the constant made per-intent --
+    30000 x 0.95 off the bid, 31600 x 1.05 off the ask."""
+    ex, client, clock = _resting_executor(
+        tmp_path,
+        intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45, **overrides)],
+        bid=30000.0,
+        ask=31600.0,
+    )
+    assert client.submitted[0][0].price == expected
+
+
+def test_the_kill_file_revokes_a_resting_rest_hold_order_within_one_tick(tmp_path):
+    """Drill E's subject, and the only bound that acts on a resting order while it rests. The path
+    is exercised today only against `execute`."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+    resting_order = client.submitted[0][0]
+
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=5)
+    ex.on_quote(_quote())  # a live quote: what revokes here is the gate, not silence
+    ex.on_timer(clock.now)
+    assert client.canceled == [resting_order.client_order_id]
+
+    ex.on_order_event(_canceled(client.last_order_id))
+    assert len(client.submitted) == 1  # a revoked intent NEVER falls back
+    assert _intent_outcome(tmp_path) == "revoked", "a kill is a revoke, never an expiry"
+
+
+def test_quote_silence_still_revokes_a_resting_rest_hold_order(tmp_path):
+    """Drill F2 has no subject without it: 30 s of silence, one cancel attempt, no retry. Exempting
+    this mode would delete the drill whose result decides whether re-cancel-on-reconnect is built."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [client.submitted[0][0].client_order_id]
+    ex.on_order_event(_canceled(client.last_order_id))
+    assert _intent_entry(tmp_path, 0)["reasons"] == ["quote_silence"]
+
+
+def test_the_resting_order_age_is_published_under_its_own_mode_and_returns_to_zero(tmp_path):
+    """A mode that deliberately leaves an order resting for up to an hour ships with the instrument
+    that shows it. The label is what keeps the panel legible across the eras: a drill's artifact and
+    a rung-1 trading order are the same shape, and only the mode tells them apart."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+
+    clock.now = NOW + timedelta(seconds=120)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+
+    published = dict(metrics.resting_ages[-len(MODES) :])
+    assert published["rest-hold"] == pytest.approx(120.0, abs=6)
+    # The true positive: without a second label asserted zero, a gauge stuck at the resting value
+    # for every mode would pass.
+    assert published["execute"] == 0.0
+
+    ex.on_order_event(_canceled(client.last_order_id))  # the venue takes it off the book
+    ex.on_timer(NOW + timedelta(seconds=125))
+    assert dict(metrics.resting_ages[-len(MODES) :])["rest-hold"] == 0.0
+
+
+def test_an_outstanding_cancel_zeroes_the_resting_age_though_the_order_may_still_be_at_the_venue(tmp_path):
+    """The publish reads a THREE-part condition -- `_active` is set, its phase is `resting`, and
+    `placed_at` is stamped -- and this fixture satisfies exactly the phase one's negation: the kill
+    file revoked the order, so the intent is live and `placed_at` still holds NOW, but the phase is
+    `cancelling` and a cancel is outstanding at the venue. Zero is the declared reading: the gauge is
+    the engine's BELIEF about an order it is still holding, and it has already asked for this one
+    back. Without the phase term the age would keep climbing through a cancel and past a revocation,
+    which is the opposite of what the panel's zero is supposed to mean.
+
+    The third term cannot be fixtured and is not meant to be: `_enter` is the only writer of the
+    `resting` phase and it stamps `placed_at` in the same breath, so a resting order with no
+    placement time is unreachable. It guards the `None` deref in the arithmetic below it."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=30)
+    ex.on_quote(_quote())  # a live quote: what revokes here is the gate, not silence
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [client.submitted[0][0].client_order_id]
+    assert ex._active is not None and ex._active.placed_at == NOW, "the other two terms still hold"
+    assert ex._active.phase == "cancelling"
+    assert dict(metrics.resting_ages[-len(MODES) :]) == dict.fromkeys(MODES, 0.0)
+
+
+def test_a_raise_inside_the_resting_age_publish_never_ends_the_running_plan(tmp_path, monkeypatch):
+    """`on_timer`'s catch-all drops the plan and nulls `_active`, so an exception raised anywhere in
+    the publish would leave a live order at the venue with nothing tracking it: `_poll` is
+    unreachable with no `_active`, the adopt pass has already run, and a kill file would then sweep
+    nothing. The publish is wrapped WHOLE -- `_set_resting_age`'s own try/except is a helper-level
+    guard and does not cover the loop, the phase read or the arithmetic around it."""
+
+    def _boom(mode, seconds):
+        raise RuntimeError("the resting-age publish is broken")
+
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_order_event(_accepted(client.last_order_id))
+    monkeypatch.setattr("cli.engine.executor._set_resting_age", _boom)
+
+    clock.now = NOW + timedelta(seconds=10)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+
+    assert ex._plan is not None and ex._active is not None
+    assert ex._active.phase == "resting"
+    assert client.canceled == []
+
+
+def test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase(tmp_path):
+    """Any age bound on a resting order reads `placed_at`, so it must track the ORDER: a post-only
+    rejection's reprice replaces the order, and the replacement's age starts with it -- an
+    intent-scoped stamp would age the new order from the old one's placement. The second half is
+    `_enter`'s `resting` test doing its job: `cancelling` is a phase this intent passes through,
+    never a placement."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    assert ex._active.placed_at == NOW
+
+    clock.now = NOW + timedelta(minutes=7)
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+    assert len(client.submitted) == 2  # the rejection repriced: nothing was ever resting
+    assert ex._active.placed_at == clock.now, "the replacement order's age starts with it"
+
+    replaced_at = clock.now
+    clock.now = NOW + timedelta(minutes=8)
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert ex._active.phase == "cancelling"
+    assert ex._active.placed_at == replaced_at, "entering `cancelling` is not a placement"
 
 
 def test_a_disposal_intent_over_the_plan_cap_is_refused_naming_the_cap(tmp_path):

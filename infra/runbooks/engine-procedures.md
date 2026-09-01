@@ -220,6 +220,30 @@ Three plan-file mechanics that apply to **every** plan from here on:
    ```
    Expect the `submitted`, `accepted` and `canceled` outcomes to have advanced, **every** `zcrypto_exec_fills_total` series still `0`, and `zcrypto_exec_fees_eur_total` still `0`. A number, never `(no series)`.
 
+**The third mode, `rest-hold` — not authored here, but authored against this shape.** Nothing in the probe window uses it; the order-path drills do ([`drills-order-path.md`](drills-order-path.md)), and its plan is the shape above plus two fields:
+
+```json
+{
+  "plan_id": "drill-a1-2026-09-01",
+  "created_at": "2026-09-01T09:05:00+00:00",
+  "intents": [
+    {"symbol": "BTC/EUR", "side": "buy", "action": "open", "mode": "rest-hold", "notional_eur": 20.0, "leverage": 2, "offset_pct": 5.0, "hold_minutes": 45}
+  ]
+}
+```
+
+**`offset_pct` is a PERCENTAGE, not a fraction — `5.0` is five percent.** The dangerous slip is the quiet one: `0.05` is five *hundredths* of one percent, about fifteen euro off a thirty-thousand euro bid, and it fills — on the one mode built never to. The opposite slip is loud and harmless, since `500.0` prices absurdly and simply never places. `hold_minutes` is how long the order rests, an integer in 1–60. Both fields are required on `rest-hold` and refused on the other two modes; `action` must be `open`.
+
+The `--check` line carries both back in words on the intent line, and reading it is how the slip is caught before the file is placed — the same line as above with the two fields spliced in:
+
+```
+  [0] BTC/EUR buy open rest-hold (5% passive of the touch, holding 45 min): notional 20.00 EUR, costmin <X> EUR
+```
+
+**Three terminal outcomes to read back in the ledger, beside Drill A's `rest_cancel_ok`.** `rest_hold_expired` — the hold ran its course: the engine cancelled at `hold_minutes` and the venue acknowledged. `rest_hold_venue_canceled` — the venue or the operator took the order off the book, and the engine deliberately did **not** put a new one back; a completed intent, not a fault, and the reason a hand-cancel in the Kraken web UI ends the drill rather than restarting it under an order id nobody is watching. `revoked` — the kill file, a disarm or quote silence took it mid-rest, so it was revoked rather than held to its expiry, and the plan stops there.
+
+**Read `filled_qty`, not the outcome name — the names you can see here do not behave alike.** `rest_hold_expired` and `rest_hold_venue_canceled` are **remapped to `partial`** the instant anything filled, so seeing either name is itself the statement that nothing did. A **fully** filled order reaches none of the three: the intent finishes `filled` the moment its target quantity is met, before any cancel is asked for — so `filled` is the fourth name on this list, and the one that says money moved loudest. **`revoked` is not remapped**: it keeps its name whatever filled, and carries the fill through in `filled_qty`. That state is reachable by design, because a partial on a resting order leaves the remainder working at the touch — so an order that took a fill and was *then* revoked (drill E's kill file landing on a rest-hold order the market had already reached) journals `outcome revoked` with a **non-zero `filled_qty` and a real position behind it**. On a `revoked` intent, `filled_qty` is the only field that answers whether anything reached the book.
+
 **Drill B — the disarmed refusal: prove the key actually refuses.**
 
 1. `sudo rm /var/lib/zcrypto-engine/exec/armed`. Gate read → `level=none`, `reasons=arm_file_absent`.
@@ -233,7 +257,7 @@ Three plan-file mechanics that apply to **every** plan from here on:
 
 - **Never drop a funded plan inside the final 60 minutes before a 4-hourly boundary** (00/04/08/12/16/20 UTC). Run `date -u` immediately before placing; if the next boundary is under 60 minutes away, wait for it to pass. The 4-hourly cycle runs synchronously on the node's single event-loop thread and can hold that thread for up to about 25 minutes when a refresh degrades. While it is held no 5-second tick fires, so **none** of the mid-flight revocations — the kill file, a disarm, quote staleness, the intent's own time-box — can act on a resting order. This rule is the only thing keeping a funded order from resting through that window.
 - **Every plan is signed off on its own**: the owner reads the `--check` output and personally places the file. Drill plans included.
-- **Nothing retries itself.** An intent ending `unfilled`, `refused`, `rejected`, `partial` or `ambiguous` stops there. **`ambiguous` means the order may be live at the venue** — read Kraken's open orders in the web UI and establish what actually reached it before placing anything else on that symbol.
+- **Nothing retries itself.** An intent ending `unfilled`, `refused`, `rejected`, `partial` or `ambiguous` stops there, and so do a `rest-hold` intent's own two terminals — `rest_hold_expired`, the hold run to its end, and `rest_hold_venue_canceled`, the venue's or the operator's own cancel which the engine deliberately does not undo. Those two are completed intents rather than faults, and stopping is what they are supposed to do. **`ambiguous` means the order may be live at the venue** — read Kraken's open orders in the web UI and establish what actually reached it before placing anything else on that symbol.
 
 **Step 1 — the open plan, both positions in one plan.** A BTC/EUR margin long and an ETH/EUR margin short, leverage 2, €10–30 each:
 

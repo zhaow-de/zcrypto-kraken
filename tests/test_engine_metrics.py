@@ -1497,6 +1497,17 @@ def test_the_execution_families_carry_the_names_and_labels_the_keep_regex_admits
     assert registry.get_sample_value("zcrypto_exec_realized_pnl_eur") == -30.0
 
 
+def test_the_resting_age_gauge_exposes_the_name_and_label_the_panel_reads():
+    """Parsed off the registry, not the object: the keep-regex and the panel both match the EXPOSED
+    series name and its label."""
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+
+    metrics.set_resting_age("rest-hold", 42.0)
+
+    assert registry.get_sample_value("zcrypto_exec_resting_order_age_seconds", {"mode": "rest-hold"}) == 42.0
+
+
 def test_a_fee_the_caller_could_not_denominate_in_eur_counts_the_fill_but_not_the_money():
     """`zcrypto_exec_fees_eur_total` is EUR by name. A `/BTC` leg's BTC-denominated commission added
     to it would be a number with no unit -- so the fill still counts (it happened) and the fee does

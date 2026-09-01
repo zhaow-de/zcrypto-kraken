@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from cli.engine import probeplan
 from cli.engine.probeplan import PLAN_TTL, ProbePlanError, parse_plan, plan_refusals
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=timezone.utc)
@@ -223,6 +224,100 @@ def test_parse_plan_accepts_a_valid_qty_close_intent():
 def test_parse_plan_accepts_a_valid_margin_intent():
     plan = parse_plan(_text(intents=[_intent(leverage=2)]))
     assert plan.intents[0].leverage == 2
+
+
+# ---- rest-hold: the vocabulary, the two fields, and their refusals -----------------------------
+
+
+def test_the_mode_vocabulary_is_pinned_so_a_new_mode_cannot_arrive_unnoticed():
+    """Every mode name is a branch in the executor. A mode added here and nowhere else runs with
+    `execute` semantics -- joining the touch and crossing the spread at the time box -- so the
+    vocabulary is pinned and widening it is a deliberate, reviewed edit."""
+    assert probeplan.MODES == frozenset({"execute", "rest-cancel", "rest-hold"})
+
+
+def _rest_hold_intent() -> dict:
+    return {
+        "symbol": "BTC/EUR",
+        "side": "buy",
+        "action": "open",
+        "mode": "rest-hold",
+        "notional_eur": 20.0,
+        "offset_pct": 5.0,
+        "hold_minutes": 45,
+    }
+
+
+def test_a_rest_hold_intent_without_both_fields_is_refused():
+    """The two fields are what distinguish this mode; an intent missing either has no price and no
+    duration, and there is no default that would be safe to invent for a live order."""
+    for missing in ("offset_pct", "hold_minutes"):
+        raw = _rest_hold_intent()
+        del raw[missing]
+        with pytest.raises(probeplan.ProbePlanError, match="rest-hold"):
+            probeplan._parse_intent(raw)
+
+
+def test_the_two_fields_are_refused_on_every_other_mode():
+    """A hold on an `execute` intent reads as a request the executor will silently ignore. Each
+    field alone is that same request: an intent carrying only `offset_pct` is what an `or` turned
+    into an `and` lets through, so the halves are refused separately as well as together."""
+    for mode in ("execute", "rest-cancel"):
+        for dropped in ((), ("offset_pct",), ("hold_minutes",)):
+            raw = _rest_hold_intent() | {"mode": mode}
+            for key in dropped:
+                del raw[key]
+            with pytest.raises(probeplan.ProbePlanError, match="only on mode 'rest-hold'"):
+                probeplan._parse_intent(raw)
+
+
+@pytest.mark.parametrize("hold", [0, -1, 61, 600, 45.5, "45", True])
+def test_a_hold_outside_the_cap_is_refused(hold):
+    """The cap is what keeps a plan from resting an order indefinitely -- the one bound on this
+    mode that does not depend on anything else in the system still working.
+
+    The last three fixtures hold the TYPE half of that guard in place, which the int cases cannot
+    reach: 45.5 is in range as a number, so only `isinstance` can refuse it; "45" additionally
+    pins that the refusal is a ProbePlanError -- `1 <= "45"` raises TypeError, which
+    `Executor._read_plan`'s `except (ProbePlanError, OSError)` does not catch, so the malformed
+    plan would be neither journaled nor deleted and every later tick would re-read it; and True is
+    an int by subclass whose range check PASSES, so only the explicit bool arm can refuse it --
+    without that arm `hold_minutes: true` parses as a one-minute hold and `--check` prints it."""
+    with pytest.raises(probeplan.ProbePlanError, match="hold_minutes"):
+        probeplan._parse_intent(_rest_hold_intent() | {"hold_minutes": hold})
+
+
+@pytest.mark.parametrize("offset", [0, -1.0])
+def test_a_non_positive_offset_is_refused(offset):
+    """Zero or negative prices the order at or through the touch, which the post-only submission
+    path rejects -- and which would make a mode built never to fill, fill."""
+    with pytest.raises(probeplan.ProbePlanError, match="offset_pct"):
+        probeplan._parse_intent(_rest_hold_intent() | {"offset_pct": offset})
+
+
+@pytest.mark.parametrize("offset", ["5.0", "abc"])
+def test_a_non_numeric_offset_is_refused(offset):
+    """`_parse_positive_number`'s type half, which this mode is the first caller to depend on: a
+    bool is caught by the half beside it, and no numeric fixture can reach this one. Dropped,
+    `"5.0"` becomes five percent silently, and `"abc"` raises ValueError -- which
+    `Executor._read_plan`'s `except (ProbePlanError, OSError)` does not catch, so the plan is
+    neither journaled nor deleted and every later tick re-reads it."""
+    with pytest.raises(probeplan.ProbePlanError, match="offset_pct"):
+        probeplan._parse_intent(_rest_hold_intent() | {"offset_pct": offset})
+
+
+def test_a_rest_hold_close_is_refused():
+    """No drill needs a resting close, and a resting reduce-only order is a different animal that
+    should be specified when something wants it."""
+    with pytest.raises(probeplan.ProbePlanError, match="action"):
+        probeplan._parse_intent(_rest_hold_intent() | {"action": "close"})
+
+
+def test_a_well_formed_rest_hold_intent_parses():
+    """The true positive: without it, a refusal-only suite is satisfied by a parser that refuses
+    everything."""
+    intent = probeplan._parse_intent(_rest_hold_intent())
+    assert (intent.mode, intent.offset_pct, intent.hold_minutes) == ("rest-hold", 5.0, 45)
 
 
 # ---- plan_refusals -------------------------------------------------------------------------

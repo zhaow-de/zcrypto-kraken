@@ -626,6 +626,15 @@ class _ExecutionMetrics:
         self.position = Gauge(
             "zcrypto_exec_position", "Net position quantity by symbol, in base units.", ["symbol"], registry=registry
         )
+        self.resting_order_age = Gauge(
+            "zcrypto_exec_resting_order_age_seconds",
+            "How long the engine's current resting order has been at the venue, in seconds, by plan "
+            "mode; zero when none rests. This is the engine's own belief, not a venue read: if a "
+            "cancel could not reach the venue the engine gives up on the order and this reads zero "
+            "while it may still rest at Kraken. Nothing is published while the engine is down.",
+            ["mode"],
+            registry=registry,
+        )
         self.realized_pnl = Gauge("zcrypto_exec_realized_pnl_eur", "Realized profit and loss, in EUR.", registry=registry)
         self.external_events = Counter(
             "zcrypto_exec_external_events_total",
@@ -651,6 +660,9 @@ class _ExecutionMetrics:
 
     def inc_order(self, outcome: str) -> None:
         self.orders.labels(outcome=outcome).inc()
+
+    def set_resting_age(self, mode: str, seconds: float) -> None:
+        self.resting_order_age.labels(mode=mode).set(seconds)
 
     def inc_external(self, disposition: str) -> None:
         self.external_events.labels(disposition=disposition).inc()
@@ -1990,6 +2002,11 @@ def _intent_floor_check(index: int, intent, entry: dict) -> tuple[str, list[str]
     """
     refusals: list[str] = []
     head = f"  [{index}] {intent.symbol} {intent.side} {intent.action} {intent.mode}"
+    if intent.mode == "rest-hold":
+        # The two fields that decide whether this order can FILL, in words, on the only surface an
+        # operator reads before placing it. `offset_pct` is a percent: `0.05` here is fifteen euro
+        # off a thirty-thousand euro bid, and the whole point of printing it is that it looks wrong.
+        head += f" ({intent.offset_pct:g}% passive of the touch, holding {intent.hold_minutes} min)"
     if intent.notional_eur is not None:
         quote = entry["costmin_quote"]
         if quote != "EUR":

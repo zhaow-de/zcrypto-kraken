@@ -1092,6 +1092,20 @@ def test_probe_plan_check_accepts_a_lot_aligned_qty_disposal(tmp_path, monkeypat
     assert "plan ok: 1 intent(s), total notional 0.00 EUR" in out
 
 
+def test_probe_plan_check_echoes_the_rest_hold_offset_and_hold(tmp_path, monkeypatch):
+    """The quiet units slip is `offset_pct: 0.05` copied from `_REST_CANCEL_OFFSET`'s fractional
+    shape: it parses, it prices fifteen euro off a thirty-thousand euro bid, and it fills on the
+    one mode built never to. The check line is where an operator can still see it."""
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    plan = _write_plan(tmp_path, [_intent(mode="rest-hold", offset_pct=0.05, hold_minutes=45)])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "0.05% passive of the touch, holding 45 min" in out
+
+
 def test_probe_plan_check_refuses_a_malformed_plan(tmp_path, monkeypatch):
     _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
     path = tmp_path / "plan.json"

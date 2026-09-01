@@ -48,7 +48,7 @@ from cli.engine.execledger import (
 from cli.engine.feeders import CycleStages
 from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, from_json
-from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
+from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
 from cli.engine.venueledger import read_venue_record, validate_venue_record
@@ -199,6 +199,15 @@ def _inc_order(outcome: str) -> None:
         return
     try:
         _metrics.inc_order(outcome)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _set_resting_age(mode: str, seconds: float) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_resting_age(mode, seconds)
     except Exception:
         logger.exception("executor metrics hook raised -- continuing")
 
@@ -516,6 +525,13 @@ class _ActiveIntent:
     # When the venue owes an answer by, for the phases that are waiting on one (`cancelling`,
     # `ioc`). None in the phases where nothing is outstanding.
     phase_deadline: datetime | None = None
+    # Set whenever an order enters `resting`, so it tracks the CURRENT order rather than the intent:
+    # a post-only rejection's reprice replaces the order, and its age restarts with it.
+    placed_at: datetime | None = None
+    # A rest-hold order reaching `_on_cancel_ack` got there one of two ways -- its hold elapsed, or
+    # the kill file revoked it -- and only the first is `rest_hold_expired`. Matching on
+    # `revoke_reasons`' text instead would tie the outcome to a string written for a human.
+    hold_expired: bool = False
 
 
 class ProbeExecutor:
@@ -653,6 +669,7 @@ class ProbeExecutor:
             if self._plan is None:
                 self._pickup(now)
             self._pump(now)
+            self._publish_resting_age(now)
         except Exception:
             # Refusal by default: whatever broke, stop running this plan. Anything already resting
             # at the venue stays in the ledger as an open row for reconciliation to pick up.
@@ -660,6 +677,29 @@ class ProbeExecutor:
             self._plan = None
             self._active = None
             self._index = 0
+
+    def _publish_resting_age(self, now: datetime) -> None:
+        """Eagerly zero for every mode, then set the one that is resting: the board's convention is
+        that execution numbers read flat zero rather than absent, and a panel over an absent series
+        cannot distinguish 'nothing rests' from 'the engine stopped publishing'.
+
+        Wrapped WHOLE, not just at the metrics call. `_set_resting_age`'s try/except is a
+        helper-level guard; everything computed around it -- the mode loop, the phase read, the age
+        arithmetic -- would otherwise raise into `on_timer`'s catch-all, which drops the plan and
+        nulls `_active`. A live order would then rest at the venue with nothing left to end it:
+        `_poll` is unreachable with no `_active`, the adopt pass has already run, and a kill file
+        would sweep nothing. A telemetry defect may never end a plan.
+        """
+        try:
+            active = self._active
+            resting = active is not None and active.phase == "resting" and active.placed_at is not None
+            for mode in MODES:
+                age = 0.0
+                if resting and active.intent.mode == mode:
+                    age = max(0.0, (now - active.placed_at).total_seconds())
+                _set_resting_age(mode, age)
+        except Exception:
+            logger.exception("executor resting-age publish raised -- continuing")
 
     def _adopt_resting_orders(self, now: datetime) -> None:
         """The startup pass (D10), run once on the first tick: decide, per resting order this
@@ -1106,9 +1146,13 @@ class ProbeExecutor:
             self._revoke(active, ("quote_silence",))
             return
         if now > active.timebox_at:
+            # Only `execute` crosses when its box elapses. Both resting modes exist never to fill,
+            # so for them the box cancels and stops there. Written `== "execute"` rather than
+            # `!= "rest-cancel"` so a fourth mode inherits the arm that cannot cross; the pin on
+            # `MODES` is what forces this line to be re-read when one arrives.
             active.cancel_requested = True
-            # A rest-cancel drill must never execute: the time-box cancels it and stops there.
-            active.falling_back = active.intent.mode != "rest-cancel"
+            active.falling_back = active.intent.mode == "execute"
+            active.hold_expired = active.intent.mode == "rest-hold"
             active.revoke_reasons = ("time box elapsed",)
             self._enter(active, "cancelling")
             self._cancel(active)
@@ -1174,7 +1218,7 @@ class ProbeExecutor:
             phase="awaiting_quote",
             started_at=now,
             quote_deadline=now + _QUOTE_WAIT,
-            timebox_at=now + _TIME_BOX,
+            timebox_at=now + (timedelta(minutes=intent.hold_minutes) if intent.mode == "rest-hold" else _TIME_BOX),
             close_qty=decision.qty if intent.action == "close" else None,
             reduce_only=decision.reduce_only,
             position_before=state.positions.get(intent.symbol, 0.0),
@@ -1229,14 +1273,20 @@ class ProbeExecutor:
         `execute` joins the touch -- a buy the bid, a sell the ask; crossing the spread would be
         taking. `rest-cancel` is a drill that must never fill, so it prices `_REST_CANCEL_OFFSET`
         away on the passive side instead: joining the touch can fill in the instant between the
-        venue's acknowledgment and this process's cancel.
+        venue's acknowledgment and this process's cancel. `rest-hold` rests the same way but at the
+        distance its own intent declared, because an order meant to sit for many minutes chooses how
+        far from the touch it is willing to sit.
         """
         touch = active.bid if active.intent.side == "buy" else active.ask
         if touch is None:
             return None
         if active.intent.mode == "rest-cancel":
-            return touch * (1 - _REST_CANCEL_OFFSET) if active.intent.side == "buy" else touch * (1 + _REST_CANCEL_OFFSET)
-        return touch
+            offset = _REST_CANCEL_OFFSET
+        elif active.intent.mode == "rest-hold":
+            offset = active.intent.offset_pct / 100.0  # the field is PERCENT; the arithmetic is a fraction
+        else:
+            return touch
+        return touch * (1 - offset) if active.intent.side == "buy" else touch * (1 + offset)
 
     def _opposite_touch(self, active: _ActiveIntent) -> float | None:
         """What the marketable fallback is bounded by: a buy's ask, a sell's bid. A limit, always --
@@ -1350,9 +1400,14 @@ class ProbeExecutor:
         self._enter(active, "resting")
 
     def _reprice(self, active: _ActiveIntent) -> None:
-        """Both crossing surfaces funnel here: the venue's synchronous post-only rejection and its
-        accept-then-cancel. The counter counts RESUBMISSIONS -- the first submission was never a
-        reprice -- so `_MAX_REPRICES` of them happen and the next one refuses."""
+        """Two callers, not two universally-reachable ones: the venue's synchronous post-only
+        rejection and its accept-then-cancel. The rejection arm is unconditional -- nothing was ever
+        resting, so the recomputed price is simply this intent's own offset off the CURRENT touch,
+        and a tight-offset intent needs that recovery to get resting at all. The accept-then-cancel
+        arm is filtered before it arrives: a rest-hold order is a drill's subject and its
+        venue-originated cancel is terminal there (spec 00108 D5), never a reprice. The counter
+        counts RESUBMISSIONS -- the first submission was never a reprice -- so `_MAX_REPRICES` of
+        them happen and the next one refuses."""
         if active.cancel_requested:
             # A cancel is already out, so this order is over either way -- but WHY it is out decides
             # what happens next, and the two answers are opposites. A revoke (kill file, disarm,
@@ -1414,9 +1469,15 @@ class ProbeExecutor:
 
     def _enter(self, active: _ActiveIntent, phase: str) -> None:
         """Move to `phase`, arming the venue-answer deadline for the two phases that wait on one and
-        clearing it everywhere else -- a stale deadline would strand an intent that is not waiting."""
+        clearing it everywhere else -- a stale deadline would strand an intent that is not waiting.
+
+        Entering `resting` also stamps `placed_at`. Both submission paths funnel through here, so an
+        order that replaced an earlier one carries its OWN placement time, never the intent's.
+        """
         active.phase = phase
         active.phase_deadline = self._now() + _ACK_WAIT if phase in ("cancelling", "ioc") else None
+        if phase == "resting":
+            active.placed_at = self._now()
 
     def _strand_ambiguous(self, active: _ActiveIntent, reason: str) -> None:
         """The one exit for an outcome the venue never established: journal the intent ambiguous and
@@ -2050,6 +2111,11 @@ class ProbeExecutor:
             if active.intent.mode == "rest-cancel":
                 self._finish_active("rest_cancel_ok" if active.filled == 0.0 else "partial", (), active.filled)
                 return
+            if active.intent.mode == "rest-hold" and active.hold_expired:
+                self._finish_active("rest_hold_expired" if active.filled == 0.0 else "partial", (), active.filled)
+                return
+            # A rest-hold order the kill file (or any other revoke) took off the book falls through
+            # to `_finish_revoked`, which is correct: it was revoked, not held to its expiry.
             self._finish_revoked(active)
             return
 
@@ -2060,6 +2126,14 @@ class ProbeExecutor:
         _inc_order("venue_canceled")
         if active.phase == "ioc":
             self._fallback(active)
+            return
+        if active.intent.mode == "rest-hold":
+            # Spec 00108 D5. This arm runs for ANY venue-originated cancel or expiry while the
+            # phase is not `ioc` -- it tests nothing about crossing -- and a resting rest-hold order
+            # is a drill's SUBJECT. Re-placing it at the current touch under a new client-order-id
+            # swaps the subject mid-induction, silently undoes an operator's own cancel at the
+            # venue, and contaminates exactly the continuity drill G exists to measure.
+            self._finish_active("rest_hold_venue_canceled" if active.filled == 0.0 else "partial", (), active.filled)
             return
         self._reprice(active)
 
