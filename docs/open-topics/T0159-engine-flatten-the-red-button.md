@@ -1,5 +1,6 @@
 ---
 status: partial
+ripe_when: 'per sub-item, not one trigger — the engine converge carrying 00106 + rest-hold is ripe now, both being merged, and waits only on an inter-cycle gap; the read-only dry-run and then the first real press follow it in the same attended session, the host wrapper not existing until that converge has run'
 ---
 
 # `zcrypto engine flatten` — the red button
@@ -37,4 +38,4 @@ The build half is delivered on `feat/00106-engine-flatten`, every spec-`00106` c
 
 - **(human)** The engine converge carrying `00106` (with `rest-hold`), inside an inter-cycle gap, per `zcrypto-rollout-image` and the canary rule. The same converge records `/usr/local/sbin/zcrypto-flatten` in `docs/reference/fleet.md` — a new permanent host artifact, and this is the only host-touching step that puts it there.
 - **(human)** After the converge — the wrapper reaches the host only then — the live read-only dry-run on the engine host **through the wrapper**, the engine running and a spot balance present — the five read shapes proven against the real venue and recorded as a row in `docs/reference/adapter-verification/<version>.md`; until it exists the command's live use is unverified and the runbook says so.
-- **(human)** Drill B at rung 1 against A2's real position and a small spot balance: decision-to-flat is the number; the drill-log entry closes this topic's execution half. Anything the drill finds that the spec did not foresee lands here.
+- **(human)** **The first real press closes the execution half**, on a position minted for the purpose against the current pin — spot, plus a margin leg where `ordermin` allows, margin being what exercises `margin_legs`, the reduce-only close and the `position_side` read. This topic is `partial` for one reason, that the command has never touched Kraken, and this is what removes it; its artifact is the adapter-verification row (`00106` D8.2). Anything the press finds that the spec did not foresee lands here. **Drill B is not this** — it measures decision-to-flat at rung 1 and belongs to [[T0158]]'s order-path tier. Gating this topic on it would hold a command-correctness question open until a funding-gated milestone, and would invert the reason the press happens on the current pin at all: to know the red button works *before* rung 1 has positions for it to fail on.

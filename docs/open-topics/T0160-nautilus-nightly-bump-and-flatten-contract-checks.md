@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: the PR for `feat/00106-engine-flatten` is merged into `develop`
+ripe_when: 'fired — that PR merged 2026-09-01 (904862a8), so this is live work; it runs only once the engine is converged onto 00106 + rest-hold and `zcrypto engine flatten` has been watched to succeed once on the CURRENT pin — which is what makes the side-enum hazard below attributable to the bump rather than latent — and never shares a window with either'
 ---
 
 # T0160 — nautilus-trader nightly bump, and the flatten contract checks it must not skip
