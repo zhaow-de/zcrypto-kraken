@@ -209,6 +209,16 @@ NOT_A_FAULT_SIGNAL = {
     # does not cover, since nobody is watching the board when the engine is the thing that left.
     "zcrypto_exec_position",
     "zcrypto_exec_realized_pnl_eur",
+    # The resting order's age. NO rule, deliberately and not by omission (spec 00108 D7, which
+    # records the rule it declines and why), for two structural reasons. The ceiling and the legal
+    # maximum are the same number: the executor leaves `resting` on the first tick past
+    # `timebox_at`, itself capped at 60 minutes, so a threshold above the cap can never be crossed
+    # and one below it fires on every lawful hold. And the condition a rule would be FOR -- an
+    # order left resting at the venue with nothing tracking it -- is the one where this gauge reads
+    # zero: every ambiguity route halts the plan and nulls the active order, after which the gauge
+    # publishes 0.0 for every mode while the order rests at Kraken. It is the engine's belief, and
+    # an engine that has given up on an order believes nothing about it.
+    "zcrypto_exec_resting_order_age_seconds",
     # The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
     # order filling, which is the feature working, and `unmatched` says an order event belonging to
     # no order this engine's ledger vouches for arrived and was acted on nowhere. It does NOT

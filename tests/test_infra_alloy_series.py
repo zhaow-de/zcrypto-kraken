@@ -107,6 +107,10 @@ ENGINE_APP_SERIES = [
     "zcrypto_exec_fills_total",
     "zcrypto_exec_fees_eur_total",
     "zcrypto_exec_position",
+    # spec 00108: rest-hold's only observable. The mode leaves an order at the venue for up to an
+    # hour on purpose, so dropped from the keep-regex a resting order and no order at all render
+    # identically -- and there is no rule to notice, by design.
+    "zcrypto_exec_resting_order_age_seconds",
     "zcrypto_exec_realized_pnl_eur",
     # The external-events counter is pinned on the same grounds and one more: it is the only
     # observable of a restart adoption doing anything at all, and its `unmatched` label is the
