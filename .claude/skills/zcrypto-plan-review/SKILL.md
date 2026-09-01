@@ -1,0 +1,76 @@
+---
+name: zcrypto-plan-review
+description: The review-and-fix loop for a committed spec+plan pair, run after `superpowers:writing-plans` commits the plan and before `superpowers:subagent-driven-development` Task 1 — contract pin, two lens reviewers, mechanical max-severity union, fixer, then the Minor sweep, executability pass and blind gate; exits only when no Critical or Important remains and every foldable Minor is folded. Invoke as `/zcrypto-plan-review <spec> <plan> [T<NNNN>]`; with no arguments it takes the pair the branch introduces.
+---
+
+# zcrypto-plan-review
+
+The gate between a committed plan and its execution. Every step below exists because its absence was measured to ship a defect — `docs/research/90.spec-plan-review-protocol.md` is the evidence; this file is only the procedure. The three facts that shape it: the loop's own reports are not a stopping signal, a second independent reader finds more than a second round, and no reader can falsify a wrong premise from the text.
+
+**Every dispatch prompt is rendered from `references/` and written to the report dir before dispatch** — never composed ad hoc, never patched mid-loop with the loop's own lessons. Re-read the rendered prompt once before sending it: a template is not portable and every new pair has broken one at render time.
+
+## Inputs and derived state
+
+- `{SPEC}`, `{PLAN}`: the paths given, else the pair `git log develop..HEAD --name-only --diff-filter=A --format= -- docs/specs docs/plans` lists (exactly one pair, or stop and ask); rendered absolute.
+- `{TOPIC_LINE}`: ` Then read {WORKTREE}/docs/open-topics/T<NNNN>-*.md — the topic this pair delivers.` when a topic is given, else empty.
+- `{WORKTREE}`: the absolute path of the checkout the branch lives in; `{BRANCH}`: its name; `{REPORT_DIR}`: `{WORKTREE}/.tmp/plan-review/<serial>/` (gitignored — create it). **Every path token is rendered absolute** — a subagent's cwd resets between commands, and a relative path in a prompt naming two roots resolves against whichever the last command left.
+- `{BLAST_RADIUS}`: two or three lines naming what costs something if this pair is wrong — what ships to production, what a paged operator acts on, what a number would change. Write them before anything is dispatched; every reviewer is told everything else is Minor by construction.
+- **The floor**: `fable` for the executability pass and the blind gate when the pair touches the unbackfillable capture path, the live trade path, or canonical data; else `opus`. Pin, lenses, fixer and scoped re-reviews are `opus` always — a cheaper fixer diverged exactly on spec amendments, the highest-stakes edit it makes.
+- `{SPEC_PINNED}`: `grep -c "$(sha256sum {SPEC} | cut -d' ' -f1)" docs/reference/trial-registry.jsonl` — the registry stores the bare hex, so the two-field `sha256sum` line never matches. Non-zero, or a hit for `grep -c "spec <serial>"` (a record naming the serial while the hash misses is a drifted pin; one naming neither is undetectable here), renders the pinned clause; otherwise the amendable one. Pinned: `{SPEC} is pinned — a docs/reference/trial-registry.jsonl record names its sha256 or its serial. Do not edit it; a finding that needs a spec change goes under ## Spec-blocked with the change it would need.` Amendable: `{SPEC} is not pinned — where a finding shows it wrong or silent on something load-bearing, amend its decision text, never contradict it, and list every amendment under ## Spec amendments.`
+- Per-dispatch tokens: `{OUT}` the dispatch's report path; `{COMMON}` the text of `references/review-common.md`; `{ROUND}` the round number (the floor passes carry the last round's); `{UNION}` the round's union path — for a floor cycle, `union.py` run over the pass report that started it plus the previous cycle's scoped report when one exists (`{REPORT_DIR}/r<N>-<pass>[-c<cycle>]-union.md`); `{PRIOR_FIX}` the previous round's fixer report plus its scoped report if one exists, or the word `none` in round 1 and for every floor pass; `{PRE_FIX}` the commit before a fix and `{FIX_REPORT}` that fix's report, for a scoped re-review; `{EXEC_WT}` = `{REPORT_DIR}/exec-wt`.
+- The ledger, `{REPORT_DIR}/ledger.md`, first line `# plan-review ledger — {SPEC} {PLAN} — base <commit>`: the recovery map after compaction. After compaction trust it and `git log` over recollection; a round with a `fix: <hash>` line is done.
+
+## The loop
+
+Round `N` = pin (round 1 only) → lenses → union → fix. Each dispatch's prompt is `{REPORT_DIR}/r<N>-<role>-prompt.md`; its output is `{REPORT_DIR}/r<N>-<role>.md`. A floor cycle's dispatches carry the cycle — `r<N>-<pass>-fix-c<cycle>.md`, `r<N>-<pass>-scoped-c<cycle>.md`, the re-run `r<N>-<pass>-c<cycle>.md` — so the first run's report is never overwritten.
+
+1. **Contract pin** (round 1, `opus`, alone): render `references/pin.md` + `references/review-common.md`. It runs code against every premise the pair asserts about the tree, a library, a runtime or a venue, writes `pin-facts.md`, and reports each refuted premise as a finding. Nothing reviews until this returns — it is the only step that can find a false premise, and a pair can be internally consistent around one. A premise about a fleet host cannot be verified from a dispatched agent (`agent-ops.md`): the pin writes those as `HOST` lines carrying the exact read-only command, and **the orchestrator runs each in the main loop and rewrites the line `VERIFIED`/`REFUTED`/`UNVERIFIABLE` before the lenses are dispatched** — reading each command against `CLAUDE.md`'s secrets rule first: a `docker inspect` names one field, never `.Config`/`.Config.Env`, and a non-compliant or non-read-only command is rewritten `UNVERIFIABLE`, never run. A REFUTED or UNVERIFIABLE host line is appended to `r1-pin.md` as `### [<severity by its scenario; UNVERIFIABLE is Important>] · [in-original] · <the plan line asserting the premise>` in `review-common.md`'s shape — a bullet is invisible to the union. **Step 2 is dispatched only after** (a) `grep -vcE '^(VERIFIED|REFUTED|UNVERIFIABLE) ·|^#|^\s*$' {REPORT_DIR}/pin-facts.md` prints 0 and `grep -cE '^(VERIFIED|REFUTED|UNVERIFIABLE) ·' {REPORT_DIR}/pin-facts.md` prints at least 1 — every claim line begins with its grade, so a standing `HOST` line, a list-shaped file or an empty one fails positively — and (b) for every host line now REFUTED or UNVERIFIABLE, `grep -c '<its key>' {REPORT_DIR}/r1-pin.md` prints at least 1; the ledger's pin line `host: <n> run · <m> refuted/unverifiable · <the m keys>` is written as the host lines are rewritten, before their appends, so the keys owed are on disk before the step that owes them.
+1. **Two lenses** (`opus`, in parallel — both read-only): render `references/lenses.md`'s shared head with lens A, and again with lens B, each + `review-common.md`. Both receive `pin-facts.md` as fact and `{PRIOR_FIX}` (so the previous round's skips are re-adjudicated rather than inherited as settled). Never two samples of one prompt: the lenses are disjoint by design and each is told what the other owns.
+1. **Union** — from `{WORKTREE}`: `python3 .claude/skills/zcrypto-plan-review/scripts/union.py {REPORT_DIR}/r<N>-union.md {REPORT_DIR}/r<N>-pin.md {REPORT_DIR}/r<N>-lens-safety.md {REPORT_DIR}/r<N>-lens-coverage.md` (pin only in round 1; add `{REPORT_DIR}/r<N-1>-scoped.md` when the previous round produced one — it is in the report shape, so its findings reach the fixer through the union). Mechanical: cluster on the `path:line` key, keep the maximum severity, never re-grade downward, no consolidating agent. **The counts on its last line are the round's counts** — never a reviewer's own summary, which under-reports. Exit 2 lists unparsed headings: read every one, an unparsed finding is a finding; an `unclosed fence` entry means every heading after that line is uncounted — close the fence in that report, re-run the union, and only then record the counts. Near-duplicates under different keys stay separate — the fixer reads both; merging them is where a severity is lost.
+1. **Trailer**: every reviewer that returns reviewed HEAD — the pin, each lens, a scoped re-reviewer. Amend `Reviewed-by:` for its model onto HEAD as each returns, whatever commit HEAD is, before anything else (`commit-messages.md`).
+1. **Fix** (`opus`, alone, in `{WORKTREE}`) — only when the union carries a Critical or Important; a union with neither goes straight to the floor. Render `references/fixer.md`. Its contract, each clause load-bearing: verify each finding against the real file before acting; **refuse** a finding verified wrong, with what was checked; fix every Critical and Important; fold a Minor where the fix is a line, skip with a reason otherwise; enumerate every spec amendment; **fix the family** — name it, enumerate every member, write the enumeration into the artefact; extend rather than restate; list every new mechanism; back every new claim written into the pair with a `path:line` or a command's output. One commit per file kind; `Co-Authored-By:` only.
+1. **Scoped re-review** (`opus`) iff the fix report's `## New mechanisms` is non-empty: render `references/floor-passes.md` §scoped on `git diff {PRE_FIX}..HEAD` — the subject is the mechanism's own failure modes, which the review that asked for it never examined. Its report gates like a union: a Critical or Important there re-enters the loop, and it travels in the next round's `{PRIOR_FIX}`.
+1. **Ledger** the round: union counts, fix commit, refused/skipped with reasons, spec amendments, new mechanisms. Then re-enter at step 2 while the union or the round's scoped report carries any Critical or Important.
+
+**Round cap: five.** A fifth union still carrying a Critical or Important is not a reason for a sixth — a loop that does not converge is a verdict on the design, not on the reviewers. Stop, and hand the user the residuals with their scenarios: the decision is a re-derivation, not another round.
+
+## The floor — after a union with zero Critical and zero Important
+
+Three passes, in this order because each is blind to what the previous one finds cheaply.
+
+1. **Minor sweep** (`opus`, alone, once): render `references/floor-passes.md` §minor-sweep over the union's Minors. Fold every Minor whose fix is one local hunk that adds no mechanism and moves no cross-reference; leave the rest with a one-clause reason **in the commit message** — the commit is the durable record of what was consciously left. A union with no Minor skips the sweep; a sweep that folds nothing commits `--allow-empty` so the reasons still land. At this floor the remaining edits are local; measured, this sweep introduced nothing.
+1. **Executability pass** (the floor model, alone, in the **detached worktree** `{EXEC_WT}` — `git worktree add --detach {EXEC_WT} HEAD` before and `git worktree remove --force {EXEC_WT}` after, both by the orchestrator; an `rm -rf` leaves it registered and the next review's `add` refuses): render §exec + `review-common.md`. It assembles what the plan says an implementer will write, task by task, and runs it — the stated commands against their stated `Expected`, the whole test file a task touches, every mutation probe with the failure text read, every template through every publishing path. Its report carries an `## Executed` table so a clean pass is distinguishable from a skip. It is last because it finds a class the lenses cannot — constructor arity, fixture contracts, substitution scope — and wastes its budget on their findings if run first.
+1. **Blind gate** (the floor model, alone): render §blind. Structurally blind — the prompt forbids `{REPORT_DIR}`, this branch's commit messages and the memo, and says nothing was caught. It is the highest-yield single review and it is a complement, never a substitute: it has missed Criticals a second lineage held.
+
+A Critical or Important from either pass starts a **cycle**: a fix dispatch (step 5's contract), a scoped re-review of that diff (§scoped), then **the pass re-run on the new HEAD** (a fresh `{EXEC_WT}` for the executability pass) — a first review of new work, never another round. The re-run's — or the cycle's scoped re-review's — Critical or Important starts cycle two; **a third cycle is not started** — its findings go to the user unfixed, because the pass is finding what the loop should have. Every fix commit takes two trailers, its scoped re-reviewer's and its re-run pass's, each amended as it returns.
+
+## Exit
+
+Write to the ledger, in this order, and refuse to hand off without every line:
+
+- the last union's counts, the sweep's folded/left counts, its spec amendments (or `none`) and commit, each floor pass's counts, its fix cycles and their scoped reports' counts;
+- **the consequence statement** — quote each remaining finding's `Consequence:` line and state that none threatens any `{BLAST_RADIUS}` item. That sentence is the stopping signal; a zero on a counter is not.
+- `infra/scripts/review-trailer-audit.sh develop` output: every code-kind commit carries its trailer.
+
+Then remove `{EXEC_WT}` (the floor's command) and hand off to `superpowers:subagent-driven-development`. `{REPORT_DIR}` stays until the branch merges — the SDD ledger cites it.
+
+## Dispatch mechanics
+
+- Agent tool, `model` named explicitly on every dispatch; the two lenses in one message, everything else one at a time — the fixer, the sweep and the executability pass all write.
+- The dispatch prompt is two lines: the rendered prompt's path, "read it first — it is your complete instructions", and the output path. Everything else lives in the file.
+- Every rendered prompt ends with: run everything as plain blocking commands, background nothing, no subagents, and — for writers — do not end the turn before the commit exists. A writer whose final message says it is *waiting* is stranded: check `git status`, resume the same agent (`agent-ops.md`).
+- Never `Claude-Session:`; a fixer never adds `Reviewed-by:`.
+
+## Failure modes — catch yourself
+
+| The impulse | The reality |
+|---|---|
+| "The union is clean, so the pair is clean" | The union is the loop's own verdict. The floor passes are the measurement. |
+| "The reviewer's summary says 0/1/6" | The body says 0/2/6. `union.py`'s line is the count. |
+| "Two reviewers agreed it is Important" | One said Critical. Max severity; agreement is not a re-grade. |
+| "This Minor was skipped with a good reason two rounds ago" | A skip is not closed. It was re-adjudicated this round, or it was not reviewed. |
+| "The fix looks right, dispatch the next round" | A fix is a hypothesis; the next union is its first measurement. |
+| "One more round will clear it" | Five rounds with a Critical left is a design verdict. Re-derive. |
+| "The pin is expensive, the docstring says who calls it" | The docstring names the callers the author meant. The pin found the one they did not. |
+| "The blind gate came back clean, skip the executability pass" | The gate reads. Three Importants in one pair were findable only by running. |
+| "I will just tighten the lens prompt for this round" | The instrument is patched between pairs, never inside a loop. |
