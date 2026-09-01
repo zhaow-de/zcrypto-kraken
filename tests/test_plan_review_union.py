@@ -173,6 +173,22 @@ def test_fences_follow_commonmark_and_an_unclosed_one_is_surfaced(tmp_path):
     assert "unclosed fence opened at line 7" in out
 
 
+def test_a_heading_without_its_brackets_is_still_a_finding(tmp_path):
+    """The template once wrote the shape as `[Critical|Important|Minor]`, which every reviewer read as
+    choose-one notation and rendered bare. A parser keyed on literal brackets then counted a real
+    Critical as zero — measured on this skill's own first live run, eleven findings, `unparsed 11`."""
+    bare = (
+        "### Critical · in-original · docs/plans/00000-x.md:30\n**Quote:** `a`\n"
+        "### Important · last-fix · docs/plans/00000-x.md:31\n**Quote:** `b`\n"
+    )
+    proc, out = _run(tmp_path, bare)
+    assert proc.returncode == 0, "a bare heading is a finding, not an unparsed line"
+    assert "Critical 1 · Important 1 · Minor 0 · keys 2 · raw findings 2 · unparsed 0" in proc.stdout
+    # Mixed forms across two reports still cluster on one key and take the maximum severity.
+    proc, out = _run(tmp_path, "### Minor · in-original · docs/plans/00000-x.md:30\n**Quote:** `a`\n", bare)
+    assert "Critical 1 · Important 1 · Minor 0 · keys 2" in proc.stdout
+
+
 def test_an_unparsable_heading_is_listed_and_exits_2(tmp_path):
     proc, text = _run(tmp_path, _A, "### Important — docs/plans/00000-x.md:99\nprose\n")
     assert proc.returncode == 2
