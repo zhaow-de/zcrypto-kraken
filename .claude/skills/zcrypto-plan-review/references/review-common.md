@@ -16,10 +16,10 @@ A finding that cannot quote the line it judges is not a finding. Verify every cl
 
 ## Report shape — `{OUT}`
 
-One block per finding, nothing else under a `###`, in this exact heading form (a script clusters on it):
+One block per finding, nothing else under a `###`. Copy this heading **literally**, square brackets included — they are part of the text, not a choose-one notation; substitute only the severity word, the origin word and the path (a script clusters on it):
 
 ```
-### [Critical|Important|Minor] · [in-original|earlier-fix|last-fix] · <path>:<line>
+### [Important] · [in-original] · docs/plans/00042-example.md:117
 **Quote:** `<the line, verbatim>`
 **Defect:** <what is wrong>
 **Scenario:** <the concrete failure — required for Critical and Important>

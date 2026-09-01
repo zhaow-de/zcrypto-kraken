@@ -34,7 +34,12 @@ ORIGIN_RANK = {"last-fix": 0, "earlier-fix": 1, "in-original": 2}  # most recent
 _PREFIX = r"^\s*(?:>\s*)?(?:[-*+]\s+|\d+[.)]\s+)?"  # blockquote, indentation, list marker: not part of the heading
 CANDIDATE = re.compile(_PREFIX + r"#{3,}")  # no space / seven hashes still surface, never sink into a body
 SECTION = re.compile(_PREFIX + r"#{1,2}\s")
-HEADING = re.compile(_PREFIX + r"#{3,6}\s+\[(Critical|Important|Minor)\] · \[(in-original|earlier-fix|last-fix)\] · (\S.*?)\s*$")
+# The brackets are optional on read: reviewers routinely drop them (the template once showed them as
+# choose-one notation), and a finding whose severity is plain is still a finding — parsing it is the
+# safe direction, since the alternative is a real Critical counted as zero.
+HEADING = re.compile(
+    _PREFIX + r"#{3,6}\s+\[?(Critical|Important|Minor)\]? · \[?(in-original|earlier-fix|last-fix)\]? · (\S.*?)\s*$"
+)
 # CommonMark fences. An opener may sit inside a blockquote and/or a list item; it closes on a bare run of the
 # same character at the same length or longer, indented at most three columns or no deeper than its own opener, INSIDE that
 # same container — or when the container itself ends. A `> ```` line inside a column-0 fence is content, not
