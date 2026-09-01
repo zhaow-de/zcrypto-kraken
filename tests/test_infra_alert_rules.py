@@ -1354,3 +1354,65 @@ def test_the_dark_with_exposure_page_keeps_the_wording_two_reviews_argued_into_i
         f"the summary does not name {_DARK_DISCRIMINATOR!r}, so the page's first instruction is missing and a "
         f"responder may flatten a live position for a telemetry incident"
     )
+
+
+# --- Drift ratchets (2026-09-01) -------------------------------------------------------------
+# Both guards exist because a class of prose defect recurred across two audits and neither
+# existing test could see it. They assert facts that are DERIVABLE, so nobody has to re-count.
+
+# One section may legitimately serve several uids, and one rule may point at a procedure named for
+# the host rather than the rule. Each entry is a decision, not a backlog: adding one is how you
+# record a deliberate exception, and an empty diff here means no rule quietly drifted off-target.
+_ANCHOR_EXCEPTIONS = {
+    "zcrypto-reconcile-ledger-scan-slow": "reconcile-ledger-scan-cost",
+    "zcrypto-reconcile-ledger-scan-critical": "reconcile-ledger-scan-cost",
+    "zcrypto-alloy-dark-zaccess": "zaccess-bridgehead-dark",
+}
+
+
+def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
+    """A `Runbook:` link that RESOLVES can still send the operator to the wrong rule's section.
+
+    `test_every_runbook_link_in_an_alert_summary_resolves` checks the anchor exists; it cannot
+    check the anchor is the right one. `zcrypto-capture-venue-state-recurrence` cited
+    `capture.md#zcrypto-capture-venue-not-online` -- a sibling rule's section -- and passed that
+    test for as long as both anchors existed.
+    """
+    wrong = []
+    for rule in _rules():
+        summary = (rule.get("annotations") or {}).get("summary", "")
+        match = re.search(r"Runbook:\s*\S+?#(\S+?)\"?\s*$", summary.strip())
+        assert match, f"{rule['uid']} carries no Runbook anchor"
+        anchor, uid = match.group(1).rstrip('"'), rule["uid"]
+        if anchor != _ANCHOR_EXCEPTIONS.get(uid, uid):
+            wrong.append(f"{uid} -> #{anchor}")
+    assert not wrong, (
+        "these rules route to a section that is not their own; add a deliberate exception to "
+        f"_ANCHOR_EXCEPTIONS or fix the anchor: {wrong}"
+    )
+
+
+# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not error
+# -- it returns a SHORTER series -- so a window wider than this is silently truncated and any
+# figure derived from it is recorded at the width it asked for, not the width it got. T0129
+# (resolved) re-derived two thresholds after finding `[30d]` returns the same ~14 days.
+_RETENTION_SECONDS = 14 * 24 * 3600
+
+
+def test_no_rule_queries_past_the_platforms_retention() -> None:
+    """A window wider than retention is truncated in silence, so its threshold is mis-derived."""
+    unit = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+    over = []
+    for rule in _rules():
+        for node in rule.get("data", []):
+            frm = (node.get("relativeTimeRange") or {}).get("from")
+            if isinstance(frm, (int, float)) and frm > _RETENTION_SECONDS:
+                over.append(f"{rule['uid']}: relativeTimeRange.from={frm}s")
+            expr = (node.get("model") or {}).get("expr") or ""
+            for tok, num, suf in ((m.group(0), m.group(1), m.group(2)) for m in re.finditer(r"\[(\d+)([smhdw])[\]:]", expr)):
+                if int(num) * unit[suf] > _RETENTION_SECONDS:
+                    over.append(f"{rule['uid']}: selector {tok}")
+            for m in re.finditer(r"offset\s+(\d+)([smhdw])", expr):
+                if int(m.group(1)) * unit[m.group(2)] > _RETENTION_SECONDS:
+                    over.append(f"{rule['uid']}: offset {m.group(0)}")
+    assert not over, f"windows wider than the {_RETENTION_SECONDS // 86400}d retention: {over}"

@@ -249,7 +249,7 @@ The `container` label names the source, and that is your routing:
 
 **Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the CLI's Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`). The runner scripts' own `echo` lines never match it and ship unleveled — including the load-bearing `WARNING: writer cycle SKIPPED (fail-closed gate): …`. A gate-skip streak produces no ERROR page by construction.
 
-Correcting the rule's own comment: it says the selector covers "the four zcrypto-\* units". The journal keep-regex in `infra/ansible/roles/ops/files/config.alloy` admits **five** — `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize`, `tape-bars`. The rule's selector is `zcrypto-.*`, so all five are in fact watched; only the count in the comment is stale.
+The scope is the journal keep-regex in `infra/ansible/roles/ops/files/config.alloy`, which admits **five** units — `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize`, `tape-bars`. The rule's selector is `zcrypto-.*`, so all five are in fact watched; only the count in the comment is stale.
 
 ### What to do
 

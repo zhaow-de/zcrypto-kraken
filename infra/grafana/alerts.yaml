@@ -2228,7 +2228,7 @@ rules:
       #
       # Threshold: the ops box has 24 threads (infra/ansible/roles/ops/defaults/main.yml), so the NAS
       # rule's `gt 4` (100% of its 4 cores) would not mean the same thing here. `gt 20` is ~83% of 24
-      # threads rather than 100%: ops runs several concurrent services (Alloy, the four timers, and
+      # threads rather than 100%: ops runs several concurrent services (Alloy, the ops timers, and
       # soon the overlay writer) whose transient overlaps are normal, so full-saturation would be
       # noisier than the NAS's single-purpose box; 20 keeps the same "sustained saturation, not a
       # transient burst" intent with headroom for that cross-service scheduling noise.
@@ -2274,7 +2274,7 @@ rules:
       # Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the
       # parse stages strip the level out of the message line, so a grep would be silently blind;
       # `queryType: instant` for the same Loki-specific reason). It covers every container that ships
-      # from the ops node -- the four zcrypto-* units, Alloy's own logs, and the liquidations poller,
+      # from the ops node -- the `zcrypto-*` units (`{container=~"zcrypto-.*"}`, not a fixed count), Alloy's own logs, and the liquidations poller,
       # a long-lived daemon whose errors flip NO exit-code metric, so this rule is its ONLY error
       # channel.
       #
@@ -2375,7 +2375,7 @@ rules:
     condition: C
     data:
       # The canary that closes the ERROR-logs rule's green-when-blind gap for the Alloy-fed half of
-      # its scope (Alloy's own logs + the four zcrypto-* units). Scoped to `container="alloy"`
+      # its scope (Alloy's own logs + the `zcrypto-*` units (`{container=~"zcrypto-.*"}`, not a fixed count)). Scoped to `container="alloy"`
       # (review finding, 00068 T6/T7/T8 review Critical 2) -- NOT host-wide any more: the liquidations
       # poller now direct-ships (spec 00068 D3/T6) with its OWN `level` stamped at the source
       # (cli/logging/ship.py), completely bypassing Alloy, so its ~5-min heartbeat alone would have
@@ -2437,7 +2437,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy is quiet but never silent while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. The margin here is thin and deliberately so: a healthy 6h window measured 7 to 9 lines over 14 days, roughly 1.5 an hour, so read a low count on this stream as a signal to look rather than as headroom. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`). Runbook: infra/runbooks/observability.md#zcrypto-ops-log-pipeline-dead"
+      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy is quiet but never silent while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. The margin here is thin and deliberately so: a healthy 6h window measured 7 to 9 lines over 14 days, roughly 1.5 an hour, so read a low count on this stream as a signal to look rather than as headroom. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the `zcrypto-*` units' own level-parse health is watched separately too (`Ops · unit log parse dead`). Runbook: infra/runbooks/observability.md#zcrypto-ops-log-pipeline-dead"
       __dashboardUid__: "zcrypto-logs"
       __panelId__: "103"
     labels:
@@ -2527,7 +2527,7 @@ rules:
       # dead`'s own window below, for the same reason): during a fail-closed skip-gate streak
       # archive-pull emits only unleveled echoes, but panel-materialize (hourly) and verify-replay/
       # verified-replay (daily) run on independent schedules unaffected by that gate, so at least one
-      # of the four units produces a leveled line well within 26h even through an extended streak --
+      # of the `zcrypto-*` units produces a leveled line well within 26h even through an extended streak --
       # a 6h window on this same selector would false-fire and was rejected for that reason.
       #
       # `by (host, container)` -- container is a REGEX here, so it is real information on the label
@@ -2572,7 +2572,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one LEVEL-PARSED line from any of the four zcrypto-* ops units in 26h -- the four run on independent schedules (half-hourly/hourly/daily) so at least one always produces a leveled line inside that window while Alloy's zcrypto parse stage is intact; silence means that stage regressed (the line-shape regex, the container selector, or the label scheme) even though Alloy itself and its own logs (watched by `Ops · log pipeline dead`) stay healthy. Runbook: infra/runbooks/observability.md#zcrypto-ops-unit-parse-dead"
+      summary: "Not one LEVEL-PARSED line from any zcrypto-* ops unit in 26h -- they run on independent schedules (half-hourly/hourly/daily) so at least one always produces a leveled line inside that window while Alloy's zcrypto parse stage is intact; silence means that stage regressed (the line-shape regex, the container selector, or the label scheme) even though Alloy itself and its own logs (watched by `Ops · log pipeline dead`) stay healthy. Runbook: infra/runbooks/observability.md#zcrypto-ops-unit-parse-dead"
       __dashboardUid__: "zcrypto-logs"
       __panelId__: "103"
     labels:
@@ -2589,7 +2589,7 @@ rules:
     data:
       # The journal-scoped companion to the canary above. `zcrypto-ops-log-pipeline-dead` is scoped to
       # `container="alloy"` (00068 T6/T7/T8 review) -- it proves Alloy's OWN journald-driver stream
-      # is flowing, not that the SEPARATE journal-reader path carrying the four zcrypto-* units is
+      # is flowing, not that the SEPARATE journal-reader path carrying the `zcrypto-*` units (`{container=~"zcrypto-.*"}`, not a fixed count) is
       # intact, so it cannot see a journal-transport-only death either -- and loki.source.journal is
       # the SOLE carrier of those units' logs, including the reconcile skip-gate warning this
       # pipeline exists to ship. The unit failure modes it covers are all silent everywhere else: a
@@ -3762,7 +3762,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "{{ if $labels.system }}Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online`.{{ else }}This fired with no venue state attached, so treat the state as UNKNOWN rather than observed: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before acting on anything below.{{ end }} The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-state-recurrence"
+      summary: "{{ if $labels.system }}Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online`.{{ else }}This fired with no venue state attached, so treat the state as UNKNOWN rather than observed: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before acting on anything below.{{ end }} The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-not-online"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "108"
     labels:
@@ -3829,7 +3829,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "{{ if $labels.system }}Kraken reported the trading venue in state `{{ $labels.system }}` rather than `online` within the last 15 minutes -- a NEW sighting, not a standing latch.{{ else }}This fired with no venue state attached, so nothing was observed to recur: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before treating this as a recurrence at all.{{ end }} The sibling venue alert latches on the first sighting of each state and stays red until the capture daemon restarts, so it cannot tell you a degradation is recurring; this one clears itself once 15 minutes pass with no further sighting. The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-not-online"
+      summary: "{{ if $labels.system }}Kraken reported the trading venue in state `{{ $labels.system }}` rather than `online` within the last 15 minutes -- a NEW sighting, not a standing latch.{{ else }}This fired with no venue state attached, so nothing was observed to recur: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before treating this as a recurrence at all.{{ end }} The sibling venue alert latches on the first sighting of each state and stays red until the capture daemon restarts, so it cannot tell you a degradation is recurring; this one clears itself once 15 minutes pass with no further sighting. The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-state-recurrence"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "108"
     labels:
