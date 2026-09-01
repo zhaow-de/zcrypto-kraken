@@ -204,8 +204,8 @@ file is simply untransmittable).
 Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default
 `/etc/zcrypto-ops/alloy`), rendered by the `ops` role only when the pinned Alloy digest is supplied
 (`-e ops_alloy_digest=sha256:<...>`; no default, matching `ops_image_digest`'s pattern). It ships
-host metrics (load, memory, free disk space, network IO), the four OPS-3/OPS-4 timers' textfile
-series, and its own logs plus those four units' logs to Grafana Cloud (**not** "every container's
+host metrics (load, memory, free disk space, network IO), the OPS-3/OPS-4 timers' textfile
+series, and its own logs plus those units' logs to Grafana Cloud (**not** "every container's
 logs" — the liquidations poller direct-ships its own instead; see the paragraph below), mirroring
 `infra/nas/config.alloy`'s pipeline (see `infra/ansible/roles/ops/files/config.alloy` for the two
 deliberate divergences: no cadvisor, dedicated non-admin uid + rootfs mount).

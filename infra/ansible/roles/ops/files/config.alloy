@@ -78,7 +78,7 @@ prometheus.exporter.unix "host" {
 // DIVERGENCE 1 (cadvisor): the NAS omits cadvisor because it SIGSEGVs on Synology DSM's
 // cgroup-less kernel, taking down all of Alloy -- that rationale does NOT apply here: the ops node
 // is Debian with a normal cgroup hierarchy, so cadvisor would simply work. It is still left out,
-// omitted BY CHOICE here, not by DSM constraint: this task's job is the four textfile series +
+// omitted BY CHOICE here, not by DSM constraint: this task's job is the timers' textfile series +
 // host metrics reaching Grafana (spec D1), container CPU/mem is not part of that gate, and adding
 // cadvisor's series would eat into the active-series budget the spec flags as an open risk. A
 // future task can add it deliberately if a container-level gate ever needs it.
