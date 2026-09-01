@@ -4,7 +4,7 @@
 
 **Goal:** Add a third plan mode whose order is placed passively, is not cancelled on acknowledgement, rests for a duration the plan author declares, and is never re-placed once the venue takes it off the book — so the five blocked order-path drill sections have a subject — and ship the instrument that shows a resting order while it rests, over a road that actually reaches Grafana.
 
-**Architecture:** One token in the mode vocabulary, two plan-carried fields validated at the parse wall, and five executor sites that decide on a *property* rather than on the name `rest-cancel`. One labelled gauge published from the tick the executor already runs, one panel, one keep-regex admission. **No alert rule** — spec D7 rules the condition unobservable on this metric and already covered by `zcrypto-engine-error-logs`.
+**Architecture:** One token in the mode vocabulary, two plan-carried fields validated at the parse wall, and five executor sites made explicit about all three modes, the two money-line arms turned around so their default is the one that cannot cross (spec D2). One labelled gauge published from the tick the executor already runs, one panel, one keep-regex admission. **No alert rule** — spec D7 rules the condition unobservable on this metric and already covered by `zcrypto-engine-error-logs`.
 
 **Tech Stack:** Python 3.14, `nautilus_trader 2.0.0rc4.dev20260825`, `prometheus_client`, pytest, Grafana provisioned JSON, Alloy.
 
@@ -52,6 +52,8 @@
 
 This test is first because its absence is why the whole-mode miswiring would ship green.
 
+**Add the module import first.** `tests/test_engine_probeplan.py` imports names only today — `from cli.engine.probeplan import PLAN_TTL, ProbePlanError, parse_plan, plan_refusals` — and every fence in this task reaches the module attribute (`probeplan.MODES`, `probeplan._parse_intent`, `probeplan.ProbePlanError`), so add `from cli.engine import probeplan` beside it. `grep -c "probeplan\." tests/test_engine_probeplan.py` returns `0` before this step.
+
 ```python
 def test_the_mode_vocabulary_is_pinned_so_a_new_mode_cannot_arrive_unnoticed():
     """Every mode name is a branch in the executor. A mode added here and nowhere else runs with
@@ -85,12 +87,14 @@ _INTENT_KEYS = frozenset(
 _MAX_HOLD_MINUTES = 60
 ```
 
-Add to `ProbeIntent`, after `leverage`:
+Add to `ProbeIntent`, after `leverage` — **both defaulted `None`, and the default is load-bearing**:
 
 ```python
-    offset_pct: float | None  # rest-hold only: PERCENT passive of the touch -- 5.0 is five percent
-    hold_minutes: int | None  # rest-hold only: how long the order rests, 1.._MAX_HOLD_MINUTES
+    offset_pct: float | None = None  # rest-hold only: PERCENT passive of the touch -- 5.0 is five percent
+    hold_minutes: int | None = None  # rest-hold only: how long the order rests, 1.._MAX_HOLD_MINUTES
 ```
+
+Bare annotations would make both required positional arguments and break the two existing constructor sites that pass exactly the current seven kwargs — `tests/test_engine_executor.py:4773` (`_terminal_intent`, feeding the three `_reconcile_terminal` tests) and `tests/test_engine_node.py:710` — with `TypeError: ProbeIntent.__init__() missing 2 required positional arguments`. Neither is in this task's Step 9 run, and `test_engine_node.py` is reached by no step before Task 5. The defaults cost nothing: `_parse_intent` is the only constructor that ever sets either field, and it sets both explicitly.
 
 - [ ] **Step 4: Write the failing refusal tests**
 
@@ -282,7 +286,7 @@ git commit -m "feat(engine): the rest-hold plan vocabulary, its refusals, and th
 
 ---
 
-### Task 2: The executor — five sites that must stop deciding on a name
+### Task 2: The executor — five mode sites, and the two that must default passive
 
 **Files:**
 
@@ -368,7 +372,7 @@ def test_a_rest_hold_order_is_priced_the_declared_percent_passive_of_the_touch(t
     assert client.submitted[0][0].price == expected
 
 
-def test_the_kill_file_revokes_a_resting_rest_hold_order_within_one_tick(tmp_path, kill_trip_expected):
+def test_the_kill_file_revokes_a_resting_rest_hold_order_within_one_tick(tmp_path):
     """Drill E's subject, and the only bound that acts on a resting order while it rests. The path
     is exercised today only against `execute`."""
     ex, client, clock = _resting_executor(
@@ -404,7 +408,7 @@ def test_quote_silence_still_revokes_a_resting_rest_hold_order(tmp_path):
     assert _intent_entry(tmp_path, 0)["reasons"] == ["quote_silence"]
 ```
 
-**On the kill-file test's fixture requests:** `kill_trip_expected` is the autouse guard's opt-in — a test that trips the switch without requesting it fails. `NOW`, `KILL_FILE`, `exec_dir`, `_quote`, `_intent_entry` are all already imported in that module.
+**Do NOT request `kill_trip_expected` on the kill-file test.** That fixture is the autouse `_no_unannounced_kill_trip` guard's opt-in, and it runs both ways: requesting it *requires* a `logger.critical("execution kill switch tripped ...")` record, which lives only in `_trip_kill` and is reached from fill-time divergences. The kill FILE reaches a resting order through the gate → `_revoke` path and emits no such line — so the request would fail the test at teardown on a fully healthy run, with a message ("this construction was supposed to trip the kill switch and did not") that invites latching the kill on a file read. The existing twin, `test_a_kill_file_mid_rest_cancels_with_no_fallback_and_halts_the_plan`, requests nothing; match it. `NOW`, `KILL_FILE`, `exec_dir`, `_quote`, `_intent_entry` are all already imported in that module.
 
 - [ ] **Step 3: Run them and watch them fail for the right reasons**
 
@@ -462,8 +466,9 @@ At `executor.py:1108-1113`, replace the `falling_back` assignment:
 ```python
         if now > active.timebox_at:
             # Only `execute` crosses when its box elapses. Both resting modes exist never to fill,
-            # so for them the box cancels and stops there -- the property, not the mode name, is
-            # what decides, because a fourth mode added against a name inherits the wrong arm.
+            # so for them the box cancels and stops there. Written `== "execute"` rather than
+            # `!= "rest-cancel"` so a fourth mode inherits the arm that cannot cross; the pin on
+            # `MODES` is what forces this line to be re-read when one arrives.
             active.cancel_requested = True
             active.falling_back = active.intent.mode == "execute"
             active.hold_expired = active.intent.mode == "rest-hold"
@@ -567,7 +572,7 @@ Expected: **KILLED** on each, control proven.
 
 ```bash
 git add cli/engine/executor.py tests/test_engine_executor.py
-git commit -m "feat(engine): rest-hold rests -- five mode branches decide on a property, never a name"
+git commit -m "feat(engine): rest-hold rests -- five mode branches, and the fallback defaults passive"
 ```
 
 ---
@@ -809,6 +814,8 @@ Expected: PASS.
 
 In `infra/grafana/engine-dashboard.json`: id `67` is unused, the **Execution** row's last panels (65, 66) sit at `y=78, h=6`, and the **Venue truth** row (`id` 70) sits at `y=84` with panels 71–73 at `y=85`. So the new panel takes `y=84` full width, and row 70 shifts to `y=90` with its three panels to `y=91`.
 
+**The datasource uid is the literal `grafanacloud-prom`, copied from panel 65, and the `${GRAFANA_PROM_DS_UID}` form must NOT be used here.** `infra/scripts/grafana-push.sh` substitutes that placeholder on the **alert-rules** path only (a `jq walk` with `gsub`, `:244-252`); dashboards are `json.load` → `json.dumps` → POSTed **verbatim** (`:100-108`). The placeholder appears zero times in `infra/grafana/engine-dashboard.json` today, and every repo guard passes with it there — `test_every_published_app_family_is_charted` matches expression text and reads no datasource — so the panel would simply render "datasource not found" forever, on the one instrument built to show a live resting order during the drills. Same reason for the per-target `datasource` and the `{host=~"$host"}` matcher: both are this board's idiom, and the board's `host` template variable is what scopes every other panel.
+
 ```json
 {
   "id": 67,
@@ -816,11 +823,12 @@ In `infra/grafana/engine-dashboard.json`: id `67` is unused, the **Execution** r
   "title": "Resting order age — by plan mode",
   "description": "How long the engine's current resting order has been at the venue. A rest-hold series is a drill's deliberate artifact, not trading; an execute series is a real trading order and should be short-lived, since its own time box is fifteen minutes. Zero means the engine believes nothing rests — which is not the same as the venue holding nothing, if a cancel never reached it.",
   "gridPos": {"x": 0, "y": 84, "w": 24, "h": 6},
-  "datasource": {"type": "prometheus", "uid": "${GRAFANA_PROM_DS_UID}"},
+  "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
   "targets": [
     {
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "refId": "A",
-      "expr": "max by (mode) (zcrypto_exec_resting_order_age_seconds)",
+      "expr": "max by (mode) (zcrypto_exec_resting_order_age_seconds{host=~\"$host\"})",
       "legendFormat": "{{mode}}"
     }
   ],
@@ -900,8 +908,8 @@ Check `docs/open-topics/README.md`'s T0018 bullet before staging it: it does not
 
 - [ ] **Step 5: Verify the whole reachable set**
 
-Run: `uv run pytest tests/test_engine_executor.py tests/test_engine_probeplan.py tests/test_engine_metrics.py tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_infra_alloy_series.py tests/test_dashboards_cover_metrics.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py -q`
-Expected: PASS. `test_engine_stub_fidelity.py` is in the list because it globs sibling `test_engine_*.py` files and classifies their doubles — `RecordingMetrics` grew a method in Task 3, and any new double must be classified in the same change. `test_internal_terms_not_operator_visible.py` covers the new metric HELP, the panel title and description, and the `--check` line.
+Run: `uv run pytest tests/test_engine_executor.py tests/test_engine_node.py tests/test_engine_probeplan.py tests/test_engine_metrics.py tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_infra_alloy_series.py tests/test_dashboards_cover_metrics.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py -q`
+Expected: PASS. `test_engine_node.py` is in the list because it constructs a `ProbeIntent` by hand (`:710`) and no earlier step runs it: a change to that dataclass's shape is invisible on this branch until CI otherwise. `test_engine_stub_fidelity.py` is in the list because it globs sibling `test_engine_*.py` files and classifies their doubles — `RecordingMetrics` grew a method in Task 3, and any new double must be classified in the same change. `test_internal_terms_not_operator_visible.py` covers the new metric HELP, the panel title and description, and the `--check` line.
 
 - [ ] **Step 6: The iterations-history entry**
 
