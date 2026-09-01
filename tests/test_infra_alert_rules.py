@@ -1364,3 +1364,54 @@ def test_the_dark_with_exposure_page_keeps_the_wording_two_reviews_argued_into_i
         f"the summary does not name {_DARK_DISCRIMINATOR!r}, so the page's first instruction is missing and a "
         f"responder may flatten a live position for a telemetry incident"
     )
+
+
+# --- Drift ratchets (2026-09-01) -------------------------------------------------------------
+# Both guards exist because a class of prose defect recurred across two audits and neither
+# existing test could see it. They assert facts that are DERIVABLE, so nobody has to re-count.
+
+# One section may legitimately serve several uids, and one rule may point at a procedure named for
+# the host rather than the rule. Each entry is a decision, not a backlog: adding one is how you
+# record a deliberate exception, and an empty diff here means no rule quietly drifted off-target.
+_ANCHOR_EXCEPTIONS = {
+    "zcrypto-reconcile-ledger-scan-slow": "reconcile-ledger-scan-cost",
+    "zcrypto-reconcile-ledger-scan-critical": "reconcile-ledger-scan-cost",
+    "zcrypto-alloy-dark-zaccess": "zaccess-bridgehead-dark",
+}
+
+
+def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
+    """A `Runbook:` link that RESOLVES can still send the operator to the wrong rule's section.
+
+    `test_every_runbook_link_in_an_alert_summary_resolves` checks the anchor exists; it cannot
+    check the anchor is the right one. `zcrypto-capture-venue-state-recurrence` cited
+    `capture.md#zcrypto-capture-venue-not-online` -- a sibling rule's section -- and passed that
+    test for as long as both anchors existed.
+    """
+    wrong = []
+    for rule in _rules():
+        summary = (rule.get("annotations") or {}).get("summary", "")
+        match = re.search(r"Runbook:\s*\S+?#(\S+?)\"?\s*$", summary.strip())
+        assert match, f"{rule['uid']} carries no Runbook anchor"
+        anchor, uid = match.group(1).rstrip('"'), rule["uid"]
+        if anchor != _ANCHOR_EXCEPTIONS.get(uid, uid):
+            wrong.append(f"{uid} -> #{anchor}")
+    assert not wrong, (
+        "these rules route to a section that is not their own; add a deliberate exception to "
+        f"_ANCHOR_EXCEPTIONS or fix the anchor: {wrong}"
+    )
+
+
+# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not
+# error -- it returns a SHORTER series -- so the window is truncated in silence and any figure
+# derived from it is recorded at the width it asked for. `T0129` (resolved) re-derived two
+# thresholds after finding `[30d]` returns the same ~14 days.
+#
+# There is DELIBERATELY no guard for it. Four designs were built and three independent review
+# rounds each found a window that reached past retention and passed: composite durations, a
+# bare `offset`, a `]@` adjacency, subquery composition, and a string-blanking order that
+# swallowed the range between two backtick literals. Computing a query's true reach means
+# parsing PromQL and LogQL, and every partial parser shipped a hole while reading as complete
+# -- which is worse than nothing, because it licenses the belief that the class is covered.
+# The widest rule here reaches 1.08d against the 14d ceiling, so the exposure is small and
+# known. Re-measure it in an audit; do not add a regex that claims to settle it.

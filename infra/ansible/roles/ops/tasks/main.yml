@@ -686,7 +686,7 @@
     # name would never resolve): the host's persistent journal files are root:systemd-journal 0640,
     # and Alloy -- running as the non-root zcrypto-alloy user -- reads them through the
     # /var/log/journal:/host/journal:ro mount (alloy-compose.yaml.j2) for
-    # the four zcrypto-*.service units' logs (T0060: the orchestration scripts' host-side lines
+    # the `zcrypto-*.service` units' logs (T0060: the orchestration scripts' host-side lines
     # exist in no container log, so the docker socket can never ship them). Safe to look up here:
     # the `systemd-journal` group is created by the systemd package itself, so it exists on any
     # Debian host this role can converge. Same `getent group` field-layout caveat as above:

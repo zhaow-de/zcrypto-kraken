@@ -194,9 +194,9 @@ A **warning** Grafana alert (`Ops · node load high`): `node_load1{host="ops"} >
 
 Sustained saturation, not a transient burst. Nothing is lost by load alone — the cost is that timers overrun their ticks, and one of them has a cliff: a writer cycle past 1800 s means the next `:12`/`:42` trigger fires against a still-activating unit and is **dropped**, halving the booking cadence (`infra/runbooks/ops.md#zcrypto-reconcile-cycle-duration` owns that, and its own rule warns at 1500 s).
 
-**Two corrections to the rule's own comment, which the responder would otherwise reason from.**
+**One caveat on the rule's own comment, which the responder would otherwise reason from.**
 
-*The timer count is stale.* The comment says "Alloy, the four timers, and soon the overlay writer". Counted from `infra/ansible/roles/ops/` today there are **six** timers, and the overlay writer is one of them rather than pending:
+*The load on this box is Alloy plus the timers under `infra/ansible/roles/ops/`, and that set grows.* Counted from `infra/ansible/roles/ops/` — the overlay writer is one of them, not a pending addition. Count them there rather than trusting any number written here:
 
 | Timer | Schedule (UTC) | `Persistent=` |
 | -- | -- | -- |
@@ -207,7 +207,7 @@ Sustained saturation, not a transient burst. Nothing is lost by load alone — t
 | `zcrypto-verified-replay.timer` | `05:23:00` | yes |
 | `zcrypto-grafana-watchdog.timer` | `*:0/5:41` | no |
 
-*The thread count is unverified.* The comment sources "24 threads" to `infra/ansible/roles/ops/defaults/main.yml`, which records no CPU count — the figure is recorded in `docs/specs/00050-redundant-capture-design.md` and `docs/specs/00054-ops5-offload-design.md`. The threshold is 20 either way — but if you are about to reason about the ratio, run `nproc` on the host and use that.
+*The thread count is unverified.* The comment cites specs 00050 and 00054 for "24 threads"; no file in `infra/ansible/` records a CPU count for THIS host — the figure is recorded in `docs/specs/00050-redundant-capture-design.md` and `docs/specs/00054-ops5-offload-design.md`. The threshold is 20 either way — but if you are about to reason about the ratio, run `nproc` on the host and use that.
 
 **Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the six timers are `Persistent=true`, so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 
@@ -249,7 +249,7 @@ The `container` label names the source, and that is your routing:
 
 **Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the CLI's Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`). The runner scripts' own `echo` lines never match it and ship unleveled — including the load-bearing `WARNING: writer cycle SKIPPED (fail-closed gate): …`. A gate-skip streak produces no ERROR page by construction.
 
-Correcting the rule's own comment: it says the selector covers "the four zcrypto-\* units". The journal keep-regex in `infra/ansible/roles/ops/files/config.alloy` admits **five** — `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize`, `tape-bars`. The rule's selector is `zcrypto-.*`, so all five are in fact watched; only the count in the comment is stale.
+The scope is the journal keep-regex in `infra/ansible/roles/ops/files/config.alloy`, which admits **five** units — `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize`, `tape-bars`. The rule's selector is `zcrypto-.*`, so all five are in fact watched; only the count in the comment is stale.
 
 ### What to do
 

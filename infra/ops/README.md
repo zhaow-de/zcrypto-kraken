@@ -204,8 +204,8 @@ file is simply untransmittable).
 Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default
 `/etc/zcrypto-ops/alloy`), rendered by the `ops` role only when the pinned Alloy digest is supplied
 (`-e ops_alloy_digest=sha256:<...>`; no default, matching `ops_image_digest`'s pattern). It ships
-host metrics (load, memory, free disk space, network IO), the four OPS-3/OPS-4 timers' textfile
-series, and its own logs plus those four units' logs to Grafana Cloud (**not** "every container's
+host metrics (load, memory, free disk space, network IO), the OPS-3/OPS-4 timers' textfile
+series, and its own logs plus those units' logs to Grafana Cloud (**not** "every container's
 logs" — the liquidations poller direct-ships its own instead; see the paragraph below), mirroring
 `infra/nas/config.alloy`'s pipeline (see `infra/ansible/roles/ops/files/config.alloy` for the two
 deliberate divergences: no cadvisor, dedicated non-admin uid + rootfs mount).
@@ -215,12 +215,12 @@ T0060 introduced — that path is retired fleet-wide): the liquidations poller *
 own logs straight to Grafana Cloud Loki (`--ship-logs`, `cli/logging/ship.py`) — Alloy is not in
 that path at all, and the `container` label (`liquidations`) is set by the app itself
 (`ZCRYPTO_LOG_SERVICE`), never by an Alloy relabel rule. Everything else — Alloy's own logs
-(journald logging driver on the alloy compose service) and the four ephemeral systemd-unit
+(journald logging driver on the alloy compose service) and the ephemeral systemd-unit
 `docker run --rm` jobs (their `--rm` lifetime makes polling docker discovery structurally lossy,
 T0060) — ships via the **host journal** to Alloy's `loki.source.journal` pipeline, labelled by
 unit/container name there. The full `container` label set across the two paths is therefore
 `liquidations` (direct-ship), `alloy`, `zcrypto-archive-pull`, `zcrypto-verify-replay`,
-`zcrypto-verified-replay`, `zcrypto-panel-materialize` (journal) — there is **no**
+`zcrypto-verified-replay`, `zcrypto-panel-materialize`, `zcrypto-tape-bars` (journal) — there is **no**
 `zcrypto-reconcile` or `zcrypto-trade-backfill` stream: those runs are attached children of the
 archive-pull unit, so their stdout lands under `container="zcrypto-archive-pull"`. This deliberately
 differs from the NAS's docker-name-derived scheme that predated 00068 (whose selectors, copied
@@ -251,7 +251,7 @@ holds the API any more.
 
 1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` (from `infra/ansible/`). There is no hand-placed secrets file anywhere on this host (and none on the NAS either since T0056 — the `nas` role renders its copy from the same vault group): the `ops` role renders **two** such files, both mode `0600`, never hand-placed — this Alloy one, and `{{ ops_compose_dir }}/logship-secrets.env` for the liquidations poller's own direct-ship Loki creds (spec 00068 D3/T6 — see the Liquidations poller section above). For Alloy: the role renders `{{ ops_alloy_dir }}/alloy-secrets.env` (default `/etc/zcrypto-ops/alloy/alloy-secrets.env`) straight from the vault, owned by `zcrypto-alloy` (the container runs as that user and must be able to read a 0600 file it does not own by default), with `no_log: true` + `diff: false` so the converge never prints the values. The six vars (`GRAFANA_PROM_URL/USERNAME/PASSWORD`, `GRAFANA_LOKI_URL/USERNAME/PASSWORD`) live in `group_vars/observed/vault.yml` — rotate them there. `config.alloy` reads the rendered file via the River `sys.env(...)` stdlib function; `compose.yaml` itself stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name).
 2. Start it (attended): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d`.
-3. Verify by outcome: the four textfile series (`ops_archive_pull_*`, `ops_panel_*`,
-   `ops_verify_replay_*`, `ops_verified_replay_*`) and host metrics appear in Grafana Cloud within a
+3. Verify by outcome: the timers' textfile series (`ops_archive_pull_*`, `ops_panel_*`,
+   `ops_verify_replay_*`, `ops_verified_replay_*`, `zcrypto_tapebars_*`) and host metrics appear in Grafana Cloud within a
    scrape interval; `tests/test_infra_alloy_series.py` pins the keep-regex against every series this
-   stack (present + the future writer move) actually publishes.
+   stack (present + the writer move (done at spec 00054 D2)) actually publishes.
