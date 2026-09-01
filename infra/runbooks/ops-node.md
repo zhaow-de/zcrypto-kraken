@@ -118,7 +118,7 @@ Two Grafana alerts on `zcrypto-verified-replay.service`, the daily verified-path
 
 **`last_success` bumps only when the run is clean AND fully caught up** (`ops_verified_replay_days_behind` at 0). Read `days_behind` on the same panel — it is the discriminator:
 
-- **`days_behind > 0`, exit code 0** — the loop stopped short without advancing, for one of two reasons, each logged verbatim: the day's directory under `/mnt/zhao-crypto/engine-journal/<day>/` holds no `cycle-*.json` or `failed-cycle-*.json` (`journal has not caught up`); the **successor** day holds none either, so the day may be only partly pulled (`journal freshness unproven` — this successor-day probe is the only journal-freshness check there is, because `.pull-status` carries `capture_ok`/`secondary_ok` and nothing about the journal); or the 30-day budget ran out (`capped at 30 day(s)`).
+- **`days_behind > 0`, exit code 0** — the loop stopped short, for one of three reasons, each logged verbatim — **the first two stop *without advancing the watermark*, the third advances and resumes tomorrow**: the day's directory under `/mnt/zhao-crypto/engine-journal/<day>/` holds no `cycle-*.json` or `failed-cycle-*.json` (`journal has not caught up`); the **successor** day holds none either, so the day may be only partly pulled (`journal freshness unproven` — this successor-day probe is the only journal-freshness check there is, because `.pull-status` carries `capture_ok`/`secondary_ok` and nothing about the journal); or the 30-day budget ran out (`capped at 30 day(s)`).
 - **Exit code non-zero** — either a day genuinely mismatched, or the run was **refused** before it started.
 
 **A refused run touches neither the watermark nor the textfile**, exits 1, and names the file in its own error line: the watermark is not a `YYYY-MM-DD` day, is a shape-valid but nonexistent calendar date, is beyond yesterday (clock skew or a manual edit), or the seed could not be persisted. An **empty** watermark file is the one to know: it once parsed as *tomorrow*, skipped the loop forever, and read fully healthy while doing so — hence the refusal.
@@ -129,7 +129,7 @@ The healthchecks.io dead-man for this timer is fed only on a clean, fully-caught
 
 ### What to do
 
-1. **`ssh hp`, then read the unit and its last three days**: `systemctl status zcrypto-verified-replay.service`, then `sudo journalctl -u zcrypto-verified-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it. Grep for the two stop messages above and for `ERROR: watermark`.
+1. **`ssh hp`, then read the unit and its last three days**: `systemctl status zcrypto-verified-replay.service`, then `sudo journalctl -u zcrypto-verified-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it. Grep for the three stop messages above and for `ERROR: watermark`.
 2. **Read the watermark and the journal tree.** `cat /var/lib/zcrypto-ops/.verified-replay-watermark`; `ls /mnt/zhao-crypto/engine-journal/ | tail -3`. The day after the watermark **and** its successor must each hold `cycle-*.json` or `failed-cycle-*.json`.
 3. **Journal not arriving is a NAS-side finding**, not this unit's. Nothing here can fix a stalled journal pull, and the fail-closed stop is correct behaviour.
 4. **Repair a refused run with a tmp+mv write, matching the script** — an in-place truncate is what minted the zero-byte watermark in the first place:

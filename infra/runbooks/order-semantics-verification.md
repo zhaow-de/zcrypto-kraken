@@ -332,9 +332,10 @@ closing `SELL` plan → `market sell @ <px> filled` → verdict `PASS`.
 - A note about the closing quantity being "floored … dust will remain" means a sliver of BTC stays
   in the wallet. Below the leg's `ordermin` that is terminal dust, not a position — record it, do not
   chase it.
-- Whether a spot buy under `spot_account_type=MARGIN` shows an OpenPositions row is **per build, and the two
-  probed builds disagree**: 1.230.0 showed none, while `2.0.0rc4.dev20260825` recorded `open positions=1`.
-  Read it on the build in front of you and record it. On a build that has not been probed that is a thing
+- Whether a spot buy under `spot_account_type=MARGIN` shows an OpenPositions row is **per build, and only one
+  record carries the reading**: `2.0.0rc4.dev20260825` reports `open positions=1` after the buy and 0 after the
+  closing sell. Neither earlier record answers it — the harness's "may open none" is a note asking for the
+  reading, not a result. Read it on the build in front of you and record it. On a build that has not been probed that is a thing
   to check and record, not a thing to expect; either way it is not by itself a failure, and probe 5
   is judged on the fill and the flat close. The harness prints this reminder inline.
 

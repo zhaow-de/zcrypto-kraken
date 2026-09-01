@@ -106,8 +106,8 @@ class DesyncRecovery:
         if state is None:
             return
         if state.escalated_at is not None and (at - state.escalated_at).total_seconds() < self.cooldown_seconds:
-            # Ladder cleared, cooldown preserved — a re-desync inside the hour gets rungs 1 and 2,
-            # never a second reconnect.
+            # Ladder cleared, cooldown preserved — a re-desync inside the hour gets the transition
+            # resubscribe and nothing else: `due()` returns NONE until the cooldown expires.
             self._pairs[pair] = _PairState(escalated_at=state.escalated_at)
             return
         self._pairs.pop(pair, None)

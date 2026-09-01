@@ -159,7 +159,7 @@ def test_the_escalation_cooldown_survives_a_recovery():
     lad.note_escalated("BTC/EUR", at=T0 + timedelta(seconds=55))
     lad.note_recovered("BTC/EUR", at=T0 + timedelta(seconds=60))  # the reconnect healed it
 
-    # A fresh episode inside the cooldown gets retries, but must NOT reach a second reconnect.
+    # A fresh episode inside the cooldown reaches no rung at all -- and must NOT reach a second reconnect.
     lad.note_desync("BTC/EUR", at=T0 + timedelta(seconds=600))
     now = T0 + timedelta(seconds=600)
     for _ in range(60):
