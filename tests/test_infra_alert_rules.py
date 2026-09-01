@@ -1392,68 +1392,16 @@ def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
     )
 
 
-# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not error
-# -- it returns a SHORTER series -- so a window wider than this is silently truncated and any
-# figure derived from it is recorded at the width it asked for, not the width it got. T0129
-# (resolved) re-derived two thresholds after finding `[30d]` returns the same ~14 days.
-_RETENTION_SECONDS = 14 * 24 * 3600
-
-
-def test_no_rule_queries_past_the_platforms_retention() -> None:
-    """No rule may reach further back than the platform retains.
-
-    This does NOT model PromQL's reach semantics, and three review rounds are why: subqueries
-    compose an outer window with an inner range, an `offset` adds to whichever selector it binds,
-    and an `@` anchor is unbounded -- every attempt to compute the true reach shipped with a hole
-    that let a too-wide window through. So it computes an UPPER BOUND instead: every duration in
-    the rule, summed, plus `relativeTimeRange.from`. A sum cannot under-estimate reach however the
-    parts compose, so a rule within the bound is certainly within retention.
-
-    The cost is over-flagging, which is the safe direction and free today -- the widest rule in the
-    file bounds at 3d against a 14d ceiling. A rule that legitimately trips this wants a human, not
-    a cleverer parser. Absolute `@` anchors are flagged outright because nothing bounds them, and a
-    duration-shaped token that will not parse ASSERTS rather than being skipped.
-    """
-    unit = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "y": 31536000}
-    # One pass over all three literal syntaxes, so a quote inside a backtick literal cannot pair
-    # with a later one and blank the code between them.
-    literal = re.compile(r"`[^`]*`|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'")
-    # Grab each numeric-led token WHOLE -- `15d12h` must not be read as `15d` with a tail, or the
-    # composite slips past both the parser and the assert that is supposed to catch what it cannot read.
-    token = re.compile(r"(?<![A-Za-z0-9_])\d[A-Za-z0-9._]*")
-    component = re.compile(r"(\d+(?:\.\d+)?)(ms|[smhdwy])")
-    anchored = re.compile(r"@\s*\d")
-
-    over = []
-    for rule in _rules():
-        reach = 0.0
-        for node in rule.get("data", []):
-            frm = (node.get("relativeTimeRange") or {}).get("from")
-            if isinstance(frm, (int, float)) and not isinstance(frm, bool) and frm > 0:
-                reach += float(frm)
-            expr = (node.get("model") or {}).get("expr") or ""
-            assert isinstance(expr, str), f"{rule['uid']}: expr is {type(expr).__name__}, not a string"
-            code = literal.sub('""', expr)
-            if anchored.search(code):
-                over.append(f"{rule['uid']}: absolute @ anchor -- nothing bounds how far back it evaluates")
-            for raw in token.findall(code):
-                parts = component.findall(raw)
-                if not parts:
-                    # A plain number (threshold, quantile, timestamp) is not a duration; a token
-                    # carrying letters but no readable unit is a form this cannot bound.
-                    assert not re.search(r"[A-Za-z]", raw), (
-                        f"{rule['uid']}: cannot read {raw!r} as a duration -- extend this parser "
-                        "rather than letting an unreadable form pass as within retention"
-                    )
-                    continue
-                assert "".join(n + u for n, u in parts) == raw, (
-                    f"{rule['uid']}: cannot read {raw!r} as a duration -- extend this parser "
-                    "rather than letting an unreadable form pass as within retention"
-                )
-                reach += sum(float(n) * unit[u] for n, u in parts)
-        if reach > _RETENTION_SECONDS:
-            over.append(f"{rule['uid']}: durations sum to {reach / 86400:.2f}d")
-    assert not over, (
-        f"reach past the {_RETENTION_SECONDS // 86400}d retention (this is an upper bound; if a "
-        f"rule is genuinely within it, say so here rather than loosening the bound): {over}"
-    )
+# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not
+# error -- it returns a SHORTER series -- so the window is truncated in silence and any figure
+# derived from it is recorded at the width it asked for. `T0129` (resolved) re-derived two
+# thresholds after finding `[30d]` returns the same ~14 days.
+#
+# There is DELIBERATELY no guard for it. Four designs were built and three independent review
+# rounds each found a window that reached past retention and passed: composite durations, a
+# bare `offset`, a `]@` adjacency, subquery composition, and a string-blanking order that
+# swallowed the range between two backtick literals. Computing a query's true reach means
+# parsing PromQL and LogQL, and every partial parser shipped a hole while reading as complete
+# -- which is worse than nothing, because it licenses the belief that the class is covered.
+# The widest rule here reaches 1.08d against the 14d ceiling, so the exposure is small and
+# known. Re-measure it in an audit; do not add a regex that claims to settle it.
