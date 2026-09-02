@@ -340,7 +340,7 @@ class SegmentWriter:
         self.rows_held = 0
         self.rows_quarantined = 0
         self.hour_finalized_early = 0  # hours FINALIZED before our clock said they were over (`_count_if_early`)
-        self.ts_past_dated_hour = 0  # oracle-bearing first stamps that opened an hour behind the clock (`_enter_hour`)
+        self.ts_past_dated_hour = 0  # oracle-bearing first stamps that opened a part-less hour behind the clock (`_enter_hour`)
         self._recover()
 
     def append(self, event: dict) -> None:
@@ -488,7 +488,7 @@ class SegmentWriter:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
         A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
         if self._current_hour is None:
-            # Spec 00103 D5, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
+            # Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
             # is the only one that can open an hour behind the wall clock -- from here on `floor` is
             # `_current_hour`, so the late-event guard refuses a past-dated stamp before it reaches
             # us -- and such an hour can commit a final for an hour that was never captured.
@@ -496,7 +496,17 @@ class SegmentWriter:
             # Gated on the oracle because that premise is FALSE without one: `finalize_completed_hours`
             # nulls `_current_hour` every poll cycle, so an oracle-less poller re-enters this branch
             # constantly and a re-awakening sparse symbol opens a prior hour BY DESIGN.
-            if self._oracle is not None and hour < _hour_start(_utcnow()):
+            # Spec 00109 D1 supersedes 00103 D5's predicate. `hour < _hour_start(now)` alone also
+            # matches a benign restart: the first event after a restart is often a replayed
+            # pre-restart print (T0026), which opens the PREVIOUS hour. What D5 actually specified is
+            # a FABRICATION — a past hour that was never captured — so test that directly. `.part`
+            # only: `.held` spills are rows the oracle never confirmed, and an hour holding only
+            # those is the fabrication case, not evidence of capture.
+            if (
+                self._oracle is not None
+                and hour < _hour_start(_utcnow())
+                and not self._parts_for(self._hour_dir(hour), f"{hour:%H}")
+            ):
                 self.ts_past_dated_hour += 1
                 logger.warning("first stamp opened a past hour pair=%s kind=%s hour=%s", self._pair, self._kind, hour)
             self._sweep(hour)

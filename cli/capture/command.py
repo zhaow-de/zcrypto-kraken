@@ -614,9 +614,9 @@ class CaptureCollector:
         )
         yield CounterMetricFamily(
             "zcrypto_capture_ts_past_dated_hour_total",
-            # Spec 00103 D5: T0037's past-dated residual. Oracle-bearing writers only -- `_enter_hour`
+            # Spec 00109 D1: T0037's past-dated residual. Oracle-bearing writers only -- `_enter_hour`
             # gates the increment, so this counts fabrication rather than poll cadence.
-            "First events that opened a stream's hour already behind the wall clock.",
+            "First events that opened a stream's hour already behind the wall clock, where that hour held no captured parts.",
             value=sum(w.ts_past_dated_hour for w in writers),
         )
 
