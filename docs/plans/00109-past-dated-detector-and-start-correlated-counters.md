@@ -192,7 +192,7 @@ Narrow `segment_writer.py`'s attribute comment the same way and in the same comm
 - [ ] **Step 3: Run the T0037 family together**
 
 Run: `uv run pytest tests/test_capture_segment_writer.py -k t0037 -v`
-Expected: **29 collected, all pass** — 26 today (measured: `-k t0037` collects 26, 69 deselected) plus Task 1's three. Confirm the count before reading the result: this selection is the whole T0037 family, far larger than the five past-dated tests, so "more tests than the plan said" must never be waved through as harmless. Of the five, `test_t0037_past_dated_first_stamp_counted` stays a true positive because hour 10 never received an event and so holds no parts.
+Expected: **30 collected, all pass** — 26 today (measured: `-k t0037` collects 26, 69 deselected) plus Task 1's four. Confirm the count before reading the result: this selection is the whole T0037 family, far larger than the five past-dated tests, so "more tests than the plan said" must never be waved through as harmless. Of the five, `test_t0037_past_dated_first_stamp_counted` stays a true positive because hour 10 never received an event and so holds no parts.
 
 Step 2 rewrote a Prometheus HELP string — an operator-visible surface (`.claude/rules/operator-facing-text.md`) — so run its guard too, and as its OWN command: a shared `-k t0037` would deselect every test in that file and report a green nobody ran. Tasks 4, 5 and 6 each run it for their own surfaces.
 
@@ -258,7 +258,7 @@ Its fixture is already correct under D1 — hour 10 holds no parts — but nothi
 - [ ] **Step 2: Run and commit**
 
 Run: `uv run pytest tests/test_capture_segment_writer.py -k t0037 -q`
-Expected: 29 collected, all pass, unchanged — this step edits a comment only.
+Expected: 30 collected, all pass, unchanged — this step edits a comment only.
 
 ```bash
 git add tests/test_capture_segment_writer.py
