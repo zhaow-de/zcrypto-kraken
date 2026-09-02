@@ -72,7 +72,7 @@ Three alert rules and five runbook entries ship with them, including the `bogus-
 
 - **The `.held` alert's prose needs no correction — both halves already disclaim the late-arrival path.** The comment reads "NOT rows that 'arrived after their hour was finalized' -- that is the opposite direction in time, and such a row is dropped by the late-event guard and counted nowhere", and the summary "It is NOT rows arriving late: a genuinely late row is dropped, never spilled". The summary's wording landed with the rules in `10995d8e` and the comment's in `fb750604`, and the ask and the fix were authored the same day in the same branch, the fixes eight and ten hours after the ask, merging together in PR #347 (`787e4e01`) — so no reader on `develop` ever saw the ask unsatisfied, and nothing is owed.
 
-- **The detectors are DEPLOYED and READ BY VALUE ON BOTH CAPTURE HOSTS, 2026-09-01 — this is what the attended rollout owed.** The `00103` image reached `zcrypto-red` at 16:15:21Z and `zcrypto` at 20:07:53Z (digest `6ece9ceb1c18`, revision `962d97c7`), so both now publish what the pre-2026-08-29 image could not. Read at 20:1xZ, `(no series)` treated as FAIL and never as a zero:
+- **The detectors are DEPLOYED and READ BY VALUE ON BOTH CAPTURE HOSTS, 2026-09-01 — this is what the attended rollout owed.** The `00103` image reached `zcrypto-red` at 16:15:21Z and `zcrypto` at 20:07:53Z (digest `6ece9ceb1c18`, revision `8f4ac521`), so both now publish what the pre-2026-08-29 image could not. Read at 20:1xZ, `(no series)` treated as FAIL and never as a zero:
 
 | family | `zcrypto` | `zcrypto-red` |
 | --- | --- | --- |
