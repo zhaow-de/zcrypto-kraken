@@ -3569,12 +3569,11 @@ rules:
     condition: C
     data:
       # T0037's past-dated residual (spec 00109 D1, which narrows spec 00103 D5's predicate). The
-      # plausibility guard bounds the FUTURE direction only, so a stamp dated into a past,
-      # unpublished hour is still trusted -- and a
-      # capture process's FIRST event is the only place one can act, because from then on `floor` is
-      # the open hour and the late-event guard refuses anything behind it. Acting means opening that
-      # past hour and committing a manifest-certified "complete" final for a period nothing was
-      # captured in, possibly redeeming a quarantined `.held` spill on the way.
+      # plausibility guard bounds the FUTURE direction only, so a stamp dated into a past, unpublished
+      # hour is still trusted -- and a capture process's FIRST event is the only place one can act,
+      # because from then on `floor` is the open hour and the late-event guard refuses anything behind
+      # it. Acting means opening that past hour and committing a manifest-certified "complete" final
+      # for a period nothing was captured in, possibly redeeming a quarantined `.held` spill on the way.
       #
       # ABSOLUTE VALUE, not increase(). The counter's only step lands on a stream's FIRST event,
       # seconds after the capture process starts, so its reset to 0 is never scraped: at 60 s scrapes
