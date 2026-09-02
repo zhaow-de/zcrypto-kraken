@@ -1183,6 +1183,9 @@ rules:
       # rather than to zero -- the rule would sit in NoData instead of firing, which is the precise
       # failure it exists to catch. The `or` substitutes an explicit 0, which trips the `lt 1` below.
       #
+      # Both arms are unlabelled, so an interpolated `$labels.host` renders EMPTY -- which is why the
+      # summary names the host and container as literal words. Keep it that way.
+      #
       # `by (host)` is dropped here. Keep the bare `sum` -- it costs nothing and matches the
       # `alloy-dark-*` shape -- but the reason once recorded here was WRONG, and the rollout it
       # licensed is cancelled. Do not re-derive either from the git history of this comment.
@@ -1197,8 +1200,9 @@ rules:
       # `Alerting -> Normal (MissingSeries)` account was theorised from a real symptom.
       #
       # SO DO NOT ROLL THE SEVEN SIBLINGS. Editing their expressions changes nothing, and three of
-      # them (engine-log-dead, capture-log-dead-primary, capture-log-dead-secondary) are on `logs`
-      # themselves. A real fix is a ROUTING change -- move the Loki-sourced dead-men to `metrics`, or
+      # them are on `logs` themselves -- measured, all seven: engine-log-dead,
+      # ops-log-pipeline-dead, ops-poller-log-dead, ops-unit-parse-dead,
+      # ops-journal-transport-dead, capture-log-dead-primary, capture-log-dead-secondary. A real fix is a ROUTING change -- move the Loki-sourced dead-men to `metrics`, or
       # mint a third receiver for Loki rules whose clear is meaningful ("a resolve ping is noise"
       # holds for the ERROR-log rules, not for a dead-man). Until then read a clear from rule state
       # (`/api/prometheus/grafana/api/v1/rules`), never from channel silence.
