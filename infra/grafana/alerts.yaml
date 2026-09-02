@@ -3576,18 +3576,21 @@ rules:
       # past hour and committing a manifest-certified "complete" final for a period nothing was
       # captured in, possibly redeeming a quarantined `.held` spill on the way.
       #
-      # A STEP, not a rate. The counter can advance at most once per stream per process -- one first
-      # event each -- so `increase() > 0` over a long window is the whole detection, and any rate bar
-      # would be a bar on how many streams were poisoned rather than on whether one was. CRITICAL is
-      # proportionate on the worst shape rather than the common one: a count can be a benign restart
-      # that opened a past hour holding no parts, but where it is the fabrication that hour is
-      # already certified on disk and nothing repairs it.
+      # ABSOLUTE VALUE, not increase(). The counter's only step lands on a stream's FIRST event,
+      # seconds after the capture process starts, so its reset to 0 is never scraped: at 60 s scrapes
+      # the series' first sample already carries the step and never re-enters any window below it, so
+      # increase() over that shape reads 0 through a standing count. The value itself is therefore the
+      # detection, and no rate bar belongs on it -- the counter can advance at most once per stream
+      # per process, so a bar would measure how many streams were poisoned rather than whether one
+      # was. CRITICAL is proportionate on the worst shape rather than the common one: a count can be
+      # a benign restart that opened a past hour holding no parts, but where it is the fabrication
+      # that hour is already certified on disk and nothing repairs it.
       - refId: A
         queryType: ""
-        relativeTimeRange: {from: 21600, to: 0}
+        relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'increase(zcrypto_capture_ts_past_dated_hour_total{host=~"zcrypto|zcrypto-red"}[6h])'
+          expr: 'max by (host) (zcrypto_capture_ts_past_dated_hour_total{host=~"zcrypto|zcrypto-red"})'
           instant: true
           refId: A
       - refId: C
@@ -3608,10 +3611,10 @@ rules:
     # condition true at 5m is still true later, and the wait would only delay the read.
     for: 5m
     annotations:
-      summary: "A capture host opened an archive hour that was ALREADY PAST and held NO CAPTURED PARTS on disk when the stream's first event arrived -- the shape a bogus, past-dated exchange timestamp leaves. Committing such an hour publishes a manifest-certified 'complete' final for a period during which nothing was actually captured, and it can pull a quarantined .held sidecar in with it. A count is not by itself that fabrication: a restart whose first event replays a pre-restart print can open a part-less past hour too, so work the runbook's shape discrimination before concluding one. Do not attempt to repair the hour by hand. Runbook: infra/runbooks/capture.md#zcrypto-capture-ts-past-dated-hour"
+      summary: "A capture host opened an archive hour that was ALREADY PAST and held NO CAPTURED PARTS on disk when the stream's first event arrived -- the shape a bogus, past-dated exchange timestamp leaves. Committing such an hour publishes a manifest-certified 'complete' final for a period during which nothing was actually captured, and it can pull a quarantined .held sidecar in with it. A count is not by itself that fabrication: a restart whose first event replays a pre-restart print can open a part-less past hour too, so work the runbook's shape discrimination before concluding one. The value is cumulative over the capture process's life and does not decay: it clears only when that process restarts, so this page stands until then and its age says nothing about when the open happened. Do not attempt to repair the hour by hand. Runbook: infra/runbooks/capture.md#zcrypto-capture-ts-past-dated-hour"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "110"
-      unit: "first events that opened a past hour holding no captured parts, last 6 hours"
+      unit: "first events that opened a past hour holding no captured parts, since this capture process started"
     labels:
       severity: critical
     notification_settings:

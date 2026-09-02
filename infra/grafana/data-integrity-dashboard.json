@@ -1057,9 +1057,9 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "increase(zcrypto_capture_ts_past_dated_hour_total{host=~\"$capture_host\"}[6h])",
+          "expr": "max by (host) (zcrypto_capture_ts_past_dated_hour_total{host=~\"$capture_host\"})",
           "refId": "B",
-          "legendFormat": "{{host}} past-dated hour opens (6h)"
+          "legendFormat": "{{host}} past-dated hour opens"
         },
         {
           "datasource": {
