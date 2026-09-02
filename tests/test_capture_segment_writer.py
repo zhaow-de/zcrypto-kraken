@@ -1787,6 +1787,10 @@ def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
     # event that can open an hour behind the wall clock. Hour 08 is committed first so the recovery
     # floor is real (09:00) — the stamp lands ABOVE it, where the late-event guard cannot refuse it
     # and only this counter sees it.
+    # Under spec 00109 D1 this stays a TRUE positive for a property the fixture already had:
+    # neither writer ever appended an event in hour 10, so it holds no `.part` files and the
+    # narrowed predicate still counts it. That — not the crash — is what makes this a fabrication
+    # rather than a re-open, and it is the one property the negative test below inverts.
     w1 = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(8, 30)
     w1.append(_book_event(8, 30, checksum=1))
