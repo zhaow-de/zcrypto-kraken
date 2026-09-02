@@ -1183,29 +1183,25 @@ rules:
       # rather than to zero -- the rule would sit in NoData instead of firing, which is the precise
       # failure it exists to catch. The `or` substitutes an explicit 0, which trips the `lt 1` below.
       #
-      # `by (host)` was DROPPED here on purpose, and re-adding it silently costs the resolved notice.
-      # It was already inert at fire time -- the fire path IS the `or on() vector(0)` arm, which is
-      # unlabelled, so an interpolated `$labels.host` rendered empty and the summary names the host
-      # and container as literal words instead. But it was worse than inert on the way OUT: healthy,
-      # `sum by (host)` yields `{host="nas"}`; stalled, that arm yields nothing and the fallback fires
-      # as `{}`. Recovery therefore makes the FIRING instance cease to exist, which Grafana records as
-      # `Alerting -> Normal (MissingSeries)` and for which it sends NO resolved notification at all.
-      # Measured, not theorised: this rule paged at 20:07:13Z on 2026-08-31 with `no host label on
-      # this instance` in the body, cleared by value ~20:17:59Z, and had still sent nothing at
-      # 20:53:32Z -- while three sibling rules that do NOT fire through a `vector(0)` arm resolved in
-      # 15-68 s the same window. Bare `sum` makes BOTH arms `{}`, so the instance is present on both
-      # sides of the transition and the clear is an ordinary Alerting -> Normal. Nothing else moves:
-      # one host runs this container, so the sum is over one series either way, and the `lt 1`
-      # evaluator sees the identical value. SEVEN sibling dead-men share the defect and are
-      # deliberately NOT changed here -- this rule is the pilot, because it is the one with a measured
-      # baseline; roll the rest only once a drill-N induction proves a resolved notice actually lands.
-      # The discriminator is BOTH arms, not the evaluator: the defect needs a LABELLED healthy arm and
-      # an UNLABELLED fire arm. The seven are engine-log-dead, ops-log-pipeline-dead,
-      # ops-poller-log-dead, ops-unit-parse-dead, ops-journal-transport-dead, capture-log-dead-primary
-      # and capture-log-dead-secondary. The five `alloy-dark-*` dead-men are `count(up{...}) or on()
-      # vector(0)` -- unlabelled on BOTH arms, so their instance is `{}` throughout and they already
-      # resolve normally. Counting by `lt` alone yields twelve and sends a rollout after five rules
-      # that need nothing.
+      # `by (host)` is dropped here. Keep the bare `sum` -- it costs nothing and matches the
+      # `alloy-dark-*` shape -- but the reason once recorded here was WRONG, and the rollout it
+      # licensed is cancelled. Do not re-derive either from the git history of this comment.
+      #
+      # THIS RULE'S CLEAR SENDS NO RESOLVED NOTICE, AND LABELS ARE NOT WHY. Its receiver is `logs`,
+      # and that contact point is minted `disableResolveMessage: true` -- deliberately, since T0047
+      # (`grafana-push.sh` states the reason; spec 00084 tabulates it). Every Loki-sourced rule pins
+      # `logs`, so none of them can resolve-notify. Measured by drill-N re-induction 2026-09-02: this
+      # rule fired and cleared with BOTH arms already `{}` and no notice arrived, while
+      # `zcrypto-hcio-watchdog` -- `max(...) or on() vector(999)`, unlabelled on both arms, same
+      # shape, same channel, but on `metrics` -- resolved in ~1 min. The earlier
+      # `Alerting -> Normal (MissingSeries)` account was theorised from a real symptom.
+      #
+      # SO DO NOT ROLL THE SEVEN SIBLINGS. Editing their expressions changes nothing, and three of
+      # them (engine-log-dead, capture-log-dead-primary, capture-log-dead-secondary) are on `logs`
+      # themselves. A real fix is a ROUTING change -- move the Loki-sourced dead-men to `metrics`, or
+      # mint a third receiver for Loki rules whose clear is meaningful ("a resolve ping is noise"
+      # holds for the ERROR-log rules, not for a dead-man). Until then read a clear from rule state
+      # (`/api/prometheus/grafana/api/v1/rules`), never from channel silence.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 10800, to: 0}
