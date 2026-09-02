@@ -189,6 +189,25 @@ def test_a_heading_without_its_brackets_is_still_a_finding(tmp_path):
     assert "Critical 1 · Important 1 · Minor 0 · keys 2" in proc.stdout
 
 
+def test_a_finding_written_at_section_level_is_surfaced_not_swallowed(tmp_path):
+    """A severity heading at one or two hashes is a typo of the required form. It matches the section
+    pattern, so before this guard it closed the open block and vanished at exit 0 — the silent drop the
+    script exists to prevent, and the one failure mode its counts cannot survive."""
+    text = (
+        "### [Important] · [in-original] · docs/plans/00000-x.md:40\n**Quote:** `q`\n"
+        "## [Critical] · [in-original] · docs/plans/00000-x.md:41\n**Quote:** `r`\n"
+        "# [Minor] · [in-original] · docs/plans/00000-x.md:42\n"
+    )
+    proc, out = _run(tmp_path, text)
+    assert proc.returncode == 2, "a finding at section level must not pass silently"
+    assert "Critical 0 · Important 1 · Minor 0 · keys 1 · raw findings 1 · unparsed 2" in proc.stdout
+    unparsed = out.split("## Unparsed")[1]
+    assert "## [Critical]" in unparsed and "# [Minor]" in unparsed
+    # A real section heading still just closes the block, without being surfaced.
+    proc, out = _run(tmp_path, "### [Minor] · [in-original] · docs/plans/00000-x.md:43\n**Quote:** `s`\n## Skips upheld\n- none\n")
+    assert proc.returncode == 0 and "unparsed 0" in proc.stdout
+
+
 def test_an_unparsable_heading_is_listed_and_exits_2(tmp_path):
     proc, text = _run(tmp_path, _A, "### Important — docs/plans/00000-x.md:99\nprose\n")
     assert proc.returncode == 2
