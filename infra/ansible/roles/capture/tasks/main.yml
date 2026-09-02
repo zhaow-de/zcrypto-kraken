@@ -389,6 +389,14 @@
     daemon_reload: true
     enabled: true
     state: started
+- name: remove the pre-conf layout's stale alloy config
+  # Ungated for the same reason the drift check below is: inside the Alloy block it would be
+  # skipped by every converge that does not carry a digest, which is every ordinary one — so the
+  # orphan the guess answers would outlive the fix on exactly the hosts that have it.
+  ansible.builtin.file:
+    path: "{{ capture_alloy_dir }}/config.alloy"
+    state: absent
+
 
 # --- The capture host's telemetry stack — Grafana Alloy (spec 00057; T0020's first-time telemetry
 # stand-up on the capture VPSes). Gated on the pinned Alloy digest: a converge without it skips the
@@ -542,11 +550,6 @@
     # stale file at the path an operator would guess returns plausible DATA instead of an error, and
     # on 2026-09-01 that produced a confidently-wrong "three metric families are dark" report against
     # a host whose config was in fact current. Removing it fleet-wide so the guess cannot be answered.
-    - name: remove the pre-conf layout's stale alloy config
-      ansible.builtin.file:
-        path: "{{ capture_alloy_dir }}/config.alloy"
-        state: absent
-
     # Renders straight from the vault (group_vars/observed/vault.yml) — capture_host is in the
     # `observed` group, so the six GRAFANA_* creds resolve. no_log + diff: false: without both, a
     # converge prints the six Grafana Cloud credentials to the terminal and any log capturing the run.
