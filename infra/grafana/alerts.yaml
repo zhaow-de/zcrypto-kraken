@@ -1199,10 +1199,11 @@ rules:
       # shape, same channel, but on `metrics` -- resolved in ~1 min. The earlier
       # `Alerting -> Normal (MissingSeries)` account was theorised from a real symptom.
       #
-      # SO DO NOT ROLL THE SEVEN SIBLINGS. Editing their expressions changes nothing, and three of
-      # them are on `logs` themselves -- measured, all seven: engine-log-dead,
-      # ops-log-pipeline-dead, ops-poller-log-dead, ops-unit-parse-dead,
-      # ops-journal-transport-dead, capture-log-dead-primary, capture-log-dead-secondary. A real fix is a ROUTING change -- move the Loki-sourced dead-men to `metrics`, or
+      # SO DO NOT ROLL THE SEVEN SIBLINGS. Editing their expressions changes nothing, and all seven
+      # are on `logs` themselves -- measured per rule: engine-log-dead, ops-log-pipeline-dead,
+      # ops-poller-log-dead, ops-unit-parse-dead, ops-journal-transport-dead,
+      # capture-log-dead-primary, capture-log-dead-secondary. The real fix is registered as T0162 and
+      # is a ROUTING change -- move the Loki-sourced dead-men to `metrics`, or
       # mint a third receiver for Loki rules whose clear is meaningful ("a resolve ping is noise"
       # holds for the ERROR-log rules, not for a dead-man). Until then read a clear from rule state
       # (`/api/prometheus/grafana/api/v1/rules`), never from channel silence.
