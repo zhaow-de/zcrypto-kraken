@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: Kraken publishes the 2026 Q2/Q3 OHLCVT dumps
+ripe_when: "the Kraken OHLCVT Google Drive listing carries a 2026 Q2 (or later) quarterly ZIP — read the LISTING, never the support article's prose, which lags; see `## Suggested next steps` for the check"
 ---
 
 # Data-pipeline maturity for strategy research — assessment + dedicated-round backlog
@@ -109,5 +109,5 @@ The pipeline is in good shape for the strategy already researched (1d/4h) but ha
 
 _Dedicated rounds — pick when ripe; split into own specs when taken._
 
-- **Fine-cadence reach round — the ingest half only.** Ingest the 2026 Q2 (+ early Q3) OHLCVT dumps to extend the frozen canonicals past 2026-03-31 and to supply the 1h/15m history inside Q2 that no other source can. Ripe when those dumps publish (absent 2026-08-10). The materializer half is done — see `## Done so far`; its settle-vs-heal-complete question, which [[T0066]] bound this round to answer, was answered by measurement rather than by copying the panel's shape.
+- **Fine-cadence reach round — the ingest half only.** Ingest the 2026 Q2 (+ early Q3) OHLCVT dumps to extend the frozen canonicals past 2026-03-31 and to supply the 1h/15m history inside Q2 that no other source can. **The check, because this trigger was unevaluable from the record until 2026-09-02** — no source was named in this topic or either data catalog, so every review had to rediscover it. Kraken distributes OHLCVT as **Google Drive** ZIPs — one full archive plus per-quarter incrementals — linked from *Downloadable historical OHLCVT (Open, High, Low, Close, Volume, Trades) data* on `support.kraken.com`. **Read availability off the DRIVE LISTING, not off that article**: its own coverage sentence read "currently end of Q3 2024" on 2026-09-02, while `ohlc-full` already carries Q1 2026, so the prose lags reality by years and a reader trusting it concludes the opposite of the truth. **Absent 2026-08-10, re-confirmed absent 2026-09-02 (owner).** **And it is overdue against Kraken's own stated cadence** — the article says incremental updates are provided *at the end of each quarter*, Q2 2026 closed 2026-06-30, so this is ~2 months late. Treat the trigger as *may not fire on schedule* rather than *imminent*; nothing here perishes, so the cost of the delay is zero and no escalation is owed. The materializer half is done — see `## Done so far`; its settle-vs-heal-complete question, which [[T0066]] bound this round to answer, was answered by measurement rather than by copying the panel's shape.
 - **Already tracked — do NOT duplicate here:** durability + catalog rewrite → **OPS-6 / spec 00056 (done, iter-103)**; deployable doc drift → **[[T0063]] (resolved 2026-07-19)**; deployable out-of-sample validation → **[[T0064]]**.
