@@ -1787,6 +1787,11 @@ def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
     # event that can open an hour behind the wall clock. Hour 08 is committed first so the recovery
     # floor is real (09:00) — the stamp lands ABOVE it, where the late-event guard cannot refuse it
     # and only this counter sees it.
+    # Under spec 00109 D1 this stays a TRUE positive for a property the fixture already had:
+    # neither writer had appended an event in hour 10 before the stamp, so it holds no `.part`
+    # files and the narrowed predicate still counts it. That — not the crash — is what makes this
+    # a fabrication rather than a re-open, and it is the property that
+    # `test_t0037_restart_reopening_a_captured_hour_counts_nothing` inverts.
     w1 = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(8, 30)
     w1.append(_book_event(8, 30, checksum=1))
@@ -1798,6 +1803,108 @@ def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
     w2 = _oracle_writer(tmp_path, HourOracle())
     w2.append(_book_event(10, 0, checksum=999))  # the first stamp opens never-captured hour 10, 2.5 h back
     assert w2._current_hour == _ts(10, 0)  # the past hour genuinely OPENED — the late-event guard let it through
+    assert w2.ts_past_dated_hour == 1
+
+
+def test_t0037_restart_reopening_a_captured_hour_counts_nothing(tmp_path, clock):
+    # The 2026-09-01 incident (spec 00109 D1): a mid-hour restart whose FIRST event is a replayed
+    # pre-restart print opens the PREVIOUS hour — but that hour HAS parts on disk, so nothing was
+    # fabricated and nothing may be counted. `test_t0037_a_held_only_past_hour_still_counts` is this
+    # fixture with hour 15's `.part` swapped for a `.held`, and it must read 1: the opened hour
+    # holding its OWN parts is the only property that may make this one read 0. Hour 14 is committed
+    # first so the floor is seeded as it always is on a capture host, where every previous hour has a
+    # final — keying the count on `self._floor is not None` reproduces the incident and passes.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(14, 30)
+    for i in range(5):
+        w1.append(_book_event(14, 30, checksum=i + 1))
+    clock.now = _ts(15, 5)
+    w1.finalize_completed_hours(_ts(15, 0))  # 14.parquet commits, so the recovery floor is 15:00
+    clock.now = _ts(15, 30)
+    for i in range(5):  # flush_rows=5 → these land as 15.part0000.parquet
+        w1.append(_book_event(15, 30, checksum=i + 1))
+    del w1  # crash mid-hour: parts on disk, hour never finalized (close() never finalizes anyway)
+
+    assert list(tmp_path.rglob("15.part*.parquet"))  # hour 15 holds its own parts — never captured is false
+
+    clock.now = _ts(16, 15)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    assert w2._floor == _ts(15, 0)  # a floor, and the stamp lands ON it — the late-event guard cannot refuse it
+    w2.append(_book_event(15, 30, checksum=999))  # replayed pre-restart print, one hour back
+    assert w2._current_hour == _ts(15, 0)  # the past hour DID open — the branch ran
+    assert w2.ts_past_dated_hour == 0  # …and counted nothing, because the hour was captured
+
+
+def test_t0037_a_held_only_past_hour_still_counts(tmp_path, clock):
+    # Spec 00109 D1's DANGEROUS case: an hour holding only a quarantined `.held` spill was never
+    # corroborated by the oracle, so it is NOT captured. Opening it redeems that spill into a
+    # manifest-certified final built from rows nothing confirmed — a fabrication, and it must count.
+    # A predicate widened to accept any parquet as capture evidence reads 0 here while every other
+    # t0037 test stays green.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(14, 30)
+    for i in range(5):
+        w1.append(_book_event(14, 30, checksum=i + 1))
+    clock.now = _ts(15, 5)
+    w1.finalize_completed_hours(_ts(15, 0))  # 14.parquet commits, so the recovery floor is 15:00
+    w1._write_part([_book_event(15, 40, checksum=7)], _ts(15, 0), marker=".held")
+    del w1
+
+    clock.now = _ts(16, 15)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    assert not w2._parts_for(w2._hour_dir(_ts(15, 0)), "15")  # no parts…
+    assert w2._parts_for(w2._hour_dir(_ts(15, 0)), "15", marker=".held")  # …but a held spill
+    w2.append(_book_event(15, 40, checksum=999))
+    assert w2._current_hour == _ts(15, 0)  # a `.held` seeds no floor, so the hour really opens
+    assert w2.ts_past_dated_hour == 1
+
+
+def test_t0037_a_finalized_past_hour_never_reaches_the_counter(tmp_path, clock, caplog):
+    # Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an
+    # hour's parts once the merged bytes are durable, so a COMMITTED hour also has none. It is the
+    # recovery floor, not the predicate, that rules it out — `_recover` seeds `_floor` at the newest
+    # final plus an hour, and the late-event guard then refuses the stamp before `_enter_hour` runs.
+    # If this ever fails, the floor no longer closes the door the `.part`-only predicate relies on, and
+    # a benign re-open of a committed hour would count as fabrication — fix `_recover` or the
+    # late-event guard, not the predicate, whose text this test never reads.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(15, 30)
+    for i in range(5):
+        w1.append(_book_event(15, 30, checksum=i + 1))
+    clock.now = _ts(16, 15)
+    w1.finalize_completed_hours(_ts(16, 0))  # hour 15 commits AND its parts are unlinked
+    del w1
+
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    assert not w2._parts_for(w2._hour_dir(_ts(15, 0)), "15")  # the predicate alone would say "never captured"
+    assert w2._floor == _ts(16, 0)  # …but the floor is above hour 15
+    with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):
+        w2.append(_book_event(15, 40, checksum=999))
+    assert _drop_levels(caplog, "dropping late event") == [logging.INFO]  # the FLOOR refused it…
+    assert w2._current_hour is None  # …so the branch never ran
+    assert w2.ts_past_dated_hour == 0
+
+
+def test_t0037_a_never_captured_hour_beside_unswept_parts_still_counts(tmp_path, clock):
+    # The predicate's GRANULARITY, which no other fixture pins: it must ask about the hour that
+    # OPENED, not about the day or the stream. Here a crash in hour 14 leaves parts nothing has
+    # swept, while hour 15 never received an event — the never-captured fabrication the counter
+    # exists for. A glob that drops the `<HH>` prefix (the day dir), or that walks the stream root
+    # the way `_sweep` and `finalize_completed_hours` legitimately do, sees hour 14's parts and reads
+    # 0 here — blind to its own target case whenever a crash hour shares a day with the fabricated
+    # one, which is nearly always.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(14, 30)
+    for i in range(5):
+        w1.append(_book_event(14, 30, checksum=i + 1))
+    del w1  # crash in hour 14: its parts stay unswept, and hour 15 never receives an event
+
+    clock.now = _ts(16, 15)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    assert list(tmp_path.rglob("14.part*.parquet"))  # hour 14's parts are on disk WHEN the branch reads
+    w2.append(_book_event(15, 40, checksum=999))  # the first stamp opens never-captured hour 15
+    assert w2._current_hour == _ts(15, 0)
+    assert not list(tmp_path.rglob("14.part*.parquet"))  # `_sweep` merged hour 14 — the branch really ran
     assert w2.ts_past_dated_hour == 1
 
 

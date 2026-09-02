@@ -396,6 +396,19 @@
 # digest. This RENDERS the stack only — it never starts Alloy (no systemd unit, no `docker compose
 # up`, no restart handler), mirroring the ops role's render-only Alloy block: the first start is an
 # attended step, not a converge side effect.
+
+# The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
+# it -- the container binds `conf/`, not its parent -- so it is inert, but it is NOT harmless: a
+# stale file at the path an operator would guess returns plausible DATA instead of an error, and
+# on 2026-09-01 that produced a confidently-wrong "three metric families are dark" report against
+# a host whose config was in fact current. Removing it fleet-wide so the guess cannot be answered.
+# Ungated for the same reason the drift check below is: inside the Alloy block it would be
+# skipped by every converge that does not carry a digest, which is every ordinary one.
+- name: remove the pre-conf layout's stale alloy config
+  ansible.builtin.file:
+    path: "{{ capture_alloy_dir }}/config.alloy"
+    state: absent
+
 # T0110: the gate above skips the config copy on any converge that omits the digest -- by design,
 # and the reason both capture hosts silently ran a month-old keep-regex while the repo was correct.
 # Every automated check in this repo compares the repo to ITSELF; nothing compared a host to it.
