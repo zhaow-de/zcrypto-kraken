@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 ## What this is
 
-Run open work **unattended** — the same brainstorm → spec → plan → subagent-driven execution → verify → merge cycle as attended work, with **zero human interaction**: nobody will answer, and pausing kills the loop. The loop executes **any** open item within the autonomy boundary — infra, tooling, docs, and research — leaving a reviewable trail.
+Run open work **unattended** — the same brainstorm → spec → plan → plan review → subagent-driven execution → verify → merge cycle as attended work, with **zero human interaction**: nobody will answer, and pausing kills the loop. The loop executes **any** open item within the autonomy boundary — infra, tooling, docs, and research — leaving a reviewable trail.
 
 Two goals, by work type:
 
@@ -86,6 +86,6 @@ Measurement bugs produce plausible numbers — *artifacts asserting untruths*. S
 
 ## Notes
 
-- Orchestrates: `superpowers:brainstorming`, `superpowers:writing-plans`, `superpowers:subagent-driven-development`, `superpowers:systematic-debugging`, `merge-pr`, and `/zcrypto-grooming` (ad-hoc procedures only). All `.claude/rules/` conventions hold. Unattended mode changes *who approves* — not *what gets produced*.
+- Orchestrates: `superpowers:brainstorming`, `superpowers:writing-plans`, `zcrypto-plan-review`, `superpowers:subagent-driven-development`, `superpowers:systematic-debugging`, `merge-pr`, and `/zcrypto-grooming` (ad-hoc procedures only). All `.claude/rules/` conventions hold. Unattended mode changes *who approves* — not *what gets produced*.
 - War stories behind these rules: `references/case-log.md` — read it when a rule's rationale matters to a live call.
 - Older docs and specs call this loop `research-loop`; the names are the same thing.
