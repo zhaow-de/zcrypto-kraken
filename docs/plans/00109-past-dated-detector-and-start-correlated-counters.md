@@ -319,6 +319,8 @@ Keep the internal-token guard in mind: `title`, `summary` and `unit` are phone-r
 
 refId B's existing `byFrameRefID` override — `custom.thresholdsStyle: line`, `thresholds.steps` red at `0.001` — already puts the red line inside `0 < bar <= 1` and agrees with `> 0` in the old form and the new. Leave it; adding one produces a second override on the same refId.
 
+**Nothing in the suite verifies that this panel moved with its rule, so this step's own check is Step 4's grep, read for the FORM of each hit** — the panel-pairing guard matches rule and panel expressions as exact strings, and this panel is host-templated where both rotation rules hardcode `zcrypto|zcrypto-red`, so neither rule pairs and the guard passes identically whether or not refId B was edited. Do not read a green suite as evidence the series moved; the grep is the only thing that discriminates.
+
 - [ ] **Step 4: Check the pairing — knowing it is blind here**
 
 The panel-pairing test compares rule and panel expressions for **exact string equality**, and this panel is host-templated (`$capture_host`) where the rules hardcode `zcrypto|zcrypto-red`. Measured: `len(pairs) == 54` and neither capture rotation rule is in that set, before or after this edit. **A PASS therefore proves nothing about panel 110** — it passed identically while the panel was wrong, which is how this was nearly missed.
