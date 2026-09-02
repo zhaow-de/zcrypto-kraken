@@ -1801,6 +1801,74 @@ def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
     assert w2.ts_past_dated_hour == 1
 
 
+def test_t0037_restart_reopening_a_captured_hour_counts_nothing(tmp_path, clock):
+    # The 2026-09-01 incident (spec 00109 D1): a mid-hour restart whose FIRST event is a replayed
+    # pre-restart print opens the PREVIOUS hour — but that hour HAS parts on disk, so nothing was
+    # fabricated and nothing may be counted. Distinguished from the positive test above by exactly
+    # one property: there, hour 10 never received an event; here, hour 15 holds its own parts.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(15, 30)
+    for i in range(5):  # flush_rows=5 → these land as 15.part0000.parquet
+        w1.append(_book_event(15, 30, checksum=i + 1))
+    del w1  # crash mid-hour: parts on disk, hour never finalized (close() never finalizes anyway)
+
+    assert list(tmp_path.rglob("15.part*.parquet"))  # unfinalized parts, so the floor stays below 15
+
+    clock.now = _ts(16, 15)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    w2.append(_book_event(15, 30, checksum=999))  # replayed pre-restart print, one hour back
+    assert w2._current_hour == _ts(15, 0)  # the past hour DID open — the branch ran
+    assert w2.ts_past_dated_hour == 0  # …and counted nothing, because the hour was captured
+
+
+def test_t0037_a_held_only_past_hour_still_counts(tmp_path, clock):
+    # Spec 00109 D1's DANGEROUS case, and the one the alert summary names: an hour holding only a
+    # quarantined `.held` spill was never corroborated by the oracle, so it is NOT captured. Opening
+    # it redeems that spill into a manifest-certified final built from rows nothing confirmed — a
+    # fabrication, and it must count. A predicate widened to accept any parquet as capture evidence
+    # reads 0 here while every other t0037 test stays green.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(14, 30)
+    for i in range(5):
+        w1.append(_book_event(14, 30, checksum=i + 1))
+    clock.now = _ts(15, 5)
+    w1.finalize_completed_hours(_ts(15, 0))  # 14.parquet commits, so the recovery floor is 15:00
+    w1._write_part([_book_event(15, 40, checksum=7)], _ts(15, 0), marker=".held")
+    del w1
+
+    clock.now = _ts(16, 15)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    assert not w2._parts_for(w2._hour_dir(_ts(15, 0)), "15")  # no parts…
+    assert w2._parts_for(w2._hour_dir(_ts(15, 0)), "15", marker=".held")  # …but a held spill
+    w2.append(_book_event(15, 40, checksum=999))
+    assert w2._current_hour == _ts(15, 0)  # a `.held` seeds no floor, so the hour really opens
+    assert w2.ts_past_dated_hour == 1
+
+
+def test_t0037_a_finalized_past_hour_never_reaches_the_counter(tmp_path, clock, caplog):
+    # Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an
+    # hour's parts once the merged bytes are durable, so a COMMITTED hour also has none. It is the
+    # recovery floor, not the predicate, that rules it out — `_recover` seeds `_floor` at the newest
+    # final plus an hour, and the late-event guard then refuses the stamp before `_enter_hour` runs.
+    # If this ever fails, the predicate has become wrong: a benign re-open would count as fabrication.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    clock.now = _ts(15, 30)
+    for i in range(5):
+        w1.append(_book_event(15, 30, checksum=i + 1))
+    clock.now = _ts(16, 15)
+    w1.finalize_completed_hours(_ts(16, 0))  # hour 15 commits AND its parts are unlinked
+    del w1
+
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    assert not w2._parts_for(w2._hour_dir(_ts(15, 0)), "15")  # the predicate alone would say "never captured"
+    assert w2._floor == _ts(16, 0)  # …but the floor is above hour 15
+    with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):
+        w2.append(_book_event(15, 40, checksum=999))
+    assert _drop_levels(caplog, "dropping late event") == [logging.INFO]  # the FLOOR refused it…
+    assert w2._current_hour is None  # …so the branch never ran
+    assert w2.ts_past_dated_hour == 0
+
+
 def test_t0037_normal_start_counts_no_past_dated_hour(tmp_path, clock):
     # CONTROL for the ordinary case: a mid-hour start whose first stamp names the CURRENT wall hour.
     # `hour < _hour_start(now)` is false, so nothing counts — an unconditional or sign-flipped count
