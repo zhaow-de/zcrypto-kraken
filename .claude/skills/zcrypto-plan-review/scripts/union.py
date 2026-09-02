@@ -13,7 +13,8 @@ A heading candidate is any run of three or more `#`, indented, blockquoted or li
 nests its findings under a `### Findings` title writes them as `####`, and a parser keyed on exactly
 `### ` absorbs every one of them into the previous body. Exit 0 on success. Exit 2 when any candidate
 fails the shape below: those are listed under `## Unparsed` in OUT.md and MUST be read — an unparsed
-finding is a finding, not noise (a bare section title lands there too). Two reports naming one line two
+finding is a finding, not noise (a bare section title lands there too, as does a finding written at one or
+two hashes). Two reports naming one line two
 ways are two keys — the safe direction, the fixer reads both — and the script does not try to merge them.
 A fenced block is body whatever it contains — fences follow CommonMark (backtick or tilde, closed only by
 the same character at the same length or longer inside the same blockquote or list item as the opener, or
@@ -34,6 +35,10 @@ ORIGIN_RANK = {"last-fix": 0, "earlier-fix": 1, "in-original": 2}  # most recent
 _PREFIX = r"^\s*(?:>\s*)?(?:[-*+]\s+|\d+[.)]\s+)?"  # blockquote, indentation, list marker: not part of the heading
 CANDIDATE = re.compile(_PREFIX + r"#{3,}")  # no space / seven hashes still surface, never sink into a body
 SECTION = re.compile(_PREFIX + r"#{1,2}\s")
+# A finding written at one or two hashes is a typo of the required form, not a section. Without this it
+# matches SECTION, closes the open block and vanishes with exit 0 — the one failure this script exists to
+# prevent. Surfaced instead, so the round's counts are never silently short.
+MALFORMED = re.compile(_PREFIX + r"#{1,2}\s+\[?(?:Critical|Important|Minor)\]? · ")
 # The brackets are optional on read: reviewers routinely drop them (the template once showed them as
 # choose-one notation), and a finding whose severity is plain is still a finding — parsing it is the
 # safe direction, since the alternative is a real Critical counted as zero.
@@ -119,6 +124,8 @@ def parse(path: Path) -> tuple[list[dict], list[str]]:
                 continue
             unparsed.append(f"{path.name}: {line.strip()}")  # surfaced, and the open finding keeps its body
         elif SECTION.match(line):
+            if MALFORMED.match(line):
+                unparsed.append(f"{path.name}: {line.strip()}")
             current = None  # a section heading ends the finding block
             continue
         if current is not None:
