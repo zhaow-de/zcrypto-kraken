@@ -29,7 +29,7 @@ Scope, stated so nobody over-reads this: the metric is **not** wholly blind. Cap
 - **There is no CRITICAL log line to promote to a detector, and any plan that assumes one is unbuildable.** Measured: `grep -rni critical cli/capture/` returns exactly one hit — a comment in `command.py` about the Loki rule's `level=~"ERROR|CRITICAL"` selector — and `segment_writer.py` contains none. `_write_part` is the sole writer of a `.held` file, and its only logger call is a `logger.exception` on the **failure** branch, which fires when the spill does not happen. A successful spill emits nothing at any level. `00109` D3 states this outright.
 - `stop_grace_period` does not appear anywhere under `infra/` — checked, not assumed. Nothing widens the shutdown window today.
 - Scrape interval is 60 s (`infra/ansible/roles/capture/files/config.alloy`).
-- Registered 2026-09-02 during `00109`'s execution. **Its first draft claimed a converge-free fix existed; pre-push review falsified that, and the correction is recorded below rather than quietly swapped in.**
+- Registered 2026-09-02 **on the owner's explicit word**, during `00109`'s execution. **Its first draft claimed a converge-free fix existed; pre-push review falsified that, and the correction is recorded below rather than quietly swapped in.**
 
 ## Suggested next steps
 
