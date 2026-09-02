@@ -3562,14 +3562,15 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-capture-ts-past-dated-hour
-    title: "Capture · a stream opened an archive hour that was already in the past"
+    title: "Capture · a stream opened a past archive hour that held no captured data"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
     data:
-      # T0037's past-dated residual (spec 00103 D5). The plausibility guard bounds the FUTURE
-      # direction only, so a stamp dated into a past, unpublished hour is still trusted -- and a
+      # T0037's past-dated residual (spec 00109 D1, which narrows spec 00103 D5's predicate). The
+      # plausibility guard bounds the FUTURE direction only, so a stamp dated into a past,
+      # unpublished hour is still trusted -- and a
       # capture process's FIRST event is the only place one can act, because from then on `floor` is
       # the open hour and the late-event guard refuses anything behind it. Acting means opening that
       # past hour and committing a manifest-certified "complete" final for a period nothing was
@@ -3577,9 +3578,10 @@ rules:
       #
       # A STEP, not a rate. The counter can advance at most once per stream per process -- one first
       # event each -- so `increase() > 0` over a long window is the whole detection, and any rate bar
-      # would be a bar on how many streams were poisoned rather than on whether one was. Kraken's ts
-      # is measured strictly non-decreasing in production, so the baseline is a hard zero and
-      # CRITICAL is proportionate: the fabricated hour is already certified on disk.
+      # would be a bar on how many streams were poisoned rather than on whether one was. CRITICAL is
+      # proportionate on the worst shape rather than the common one: a count can be a benign restart
+      # that opened a past hour holding no parts, but where it is the fabrication that hour is
+      # already certified on disk and nothing repairs it.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 21600, to: 0}
@@ -3601,14 +3603,15 @@ rules:
             - evaluator: {type: gt, params: [0]}
     noDataState: OK
     execErrState: Alerting
-    # 5m absorbs the one-minute datasource transients and no more: the damage is already permanent
-    # when this counts, so nothing is bought by waiting longer.
+    # 5m absorbs the one-minute datasource transients and no more. A longer wait buys nothing rather
+    # than costing detection: the counter never falls back inside a capture process's life, so a
+    # condition true at 5m is still true later, and the wait would only delay the read.
     for: 5m
     annotations:
-      summary: "A capture host opened an archive hour that was ALREADY IN THE PAST when the stream's first event arrived -- a bogus, past-dated exchange timestamp. That publishes an hour marked complete and certified for a period during which nothing was actually captured, and it can pull a quarantined .held sidecar in with it. The baseline is a hard zero over the fleet's whole life and the counter can step at most once per stream per capture process, so any step at all is a real event. Do not attempt to repair the hour by hand. Runbook: infra/runbooks/capture.md#zcrypto-capture-ts-past-dated-hour"
+      summary: "A capture host opened an archive hour that was ALREADY PAST and held NO CAPTURED PARTS on disk when the stream's first event arrived -- the shape a bogus, past-dated exchange timestamp leaves. Committing such an hour publishes a manifest-certified 'complete' final for a period during which nothing was actually captured, and it can pull a quarantined .held sidecar in with it. A count is not by itself that fabrication: a restart whose first event replays a pre-restart print can open a part-less past hour too, so work the runbook's shape discrimination before concluding one. Do not attempt to repair the hour by hand. Runbook: infra/runbooks/capture.md#zcrypto-capture-ts-past-dated-hour"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "110"
-      unit: "first events that opened an hour already in the past, last 6 hours"
+      unit: "first events that opened a past hour holding no captured parts, last 6 hours"
     labels:
       severity: critical
     notification_settings:
@@ -3738,8 +3741,12 @@ rules:
       # series' first sample, so increase() over it returns nothing on one sample and 0 on N equal
       # samples. Kraken pushes `status` on connect and on state change, so a clean online->maintenance
       # transition is exactly ONE frame per host: an increase() form would sit green through the very
-      # event this rule exists for. The sibling increase() rules work because their counters already
-      # exist at 0 and only step; that idiom does not transfer to a label that materialises on the event.
+      # event this rule exists for. An increase() form reads a counter only where a 0 sample precedes
+      # the step INSIDE the window, and that needs three things at once: the series already exists, the
+      # host has already published it at 0, and the step lands far enough after process start to be
+      # scraped at 0 first. A label that materialises on the event fails the first; a host new to an
+      # eagerly-published metric fails the second, its first sample already carrying the step; and a
+      # start-correlated step fails the third, landing seconds after start where scrapes are 60 s apart.
       #
       # This LATCHES: the counter never decreases until the daemon restarts. That is deliberate -- the
       # point is to capture the first observation of a shape this fleet has never seen, and a
