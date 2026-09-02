@@ -56,7 +56,7 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 #   docker run --rm --entrypoint python <image> -c \
 #     'from cli.engine.gate_cache import replay_fingerprint; print(replay_fingerprint())'
 # What it cost on a given rollout belongs in that rollout's fleet-pins row, never here.
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:38fd9d70374939d2f82b6eaeac3ab03ee12b80bb299a643e9c01cf93378c1b0b
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the trap the
 # committed pin kills. Alloy v1.18.0 (2026-07-20); previous pin 4f6ddc56ffdc (v1.17.1).
 nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
