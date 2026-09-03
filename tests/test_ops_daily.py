@@ -780,10 +780,11 @@ def test_an_instance_the_api_does_not_call_alerting_contributes_no_host(state):
     assert read.firing_now[0].hosts == ("zcrypto",)
 
 
-def test_a_rule_whose_expr_aggregates_every_label_away_still_names_its_host():
-    """The five `zcrypto-alloy-dark-*` rules carry no `host` label at all, so `_UID_HOST` is the only
-    thing that can name them -- and it is reached through the synthetic instance, which must survive
-    the state filter that has no state to read."""
+def test_a_firing_rule_that_arrives_with_no_instances_still_names_its_mapped_host():
+    """The synthetic instance standing in for an empty `alerts` array must survive the state filter
+    that has no state to read, or `_UID_HOST` -- consulted per instance -- is never consulted at all.
+    Distinct from the rules that aggregate the host away: those DO carry an instance (pinned by the
+    test above), and reach the map through it."""
     payload = _rules(
         {
             "name": "Alloy dark",

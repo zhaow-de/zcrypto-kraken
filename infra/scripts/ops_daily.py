@@ -143,11 +143,13 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 # remember to delete, a silence on a host that never fired.
                 #
                 # Default-DENY, then restore the sentinel: an instance whose state the code cannot
-                # read is not evidence that it fired. `[{}]` stands in for a firing rule whose own
-                # expr aggregated every label away -- the only thing that can name those is
-                # `_UID_HOST`, and it is reached per instance, so with nothing left there is nothing
-                # to reach it through. Admitting the sentinel as a DEFAULT instead would let any
-                # unreadable state through the door it was opened for.
+                # read is not evidence that it fired. `[{}]` covers a firing rule that arrives with no
+                # readable instance at all -- an API-shape defence, not a rule class; the five whose
+                # expr aggregates the host away do carry one, and reach `_UID_HOST` through it. The
+                # map is consulted per instance, so with nothing left there is nothing to reach it
+                # through, and a rule outside the map degrades to `on ?` rather than to a wrong host.
+                # Admitting the sentinel as a DEFAULT instead would let any unreadable state through
+                # the door it was opened for.
                 alerting = [i for i in instances if str(i.get("state") or "").startswith("Alerting")] or [{}]
                 summary = (rule.get("annotations") or {}).get("summary") or ""
                 link = _RUNBOOK_LINK.search(summary)
@@ -158,7 +160,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                             uid=uid,
                             title=rule.get("name", ""),
                             state="firing",
-                            active_at=(alerting[0] if alerting else {}).get("activeAt"),
+                            active_at=alerting[0].get("activeAt"),
                             runbook=link.group(0) if link else None,
                             hosts=_hosts_of(uid, alerting),
                         )
