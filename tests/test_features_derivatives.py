@@ -5,6 +5,7 @@ import pytest
 
 from cli.features.derivatives import (
     align_asof,
+    coverage_by_year,
     funding_accrued_carry,
     funding_sign_persistence,
     funding_zscore,
@@ -278,3 +279,37 @@ def test_ratio_features_rejects_a_dropped_column():
 
     with pytest.raises(FeatureError):
         ratio_features({name: [1.0, 2.0] for name in _RATIOS[:3]})
+
+
+def test_coverage_by_year_separates_a_late_start_from_an_interior_outage():
+    """The shape that motivated D6: an overall null rate reads as a nuisance while one year is
+    almost entirely missing. Coverage must show the year, not the aggregate -- and within a year,
+    the two timestamps, because 2021 and 2022 below carry the SAME `(non_null, total)` of `(2, 10)`
+    and opposite meanings. 2021 spans January to October with an eight-month hole between them;
+    2022 does not start until September. Only `first_non_null` / `last_non_null` separate them, so
+    the 2021 and 2022 assertions below agree in their first two fields and differ only in the last
+    two; a 2-tuple return fails all three on arity."""
+    UTC = timezone.utc
+    ts = [datetime(y, m, 1, tzinfo=UTC) for y in (2021, 2022, 2023) for m in range(1, 11)]
+    vals = [1.0] + [None] * 8 + [1.0] + [None] * 8 + [1.0, 1.0] + [1.0] * 10
+    cov = coverage_by_year(ts, vals)
+    assert cov[2021] == (2, 10, datetime(2021, 1, 1, tzinfo=UTC), datetime(2021, 10, 1, tzinfo=UTC))
+    assert cov[2022] == (2, 10, datetime(2022, 9, 1, tzinfo=UTC), datetime(2022, 10, 1, tzinfo=UTC))
+    assert cov[2023] == (10, 10, datetime(2023, 1, 1, tzinfo=UTC), datetime(2023, 10, 1, tzinfo=UTC))
+    assert 1 - cov[2022].non_null / cov[2022].total == 0.8
+
+
+def test_coverage_by_year_rejects_a_length_mismatch_and_reports_an_empty_year():
+    """The two contracts the summary's arithmetic rests on. The derived null fraction is only as
+    good as `total`, and a `zip`-based implementation truncates to the shorter input and under-counts
+    it with nothing raising. And an all-null year has no timestamps to report -- `None` twice, not a
+    `min()` over an empty sequence."""
+    import pytest
+
+    from cli.features.errors import FeatureError
+
+    UTC = timezone.utc
+    ts = [datetime(2021, m, 1, tzinfo=UTC) for m in range(1, 4)]
+    with pytest.raises(FeatureError):
+        coverage_by_year(ts, [1.0, 2.0])
+    assert coverage_by_year(ts, [None, None, None])[2021] == (0, 3, None, None)

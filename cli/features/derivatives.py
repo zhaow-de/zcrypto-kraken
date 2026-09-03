@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import statistics
 from datetime import datetime
+from typing import NamedTuple
 
 from cli.features._validate import _validate_levels, _validate_rates, _validate_window
 from cli.features.errors import FeatureError
@@ -254,3 +255,48 @@ def ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[floa
         # bar, while a zero OI is a venue hole (spec 00110 D5).
         _validate_rates(name, values)
     return {f"binperp_{name}": list(values) for name, values in ratios.items()}
+
+
+class YearCoverage(NamedTuple):
+    """Coverage of one column inside one calendar year: how many rows carried a reading, how many
+    rows there were, and the stamps of the earliest and latest reading -- None for both when the
+    year carried none. A NamedTuple rather than a dataclass so it reads by field name and still
+    compares equal to the plain 4-tuple a caller writes in an assertion.
+
+    The null fraction is DERIVED (`1 - non_null / total`), never a fifth field: stored beside the
+    counts it is a second answer to the same question and free to disagree with them (spec 00110
+    D6)."""
+
+    non_null: int
+    total: int
+    first_non_null: datetime | None
+    last_non_null: datetime | None
+
+
+def coverage_by_year(ts: list[datetime], values: list[float | None]) -> dict[int, YearCoverage]:
+    """Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
+    only how much (spec 00110 D6). The counts alone cannot separate a late start from an interior
+    outage -- both can read `(2, 10)`, and they mean opposite things for a fold over that year --
+    so the two stamps travel with them.
+
+    Raises FeatureError on a length mismatch, `align_asof`'s rule: the derived null fraction is
+    only as good as `total`, and a zip that truncates to the shorter input under-counts it and
+    reports a healthier column than the substrate holds, with nothing raising.
+
+    The stamps are the EARLIEST and LATEST non-null row of the year, not the positionally first
+    and last, so an out-of-order input still reports the span it covers rather than a narrower
+    one."""
+    if len(ts) != len(values):
+        raise FeatureError(f"ts and values must be equal length, got {len(ts)} and {len(values)}")
+    totals: dict[int, int] = {}
+    stamps: dict[int, list[datetime]] = {}
+    for t, v in zip(ts, values):
+        totals[t.year] = totals.get(t.year, 0) + 1
+        if v is not None:
+            stamps.setdefault(t.year, []).append(t)
+    out: dict[int, YearCoverage] = {}
+    for year, total in totals.items():
+        seen = stamps.get(year, [])
+        # An empty year has no stamps to take a min() over -- None twice, not a crash.
+        out[year] = YearCoverage(len(seen), total, min(seen) if seen else None, max(seen) if seen else None)
+    return out
