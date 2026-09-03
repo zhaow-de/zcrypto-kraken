@@ -47,4 +47,4 @@ Main runs it from an in-session `CronCreate` job — session-only, fires only wh
 
 ## The payload contract
 
-A payload session, on receiving an assignment: works only in the worktree named; never writes outside the boundary list; never opens a PR, registers a topic, or writes memory — it asks main; reports at start, at each commit, when blocked, and at completion, each report carrying branch and commit hash; ends a turn only with its state reported, never with work announced and not begun.
+A payload session, on receiving an assignment: works only in the worktree named; never writes outside the boundary list; never opens a PR, registers a topic, or writes memory — it asks main; reports at start, at each commit, when blocked, and at completion, each report carrying branch and commit hash; ends a turn only with its state reported, never with work announced and not begun; appends its own self-corrections, rule deviations, and rule or skill feedback to `docs/reference/agent-lessons.jsonl` on its branch as they happen, never by message to main.
