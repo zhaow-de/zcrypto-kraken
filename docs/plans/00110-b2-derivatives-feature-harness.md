@@ -6,7 +6,7 @@
 >
 > A contract-pin run on 2026-09-02 graded 34 premises and refuted 11 before the auto-exec time-gate cut the loop. All eleven are now fixed in this pair; the review loop restarts at the pin against the corrected version. What changed, so a reader can check the fixes rather than trust them:
 >
-> - **Task 2's look-ahead guard was inert and is replaced.** The old form appended source rows *past the grid's last stamp*, which cannot move any value under any semantics — the pin showed it passing on a deliberate backward-fill defect. The new form truncates: recompute over `grid[:k]` from rows stamped `<= grid[k-1]` and demand the prefix match. **Re-verified here on both arms: old guard passes correct AND defect; new guard passes correct, trips defect.**
+> - **Task 2's look-ahead guard was inert and is replaced.** The old form appended source rows *past the grid's last stamp*, which cannot move any value under any semantics — the pin showed it passing on a deliberate backward-fill defect. The new form truncates: recompute over `grid[:k]` from rows stamped `<= grid[k-1]` and demand the prefix match. **Re-verified on both arms: old guard passes correct AND defect; new guard passes correct and trips the defect at k=2** (the banner first said k=1, from a report rather than a run).
 > - **Both planted-signal thresholds asserted `> 3.0`, which no window definition produces.** Spec D7 now pins the semantics (inclusive trailing window ending at `k`, sample stdev, `None` when short or null-bearing, `0.0` at zero variance) and both tests assert the pinned definition's exact value, `2.8460498941515410` — computed, not thresholded.
 > - **Task 4 asked null propagation through `_validate_prices`, which raises on `None`.** Task 1 now adds `_validate_levels` (finite, `> 0`, or `None`).
 > - **"Matching the convention exactly" was false about length.** The existing five return `len(prices) - 1`, aligned to `returns_from_prices`; these align to the input grid and return `len(input)`. Stated in both artefacts.
@@ -35,7 +35,7 @@
 
 ---
 
-### Task 1: A signed-value validator
+### Task 1: Two validators — signed, and positive-nullable
 
 **Files:**
 - Modify: `cli/features/_validate.py`
@@ -49,7 +49,7 @@
 
 ```python
 import pytest
-from cli.features._validate import _validate_rates
+from cli.features._validate import _validate_levels, _validate_rates
 from cli.features.errors import FeatureError
 
 def test_validate_rates_accepts_negative_and_none():
@@ -59,6 +59,12 @@ def test_validate_rates_rejects_nonfinite_and_bool():
     for bad in ([1.0, float("nan")], [1.0, float("inf")], [1.0, True]):
         with pytest.raises(FeatureError):
             _validate_rates("funding", bad)
+
+def test_validate_levels_accepts_positive_and_none_but_not_zero_or_negative():
+    _validate_levels("oi", [100.0, None, 110.0])
+    for bad in ([100.0, 0.0], [100.0, -1.0], [100.0, float("nan")]):
+        with pytest.raises(FeatureError):
+            _validate_levels("oi", bad)
 ```
 
 - [ ] **Step 2: Run it, expect ImportError / failure**
@@ -80,8 +86,23 @@ def _validate_rates(name: str, values: list[float | None]) -> None:
             raise FeatureError(f"{name} must be finite numbers or None, got {v!r}")
 ```
 
+- [ ] **Step 3b: Implement `_validate_levels`**
+
+```python
+def _validate_levels(name: str, values: list[float | None]) -> None:
+    """Positive-and-nullable: OI is strictly positive, but `_validate_prices` raises on `None`
+    and these features must propagate it (spec 00110 D5)."""
+    if not isinstance(values, list) or len(values) < 2:
+        raise FeatureError(f"{name} must be a list of >= 2 values, got {values!r}")
+    for v in values:
+        if v is None:
+            continue
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v <= 0:
+            raise FeatureError(f"{name} must be finite positive numbers or None, got {v!r}")
+```
+
 - [ ] **Step 4: Run, expect pass**
-- [ ] **Step 5: Commit** — `feat(features): a signed validator, because funding rates go negative`
+- [ ] **Step 5: Commit** — `feat(features): signed and positive-nullable validators, because funding goes negative and OI goes null`
 
 ---
 
@@ -123,8 +144,8 @@ def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
     implementation, because rows past the grid's end cannot move any value under either semantics.
 
     This form truncates instead: recompute over `grid[:k]` using only source rows stamped at or
-    before `grid[k-1]`, and demand the prefix match the full run's. The defect trips at k=1
-    (`[None]` vs `[2.0]`); the correct implementation passes."""
+    before `grid[k-1]`, and demand the prefix match the full run's. The defect first mismatches at **k=2** (`[1.0, None]` vs `[1.0, 2.0]`); the correct implementation passes at
+    every k. An earlier draft of this docstring said k=1, taken from a review report rather than run."""
     src_ts, src_v = [_t(0), _t(8)], [1.0, 2.0]
     grid = [_t(0), _t(4), _t(8)]
     full = align_asof(src_ts, src_v, grid)
@@ -264,7 +285,80 @@ def test_oi_momentum_is_causal_over_the_lookback():
 
 ---
 
-### Task 5: Per-year coverage, so a trial cannot run blind
+### Task 5: The ratio family, and the `binperp_` naming
+
+**Files:**
+- Modify: `cli/features/derivatives.py`
+- Test: `tests/test_features_derivatives.py`
+
+**Interfaces:**
+- Produces: `ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[float | None]]` — carries the four Binance ratio columns through unchanged, re-keyed with the `binperp_` prefix (spec D8). Null-propagating by construction: a carried column is the same list.
+
+This family is small but it is the only **null-bearing** one, so it is what exercises D5's no-imputation rule against the real data shape — the 2022 hole is 87.3 % panel-wide in exactly these columns. It also lands the `binperp_` prefix, which spec D8 requires and which no other task emits.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+from cli.features.derivatives import ratio_features
+
+_RATIOS = (
+    "count_toptrader_long_short_ratio",
+    "sum_toptrader_long_short_ratio",
+    "count_long_short_ratio",
+    "sum_taker_long_short_vol_ratio",
+)
+
+def test_ratio_features_prefix_every_column_with_its_venue():
+    out = ratio_features({name: [1.0, 2.0] for name in _RATIOS})
+    assert set(out) == {f"binperp_{name}" for name in _RATIOS}
+
+def test_ratio_features_carry_nulls_through_untouched():
+    """Spec D5: no imputation. A null in, a null out -- never 0.0, never a trailing mean."""
+    out = ratio_features({name: [1.0, None, 3.0] for name in _RATIOS})
+    for name in _RATIOS:
+        assert out[f"binperp_{name}"] == [1.0, None, 3.0]
+
+def test_ratio_features_rejects_an_unknown_column():
+    import pytest
+    from cli.features.errors import FeatureError
+    with pytest.raises(FeatureError):
+        ratio_features({"not_a_ratio": [1.0, 2.0]})
+```
+
+- [ ] **Step 2: Run, expect failure**
+
+Run: `uv run pytest tests/test_features_derivatives.py -v`
+
+- [ ] **Step 3: Implement**
+
+```python
+_RATIO_COLUMNS: tuple[str, ...] = (
+    "count_toptrader_long_short_ratio",
+    "sum_toptrader_long_short_ratio",
+    "count_long_short_ratio",
+    "sum_taker_long_short_vol_ratio",
+)
+
+
+def ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[float | None]]:
+    """Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
+    imputation: these columns are 87.3 % null across 2022 panel-wide, and filling one would
+    manufacture a reading the venue never published (spec 00110 D5). The prefix is spec D8 -- the
+    features describe Binance perpetuals, not the Kraken spot book they will sit beside."""
+    unknown = set(ratios) - set(_RATIO_COLUMNS)
+    if unknown:
+        raise FeatureError(f"unknown ratio column(s): {sorted(unknown)}")
+    for name, values in ratios.items():
+        _validate_levels(name, values)  # ratios are positive and nullable
+    return {f"binperp_{name}": list(values) for name, values in ratios.items()}
+```
+
+- [ ] **Step 4: Run, expect pass**
+- [ ] **Step 5: Commit** — `feat(features): the four ratios carried through under binperp_, nulls intact`
+
+---
+
+### Task 6: Per-year coverage, so a trial cannot run blind
 
 **Files:**
 - Modify: `cli/features/derivatives.py`
@@ -300,9 +394,10 @@ def test_coverage_by_year_exposes_a_single_bad_year():
 
 ---
 
-### Task 6: Closeout
+### Task 7: Closeout
 
 - [ ] **Step 1:** Append the iterations-history entry to `docs/iterations-history-phase4.md` (B-family is Phase 4 subject matter) via the `iteration-closeout` skill.
 - [ ] **Step 2:** Append the Phase-4 decisions-log entry to `docs/research/10.phase4-decisions.md` for the subject-matter decisions this iteration made (the 2022 coverage finding and its consequence for feature selection).
 - [ ] **Step 3:** `T0023` is ALREADY `partial` (set at iter-090) and its `ripe_when` — "the B2 derivatives-positioning family is picked for an iteration" — is satisfied by this branch, so there is no status flip to make. The real work is the `## Done so far` entry recording the harness and trimming `## Suggested next steps`, whose second bullet is exactly this harness, to the remainder (the family, the trials, liquidations).
-- [ ] **Step 4:** Run `uv run pre-commit run -a` and the full reachable test set; commit.
+- [ ] **Step 4:** Add the data-gated panel-start assertion (spec D10) beside the `cli/derivatives/` substrate tests, not in the pure-function module: it reads the substrate, so it skips where the mount is absent and therefore runs locally and never in CI. Assert the balanced-panel start is 2021-12-01 and that `sum_open_interest` has zero nulls, so a substrate refresh cannot move either silently.
+- [ ] **Step 5:** Run `uv run pre-commit run -a` and the full reachable test set — including the data-gated family, which CI cannot run; commit.
