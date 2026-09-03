@@ -15,7 +15,7 @@
 - **`kraken-cli` is never a runtime dependency.** Not imported by `cli/`, not present in CI, not invoked by the engine. It appears only in `infra/scripts/` and in operator prose.
 - **A test double that does not model the defect proves nothing.** `FakeClient` currently returns orders regardless of its instrument cache, so a test written against it passes with and without the fix. Task 1 fixes the double *before* Task 2 fixes the code, and the reds that fix produces are read before the production change lands.
 - **Identity comes from the non-adapter witness; the adapter contributes a count** (spec D4). `kraken-cli` names the fixture txids and symbols. Flatten prints `N resting order(s) will be cancelled account-wide` and nothing else about orders — `render_plan` echoes no txid, and the dry path returns before `write_journal`, so there is no artifact to read one out of. The adapter's count is therefore never compared with itself: what discriminates is the same count read through **two code versions** (Task 5 Step 5), with the identities supplied by `kraken-cli`.
-- **The mechanism is settled OFFLINE, and the live readings corroborate it** (spec D4, and the spec's own offline section). The client's credential check is a string-presence gate, `base_url` redirects its transport to a loopback HTTP server, and `request_instruments()` rebuilds the listing from whatever `AssetPairs` body that server returns — so listing → `cache_instrument` → order/position report runs end to end with no venue, no credential and no host. Task 2 Step 8 is that test, it needs no opt-in variable and no data mount, and CI runs it. **A live count on `SOLEUR` moves 0→2 whether the twins are present or not**, so no live reading in this plan can discriminate the fix; only the offline arms can.
+- **The mechanism is settled OFFLINE, and the live readings corroborate it** (spec D4, and the spec's own offline section). The client's credential check is a string-presence gate, `base_url` redirects its transport to a loopback HTTP server, and `request_instruments()` rebuilds the listing from whatever `AssetPairs` body that server returns — so listing → `cache_instrument` → order/position report runs end to end with no venue, no credential and no host. Task 2 Step 8 is that test, it needs no opt-in variable and no data mount, and CI runs it — **which holds only because that step injects `run_flatten`'s two network-reaching defaults as well**, `venue_reader` and `altnames_reader`, neither of which `base_url` redirects; a step that redirected the client alone would have swapped a data gate for a network gate, and a network gate passes until the venue has a bad day. **A live count on `SOLEUR` moves 0→2 whether the twins are present or not**, so no live reading in this plan can discriminate the fix; only the offline arms can.
 - **Nothing in this plan converges a host, pushes Grafana, or arms anything.** The consequence is load-bearing and easy to miss: `/usr/local/sbin/zcrypto-flatten` execs `{{ engine_image }}@{{ engine_image_digest }}`, the *deployed* pin, so **no run through the host wrapper can contain this branch's code** — the fix is proven from the worktree instead (Task 5 Step 5). The wrapper's dry run is used once, deliberately, as that step's **pre-fix arm**: read-only, no arguments, and never `--execute`.
 - **The two existing SOL/EUR orders (`OZRI5U-U7WGD-OYCOMW` spot, `OVNLAJ-6PXBH-T4GDXF` 2:1 margin) must survive every task.** Nothing here cancels them.
 - Every commit carries `Co-Authored-By: <the actual authoring model> <noreply@anthropic.com>` and **no `Claude-Session:` trailer**. Each code commit is reviewed by a different agent before push, at the **Fable floor** — this touches the live trade path.
@@ -130,7 +130,7 @@ def test_read_open_orders_is_blind_until_the_instrument_cache_is_populated():
         self.raw_symbol = symbol.replace("/", "")
 ```
 
-**Do not teach the double the second spelling, and do not give it an `altname`.** The real `CurrencyPair` carries none — its `info` is `{}` (measured) — so an `altname` attribute here would be a name the library type lacks, which is a red under this file's own fidelity guard AND a model of a world that does not exist. The altname reaches production from the public `AssetPairs` endpoint (Task 2 Step 3), and every test in this file supplies it through `run_flatten`'s injected reader, so the fixtures in this file are all coinciding-spelling ones by construction and mint no twins. The legacy-pair miss — the whole subject of the twin — is measured on real listing rows in Task 2 Step 8.
+**Do not teach the double the second spelling, and do not give it an `altname`.** The real `CurrencyPair` carries none — its `info` is `{}` (measured) — so an `altname` attribute here would be a name the library type lacks, which is a red under this file's own fidelity guard AND a model of a world that does not exist. The altname reaches production from the public `AssetPairs` endpoint (Task 2 Step 3), and every test in this file supplies it through `run_flatten`'s injected reader, so the fixtures in this file are all coinciding-spelling ones by construction — except where one test overrides `raw_symbol` per row to make every twin fail to build, which is a claim about the containment and not about the double (Task 2 Step 1). The legacy-pair miss — the whole subject of the twin — is measured on real listing rows in Task 2 Step 8.
 
 - [ ] **Step 3: Migrate the fixture family the filter now drops**
 
@@ -225,7 +225,7 @@ def test_a_partly_uncacheable_listing_cannot_read_flat(tmp_path):
 
 **`_armed(tmp_path)` is the first line of both, and `execute` stays at its default.** These two are execute-mode tests — the whole-listing arm must show a refusal that precedes the cancel, and the partial arm must leave a journal, which `_dry_exit` never writes. In execute mode `run_flatten` reaches `check_kill_file(state_dir)` before any client call; with no kill file that raises `FlattenRefused` and the run returns **1** having called nothing, so both tests would read 1 before and after Step 3 and neither would touch the code under test. `_armed` is what every other execute-mode `_run` site in the file calls first. Do **not** reach for `execute=False` instead when a red does not match: a dry run calls neither `cancel_all_orders` nor `submit_order` under any implementation, so the first test's two corroborating assertions would become assertions nothing can fail.
 
-**The altname source is INJECTED, not monkeypatched, and that decision is what keeps the network out of this file.** Step 3 makes `run_flatten` fetch Kraken's public `AssetPairs` for the altname map (spec D1). `run_flatten` already injects every other outside read the same way — `venue_reader`, `tty_available`, `prompt`, `echo` — so it gains `altnames_reader: Callable[[], dict[str, str]] = read_altnames` beside them, and the `_run` helper gains one keyword, `altnames_reader=_no_altnames`, where `_no_altnames` is a module-level `def _no_altnames(): return {}` beside `_online`. One keyword, not two: a test that wants a map or a raise passes its own reader, the same way `_run` already takes `venue=_offline`. **Without that the roughly thirty `run_flatten`-driving tests in this file would each make a real HTTPS request to `api.kraken.com`**, which is a network-gated suite created by accident — exactly what `CLAUDE.md` forbids. Every fixture in this file is a coinciding-spelling one, so `{}` is the truthful default and no test here mints a twin.
+**The altname source is INJECTED, not monkeypatched, and that decision is what keeps the network out of this file.** Step 3 makes `run_flatten` fetch Kraken's public `AssetPairs` for the altname map (spec D1). `run_flatten` already injects every other outside read the same way — `venue_reader`, `tty_available`, `prompt`, `echo` — so it gains `altnames_reader: Callable[[], dict[str, str]] = read_altnames` beside them, and the `_run` helper gains one keyword, `altnames_reader=_no_altnames`, where `_no_altnames` is a module-level `def _no_altnames(): return {}` beside `_online`. One keyword, not two: a test that wants a map or a raise passes its own reader, the same way `_run` already takes `venue=_offline`. **Without that the roughly thirty `run_flatten`-driving tests in this file would each make a real HTTPS request to `api.kraken.com`**, which is a network-gated suite created by accident — exactly what `CLAUDE.md` forbids. Every fixture in this file is a coinciding-spelling one, so `{}` is the truthful default; the single exception is the twins-only test below, which passes a two-way map on purpose so it can watch every twin fail.
 
 Two more in this file, both about the map's own reader and its failure, neither needing a client:
 
@@ -262,14 +262,41 @@ def test_a_failed_altname_fetch_cannot_read_flat(tmp_path):
     assert any(row["reason"] == "altnames_unavailable" for row in doc["residuals"])
 ```
 
+**And one more, for the third value `prime_cache` returns — the only claim in Step 3 that is argued twice in prose and checked by nothing.** `prime_cache` counts rows CACHED so the whole-listing refusal is not `len(uncached) == len(listing)`; its docstring says so and `run_flatten`'s comment repeats it, and without this test the two are indistinguishable to the suite. Measured: substituting `if len(uncached) >= len(listing):` for `if not cached:` turns exit 2 into exit **3** — the red button refusing before the cancel, on a listing it read perfectly — with the rest of the flatten suite still green. This test fails `assert 3 == 2` under that substitution and passes on the correct code. It is also the one place in this file where a twin is minted, and it mints one only to watch every twin FAIL: `_Instrument` carries no `to_dict`, so `_twin` raises on both rows with no extra fixture machinery, which is exactly the state the counter separates.
+
+```python
+def test_a_listing_whose_TWINS_alone_failed_is_not_a_whole_listing_refusal(tmp_path):
+    """The direction `prime_cache`'s third return value exists for. Every row caches under its own
+    spelling and every TWIN raises, so `uncached` is as long as the listing while nothing about the
+    listing is unreadable. Keyed on rows CACHED it is exit 2 with the pairs named; keyed on
+    `len(uncached) == len(listing)` it would be exit 3 -- the red button refusing before the cancel
+    on a listing it read perfectly well."""
+    _armed(tmp_path)
+    rows = [_Instrument("BTC/EUR"), _Instrument("ETH/EUR")]
+    rows[0].raw_symbol, rows[1].raw_symbol = "XXBTZEUR", "XETHZEUR"
+    client = FakeClient(instruments=rows, orders=[[]], positions=[[]], balances=[[]])
+
+    code = _run(client, tmp_path, altnames_reader=lambda: {"XXBTZEUR": "XBTEUR", "XETHZEUR": "ETHEUR"})
+
+    assert code == 2, "a listing whose own rows all cached must never reach the whole-listing refusal"
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    doc = json.loads(path.read_text())
+    assert len(doc["uncached"]) == len(rows)
+    assert [row["reason"] for row in doc["residuals"]] == ["uncached_listing_rows"]
+```
+
+`FakeClient` is constructed directly rather than through `_client_with` because the raw symbols must be overridden per row, which that helper does not take; the account is otherwise **empty**, so `uncached_listing_rows` is the only residual the run can book and the assertion on the residual list is an equality rather than an `any`.
+
 `_no_altnames` is a plain `def` beside `_online` and `_offline`, matching the shape those two already have. It adds nothing for `tests/test_engine_stub_fidelity.py` to classify: that walk takes top-level non-test functions only when they build a `SimpleNamespace`, and this one returns a dict.
 
-**And the twin and the alias are NOT tested in this file** (spec D5's re-tensed note): the double's `_Instrument` has no `to_dict`, the real `CurrencyPair` does, and the twin is built from that — so a twin test here would be a test of a fixture nobody ships. Step 8's loopback file carries them, on the real client.
+**And a WORKING twin, and the alias, are NOT tested in this file** (spec D5's re-tensed note): the double's `_Instrument` has no `to_dict`, the real `CurrencyPair` does, and the twin is built from that — so a successful-twin test here would be a test of a fixture nobody ships. Step 8's loopback file carries both, on the real client. What the test above uses that same absence FOR is the opposite claim — that a twin which cannot be built is contained rather than escalated — which needs no `to_dict` and is a fact about `prime_cache`, not about the fixture.
 
 - [ ] **Step 2: Run it and see it fail**
 
-Run: `uv run pytest tests/test_engine_flatten.py -k "caches_the_listing_before or nothing_can_be_cached or partly_uncacheable or read_altnames_returns_only or failed_altname_fetch" -v`
-Expected: all five FAIL. `caches_the_listing_before` on `names.index` raising `ValueError` — `cache_instrument` is never called. `read_altnames_returns_only` on an `AttributeError` naming `fetch_public`, raised by `monkeypatch.setattr` before the body ever calls `read_altnames` — `setattr` refuses a name the target does not already carry, so the red names the import Step 3 adds rather than the function it adds, and a red naming `read_altnames` instead means the import landed and the function did not. The other three on the **exit code**, which is 0 all three times: the kill file is in place (`_armed`) and the confirmation matches, so the run completes over an account nothing raised on, and neither the refusal nor either residual exists. **A red reading exit 1 means the `_armed` line was dropped**, not that the fix is missing; a red reading `TypeError: run_flatten() got an unexpected keyword argument 'altnames_reader'` on the last one means the helper was threaded and the parameter was not. **Read which assertion fired**: a red on the journal glob unpacking, or a `KeyError` for `uncached` / `altnames`, is also what a half-implementation shows, and only the exit-code line separates the two. Confirm the selection collects exactly 5 first: same command with `--collect-only -q`.
+Run: `uv run pytest tests/test_engine_flatten.py -k "caches_the_listing_before or nothing_can_be_cached or partly_uncacheable or read_altnames_returns_only or failed_altname_fetch or TWINS_alone_failed" -v`
+Expected: all six FAIL, and **five of them on one and the same `TypeError: run_flatten() got an unexpected keyword argument 'altnames_reader'`** — measured. Step 1 threads the `_run` helper with that keyword and Step 3 is what adds the parameter to `run_flatten`, so between the two every `_run`-driven test in this file is red on it, not merely the six selected here. **That is the correct intermediate state and not a defect to chase**: do not remove the keyword from `_run` to clear it, and do not read the whole-file red as a fixture that broke. The sixth, `read_altnames_returns_only`, is the only one that reaches its own subject: it fails on an `AttributeError` naming `fetch_public`, raised by `monkeypatch.setattr` before the body ever calls `read_altnames` — `setattr` refuses a name the target does not already carry, so the red names the import Step 3 adds rather than the function it adds, and a red naming `read_altnames` instead means the import landed and the function did not. Confirm the selection collects exactly 6 first: same command with `--collect-only -q`.
+
+**The exit-code diagnostics are for the RE-RUN after Step 3**, which is where a residual or a refusal can actually be missing; at Step 2 the `TypeError` fires before any of them. Four of the six are decided on the code — `nothing_can_be_cached` expects 3, and `partly_uncacheable`, `failed_altname_fetch` and `TWINS_alone_failed` expect 2 — and the shape of a half-implementation is a **0**: the kill file is in place (`_armed`), the confirmation matches, the run completes over an account nothing raised on, and neither the refusal nor either residual exists. **A red reading exit 1 means the `_armed` line was dropped**, not that the fix is missing. **Read which assertion fired**: a red on the journal glob unpacking, or a `KeyError` for `uncached` / `altnames`, is also what a half-implementation shows, and only the exit-code line separates the two.
 
 - [ ] **Step 3: Implement**
 
@@ -378,8 +405,9 @@ Then in `run_flatten`, the three lines inside the `try` currently read `snapshot
         except Exception as exc:  # noqa: BLE001
             # Degraded, never refused: this is a second read of the endpoint that answered
             # `read_listing` a moment ago, and caching the keys alone still beats the blind state.
-            # It reaches the verdict below, so the run cannot call itself flat over the pairs it
-            # could not see.
+            # It reaches the verdict below in `--execute` and the terminal in a dry run, which
+            # returns before that verdict -- so neither mode reads clean over pairs it could not
+            # see, and neither the residual nor the `say` below is redundant with the other.
             altnames, altname_failure = {}, str(exc)
         record["altnames"] = {"count": len(altnames), "error": altname_failure}
         # `aliases` maps a twin's symbol back to the real pair. An order report's identity is read
@@ -451,7 +479,7 @@ and, immediately after `residuals = judge_final(...)` further down `run_flatten`
 
 `instrument_id` deliberately keeps the twin's value: nothing downstream reads it — `constraints_for` takes the id from the LISTING row, and `_snapshot_payload` journals symbol, side and quantity only — so rewriting it would be a second edit nothing can observe.
 
-**The call sites, enumerated so none is discovered by CI.** Six in production, all in `cli/engine/flatten.py`: `read_positions` at `read_snapshot`'s `positions=` line and twice inside `sweep` (the `margin_legs` line and the `_read_for_the_record` lambda); `read_snapshot` inside `sweep` and in `run_flatten`; `sweep` in `run_flatten`. **Thirty-three in `tests/test_engine_flatten.py`, and no other test file calls any of the three** (`grep -rn "read_positions(\|read_snapshot(\|sweep(" tests/` returns this file plus four unrelated `*_the_sweep` test names and one local helper): `flatten.read_positions(` ×4, `flatten.read_snapshot(` ×14, `flatten.sweep(` ×15. Every one takes `{}` — no fixture in that file mints a twin, so `{}` is the truthful value and not a placeholder. Count the three greps again after the edit and expect the same 4/14/15; a number that moved means a site was rewritten rather than threaded.
+**The call sites, enumerated so none is discovered by CI.** Six in production, all in `cli/engine/flatten.py`: `read_positions` at `read_snapshot`'s `positions=` line and twice inside `sweep` (the `margin_legs` line and the `_read_for_the_record` lambda); `read_snapshot` inside `sweep` and in `run_flatten`; `sweep` in `run_flatten`. **Thirty-three in `tests/test_engine_flatten.py`, and no other test file calls any of the three** (`grep -rn "read_positions(\|read_snapshot(\|sweep(" tests/` returns this file plus **four** lines — three unrelated `*_the_sweep` test names in `test_tick_command.py`, `test_panel_command.py` and `test_engine_command.py`, and one local `def sweep` in `test_record43_book.py`; re-counted against the tree this branch starts from): `flatten.read_positions(` ×4, `flatten.read_snapshot(` ×14, `flatten.sweep(` ×15. Every one takes `{}` — all thirty-three drive coinciding-spelling fixtures, so `{}` is the truthful value and not a placeholder. Step 1's twins-only test is not among them: it reaches `prime_cache` through `run_flatten` and calls none of these three signatures, so it moves no count here. Count the three greps again after the edit and expect the same 4/14/15; a number that moved means a site was rewritten rather than threaded.
 
 **Why the containment is per row AND still reaches the verdict — both directions, because the omitted one was this loop's blast radius.** An uncacheable row loses only its own orders, which is the pre-fix status quo for that row, while the button still works for everything else; a whole-listing refusal on one bad row would exit 3 having cancelled nothing. But invisibility is not free: `read_open_orders`'s own docstring says the LIST decides the exit code, `judge_final` adds an order residual only `if final.orders:`, and `exit_code` returns 0 on empty residuals — so a blind row that is silently contained lets the run print *"the account reads flat"* over live exposure. The `constraints_for` precedent the comment cites is not analogous either, and reading it as one is how the omission happens: its containment lands **inside** the verdict as an `unjudgeable:` residual, i.e. fails closed. So the containment here is made to do the same — the journal names the rows, the operator is told, and the run cannot be called flat. And the systematic case (a wrong object shape makes all ~1600 rows raise identically) is separated out and refused before the first write, because it is the pre-fix state and not a contained row.
 
@@ -469,6 +497,8 @@ Enumerated so it is not re-derived: this loop is the **only** place in the branc
 | `infra/runbooks/engine-procedures.md`, the dry-run paragraph in step 1 of the flatten procedure | the paragraph directly under the `sudo zcrypto-flatten` of step 1 — the command the operator runs **first** — and a dry run is a path the whole-listing refusal reaches: `run_flatten`'s `except FlattenUnreachable` returns `_dry_exit(3, str(exc), say)` |
 | `infra/runbooks/engine-procedures.md`, the exit-code table's row 3 | what the incident runbook says to do |
 | `README.md`, the `flatten` Usage row | the same clause again (`readme-usage.md` requires it in this change) |
+
+*The dry run's 0, which the new degradation makes narrower than it reads — and the same step-1 paragraph is where that is said.* Both residual appends and `judge_final` itself sit after `run_flatten`'s `if not execute:` return, so a dry run whose altname fetch failed, or whose listing rows would not cache, prints its degradation line and then exits **0** over a plan whose `N resting order(s)` is a floor rather than a count. Measured, both cases. **The code is not what changes**: 0 for "the default dry run completed" is spec `00106`'s rule, this branch does not touch it, and spec `00111`'s exit-2 claim is an `--execute` claim that now says so in its own words. What is owed is on the surface the operator reads it from — the step-1 paragraph gains a sentence saying that a dry run's 0 means the run completed and never that the read was complete, so a degradation line above the plan makes every count under it a lower bound and the pairs it names get hand-checked before the button is pressed. **One surface, deliberately**: `--help` and the README carry the button's exit-code map as a whole, and a mode caveat there would restate `00106`'s contract in two more homes to no operator's gain; the runbook step the dry run is actually run from is where it is read. `.claude/rules/operator-facing-text.md` applies to this sentence as to the rest.
 
 *Exit 3's ACTION column, which widening its cause alone leaves wrong.* `grep -n '\*\*3\*\*' infra/runbooks/engine-procedures.md` returns one line, so exit 3 has exactly one triage home in the runbook: the **action** cell of the exit-code table row the widening above already opens, reading "nothing was sent; the account is as it was". Under a venue outage the action it implies (wait, run it again) works; under the new cause it does not, because a re-run against an unchanged cache writer reproduces the refusal and the operator retries a dead emergency exit. The cell gains what is owed instead: when the message says no listing row could be cached, this run saw nothing at the venue and a re-run will not either — cancel and close by hand on Kraken's own pages. **Deliberately not the exit-2 bullet's wording**: there the record's `uncached` list names which pairs were blind, here nothing was read at all and the whole account is what has to be checked. **Family: one member** — the grep above is the whole enumeration; unlike exit 2 there is no step-5 equivalent for exit 3.
 
@@ -589,14 +619,16 @@ Before trusting either verdict, confirm the `-k` filter collects the test: `uv r
 
 Create `tests/test_engine_flatten_offline_venue.py`:
 
-- **The fixture is six real `AssetPairs` rows, embedded verbatim.** The five basket legs whose altname differs from their key — `XXBTZEUR`/`XBTEUR`, `XETHZEUR`/`ETHEUR`, `XXRPZEUR`/`XRPEUR`, `XLTCZEUR`/`LTCEUR`, `XETHXXBT`/`ETHXBT` — plus `SOLEUR`, whose two spellings coincide and which is therefore the control that separates arm B from arm C. Take them from a credential-free public `AssetPairs` fetch (Task 4 Step 8 makes one anyway) and trim only `fees`/`fees_maker` to two rungs, exactly as `test_engine_data_socket.py` trims its row. **Do not hand-minimise the row further**: which fields the compiled parser requires is undocumented, and a row it rejects fails as an empty listing rather than as a named missing field.
-- **The server answers four paths**, and the `AssetPairs` one must branch on its query string: `GET /0/public/AssetPairs` returns the six rows, `GET /0/public/AssetPairs?aclass_base=tokenized_asset` returns `{}` (the adapter requests both — measured; answering the second with the same six yields twelve rows and a listing that is silently doubled), `POST /0/private/OpenOrders` returns `{"error": [], "result": {"open": {…}}}`, `POST /0/private/OpenPositions` and `POST /0/private/Balance` return the canned bodies each test needs. Every body is `{"error": [], "result": …}`; Kraken carries errors in a 200.
+- **The fixture is six real `AssetPairs` rows, embedded verbatim.** The five basket legs whose altname differs from their key — `XXBTZEUR`/`XBTEUR`, `XETHZEUR`/`ETHEUR`, `XXRPZEUR`/`XRPEUR`, `XLTCZEUR`/`LTCEUR`, `XETHXXBT`/`ETHXBT` — plus `SOLEUR`, whose two spellings coincide and which is therefore the control that separates arm B from arm C. Take them from a credential-free public `AssetPairs` fetch (Task 4 Step 8 makes one anyway) and trim only `fees`/`fees_maker` to two rungs, exactly as `test_engine_data_socket.py` trims its row. **Do not hand-minimise the row further**: which fields the compiled parser requires is undocumented, and a row it rejects fails as an empty listing rather than as a named missing field. **Held as Python dicts, `ruff format` will explode them one key per line** — measured, roughly two hundred lines for the six — which is the gate rewriting, not a defect: re-stage and commit. The cited precedent sidesteps that by holding its row as a raw JSON string parsed at use; either shape is fine here, and the per-pair values only have to survive the parser. Lifting the fields every row shares into one `dict` merged into each keeps the block readable under either.
+- **The server answers four paths** — `AssetPairs`, `OpenOrders`, `OpenPositions`, `Balance` — and the `AssetPairs` one must branch on its query string, so five request shapes reach the handler: `GET /0/public/AssetPairs` returns the six rows, `GET /0/public/AssetPairs?aclass_base=tokenized_asset` returns `{}` (the adapter requests both — measured; answering the second with the same six yields twelve rows and a listing that is silently doubled), `POST /0/private/OpenOrders` returns `{"error": [], "result": {"open": {…}}}`, `POST /0/private/OpenPositions` and `POST /0/private/Balance` return the canned bodies each test needs. Every body is `{"error": [], "result": …}`; Kraken carries errors in a 200. **A `venue` fixture owns it**: bind to `("127.0.0.1", 0)` so the port is ephemeral, serve on a daemon thread, reset the handler's canned bodies and its seen-path list per test, and `shutdown()`/`server_close()` after — every test below takes that fixture, and it is what makes the file order-independent.
 - **The client is the real one**, `KrakenSpotHttpClient(key, secret, base_url=f"http://127.0.0.1:{port}")`, on values that authenticate nothing — the credential check is a string-presence gate, so a literal key and a base64 secret clear it and no request leaves the loopback interface. A module docstring says that, in the same terms as `test_engine_data_socket.py`'s.
+- **`run_flatten`'s two network-reaching defaults are injected, and that — not `base_url` — is what keeps this file offline.** `base_url` redirects the CLIENT and nothing else. `venue_reader` defaults to `read_system_status`, whose URL is the hardcoded `https://api.kraken.com/0/public/SystemStatus` (`cli/engine/venue.py`'s `_BASE_URL`), and `altnames_reader` defaults to `read_altnames` → `fetch_public`, whose base is the hardcoded `https://api.kraken.com/0/public` (`cli/snapshot/fetch.py`'s `_BASE_URL`); neither goes near the client. **The one test here that drives `run_flatten` passes both**, plus `echo` so the printed line can be read. Leaving either out is how a data-gated test becomes a **network-gated** one — worse, because it passes until Kraken has a bad day, and it would falsify this step's own claim that CI runs this file with no opt-in variable. `_no_altnames` exists in `tests/test_engine_flatten.py` for exactly this reason one file over; here the map is supplied rather than emptied, because these six rows are the whole point.
+- **And the handler records what it was asked for, so the offline claim carries a POSITIVE trace.** `LoopbackKraken` appends each `self.path` to a class-level list the fixture resets, and the `run_flatten` test asserts the listing GET and the `OpenOrders` POST are both in it. There is no assertion available that says nothing left the machine; this one says the listing read and the order read were answered HERE, so the run cannot have got its six orders from anywhere else. It is the same rule as everywhere else in this repo: an empty filtered query is not an absent event, and a green here without it would be a claim about a request nobody looked for.
 
-The tests, and what each one alone would fail to prove:
+The tests, and what each one alone would fail to prove. The second is given in full, because its injections are the file's whole network hygiene and a docstring cannot carry them:
 
 ```python
-def test_the_three_cache_arms_discriminate_the_twin_fix():
+def test_the_three_cache_arms_discriminate_the_twin_fix(venue):
     """The defect and the two candidate fixes, on one venue, in one run: cold cache 0 of 6, every
     listing row cached 1 of 6, listing rows plus altname twins 6 of 6. The one row arm B returns is
     `SOL/EUR`, whose two spellings coincide -- which is why a live A/B on that pair cannot tell arm
@@ -604,27 +636,52 @@ def test_the_three_cache_arms_discriminate_the_twin_fix():
     `run_flatten` does, and the test below is the one that reads production."""
 
 
-def test_run_flatten_reads_every_resting_order_the_venue_holds():
+def test_run_flatten_reads_every_resting_order_the_venue_holds(venue, tmp_path):
     """Production's claim, through `run_flatten` itself so the twin loop and the altname map are
     both wired and not merely present: a dry run over an account resting one order per leg prints
     `6 resting order(s)`. Read the printed line, never the exit code -- a dry run returns 0 whether
-    it saw six orders or none, which is the defect."""
+    it saw six orders or none, which is the defect.
+
+    Both of `run_flatten`'s network-reaching defaults are injected: `venue_reader` would otherwise
+    GET Kraken's own SystemStatus and `altnames_reader` its own AssetPairs, neither of which
+    `base_url` redirects, and this file's whole claim is that CI runs it with nothing opted in."""
+    from cli.engine.venue import VenueStatus
+
+    lines: list[str] = []
+    asyncio.run(
+        flatten.run_flatten(
+            _client(venue),
+            state_dir=tmp_path,
+            execute=False,
+            venue_reader=lambda **_: VenueStatus(status="online", ok=True, observed_at=None),
+            tty_available=lambda: True,
+            prompt=lambda _: "FLATTEN",
+            echo=lines.append,
+            altnames_reader=lambda: dict(ALTNAMES),
+        )
+    )
+    assert "6 resting order(s) will be cancelled account-wide" in lines, lines
+    # The positive trace: this run's listing and order reads were answered by the loopback, not by
+    # a venue. An assertion that nothing left the machine is not available; this one is.
+    seen = list(LoopbackKraken.seen)
+    assert any(path.startswith("/0/public/AssetPairs") for path in seen), seen
+    assert "/0/private/OpenOrders" in seen, seen
 
 
-def test_a_position_the_venue_spells_with_the_altname_closes_under_its_real_pair():
+def test_a_position_the_venue_spells_with_the_altname_closes_under_its_real_pair(venue):
     """The twin's cost, paid. With twins cached and no alias the position comes back `XBTEUR`, the
     listing carries `BTC/EUR`, and `margin_legs` sizes NO closer -- the red button reporting a
     leveraged position instead of closing it. Through `prime_cache`'s own alias map it is one
     `BTC/EUR` SELL leg. Both halves are asserted, so an alias that silently did nothing fails."""
 
 
-def test_the_alias_leaves_a_key_spelled_position_exactly_as_it_was():
+def test_the_alias_leaves_a_key_spelled_position_exactly_as_it_was(venue):
     """The control for the test above: same twins, same alias map, a position the venue spells with
     the KEY. It must produce the identical `BTC/EUR` SELL leg -- an alias that only worked by
     rewriting every symbol would pass the test above and break every pair on the account."""
 
 
-def test_a_cold_cache_aborts_the_position_read_rather_than_reading_flat():
+def test_a_cold_cache_aborts_the_position_read_rather_than_reading_flat(venue):
     """The live defect this branch resolves as a side effect, pinned so a later edit cannot restore
     it: the position read shares the cache and RAISES on a miss where the order read drops the row
     silently, so today's deployed flatten exits 3 on any account holding a margin position. Asserted
@@ -642,10 +699,12 @@ Measured, so each `Expected` is a reproduction rather than a prediction — the 
 | listing + twins, aliased | `XBTEUR` | one leg, `('BTC/EUR', 'SELL', 0.01)`, base `BTC` |
 | listing + twins, aliased | `XXBTZEUR` | one leg, `('BTC/EUR', 'SELL', 0.01)` — unchanged |
 
-**The new file has one blast-radius item outside itself, and it is not discoverable by reading this file.** `tests/test_engine_stub_fidelity.py` derives its `MODULES` from the directory — `glob("test_engine_*.py")` — and `_doubles_in` sweeps **every top-level `class`**, so the loopback handler class in a file named `test_engine_flatten_offline_venue.py` is an unclassified double and its own docstring says the consequence: "a NEW `test_engine_*.py` carrying a double is a red run until its doubles are classified here." Add the module and its handler to `TABLE` as `NOT_A_STANDIN` — it models a venue ENDPOINT, not a type this repo or the library owns, which is exactly the verdict's stated case ("a fixture-environment helper") — with an empty guards tuple, in the same edit that creates the file. Every top-level class in the new file needs an entry, and a top-level non-test function that builds a `SimpleNamespace` does too; keep helper functions free of `SimpleNamespace` and the class count to the handler and nothing else, and the entry stays one line.
+**The new file has two blast-radius items outside itself, in the same file, and neither is discoverable by reading this one.** `tests/test_engine_stub_fidelity.py` derives its `MODULES` from the directory — `glob("test_engine_*.py")` — and `_doubles_in` sweeps **every top-level `class`**, so the loopback handler class in a file named `test_engine_flatten_offline_venue.py` is an unclassified double and its own docstring says the consequence: "a NEW `test_engine_*.py` carrying a double is a red run until its doubles are classified here." Add the module and its handler to `TABLE` as `NOT_A_STANDIN` — it models a venue ENDPOINT, not a type this repo or the library owns, which is exactly the verdict's stated case ("a fixture-environment helper") — with an empty guards tuple, in the same edit that creates the file. Every top-level class in the new file needs an entry, and a top-level non-test function that builds a `SimpleNamespace` does too; keep helper functions free of `SimpleNamespace` and the class count to the handler and nothing else, and the entry stays one line.
+
+**And `_WALK_FLOOR` in that same file gains `"test_engine_flatten_offline_venue.py": 1` in the same edit** — measured, the `TABLE` entry alone leaves the pair still red. That dict is keyed in lock-step with `TABLE` and `test_the_table_and_the_floor_cover_the_same_modules` asserts `set(TABLE) == set(_WALK_FLOOR)`, so a new table key with no floor entry fails with `table ['test_engine_flatten_offline_venue.py'] is not floored in lock-step`. The value is **1**, the handler and nothing else: that dict's own comment says the small inventories sit AT their count, because a floor below it would tolerate losing the double the entry exists to protect.
 
 Run: `uv run pytest tests/test_engine_flatten_offline_venue.py tests/test_engine_stub_fidelity.py -q`
-Expected: all pass — 5 from the new file. A failure inside `request_instruments` reading "listing came back empty" is the fixture rows being rejected by the parser, not the fix; a failure in `test_every_test_double_in_the_engine_suite_is_classified` naming the new module is the `TABLE` entry above, not a defect in the double.
+Expected: all pass — 5 from the new file. (No total is stated for the pair: two of `tests/test_engine_stub_fidelity.py`'s tests are `parametrize`d over `MODULES`, which is a `glob("test_engine_*.py")`, so creating this file grows that file's own collected count. Read the reds, not a total.) A failure inside `request_instruments` reading "listing came back empty" is the fixture rows being rejected by the parser, not the fix. **Two reds in the fidelity file are the classification and not a defect in the double, and they arrive one at a time**: `test_every_test_double_in_the_engine_suite_is_classified` naming the new module is the missing `TABLE` entry, and `test_the_table_and_the_floor_cover_the_same_modules` naming it is the missing `_WALK_FLOOR` entry — the second is what remains if only the `TABLE` half of the edit above lands, which is the shape an implementer is most likely to produce and the one they are most primed to misread as their own handler's fault.
 
 Commit, then prove both new guards bite:
 
@@ -1277,7 +1336,7 @@ PY
 
 **Credential-free on both halves, and that is measured rather than assumed**: `test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_await`, in `tests/test_engine_flatten.py`, already drives that exact client call on `KrakenSpotHttpClient("dummy-key", "dummy-secret")` and asserts a list comes back — its own docstring reads "Only the read-only public listing call" — and `fetch_public` is `GET /0/public/AssetPairs` over stdlib `urllib`, the same endpoint the client itself just hit. This is a one-off measurement and **not** a new test, so it adds no CI surface and no gate.
 
-**What each reading is checked against, all three offline-established and none of them a prediction:** `raw_symbol` is the `AssetPairs` key on every basket leg; `altname` differs from it for exactly the five legs BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR and ETH/BTC; and on the committed 2026-08-04 body **44 of 1429** rows are spelled two ways, with no altname equal to another pair's key and no altname held by two pairs. The live counts will differ — the listing grows — but the SHAPE must hold.
+**What each reading is checked against, all three offline-established and none of them a prediction:** `raw_symbol` is the `AssetPairs` key on every basket leg; `altname` differs from it for exactly the five legs BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR and ETH/BTC; and on the 2026-08-04 body **44 of 1429** rows are spelled two ways, with no altname equal to another pair's key and no altname held by two pairs. **That body is not committed** — `docs/reference/kraken-snapshot-register.md` pins its sha256 and records that the file under `data/snapshots/` is gitignored — so those three counts cannot be re-derived from the repo alone, which is one more reason this step re-takes all three live. The live counts will differ — the listing grows — but the SHAPE must hold.
 
 Five outcomes, and one of them stops the branch:
 
