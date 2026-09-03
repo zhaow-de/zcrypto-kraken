@@ -1,6 +1,6 @@
 # Iterations history
 
-The per-iteration changelog is split by master-plan §12 phase: `docs/iterations-history-phase<N>.md`, indexed by `docs/iterations-history.md`. **Appending the entry is the final task of every implementation plan** — include it explicitly when writing a plan. Skip it only for trivial changes that skip the committed spec/plan (see `spec-plan-locations.md`).
+The per-iteration changelog is split by master-plan §12 phase: `docs/iterations-history-phase<N>.md`, indexed by `docs/iterations-history.md`. **Appending the entry is the final task of every implementation plan** — include it explicitly when writing a plan. Owed whenever the change alters a surface an operator or agent acts on, however small — the test is `spec-plan-locations.md`'s.
 
 **Which file, entry format, and dataset-catalog sync are the `iteration-closeout` skill** (`.claude/skills/iteration-closeout/SKILL.md`): load it at closeout.
 

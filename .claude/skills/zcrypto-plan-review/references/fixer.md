@@ -14,6 +14,8 @@ Read the union report `{UNION}` in full. Then read {SPEC} — the binding author
 
 **Extend, do not restate.** Two things that must agree are made unable to disagree — a shared constant, one source of truth, a derived value — never the same fact written twice. Restating is where the next round's regression is born.
 
+**Smallest correct edit.** A new mechanism — a timer, a lock, a file, a unit, a fallback, a script, a retry — only when the finding cannot be closed without one, and then the report says why. **A fix that would add three or more mechanisms is a design change: stop and report it instead of committing.** Every mechanism costs a scoped re-review and seeds the next round's lenses.
+
 ## The failure mode this loop is measured on
 
 Fixes that introduce defects are what makes these loops long, and the rate does not fall with a better fixer. Before you commit, re-read your own diff against this list — and for each item, the evidence is a `path:line` or a command's output, not your confidence:
@@ -27,6 +29,8 @@ Fixes that introduce defects are what makes these loops long, and the rate does 
 - Did you rewrite a test? State in the report what the new assertion can still fail on.
 - Did you introduce a sentence asserting a fact about a file other than the one it sits in? (`.claude/rules/code-prose.md`'s rot test — test docstrings included.)
 - Did your fix add a mechanism — a timer, a lock, a file, a unit, a fallback, a retry? It inherits that mechanism's failure modes, which no review has examined. List it.
+- Did you touch a fence? Run `zsh -n` over every `bash` fence you edited and `python -c 'import ast,sys; ast.parse(sys.stdin.read())'` over every Python one — a prose edit that lands on a command line dies at paste time while its placeholder tail still reads like an operand.
+- Did you write, move, or trim an enumeration? Re-count every stated number against the list under it — "the following three" above four bullets costs the next round.
 
 ## Constraints
 

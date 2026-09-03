@@ -396,7 +396,7 @@ A **rule-scoped** evaluation error on these two — an expression broken by a la
 
 ### Where the numbers came from
 
-The 264-against-52 measurement is read from Grafana's **alert state history**, not from metrics — `GET /api/v1/rules/history?ruleUID=<uid>&from=<epoch>&to=<epoch>`, with the same service-account token `infra/scripts/grafana-query.py` resolves. It is a different store from the 14 d metric retention, which is why the window can run 2026-08-05 → 08-28. Read it in chunks and compare each chunk's row count against the `limit`: a chunk that returns exactly its limit is truncated, which understates both columns.
+The 264-against-52 measurement is read from Grafana's **alert state history**, not from metrics — `GET /api/v1/rules/history?ruleUID=<uid>&from=<epoch seconds>&to=<epoch seconds>` (milliseconds return an empty page that reads as no data), with the same service-account token `infra/scripts/grafana-query.py` resolves. It is a different store from the 14 d metric retention, which is why the window can run 2026-08-05 → 08-28. Read it in chunks and compare each chunk's row count against the `limit`: a chunk that returns exactly its limit is truncated, which understates both columns.
 
 ### Retire when
 

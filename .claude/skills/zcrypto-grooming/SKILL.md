@@ -1,6 +1,6 @@
 ---
 name: zcrypto-grooming
-description: Drain and groom docs/memo.local.md together with the user. Bare /zcrypto-grooming runs the full three-step flow; an argument ("T0199 is done", "T0199 is partially done", "T0199 registered — insert into queue", "iter-290 (PR #1332) has been merged") applies one mechanical queue procedure.
+description: Drain and groom docs/memo.local.md together with the user. Bare /zcrypto-grooming runs the full three-step flow; an argument ("T9999 is done", "T9999 is partially done", "T9999 registered — insert into queue", "iter-290 (PR #1332) has been merged") applies one mechanical queue procedure.
 disable-model-invocation: true
 model: claude-fable-5
 allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Bash(git log:*), Bash(git show:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(date:*), Bash(uv run pre-commit:*)
@@ -23,9 +23,9 @@ Grooming is a **joint conversation**: this skill structures it, the user decides
 
 The four argument forms — each defined, with its exact scope, in `references/memo-protocol.md` § *Ad-hoc procedures*; the definitions there govern:
 
-- `/zcrypto-grooming T0199 is done`
-- `/zcrypto-grooming T0199 is partially done`
-- `/zcrypto-grooming T0199 registered — insert into queue`
+- `/zcrypto-grooming T9999 is done`
+- `/zcrypto-grooming T9999 is partially done`
+- `/zcrypto-grooming T9999 registered — insert into queue`
 - `/zcrypto-grooming iter-290 (PR #1332) has been merged` (work-shaped — resolve to topics first)
 
 All are mechanical and single-item — scope limits per the protocol's **All forms** rule. They may also be applied from within a human-launched `/zcrypto-auto-exec` run; the full flow below remains a live conversation with the user.
