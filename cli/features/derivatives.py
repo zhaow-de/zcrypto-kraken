@@ -27,7 +27,9 @@ def align_asof(
     """As-of forward fill onto a decision grid: out[k] is the value of the latest source row with
     ts <= grid_ts[k], or None before the first such row. Uses only source rows at or before each
     grid stamp -> no look-ahead. Never interpolates: an interpolated value is a number the venue
-    never showed (spec 00110 D2)."""
+    never showed (spec 00110 D2). A null source value is carried forward as a null -- it replaces
+    the carry rather than being skipped, so one null source row erases the carry for every later
+    grid stamp until the next non-null source row."""
     if len(source_ts) != len(source_values):
         raise FeatureError(f"source_ts and source_values must be equal length, got {len(source_ts)} and {len(source_values)}")
     if any(b < a for a, b in zip(source_ts, source_ts[1:])):

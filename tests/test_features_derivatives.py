@@ -22,6 +22,18 @@ def test_align_asof_is_none_before_the_first_source_row():
     assert align_asof([_t(8)], [2.0], [_t(0), _t(8)]) == [None, 2.0]
 
 
+def test_a_null_source_row_erases_the_carry_rather_than_being_skipped():
+    """Pins spec D5's null semantics: a null source value REPLACES the carry, it is not skipped.
+    The competing reading (forward-fill the last observed value, skipping nulls) is equally
+    plausible and silently different -- Tasks 4 and 5 feed nulls through this exact path
+    (`oi_levels_from_raw`'s zero-to-None map, and the ratio columns' own nulls), so this is
+    load-bearing: a later "fix" to the other reading would move every OI and ratio feature."""
+    src_ts = [_t(0), _t(4)]
+    src_v = [1.0, None]
+    grid = [_t(0), _t(2), _t(4), _t(6)]
+    assert align_asof(src_ts, src_v, grid) == [1.0, 1.0, None, None]
+
+
 def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
     """The look-ahead guard (spec D2/D10), in the form that actually bites.
 
@@ -32,7 +44,7 @@ def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
 
     This form truncates instead: recompute over `grid[:k]` using only source rows stamped at or
     before `grid[k-1]`, and demand the prefix match the full run's. The defect first mismatches at **k=2** (`[1.0, None]` vs `[1.0, 2.0]`); the correct implementation passes at
-    every k. An earlier draft of this docstring said k=1, taken from a review report rather than run."""
+    every k."""
     src_ts, src_v = [_t(0), _t(8)], [1.0, 2.0]
     grid = [_t(0), _t(4), _t(8)]
     full = align_asof(src_ts, src_v, grid)
