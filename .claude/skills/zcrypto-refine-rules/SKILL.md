@@ -25,7 +25,7 @@ A joint session that keeps the guidance corpus truthful, minimal, and placed whe
 Populate the memory inbox with candidate items in the standard memory-file shape (frontmatter `name`/`description`/`metadata.type`, body with **Why** and **How to apply**).
 
 - **Watermark**: `git log -1 --grep='^Refine-Round-Closed:' --format=%cI` — the previous round's closing commit carries the `Refine-Round-Closed: <ISO-8601 UTC>` trailer. **No match ⇒ first round**: harvest the full current memory inbox plus the trailing two weeks.
-- **Sources since the watermark**: `git log` over `.claude/`; new iterations-history entries; merged PR bodies; lessons either party names in the session.
+- **Sources since the watermark**: `git log -p -- docs/reference/agent-lessons.jsonl` (every session's self-corrections, rule deviations, and rule/skill feedback, appended where they happened); `git log` over `.claude/`; new iterations-history entries; merged PR bodies; lessons either party names in the session.
 - A candidate that duplicates an existing memory item updates that item instead (the memory system's own dedup rule).
 
 ## Step 2 — Graduate (joint)
