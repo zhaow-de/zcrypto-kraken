@@ -91,7 +91,11 @@ def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
             "state": "firing",
             "labels": {"severity": "critical"},
             "annotations": {"summary": "one stream stopped. Runbook: infra/runbooks/capture.md#zcrypto-capture-stream-silent"},
-            "alerts": [{"activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto"}}],
+            "alerts": [
+                {"activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto", "system": "maintenance"}},
+                {"activeAt": "2026-08-29T10:02:00Z", "labels": {"host": "zcrypto-red", "system": "maintenance"}},
+                {"activeAt": "2026-08-29T10:04:00Z", "labels": {"host": "zcrypto-red", "system": "post_only"}},
+            ],
         },
         {
             "name": "Capture · venue not online",
@@ -106,6 +110,12 @@ def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
     assert [a.uid for a in read.firing_now] == ["zcrypto-capture-stream-silent"]
     assert read.firing_now[0].runbook == "infra/runbooks/capture.md#zcrypto-capture-stream-silent"
     assert read.unreadable is None
+    # One Alert per RULE, but carrying every host that has a firing instance: the venue rules group
+    # `by (host, system)`, so one venue halt raises several instances per host, and the silence the
+    # runbook prescribes is created and deleted PER HOST. A reader who cannot enumerate the hosts
+    # cannot discharge that obligation. Deduped, so three instances over two hosts read as two.
+    assert read.firing_now[0].hosts == ("zcrypto", "zcrypto-red")
+    assert read.firing_now[0].active_at == "2026-08-29T10:00:00Z"
 
 
 def test_a_rule_without_a_uid_is_a_finding_never_a_silently_dropped_rule():
@@ -156,7 +166,7 @@ def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid
         }
     )
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
-    assert read.firing_now[0].host == expected
+    assert read.firing_now[0].hosts == (expected,)
 
 
 def test_an_instance_host_label_wins_over_the_uid_map():
@@ -171,7 +181,7 @@ def test_an_instance_host_label_wins_over_the_uid_map():
         }
     )
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
-    assert read.firing_now[0].host == "nas"
+    assert read.firing_now[0].hosts == ("nas",)
 
 
 # --- Task 12 (spec 00104): the log plane -------------------------------------------------------------------
@@ -230,6 +240,29 @@ def test_no_series_is_a_verdict_failure_never_a_pass():
     assert all(c.value == "(no series)" for c in checks)
 
 
+@pytest.mark.parametrize(("value", "ok"), [("1", True), ("0", False)])
+def test_a_value_bearing_check_is_judged_on_its_VALUE_never_on_the_series_existing(value, ok):
+    """The empty-result fixture above cannot see a bound -- with no series a bounded and an unbounded
+    read both FAIL -- so only a value-bearing one separates them. `up` is 0, not absent, when Alloy is
+    running and the app it scrapes is dead; the capture role's own `config.alloy` says exactly that of
+    `engine_app` on the secondary. A presence-only check therefore prints PASS beside the one value
+    this check exists to catch."""
+    payload = {"data": {"result": [{"metric": {}, "value": [1, value]}]}}
+    up = next(c for c in ops_daily.read_verdict("tok", opener=_canned(payload)) if c.name == "capture primary up")
+    assert up.ok is ok
+    assert up.value == value
+
+
+def test_an_out_of_bound_age_fails_rather_than_reporting_its_number_as_a_pass():
+    """Every check whose name does not end `present` carries the bound of the rule that owns it, so
+    the pass cannot report PASS beside a value the fleet is already paging on: 99999 s of cycle age is
+    six times `zcrypto-engine-cycle-stale`'s own 16500."""
+    payload = {"data": {"result": [{"metric": {}, "value": [1, "99999"]}]}}
+    age = next(c for c in ops_daily.read_verdict("tok", opener=_canned(payload)) if c.name == "engine cycle age")
+    assert not age.ok
+    assert age.value == "99999"
+
+
 def test_the_deploy_window_holds_only_lines_inside_it(tmp_path):
     log = tmp_path / "deploy-log.jsonl"
     log.write_text(
@@ -264,7 +297,7 @@ def test_an_all_clear_report_exits_zero():
 
 
 def test_anything_fired_exits_one():
-    firing = ops_daily.AlertsRead(firing_now=[ops_daily.Alert("u", "t", "firing", None, None, "ops")])
+    firing = ops_daily.AlertsRead(firing_now=[ops_daily.Alert("u", "t", "firing", None, None, ("ops",))])
     assert _report(alerts=firing).exit_code == 1
 
 
@@ -281,7 +314,7 @@ def test_a_source_the_instrument_could_not_read_exits_two_and_names_it():
 
 def test_unreadable_outranks_fired_so_a_partial_read_is_never_reported_as_attention_only():
     firing = ops_daily.AlertsRead(
-        firing_now=[ops_daily.Alert("u", "t", "firing", None, None, "ops")], unreadable="history truncated"
+        firing_now=[ops_daily.Alert("u", "t", "firing", None, None, ("ops",))], unreadable="history truncated"
     )
     assert _report(alerts=firing).exit_code == 2
 
@@ -645,11 +678,11 @@ def test_the_true_positives_still_pass(cmd):
 
 
 def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
-    """The daily pass's core case, and it was silently missing: history rows were fetched and
-    discarded, so `fired_in_window` was a copy of `firing_now` and an alert that fired at 02:00 and
-    cleared at 03:00 never reached the report, the runbook loop, or the journal. The frame's shape
-    is measured against the live API: three columns named by `schema.fields`, the rule identity in
-    `line`, never in `labels`."""
+    """The daily pass's core case: an alert that fired at 02:00 and cleared at 03:00 is invisible to
+    `firing_now` by the time the pass runs, so it must reach the report, the exit code and the
+    journal through `fired_in_window` -- otherwise a day whose only event self-resolved reads
+    all-clear over whatever it was. The frame's shape is measured against the live API: three
+    columns named by `schema.fields`, the rule identity in `line`, never in `labels`."""
     rules = _rules(
         {
             "name": "Capture · stream silent",
@@ -687,6 +720,24 @@ def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
     assert read.firing_now == [], "it is not firing now -- that is the point"
     assert [a.uid for a in read.fired_in_window] == ["zcrypto-capture-stream-silent"]
     assert read.fired_in_window[0].runbook == "infra/runbooks/capture.md#zcrypto-capture-stream-silent"
+    # Reading it is half the job; the pass's artefacts are the report and the journal paragraph, and
+    # a `read_alerts` assertion alone cannot tell a rendered list from a discarded one.
+    report = _report(alerts=read)
+    assert "zcrypto-capture-stream-silent" in report.markdown()
+    assert "infra/runbooks/capture.md#zcrypto-capture-stream-silent" in report.markdown()
+    assert report.exit_code == 1 and report.verdict_word == "attention"
+    assert "zcrypto-capture-stream-silent" in report.journal_paragraph()
+
+
+def test_an_alert_still_firing_is_not_also_listed_as_cleared():
+    """`fired_in_window` is SEEDED from `firing_now`, so the two overlap by construction; rendering
+    it raw prints every standing alert twice and inflates the journal line."""
+    still_firing = ops_daily.Alert(
+        "zcrypto-capture-venue-not-online", "t", "firing", None, "infra/runbooks/capture.md#x", ("zcrypto",)
+    )
+    report = _report(alerts=ops_daily.AlertsRead(firing_now=[still_firing], fired_in_window=[still_firing]))
+    assert report.markdown().count("zcrypto-capture-venue-not-online") == 1
+    assert "fired and cleared" not in report.markdown()
 
 
 @pytest.mark.parametrize(
