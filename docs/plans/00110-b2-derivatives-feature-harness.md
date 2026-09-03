@@ -2,26 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> ## ⛔ NOT EXECUTION-READY — the contract pin refuted 11 premises (2026-09-03)
+> ## ✅ The pin's eleven refutations are ADDRESSED (2026-09-03)
 >
-> The review loop was cut at the pin by its time-gate; lenses, union, fix and the three floor passes never ran. **Do not execute this plan as written.** The pin's refutations, each verified by running code, and every one of them a defect in the pair rather than in the tree:
+> A contract-pin run on 2026-09-02 graded 34 premises and refuted 11 before the auto-exec time-gate cut the loop. All eleven are now fixed in this pair; the review loop restarts at the pin against the corrected version. What changed, so a reader can check the fixes rather than trust them:
 >
-> 1. **The look-ahead guard in Task 2 does not work.** The pin built a deliberate backward-fill defect (`if t >= g: return x` — reads the NEXT source row) and ran the plan's own test against it: correct implementation and defect **both PASS**, because the appended stamps `_t(16), _t(20)` sit beyond the grid's last stamp `_t(8)` and cannot move any value under either semantics. **The working guard it verified**: recompute over `grid[:k]` using only source rows with `ts <= grid[k-1]` and compare to the full run's prefix — correct as-of passes, the defect trips at `k=1` (`[None]` vs `[2.0]`). This is the plan's load-bearing test and it was inert.
-> 2. **Both planted-signal assertions are unachievable.** `funding_zscore` and `oi_zscore` both assert `> 3.0`; the true value is **2.8460498941515410** (inclusive window, sample stdev) or **exactly 3.0** (population stdev), and undefined under a strictly-past window. No definition returns `> 3.0`, and the docstring's own "2 sd above" contradicts the assertion.
-> 3. **Task 4 is self-contradictory as executed.** "OI is strictly positive, so these use `_validate_prices`" cannot hold beside "null-propagating": `_validate_prices([100.0, None, 110.0])` raises `FeatureError`. An OI feature cannot both call it and propagate a null.
-> 4. **"Matching the existing convention exactly" is false about length.** All five existing feature functions return `len(prices) - 1`, aligned to `returns_from_prices`; every test in this plan requires `len(input)`. The three traits the sentence's parenthesis names — keyword-only params, a causality docstring, `_validate_*`/`FeatureError` — do all hold.
-> 5. **The 2022 hole is panel-wide, not a BTCUSDT property.** It is 87.3 % for nine symbols and 87.0 % for XRP — identical. Panel-wide null is **18.4 %** (921,890/5,010,882); BTCUSDT's 14.9 % is lower only because it has 15 more months of dense history diluting it. The spec's D5 presents 14.9 % as the figure.
-> 6. **`none before 2022-01-30` is false read absolutely** — the column is populated from 2020-09-01, the series' first row. The true statement is 2022-scoped.
-> 7. **The §12 attribution is wrong**: the B2 quote is verbatim at master-plan line 156, inside **§5** (Strategy Design Space). §12 begins at line 307. T0023 cites it as §5 correctly. Separately, §9 line 261 uses "B2" for an unrelated *benchmark*.
-> 8. **B1's band is 4h only**, not 1h/4h — spec `00045` conditions on the adopted A2-**4h** ensemble over `hour ∈ {0,4,8,12,16,20}`; its 15m substrate feeds the vol scaler, not a decision grid. Both grids are buildable (`60/240/1440.parquet` all present), so D3's *choice* survives; its stated *reason* does not.
-> 9. **The spec's claim about the catalog is stale against its own commit** — `523a4034` already replaced the "early metrics" wording, so "the catalog is corrected in the same change" is discharged and the present-tense premise no longer matches the tree.
-> 10. **T0023 is already `partial`** (set at iter-090); Task 6's status flip is a no-op. The `## Done so far` entry and the next-steps trim are the real work.
+> - **Task 2's look-ahead guard was inert and is replaced.** The old form appended source rows *past the grid's last stamp*, which cannot move any value under any semantics — the pin showed it passing on a deliberate backward-fill defect. The new form truncates: recompute over `grid[:k]` from rows stamped `<= grid[k-1]` and demand the prefix match. **Re-verified here on both arms: old guard passes correct AND defect; new guard passes correct, trips defect.**
+> - **Both planted-signal thresholds asserted `> 3.0`, which no window definition produces.** Spec D7 now pins the semantics (inclusive trailing window ending at `k`, sample stdev, `None` when short or null-bearing, `0.0` at zero variance) and both tests assert the pinned definition's exact value, `2.8460498941515410` — computed, not thresholded.
+> - **Task 4 asked null propagation through `_validate_prices`, which raises on `None`.** Task 1 now adds `_validate_levels` (finite, `> 0`, or `None`).
+> - **"Matching the convention exactly" was false about length.** The existing five return `len(prices) - 1`, aligned to `returns_from_prices`; these align to the input grid and return `len(input)`. Stated in both artefacts.
+> - **Four spec facts corrected**: the 2022 hole is panel-wide (87.3 % in nine symbols, 87.0 % in XRP; panel null 18.4 %, not BTC's diluted 14.9 %); "none before 2022-01-30" is true only within 2022; the B2 quote is master-plan **§5**, not §12; B1's band is **4h only**, so D3's grid choice survives on a different and stated reason.
+> - **Two bookkeeping errors**: the spec's claim about the catalog was already discharged by its own commit `523a4034`, and `T0023` is already `partial` so Task 6's flip was a no-op — its real work is the `## Done so far` entry and the next-steps trim.
 >
-> Full graded fact file: 34 claims, at `.tmp/plan-review/00110/pin-facts.md` — **gitignored, so it will not survive a clean**; this block is the durable record.
+> The pin's full fact file is at `.tmp/plan-review/00110/pin-facts.md` — gitignored, so this block is the durable record.
+
 
 **Goal:** Build the funding + OI feature harness B2 will be measured with, proven on known answers before any verdict counts.
 
-**Architecture:** Pure functions on plain Python lists in `cli/features/derivatives.py`, matching the existing `cli/features/` convention exactly (see `momentum.py`: keyword-only params, a docstring stating the causality property, `_validate_*` helpers raising `FeatureError`). No polars, no frames, no I/O — the substrate readers already exist in `cli/derivatives/`.
+**Architecture:** Pure functions on plain Python lists in `cli/features/derivatives.py`, matching the existing `cli/features/` convention in the three traits that transfer — keyword-only params after the data, a docstring stating the causality property, `_validate_*` raising `FeatureError` — and **deliberately NOT in output length**: the existing five return `len(prices) - 1` because they align to `returns_from_prices`, while these align to the input grid and return `len(input)` with `None` where undefined (spec D7). No polars, no frames, no I/O — the substrate readers already exist in `cli/derivatives/`.
 
 **Tech Stack:** Python 3.14, stdlib only for the feature math; pytest.
 
@@ -45,7 +42,8 @@
 - Test: `tests/test_features_validate.py`
 
 **Interfaces:**
-- Produces: `_validate_rates(name: str, values: list[float | None]) -> None` — accepts finite floats of ANY sign and `None`; rejects non-finite, bool, non-numeric, and lists shorter than 2.
+- Produces: `_validate_rates(name, values)` — finite floats of ANY sign, or `None`.
+- Produces: `_validate_levels(name, values)` — finite floats `> 0`, or `None`. Needed because `_validate_prices` raises on `None` and OI features must propagate it (spec D5).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -99,7 +97,9 @@ def _validate_rates(name: str, values: list[float | None]) -> None:
 - [ ] **Step 1: Write the failing tests — including the guard the spec exists for**
 
 ```python
-from datetime import datetime, timedelta, timezone
+import pytest
+from datetime import datetime, timezone
+
 from cli.features.derivatives import align_asof
 
 UTC = timezone.utc
@@ -114,14 +114,25 @@ def test_align_asof_forward_fills_and_never_interpolates():
 def test_align_asof_is_none_before_the_first_source_row():
     assert align_asof([_t(8)], [2.0], [_t(0), _t(8)]) == [None, 2.0]
 
-def test_appending_future_source_rows_cannot_change_any_earlier_value():
-    """The look-ahead guard (spec D2/D10). Recomputing with future rows appended must be
-    bit-identical over the original grid, or a feature is reading its own future."""
+def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
+    """The look-ahead guard (spec D2/D10), in the form that actually bites.
+
+    An earlier draft appended FUTURE source rows beyond the grid's last stamp and asserted the
+    result was unchanged. The contract pin showed that test passes on a deliberate backward-fill
+    defect (`if t >= g: return x`, which reads the NEXT source row) as readily as on the correct
+    implementation, because rows past the grid's end cannot move any value under either semantics.
+
+    This form truncates instead: recompute over `grid[:k]` using only source rows stamped at or
+    before `grid[k-1]`, and demand the prefix match the full run's. The defect trips at k=1
+    (`[None]` vs `[2.0]`); the correct implementation passes."""
     src_ts, src_v = [_t(0), _t(8)], [1.0, 2.0]
     grid = [_t(0), _t(4), _t(8)]
-    before = align_asof(src_ts, src_v, grid)
-    after = align_asof(src_ts + [_t(16), _t(20)], src_v + [99.0, -99.0], grid)
-    assert before == after
+    full = align_asof(src_ts, src_v, grid)
+    for k in range(1, len(grid) + 1):
+        cutoff = grid[k - 1]
+        visible = [(t, v) for t, v in zip(src_ts, src_v) if t <= cutoff]
+        prefix = align_asof([t for t, _ in visible], [v for _, v in visible], grid[:k])
+        assert prefix == full[:k], f"prefix at k={k} disagrees with the full run"
 ```
 
 - [ ] **Step 2: Run, expect failure**
@@ -187,10 +198,13 @@ def align_asof(
 from cli.features.derivatives import funding_accrued_carry, funding_sign_persistence, funding_zscore
 
 def test_funding_zscore_recovers_a_planted_value():
-    """Planted signal (spec D10): a constant series then one print 2 sd above it."""
+    """Planted signal (spec D10) under D7's pinned window: inclusive trailing window ending at k,
+    sample stdev. Nine identical prints then one outlier scores exactly 2.8460498941515410 --
+    verified by computation, not asserted as a threshold. An earlier draft asserted `> 3.0`, which
+    no window definition can produce: population stdev gives exactly 3.0, exclusive is undefined."""
     rates = [0.0001] * 10 + [0.0009]
     z = funding_zscore(rates, window=10)
-    assert z[-1] is not None and z[-1] > 3.0
+    assert z[-1] == pytest.approx(2.8460498941515410)
 
 def test_funding_zscore_of_a_constant_series_is_zero_not_spurious():
     z = funding_zscore([0.0001] * 12, window=10)
@@ -221,7 +235,7 @@ def test_accrued_carry_sums_the_window():
 - Test: `tests/test_features_derivatives.py`
 
 **Interfaces:**
-- Produces: `oi_log_delta(levels)`, `oi_zscore(levels, *, window)`, `oi_momentum(levels, *, lookback)` — `list[float | None]`, null-propagating. OI is strictly positive, so these use `_validate_prices`.
+- Produces: `oi_log_delta(levels)`, `oi_zscore(levels, *, window)`, `oi_momentum(levels, *, lookback)` — `list[float | None]`, null-propagating. OI is strictly positive **and nullable**, which `_validate_prices` cannot express — it raises `FeatureError` on `None` (verified). Task 1 therefore adds `_validate_levels` alongside `_validate_rates`: finite, `> 0`, or `None`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -235,8 +249,9 @@ def test_oi_log_delta_is_the_log_ratio_and_starts_none():
     assert out[1] == math.log(110.0 / 100.0)
 
 def test_oi_zscore_recovers_a_planted_spike():
+    """Same pinned definition, same arithmetic as the funding case."""
     out = oi_zscore([100.0] * 10 + [180.0], window=10)
-    assert out[-1] is not None and out[-1] > 3.0
+    assert out[-1] == pytest.approx(2.8460498941515410)
 
 def test_oi_momentum_is_causal_over_the_lookback():
     assert oi_momentum([100.0, 100.0, 100.0, 125.0], lookback=3)[-1] == 0.25
@@ -289,5 +304,5 @@ def test_coverage_by_year_exposes_a_single_bad_year():
 
 - [ ] **Step 1:** Append the iterations-history entry to `docs/iterations-history-phase4.md` (B-family is Phase 4 subject matter) via the `iteration-closeout` skill.
 - [ ] **Step 2:** Append the Phase-4 decisions-log entry to `docs/research/10.phase4-decisions.md` for the subject-matter decisions this iteration made (the 2022 coverage finding and its consequence for feature selection).
-- [ ] **Step 3:** Update `T0023` to `partial` with a `## Done so far` recording the harness, and trim its next steps to the remainder (the family, the trials, liquidations).
+- [ ] **Step 3:** `T0023` is ALREADY `partial` (set at iter-090) and its `ripe_when` — "the B2 derivatives-positioning family is picked for an iteration" — is satisfied by this branch, so there is no status flip to make. The real work is the `## Done so far` entry recording the harness and trimming `## Suggested next steps`, whose second bullet is exactly this harness, to the remainder (the family, the trials, liquidations).
 - [ ] **Step 4:** Run `uv run pre-commit run -a` and the full reachable test set; commit.
