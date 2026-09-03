@@ -3740,7 +3740,8 @@ rules:
       # feeds synthetic `maintenance` and `cancel_only` frames and asserts a series per system value.
       #
       # PRESENCE, not increase(). The daemon emits a series only for `system` values it has actually
-      # seen, so a non-online series is BORN at 1 -- and Prometheus inserts no implicit zero before a
+      # seen, so a non-online series is BORN at whatever its first scrape catches -- and Prometheus
+      # inserts no implicit zero before a
       # series' first sample, so increase() over it returns nothing on one sample and 0 on N equal
       # samples. The per-transition frame count is NOT fixed -- on 2026-09-03 each host logged five
       # `maintenance` lines, two `post_only` and one `cancel_only` -- so whether increase() finds a
@@ -3818,14 +3819,17 @@ rules:
       # on its digest, so a standing latch would mask every repeat for as long as that holds.
       #
       # increase() is exactly wrong as the PRIMARY form and exactly right as the SECOND one. The
-      # sibling's comment explains why it cannot lead: a non-online series is BORN at 1 and Prometheus
-      # inserts no implicit zero before a series' first sample, so increase() returns nothing on the
-      # very transition that rule exists to catch. That argument does not transfer to a series ALREADY
-      # sitting at a non-zero value -- a 1 -> 2 step is an ordinary counter increase and increase()
-      # reports it. The two rules therefore partition the space: presence catches the first sighting
-      # (including the first after any restart, since the counter is in-memory and resets with the
-      # process), and this one catches every sighting thereafter. Neither alone covers both, which is
-      # why this supplements rather than replaces -- swapping the sibling out for this form would lose
+      # sibling's comment explains why it cannot lead: a non-online series is BORN at whatever its
+      # first scrape catches -- 2 on zcrypto and 5 on zcrypto-red on 2026-09-03, from frames 30 ms
+      # apart -- and Prometheus inserts no implicit zero before that first sample, so increase()
+      # returns nothing whenever the whole burst lands before it. That argument does not transfer to a
+      # series ALREADY sitting at a non-zero value -- a 1 -> 2 step is an ordinary counter increase and
+      # increase() reports it. So the split is NOT a clean partition and BOTH are needed: presence
+      # catches every first sighting unconditionally (including the first after any restart, since the
+      # counter is in-memory and resets with the process), while this form catches a first sighting
+      # only where a scrape happens to land mid-burst -- it did on zcrypto that day and did not on
+      # zcrypto-red -- and every sighting thereafter. Neither alone covers both, which is why this
+      # supplements rather than replaces -- swapping the sibling out for this form would lose
       # first-observation detection entirely.
       #
       # This one SELF-RESOLVES, the behavioural opposite of the latch, and that is the point: it
