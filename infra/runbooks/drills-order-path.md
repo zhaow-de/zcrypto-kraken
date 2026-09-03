@@ -136,6 +136,8 @@ Entry `A2`: the venue's figure, the ledgered figure, the delta, that the fill co
 
 **Decision-to-flat**: how long it takes, in wall-clock minutes, from an operator deciding to close everything to the account actually being flat. That number is the one an operator needs before they can promise anything about a bad afternoon, and nothing in this system has ever produced it.
 
+**What stops the clock is venue truth, and here that is not a formality.** The command's own flat verdict is blind to an order resting on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), so a clock stopped on its exit 0 measures decision-to-*verdict* and would record the one number this drill exists to produce against a read that can say flat while an order rests. Stop it on Kraken's own pages.
+
 ### Preconditions
 
 - **B waits on the converge, not on the build.** `zcrypto engine flatten` shipped with spec `00106`; the host-facing wrapper is rendered by `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2` to `/usr/local/sbin/zcrypto-flatten`, and the procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Until an **engine converge carrying 00106** reaches the host, the wrapper is absent and a run booked against B is **`blocked`** with *that* reason — "wrapper not yet deployed", never "not built", and never `fail`, which would assert a red button that did not work.
@@ -156,7 +158,7 @@ The flatten command, per [`engine-procedures.md#engine-flatten`](engine-procedur
 
 ### Operator action
 
-The measurement *is* the operator action: note the decision time, run the procedure the command lands with, and stop the clock on venue truth reading flat — positions empty and balances EUR-only, read with the probe window's venue-truth read rather than from anything the engine reports about itself.
+The measurement *is* the operator action: note the decision time, run the procedure the command lands with, and stop the clock on venue truth reading flat — **no order resting**, positions empty and balances EUR-only, read with the probe window's venue-truth read rather than from anything the engine reports about itself. The open-orders half is the one the command's own verdict cannot supply.
 
 The kill file the flatten placed **stays** until a human clears it. Read it (`sudo cat /var/lib/zcrypto-engine/exec/kill`) before removing it, exactly as after any other trip.
 

@@ -454,7 +454,15 @@ Real money moves, at whatever price the market gives. This closes the **whole ac
 
 **What it does not do**: it does not clear the kill file, does not restart the engine, does not touch the engine's execution ledger, and does not close anything partially — it is the whole account or nothing.
 
-**Two limits it carries today.** The reduce-only market close on a margin position has never been sent live from this repository on any order type; the first real press through this wrapper — on a position minted for the purpose against the current pin, with a margin leg wherever `ordermin` allows — is where that is first proven, and until its `docs/reference/adapter-verification/` row records it, treat a margin close as unverified and read Kraken's own positions page afterwards by eye. The drill program's decision-to-flat drill is a later, separate measurement and does not lift this caveat. And the five account reads have been proven against the live venue only once the read-only dry-run recorded in `docs/reference/adapter-verification/` has been run through this wrapper; until that row exists, a live `--execute` is being run against read shapes nothing has confirmed.
+**Three limits it carries today.** The reduce-only market close on a margin position has never been sent live from this repository on any order type; the first real press through this wrapper — on a position minted for the purpose against the current pin, with a margin leg wherever `ordermin` allows — is where that is first proven, and until its `docs/reference/adapter-verification/` row records it, treat a margin close as unverified and read Kraken's own positions page afterwards by eye. The drill program's decision-to-flat drill is a later, separate measurement and does not lift this caveat. And the five account reads have been proven against the live venue only once the read-only dry-run recorded in `docs/reference/adapter-verification/` has been run through this wrapper; until that row exists, a live `--execute` is being run against read shapes nothing has confirmed.
+
+<a name="flat-verdict-blind-legs"></a>
+
+**And the third: the flat verdict is blind on five pairs — exit 0 can be a false all-clear.** The venue adapter caches its instruments under Kraken's `AssetPairs` key (`XXBTZEUR`) and looks an open order up by the pair name the order itself carries, which is the altname (`XBTEUR`); on a miss it drops the row and returns success with no warning. Five of the twelve traded legs — **BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR, ETH/BTC** — are spelled both ways, so an order resting on one of them is absent from every open-order read this command makes: the dry-run preview's count, and the final read the exit code is derived from.
+
+**The cancel is not affected.** It is one account-wide cancel that names no pair, and it does reach an order on those five legs. What is affected is the verdict, which is why the mitigation is real rather than hopeful: **confirm open orders on Kraken's own page after every press — step 4, and this is why it is not optional — and if one is still resting, press the button again.** The second press sends the account-wide cancel again.
+
+This is a known, deliberately unfixed limit (registered on \[[T0160]\]), not a defect to report — the tidy-looking correction, "the read should be complete", is a change to the adapter's instrument cache and is exactly what has been deferred. Do not delete this paragraph in a docs pass.
 
 ### What to do
 
@@ -464,7 +472,7 @@ Real money moves, at whatever price the market gives. This closes the **whole ac
 sudo zcrypto-flatten
 ```
 
-It prints every resting order it would cancel, every position it would close with its side and quantity, every balance it would sell with an estimate at the taker rate, every balance below the venue's minimum that it will list and not send, and every balance no EUR or BTC pair can carry. It exits 0 and changes nothing — 3 if the venue could not be read, 1 if the plan could not be printed, both of them having changed nothing either. Its reads run beside the still-running engine and share the trade key with it, so one engine order or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary.
+It prints the resting orders it can see — a floor, not an inventory: the count omits any order on the five pairs [the third limit](#flat-verdict-blind-legs) names, though the cancel still reaches them — every position it would close with its side and quantity, every balance it would sell with an estimate at the taker rate, every balance below the venue's minimum that it will list and not send, and every balance no EUR or BTC pair can carry. It exits 0 and changes nothing — 3 if the venue could not be read, 1 if the plan could not be printed, both of them having changed nothing either. Its reads run beside the still-running engine and share the trade key with it, so one engine order or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary.
 
 2. **Press it.**
 
@@ -478,7 +486,7 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 
 | code | what it means | what to do |
 | -- | -- | -- |
-| **0** | the final read shows no resting order, no open position and nothing sellable left | go to step 4 |
+| **0** | the final read shows no resting order, no open position and nothing sellable left — and that read is blind to an order resting on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC ([the third limit](#flat-verdict-blind-legs)) | go to step 4, which is what catches that |
 | **1** | refused with nothing sent — no kill file, no terminal, the word did not match, the plan could not be shown, or no credentials in the container | nothing was sent; fix what it named and run it again |
 | **2** | something is still open, or the account-wide cancel failed, or a read after the cancel failed | go to step 5 |
 | **3** | the venue could not be reached or read **before anything was sent** | nothing was sent; the account is as it was |

@@ -459,9 +459,12 @@ believes is still working.
 3. Only then, re-run `$RUN --probes 6 --evidence-dir "$EVID"` and confirm `open orders 0 (ours 0 …)`.
 
 Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads
-every resting order at the venue, finds no ledgered row for a probe order, and **cancels it** — a
-silent interaction between two systems, in the logs of only one of them. Leave nothing for it to
-find.
+the resting orders reconciliation put in its cache, finds no ledgered row for a probe order, and
+**cancels it** — a silent interaction between two systems, in the logs of only one of them. And on
+BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR and ETH/BTC that read is blind
+([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), so
+a probe order left resting on one of those is not cancelled either — it just keeps working. Both
+outcomes say the same thing: leave nothing for it to find.
 
 **Ctrl-C behaviour:** one Ctrl-C is safe. It reaches two handlers. Nautilus's stops the trader
 within a millisecond, which is what runs the harness's cancel-everything sweep — issued while the

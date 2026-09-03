@@ -728,7 +728,10 @@ class ProbeExecutor:
         At level NONE the pass cancels EVERYTHING, ledgered reducers included: a trip cancels
         resting orders, `_poll` already revokes even a resting close when the level drops there, and
         "nothing is working at the venue" must not have a restart-shaped hole -- a kill file that
-        survived the restart is exactly the state the operator pulled the switch for.
+        survived the restart is exactly the state the operator pulled the switch for. The hole this
+        paragraph forbids exists today in a different shape, and it reaches this pass through the
+        same `orders_open` list: `_cancel_resting` states it. "EVERYTHING" is everything the Cache
+        holds, and on a leg Kraken spells two ways a previous process's order is not in it.
 
         EVERY matched row is attached, canceled ones included, before any cancel goes out: a cancel
         is a request, not an outcome, and an order can still fill between it and the venue's answer.
@@ -777,7 +780,7 @@ class ProbeExecutor:
             # startup, including idle ones where nothing could be canceled at all.
             logger.critical(
                 "the exec ledger could not be read at startup -- no row can be reconciled against venue truth%s",
-                " and every resting order will be canceled" if resting else "",
+                " and every resting order the Cache holds will be canceled" if resting else "",
                 exc_info=True,
             )
             rows, finished = {}, {}
@@ -1743,8 +1746,9 @@ class ProbeExecutor:
     # --- the kill switch -----------------------------------------------------------------------
 
     def _trip_kill(self, reason: str) -> None:
-        """Latch the execution kill switch: create the kill file, pull everything that may still be
-        working at the venue, and stop the plan.
+        """Latch the execution kill switch: create the kill file, pull everything the Cache reports
+        still working at the venue, and stop the plan. "Everything the Cache reports" is narrower
+        than "everything working" on the legs `_cancel_resting` names.
 
         The file's semantics are `00088`'s, untouched -- presence is the whole protocol, the contents
         are for the human who finds it, and NO code path anywhere clears it. That is what makes this
@@ -1803,6 +1807,26 @@ class ProbeExecutor:
         the Cache reports open, which after a restart includes orders the startup pass deliberately
         left resting. That pass makes the same call when it starts up onto a latched kill -- a
         tripped switch has no order it is willing to leave working, however well justified.
+
+        THAT INVARIANT HAS A HOLE, and it is spelling-shaped rather than restart-shaped. An order
+        this process did not place -- a previous process's, or a hand-placed one -- reaches the Cache
+        only through startup reconciliation, and reconciliation obtains open orders through the same
+        adapter read `cli/engine/flatten.py`'s `read_open_orders` documents: the instrument lookup
+        compares Kraken's `AssetPairs` key against the order's altname and drops the row on a miss,
+        silently and with a successful return. On the legs spelled both ways -- `BLIND_ORDER_READ_LEGS`
+        there, BTC/EUR among them -- such an order never enters the Cache, so `orders_open` never
+        lists it and `cancel_order` is never called for it.
+
+        This is the OPPOSITE failure to flatten's, and the difference decides what an operator does.
+        Flatten's cancel is account-wide and reaches a blind leg; only its verdict is blind, so a
+        re-run mitigates. Here the cancel is issued PER ORDER off that list, so an order the list
+        omits is never requested at all: a capability gap, which no retry of the trip closes.
+        `filter_unclaimed_external_orders=False` in `cli/engine/node.py` is necessary for this sweep
+        to reach such an order and is not sufficient.
+
+        Not repaired here. The repair owes a venue-side open-order read at trip time, independent of
+        the Cache -- not a wider Cache query, which reads the same populated set. `T0160` carries the
+        registration and the reading that would settle it.
 
         Best-effort throughout, and never able to stop the trip: a cancel is a request rather than an
         outcome, the rows keep their open states, and a fill racing a cancel still lands through the
