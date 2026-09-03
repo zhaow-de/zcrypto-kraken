@@ -17,7 +17,7 @@
 - **`git mv` stages a rename of the INDEX version** — edits made before the move stay unstaged and `git status` shows `R100`; `git add` the new path after every `git mv`, and verify an invariant against the **committed** tree, never the working tree.
 - **Chain history-rewriting git commands one per call, never compounded** — verify each step's effect before issuing the next; `--amend` folds the staged set into HEAD, so read `git log -1 --stat` first — hooks see the staged set, never the mixture the amend produces.
 - **A grep hit is not a call site** — before claiming X calls Y, open the match and confirm it is a call site — a docstring, comment, or string-literal mention justifies nothing about runtime reachability.
-- **A count derived by arithmetic is not a measured count** — `total_a - total_b` is the set difference only when the sets nest. Measure the set.
+- **A count derived by arithmetic is not a measured count** — `total_a - total_b` is the set difference only when the sets nest. Measure the set — against the tree the change PRODUCES, not the one before it, and say which tree was counted.
 - **Never write a digest or hash from memory** — read it from its source and verify shape and existence (64 hex, present in a commit) before recording it: an invented value in a rollback record looks usable and is not.
 - **Attribute an observed mutation only after proving the suspect command's MODE could produce it** — an ansible `--check` renders against controller-local temp while a real write stages into the remote user's temp; fingerprint first, a timing coincidence is never an attribution.
 - **Python `str.replace` edits silently no-op on a missed match** — `assert old in s` (or verify the output) every time.

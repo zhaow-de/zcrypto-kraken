@@ -1,5 +1,7 @@
 # Fleet deploys
 
+*Protected — every edit takes the owner's per-edit sign-off (`zcrypto-refine-rules`).*
+
 L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-red` (secondary) is permanent data loss. **Before any converge, re-pin, restart, image prune or panel regeneration, read the owning skill** — `.claude/skills/zcrypto-rollout-image/SKILL.md` for app-image digests and every tier's converge mechanics, `.claude/skills/zcrypto-bump-alloy/SKILL.md` for Alloy digests; both carry the shared converge mechanics and are readable even where skill invocation is blocked. Below is only what must hold before either file is open.
 
 ## Invariants
@@ -17,6 +19,7 @@ L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-re
 
 ## Alert-rule lifecycle
 
+- **`grafana-push.sh` runs from merged `develop`, never from a branch** — its header states the bar and the owner-word exception.
 - **Deleting a rule from `infra/grafana/alerts.yaml` does not retire it** — the push upserts and never deletes; retiring is `GRAFANA_PRUNE=1` with the orphan report naming exactly the uid.
 - **Never prune the superseded rule before its replacement's first sample is verified by VALUE** — `delta()`/`increase()` are blind to a condition already present in a series' first sample. Order: converge → push → verify the value → prune → confirm the old uid 404s.
 - A rule pushed before its metric's first record pages a spurious no-data alert — push after the first record, or knowingly accept one self-healing page; journal-seed an eagerly-registered gauge instead of publishing `0.0`.

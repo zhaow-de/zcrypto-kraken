@@ -17,6 +17,8 @@ Standard single-package uv project: `pyproject.toml`, `uv.lock`, `.python-versio
 
 ## Secrets
 
+*Protected — every edit takes the owner's per-edit sign-off (`zcrypto-refine-rules`).*
+
 **Never print a container's environment on the engine host `zcrypto`** — `docker inspect … {{json .Config.Env}}` / `{{json .Config}}`, `docker exec … env`, `docker compose config`: `zcrypto-engine` carries the live Kraken trade key and the Loki push password as env vars. Scope every inspect to the field you need — `.Mounts`, `.State`, `.Config.Image`, `.Config.Entrypoint`, `.RestartCount` — and **name those fields in a subagent's dispatch prompt**, since an unscoped "gather `docker inspect` evidence" invites the whole-object form. Vault- and deploy-specific hazards (`ansible-inventory --host`/`--list`) are in `fleet-deploys.md`.
 
 ## Rules
