@@ -1,5 +1,7 @@
 # The memo protocol — `docs/memo.local.md`
 
+**Concurrent writers:** the memo is written under the token `docs/reference/multi-agent-protocol.md` defines — request it from `zcrypto-main`, read before, Edit/Write tools only, read back after, hand back the `sha256 · lines · bytes` chain.
+
 The single source of truth for the memo's data model, tooling discipline, and mechanical procedures. Loaded by `/zcrypto-grooming` (the owner — its interactive flow is `../SKILL.md`) and by `/zcrypto-auto-exec` (full path: `.claude/skills/zcrypto-grooming/references/memo-protocol.md`). **The human gates below attach to the operations themselves, not to whichever skill loaded this file** — any future memo machinery inherits them.
 
 ## The file
