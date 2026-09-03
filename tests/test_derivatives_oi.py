@@ -6,11 +6,14 @@ import json
 import urllib.error
 import zipfile
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import polars as pl
 import pytest
 
+from cli.config import load_config, resolve_hot_source
 from cli.derivatives.errors import DerivativesError
+from cli.derivatives.funding import PERP_SYMBOLS
 from cli.derivatives.oi import (
     backfill_oi,
     build_oi_substrate,
@@ -387,3 +390,76 @@ def test_build_substrate_writes_per_perp_files_and_a_manifest(tmp_path):
     # the manifest hash is byte-reproducible across two identical builds
     m2 = json.loads((tmp_path / "manifest.json").read_text())
     assert m2["set_sha256"] == manifest["set_sha256"]
+
+
+def _substrate_root(name: str) -> Path:
+    """The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
+
+    Gating on `Path("data/<name>")` alone would be wrong. `data/` is per-checkout and a git
+    worktree's is empty, so such a gate skips wherever this suite runs from a worktree — and a skip
+    on the only machine holding the substrate is recorded as coverage.
+    """
+    hot = resolve_hot_source(load_config()) / name
+    return hot if hot.is_dir() else Path("data") / name
+
+
+_OI_ROOT = _substrate_root("derivatives-oi")
+
+# A closed past window. A forward refresh extends the substrate beyond it and cannot move a count
+# taken over it; every population pinned below sits entirely inside it.
+_CLOSED_WINDOW_END = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+@pytest.fixture(scope="module")
+def oi_panel() -> dict[str, pl.DataFrame]:
+    """The ten perps' OI series, read once for the three assertions below (~5M rows over NFS).
+
+    Keyed on `PERP_SYMBOLS` rather than on whatever the directory holds, so a missing leg raises
+    instead of quietly shrinking the panel the counts are taken over.
+    """
+    return {perp: read_oi_series(_OI_ROOT, perp) for perp in sorted(PERP_SYMBOLS.values())}
+
+
+@pytest.mark.skipif(not _OI_ROOT.is_dir(), reason="derivatives-oi substrate absent")
+def test_the_balanced_oi_panel_starts_2021_12_01(oi_panel):
+    """Spec 00110 D4's balanced start is the LATEST first stamp, not BTC's: BTCUSDT reaches
+    2020-09-01 and the other nine begin 2021-12-01. A coverage extension moving either date moves
+    the panel every cross-sectional B2 feature is computed over."""
+    firsts = {perp: frame["ts"].min() for perp, frame in oi_panel.items()}
+    assert firsts["BTCUSDT"] == datetime(2020, 9, 1, tzinfo=UTC)
+    assert set(firsts.values()) == {datetime(2020, 9, 1, tzinfo=UTC), datetime(2021, 12, 1, tzinfo=UTC)}
+    assert max(firsts.values()) == datetime(2021, 12, 1, tzinfo=UTC)
+
+
+@pytest.mark.skipif(not _OI_ROOT.is_dir(), reason="derivatives-oi substrate absent")
+def test_both_oi_level_columns_carry_no_nulls(oi_panel):
+    """Spec 00110 D5's density claim is about BOTH level columns. A single-column guard would let a
+    re-fetch put holes in the other one silently — the same reason the zero counts below assert
+    both."""
+    nulls = {
+        column: sum(frame[column].null_count() for frame in oi_panel.values())
+        for column in ("sum_open_interest", "sum_open_interest_value")
+    }
+    assert nulls == {"sum_open_interest": 0, "sum_open_interest_value": 0}
+
+
+@pytest.mark.skipif(not _OI_ROOT.is_dir(), reason="derivatives-oi substrate absent")
+def test_the_oi_zero_populations_hold_over_a_closed_window(oi_panel):
+    """Spec 00110 D5's venue-hole counts, pinned so a substrate re-fetch cannot move them silently.
+
+    The two OI zero sets NEST rather than coincide — 101 rows read a zero notional against a healthy
+    positive `sum_open_interest` — so a guard on the first column alone is blind to the second's
+    count moving. `sum_taker_long_short_vol_ratio == 0.0` is the opposite case, a real all-sell bar
+    D5 rules must be ACCEPTED, and is pinned here so that ruling's population cannot drift either.
+    """
+    window = {perp: frame.filter(pl.col("ts") < _CLOSED_WINDOW_END) for perp, frame in oi_panel.items()}
+    assert sum(frame.height for frame in window.values()) == 4_426_251
+    zeros = {
+        column: sum(frame.filter(pl.col(column) == 0.0).height for frame in window.values())
+        for column in ("sum_open_interest", "sum_open_interest_value", "sum_taker_long_short_vol_ratio")
+    }
+    assert zeros == {
+        "sum_open_interest": 2_329,
+        "sum_open_interest_value": 2_430,
+        "sum_taker_long_short_vol_ratio": 45,
+    }

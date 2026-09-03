@@ -3,11 +3,14 @@ import io
 import json
 import urllib.error
 import zipfile
+from collections import Counter
 from datetime import UTC, datetime
+from pathlib import Path
 
 import polars as pl
 import pytest
 
+from cli.config import load_config, resolve_hot_source
 from cli.derivatives.errors import DerivativesError
 from cli.derivatives.funding import (
     _BASE_URL,
@@ -234,3 +237,49 @@ def test_perp_symbols_maps_ten_basket_assets():
     assert PERP_SYMBOLS["AVAX"] == "AVAXUSDT"
     assert len(PERP_SYMBOLS) == 10
     assert all(v.endswith("USDT") for v in PERP_SYMBOLS.values())
+
+
+def _substrate_root(name: str) -> Path:
+    """The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
+
+    Gating on `Path("data/<name>")` alone would be wrong. `data/` is per-checkout and a git
+    worktree's is empty, so such a gate skips wherever this suite runs from a worktree — and a skip
+    on the only machine holding the substrate is recorded as coverage.
+    """
+    hot = resolve_hot_source(load_config()) / name
+    return hot if hot.is_dir() else Path("data") / name
+
+
+_FUNDING_ROOT = _substrate_root("derivatives-funding")
+
+# A closed past window: a forward refresh extends the substrate beyond it and cannot move a count
+# taken over it. A NEW off-cadence stretch after this end sits outside the guard below and surfaces
+# only in the per-year coverage summary (spec 00110 D6).
+_CLOSED_WINDOW_END = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+@pytest.mark.skipif(not _FUNDING_ROOT.is_dir(), reason="derivatives-funding substrate absent")
+def test_the_off_cadence_funding_prints_are_one_bounded_stretch_on_sol():
+    """Spec 00110 D7 rules the funding features' input a constant-interval print series, and rests
+    that ruling on the off-cadence population being one bounded stretch on one leg. A re-fetch that
+    re-derived that stretch differently would make the ruling wrong, and this is the only guard that
+    would notice.
+
+    The 101 here coincides in count with the zero-notional OI rows pinned in
+    `tests/test_derivatives_oi.py`; they are different populations on different substrates, so the
+    two assertions must not be folded together.
+    """
+    prints = 0
+    off_cadence: Counter[int] = Counter()
+    off_perps = set()
+    for perp in sorted(PERP_SYMBOLS.values()):
+        frame = read_funding_series(_FUNDING_ROOT, perp).filter(pl.col("ts") < _CLOSED_WINDOW_END)
+        prints += frame.height
+        off = frame.filter(pl.col("interval_hours") != 8)
+        if off.height:
+            off_perps.add(perp)
+            off_cadence.update(off["interval_hours"].to_list())
+
+    assert prints == 62_851
+    assert off_perps == {"SOLUSDT"}
+    assert dict(off_cadence) == {2: 99, 4: 2}
