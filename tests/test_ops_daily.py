@@ -91,7 +91,15 @@ def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
             "state": "firing",
             "labels": {"severity": "critical"},
             "annotations": {"summary": "one stream stopped. Runbook: infra/runbooks/capture.md#zcrypto-capture-stream-silent"},
-            "alerts": [{"activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto"}}],
+            "alerts": [
+                {"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto", "system": "maintenance"}},
+                {
+                    "state": "Alerting",
+                    "activeAt": "2026-08-29T10:02:00Z",
+                    "labels": {"host": "zcrypto-red", "system": "maintenance"},
+                },
+                {"state": "Alerting", "activeAt": "2026-08-29T10:04:00Z", "labels": {"host": "zcrypto-red", "system": "post_only"}},
+            ],
         },
         {
             "name": "Capture · venue not online",
@@ -106,6 +114,12 @@ def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
     assert [a.uid for a in read.firing_now] == ["zcrypto-capture-stream-silent"]
     assert read.firing_now[0].runbook == "infra/runbooks/capture.md#zcrypto-capture-stream-silent"
     assert read.unreadable is None
+    # One Alert per RULE, but carrying every host that has a firing instance: the venue rules group
+    # `by (host, system)`, so one venue halt raises several instances per host, and the silence the
+    # runbook prescribes is created and deleted PER HOST. A reader who cannot enumerate the hosts
+    # cannot discharge that obligation. Deduped, so three instances over two hosts read as two.
+    assert read.firing_now[0].hosts == ("zcrypto", "zcrypto-red")
+    assert read.firing_now[0].active_at == "2026-08-29T10:00:00Z"
 
 
 def test_a_rule_without_a_uid_is_a_finding_never_a_silently_dropped_rule():
@@ -152,11 +166,11 @@ def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid
             "state": "firing",
             "labels": {"severity": "critical"},
             "annotations": {},
-            "alerts": [{"activeAt": "2026-08-29T10:00:00Z", "labels": {"severity": "critical"}}],
+            "alerts": [{"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"severity": "critical"}}],
         }
     )
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
-    assert read.firing_now[0].host == expected
+    assert read.firing_now[0].hosts == (expected,)
 
 
 def test_an_instance_host_label_wins_over_the_uid_map():
@@ -167,11 +181,11 @@ def test_an_instance_host_label_wins_over_the_uid_map():
             "state": "firing",
             "labels": {"severity": "critical"},
             "annotations": {},
-            "alerts": [{"activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "nas"}}],
+            "alerts": [{"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "nas"}}],
         }
     )
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
-    assert read.firing_now[0].host == "nas"
+    assert read.firing_now[0].hosts == ("nas",)
 
 
 # --- Task 12 (spec 00104): the log plane -------------------------------------------------------------------
@@ -230,6 +244,29 @@ def test_no_series_is_a_verdict_failure_never_a_pass():
     assert all(c.value == "(no series)" for c in checks)
 
 
+@pytest.mark.parametrize(("value", "ok"), [("1", True), ("0", False)])
+def test_a_value_bearing_check_is_judged_on_its_VALUE_never_on_the_series_existing(value, ok):
+    """The empty-result fixture above cannot see a bound -- with no series a bounded and an unbounded
+    read both FAIL -- so only a value-bearing one separates them. `up` is 0, not absent, when Alloy is
+    running and the app it scrapes is dead; the capture role's own `config.alloy` says exactly that of
+    `engine_app` on the secondary. A presence-only check therefore prints PASS beside the one value
+    this check exists to catch."""
+    payload = {"data": {"result": [{"metric": {}, "value": [1, value]}]}}
+    up = next(c for c in ops_daily.read_verdict("tok", opener=_canned(payload)) if c.name == "capture primary up")
+    assert up.ok is ok
+    assert up.value == value
+
+
+def test_an_out_of_bound_age_fails_rather_than_reporting_its_number_as_a_pass():
+    """Every check whose name does not end `present` carries the bound of the rule that owns it, so
+    the pass cannot report PASS beside a value the fleet is already paging on: 99999 s of cycle age is
+    six times `zcrypto-engine-cycle-stale`'s own 16500."""
+    payload = {"data": {"result": [{"metric": {}, "value": [1, "99999"]}]}}
+    age = next(c for c in ops_daily.read_verdict("tok", opener=_canned(payload)) if c.name == "engine cycle age")
+    assert not age.ok
+    assert age.value == "99999"
+
+
 def test_the_deploy_window_holds_only_lines_inside_it(tmp_path):
     log = tmp_path / "deploy-log.jsonl"
     log.write_text(
@@ -264,7 +301,7 @@ def test_an_all_clear_report_exits_zero():
 
 
 def test_anything_fired_exits_one():
-    firing = ops_daily.AlertsRead(firing_now=[ops_daily.Alert("u", "t", "firing", None, None, "ops")])
+    firing = ops_daily.AlertsRead(firing_now=[ops_daily.Alert("u", "t", "firing", None, None, ("ops",))])
     assert _report(alerts=firing).exit_code == 1
 
 
@@ -281,7 +318,7 @@ def test_a_source_the_instrument_could_not_read_exits_two_and_names_it():
 
 def test_unreadable_outranks_fired_so_a_partial_read_is_never_reported_as_attention_only():
     firing = ops_daily.AlertsRead(
-        firing_now=[ops_daily.Alert("u", "t", "firing", None, None, "ops")], unreadable="history truncated"
+        firing_now=[ops_daily.Alert("u", "t", "firing", None, None, ("ops",))], unreadable="history truncated"
     )
     assert _report(alerts=firing).exit_code == 2
 
@@ -645,11 +682,11 @@ def test_the_true_positives_still_pass(cmd):
 
 
 def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
-    """The daily pass's core case, and it was silently missing: history rows were fetched and
-    discarded, so `fired_in_window` was a copy of `firing_now` and an alert that fired at 02:00 and
-    cleared at 03:00 never reached the report, the runbook loop, or the journal. The frame's shape
-    is measured against the live API: three columns named by `schema.fields`, the rule identity in
-    `line`, never in `labels`."""
+    """The daily pass's core case: an alert that fired at 02:00 and cleared at 03:00 is invisible to
+    `firing_now` by the time the pass runs, so it must reach the report, the exit code and the
+    journal through `fired_in_window` -- otherwise a day whose only event self-resolved reads
+    all-clear over whatever it was. The frame's shape is measured against the live API: three
+    columns named by `schema.fields`, the rule identity in `line`, never in `labels`."""
     rules = _rules(
         {
             "name": "Capture · stream silent",
@@ -687,6 +724,187 @@ def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
     assert read.firing_now == [], "it is not firing now -- that is the point"
     assert [a.uid for a in read.fired_in_window] == ["zcrypto-capture-stream-silent"]
     assert read.fired_in_window[0].runbook == "infra/runbooks/capture.md#zcrypto-capture-stream-silent"
+    # Reading it is half the job; the pass's artefacts are the report and the journal paragraph, and
+    # a `read_alerts` assertion alone cannot tell a rendered list from a discarded one.
+    report = _report(alerts=read)
+    assert "zcrypto-capture-stream-silent" in report.markdown()
+    assert "infra/runbooks/capture.md#zcrypto-capture-stream-silent" in report.markdown()
+    assert report.exit_code == 1 and report.verdict_word == "attention"
+    assert "zcrypto-capture-stream-silent" in report.journal_paragraph()
+
+
+def test_a_normal_instance_does_not_contribute_its_host_to_a_firing_rule():
+    """The rules API lists instances in EVERY state, not only the firing ones, and their states carry
+    a reason suffix the same way the history's do. A rule grouped `by (host, system)` can be Alerting
+    on the primary and Normal on the secondary, and naming both sends the operator to create a
+    silence on a host that never fired."""
+    payload = _rules(
+        {
+            "name": "Capture · venue not online",
+            "uid": "zcrypto-capture-venue-not-online",
+            "state": "firing",
+            "labels": {"severity": "warning"},
+            "annotations": {"summary": "Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-not-online"},
+            "alerts": [
+                {"state": "Normal", "activeAt": None, "labels": {"host": "zcrypto-red"}},
+                {"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto"}},
+            ],
+        }
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert read.firing_now[0].hosts == ("zcrypto",)
+    # `active_at` comes from the same filtered set, or a Normal instance's absent one wins by position.
+    assert read.firing_now[0].active_at == "2026-08-29T10:00:00Z"
+
+
+@pytest.mark.parametrize("state", [None, "", "Normal"])
+def test_an_instance_the_api_does_not_call_alerting_contributes_no_host(state):
+    """Default-DENY on the instance's own state. The `[{}]` sentinel that stands in for a rule whose
+    expr aggregated every label away is restored after the filter, not smuggled through it as a
+    default -- otherwise any instance the code cannot prove is firing names its host anyway, which is
+    the defect the filter exists to close."""
+    payload = _rules(
+        {
+            "name": "Capture · venue not online",
+            "uid": "zcrypto-capture-venue-not-online",
+            "state": "firing",
+            "labels": {"severity": "warning"},
+            "annotations": {"summary": "Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-not-online"},
+            "alerts": [
+                {"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto"}},
+                {"state": state, "activeAt": "2026-08-29T09:00:00Z", "labels": {"host": "zcrypto-red"}},
+            ],
+        }
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert read.firing_now[0].hosts == ("zcrypto",)
+
+
+def test_a_firing_rule_that_arrives_with_no_instances_still_names_its_mapped_host():
+    """The synthetic instance standing in for an empty `alerts` array must survive the state filter
+    that has no state to read, or `_UID_HOST` -- consulted per instance -- is never consulted at all.
+    Distinct from the rules that aggregate the host away: those DO carry an instance (pinned by the
+    test above), and reach the map through it."""
+    payload = _rules(
+        {
+            "name": "Alloy dark",
+            "uid": "zcrypto-alloy-dark-nas",
+            "state": "firing",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/observability.md#zcrypto-alloy-dark-nas"},
+            "alerts": [],
+        }
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert read.firing_now[0].hosts == ("nas",)
+
+
+def _history(*transitions):
+    """The live frame shape: three columns named by `schema.fields`, identity in `line`."""
+    return {
+        "schema": {"fields": [{"name": "time"}, {"name": "line"}, {"name": "labels"}]},
+        "data": {
+            "values": [
+                [1787987260000 + i * 1000 for i in range(len(transitions))],
+                list(transitions),
+                [{} for _ in transitions],
+            ]
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("current", "reaches"),
+    [
+        ("Alerting", True),
+        # 26 rules carry `noDataState: Alerting`; drill K measured the pair `Pending (NoData) ->
+        # Alerting (NoData)` off this endpoint. An exact match on "Alerting" drops every one of them.
+        ("Alerting (NoData)", True),
+        # `execErrState: Alerting` is Grafana failing to reach its own Prometheus -- 83.5% false over
+        # 23 days by the capture runbook's count. Admitting it would move the verdict on a hiccup.
+        ("Alerting (Error)", False),
+        # An Alerting reason nobody has measured yet costs one report line if admitted and a silent
+        # all-clear over a page if dropped, so the filter is a prefix minus Error rather than a list.
+        ("Alerting (KeepLast)", True),
+        # ... and a compound reason naming Error is still Grafana failing to read its own datasource.
+        ("Alerting (Error, KeepLast)", False),
+    ],
+)
+def test_the_history_admits_a_real_firing_and_its_nodata_sentinel_but_not_a_datasource_error(current, reaches):
+    rules = _rules(
+        {
+            "name": "Engine · cycle stale",
+            "uid": "zcrypto-engine-cycle-stale",
+            "state": "inactive",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/engine.md#zcrypto-engine-cycle-stale"},
+            "alerts": [],
+        }
+    )
+    history = _history({"previous": "Pending", "current": current, "ruleUID": "zcrypto-engine-cycle-stale", "ruleTitle": "t"})
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(rules, history))
+    assert bool(read.fired_in_window) is reaches
+
+
+def test_a_history_alert_takes_the_host_from_its_own_labels():
+    """A history row carries its own labels, and `_UID_HOST` names only the handful of rules whose
+    expr aggregates the host away -- so falling straight to the map prints `on ?` for most rules."""
+    rules = _rules(
+        {
+            "name": "Gate · exporter stale",
+            "uid": "zcrypto-gate-exporter-stale",
+            "state": "inactive",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/gate.md#zcrypto-gate-exporter-stale"},
+            "alerts": [],
+        }
+    )
+    history = _history(
+        {
+            "previous": "Pending",
+            "current": "Alerting",
+            "ruleUID": "zcrypto-gate-exporter-stale",
+            "ruleTitle": "t",
+            "labels": {"host": "nas"},
+        }
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(rules, history))
+    assert read.fired_in_window[0].hosts == ("nas",)
+
+
+def test_a_history_alert_gathers_every_host_that_fired_not_just_the_first_row():
+    """One rule fires once per host, so the history carries a row each -- 2026-09-03's
+    `zcrypto-capture-all-streams-silent` transitioned on both capture hosts within the same minute.
+    Keeping the first row alone under-reports exactly as reading `instances[0]` did."""
+    rules = _rules(
+        {
+            "name": "Capture · every book stream on a host is silent",
+            "uid": "zcrypto-capture-all-streams-silent",
+            "state": "inactive",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/capture.md#zcrypto-capture-all-streams-silent"},
+            "alerts": [],
+        }
+    )
+    uid = "zcrypto-capture-all-streams-silent"
+    history = _history(
+        {"previous": "Normal", "current": "Alerting", "ruleUID": uid, "ruleTitle": "t", "labels": {"host": "zcrypto"}},
+        {"previous": "Normal", "current": "Alerting", "ruleUID": uid, "ruleTitle": "t", "labels": {"host": "zcrypto-red"}},
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(rules, history))
+    assert [a.uid for a in read.fired_in_window] == [uid], "still ONE Alert per rule"
+    assert read.fired_in_window[0].hosts == ("zcrypto", "zcrypto-red")
+
+
+def test_an_alert_still_firing_is_not_also_listed_as_cleared():
+    """`fired_in_window` is SEEDED from `firing_now`, so the two overlap by construction; rendering
+    it raw prints every standing alert twice and inflates the journal line."""
+    still_firing = ops_daily.Alert(
+        "zcrypto-capture-venue-not-online", "t", "firing", None, "infra/runbooks/capture.md#x", ("zcrypto",)
+    )
+    report = _report(alerts=ops_daily.AlertsRead(firing_now=[still_firing], fired_in_window=[still_firing]))
+    assert report.markdown().count("zcrypto-capture-venue-not-online") == 1
+    assert "fired and cleared" not in report.markdown()
 
 
 @pytest.mark.parametrize(

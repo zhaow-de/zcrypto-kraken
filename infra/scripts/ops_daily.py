@@ -16,7 +16,8 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -75,7 +76,12 @@ class Alert:
     state: str
     active_at: str | None
     runbook: str | None
-    host: str | None
+    # EVERY host with a firing instance, not the first. The venue rules group `by (host, system)`,
+    # so one halt raises several instances per host, and `infra/runbooks/capture.md`'s prescribed
+    # silence is created and deleted PER HOST -- a report naming one host cannot discharge that.
+    # Still one Alert per RULE: `journal_paragraph` prints uids alone, so a per-instance Alert would
+    # print the same uid several times in the durable line.
+    hosts: tuple[str, ...]
 
 
 @dataclass
@@ -114,9 +120,10 @@ def _history_transitions(payload: dict):
             yield stamp, line
 
 
-def _host_of(uid: str, instance: dict) -> str | None:
-    labels = instance.get("labels") or {}
-    return labels.get("host") or _UID_HOST.get(uid)
+def _hosts_of(uid: str, instances: list[dict]) -> tuple[str, ...]:
+    """Deduped in the API's own order, so three instances over two hosts read as two."""
+    found = ((instance.get("labels") or {}).get("host") or _UID_HOST.get(uid) for instance in instances)
+    return tuple(dict.fromkeys(host for host in found if host))
 
 
 def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.request.urlopen) -> AlertsRead:
@@ -129,7 +136,21 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 uid = rule.get("uid")
                 if not uid:
                     return AlertsRead(unreadable=f"a rule arrived with no uid ({rule.get('name', '?')!r}) -- the API shape changed")
-                instances = rule.get("alerts") or [{}]
+                instances = rule.get("alerts") or []
+                # Instances arrive in EVERY state, reason suffix included, so a rule grouped
+                # `by (host, system)` that is Alerting on the primary and Normal on the secondary
+                # would otherwise name both hosts -- sending the operator to create, and later
+                # remember to delete, a silence on a host that never fired.
+                #
+                # Default-DENY, then restore the sentinel: an instance whose state the code cannot
+                # read is not evidence that it fired. `[{}]` covers a firing rule that arrives with no
+                # readable instance at all -- an API-shape defence, not a rule class; the five whose
+                # expr aggregates the host away do carry one, and reach `_UID_HOST` through it. The
+                # map is consulted per instance, so with nothing left there is nothing to reach it
+                # through, and a rule outside the map degrades to `on ?` rather than to a wrong host.
+                # Admitting the sentinel as a DEFAULT instead would let any unreadable state through
+                # the door it was opened for.
+                alerting = [i for i in instances if str(i.get("state") or "").startswith("Alerting")] or [{}]
                 summary = (rule.get("annotations") or {}).get("summary") or ""
                 link = _RUNBOOK_LINK.search(summary)
                 rule_links[uid] = link.group(0) if link else None
@@ -139,9 +160,9 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                             uid=uid,
                             title=rule.get("name", ""),
                             state="firing",
-                            active_at=instances[0].get("activeAt"),
+                            active_at=alerting[0].get("activeAt"),
                             runbook=link.group(0) if link else None,
-                            host=_host_of(uid, instances[0]),
+                            hosts=_hosts_of(uid, alerting),
                         )
                     )
     except _UNREACHABLE as exc:
@@ -158,10 +179,38 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
             payload = _get(url, token, opener)
             rows = (payload.get("data") or {}).get("values") or []
             for stamp, line in _history_transitions(payload):
-                if (line.get("current") or "") != "Alerting":
+                # The history writes the state with its REASON attached -- `drill-log.md` measured
+                # both `Pending (NoData) -> Alerting (NoData)` and `Alerting -> Normal (MissingSeries)`
+                # off this endpoint -- so an exact match on "Alerting" drops every firing that arrived
+                # through `noDataState: Alerting`, which the rules carry deliberately.
+                #
+                # A PREFIX rather than a list of the reasons seen so far, because the two failure
+                # directions are not symmetric: admitting a reason nobody has measured yet costs one
+                # report line, dropping one costs a silent all-clear over a page. `Error` is the
+                # single exclusion, and by substring so a compound reason cannot smuggle it past:
+                # that is Grafana failing to reach its own Prometheus rather than any fleet event,
+                # measured 83.5% false over 23 days in `infra/runbooks/capture.md`, and nearly every
+                # rule carries `execErrState: Alerting`, so admitting it would move the daily verdict
+                # on a platform hiccup.
+                current = str(line.get("current") or "")
+                if not current.startswith("Alerting") or "Error" in current:
                     continue
                 uid = line.get("ruleUID")
-                if not uid or uid in fired:
+                if not uid:
+                    continue
+                # The row's own label first: most rules are outside `_UID_HOST`, and falling straight
+                # to it prints `on ?` for them.
+                row_hosts = _hosts_of(uid, [{"labels": line.get("labels") or {}}])
+                seen = fired.get(uid)
+                if seen is not None:
+                    # A rule fires once per HOST, so a later row adds a host to the same Alert rather
+                    # than making a second one -- keeping the first row alone under-reports a
+                    # fleet-wide event exactly as reading `instances[0]` did. A uid already carrying a
+                    # CURRENTLY-firing Alert is left untouched: that one renders from `firing_now`,
+                    # and `cleared_in_window` subtracts it. The first row seen for a uid sets
+                    # `active_at`; later rows only add hosts.
+                    if seen.state == "fired-in-window" and row_hosts:
+                        fired[uid] = replace(seen, hosts=tuple(dict.fromkeys(seen.hosts + row_hosts)))
                     continue
                 fired[uid] = Alert(
                     uid=uid,
@@ -169,7 +218,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                     state="fired-in-window",
                     active_at=datetime.fromtimestamp(stamp / 1000, timezone.utc).isoformat(),
                     runbook=rule_links.get(uid),
-                    host=_UID_HOST.get(uid),
+                    hosts=row_hosts,
                 )
             if rows and len(rows[0]) >= HISTORY_PAGE_LIMIT:
                 read.unreadable = (
@@ -466,31 +515,48 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
 
 # Presence and freshness, which the alert rules deliberately cannot give -- their absence states are
 # `OK` by design, so a vanished series pages nothing. `(no series)` here is a FAIL, never a zero.
-VERDICT_CHECKS: tuple[tuple[str, str], ...] = (
-    ("capture primary up", 'up{job="capture_app",host="zcrypto"}'),
-    ("capture secondary up", 'up{job="capture_app",host="zcrypto-red"}'),
-    ("engine cycle age", "time() - zcrypto_engine_cycle_completed_at_seconds"),
-    ("gate status present", "zcrypto_gate_status"),
-    ("gate streak present", "zcrypto_gate_streak_days"),
-    ("exec gate level present", "zcrypto_exec_gate_level"),
-    ("reconcile source lag", "max(zcrypto_reconcile_source_lag_seconds)"),
-    ("logship drops", "max(zcrypto_logship_dropped_lines_total)"),
+# (name, expr, bound). A `None` bound is presence-only and belongs to the three checks whose names
+# say `present`; every other check is judged on its VALUE, because a series can be present and
+# carry the very reading the check exists to catch -- `up` reads 0, not absent, when Alloy is
+# running and the app it scrapes is dead (the capture role's own `config.alloy` says so of
+# `engine_app` on the secondary). A value-bearing check without a bound reports PASS through its
+# own failure.
+#
+# Each bound is the owning alert rule's own evaluator, so the pass and the page agree about what
+# healthy means; they drift apart if one is changed alone. `zcrypto-engine-cycle-stale` gt 16500,
+# `zcrypto-reconcile-source-lag` gt 10800, `zcrypto-logship-lines-dropped` gt 0 over 6 h.
+VERDICT_CHECKS: tuple[tuple[str, str, Callable[[float], bool] | None], ...] = (
+    ("capture primary up", 'up{job="capture_app",host="zcrypto"}', lambda v: v == 1),
+    ("capture secondary up", 'up{job="capture_app",host="zcrypto-red"}', lambda v: v == 1),
+    # The host matcher is the rule's, and it is load-bearing rather than decoration: without it
+    # `series[0]` is whichever host the API happened to list first.
+    ("engine cycle age", 'time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}', lambda v: v <= 16500),
+    ("gate status present", "zcrypto_gate_status", None),
+    ("gate streak present", "zcrypto_gate_streak_days", None),
+    ("exec gate level present", "zcrypto_exec_gate_level", None),
+    ("reconcile source lag", "max(zcrypto_reconcile_source_lag_seconds)", lambda v: v <= 10800),
+    # The rule's 6 h window, not the raw counter: that latches for the daemon's life, so `== 0`
+    # against the cumulative total would FAIL forever after one historical drop.
+    ("logship drops", "max(increase(zcrypto_logship_dropped_lines_total[6h]))", lambda v: v == 0),
 )
 
 
 def read_verdict(token: str, *, opener=urllib.request.urlopen) -> list[Check]:
     checks = []
-    for name, expr in VERDICT_CHECKS:
+    for name, expr, bound in VERDICT_CHECKS:
         # The PARSE is inside the guard too: a 200 whose shape changed raises `KeyError` out here,
         # and an uncaught raise leaves the pass at exit 1 -- attention -- for a source it could not
-        # read. A body it cannot understand is the same finding as a body it cannot fetch.
+        # read. A body it cannot understand is the same finding as a body it cannot fetch. The
+        # `float()` below is inside it for the same reason: `ValueError` is already in `_UNREACHABLE`,
+        # so a non-numeric body stays exit 2 rather than becoming a FAIL that blames the fleet.
         try:
             series = _proxy_query(PROM_DS_UID, expr, token, opener)
-            check = (
-                Check(name, expr, ok=True, value=str(series[0]["value"][1]))
-                if series
-                else Check(name, expr, ok=False, value="(no series)")
-            )
+            if not series:
+                check = Check(name, expr, ok=False, value="(no series)")
+            else:
+                raw = str(series[0]["value"][1])
+                # `or` short-circuits, so a presence-only check never parses the value at all.
+                check = Check(name, expr, ok=bound is None or bound(float(raw)), value=raw)
         except _UNREACHABLE as exc:
             check = Check(name, expr, ok=False, value=f"unreadable: {exc}")
         checks.append(check)
@@ -544,11 +610,26 @@ class Report:
         ]
 
     @property
+    def cleared_in_window(self) -> list[Alert]:
+        """Fired and already resolved. `fired_in_window` is SEEDED from `firing_now`, so the two
+        overlap by construction and every consumer wants the difference, never the raw list."""
+        standing = {a.uid for a in self.alerts.firing_now}
+        return [a for a in self.alerts.fired_in_window if a.uid not in standing]
+
+    @property
     def exit_code(self) -> int:
         """2 outranks 1: a partial read reported as mere attention hides that something was not seen."""
         if self.unreadable:
             return 2
-        if self.alerts.firing_now or [c for c in self.verdict if not c.ok] or (self.deadmen.via_prometheus or 0) > 0:
+        # A rule that fired and cleared before the pass ran is the case the overnight history is read
+        # FOR, and it is invisible to `firing_now` by then. Left out of this test the pass calls a day
+        # containing a critical firing `all-clear`, which is the one verdict it must never get wrong.
+        if (
+            self.alerts.firing_now
+            or self.cleared_in_window
+            or [c for c in self.verdict if not c.ok]
+            or (self.deadmen.via_prometheus or 0) > 0
+        ):
             return 1
         return 0
 
@@ -563,7 +644,12 @@ class Report:
         if self.unreadable:
             out += ["", "## Sources that could not be read"] + [f"- {n}" for n in self.unreadable]
         out += ["", "## Alerts firing"]
-        out += [f"- `{a.uid}` on {a.host or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.alerts.firing_now] or ["- none"]
+        out += [f"- `{a.uid}` on {', '.join(a.hosts) or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.alerts.firing_now] or [
+            "- none"
+        ]
+        if self.cleared_in_window:
+            out += ["", "## Alerts that fired and cleared in the window"]
+            out += [f"- `{a.uid}` on {', '.join(a.hosts) or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.cleared_in_window]
         out += ["", "## Fleet checks"] + [f"- {'PASS' if c.ok else 'FAIL'} {c.name}: {c.value}" for c in self.verdict]
         out += ["", "## Logs"] + ([f"- {c.host}/{c.container} {c.level}: {c.count}" for c in self.logs.counts[:10]] or ["- none"])
         out += [
@@ -591,6 +677,9 @@ class Report:
 
     def journal_paragraph(self) -> str:
         fired = ", ".join(f"`{a.uid}`" for a in self.alerts.firing_now) or "none"
+        # Named separately from `fired`: "it is still firing" and "it fired and went away" are
+        # different findings and take different runbook dispositions.
+        cleared = ", ".join(f"`{a.uid}`" for a in self.cleared_in_window)
         failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"
         errors = sum(c.count for c in self.logs.counts if c.level in ("ERROR", "CRITICAL"))
         # WARNING is carried too, and only when there is some. A healthy fleet produces no
@@ -608,7 +697,8 @@ class Report:
         deploys = ", ".join(str(d.get("limit")) for d in self.deploys) or "none"
         hours = int(self.window.total_seconds() // 3600)
         return (
-            f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired} · checks {failed} · "
+            f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired}"
+            f"{f' · fired and cleared {cleared}' if cleared else ''} · checks {failed} · "
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
             f"{len(self.deadmen.via_healthchecks)} read directly{f', {findings} description finding{"s" if findings != 1 else ""}' if findings else ''} · deploys {deploys} · "
