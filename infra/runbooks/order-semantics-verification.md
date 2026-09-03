@@ -355,6 +355,14 @@ marking its own row REVIEW. The separate invocation is the stronger check and th
 
 **Expect:** `open orders 0 (ours 0, other 0), open positions 0`, `PASS`, exit 0.
 
+**That zero is a floor, not a total, and this probe is where it matters most.** Startup
+reconciliation's order read cannot see a row on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC
+([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)),
+and `--pair` defaults to **BTC/EUR** — so the order a run is most likely to have left resting is
+exactly the one this count cannot include, and a PASS here is not on its own evidence the account is
+clear. The harness prints that caveat beneath the row. §7.1's by-eye read at Kraken is what closes
+it, which is why that section calls the UI the tie-breaker rather than a formality.
+
 - `ours` non-zero ⇒ **verdict FAIL**, and the open ids are printed in probe 6's own rows ⇒ go to §8 now. Expect exit **3**, with the cancel-by-hand banner: the final read sweeps every probe-shaped order the venue still holds, including ones this invocation never submitted, so a leftover an earlier run left behind is adopted by startup reconciliation and counted as outstanding. FAIL and the banner read the same cache, so expect the same ids -- but they are read at different moments, and the node holds its clients open for `--order-timeout` seconds after the stop (default 30), so a cancel or fill the venue confirms in that window can legitimately move an id between the two.
 - `other` non-zero ⇒ `REVIEW` ⇒ something at the venue is not ours. Adjudicate before signing off.
 
@@ -456,7 +464,7 @@ believes is still working.
 1. Kraken → Trade → Open Orders. Cancel each listed order **by hand**. Do not leave the terminal
    until they are gone.
 2. If a probe-5 buy filled and its sell did not, flatten the position by hand in the same place.
-3. Only then, re-run `$RUN --probes 6 --evidence-dir "$EVID"` and confirm `open orders 0 (ours 0 …)`.
+3. Only then, re-run `$RUN --probes 6 --evidence-dir "$EVID"` and confirm `open orders 0 (ours 0 …)` — **and confirm it a second time on Kraken's own Open Orders page**, because that count is blind on the five pairs §5.4 names and a leftover on one of them reads as a clean zero.
 
 Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads
 the resting orders reconciliation put in its cache, finds no ledgered row for a probe order, and
