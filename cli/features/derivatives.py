@@ -14,10 +14,11 @@ an API path that does not exist yet.
 
 from __future__ import annotations
 
+import math
 import statistics
 from datetime import datetime
 
-from cli.features._validate import _validate_rates, _validate_window
+from cli.features._validate import _validate_levels, _validate_rates, _validate_window
 from cli.features.errors import FeatureError
 
 
@@ -128,4 +129,99 @@ def funding_accrued_carry(rates: list[float | None], *, window: int) -> list[flo
             out.append(None)
             continue
         out.append(sum(w))
+    return out
+
+
+def oi_levels_from_raw(values: list[float | None]) -> list[float | None]:
+    """Map the substrate's `0.0` open-interest placeholders to None; pass everything else through.
+    A `0.0` open interest is a hole the venue wrote as a zero, not a market with no open interest,
+    and the zero itself is the only predicate available -- the account-ratio columns do not mark
+    those rows (spec 00110 D5). Mapping is the opposite of imputation: it removes a reading rather
+    than inventing one, which is why D5 permits it where dropping or filling the rows is forbidden.
+
+    Runs BEFORE validation and validates nothing itself -- calling `_validate_levels` here would
+    reject the very rows it exists to map. It is a step the CALLER has to remember: skip it and
+    `oi_log_delta` takes log(0), `oi_momentum` divides by zero, and `oi_zscore` would take a mean
+    and a sample stdev over the fabricated zero and return a finite, plausible, large negative
+    reading -- which is what the `_validate_levels` call in each of the three refuses."""
+    return [None if v == 0.0 else v for v in values]
+
+
+def oi_log_delta(levels: list[float | None]) -> list[float | None]:
+    """Log ratio of consecutive open-interest levels: log(levels[k] / levels[k-1]), same length as
+    the input. None at k=0, which has no predecessor, and None wherever either endpoint is null --
+    an undefined reading is unknown, never 0.0 (spec 00110 D5/D7). Uses only levels[<= k] -> no
+    look-ahead.
+
+    `levels` is the GRID series -- `align_asof`'s output over `oi_levels_from_raw`, on the 1h or 4h
+    grid -- not the raw 5-minute source series (spec 00110 D3/D7). Each delta therefore spans one
+    BAR; on the raw series it spans five minutes instead, so the readings are a twelfth of the
+    intended horizon and their scale is wrong -- perfectly causal, and so invisible to the
+    truncating-prefix guard."""
+    _validate_levels("levels", levels)
+    out: list[float | None] = []
+    for k in range(len(levels)):
+        if k == 0:
+            out.append(None)
+            continue
+        prev = levels[k - 1]
+        if prev is None or levels[k] is None:
+            out.append(None)
+            continue
+        out.append(math.log(levels[k] / prev))
+    return out
+
+
+def oi_zscore(levels: list[float | None], *, window: int) -> list[float | None]:
+    """Trailing z-score of the open-interest level at k over the inclusive window ending at k:
+    (levels[k] - mean(w)) / stdev(w) for w = levels[k-window+1 .. k], sample stdev (spec 00110 D7).
+    None until the window is full, and None wherever that window holds a null -- an undefined
+    window is unknown, never 0.0 (spec 00110 D5/D7). A zero-variance window scores 0.0: flat is
+    exactly average, which is a reading rather than an absence. Uses only levels[<= k] -> no
+    look-ahead.
+
+    `levels` is the GRID series -- `align_asof`'s output over `oi_levels_from_raw`, on the 1h or 4h
+    grid -- not the raw 5-minute source series (spec 00110 D3/D7). `window` counts BARS, which is
+    why it is registered as 720 at 1h and 180 at 4h rather than as a print count; feed the raw
+    series and 720 covers 2.5 days instead of 30, with nothing raising -- perfectly causal, and so
+    invisible to the truncating-prefix guard."""
+    _validate_levels("levels", levels)
+    _validate_window("window", window)
+    out: list[float | None] = []
+    for k in range(len(levels)):
+        if k < window - 1:
+            out.append(None)
+            continue
+        w = levels[k - window + 1 : k + 1]
+        if any(v is None for v in w):
+            out.append(None)
+            continue
+        sd = statistics.stdev(w)
+        out.append(0.0 if sd == 0.0 else (levels[k] - statistics.mean(w)) / sd)
+    return out
+
+
+def oi_momentum(levels: list[float | None], *, lookback: int) -> list[float | None]:
+    """Past return of the open-interest level over `lookback` bars: levels[k] / levels[k-lookback]
+    - 1, same length as the input. None until the lookback is available (k < lookback) and None
+    wherever either endpoint is null -- an undefined window is unknown, never 0.0, which is where
+    this departs from `cli/features/momentum.py`'s 0.0-filled warm-up head and its length of
+    len(prices)-1 (spec 00110 D5/D7). Uses only levels[<= k] -> no look-ahead.
+
+    `levels` is the GRID series -- `align_asof`'s output over `oi_levels_from_raw`, on the 1h or 4h
+    grid -- not the raw 5-minute source series (spec 00110 D3/D7). `lookback` counts BARS, so on
+    the raw series the same number spans a twelfth of the calendar time the registered value means
+    -- perfectly causal, and so invisible to the truncating-prefix guard."""
+    _validate_levels("levels", levels)
+    _validate_window("lookback", lookback)
+    out: list[float | None] = []
+    for k in range(len(levels)):
+        if k < lookback:
+            out.append(None)
+            continue
+        base = levels[k - lookback]
+        if base is None or levels[k] is None:
+            out.append(None)
+            continue
+        out.append(levels[k] / base - 1)
     return out

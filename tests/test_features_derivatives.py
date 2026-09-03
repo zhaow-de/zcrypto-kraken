@@ -1,8 +1,18 @@
+import math
 from datetime import datetime, timezone
 
 import pytest
 
-from cli.features.derivatives import align_asof, funding_accrued_carry, funding_sign_persistence, funding_zscore
+from cli.features.derivatives import (
+    align_asof,
+    funding_accrued_carry,
+    funding_sign_persistence,
+    funding_zscore,
+    oi_levels_from_raw,
+    oi_log_delta,
+    oi_momentum,
+    oi_zscore,
+)
 from cli.features.errors import FeatureError
 
 UTC = timezone.utc
@@ -130,3 +140,82 @@ def test_every_funding_feature_reproduces_itself_on_a_truncated_prefix():
         full = f(rates, **kw)
         for n in range(2, len(rates) + 1):
             assert f(rates[:n], **kw) == full[:n], f"{f.__name__} disagrees at n={n}"
+
+
+def test_oi_log_delta_is_the_log_ratio_starts_none_and_propagates_null():
+    assert oi_log_delta([100.0, 110.0, None, 120.0]) == [None, pytest.approx(math.log(110.0 / 100.0)), None, None]
+
+
+def test_oi_zscore_recovers_a_planted_spike():
+    """Same pinned definition, same arithmetic as the funding case -- and the same full-list
+    assertion, which pins the nine-`None` warm-up head a `0.0`-filling implementation would
+    replace with `exactly average`."""
+    assert oi_zscore([100.0] * 10 + [180.0], window=10) == [None] * 9 + [0.0, pytest.approx(2.8460498941515410)]
+
+
+def test_oi_zscore_propagates_null():
+    assert oi_zscore([100.0] * 10 + [None], window=10) == [None] * 9 + [0.0, None]
+
+
+def test_oi_momentum_pins_its_head_its_base_index_and_its_nulls():
+    """Keep every level distinct: `lookback` 1, 2 and 3 then give three different answers, so an
+    off-by-one base index cannot hide. A fixture whose head is constant makes them agree."""
+    assert oi_momentum([100.0, 110.0, 121.0, 125.0], lookback=2) == [
+        None,
+        None,
+        pytest.approx(0.21),
+        pytest.approx(0.13636363636363646),
+    ]
+    assert oi_momentum([100.0, 110.0, None, 125.0, 140.0], lookback=2) == [
+        None,
+        None,
+        None,
+        pytest.approx(0.13636363636363646),
+        None,
+    ]
+
+
+def test_oi_levels_from_raw_maps_the_venue_hole_to_null():
+    """Spec 00110 D5: a `0.0` open interest is a hole the venue wrote as a zero, not a market with
+    no open interest. Without this mapping `_validate_levels` raises on the canonical substrate at
+    first real use, and the cheapest-looking repair there is the imputation D5 forbids."""
+    assert oi_levels_from_raw([100.0, 0.0, 110.0, None]) == [100.0, None, 110.0, None]
+
+
+def test_every_oi_feature_refuses_a_raw_zero_instead_of_scoring_it():
+    """`oi_levels_from_raw` is a step a caller has to remember, and these three assertions are what
+    make forgetting it loud rather than silent. `oi_zscore` is why all three are asserted and not
+    just the one where a bad level is obvious: a fabricated zero is a perfectly good number to take
+    a mean and a sample stdev over, so an unguarded z-score returns a finite, plausible, large
+    negative reading -- exactly what a de-risking trigger acts on. And `FeatureError` specifically:
+    a bare `ValueError` out of `log(0)` is the contract failing too, not the contract holding."""
+    for f, kw in ((oi_log_delta, {}), (oi_zscore, {"window": 3}), (oi_momentum, {"lookback": 2})):
+        with pytest.raises(FeatureError):
+            f([100.0, 0.0, 110.0, 120.0], **kw)
+
+
+def test_every_windowed_oi_feature_rejects_a_short_window():
+    """`_validate_window`, the second half of the house form, must be CALLED by both windowed OI
+    forms too -- see the funding twin for what an unguarded `window=0` fabricates. The levels below
+    are healthy positives, so only the window can be what fires. The parameter is spelled
+    `lookback` on `oi_momentum`, and each function names its own in the error."""
+    for f, param in ((oi_zscore, "window"), (oi_momentum, "lookback")):
+        for bad in (0, 1, 2.0, True):
+            with pytest.raises(FeatureError):
+                f([100.0, 104.0, 99.0, 130.0], **{param: bad})
+
+
+def test_every_oi_feature_reproduces_itself_on_a_truncated_prefix():
+    """The causality guard for this task's three feature functions (spec D2/D10). See
+    `test_every_funding_feature_reproduces_itself_on_a_truncated_prefix` for why `[-1]` cannot carry
+    it. The fixture rises and falls so no two candidate window offsets coincide."""
+    levels = [100.0, 104.0, 99.0, 130.0, 128.0, 90.0, 155.0, 151.0]
+    cases = (
+        (oi_log_delta, {}),
+        (oi_zscore, {"window": 3}),
+        (oi_momentum, {"lookback": 2}),
+    )
+    for f, kw in cases:
+        full = f(levels, **kw)
+        for n in range(2, len(levels) + 1):
+            assert f(levels[:n], **kw) == full[:n], f"{f.__name__} disagrees at n={n}"
