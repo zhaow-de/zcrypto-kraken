@@ -41,7 +41,7 @@
 
 ## Global Constraints
 
-- **The fenced blocks are CONTENT, not formatting.** None is commit-gate-clean, so the first `pre-commit run` of each task will rewrite what you pasted and report **Failed**; that is the hook doing its job. Re-run until clean, stage what it rewrote, then commit — never `--no-verify`. **Run `bash -n` over every `bash` fence before pasting it**: nothing in the commit gate parses a fence, so a doc edit that lands prose on one of its lines yields a step that dies on a shell syntax error before the first probe runs, while the placeholder tail it left behind still reads like a live operand.
+- **The fenced blocks are CONTENT, not formatting.** None is commit-gate-clean, so the first `pre-commit run` of each task will rewrite what you pasted and report **Failed**; that is the hook doing its job. Re-run until clean, stage what it rewrote, then commit — never `--no-verify`. **Run `zsh -n` over every `bash` fence before pasting it**: nothing in the commit gate parses a fence, so a doc edit that lands prose on one of its lines yields a step that dies on a shell syntax error before the first probe runs, while the placeholder tail it left behind still reads like a live operand. The fences are labelled `bash` for highlighting, but the shell that executes them is zsh — the same fact the probe bullet's `"${VAR[@]}"` rule rests on — so zsh's parser is the one whose verdict counts.
 
 - **Causality is the product.** Every feature at index `k` reads only inputs at index `<= k`. Each function's docstring says so in the house form — `… uses only x[<= k]` is in all five existing `cli/features/` docstrings, the `-> no look-ahead` suffix in one (`momentum.py`); write both here.
 - **Every task that adds a windowed function carries its own truncating-prefix test.** For each function `f` it adds and every prefix length `n >= 2`, `f(x[:n], **kw) == f(x, **kw)[:n]`. Task 2's covers `align_asof` and nothing else, so Tasks 3 and 4 each schedule their own — an `[-1]`-only assertion cannot see a look-ahead, because at the final index a window peeking one bar ahead clamps to the correct window. Spec D10.
@@ -328,7 +328,7 @@ def test_every_funding_feature_reproduces_itself_on_a_truncated_prefix():
 - [ ] **Step 5: Commit** — `feat(features): funding z-score, sign persistence and accrued carry`
 - [ ] **Step 6: Prove the prefix guard is not inert — AFTER the commit, through `infra/scripts/mutate-probe.sh`** (contract in Global Constraints).
 
-The defect is the forward-summing window: `funding_accrued_carry` must sum the `window` prints **ending at** `k`, so make it sum the `window` prints **starting at** `k`. This task's implementation text is not pinned here, so **derive the sed from the code you just committed** and prove it addresses exactly one line before any verdict counts. Two things make that provable. **Bound the sed to the function** with `$IN_CARRY` below, so an expression the neighbours share cannot be rewritten in them; and within the function **derive it from the line that SUMS the window, not from the window slice**, which a natural implementation may write twice (once to build the slice, once to null-check it). The count is `sed -n "$IN_CARRY"'p' cli/features/derivatives.py | grep -c '<the summing line you are replacing>'`, and it must print `1`.
+The defect is the forward-summing window: `funding_accrued_carry` must sum the `window` prints **ending at** `k`, so make it sum the `window` prints **starting at** `k`. This task's implementation text is not pinned here, so **derive the sed from the code you just committed** and prove it addresses exactly one line before any verdict counts. Two things make that provable. **Bound the sed to the function** with `$IN_CARRY` below, so an expression the neighbours share cannot be rewritten in them; and within the function **derive it from the line that SUMS the window, not from the window slice**, which a natural implementation may write twice (once to build the slice, once to null-check it). The count is `sed -n "$IN_CARRY"'p' cli/features/derivatives.py | grep -cF '<the summing line you are replacing>'`, and it must print `1` — `-F` because the operand is a literal line of Python, never a pattern.
 
 ```bash
 uv run pytest tests/test_features_derivatives.py -q -p no:cacheprovider --collect-only -k funding_feature_reproduces   # expect exactly 1
@@ -441,7 +441,7 @@ def test_every_oi_feature_reproduces_itself_on_a_truncated_prefix():
 - [ ] **Step 3: Implement all four**, adding `_validate_levels` to the import Task 3 created. **All three feature functions CALL `_validate_levels("levels", levels)` as their first statement, and the two that take a window CALL `_validate_window` as their second** — `_validate_window("window", window)` in `oi_zscore`, `_validate_window("lookback", lookback)` in `oi_momentum` — the full house form `cli/features/momentum.py` uses, which is both validators in that order, before any arithmetic. An imported-but-uncalled validator is invisible to the commit gate — `ruff.toml` sets `select = ["I"]`, isort only, so F401 never fires (verified: an unused import passes `ruff check` inside this repo) — and so is not a guard, and the call in `oi_zscore` is the one that carries `oi_levels_from_raw`'s whole mitigation: a fabricated `0.0` inside a window is a perfectly good number to take a mean and a sample stdev over, so without it the function returns a finite, plausible z-score and raises nothing. `oi_levels_from_raw` is the deliberate exception and validates nothing (see Interfaces).
 - [ ] **Step 4: Run, expect pass**
 - [ ] **Step 5: Commit** — `feat(features): OI log-delta, z-score, momentum, and the zero-is-a-hole mapping`
-- [ ] **Step 6: Prove all three guards bite, on defects that separate them — AFTER the commit, through `infra/scripts/mutate-probe.sh`** (contract in Global Constraints). Neither the implementation nor its line numbers are pinned here, so derive (a)'s and (b)'s mutation seds from the code you committed and prove each addresses exactly one line — with the function-bounded count below the block, not a file-wide `grep -c` — before trusting a verdict. (c)'s sed is pinned and deliberately addresses **three** — the call sites, never the import, which reads `_validate_levels,` without a paren.
+- [ ] **Step 6: Prove all three guards bite, on defects that separate them — AFTER the commit, through `infra/scripts/mutate-probe.sh`** (contract in Global Constraints). Neither the implementation nor its line numbers are pinned here, so derive (a)'s and (b)'s mutation seds from the code you committed and prove each addresses exactly one line — with the function-bounded count below the block, not a file-wide one — before trusting a verdict. (c)'s sed is pinned and deliberately addresses **three** — the call sites, never the import, which reads `_validate_levels,` without a paren.
 
 ```bash
 uv run pytest tests/test_features_derivatives.py -q -p no:cacheprovider --collect-only -k oi_momentum_pins    # expect exactly 1
@@ -467,14 +467,14 @@ infra/scripts/mutate-probe.sh --file cli/features/derivatives.py --control "$CTR
 infra/scripts/mutate-probe.sh --file cli/features/derivatives.py --control "$CTRL" \
   --mutation "$IN_MOM"'{<the same s/// body>}' -- "${PREFIX[@]}"
 # (c) the validator calls: swap all three for the signed validator, which accepts 0.0
+grep -cF '_validate_levels(' cli/features/derivatives.py   # expect exactly 3 — the call sites, not the import
 # (c) expect KILLED
-grep -c '_validate_levels(' cli/features/derivatives.py   # expect exactly 3 — the call sites, not the import
 infra/scripts/mutate-probe.sh --file cli/features/derivatives.py \
   --control 's/^def oi_zscore(/def oi_zscorez(/' \
   --mutation 's/_validate_levels(/_validate_rates(/' -- "${ZERO[@]}"
 ```
 
-**Count (a)'s and (b)'s target INSIDE the function, and bound the sed to it too.** `sed -n "$IN_MOM"'p' cli/features/derivatives.py | grep -c '<the line you are replacing>'` must print `1`. Two traps this closes: a bare `out.append(None)` appears in several of this file's functions, so a file-wide `grep -c` is never `1`; and an *unbounded* range (`,$p`) isolates `oi_momentum` only if it happens to be the file's last function, which Step 3 does not pin. `/^def /` as the end address is searched from the line after the start, so the range covers `oi_momentum` whether or not another `def` follows it. `$IN_MOM` prefixes the mutation as well as the count, so the sed cannot reach an identical line in `oi_zscore` or `oi_log_delta`.
+**Count (a)'s and (b)'s target INSIDE the function, and bound the sed to it too.** `sed -n "$IN_MOM"'p' cli/features/derivatives.py | grep -cF '<the line you are replacing>'` must print `1`. `-F` is not decorative: the operand is a literal line of Python, and plain `grep` reads it as a BRE, where a subscript like `levels[k - 1]` becomes a bracket expression and `.` matches anything — so a genuinely unique line counts `0` and the step stalls on the check rather than on the code. Two further traps this closes: a bare `out.append(None)` appears in several of this file's functions, so a file-wide count is never `1`; and an *unbounded* range (`,$p`) isolates `oi_momentum` only if it happens to be the file's last function, which Step 3 does not pin. `/^def /` as the end address is searched from the line after the start, so the range covers `oi_momentum` whether or not another `def` follows it. `$IN_MOM` prefixes the mutation as well as the count, so the sed cannot reach an identical line in `oi_zscore` or `oi_log_delta`.
 
 **Each invocation's expected verdict is the comment above it — written once, there and nowhere else — and every verdict is ASSERTED, never read by eye.** `mutate-probe.sh` ends on `[[ "$verdict" == KILLED || "$verdict" == SURVIVED ]]`, which is true for BOTH, so the script exits 0 whichever way a probe lands: a `SURVIVED` where `KILLED` was expected leaves an inert causality guard behind a green step. So echo the label first (`echo "== (a1) PREFIX"`) and pipe the invocation through `| tee /dev/stderr | grep -q 'mutate-probe: <the verdict its comment names>'`, making a wrong verdict fail the step. (a) is why the prefix property is not redundant with the full-list assertions. **(b2) is the block's one expected `SURVIVED`, and it is a finding rather than a failure** — a `0.0` head is perfectly causal, so the prefix test is blind to it and the full-list assertions are what catch it; that is why (b) is probed against `HEAD_T` as well. (c) proves the `_validate_levels` calls are live in all three functions at once — its sed carries no line address, so it rewrites every call site. The baseline is half the proof: the probe passes unmutated only if all three already raise `FeatureError` on a `0.0`. The mutation is the other half: `_validate_rates` accepts `0.0`, so the swap makes `oi_zscore` score the fabricated zero silently and turns the other two's refusal into a raw `ValueError`/`ZeroDivisionError`, which is not the contract's `FeatureError` — proving the refusal came from the validator call and not from incidental arithmetic. A `SURVIVED` on (a1), (a2), (b1) or (c) means the named guard is inert; stop and re-read it rather than weakening it.
 
@@ -520,9 +520,18 @@ def test_ratio_features_carry_nulls_and_real_zeros_through_untouched():
     shared literal. The four columns are not interchangeable -- through 2022 one is 5.09 % null and
     another 87.24 % -- so an implementation that broadcast one input list across all four output
     keys would hand a trial the wrong column's values. Give them all the same list and that defect
-    cannot move this fixture."""
+    cannot move this fixture.
+
+    Mis-keying has a second shape the distinct heads alone cannot catch: pairing output keys with
+    input values POSITIONALLY -- zipping the module's canonical column order against
+    `ratios.values()` -- agrees with the correct implementation for as long as the input arrives in
+    `_RATIOS` order. So the call below hands the dict REVERSED; do not "simplify" it back to
+    `ratio_features(inputs)`, which re-blinds this fixture to that half while the assertions still
+    read as thorough. The ratio family has exactly two guards and this is the one that catches a
+    mis-key at all: `test_ratio_features_prefix_every_column_with_its_venue` asserts `set(out)`
+    alone and is blind to both shapes by design -- it pins the naming, not the pairing."""
     inputs = {name: [float(i + 1), None, 0.0, 3.0] for i, name in enumerate(_RATIOS)}
-    out = ratio_features(inputs)
+    out = ratio_features(dict(reversed(list(inputs.items()))))
     for name, values in inputs.items():
         assert out[f"binperp_{name}"] == values
 
@@ -607,7 +616,8 @@ def test_coverage_by_year_separates_a_late_start_from_an_interior_outage():
     the two timestamps, because 2021 and 2022 below carry the SAME `(non_null, total)` of `(2, 10)`
     and opposite meanings. 2021 spans January to October with an eight-month hole between them;
     2022 does not start until September. Only `first_non_null` / `last_non_null` separate them, so
-    the two assertions on those fields are the ones a 2-tuple return would fail."""
+    the 2021 and 2022 assertions below agree in their first two fields and differ only in the last
+    two; a 2-tuple return fails all three on arity."""
     UTC = timezone.utc
     ts = [datetime(y, m, 1, tzinfo=UTC) for y in (2021, 2022, 2023) for m in range(1, 11)]
     vals = [1.0] + [None] * 8 + [1.0] + [None] * 8 + [1.0, 1.0] + [1.0] * 10
