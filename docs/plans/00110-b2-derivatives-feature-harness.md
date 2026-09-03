@@ -2,6 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> ## ⛔ NOT EXECUTION-READY — the contract pin refuted 11 premises (2026-09-03)
+>
+> The review loop was cut at the pin by its time-gate; lenses, union, fix and the three floor passes never ran. **Do not execute this plan as written.** The pin's refutations, each verified by running code, and every one of them a defect in the pair rather than in the tree:
+>
+> 1. **The look-ahead guard in Task 2 does not work.** The pin built a deliberate backward-fill defect (`if t >= g: return x` — reads the NEXT source row) and ran the plan's own test against it: correct implementation and defect **both PASS**, because the appended stamps `_t(16), _t(20)` sit beyond the grid's last stamp `_t(8)` and cannot move any value under either semantics. **The working guard it verified**: recompute over `grid[:k]` using only source rows with `ts <= grid[k-1]` and compare to the full run's prefix — correct as-of passes, the defect trips at `k=1` (`[None]` vs `[2.0]`). This is the plan's load-bearing test and it was inert.
+> 2. **Both planted-signal assertions are unachievable.** `funding_zscore` and `oi_zscore` both assert `> 3.0`; the true value is **2.8460498941515410** (inclusive window, sample stdev) or **exactly 3.0** (population stdev), and undefined under a strictly-past window. No definition returns `> 3.0`, and the docstring's own "2 sd above" contradicts the assertion.
+> 3. **Task 4 is self-contradictory as executed.** "OI is strictly positive, so these use `_validate_prices`" cannot hold beside "null-propagating": `_validate_prices([100.0, None, 110.0])` raises `FeatureError`. An OI feature cannot both call it and propagate a null.
+> 4. **"Matching the existing convention exactly" is false about length.** All five existing feature functions return `len(prices) - 1`, aligned to `returns_from_prices`; every test in this plan requires `len(input)`. The three traits the sentence's parenthesis names — keyword-only params, a causality docstring, `_validate_*`/`FeatureError` — do all hold.
+> 5. **The 2022 hole is panel-wide, not a BTCUSDT property.** It is 87.3 % for nine symbols and 87.0 % for XRP — identical. Panel-wide null is **18.4 %** (921,890/5,010,882); BTCUSDT's 14.9 % is lower only because it has 15 more months of dense history diluting it. The spec's D5 presents 14.9 % as the figure.
+> 6. **`none before 2022-01-30` is false read absolutely** — the column is populated from 2020-09-01, the series' first row. The true statement is 2022-scoped.
+> 7. **The §12 attribution is wrong**: the B2 quote is verbatim at master-plan line 156, inside **§5** (Strategy Design Space). §12 begins at line 307. T0023 cites it as §5 correctly. Separately, §9 line 261 uses "B2" for an unrelated *benchmark*.
+> 8. **B1's band is 4h only**, not 1h/4h — spec `00045` conditions on the adopted A2-**4h** ensemble over `hour ∈ {0,4,8,12,16,20}`; its 15m substrate feeds the vol scaler, not a decision grid. Both grids are buildable (`60/240/1440.parquet` all present), so D3's *choice* survives; its stated *reason* does not.
+> 9. **The spec's claim about the catalog is stale against its own commit** — `523a4034` already replaced the "early metrics" wording, so "the catalog is corrected in the same change" is discharged and the present-tense premise no longer matches the tree.
+> 10. **T0023 is already `partial`** (set at iter-090); Task 6's status flip is a no-op. The `## Done so far` entry and the next-steps trim are the real work.
+>
+> Full graded fact file: 34 claims, at `.tmp/plan-review/00110/pin-facts.md` — **gitignored, so it will not survive a clean**; this block is the durable record.
+
 **Goal:** Build the funding + OI feature harness B2 will be measured with, proven on known answers before any verdict counts.
 
 **Architecture:** Pure functions on plain Python lists in `cli/features/derivatives.py`, matching the existing `cli/features/` convention exactly (see `momentum.py`: keyword-only params, a docstring stating the causality property, `_validate_*` helpers raising `FeatureError`). No polars, no frames, no I/O — the substrate readers already exist in `cli/derivatives/`.
