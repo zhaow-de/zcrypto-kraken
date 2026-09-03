@@ -10,7 +10,9 @@
 # Refuses, rewriting nothing: a dirty index or worktree (untracked files are fine); a
 # detached HEAD or the main branch; a commit not on the current branch; a commit already
 # carrying that exact trailer; two commits in the replayed range with byte-identical
-# messages (a non-HEAD target is matched during the rebase by its full message).
+# messages (a non-HEAD target is matched during the rebase by its full message); any
+# commit in the replayed range whose hash is recorded in docs/reference/deploy-log.jsonl or
+# fleet-pins.md (a rewrite would orphan a rollback operand -- exit 7).
 # Every commit after the target is rewritten -- hashes change, content does not, and the
 # script asserts that with an empty `git diff <old-head> HEAD --stat` before it prints
 # old -> new for the target.
@@ -35,6 +37,13 @@ if git rev-parse --verify -q "${target}^" >/dev/null; then range="${target}^..HE
 dup=0
 for h in $(git rev-list "$range"); do [[ "$(git log -1 --format=%B "$h")" == "$(cat "$msg")" ]] && dup=$((dup+1)); done
 (( dup == 1 )) || { echo "amend-reviewed-by: refuse -- $dup commits in the replayed range share the target's message" >&2; exit 5; }
+top=$(git rev-parse --show-toplevel)
+for rec in docs/reference/deploy-log.jsonl docs/reference/fleet-pins.md; do
+  [[ -f "$top/$rec" ]] || continue
+  for h in $(git rev-list "$range"); do
+    grep -qE "${h}|${h:0:8}" "$top/$rec" && { echo "amend-reviewed-by: refuse -- ${h:0:8} is recorded in $rec; a rewrite would orphan it. Trailer before a hash is recorded, or cite by subject." >&2; exit 7; }
+  done
+done
 
 awk 'BEGIN{RS="\0"} {sub(/\n+$/,""); printf "%s", $0}' "$msg" > "$new"
 last=$(tail -n 1 "$new")
