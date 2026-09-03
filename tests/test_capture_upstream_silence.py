@@ -132,7 +132,7 @@ def test_the_status_channel_is_recognised_rather_than_discarded():
     assert classify({"channel": "status", "type": "update", "data": [{"system": "maintenance"}]}) == "status"
 
 
-def test_the_consumer_counts_and_records_the_venue_status_it_receives():
+def test_the_consumer_counts_and_records_the_venue_status_it_receives(monkeypatch):
     """D1 is "log AND count, keeping system and effectiveTime" -- a log line alone answers the
     question only for whoever thinks to grep Loki. `effectiveTime` is the field that would carry a
     planned-downtime lead time -- the number the pre-drain decision waited on ([[T0105]], settled
@@ -141,6 +141,7 @@ def test_the_consumer_counts_and_records_the_venue_status_it_receives():
     """
     import asyncio
 
+    from cli.capture import command
     from cli.capture.command import _consume
     from cli.capture.desync_recovery import DesyncRecovery
 
@@ -153,8 +154,19 @@ def test_the_consumer_counts_and_records_the_venue_status_it_receives():
             }
 
     venue_status: dict[str, int] = {}
+    # The counter alone cannot see the half this test is NAMED for: drop `effectiveTime` from the log
+    # line and `venue_status` is unchanged, so the suite would stay green while every frame logged
+    # `effective_time=None` whether or not Kraken sent one -- and that `None` is the reading the
+    # pre-drain was dropped on. `zcrypto` loggers set `propagate = False` (`cli/logging/config.py`),
+    # so `caplog` sees nothing and the line has to be captured at the logger itself.
+    logged: list[tuple] = []
+    monkeypatch.setattr(command.logger, "info", lambda *args: logged.append(args))
     asyncio.run(_consume(_StatusClient(), {}, {}, {}, _StubMonitor(), _StubWatermark(), DesyncRecovery(), {}, venue_status))
     assert venue_status == {"maintenance": 1}, f"venue status not counted by system value: {venue_status}"
+    status_lines = [a for a in logged if a and "venue status" in str(a[0])]
+    assert status_lines, f"the venue status frame was counted but never logged: {logged}"
+    assert 1784880000 in status_lines[0], f"the lead time the frame carried was dropped from the log line: {status_lines[0]}"
+    assert "maintenance" in status_lines[0], f"the state was dropped from the log line: {status_lines[0]}"
 
 
 def test_repeated_venue_status_accumulates_per_system_value():

@@ -3177,10 +3177,10 @@ rules:
       # capture path produces it -- so the bar can be tight here where a per-pair bar cannot be. The
       # gauge reads 0 for every pair at process start, so a restart cannot false-fire it either.
       # What DOES produce it is the venue, on a published calendar: every firing in this rule's life
-      # -- 2026-08-06 and 2026-08-20, both hosts each time -- fell inside a "Kraken Website and API
-      # Maintenance" window announced 48-145 h ahead, and no unexplained crossing has been observed.
-      # They are true positives (L2 is genuinely gone: ~882 s and ~521 s of booked both_streams_silent
-      # per stream), which is why
+      # -- 2026-08-06, 2026-08-20 and 2026-09-03, both hosts each time -- fell inside a "Kraken
+      # Website and API Maintenance" window announced 41-49 h ahead, and no unexplained crossing has
+      # been observed. They are true positives (L2 is genuinely gone: ~882 s, ~521 s and ~178 s of
+      # booked both_streams_silent per stream), which is why
       # the answer is a runbook that says "read the venue calendar first" rather than a wider bar.
       - refId: A
         queryType: ""
@@ -3740,11 +3740,16 @@ rules:
       # feeds synthetic `maintenance` and `cancel_only` frames and asserts a series per system value.
       #
       # PRESENCE, not increase(). The daemon emits a series only for `system` values it has actually
-      # seen, so a non-online series is BORN at 1 -- and Prometheus inserts no implicit zero before a
+      # seen, so a non-online series is BORN at whatever its first scrape catches -- and Prometheus
+      # inserts no implicit zero before a
       # series' first sample, so increase() over it returns nothing on one sample and 0 on N equal
-      # samples. Kraken pushes `status` on connect and on state change, so a clean online->maintenance
-      # transition is exactly ONE frame per host: an increase() form would sit green through the very
-      # event this rule exists for. An increase() form reads a counter only where a 0 sample precedes
+      # samples. The per-transition frame count is NOT fixed -- on 2026-09-03 each host logged five
+      # `maintenance` lines, two `post_only` and one `cancel_only` -- so whether increase() finds a
+      # step inside such a burst is decided by scrape phase rather than by what the host saw: it read
+      # the maintenance rise on zcrypto, nothing on zcrypto-red whose first sample already carried all
+      # five, and nothing on either host for the single-line `cancel_only`. An increase() form would
+      # therefore sit green through the very event this rule exists for, on whichever hosts the scrape
+      # happened not to favour. An increase() form reads a counter only where a 0 sample precedes
       # the step INSIDE the window, and that needs three things at once: the series already exists, the
       # host has already published it at 0, and the step lands far enough after process start to be
       # scraped at 0 first. A label that materialises on the event fails the first; a host new to an
@@ -3814,14 +3819,17 @@ rules:
       # on its digest, so a standing latch would mask every repeat for as long as that holds.
       #
       # increase() is exactly wrong as the PRIMARY form and exactly right as the SECOND one. The
-      # sibling's comment explains why it cannot lead: a non-online series is BORN at 1 and Prometheus
-      # inserts no implicit zero before a series' first sample, so increase() returns nothing on the
-      # very transition that rule exists to catch. That argument does not transfer to a series ALREADY
-      # sitting at a non-zero value -- a 1 -> 2 step is an ordinary counter increase and increase()
-      # reports it. The two rules therefore partition the space: presence catches the first sighting
-      # (including the first after any restart, since the counter is in-memory and resets with the
-      # process), and this one catches every sighting thereafter. Neither alone covers both, which is
-      # why this supplements rather than replaces -- swapping the sibling out for this form would lose
+      # sibling's comment explains why it cannot lead: a non-online series is BORN at whatever its
+      # first scrape catches -- 2 on zcrypto and 5 on zcrypto-red on 2026-09-03, from frames 30 ms
+      # apart -- and Prometheus inserts no implicit zero before that first sample, so increase()
+      # returns nothing whenever the whole burst lands before it. That argument does not transfer to a
+      # series ALREADY sitting at a non-zero value -- a 1 -> 2 step is an ordinary counter increase and
+      # increase() reports it. So the split is NOT a clean partition and BOTH are needed: presence
+      # catches every first sighting unconditionally (including the first after any restart, since the
+      # counter is in-memory and resets with the process), while this form catches a first sighting
+      # only where a scrape happens to land mid-burst -- it did on zcrypto that day and did not on
+      # zcrypto-red -- and every sighting thereafter. Neither alone covers both, which is why this
+      # supplements rather than replaces -- swapping the sibling out for this form would lose
       # first-observation detection entirely.
       #
       # This one SELF-RESOLVES, the behavioural opposite of the latch, and that is the point: it

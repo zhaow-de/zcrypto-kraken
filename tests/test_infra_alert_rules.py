@@ -868,8 +868,10 @@ def test_no_define_carries_a_leading_trim_marker(path):
 # `zcrypto-capture-venue-not-online` fires on PRESENCE of a non-online series and never falls until
 # the capture daemon restarts. That latch is deliberate, but it means a repeat of an already-seen
 # state only steps a counter whose alert instance is already Alerting, so nothing notifies. The
-# recurrence rule below closes that, and the two only partition the space while each keeps its own
-# form: presence catches a series born at 1, increase() catches every step thereafter. Swap either
+# recurrence rule below closes that, and the two cover the space only while each keeps its own
+# form: presence catches EVERY first sighting unconditionally, increase() catches a first sighting
+# only where a scrape lands mid-burst, plus every step thereafter -- so the split is not clean and
+# both are needed. Swap either
 # to the other's form and a real venue degradation goes unreported.
 
 _VENUE_LATCH = "zcrypto-capture-venue-not-online"
@@ -895,7 +897,7 @@ def test_the_venue_recurrence_window_matches_its_relative_time_range():
 
 
 def test_the_two_venue_rules_keep_opposite_forms():
-    """The whole point of the pair. increase() cannot lead -- a non-online series is born at 1 and
+    """The whole point of the pair. increase() cannot lead -- a non-online series is born at whatever its first scrape catches and
     Prometheus inserts no implicit zero, so it reports nothing on the first transition; presence
     cannot follow -- it is already firing, so a repeat produces no new notification. If a future edit
     makes both rules the same form, one of the two venue failures stops being reported and nothing
@@ -903,7 +905,9 @@ def test_the_two_venue_rules_keep_opposite_forms():
     latch = " ".join(n.get("model", {}).get("expr", "") for n in _rule(_VENUE_LATCH)["data"])
     recurrence = " ".join(n.get("model", {}).get("expr", "") for n in _rule(_VENUE_RECURRENCE)["data"])
 
-    assert "increase(" not in latch, "the latch must stay a PRESENCE form -- increase() is blind to a series born at 1"
+    assert "increase(" not in latch, (
+        "the latch must stay a PRESENCE form -- increase() is blind to a series whose whole burst precedes its first scrape"
+    )
     assert "increase(" in recurrence, "the recurrence rule must stay an increase() form -- presence cannot re-notify"
 
 
