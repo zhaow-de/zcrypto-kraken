@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # zcrypto-tmux.zsh -- rebuild the zcrypto tmux cockpit after a workstation restart. Idempotent.
-# Lives in the repo; `~/.local/bin/zcrypto-tmux` is a symlink to it so it stays on PATH.
+# Lives in the repo; symlink it from ~/.local/bin/zcrypto-tmux to keep it on PATH.
 # Run the MAIN checkout's copy (the symlink does): Claude keys its project dir by the repo path,
 # so a git worktree's copy resolves a project dir Claude never wrote and would create fresh
 # sessions instead of resuming.

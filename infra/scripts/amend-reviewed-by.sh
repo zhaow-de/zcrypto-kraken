@@ -8,7 +8,8 @@
 # a message with no trailer block gets the separating blank line first, so git parses it.
 #
 # Refuses, rewriting nothing: a dirty index or worktree (untracked files are fine); a
-# detached HEAD or the main branch; a commit not on the current branch; a commit already
+# detached HEAD or the main branch; a commit not on the current branch, or already on develop
+# when run from another branch (exit 9 -- rewriting it would fork the branch off its base); a commit already
 # carrying that exact trailer; two commits in the replayed range with byte-identical
 # messages (a non-HEAD target is matched during the rebase by its full message); any
 # commit in the replayed range whose hash is recorded in docs/reference/deploy-log.jsonl or
@@ -16,7 +17,8 @@
 # replayed range (a rebase would linearize it -- exit 8). A pre-commit hook failing mid-rebase
 # leaves the rebase in progress: fix, `git rebase --continue`, and re-verify the diff is empty.
 # The blank-line rule keys on the LAST line matching a known trailer name (Co-Authored-By,
-# Reviewed-by, Refine-Round-Closed, Signed-off-by, BREAKING-CHANGE): a body ending in a
+# Reviewed-by, Refine-Round-Closed, Signed-off-by, BREAKING-CHANGE, Claude-Session -- the
+# harness default this repo bans but must still parse): a body ending in a
 # `Note:`-shaped line gets its separating blank line, and a trailer name quoted mid-body
 # does not suppress it.
 # Every commit after the target is rewritten -- hashes change, content does not, and the
@@ -33,6 +35,11 @@ branch=$(git branch --show-current)
 [[ -n "$(git status --porcelain --untracked-files=no)" ]] && { echo "amend-reviewed-by: refuse -- dirty index/worktree; commit or stash first" >&2; exit 3; }
 target=$(git rev-parse --verify -q "${target_ish}^{commit}") || { echo "amend-reviewed-by: refuse -- not a commit: $target_ish" >&2; exit 2; }
 git merge-base --is-ancestor "$target" HEAD || { echo "amend-reviewed-by: refuse -- $target is not on $branch" >&2; exit 2; }
+for base in origin/develop develop; do
+  [[ "$branch" == "${base#origin/}" ]] && continue
+  git rev-parse -q --verify "$base" >/dev/null 2>&1 || continue
+  git merge-base --is-ancestor "$target" "$base" && { echo "amend-reviewed-by: refuse -- $target is already on $base; rewriting it here would fork the branch off its base" >&2; exit 9; }
+done
 git log -1 --format=%B "$target" | grep -qF -- "$trailer" && { echo "amend-reviewed-by: refuse -- $target already carries '$trailer'" >&2; exit 4; }
 
 msg=$(mktemp); new=$(mktemp); exec_script=$(mktemp)
@@ -54,7 +61,7 @@ done
 
 awk 'BEGIN{RS="\0"} {sub(/\n+$/,""); printf "%s", $0}' "$msg" > "$new"
 last=$(tail -n 1 "$new")
-[[ "$last" =~ ^(Co-Authored-By|Reviewed-by|Refine-Round-Closed|Signed-off-by|BREAKING-CHANGE):\  ]] || printf '\n' >> "$new"
+[[ "$last" =~ ^([Cc]o-[Aa]uthored-[Bb]y|Reviewed-by|Refine-Round-Closed|Signed-off-by|BREAKING-CHANGE|Claude-Session):\  ]] || printf '\n' >> "$new"
 printf '\n%s\n' "$trailer" >> "$new"
 
 old_head=$(git rev-parse HEAD)
