@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: 'the next attended Grafana push, since the change is a receiver edit that ships through `grafana-push.sh` and cannot be verified without one'
+status: partial
+ripe_when: "both capture rows in `docs/reference/fleet-pins.md` pass `fleet-deploys.md`'s grafana-push bar: for each row's build revision, `git show <revision>:cli/capture/segment_writer.py | grep -qF 'and not self._parts_for(self._hour_dir(hour)'`"
 ---
 
 # A Loki-sourced dead-man can never notify its clear
@@ -23,13 +23,21 @@ It also cost a wrong repair. The gap was attributed on 2026-08-31 to a label mis
 - Measured: 12 of 12 Loki-sourced rules pin `logs`; no Prometheus rule does. Both receivers deliver to the same webhook and channel.
 - Drill N, 2026-09-02: fired 21:24:40Z, cleared ~21:28Z, no resolved notice. `Gate · exporter stale` and `Fleet · healthchecks.io watchdog` both resolved to the same channel within ~1 min on `metrics`.
 
+## Done so far
+
+The receiver split landed on `fix/loki-dead-men-notify-clear`, in the commit `fix(obs): the eight Loki dead-men pin the receiver that can announce their clear`: the eight dead-men pin `metrics`, the four ERROR-log rules stay on `logs` where T0047's reasoning still holds. The first shape was taken — a third receiver would have bought one templating sentence for the price of a third as-code contact point threaded through two verification loops in `grafana-push.sh`.
+
+A guard landed with it, coupling the two files rather than restating either: `tests/test_infra_alert_rules.py::test_a_rule_that_fires_on_absence_can_notify_its_clear` refuses a rule that fires on absence while pinning a receiver `grafana-push.sh` mints with `disableResolveMessage: true`, and reads that receiver set from the script, so it fails if either the pin or the flag moves. The two families are separated structurally — `lt` for a dead-man, `gt` for a burst — so a ninth dead-man added later is caught too; that case was proven by mutation rather than assumed. `test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve` is its true positive and guards against the over-correction of moving the whole Loki family.
+
+**Nothing is live yet.** The change is as-code only — the live stack still suppresses every Loki resolve until `grafana-push.sh` runs — so no doc describing what an operator sees was re-tensed. That flip belongs to the push.
+
 ## Suggested next steps
 
-Decide between two shapes, then ship it on an attended Grafana push:
+- **The attended push, then the induction.** When `ripe_when` clears, push from merged `develop`, then verify by induction rather than by reading config: page one of the eight (drill N's procedure in `infra/runbooks/drills-telemetry.md` is repeatable), clear it, and confirm a resolved notice arrives in `#zcrypto`.
+- **Re-tense the docs in that same change.** `infra/runbooks/drills-telemetry.md` records that no resolved notice arrives for a Loki dead-man — true of the live stack until the push, false after it.
 
-- **Move the eight Loki dead-men to the `metrics` receiver.** Smallest change, and **measured to cost nothing for a dead-man**: against `infra/grafana/notification-templates/zcrypto-slack.tmpl`, `metrics` is strictly richer — it adds the silence link and `since <StartsAt>`, and caps at 6 instances rather than 5. All `logs` adds is a `msg` code fence (dead-men carry no `msg` label) and a counts-lines-rather-than-carrying-them fallback sentence.
-- **Mint a third receiver** — resolve messages ON, `logs` templates kept — and pin the dead-men to it. Preserves the templating and leaves the ERROR-log rules untouched, at the cost of a third contact point to keep as-code.
+Two things a future evaluator of `ripe_when` trips on, both from `fleet-deploys.md`. A PASS counts only against a row whose `since` matches that host's current container start: a Phase-4 rollback is a hand compose re-pin that appends no deploy-log line and re-trues no pins row, so a stale row passes for a host that would fail. And the hatch that rule names — a `git revert` of the commit `fix(obs): a start-correlated counter is the one increase() cannot read`, for a rule that must ship inside the window — re-arms the hazard, making a passing trigger wrong until the revert is itself reverted.
 
-Either way the verification is the same and must be done by induction, not by reading config: page one of the rules, clear it, and confirm a resolved notice arrives in `#zcrypto`. Drill N is that induction and is repeatable.
+Read 2026-09-03: both capture rows pin revision `8f4ac521`, which fails the check, as does the rollback operand `eb6a503a`; `develop` carries the narrowed predicate but no capture rollout has shipped it to the hosts. The trigger is correctly false today.
 
 **Do not "fix" this by editing rule expressions.** That was tried and disproved; `alerts.yaml`'s comment beside `nas-archive-pull-stalled` records why, and re-deriving it from this file's git history would reach the wrong answer.

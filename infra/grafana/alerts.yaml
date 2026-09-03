@@ -764,8 +764,12 @@ rules:
       unit: "engine log lines of any level in the last 6 hours"
     labels:
       severity: critical
+    # `metrics`, not `logs` -- as for every dead-man in this file. `grafana-push.sh` mints `logs`
+    # with disableResolveMessage: true, which is right for a burst that ages out of its own window
+    # (T0047) and wrong where the clear is the news. Enforced by
+    # tests/test_infra_alert_rules.py::test_a_rule_that_fires_on_absence_can_notify_its_clear.
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   # The execution safety envelope (cli/engine/execgate.py, `_ExecGauges` in cli/engine/command.py):
   # three rules over the six `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
@@ -1190,23 +1194,23 @@ rules:
       # `alloy-dark-*` shape -- but the reason once recorded here was WRONG, and the rollout it
       # licensed is cancelled. Do not re-derive either from the git history of this comment.
       #
-      # THIS RULE'S CLEAR SENDS NO RESOLVED NOTICE, AND LABELS ARE NOT WHY. Its receiver is `logs`,
-      # and that contact point is minted `disableResolveMessage: true` -- deliberately, since T0047
-      # (`grafana-push.sh` states the reason; spec 00084 tabulates it). Every Loki-sourced rule pins
-      # `logs`, so none of them can resolve-notify. Measured by drill-N re-induction 2026-09-02: this
+      # THIS RULE'S CLEAR SENT NO RESOLVED NOTICE, AND LABELS WERE NOT WHY. It pinned `logs`, and
+      # that contact point is minted `disableResolveMessage: true` -- deliberately, since T0047
+      # (`grafana-push.sh` states the reason; spec 00084 tabulates it). Every Loki-sourced rule
+      # pinned `logs`, so none could resolve-notify. Measured by drill-N re-induction 2026-09-02: this
       # rule fired and cleared with BOTH arms already `{}` and no notice arrived, while
       # `zcrypto-hcio-watchdog` -- `max(...) or on() vector(999)`, unlabelled on both arms, same
       # shape, same channel, but on `metrics` -- resolved in ~1 min. The earlier
       # `Alerting -> Normal (MissingSeries)` account was theorised from a real symptom.
       #
-      # SO DO NOT ROLL THE SEVEN SIBLINGS. Editing their expressions changes nothing, and all seven
-      # are on `logs` themselves -- measured per rule: engine-log-dead, ops-log-pipeline-dead,
-      # ops-poller-log-dead, ops-unit-parse-dead, ops-journal-transport-dead,
-      # capture-log-dead-primary, capture-log-dead-secondary. The real fix is registered as T0162 and
-      # is a ROUTING change -- move the Loki-sourced dead-men to `metrics`, or
-      # mint a third receiver for Loki rules whose clear is meaningful ("a resolve ping is noise"
-      # holds for the ERROR-log rules, not for a dead-man). Until then read a clear from rule state
-      # (`/api/prometheus/grafana/api/v1/rules`), never from channel silence.
+      # SO DO NOT ROLL THE SEVEN SIBLINGS. Editing their expressions changes nothing. T0162 fixed it
+      # as a ROUTING change instead: this rule and the seven -- engine-log-dead,
+      # ops-log-pipeline-dead, ops-poller-log-dead, ops-unit-parse-dead, ops-journal-transport-dead,
+      # capture-log-dead-primary, capture-log-dead-secondary -- now pin `metrics`, while the
+      # ERROR-log rules stay on `logs` ("a resolve ping is noise" holds for them, not for a
+      # dead-man). An as-code pin is not live until `grafana-push.sh` has run, so confirm that push
+      # before trusting a channel resolve; rule state (`/api/prometheus/grafana/api/v1/rules`) is
+      # authoritative either way.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 10800, to: 0}
@@ -1247,7 +1251,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   # --- Reconciler: the redundant capture secondary + gap healing (spec 00050 Role C, task 11) -------
   # Pushed only after the `zcrypto_reconcile_*` series were confirmed VISIBLE in Grafana Cloud. A rule
@@ -2463,7 +2467,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   - uid: zcrypto-ops-poller-log-dead
     title: "Ops · poller log pipeline dead (no lines)"
@@ -2527,7 +2531,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   - uid: zcrypto-ops-unit-parse-dead
     title: "Ops · unit log parse dead (no leveled lines)"
@@ -2598,7 +2602,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   - uid: zcrypto-ops-journal-transport-dead
     title: "Ops · journal transport dead (no unit lines)"
@@ -2674,7 +2678,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   # ---- Capture hosts (zcrypto = primary + engine, zcrypto-red = secondary) --------------------
   # First alert rules for the capture VPSes. They ship host metrics + container logs via Alloy only
@@ -4170,7 +4174,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   - uid: zcrypto-capture-log-dead-secondary
     title: "Capture · log pipeline dead — Capture secondary"
@@ -4219,7 +4223,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   # Fleet · Alloy dark (T0079) -- five rules, one per host, all `critical`.
   # Uniform severity is deliberate: the responder's action is identical on every host (SSH, check the

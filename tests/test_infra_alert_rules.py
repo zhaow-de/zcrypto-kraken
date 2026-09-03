@@ -74,6 +74,78 @@ def test_datasource_uids_are_templated_not_hardcoded():
     assert not bad, f"datasourceUid neither templated nor the expression node: {bad}"
 
 
+# --- A dead-man that cannot announce its own recovery -------------------------------------------
+# `grafana-push.sh` mints two Slack contact points against the SAME webhook and channel, differing
+# in one property: `logs` sets `disableResolveMessage: true`, `metrics` does not. Suppressing the
+# resolve is right for a burst rule -- a flurry of ERROR lines ages out of its own window, so a "✅"
+# arrives after the operator has already moved on (T0047) -- and wrong for a dead-man, where the
+# clear IS the news: the thing that was dead is alive again.
+#
+# The two families are told apart structurally, never by a list of uids: a dead-man's threshold
+# evaluator is `lt` (it fires when the line count falls BELOW one), a burst rule's is `gt` (it fires
+# when the count rises above zero). A hand-list would admit the ninth dead-man added tomorrow, which
+# is the mechanism this guard exists to close.
+#
+# The read is the THRESHOLD node's evaluator, so a comparison folded into a `math` node (`$B < 1`
+# thresholded `gt 0`) is invisible to it. That shape is already in this file --
+# engine-dark-with-exposure and ops-verify-replay-backlog-stuck -- both on `metrics`, so nothing is
+# missed today; a dead-man written that way on `logs` would pass. Widen the classifier, never the
+# receiver.
+PUSH = REPO / "infra/scripts/grafana-push.sh"
+
+
+def _receivers_suppressing_resolve() -> set[str]:
+    """The receiver names `grafana-push.sh` mints with `disableResolveMessage: true`, read from the
+    script rather than restated here: the flag and the pin live in different files, and this guard is
+    only worth anything if it fails when EITHER of them moves."""
+    calls = re.findall(r'upsert_slack_integration\s+"[^"]+"\s+"([^"]+)"\s+(true|false)', PUSH.read_text())
+    assert calls, "no upsert_slack_integration calls in grafana-push.sh -- the receiver minting moved"
+    return {name for name, disable in calls if disable == "true"}
+
+
+def _fires_on_absence(rule) -> bool:
+    """True when the rule pages because a measured value fell BELOW its threshold -- every dead-man
+    here, and every disk or staleness rule that says "too little of something"."""
+    return any(
+        cond.get("evaluator", {}).get("type") == "lt"
+        for node in rule["data"]
+        for cond in (node.get("model", {}).get("conditions") or [])
+    )
+
+
+def test_a_rule_that_fires_on_absence_can_notify_its_clear():
+    """Drill N (2026-09-02) induced a capture log dead-man, watched it clear, and no resolved notice
+    ever arrived; `zcrypto-hcio-watchdog` -- the same unlabelled `or on() vector(N)` shape but on
+    `metrics` -- resolved to the same channel in about a minute. The receiver was the whole
+    difference, so the receiver is what this asserts."""
+    suppressed = _receivers_suppressing_resolve()
+    mute = [
+        (r["uid"], (r.get("notification_settings") or {}).get("receiver"))
+        for r in _rules()
+        if _fires_on_absence(r) and (r.get("notification_settings") or {}).get("receiver") in suppressed
+    ]
+    assert not mute, (
+        "these rules page on absence but pin a receiver that suppresses the resolve, so an operator "
+        f"is never told the condition ended: {mute}"
+    )
+
+
+def test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve():
+    """The over-correction guard, and the true positive for the test above: moving the whole Loki
+    family onto `metrics` would clear the dead-men by re-introducing exactly the noise T0047
+    removed. The ERROR-log rules fire on `gt` and stay where they are."""
+    suppressed = _receivers_suppressing_resolve()
+    burst = [
+        r["uid"]
+        for r in _rules()
+        if not _fires_on_absence(r) and (r.get("notification_settings") or {}).get("receiver") in suppressed
+    ]
+    assert burst, (
+        "no rule pins a resolve-suppressing receiver any more -- if that was deliberate, "
+        "grafana-push.sh should stop minting one; T0047 put the ERROR-log rules there"
+    )
+
+
 # --- A shipped metric that nothing watches ------------------------------------------------------
 # T0008's content, generalized. Spec 00069 shipped `zcrypto_capture_book_desynced` and
 # `zcrypto_capture_resubscribes_total`, both scraped and live on both hosts, and for two months no
