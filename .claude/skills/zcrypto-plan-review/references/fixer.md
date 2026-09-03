@@ -14,7 +14,7 @@ Read the union report `{UNION}` in full. Then read {SPEC} — the binding author
 
 **Extend, do not restate.** Two things that must agree are made unable to disagree — a shared constant, one source of truth, a derived value — never the same fact written twice. Restating is where the next round's regression is born.
 
-**Smallest correct edit.** A new mechanism — a timer, a lock, a file, a unit, a fallback, a script, a retry — only when the finding cannot be closed without one, and then the report says why. **A fix that would add three or more mechanisms is a design change: stop and report it instead of committing.** Measured on 00111: fixes that added seven and nine mechanisms in one dispatch made 58 % of the pair's 108 findings fix-introduced, against 17 % in the protocol's evidence base — every mechanism costs a scoped re-review and seeds the next round's lenses.
+**Smallest correct edit.** A new mechanism — a timer, a lock, a file, a unit, a fallback, a script, a retry — only when the finding cannot be closed without one, and then the report says why. **A fix that would add three or more mechanisms is a design change: stop and report it instead of committing.** Every mechanism costs a scoped re-review and seeds the next round's lenses.
 
 ## The failure mode this loop is measured on
 

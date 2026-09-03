@@ -51,9 +51,9 @@ The single source of truth for the memo's data model, tooling discipline, and me
 
 Appliable by whoever follows this protocol: the joint grooming conversation, or a human-launched `/zcrypto-auto-exec` run — the launch is the human trigger. They are **never** a route into the human-gated operations below.
 
-- **done** (`T0199 is done`) → find the `WORK-ITEMS QUEUE` item(s) referencing that topic; mark done citing the evidence (iter-N / T-topic / commits / PRs — whichever apply) with a timestamp; **move** the whole item to `DONE ITEMS`.
-- **partially done** (`T0199 is partially done`) → append one short cited, timestamped note in place; when the partial resolution changed the item's *shape* — scope shrank, effort resized, prerequisites moved — also update its **subject**, **Size**, and **DependsOn** to describe only the remainder, then **re-order the milestone list** so it stays a dependency-true suggested sequence.
-- **insert** (`T0199 registered — insert into queue`) → for a newly registered topic: add a queue item in the standard shape at its **dependency- and priority-correct position** in the milestone list.
+- **done** (`T9999 is done`) → find the `WORK-ITEMS QUEUE` item(s) referencing that topic; mark done citing the evidence (iter-N / T-topic / commits / PRs — whichever apply) with a timestamp; **move** the whole item to `DONE ITEMS`.
+- **partially done** (`T9999 is partially done`) → append one short cited, timestamped note in place; when the partial resolution changed the item's *shape* — scope shrank, effort resized, prerequisites moved — also update its **subject**, **Size**, and **DependsOn** to describe only the remainder, then **re-order the milestone list** so it stays a dependency-true suggested sequence.
+- **insert** (`T9999 registered — insert into queue`) → for a newly registered topic: add a queue item in the standard shape at its **dependency- and priority-correct position** in the milestone list.
 - **work-shaped argument** (`iter-290 (PR #1332) has been merged`) → resolve the delivered work to its topic(s) first — the iteration's `docs/iterations-history-phase<N>.md` entry and/or the PR — then apply *done* / *partially done* to each matching item, citing the iter/PR as evidence. Ambiguous resolution (several topics, different completion states) → ask, never guess.
 
 **All forms**: touch nothing else — no discovery, no purge, no `NEW IDEAS`, no frontmatter timestamp. No matching item → say so and stop.
