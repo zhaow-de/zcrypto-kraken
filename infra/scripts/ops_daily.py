@@ -136,14 +136,19 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 uid = rule.get("uid")
                 if not uid:
                     return AlertsRead(unreadable=f"a rule arrived with no uid ({rule.get('name', '?')!r}) -- the API shape changed")
-                instances = rule.get("alerts") or [{}]
-                # Instances arrive in EVERY state -- the live rules API carries 181 `Normal` ones and
-                # a `Normal (NoData)` -- so a rule grouped `by (host, system)` that is Alerting on the
-                # primary and Normal on the secondary would otherwise name both hosts, and the report
-                # would send the operator to silence a host that never fired. The default keeps a
-                # stateless instance: that is the `[{}]` above, standing in for a firing rule whose
-                # own expr aggregated every label away, and dropping it would report no host at all.
-                alerting = [i for i in instances if str(i.get("state") or "Alerting").startswith("Alerting")]
+                instances = rule.get("alerts") or []
+                # Instances arrive in EVERY state, reason suffix included, so a rule grouped
+                # `by (host, system)` that is Alerting on the primary and Normal on the secondary
+                # would otherwise name both hosts -- sending the operator to create, and later
+                # remember to delete, a silence on a host that never fired.
+                #
+                # Default-DENY, then restore the sentinel: an instance whose state the code cannot
+                # read is not evidence that it fired. `[{}]` stands in for a firing rule whose own
+                # expr aggregated every label away -- the only thing that can name those is
+                # `_UID_HOST`, and it is reached per instance, so with nothing left there is nothing
+                # to reach it through. Admitting the sentinel as a DEFAULT instead would let any
+                # unreadable state through the door it was opened for.
+                alerting = [i for i in instances if str(i.get("state") or "").startswith("Alerting")] or [{}]
                 summary = (rule.get("annotations") or {}).get("summary") or ""
                 link = _RUNBOOK_LINK.search(summary)
                 rule_links[uid] = link.group(0) if link else None
@@ -174,12 +179,19 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
             for stamp, line in _history_transitions(payload):
                 # The history writes the state with its REASON attached -- `drill-log.md` measured
                 # both `Pending (NoData) -> Alerting (NoData)` and `Alerting -> Normal (MissingSeries)`
-                # off this endpoint. An exact match on "Alerting" drops every firing that arrived
-                # through `noDataState: Alerting`, which 26 rules carry deliberately. `(Error)` is
-                # excluded on purpose: that is Grafana failing to reach its own Prometheus, measured
-                # 83.5% false over 23 days in `infra/runbooks/capture.md`, and admitting it would move
-                # the daily verdict on a platform hiccup.
-                if (line.get("current") or "") not in ("Alerting", "Alerting (NoData)"):
+                # off this endpoint -- so an exact match on "Alerting" drops every firing that arrived
+                # through `noDataState: Alerting`, which the rules carry deliberately.
+                #
+                # A PREFIX rather than a list of the reasons seen so far, because the two failure
+                # directions are not symmetric: admitting a reason nobody has measured yet costs one
+                # report line, dropping one costs a silent all-clear over a page. `Error` is the
+                # single exclusion, and by substring so a compound reason cannot smuggle it past:
+                # that is Grafana failing to reach its own Prometheus rather than any fleet event,
+                # measured 83.5% false over 23 days in `infra/runbooks/capture.md`, and nearly every
+                # rule carries `execErrState: Alerting`, so admitting it would move the daily verdict
+                # on a platform hiccup.
+                current = str(line.get("current") or "")
+                if not current.startswith("Alerting") or "Error" in current:
                     continue
                 uid = line.get("ruleUID")
                 if not uid:
@@ -193,8 +205,8 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                     # than making a second one -- keeping the first row alone under-reports a
                     # fleet-wide event exactly as reading `instances[0]` did. A uid already carrying a
                     # CURRENTLY-firing Alert is left untouched: that one renders from `firing_now`,
-                    # and `cleared_in_window` subtracts it. Chunks and rows run forward in time, so
-                    # the `active_at` kept is the earliest.
+                    # and `cleared_in_window` subtracts it. The first row seen for a uid sets
+                    # `active_at`; later rows only add hosts.
                     if seen.state == "fired-in-window" and row_hosts:
                         fired[uid] = replace(seen, hosts=tuple(dict.fromkeys(seen.hosts + row_hosts)))
                     continue

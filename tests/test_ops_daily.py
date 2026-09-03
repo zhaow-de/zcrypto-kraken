@@ -734,10 +734,10 @@ def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
 
 
 def test_a_normal_instance_does_not_contribute_its_host_to_a_firing_rule():
-    """The rules API lists instances in EVERY state, not only the firing ones -- measured live, where
-    181 `Normal` instances sit under inactive rules and one reads `Normal (NoData)`. A rule grouped
-    `by (host, system)` can be Alerting on the primary and Normal on the secondary, and naming both
-    sends the operator to create a silence on a host that never fired."""
+    """The rules API lists instances in EVERY state, not only the firing ones, and their states carry
+    a reason suffix the same way the history's do. A rule grouped `by (host, system)` can be Alerting
+    on the primary and Normal on the secondary, and naming both sends the operator to create a
+    silence on a host that never fired."""
     payload = _rules(
         {
             "name": "Capture · venue not online",
@@ -755,6 +755,47 @@ def test_a_normal_instance_does_not_contribute_its_host_to_a_firing_rule():
     assert read.firing_now[0].hosts == ("zcrypto",)
     # `active_at` comes from the same filtered set, or a Normal instance's absent one wins by position.
     assert read.firing_now[0].active_at == "2026-08-29T10:00:00Z"
+
+
+@pytest.mark.parametrize("state", [None, "", "Normal"])
+def test_an_instance_the_api_does_not_call_alerting_contributes_no_host(state):
+    """Default-DENY on the instance's own state. The `[{}]` sentinel that stands in for a rule whose
+    expr aggregated every label away is restored after the filter, not smuggled through it as a
+    default -- otherwise any instance the code cannot prove is firing names its host anyway, which is
+    the defect the filter exists to close."""
+    payload = _rules(
+        {
+            "name": "Capture · venue not online",
+            "uid": "zcrypto-capture-venue-not-online",
+            "state": "firing",
+            "labels": {"severity": "warning"},
+            "annotations": {"summary": "Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-not-online"},
+            "alerts": [
+                {"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto"}},
+                {"state": state, "activeAt": "2026-08-29T09:00:00Z", "labels": {"host": "zcrypto-red"}},
+            ],
+        }
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert read.firing_now[0].hosts == ("zcrypto",)
+
+
+def test_a_rule_whose_expr_aggregates_every_label_away_still_names_its_host():
+    """The five `zcrypto-alloy-dark-*` rules carry no `host` label at all, so `_UID_HOST` is the only
+    thing that can name them -- and it is reached through the synthetic instance, which must survive
+    the state filter that has no state to read."""
+    payload = _rules(
+        {
+            "name": "Alloy dark",
+            "uid": "zcrypto-alloy-dark-nas",
+            "state": "firing",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/observability.md#zcrypto-alloy-dark-nas"},
+            "alerts": [],
+        }
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert read.firing_now[0].hosts == ("nas",)
 
 
 def _history(*transitions):
@@ -781,6 +822,11 @@ def _history(*transitions):
         # `execErrState: Alerting` is Grafana failing to reach its own Prometheus -- 83.5% false over
         # 23 days by the capture runbook's count. Admitting it would move the verdict on a hiccup.
         ("Alerting (Error)", False),
+        # An Alerting reason nobody has measured yet costs one report line if admitted and a silent
+        # all-clear over a page if dropped, so the filter is a prefix minus Error rather than a list.
+        ("Alerting (KeepLast)", True),
+        # ... and a compound reason naming Error is still Grafana failing to read its own datasource.
+        ("Alerting (Error, KeepLast)", False),
     ],
 )
 def test_the_history_admits_a_real_firing_and_its_nodata_sentinel_but_not_a_datasource_error(current, reaches):
@@ -800,8 +846,8 @@ def test_the_history_admits_a_real_firing_and_its_nodata_sentinel_but_not_a_data
 
 
 def test_a_history_alert_takes_the_host_from_its_own_labels():
-    """25 of 36 history rows carried `line.labels.host` over a measured 24 h, so falling straight to
-    the uid map prints `on ?` for every rule outside it -- which is most of them."""
+    """A history row carries its own labels, and `_UID_HOST` names only the handful of rules whose
+    expr aggregates the host away -- so falling straight to the map prints `on ?` for most rules."""
     rules = _rules(
         {
             "name": "Gate · exporter stale",
