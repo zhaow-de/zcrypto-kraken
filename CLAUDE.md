@@ -4,6 +4,8 @@
 
 `zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script. Vocabulary: "observability" means the Grafana Cloud telemetry stack, never the healthchecks.io dead-man switches — those are a separate, independent failure domain.
 
+**Sessions.** Four named Claude Code sessions share this repo (`docs/reference/multi-agent-protocol.md`): `zcrypto-main` coordinates and holds the PR, topic, memory and memo-token authorities; `zcrypto-alex` and `zcrypto-bravo` are payload sessions bound by that doc's payload contract; `zcrypto-zebra` is the owner's own and is never assigned. `ListAgents` prints which one you are.
+
 ## Repository layout
 
 Standard single-package uv project: `pyproject.toml`, `uv.lock`, `.python-version`, and `ruff.toml` all live at the **repo root**, and every `uv` command runs from the root.
