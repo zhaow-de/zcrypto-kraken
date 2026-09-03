@@ -43,7 +43,8 @@ Main runs it from an in-session `CronCreate` job — session-only, fires only wh
 ## Restart and rename
 
 - A session cannot be renamed by the session; the owner runs `/rename` from its console, at a quiet moment, and tells main.
-- After a `claude` binary update the owner exits and resumes each session with no running tasks; names persist, connections re-establish. Main reinstalls its tick on resume and re-reads the coordination table before assigning anything.
+- After a `claude` binary update the owner exits and resumes each session with no running tasks; names persist, connections re-establish.
+- After a workstation restart, `infra/scripts/zcrypto-tmux.zsh` rebuilds the cockpit — one tmux session `zcrypto-main` with the three payload-and-coordinator panes resuming their Claude sessions by ID — and the owner's `zcrypto-zebra` shell; idempotent, so it is safe to run whenever a session is missing. Main reinstalls its tick on resume and re-reads the coordination table before assigning anything.
 
 ## The payload contract
 
