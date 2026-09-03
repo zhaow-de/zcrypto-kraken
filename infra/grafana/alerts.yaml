@@ -3275,11 +3275,14 @@ rules:
     annotations:
       summary: >-
         EVERY book stream on this capture host has been silent for minutes — not one message on
-        any pair, so this is the whole feed rather than one quiet leg. The last time this happened the
-        socket still reported connected, the keepalive kept completing round trips, and the cumulative
-        gap counter stayed at 0.0, so nothing else saw it. L2 is unbackfillable and every second here is
-        permanent loss. Check the venue's published maintenance calendar FIRST — every firing of this
-        rule so far has been one — then the capture container on the named host.
+        any pair, so this is the whole feed rather than one quiet leg. The socket stays connected, the
+        keepalive keeps completing round trips and the dead-man keeps pinging right through this —
+        none of them can see it. L2 is unbackfillable and every
+        second here is permanent loss. Check the venue's published maintenance calendar FIRST — every
+        firing of this rule so far has been one — then the capture container on the named host. The
+        reconciler cannot say what was lost for about two hours; until then the capture log's gap start
+        and gap end lines are the sharpest bound available, and both hosts showing the same window is
+        the venue rather than the fleet.
         Runbook: infra/runbooks/capture.md#zcrypto-capture-all-streams-silent
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "102"
