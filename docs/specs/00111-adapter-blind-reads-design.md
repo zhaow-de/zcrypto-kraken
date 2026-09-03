@@ -99,7 +99,7 @@ Click-driven order entry is error-prone and unrepeatable, and this fixture will 
 
 ### D7 — The upstream defects are reported, not patched around silently
 
-Two upstream defects are in evidence: the silent row-drop on a cache miss, and `hold_trade` never being read. The second is being submitted as a PR to `nautechsystems/nautilus_trader` (the adapter's own margin branch already uses `from_total_and_free` correctly, so the precedent is in-file). D1 and D2 stand regardless — upstream lands on its own timeline and RUNG 1 does not wait on it.
+Two upstream defects are in evidence: the silent row-drop on a cache miss, and `hold_trade` never being read. The second is owed as a PR to `nautechsystems/nautilus_trader` (the adapter's own margin branch already uses `from_total_and_free` correctly, so the precedent is in-file); whether it has been filed is the topic's to say, never this paragraph's. D1 and D2 stand regardless — upstream lands on its own timeline and RUNG 1 does not wait on it.
 
 **Both are registered in `T0160`, not in this prose.** A deferral whose only home is a spec paragraph is untracked; `T0160` already enumerates the upstream commits that intersect this repo's read path, so it is where these two belong and where their trigger lives — the `hold_trade` report is the same event D3's assertion exists to detect.
 

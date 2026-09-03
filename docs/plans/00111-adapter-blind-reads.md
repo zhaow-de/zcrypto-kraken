@@ -693,7 +693,9 @@ Load the `iteration-closeout` skill; append to `docs/iterations-history-phase6.m
 
 - [ ] **Step 2: Update the topics**
 
-`T0159` gains the cache finding. `T0160` gains **three** deferrals, each with its `ripe_when`, because a deferral whose only home is spec or plan prose is untracked: spec D7's two upstream items — the silent row-drop report and the `hold_trade` PR, the latter being the same event D3's assertion exists to detect — and the second fail-open this branch leaves standing, `executor._classify_spot_close`'s `reduce_only` bound sizing against the same overstated free balance (Task 3 Step 1 states why the schema bump that would fix it is declined; it ripens with the `hold_trade` fix that removes the overstatement at the source). Register no **new** topic without the approver's word (`zcrypto-main` holds that call); all three fold into existing ones.
+`T0159` gains the cache finding.
+
+**`T0160`'s three sub-items are already registered** — spec D7's two upstream reports and the `_classify_spot_close` fail-open D2 leaves standing, each with its own `ripe_when`, landed when the spec asserted them rather than deferred to here, because the spec claims them in the present tense and a claim that is not yet true is the failure the registration rule names. So this step **re-reads** them against what the branch actually did and re-tenses anything the implementation moved — it does not add them again. Register no **new** topic without the approver's word (`zcrypto-main` holds that call).
 
 - [ ] **Step 3: Commit the closeout**
 
