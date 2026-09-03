@@ -765,7 +765,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   # The execution safety envelope (cli/engine/execgate.py, `_ExecGauges` in cli/engine/command.py):
   # three rules over the six `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
@@ -1073,6 +1073,10 @@ rules:
       unit: "as a 1-minute load average"
     labels:
       severity: warning
+    # `metrics`, not `logs` -- as for every dead-man in this file. `grafana-push.sh` mints `logs`
+    # with disableResolveMessage: true, which is right for a burst that ages out of its own window
+    # (T0047) and wrong where the clear is the news. Enforced by
+    # tests/test_infra_alert_rules.py::test_a_rule_that_fires_on_absence_can_notify_its_clear.
     notification_settings:
       receiver: metrics
 
@@ -1247,7 +1251,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   # --- Reconciler: the redundant capture secondary + gap healing (spec 00050 Role C, task 11) -------
   # Pushed only after the `zcrypto_reconcile_*` series were confirmed VISIBLE in Grafana Cloud. A rule
@@ -2463,7 +2467,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   - uid: zcrypto-ops-poller-log-dead
     title: "Ops · poller log pipeline dead (no lines)"
@@ -2527,7 +2531,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   - uid: zcrypto-ops-unit-parse-dead
     title: "Ops · unit log parse dead (no leveled lines)"
@@ -2598,7 +2602,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   - uid: zcrypto-ops-journal-transport-dead
     title: "Ops · journal transport dead (no unit lines)"
@@ -2674,7 +2678,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   # ---- Capture hosts (zcrypto = primary + engine, zcrypto-red = secondary) --------------------
   # First alert rules for the capture VPSes. They ship host metrics + container logs via Alloy only
@@ -4170,7 +4174,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   - uid: zcrypto-capture-log-dead-secondary
     title: "Capture · log pipeline dead — Capture secondary"
@@ -4219,7 +4223,7 @@ rules:
     labels:
       severity: critical
     notification_settings:
-      receiver: logs
+      receiver: metrics
 
   # Fleet · Alloy dark (T0079) -- five rules, one per host, all `critical`.
   # Uniform severity is deliberate: the responder's action is identical on every host (SSH, check the
