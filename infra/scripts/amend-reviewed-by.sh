@@ -15,8 +15,10 @@
 # fleet-pins.md (a rewrite would orphan a rollback operand -- exit 7); a merge commit in the
 # replayed range (a rebase would linearize it -- exit 8). A pre-commit hook failing mid-rebase
 # leaves the rebase in progress: fix, `git rebase --continue`, and re-verify the diff is empty.
-# The blank-line rule keys on known trailer names, so a body ending in a `Note:`-shaped line
-# still gets its separating blank line.
+# The blank-line rule keys on the LAST line matching a known trailer name (Co-Authored-By,
+# Reviewed-by, Refine-Round-Closed, Signed-off-by, BREAKING-CHANGE): a body ending in a
+# `Note:`-shaped line gets its separating blank line, and a trailer name quoted mid-body
+# does not suppress it.
 # Every commit after the target is rewritten -- hashes change, content does not, and the
 # script asserts that with an empty `git diff <old-head> HEAD --stat` before it prints
 # old -> new for the target.
@@ -51,7 +53,8 @@ for rec in docs/reference/deploy-log.jsonl docs/reference/fleet-pins.md; do
 done
 
 awk 'BEGIN{RS="\0"} {sub(/\n+$/,""); printf "%s", $0}' "$msg" > "$new"
-grep -qE '^(Co-Authored-By|Reviewed-by|Refine-Round-Closed|Signed-off-by): ' "$new" || printf '\n' >> "$new"
+last=$(tail -n 1 "$new")
+[[ "$last" =~ ^(Co-Authored-By|Reviewed-by|Refine-Round-Closed|Signed-off-by|BREAKING-CHANGE):\  ]] || printf '\n' >> "$new"
 printf '\n%s\n' "$trailer" >> "$new"
 
 old_head=$(git rev-parse HEAD)
