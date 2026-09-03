@@ -92,9 +92,13 @@ def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
             "labels": {"severity": "critical"},
             "annotations": {"summary": "one stream stopped. Runbook: infra/runbooks/capture.md#zcrypto-capture-stream-silent"},
             "alerts": [
-                {"activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto", "system": "maintenance"}},
-                {"activeAt": "2026-08-29T10:02:00Z", "labels": {"host": "zcrypto-red", "system": "maintenance"}},
-                {"activeAt": "2026-08-29T10:04:00Z", "labels": {"host": "zcrypto-red", "system": "post_only"}},
+                {"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto", "system": "maintenance"}},
+                {
+                    "state": "Alerting",
+                    "activeAt": "2026-08-29T10:02:00Z",
+                    "labels": {"host": "zcrypto-red", "system": "maintenance"},
+                },
+                {"state": "Alerting", "activeAt": "2026-08-29T10:04:00Z", "labels": {"host": "zcrypto-red", "system": "post_only"}},
             ],
         },
         {
@@ -162,7 +166,7 @@ def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid
             "state": "firing",
             "labels": {"severity": "critical"},
             "annotations": {},
-            "alerts": [{"activeAt": "2026-08-29T10:00:00Z", "labels": {"severity": "critical"}}],
+            "alerts": [{"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"severity": "critical"}}],
         }
     )
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
@@ -177,7 +181,7 @@ def test_an_instance_host_label_wins_over_the_uid_map():
             "state": "firing",
             "labels": {"severity": "critical"},
             "annotations": {},
-            "alerts": [{"activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "nas"}}],
+            "alerts": [{"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "nas"}}],
         }
     )
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
@@ -727,6 +731,122 @@ def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
     assert "infra/runbooks/capture.md#zcrypto-capture-stream-silent" in report.markdown()
     assert report.exit_code == 1 and report.verdict_word == "attention"
     assert "zcrypto-capture-stream-silent" in report.journal_paragraph()
+
+
+def test_a_normal_instance_does_not_contribute_its_host_to_a_firing_rule():
+    """The rules API lists instances in EVERY state, not only the firing ones -- measured live, where
+    181 `Normal` instances sit under inactive rules and one reads `Normal (NoData)`. A rule grouped
+    `by (host, system)` can be Alerting on the primary and Normal on the secondary, and naming both
+    sends the operator to create a silence on a host that never fired."""
+    payload = _rules(
+        {
+            "name": "Capture · venue not online",
+            "uid": "zcrypto-capture-venue-not-online",
+            "state": "firing",
+            "labels": {"severity": "warning"},
+            "annotations": {"summary": "Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-not-online"},
+            "alerts": [
+                {"state": "Normal", "activeAt": None, "labels": {"host": "zcrypto-red"}},
+                {"state": "Alerting", "activeAt": "2026-08-29T10:00:00Z", "labels": {"host": "zcrypto"}},
+            ],
+        }
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert read.firing_now[0].hosts == ("zcrypto",)
+    # `active_at` comes from the same filtered set, or a Normal instance's absent one wins by position.
+    assert read.firing_now[0].active_at == "2026-08-29T10:00:00Z"
+
+
+def _history(*transitions):
+    """The live frame shape: three columns named by `schema.fields`, identity in `line`."""
+    return {
+        "schema": {"fields": [{"name": "time"}, {"name": "line"}, {"name": "labels"}]},
+        "data": {
+            "values": [
+                [1787987260000 + i * 1000 for i in range(len(transitions))],
+                list(transitions),
+                [{} for _ in transitions],
+            ]
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("current", "reaches"),
+    [
+        ("Alerting", True),
+        # 26 rules carry `noDataState: Alerting`; drill K measured the pair `Pending (NoData) ->
+        # Alerting (NoData)` off this endpoint. An exact match on "Alerting" drops every one of them.
+        ("Alerting (NoData)", True),
+        # `execErrState: Alerting` is Grafana failing to reach its own Prometheus -- 83.5% false over
+        # 23 days by the capture runbook's count. Admitting it would move the verdict on a hiccup.
+        ("Alerting (Error)", False),
+    ],
+)
+def test_the_history_admits_a_real_firing_and_its_nodata_sentinel_but_not_a_datasource_error(current, reaches):
+    rules = _rules(
+        {
+            "name": "Engine · cycle stale",
+            "uid": "zcrypto-engine-cycle-stale",
+            "state": "inactive",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/engine.md#zcrypto-engine-cycle-stale"},
+            "alerts": [],
+        }
+    )
+    history = _history({"previous": "Pending", "current": current, "ruleUID": "zcrypto-engine-cycle-stale", "ruleTitle": "t"})
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(rules, history))
+    assert bool(read.fired_in_window) is reaches
+
+
+def test_a_history_alert_takes_the_host_from_its_own_labels():
+    """25 of 36 history rows carried `line.labels.host` over a measured 24 h, so falling straight to
+    the uid map prints `on ?` for every rule outside it -- which is most of them."""
+    rules = _rules(
+        {
+            "name": "Gate · exporter stale",
+            "uid": "zcrypto-gate-exporter-stale",
+            "state": "inactive",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/gate.md#zcrypto-gate-exporter-stale"},
+            "alerts": [],
+        }
+    )
+    history = _history(
+        {
+            "previous": "Pending",
+            "current": "Alerting",
+            "ruleUID": "zcrypto-gate-exporter-stale",
+            "ruleTitle": "t",
+            "labels": {"host": "nas"},
+        }
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(rules, history))
+    assert read.fired_in_window[0].hosts == ("nas",)
+
+
+def test_a_history_alert_gathers_every_host_that_fired_not_just_the_first_row():
+    """One rule fires once per host, so the history carries a row each -- 2026-09-03's
+    `zcrypto-capture-all-streams-silent` transitioned on both capture hosts within the same minute.
+    Keeping the first row alone under-reports exactly as reading `instances[0]` did."""
+    rules = _rules(
+        {
+            "name": "Capture · every book stream on a host is silent",
+            "uid": "zcrypto-capture-all-streams-silent",
+            "state": "inactive",
+            "labels": {"severity": "critical"},
+            "annotations": {"summary": "Runbook: infra/runbooks/capture.md#zcrypto-capture-all-streams-silent"},
+            "alerts": [],
+        }
+    )
+    uid = "zcrypto-capture-all-streams-silent"
+    history = _history(
+        {"previous": "Normal", "current": "Alerting", "ruleUID": uid, "ruleTitle": "t", "labels": {"host": "zcrypto"}},
+        {"previous": "Normal", "current": "Alerting", "ruleUID": uid, "ruleTitle": "t", "labels": {"host": "zcrypto-red"}},
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(rules, history))
+    assert [a.uid for a in read.fired_in_window] == [uid], "still ONE Alert per rule"
+    assert read.fired_in_window[0].hosts == ("zcrypto", "zcrypto-red")
 
 
 def test_an_alert_still_firing_is_not_also_listed_as_cleared():

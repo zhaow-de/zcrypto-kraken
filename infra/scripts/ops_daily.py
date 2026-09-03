@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -137,6 +137,13 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 if not uid:
                     return AlertsRead(unreadable=f"a rule arrived with no uid ({rule.get('name', '?')!r}) -- the API shape changed")
                 instances = rule.get("alerts") or [{}]
+                # Instances arrive in EVERY state -- the live rules API carries 181 `Normal` ones and
+                # a `Normal (NoData)` -- so a rule grouped `by (host, system)` that is Alerting on the
+                # primary and Normal on the secondary would otherwise name both hosts, and the report
+                # would send the operator to silence a host that never fired. The default keeps a
+                # stateless instance: that is the `[{}]` above, standing in for a firing rule whose
+                # own expr aggregated every label away, and dropping it would report no host at all.
+                alerting = [i for i in instances if str(i.get("state") or "Alerting").startswith("Alerting")]
                 summary = (rule.get("annotations") or {}).get("summary") or ""
                 link = _RUNBOOK_LINK.search(summary)
                 rule_links[uid] = link.group(0) if link else None
@@ -146,9 +153,9 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                             uid=uid,
                             title=rule.get("name", ""),
                             state="firing",
-                            active_at=instances[0].get("activeAt"),
+                            active_at=(alerting[0] if alerting else {}).get("activeAt"),
                             runbook=link.group(0) if link else None,
-                            hosts=_hosts_of(uid, instances),
+                            hosts=_hosts_of(uid, alerting),
                         )
                     )
     except _UNREACHABLE as exc:
@@ -165,10 +172,31 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
             payload = _get(url, token, opener)
             rows = (payload.get("data") or {}).get("values") or []
             for stamp, line in _history_transitions(payload):
-                if (line.get("current") or "") != "Alerting":
+                # The history writes the state with its REASON attached -- `drill-log.md` measured
+                # both `Pending (NoData) -> Alerting (NoData)` and `Alerting -> Normal (MissingSeries)`
+                # off this endpoint. An exact match on "Alerting" drops every firing that arrived
+                # through `noDataState: Alerting`, which 26 rules carry deliberately. `(Error)` is
+                # excluded on purpose: that is Grafana failing to reach its own Prometheus, measured
+                # 83.5% false over 23 days in `infra/runbooks/capture.md`, and admitting it would move
+                # the daily verdict on a platform hiccup.
+                if (line.get("current") or "") not in ("Alerting", "Alerting (NoData)"):
                     continue
                 uid = line.get("ruleUID")
-                if not uid or uid in fired:
+                if not uid:
+                    continue
+                # The row's own label first: most rules are outside `_UID_HOST`, and falling straight
+                # to it prints `on ?` for them.
+                row_hosts = _hosts_of(uid, [{"labels": line.get("labels") or {}}])
+                seen = fired.get(uid)
+                if seen is not None:
+                    # A rule fires once per HOST, so a later row adds a host to the same Alert rather
+                    # than making a second one -- keeping the first row alone under-reports a
+                    # fleet-wide event exactly as reading `instances[0]` did. A uid already carrying a
+                    # CURRENTLY-firing Alert is left untouched: that one renders from `firing_now`,
+                    # and `cleared_in_window` subtracts it. Chunks and rows run forward in time, so
+                    # the `active_at` kept is the earliest.
+                    if seen.state == "fired-in-window" and row_hosts:
+                        fired[uid] = replace(seen, hosts=tuple(dict.fromkeys(seen.hosts + row_hosts)))
                     continue
                 fired[uid] = Alert(
                     uid=uid,
@@ -176,7 +204,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                     state="fired-in-window",
                     active_at=datetime.fromtimestamp(stamp / 1000, timezone.utc).isoformat(),
                     runbook=rule_links.get(uid),
-                    hosts=tuple(host for host in (_UID_HOST.get(uid),) if host),
+                    hosts=row_hosts,
                 )
             if rows and len(rows[0]) >= HISTORY_PAGE_LIMIT:
                 read.unreadable = (
