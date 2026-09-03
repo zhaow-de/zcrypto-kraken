@@ -33,6 +33,7 @@
 | `README.md` | The Usage row for `flatten`, which restates the same exit-3 clause |
 | `infra/scripts/kraken-fixture.sh` | Mints, verifies and closes the fixture over `kraken-cli`; `--validate` default |
 | `infra/scripts/flatten-with-vaulted-key.sh` | **New**, so Task 5 can run this branch's flatten with the vaulted key. A second entry point rather than a mode on `probe-with-vaulted-key.sh`, and **deliberately not allowlisted** — see Task 4 Step 4 |
+| `infra/scripts/kraken-order-semantics-probe.py` | Probe 1's balance render widens to `total`/`locked`/`free` — the only surface that reads the exec client's `MARGIN`-typed account from outside the engine, and the account D2's signal was never measured on |
 | `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md` | Gains the order + position verification row |
 | `docs/iterations-history-phase6.md` | The iteration entry (final task) |
 
@@ -407,6 +408,8 @@ Before trusting either verdict, confirm the `-k` filter collects the test: `uv r
 
 Executed on a constructed `MarginAccount` with a `2.757 EUR` hold, that expression returns `{'EUR': 2.76}` (EUR precision 2 quantizes it) — the same shape and the same quantization as the `balances` line above it.
 
+**What this reader sees in production is not the account the spec measured, and no offline run here can close that.** `Cache.account_for_venue` returns the exec client's account, and `node.py`'s `_exec_client_config` builds that client `spot_account_type=AccountType.MARGIN`; the spec's `locked == 0` came off flatten's `CASH`-typed read (spec D2's second paragraph). Every fixture below passes a map by hand, so a green suite says the reader and the guard are wired correctly and says **nothing** about what the live margin-typed account reports. Task 5 Step 5 takes that reading, and D2 decides the outcomes in advance.
+
 `VenueState` gains `balances_locked: dict[str, float]` as a **required** field, and **`to_payload()` is left untouched**. That is the decision, not an oversight (spec D2's "Where it runs"): `to_payload()`'s output is the `state` object of every `venue-<HH>.json`, and `validate_venue_record` compares its key set for exact equality against `_STATE_KEYS = {"snapshot_at", "instruments", "positions", "balances"}` — executed, the current shape validates and the same document plus one extra key raises `EngineJournalError: venue record 'state' keys [...] != expected [...]`. Journalling the field would therefore require bumping `VENUE_SCHEMA_VERSION`, giving `_STATE_KEYS` a per-version shape, and updating **three** readers that hardcode `schema_version != 2` — `command._seed_exec_positions`, `command._newest_venue_record`, `executor._newest_venue_balances` — plus a rollback hazard on the live trade path. Not done here.
 
 **What declining it leaves standing, stated rather than discovered.** The third of those readers is not an advisory one: `executor._newest_venue_balances` returns `state["balances"]` and `_classify_close` hands it to `_classify_spot_close`, whose `qty <= balance` bound at `REDUCE_ONLY` is on the **live trade path** — its own docstring calls that bound plus the venue's insufficient-funds rejection "the whole guard". Those balances are `account.balances_free()`, the figure spec 00111 mechanism 2 shows is overstated by whatever the venue holds. So this plan closes the fail-open at `plan_refusals` and leaves the identically-caused one at `_classify_spot_close` open, deliberately and at the price of the schema bump above. **Registered, not left in prose**: `T0160` already carries it as its own sub-item, beside the `hold_trade` deferral it is the other half of; Task 6 Step 2 re-reads and re-tenses it at closeout rather than adding it again.
@@ -543,7 +546,7 @@ def test_an_empty_locked_map_refuses_like_an_all_zero_one():
 
 
 def test_a_nonzero_locked_announces_and_stops_refusing():
-    """D3: when the upstream fix lands, `locked` becomes real and the refusal stops firing --
+    """D3: when any balance reports a hold, `locked` is real and the refusal stops firing --
     correct, but silent. Both halves are asserted here, so a guard that announced without releasing
     (or released without announcing) fails."""
     with _announcements() as records:
@@ -557,7 +560,7 @@ def test_a_nonzero_locked_announces_and_stops_refusing():
             resting_orders=1,
         )
     assert not any("cannot be trusted" in r for r in reasons)
-    assert any("locked is no longer zero" in r.getMessage() for r in records)
+    assert any("a balance reports held funds" in r.getMessage() for r in records)
 
 
 def test_a_non_finite_hold_is_named_and_still_announces_the_real_one():
@@ -576,7 +579,7 @@ def test_a_non_finite_hold_is_named_and_still_announces_the_real_one():
             resting_orders=1,
         )
     assert any("not finite" in r and "EUR" in r for r in reasons)
-    assert any("locked is no longer zero" in r.getMessage() for r in records)
+    assert any("a balance reports held funds" in r.getMessage() for r in records)
 
 
 def test_unknown_inputs_neither_refuse_nor_announce():
@@ -700,12 +703,13 @@ Extend the docstring's finiteness paragraph to cover the new map, then add, afte
             )
         if any(held > 0.0 for held in balances_locked.values()):
             logger.warning(
-                "locked is no longer zero (%r) -- the adapter now reports held funds, so the "
-                "untrustworthy-balance refusal no longer fires; re-derive whether the funding gate "
-                "still needs it",
+                "a balance reports held funds (%r) -- the untrustworthy-balance refusal does not "
+                "fire while this holds; re-derive whether the funding gate still needs it",
                 balances_locked,
             )
 ```
+
+**The line says what it READ, not that anything changed** (spec D3's no-memory paragraph). The guard holds no previous reading, so the earlier wording — *locked is no longer zero … the adapter now reports held funds* — asserted a transition nothing observed, and would have told an operator that the upstream fix had landed on the first pickup of an account whose `MARGIN`-typed `locked` was never zero to begin with. That is the reading spec D2 records as unmeasured and Task 5 Step 5 takes. **Family, four members, all of the substring and none of them the same edit**: this literal; the two `records` assertions in Step 2 (`test_a_nonzero_locked_announces_and_stops_refusing`, `test_a_non_finite_hold_is_named_and_still_announces_the_real_one`), which key on `"a balance reports held funds"` — **the leading article is load-bearing**, since the refusal reason beside it reads *no balance reports held funds* and the bare `"reports held funds"` is a substring of both, one edit away from an assertion that cannot tell the announcement from the refusal; and `T0160`'s sub-item, which quotes the old literal as the signal its first arm watches for — re-tensed at Task 6 Step 2, which is where this branch's `T0160` edits land. `grep -rn "locked is no longer zero" cli/ tests/ docs/open-topics/` is the completion check and must return nothing once all four have landed; this plan is deliberately outside those roots, because the paragraph you are reading quotes the superseded wording on purpose.
 
 **The log line carries no decision token.** `tests/test_internal_terms_not_operator_visible.py` scans every non-docstring string literal under `cli/` and `\bD\d{1,2}[a-z]?\b` is in its vocabulary — run against the literal, `_leaks(...)` returns `['D2']`. The guard's own failure message says what to do: move the token to the adjacent comment, which is what the comment above does.
 
@@ -799,6 +803,7 @@ Expected: KILLED, and again on **different** tests: the control passes the count
 **Files:**
 - Create: `infra/scripts/kraken-fixture.sh`
 - Create: `infra/scripts/flatten-with-vaulted-key.sh` (the second entry point, for Task 5)
+- Modify: `infra/scripts/kraken-order-semantics-probe.py` (`_probe1_read`'s balance render — Step 7)
 - **Do NOT modify** `infra/scripts/probe-with-vaulted-key.sh`, and **do not touch `.claude/settings.json`** — Step 4 says why both are refusals rather than omissions
 - Modify: `README.md` if it gains an operator-facing entry point
 
@@ -883,7 +888,7 @@ Task 5 must run **this branch's** flatten against the live account, and the host
   Copying is what carries the two properties a hand-written header reliably drops, and they are the two that matter if the script is ever edited: *the decrypted values go straight into the exec'd child's environment — never echoed, never written to a file, never on a command line, one process throughout so they never cross a pipe*, and *it refuses outside the repo root, so neither the target nor the vault path can be shadowed* (a bash-preamble guard, not part of the vault loader below it).
 - There is **no `--` handling** and none is added: `"$@"` is forwarded verbatim, so a `--` would reach `zcrypto engine flatten` as an argument and click would end option parsing there — measured, `['--', '--state-dir', '/tmp/x']` gives `MissingParameter: Missing option '--state-dir'`. Task 5's command carries no `--`.
 
-Two prose surfaces state `probe-with-vaulted-key.sh`'s single-fixed-target property — `infra/scripts/kraken-order-semantics-probe.py`'s credential refusal and `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`'s "executes a hardcoded target" sentence. **Both stay true and neither is edited**, which is a consequence of leaving that script alone rather than an omission.
+Two prose surfaces state `probe-with-vaulted-key.sh`'s single-fixed-target property — `infra/scripts/kraken-order-semantics-probe.py`'s credential refusal and `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`'s "executes a hardcoded target" sentence. **Both stay true and neither sentence is edited**, which is a consequence of leaving that script alone rather than an omission. Step 7 edits one render inside the harness that wrapper execs; the wrapper's own target is unchanged, so both sentences still describe it.
 
 - [ ] **Step 5: Two runs and two greps — offline, venue-free, before it is committed**
 
@@ -914,6 +919,32 @@ git commit -m "feat(scripts): a repeatable Kraken fixture mint, validate-by-defa
 ```
 
 Drop `README.md` from the `git add` if it gained nothing.
+
+- [ ] **Step 7: Teach the account probe to print the two fields the funding gate keys on**
+
+Spec D2's signal is unmeasured on the account the gate reads, and Task 5 Step 5 is where it gets measured. The only surface that can read that account from outside the engine is probe 1 of `infra/scripts/kraken-order-semantics-probe.py`, whose exec client config carries the same `spot_account_type=AccountType.MARGIN` the engine's does — and it renders `.total` alone, which is why the 2026-08-26 record holds no `locked`. One render widens:
+
+```python
+        balances = {str(c): f"total={b.total} locked={b.locked} free={b.free}" for c, b in account.balances().items()}
+```
+
+One line replacing one line, at 118 characters against `ruff.toml`'s `line-length = 132`, so the formatter leaves it whole. `observed` and both `print`s interpolate `balances` and are untouched, so the widened reading reaches the terminal, the evidence JSON and the row Task 5 Step 6 appends, from one edit. `AccountBalance` carries all three as `Money` (measured on the pinned wheel: `total=100.00 EUR locked=2.76 EUR free=97.24 EUR` for a `2.757 EUR` hold at EUR precision 2). No other probe changes, no venue is reached, and nothing about `--apply`, the notional rail or the credential refusal moves.
+
+Two checks, both offline:
+
+```bash
+uv run python infra/scripts/kraken-order-semantics-probe.py --selftest
+uv run pytest tests/test_internal_terms_not_operator_visible.py -q
+```
+
+`--selftest` runs the pure-logic rails and **does not reach `_probe1_read`** — it is the regression control for the file, never coverage of this edit, and reading it as coverage is the trap here. It reported `SELFTEST PASSED (51 checks)` against the unedited file, so a count that moves is this edit's doing. What covers the edit's shape is the measured render above, taken before the attended window rather than inside it. The second run is why the literal spells `total=`/`locked=`/`free=` and nothing else: `SCANNED_PACKAGES` carries `infra/scripts/`, so a decision token in this f-string is a red on an operator-visible surface.
+
+```bash
+git add infra/scripts/kraken-order-semantics-probe.py
+git commit -m "feat(scripts): the account probe reads held and free, not the total alone"
+```
+
+Its own commit, not folded into Step 6's: a different script, a different subject, and Step 6's message names the fixture mint.
 
 ---
 
@@ -964,19 +995,26 @@ bash infra/scripts/flatten-with-vaulted-key.sh --state-dir <a scratch dir>
 
 It has no allowlist entry, and none is to be added — if the session prompts, that is the design (Task 4 Step 4) and not a misconfiguration to route around. No `--execute`: the script refuses it outright (Task 4 Step 4), and the supported execute path is `sudo zcrypto-flatten --execute` on the engine host. And **no `--`** — the script forwards `"$@"` verbatim, so a `--` would reach click and end option parsing before `--state-dir` (Task 4 Step 4). The read shares the trade key with the running engine — the same accepted exposure `zcrypto-flatten`'s own dry-run banner names — and the engine was **confirmed** unable to submit at Step 1.3, not assumed to be.
 
-Three readings, then the one deliberately not taken:
+Four readings, then the one deliberately not taken:
 
 - **Orders — the A/B is across CODE VERSIONS, not across cache states within one run.** A post-fix flatten performs exactly one order read, so there is no cold arm inside it; and flatten prints a count, never a txid (Global Constraints). So take both arms:
-  - **cold / pre-fix**: on the engine host, `sudo zcrypto-flatten` with **no arguments** — a dry run that reads the account, prints the plan and sends nothing. It execs the deployed digest, whose flatten predates this branch, which is exactly what makes it the control here rather than a hazard. Checkable before running it: `git show 8f4ac521:cli/engine/flatten.py | grep -c cache_instrument` is **0** for the revision `docs/reference/fleet-pins.md`'s engine row names. Expect `0 resting order(s) will be cancelled account-wide`.
+  - **cold / pre-fix**: on the engine host, `sudo zcrypto-flatten` with **no arguments** — a dry run that reads the account, prints the plan and sends nothing. It execs the deployed digest, whose flatten predates this branch, which is exactly what makes it the control here rather than a hazard. Checkable before running it: `git show 8f4ac521:cli/engine/flatten.py | grep -c cache_instrument` is **0** for the revision `docs/reference/fleet-pins.md`'s engine row names. Expect `0 resting order(s) will be cancelled account-wide`, **and record its position line verbatim** — `render_plan` prints either a `margin SOL/EUR SELL …` leg or `no margin position to close`, and this run is the branch's only cold-cache POSITION read. Whether `request_position_status_reports` shares the order read's cache gate is what spec D5 calls untested and what the offline double deliberately leaves unmodelled; that one line is the only evidence this branch will ever hold on it, and it is thrown away unless it is written down.
   - **warm / this branch**: the worktree command above. Expect `2 resting order(s) will be cancelled account-wide`.
   - **identity**: from `bash infra/scripts/kraken-fixture.sh verify`'s `open-orders` read, taken between the two arms — the non-adapter witness naming both fixture txids. The count moving 0→2 against an unchanged witness is the discriminator; either arm alone reads the same whether the defect is present or not, which is how the earlier version of this defect was retracted.
 - **Positions: the minted long present in the warm run's plan, by symbol and by the CLOSING side that corresponds to it.** Never side-equality: `render_plan` prints no position's own side. `margin_legs` maps the position to its closer — `sides = {"LONG": "SELL", "SHORT": "BUY"}` — and `_leg_line` renders that mapped value, so the minted long appears as `  margin SOL/EUR SELL 0.06000000 -- market, reduce-only, …` beside a `kraken-cli` `positions` row that says long. The two surfaces disagree by construction on that field and the mapping is the reconciliation; a `BUY` there would be the finding, because it is what an inverted side produces. (A position's own side reaches the terminal only through `plan.unclosable`, which is the failure branch: a row printed there is a position flatten could size no closer for, and is itself a stop.)
-- **The engine's own view of the resting book.** D2's `resting_orders` comes from the Cache the node's reconciliation fills through this same adapter, so a cold node cache makes the guard inert. Read it directly, through the probe wrapper this branch leaves unchanged: `bash infra/scripts/probe-with-vaulted-key.sh --probes 2 --evidence-dir /tmp` — read-only without `--apply`, and probe 2 prints `open orders N` plus one `pre-existing open order:` line per order from `cache.orders_open(venue=KRAKEN_VENUE)`, which is the exact surface `_pickup` counts. Expect the two fixture orders listed and the probe's own verdict **REVIEW**, which is what it records when the account carries pre-existing state — here that verdict is the reading wanted, not a failure. `open orders 0` is the finding: it would mean the node's cache is cold the way flatten's was and D2's guard ships inert. This is the live half; the offline half is Task 3 Step 2's three `_pickup` tests, and neither substitutes for the other. `--evidence-dir` is not decoration: it defaults to the cwd, the wrapper `chdir`s to the repo root immediately before `exec`, and the harness's own help says to pass a path outside the repo — without it an untracked `evidence-*.json` lands in the working tree, invisible to Step 9's `git add`.
+- **The engine's own view of the resting book.** D2's `resting_orders` comes from the Cache the node's reconciliation fills through this same adapter, so a cold node cache makes the guard inert. Read it directly, through the probe wrapper this branch leaves unchanged (Task 4 Step 4 refuses to touch it; the harness it execs gains one widened render at Task 4 Step 7 and nothing else): `bash infra/scripts/probe-with-vaulted-key.sh --probes 1,2 --evidence-dir /tmp` — read-only without `--apply`, and probe 2 prints `open orders N` plus one `pre-existing open order:` line per order from `cache.orders_open(venue=KRAKEN_VENUE)`, which is the exact surface `_pickup` counts. Expect the two fixture orders listed and the probe's own verdict **REVIEW**, which is what it records when the account carries pre-existing state — here that verdict is the reading wanted, not a failure. `open orders 0` is the finding: it would mean the node's cache is cold the way flatten's was and D2's guard ships inert. This is the live half; the offline half is Task 3 Step 2's three `_pickup` tests, and neither substitutes for the other. `--evidence-dir` is not decoration: it defaults to the cwd, the wrapper `chdir`s to the repo root immediately before `exec`, and the harness's own help says to pass a path outside the repo — without it an untracked `evidence-*.json` lands in the working tree, invisible to Step 9's `git add`. **The selection is `1,2` and not `2`** — one invocation, two readings, because probe 1 is the only surface that reads the account the next bullet is about and a second invocation is a second client on the trade key for no gain.
+- **The gate's own account — the reading D2 keys on and nothing has ever taken.** Probe 1 of the same invocation reads `self.portfolio.account(KRAKEN_VENUE)` and, after Task 4 Step 7's widening, prints `total=`/`locked=`/`free=` per balance. That account is the exec client's, and the harness builds its client `spot_account_type=AccountType.MARGIN` exactly as `node.py` builds the engine's — so it is the account `venue_state_from_cache` reads and `plan_refusals` receives, and not the `CASH`-typed one flatten's `locked == 0` came off (spec D2). **Three outcomes, decided here and not on the day, and only one of them lets the branch continue:**
+  - **every balance reports `locked` 0** — the signal holds on the path the guard runs on. Record the figures; continue.
+  - **any balance reports `locked > 0`** — the conjunct that releases D2's refusal is already satisfied, so the funding gate ships inert on the arming path and D3's line fires on every pickup. **That is a STOP before Task 6**: the refusal is re-keyed, or this branch does not close out. It is not a number to weigh against the offline tests, every one of which passes a map by hand and can see none of this.
+  - **no reading at all** — probe 1 records `no AccountState arrived`, or the invocation dies. Record it as **not measured**, and treat it as the stop above: reading a null as the zero that confirms the design is the exact failure this spec was written to eliminate.
+
+  **Taken with the minted position OPEN**, and taken again at Step 7 once it is closed. The two are not the same question, and `docs/reference/adapter-verification/1.230.0.md` is why: that version's `MARGIN`-typed account reported **TradeBalance-derived equity in `margin_balance_asset`** rather than per-asset wallet balances, and on an account of that shape `locked` moves with margin in use rather than with an order's hold. Open-then-closed, against a spot order that rests throughout, is the one pair of readings this fixture can separate those two causes with — and the second costs one extra read-only invocation inside a window that is already open.
+
 - **No fills leg.** Nothing in `cli/` reads fills — `request_fill_reports` appears in no file under `cli/`, `tests/` or `infra/` — so the named run produces no fill row to assert on, and the committed record holds order txids (four of them `filled_qty=0.0`), not fill identities. Spec D4 records the drop and its reason.
 
 - [ ] **Step 6: Record the row**
 
-Append the verification row to `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, carrying **both** order-count arms (deployed pre-fix, and this branch), the probe-2 `open orders` count, the `kraken-cli` readings beside them, and a plain statement that fills were not exercised. A row holding only the warm arm records a number nobody can tell from the defect's. **If positions come back empty, that is the finding — stop, and do not ship a fix that cannot see the close path.**
+Append the verification row to `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, carrying **both** order-count arms (deployed pre-fix, and this branch), **both arms' position lines verbatim** beside those counts, the probe-2 `open orders` count, the probe-1 `total=`/`locked=`/`free=` reading with the position OPEN, the `kraken-cli` readings beside them, and a plain statement that fills were not exercised. A row holding only the warm arm records a number nobody can tell from the defect's; a row holding only the order counts throws away the cold arm's position line, which is the branch's only cold-cache position read. The probe-1 reading is appended to rather than replaced at Step 7, which takes the same reading with the position closed — the row carries both, each labelled with the state it was taken in, or neither can be read. **If positions come back empty, that is the finding — stop, and do not ship a fix that cannot see the close path.**
 
 - [ ] **Step 7: Close the minted position, deliberately**
 
@@ -998,6 +1036,14 @@ bash infra/scripts/kraken-fixture.sh verify
 **Assign `txid` before running the query, not after reading it.** `[TXIDS]...` is optional in `kraken query-orders [OPTIONS] [TXIDS]...`, so an unset variable expands to an empty argument and the call parses, reaches the venue and answers about no order — a reading that "does not say closed", which this step's own stop-condition reads as *the position is still open*, on a position that is in fact closed and under the rollover clock.
 
 `query-orders` must report that order `closed` and fully filled — that is the reading no failed submission can produce. `verify` then supplies the corroboration in one read: `positions` empty, and `extended-balance` moved back toward its pre-mint value. It is used rather than a hand-typed `kraken positions -o json` for the same reason as Steps 2 and 4 — the spec makes this subcommand the witness — and it needs no PATH prefix, which is why the export above is scoped to the one bare call beside it. **If `query-orders` does not say closed, the position is still open** — that is a stop, not a reading to average against the empty `positions` list. **And the recourse is not another close through this branch's path**: a venue that rejected `--reduce-only --leverage 2` for this pair (the acceptance Step 2 of Task 4 records it cannot prove until here) rejects `sudo zcrypto-flatten --execute` for the same reason, since flatten closes margin legs with that same reduce-only market order. Close the leg by hand with Kraken's own settle-position action in the web UI — the close no order can send, which `infra/runbooks/engine-procedures.md` already names for the below-minimum remainder. **Leave the two original resting orders untouched**; `verify`'s `open-orders` leg is where that is read.
+
+**Then take the account reading again, with the position closed and the spot order still resting:**
+
+```bash
+bash infra/scripts/probe-with-vaulted-key.sh --probes 1 --evidence-dir /tmp
+```
+
+Read-only, no `--apply`, and the engine was confirmed unable to submit at Step 1.3. This is the second half of Step 5's account bullet and it is what separates the two causes of a non-zero `locked`: a hold the venue placed against the resting spot order, or margin in use by a position that no longer exists. Its three outcomes are Step 5's, unchanged — including that a reading which could not be taken is recorded as **not measured** and never as a zero — with one addition this state makes available: `locked > 0` here, with no position open, is a hold, and `locked` falling to 0 between the two readings says the figure tracked the position and not the order. **Append both readings to the Step 6 row before Step 9's commit**, each labelled with the state it was taken in. Run it only after `query-orders` has said `closed` — a probe started against a position that is still open answers the Step 5 question over again and not this one.
 
 - [ ] **Step 8: Close the key's allowlist**
 
@@ -1023,6 +1069,11 @@ Load the `iteration-closeout` skill; append to `docs/iterations-history-phase6.m
 `T0159` gains the cache finding, and its exit-code contract bullet — which restates exit 3 as "the venue could not be reached or read" — is re-tensed to the widened wording Task 2 Step 3 landed on the surfaces under `cli/`, `infra/` and `README.md` (that step's own table is the enumeration; no count is restated here, so the two cannot disagree). That bullet is the only restatement of the clause under `docs/` that is a live record rather than a point-in-time one; spec `00106` and `docs/iterations-history-phase6.md` keep theirs.
 
 **`T0160`'s four `00111` sub-items are already registered** — spec D7's two upstream reports and the `_classify_spot_close` fail-open D2 leaves standing, each with its own `ripe_when`, landed when the spec asserted them rather than deferred to here, because the spec claims them in the present tense and a claim that is not yet true is the failure the registration rule names; plus the cancel-sweep blind spot, which is not a spec decision but the second consumer of D7's first defect. So this step **re-reads** them against what the branch actually did and re-tenses anything the implementation moved — it does not add them again. The fourth is the one whose re-read has to be taken against the tree the branch PRODUCED rather than the one it started from: its consumer enumeration counts `executor._pickup`'s `resting_orders`, a reader Task 3 Step 4 adds, so a re-read against `develop` reports it wrong by one. Register no **new** topic without the approver's word (`zcrypto-main` holds that call).
+
+**Two edits inside those sub-items that the branch's own work makes owed, both re-tensings and neither a new registration:**
+
+- The first sub-item quotes `locked is no longer zero` as the literal its arm watches for. Task 3 Step 4 does not write that literal — the announcement says what it read rather than that anything changed (spec D3) — so the quote is re-tensed to the text that landed, read from `cli/engine/probeplan.py` rather than from this plan. This is the last member of the family Task 3 Step 4 enumerates; that step carries the completion grep, and this plan is outside its roots because it quotes the superseded wording on purpose.
+- The fourth gains the pair-spelling question spec D4 registers there: the branch's live A/B runs on `SOLEUR`, whose `AssetPairs` key and altname coincide, so it cannot tell a cache keyed on `raw_symbol` from a lookup keyed on the report's own pair spelling, and nothing under `tests/` or `docs/reference/` records which spelling the adapter carries for a legacy pair. It belongs on that sub-item because the cancel sweep is the consumer a mismatch would silently under-report on.
 
 **Then reconcile the QUEUE, which registration alone does not do.** The memo's topic-closure line schedules `T0160` for `resolved` at the nautilus-bump item. That milestone satisfies the bump leg's trigger and **none** of the first three `00111` sub-items': the two upstream reports become ripe when 00111's listing-cache commit is on `develop`, and the `_classify_spot_close` item when the pinned `nautilus_trader` carries the `BalanceEx` read or a `REDUCE_ONLY` spot disposal is planned — the bump is to a nightly that still carries the defect the reports are about. The fourth is the one to **evaluate** at that milestone rather than assume unripe: its second arm fires on an attended engine start with an order resting at the venue that the starting process did not place, which is a condition the bump's own work can create rather than one only a third party can. Taking the topic to `resolved` there would archive a live deferred sub-item on the live trade path, which `.claude/rules/open-topics.md` forbids outright, and it would remove the only registration of a fail-open this branch knowingly left standing. **Amend that closure line here**: the bump item closes `T0160`'s bump leg only, leaving the topic `partial` while the four sub-items stand. Registration and queue insertion travel together; a topic scheduled to be archived before its own triggers can fire is invisible at pick time either way.
 
