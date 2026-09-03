@@ -85,6 +85,11 @@ def test_datasource_uids_are_templated_not_hardcoded():
 # evaluator is `lt` (it fires when the line count falls BELOW one), a burst rule's is `gt` (it fires
 # when the count rises above zero). A hand-list would admit the ninth dead-man added tomorrow, which
 # is the mechanism this guard exists to close.
+#
+# The read is the THRESHOLD node's evaluator, so a comparison folded into a `math` node (`$B < 1`
+# thresholded `gt 0`) is invisible to it. That shape is already in this file -- engine-dark-with-
+# exposure, ops-verify-replay-backlog-stuck -- both on `metrics`, so nothing is missed today; a
+# dead-man written that way on `logs` would pass. Widen the classifier, never the receiver.
 PUSH = REPO / "infra/scripts/grafana-push.sh"
 
 

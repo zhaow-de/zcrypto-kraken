@@ -25,7 +25,7 @@ It also cost a wrong repair. The gap was attributed on 2026-08-31 to a label mis
 
 ## Done so far
 
-The receiver split landed on `fix/loki-dead-men-notify-clear` (682fe7e3): the eight dead-men pin `metrics`, the four ERROR-log rules stay on `logs` where T0047's reasoning still holds. The first shape was taken — a third receiver would have bought one templating sentence for the price of a third as-code contact point threaded through two verification loops in `grafana-push.sh`.
+The receiver split landed on `fix/loki-dead-men-notify-clear`, in the commit `fix(obs): the eight Loki dead-men pin the receiver that can announce their clear`: the eight dead-men pin `metrics`, the four ERROR-log rules stay on `logs` where T0047's reasoning still holds. The first shape was taken — a third receiver would have bought one templating sentence for the price of a third as-code contact point threaded through two verification loops in `grafana-push.sh`.
 
 A guard landed with it, coupling the two files rather than restating either: `tests/test_infra_alert_rules.py::test_a_rule_that_fires_on_absence_can_notify_its_clear` refuses a rule that fires on absence while pinning a receiver `grafana-push.sh` mints with `disableResolveMessage: true`, and reads that receiver set from the script, so it fails if either the pin or the flag moves. The two families are separated structurally — `lt` for a dead-man, `gt` for a burst — so a ninth dead-man added later is caught too; that case was proven by mutation rather than assumed. `test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve` is its true positive and guards against the over-correction of moving the whole Loki family.
 
