@@ -12,7 +12,11 @@
 # carrying that exact trailer; two commits in the replayed range with byte-identical
 # messages (a non-HEAD target is matched during the rebase by its full message); any
 # commit in the replayed range whose hash is recorded in docs/reference/deploy-log.jsonl or
-# fleet-pins.md (a rewrite would orphan a rollback operand -- exit 7).
+# fleet-pins.md (a rewrite would orphan a rollback operand -- exit 7); a merge commit in the
+# replayed range (a rebase would linearize it -- exit 8). A pre-commit hook failing mid-rebase
+# leaves the rebase in progress: fix, `git rebase --continue`, and re-verify the diff is empty.
+# The blank-line rule keys on known trailer names, so a body ending in a `Note:`-shaped line
+# still gets its separating blank line.
 # Every commit after the target is rewritten -- hashes change, content does not, and the
 # script asserts that with an empty `git diff <old-head> HEAD --stat` before it prints
 # old -> new for the target.
@@ -34,6 +38,7 @@ trap 'rm -f "$msg" "$new" "$exec_script"' EXIT
 git log -1 --format=%B "$target" > "$msg"
 
 if git rev-parse --verify -q "${target}^" >/dev/null; then range="${target}^..HEAD"; base_arg="${target}^"; else range="HEAD"; base_arg="--root"; fi
+for h in $(git rev-list --merges "$range"); do echo "amend-reviewed-by: refuse -- ${h:0:8} in the replayed range is a merge commit; a rebase would linearize it" >&2; exit 8; done
 dup=0
 for h in $(git rev-list "$range"); do [[ "$(git log -1 --format=%B "$h")" == "$(cat "$msg")" ]] && dup=$((dup+1)); done
 (( dup == 1 )) || { echo "amend-reviewed-by: refuse -- $dup commits in the replayed range share the target's message" >&2; exit 5; }
@@ -46,8 +51,7 @@ for rec in docs/reference/deploy-log.jsonl docs/reference/fleet-pins.md; do
 done
 
 awk 'BEGIN{RS="\0"} {sub(/\n+$/,""); printf "%s", $0}' "$msg" > "$new"
-last=$(tail -n 1 "$new")
-[[ "$last" =~ ^[A-Za-z][A-Za-z-]*:\  ]] || printf '\n' >> "$new"
+grep -qE '^(Co-Authored-By|Reviewed-by|Refine-Round-Closed|Signed-off-by): ' "$new" || printf '\n' >> "$new"
 printf '\n%s\n' "$trailer" >> "$new"
 
 old_head=$(git rev-parse HEAD)
