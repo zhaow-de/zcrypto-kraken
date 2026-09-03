@@ -13,7 +13,7 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 
 - **PRs.** A payload session never opens or merges a PR. It sends main the component name (`branch-workflow.md`'s gate, step 1) and its branch state; main answers open, hold, or a reason — it holds the owner's PR word by delegation (`.claude/rules/branch-workflow.md` names it) — and main opens it. The one carve-out: the owner's direct word to a payload session, which then opens the PR itself and names that word in the body.
 - **T-topics.** A payload session never registers a topic. A finding it cannot resolve in-branch goes to main as the topic's `Context` + `Why this matters`; main registers, folds, or drops — **with the word recorded**. The request is the queue; silent drop is impossible because dropping now needs main's explicit answer. With no coordinator reachable, the session registers it and names it in its hand-back for confirm-or-kill (`open-topics.md`).
-- **Memory.** Only main writes `~/.claude/projects/…/memory/`. A payload session's lessons go to `docs/reference/agent-lessons.jsonl` on its branch — by message to main only for branchless work, per the payload contract; main files in memory what the harvest shows belongs there.
+- **Memory.** Only main writes `~/.claude/projects/…/memory/`. A payload session's lessons go to `docs/reference/agent-lessons.jsonl` on its branch — by message to main only for branchless work, per the payload contract; a record's `session` names the origin and its `branch` names where the WORK happened — `(branchless: <what>)` when there was none, the carrier branch being git's to know, never the field's; main files in memory what the harvest shows belongs there.
 - **The memo.** Written under the token below. `docs/coordination.local.md` is main's alone and needs no token.
 
 ## The memo token
@@ -32,6 +32,8 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 - **Every payload status message names its branch and latest commit hash**, so main can read progress from git without asking.
 
 ## The hourly tick
+
+**The coordinator is unpoked.** The tick resumes a stalled payload turn; nothing resumes main's. So main opens every turn by reading its own last declared next step against what actually happened — an announced send with nothing in the peer's inbox, a "next: X" with no X — before it reads anything else. The owner's `...` is the fallback, not the mechanism.
 
 Main runs it from an in-session `CronCreate` job — session-only, fires only while main is idle, **expires after seven days**: reinstall it at every restart and every week.
 
