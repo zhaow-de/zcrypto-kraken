@@ -5,7 +5,7 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 ## Roles
 
 - **`zcrypto-main` — the coordinator.** Runs no payload work: no SDD loop, no plan-review loop, no drill, no daily-ops pass, no investigation. It grooms the backlog, assigns work, holds the authorities below, and runs the hourly tick. Git ownership is coordination: main opens and merges PRs.
-- **`zcrypto-alpha`, `zcrypto-bravo` — payload sessions.** Idle until main assigns; execute one assignment at a time in their own worktree; report by message.
+- **`zcrypto-alex`, `zcrypto-bravo` — payload sessions.** Idle until main assigns; execute one assignment at a time in their own worktree; report by message.
 - **`zcrypto-zebra` — the owner's own session.** Never in the assignment pool. Main assigns it nothing unless the owner names it.
 - **Subagents** belong to the session that dispatched them and are not handed `docs/memo.local.md` or `docs/coordination.local.md` — a dispatch inlines the task's own context and never pastes the memo (`.claude/skills/zcrypto-grooming/references/memo-protocol.md`).
 
