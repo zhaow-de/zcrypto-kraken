@@ -13,7 +13,7 @@ L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-re
 - **A schema-widening deploy converges every READER of the record format before the WRITER.**
 - **The NAS runs only `-compat` builds** — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by running polars in the pulled image, never by reading a label.
 - **Panel regeneration is the point of no return** — no old tree survives and rollback is another full rebuild; only through `zcrypto-panel-regenerate`, on the user's word.
-- **One PR per rollout, merged within the day; never branch other work from it.**
+- **One PR per rollout, merged before any other branch touches the pins, deploy-log or fleet files — same day is the default, not a gate; never branch other work from it.**
 
 ## Alert-rule lifecycle
 

@@ -85,7 +85,7 @@ Then prune that host's stale images — `uv run python infra/scripts/prune-host-
 
 Read the pull result with `sudo /usr/local/bin/docker logs --since <ts> zcrypto-archive-pull` on the NAS (a container, not a systemd unit; full path — `docker` is off the non-interactive ssh `PATH` there). Allow ~35 min after the hour boundary before the finals appear.
 
-**One PR per rollout, two commits** — the secondary's row, then the primary's and the engine's — merged within the day, and **never branch other work from it**: a recording branch that lives for days collects everyone else's commits. **The rollout record is not complete while the two capture hosts differ**: either the primary's leg is done, or the hold and its bound are in the pins row. A gate passed with no primary leg and no bounded hold is an open rollout that reads as finished.
+**One PR per rollout, two commits** — the secondary's row, then the primary's and the engine's — merged before any other branch can touch `fleet-pins.md`, `deploy-log.jsonl` or `fleet.md` — same day is the default, not a gate: the converge-and-bake window's minimality is the invariant, the calendar day is not — and **never branch other work from it**: a recording branch that lives for days collects everyone else's commits. **The rollout record is not complete while the two capture hosts differ**: either the primary's leg is done, or the hold and its bound are in the pins row. A gate passed with no primary leg and no bounded hold is an open rollout that reads as finished.
 
 ______________________________________________________________________
 

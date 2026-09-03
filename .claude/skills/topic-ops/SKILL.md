@@ -24,6 +24,8 @@ status: open   # one of: open | partial | resolved
 ---
 ```
 
+`ripe_when:` (when present) is the bare condition — one clause a reviewer evaluates true/false at a glance. Its history, reasoning, and measurements live under `## Findings so far`; when the trigger changes, rewrite the key in place and put the why in the body.
+
 …followed by, in order:
 
 - `# <Title>` — H1 matching the slug.
