@@ -125,8 +125,12 @@ def test_read_open_orders_is_blind_until_the_instrument_cache_is_populated():
 ```python
         # The coinciding spelling class only: Kraken's pair key is `XXBTZEUR` for BTC/EUR, not
         # `BTCEUR` (`cli/ohlc/fetch.py`'s PAIR_KEYS). Nothing in THIS file drives a legacy-coded
-        # row -- the spelling that differs is exercised in `test_engine_flatten_offline_venue.py`,
-        # on the real client against a loopback venue, which is where it belongs.
+        # row through a WORKING twin -- the one test that overrides rows to `XXBTZEUR`/`XETHZEUR`,
+        # `test_a_listing_whose_TWINS_alone_failed_is_not_a_whole_listing_refusal`, spells them
+        # that way to make every twin FAIL, so those two values are load-bearing there and not
+        # fixture noise. The spelling that differs, minted and read, is exercised in
+        # `test_engine_flatten_offline_venue.py`, on the real client against a loopback venue,
+        # which is where it belongs.
         self.raw_symbol = symbol.replace("/", "")
 ```
 
@@ -369,7 +373,8 @@ def prime_cache(client: Any, listing: dict[str, Any], altnames: dict[str, str]) 
     One bad row is CONTAINED and reported, never refused: `constraints_for` states that rule for
     this same ~1600-row listing, and refusing the whole button over one unrelated row would exit 3
     having cancelled nothing. Containment is not silence -- an uncached row is invisible to every
-    read after it, so the caller journals it, says it, and counts it as a residual.
+    read after it, so the caller says it in both modes and, in `--execute`, journals it and counts
+    it as a residual -- a dry run returns before both and leaves no artifact.
     """
     uncached: list[str] = []
     aliases: dict[str, str] = {}
@@ -559,7 +564,7 @@ Measured on the pinned version, with this construction verbatim: the call return
 
 **Prove the pin bites before recording it as proof.** The differ-fixture is on the same compiled class: put `client.request_instruments()` in place of the `cache_instrument` line and the test must fail with `RuntimeError: no running event loop` — measured, it does. That is the shape the pin exists to reject, and a pin that accepted it would accept the defect.
 
-2. **The twin's construction, pinned on the library type rather than on our copy of its field list.** `_twin` is `to_dict` → override `id` and `raw_symbol` → `from_dict`, and if a version bump drops either method or stops round-tripping an overridden id, every twin raises, every twin is contained, and the branch degrades to 1-of-6 — visibly (exit 2 with a residual) but for a reason nothing else in the suite would name. Measured on the pinned wheel, verbatim: `to_dict()` returns 25 keys including `id` and `raw_symbol`; `from_dict` on that dict with both overridden yields a `CurrencyPair` whose `id` is `XBTEUR.KRAKEN` and whose `raw_symbol` is `XBTEUR`, whose `price_increment`, `size_increment`, `base_currency`, `quote_currency` and `min_quantity` all equal the source row's, and the source row is unchanged.
+2. **The twin's construction, pinned on the library type rather than on our copy of its field list.** `_twin` is `to_dict` → override `id` and `raw_symbol` → `from_dict`, and if a version bump drops either method or stops round-tripping an overridden id, every twin raises, every twin is contained, and the branch degrades to 1-of-6 — visibly (exit 2 with a residual under `--execute`; on a dry run the printed degradation line, that mode returning before the residual appends) but for a reason only this pin would name. Step 1's twins-only test is not a second namer: it drives `_Instrument` rows that carry no `to_dict` at all, so it asserts the every-twin-failed STATE and is invariant to this bump, staying green straight through it. Measured on the pinned wheel, verbatim: `to_dict()` returns 25 keys including `id` and `raw_symbol`; `from_dict` on that dict with both overridden yields a `CurrencyPair` whose `id` is `XBTEUR.KRAKEN` and whose `raw_symbol` is `XBTEUR`, whose `price_increment`, `size_increment`, `base_currency`, `quote_currency` and `min_quantity` all equal the source row's, and the source row is unchanged.
 
 ```python
 def test_the_twin_is_the_same_instrument_under_the_other_spelling():

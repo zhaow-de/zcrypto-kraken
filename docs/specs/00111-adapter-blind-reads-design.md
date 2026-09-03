@@ -165,6 +165,6 @@ Both fixture orders come back with `price=0.00` where the venue shows 45.95. Irr
 
 ## Out of scope
 
-- Any change to `flatten`'s write sequence, exit-code RULE, or confirmation gate — spec `00106` owns those and none of them is implicated. D1's uncached rows and its missing altname map are new inputs to that rule, not changes to it: a run that could not cache part of the listing, or could not mint its twins, exits 2 rather than 0, on the same "any residual" rule that already produced 2 for a resting order. Widening how exit 3's cause is WORDED on the operator surfaces is in scope and is D1's; the mapping from condition to code is not touched.
+- Any change to `flatten`'s write sequence, exit-code RULE, or confirmation gate — spec `00106` owns those and none of them is implicated. D1's uncached rows and its missing altname map are new inputs to that rule, not changes to it: a run that could not cache part of the listing, or could not mint its twins, exits 2 rather than 0 under `--execute`, on the same "any residual" rule that already produced 2 for a resting order — a rule the dry run returns before reaching, which is why its own signal is the printed line and not the code. Widening how exit 3's cause is WORDED on the operator surfaces is in scope and is D1's; the mapping from condition to code is not touched.
 - The upstream PR itself (D7) — different repository, different conventions, tracked in `T0160`.
 - `px=0.00` (D8).
