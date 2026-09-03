@@ -27,6 +27,8 @@ Fixes that introduce defects are what makes these loops long, and the rate does 
 - Did you rewrite a test? State in the report what the new assertion can still fail on.
 - Did you introduce a sentence asserting a fact about a file other than the one it sits in? (`.claude/rules/code-prose.md`'s rot test — test docstrings included.)
 - Did your fix add a mechanism — a timer, a lock, a file, a unit, a fallback, a retry? It inherits that mechanism's failure modes, which no review has examined. List it.
+- Did you touch a fence? Run `zsh -n` over every `bash` fence you edited and `python -c 'import ast,sys; ast.parse(sys.stdin.read())'` over every Python one — a prose edit that lands on a command line dies at paste time while its placeholder tail still reads like an operand.
+- Did you write, move, or trim an enumeration? Re-count every stated number against the list under it — "the following three" above four bullets costs the next round.
 
 ## Constraints
 
