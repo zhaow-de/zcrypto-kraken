@@ -250,7 +250,7 @@ In `run_flatten`, the three lines inside the `try` currently read `snapshot` fir
         if uncached:
             # One line, not one per row: 1600 warnings would bury the plan the operator reads. Said
             # as well as logged, because a dry run writes no journal (`_dry_exit`) and the terminal
-            # is its whole record -- and the dry run is what Task 5 Step 5 reads the count from.
+            # is its whole record.
             message = (
                 f"{len(uncached)} of {len(listing)} listing rows could not be cached -- any order or position "
                 f"on them stays invisible to this run: {'; '.join(uncached[:5])}"
@@ -331,11 +331,18 @@ def _a_real_currency_pair():
     return CurrencyPair(
         instrument_id=InstrumentId(Symbol("BTC/EUR"), Venue("KRAKEN")),
         raw_symbol=Symbol("XBTEUR"),
-        base_currency=btc, quote_currency=eur,
-        price_precision=1, size_precision=8,
-        price_increment=Price(0.1, 1), size_increment=Quantity(0.00000001, 8),
-        margin_init=Decimal(0), margin_maint=Decimal(0), maker_fee=Decimal(0), taker_fee=Decimal(0),
-        ts_event=0, ts_init=0,
+        base_currency=btc,
+        quote_currency=eur,
+        price_precision=1,
+        size_precision=8,
+        price_increment=Price(0.1, 1),
+        size_increment=Quantity(0.00000001, 8),
+        margin_init=Decimal(0),
+        margin_maint=Decimal(0),
+        maker_fee=Decimal(0),
+        taker_fee=Decimal(0),
+        ts_event=0,
+        ts_init=0,
     )
 ```
 
@@ -347,8 +354,8 @@ Measured on the pinned version: the call returns `None`, `isawaitable(None)` is 
 
 - [ ] **Step 5: Run the full flatten suite**
 
-Run: `uv run pytest tests/test_engine_flatten.py tests/test_internal_terms_not_operator_visible.py -q`
-Expected: all pass — including Task 1 Step 4's two known reds, which this fix is what turns green. Several existing tests assert on `client.calls` ordering — update any whose expectations the new call legitimately changes, and **read each one before changing it**: a test that now fails because the sequence genuinely changed is correct to update; one failing because the fix broke it is not. The second file is the reason the `--help` and README edits are run rather than eyeballed: it scans exactly those surfaces for the decision vocabulary.
+Run: `uv run pytest tests/test_engine_flatten.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py -q`
+Expected: all pass — including Task 1 Step 4's two known reds, which this fix is what turns green. Several existing tests assert on `client.calls` ordering — update any whose expectations the new call legitimately changes, and **read each one before changing it**: a test that now fails because the sequence genuinely changed is correct to update; one failing because the fix broke it is not. The two guard files are why the `--help`, README and runbook edits are run rather than eyeballed — Step 3 writes prose on six operator surfaces plus the fenced comments: `test_internal_terms_not_operator_visible.py` scans those surfaces for the decision vocabulary, and `test_code_prose_citations.py` rejects a plan-task number carried into `cli/`, `tests/` or `infra/` with no 5-digit serial beside it. (Step 3's fences cite `spec 00111` and no task number, so the second is insurance rather than a known red; the plan's one remaining `Task <N>` token sits in a Task 5 terminal command, which lands in no file.)
 
 - [ ] **Step 6: Commit — Task 1's work lands here too**
 
@@ -452,7 +459,7 @@ def test_locked_balances_are_read_by_currency_code_and_differ_from_the_free_map(
 
 In `tests/test_engine_probeplan.py`, beside the fifteen existing `plan_refusals` tests. The module constant is `NOW` (line 11) — there is no `_NOW`.
 
-**`caplog` cannot see these records; three of the assertions below would be vacuous or red under it.** pytest's `caplog` handler sits on the ROOT logger, and `cli.logging.config.configure()` sets `zcrypto.propagate = False` — which every `zcrypto` CLI invocation performs, the call sitting in `cli/__main__.py`'s app callback — so once any CliRunner test has run earlier in the session nothing arrives. `tests/test_engine_command.py` sorts ahead of this file (positions 72 and 90 in `ls tests/`) and is full of `runner.invoke` calls, so a local single-file run reads records and CI's alphabetical whole-suite run reads none: the two announcement assertions would go RED in CI on a fix the implementer just watched pass locally, and the third would pass vacuously with nothing pointing at the cause. Collect off the module's own logger instead — the pattern `tests/test_engine_executor.py`'s `_the_tick_backstop_never_fires` already uses, and which names both reasons. Add `import logging` and `from contextlib import contextmanager` (the module imports neither today):
+**`caplog` cannot see these records; three of the assertions below would be vacuous or red under it.** pytest's `caplog` handler sits on the ROOT logger, and `cli.logging.config.configure()` sets `zcrypto.propagate = False` — which every `zcrypto` CLI invocation performs, the call sitting in `cli/__main__.py`'s app callback — so once any CliRunner test has run earlier in the session nothing arrives. `tests/test_engine_command.py` sorts ahead of this file and is full of `runner.invoke` calls, so a local single-file run reads records and CI's alphabetical whole-suite run reads none: the two announcement assertions would go RED in CI on a fix the implementer just watched pass locally, and the third would pass vacuously with nothing pointing at the cause. Collect off the module's own logger instead — the pattern `tests/test_engine_executor.py`'s `_the_tick_backstop_never_fires` already uses, and which names both reasons. Add `import logging` and `from contextlib import contextmanager` (the module imports neither today):
 
 ```python
 @contextmanager
@@ -492,9 +499,15 @@ def test_plan_refusals_refuses_when_free_cannot_be_trusted():
     written `>= 0.0` refuses exactly as asserted below and announces here, which is the one state
     the firing and not-evaluated tests beside it cannot separate."""
     with _announcements() as records:
-        reasons = plan_refusals(_margin_plan(), now=NOW, ledgered=frozenset(),
-                                max_plan_notional_eur=100.0, free_zeur=99.52,
-                                balances_locked={"EUR": 0.0}, resting_orders=1)
+        reasons = plan_refusals(
+            _margin_plan(),
+            now=NOW,
+            ledgered=frozenset(),
+            max_plan_notional_eur=100.0,
+            free_zeur=99.52,
+            balances_locked={"EUR": 0.0},
+            resting_orders=1,
+        )
     assert any("cannot be trusted" in r for r in reasons)
     assert records == []
 
@@ -502,18 +515,30 @@ def test_plan_refusals_refuses_when_free_cannot_be_trusted():
 def test_plan_refusals_does_not_refuse_when_nothing_rests():
     """The control: same all-zero locked map, no resting orders, no refusal. Without this a guard
     that always refuses would pass the test above."""
-    reasons = plan_refusals(_margin_plan(), now=NOW, ledgered=frozenset(),
-                            max_plan_notional_eur=100.0, free_zeur=99.52,
-                            balances_locked={"EUR": 0.0}, resting_orders=0)
+    reasons = plan_refusals(
+        _margin_plan(),
+        now=NOW,
+        ledgered=frozenset(),
+        max_plan_notional_eur=100.0,
+        free_zeur=99.52,
+        balances_locked={"EUR": 0.0},
+        resting_orders=0,
+    )
     assert not any("cannot be trusted" in r for r in reasons)
 
 
 def test_an_empty_locked_map_refuses_like_an_all_zero_one():
     """A read that returned no balances learned nothing about holds, which is the untrustworthy
     input this refusal exists to catch -- not a licence to size against `free`."""
-    reasons = plan_refusals(_margin_plan(), now=NOW, ledgered=frozenset(),
-                            max_plan_notional_eur=100.0, free_zeur=99.52,
-                            balances_locked={}, resting_orders=1)
+    reasons = plan_refusals(
+        _margin_plan(),
+        now=NOW,
+        ledgered=frozenset(),
+        max_plan_notional_eur=100.0,
+        free_zeur=99.52,
+        balances_locked={},
+        resting_orders=1,
+    )
     assert any("cannot be trusted" in r for r in reasons)
 
 
@@ -522,9 +547,15 @@ def test_a_nonzero_locked_announces_and_stops_refusing():
     correct, but silent. Both halves are asserted here, so a guard that announced without releasing
     (or released without announcing) fails."""
     with _announcements() as records:
-        reasons = plan_refusals(_margin_plan(), now=NOW, ledgered=frozenset(),
-                                max_plan_notional_eur=100.0, free_zeur=99.52,
-                                balances_locked={"EUR": 2.757}, resting_orders=1)
+        reasons = plan_refusals(
+            _margin_plan(),
+            now=NOW,
+            ledgered=frozenset(),
+            max_plan_notional_eur=100.0,
+            free_zeur=99.52,
+            balances_locked={"EUR": 2.757},
+            resting_orders=1,
+        )
     assert not any("cannot be trusted" in r for r in reasons)
     assert any("locked is no longer zero" in r.getMessage() for r in records)
 
@@ -535,9 +566,15 @@ def test_a_non_finite_hold_is_named_and_still_announces_the_real_one():
     state where the refusal and the announcement are both live, which is why the announcement is
     not the refusal's `else`."""
     with _announcements() as records:
-        reasons = plan_refusals(_margin_plan(), now=NOW, ledgered=frozenset(),
-                                max_plan_notional_eur=100.0, free_zeur=99.52,
-                                balances_locked={"EUR": float("nan"), "USD": 5.0}, resting_orders=1)
+        reasons = plan_refusals(
+            _margin_plan(),
+            now=NOW,
+            ledgered=frozenset(),
+            max_plan_notional_eur=100.0,
+            free_zeur=99.52,
+            balances_locked={"EUR": float("nan"), "USD": 5.0},
+            resting_orders=1,
+        )
     assert any("not finite" in r and "EUR" in r for r in reasons)
     assert any("locked is no longer zero" in r.getMessage() for r in records)
 
@@ -547,21 +584,31 @@ def test_unknown_inputs_neither_refuse_nor_announce():
     passes None and the check is NOT EVALUATED -- no refusal it could never clear, and no
     announcement it never observed. `probe-plan --check` prints that it did not run."""
     with _announcements() as records:
-        reasons = plan_refusals(_margin_plan(), now=NOW, ledgered=frozenset(),
-                                max_plan_notional_eur=100.0, free_zeur=99.52,
-                                balances_locked=None, resting_orders=None)
+        reasons = plan_refusals(
+            _margin_plan(),
+            now=NOW,
+            ledgered=frozenset(),
+            max_plan_notional_eur=100.0,
+            free_zeur=99.52,
+            balances_locked=None,
+            resting_orders=None,
+        )
     assert not any("cannot be trusted" in r or "not finite" in r for r in reasons)
     assert records == []
 ```
 
-**Three more, in the two files the threading actually reaches.** The six above call `plan_refusals` directly and so cannot see a call site that threads a literal; a mis-threaded `resting_orders=0` — or `balances_locked={}` — type-checks and keeps every one of them green. Measured: **no existing executor test both populates `StubCache.open_orders` and drops a plan**, so `resting_orders` is structurally 0 in all of them and the new refusal changes no existing expectation — which is exactly why it needs its own set. The first two below discriminate the count; the third discriminates the map, and without it every test in the branch reads `{}` for `balances_locked` and a call site passing that literal ships green.
+**Three more, in the two files the threading actually reaches.** The six above call `plan_refusals` directly and so cannot see a call site that threads a literal; a mis-threaded `resting_orders=0` — or `balances_locked={}` — type-checks and keeps every one of them green. The first two below discriminate the count; the third discriminates the map, and without it every test in the branch reads `{}` for `balances_locked` and a call site passing that literal ships green.
+
+**The existing tests the new refusal changes — measured by running the suite under the guard, not by reading it.** `plan_refusals` sees a live cache only through `executor._pickup`, and `tests/test_engine_executor.py` is the only suite that drives it (`tests/test_engine_node.py` substitutes a `RecordingExecutor`; `tests/test_engine_probeplan.py` calls `plan_refusals` directly, which is Step 4's fifteen-call update). In that file **exactly one** existing test both populates `StubCache.open_orders` and drops a plan: `test_a_position_that_contradicts_the_intents_fills_trips_at_the_terminal`. Its plan is dropped by the `_resting_executor` helper rather than in its own body, which is why grepping test bodies for `_drop_plan` reports this family EMPTY — it is not, and Step 4 updates that one fixture. Every other `open_orders=[…]` construction in that file is a startup, adoption or reconciliation test that drops no plan, so `plan_refusals` is never reached with a non-empty book in any of them and the refusal changes no other expectation — run under the guard, that one test is the file's only red.
 
 ```python
 # tests/test_engine_executor.py, beside the other plan-refusal tests
 def test_a_resting_order_with_no_reported_hold_refuses_the_plan(tmp_path):
-    """`_pickup` threads the LIVE count, not a literal. `StubCache.open_orders` defaults empty
-    everywhere else in this file, so a call site passing `resting_orders=0` keeps the whole suite
-    green while the guard never fires in production -- present in review, inert on the arming path."""
+    """`_pickup` threads the LIVE count, not a literal. No other test here reaches `_pickup` with a
+    non-empty book -- the one other test that populates `open_orders` beside a dropped plan is
+    `test_a_position_that_contradicts_the_intents_fills_trips_at_the_terminal`, and it reports a
+    hold -- so a call site passing `resting_orders=0` keeps the whole suite green while the guard
+    never fires in production: present in review, inert on the arming path."""
     client = StubClient(StubCache(balances={"EUR": 99.84}, open_orders=[_open_order("O-resting")]))
     ex = _executor(tmp_path, client=client)
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=30.0, leverage=2)]))
@@ -590,10 +637,9 @@ def test_the_same_plan_is_not_refused_for_trust_with_an_empty_book(tmp_path):
 def test_a_reported_hold_does_not_refuse_the_plan_for_trust(tmp_path):
     """The map's discriminator. Identical to the refusing test above except that a balance reports
     a hold -- so a call site passing the literal `{}`, a reader hardcoding `{}`, and the real map
-    all read the same everywhere else in this file and differently here."""
-    client = StubClient(
-        StubCache(balances={"EUR": 99.84}, locked={"EUR": 2.757}, open_orders=[_open_order("O-resting")])
-    )
+    read the same in every other test here but the adopted-reducer trip, whose own red reads as a
+    kill switch that did not fire rather than as anything about the map."""
+    client = StubClient(StubCache(balances={"EUR": 99.84}, locked={"EUR": 2.757}, open_orders=[_open_order("O-resting")]))
     ex = _executor(tmp_path, client=client)
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=30.0, leverage=2)]))
 
@@ -626,7 +672,7 @@ Expected: all six FAIL, and **the failure text must name `balances_locked`/`rest
 The four cross-file tests are a second red, and they fail for a **different** reason — the call sites do not thread yet, so the refusal and the echo simply do not appear:
 
 Run: `uv run pytest tests/test_engine_executor.py tests/test_engine_command.py -k "no_reported_hold or not_refused_for_trust or a_reported_hold_does_not_refuse or untrustworthy_balance_check_did_not_run" -v`
-Expected: `no_reported_hold` FAILS on the missing `cannot be trusted` reason, `untrustworthy_balance_check_did_not_run` FAILS on the missing echo, and **both controls PASS** — `not_refused_for_trust` and `a_reported_hold_does_not_refuse`, which are red here only if they are testing the wrong thing. A control that passes here proves nothing on its own, which is why each has a mutation operand in Step 7. Confirm the selection collects exactly four first: same command with `--collect-only -q`.
+Expected: `no_reported_hold` FAILS on its **disposition** line (`AssertionError: assert 'accepted' == 'refused'`) — that assertion sits above the reason one, so the missing refusal is what it reads as an accepted plan — `untrustworthy_balance_check_did_not_run` FAILS on the missing echo, and **both controls PASS** — `not_refused_for_trust` and `a_reported_hold_does_not_refuse`, which are red here only if they are testing the wrong thing. A control that passes here proves nothing on its own, which is why each has a mutation operand in Step 7. Confirm the selection collects exactly four first: same command with `--collect-only -q`.
 
 `tests/test_engine_venuestate.py`'s locked assertion is **not** in this run: Step 1 both wrote it and made it green, and its red phase was read there.
 
@@ -680,10 +726,12 @@ Thread both inputs at the two call sites, whose sources differ and are the reaso
 
 Then update the **fifteen** existing `plan_refusals` calls in `tests/test_engine_probeplan.py` (lines 329, 337, 344, 350, 356, 364, 371, 378, 390, 397, 404, 412, 418, 424, 431) with `balances_locked={}, resting_orders=0` — the values that preserve each test's existing subject, since no order rests in any of them.
 
+**And the one existing fixture the guard's arrival breaks** — `test_a_position_that_contradicts_the_intents_fills_trips_at_the_terminal`, the member Step 2's enumeration names. Its `StubCache(open_orders=[_open_order("O-attached")])` gains `locked={"EUR": 2.757}`, the hold `test_a_reported_hold_does_not_refuse_the_plan_for_trust` uses; `locked` feeds nothing but `balances_locked()`, so the test's subject — a trip cancelling a resting order the engine adopted rather than placed — is untouched. **Not optional, and the shape of the failure is why**: without it that test's plan is refused `cannot be trusted`, so no order is submitted, so `_resting_executor`'s own trailing `assert len(client.submitted) == 1` fails `assert 0 == 1`, and the autouse `_no_unannounced_kill_trip` guard ERRORs at teardown with `this construction was supposed to trip the kill switch and did not` — the two reds together, one of which is not about the guard at all. The nearest edit that turns that green is an exemption in `plan_refusals` or `_pickup` for engine-adopted or reduce-only orders — which loosens this guard on exactly the case spec 00111 D2 prices, at the arming gate, shipped green. The fixture is the fix; the guard is not.
+
 - [ ] **Step 5: Run every suite this task can reach**
 
 Run: `uv run pytest tests/test_engine_probeplan.py tests/test_engine_venuestate.py tests/test_engine_venueledger.py tests/test_engine_executor.py tests/test_engine_cycle.py tests/test_engine_execledger.py tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_node.py tests/test_internal_terms_not_operator_visible.py -q`
-Expected: all pass. The venuestate/venueledger pair is what proves `to_payload()` was left alone; executor/cycle/execledger/command are the `VenueState` construction sites and the threaded call sites; **venuestate again is where the `balances_locked` addition is proved legal**, by `test_no_stub_in_the_venue_reader_suite_offers_a_name_its_real_library_type_lacks` — stub_fidelity only classifies `_fake_account` and imports nothing, so it is in the list to confirm the classification still resolves and not to check the attribute; node is the third `venue_state_from_cache` caller. **`test_internal_terms_not_operator_visible.py` is in the list for the same reason Task 2 Step 5 carries it**: Step 4 writes new non-docstring literals under `cli/` — `probeplan.py`'s two refusal reasons and its `logger.warning`, `command.py`'s `typer.echo` disclosure — and `test_python_string_literals_carry_no_internal_vocabulary` walks every literal in those packages with `\bD\d{1,2}[a-z]?\b` in its vocabulary. Step 4 already cites that guard as the reason the decision token sits in a comment; without the file here the guard first speaks in CI, on a commit this step declared clean.
+Expected: all pass. **A red in `tests/test_engine_executor.py` here is a further member of Step 2's family — find its fixture, never loosen the guard**; Step 4's one fixture update is what keeps this list green, and the enumeration behind it is Step 2's. The venuestate/venueledger pair is what proves `to_payload()` was left alone; executor/cycle/execledger/command are the `VenueState` construction sites and the threaded call sites; **venuestate again is where the `balances_locked` addition is proved legal**, by `test_no_stub_in_the_venue_reader_suite_offers_a_name_its_real_library_type_lacks` — stub_fidelity only classifies `_fake_account` and imports nothing, so it is in the list to confirm the classification still resolves and not to check the attribute; node is the third `venue_state_from_cache` caller. **`test_internal_terms_not_operator_visible.py` is in the list for the same reason Task 2 Step 5 carries it**: Step 4 writes new non-docstring literals under `cli/` — `probeplan.py`'s two refusal reasons and its `logger.warning`, `command.py`'s `typer.echo` disclosure — and `test_python_string_literals_carry_no_internal_vocabulary` walks every literal in those packages with `\bD\d{1,2}[a-z]?\b` in its vocabulary. Step 4 already cites that guard as the reason the decision token sits in a comment; without the file here the guard first speaks in CI, on a commit this step declared clean.
 
 Then run the two announcement tests **in CI's order as well**, because that order is what would break them and the list above hides it:
 
