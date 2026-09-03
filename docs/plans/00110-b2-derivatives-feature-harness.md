@@ -2,23 +2,31 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> ## ✅ The pin's eleven refutations are ADDRESSED (2026-09-03)
+> ## ✅ The review loop's findings are FOLDED IN (2026-09-03)
 >
-> A contract-pin run on 2026-09-02 graded 34 premises and refuted 11 before the auto-exec time-gate cut the loop. All eleven are now fixed in this pair; the review loop restarts at the pin against the corrected version. What changed, so a reader can check the fixes rather than trust them:
+> Every round's Critical and Important is fixed in this pair. `.tmp/plan-review/00110/` is gitignored and each round OVERWRITES the previous round's fact file, so this block — not that file — is the durable record, and it carries no count read from it. The per-round chronicle is `git log develop..HEAD`, whose commit messages carry each round's changes.
+>
+> **Round 1** (contract pin, 2026-09-02) refuted eleven premises before the auto-exec time-gate cut the loop:
 >
 > - **Task 2's look-ahead guard was inert and is replaced.** The old form appended source rows *past the grid's last stamp*, which cannot move any value under any semantics — the pin showed it passing on a deliberate backward-fill defect. The new form truncates: recompute over `grid[:k]` from rows stamped `<= grid[k-1]` and demand the prefix match. **Re-verified on both arms: old guard passes correct AND defect; new guard passes correct and trips the defect at k=2** (the banner first said k=1, from a report rather than a run).
 > - **Both planted-signal thresholds asserted `> 3.0`, which no window definition produces.** Spec D7 now pins the semantics (inclusive trailing window ending at `k`, sample stdev, `None` when short or null-bearing, `0.0` at zero variance) and both tests assert the pinned definition's exact value, `2.8460498941515410` — computed, not thresholded.
 > - **Task 4 asked null propagation through `_validate_prices`, which raises on `None`.** Task 1 now adds `_validate_levels` (finite, `> 0`, or `None`).
 > - **"Matching the convention exactly" was false about length.** The existing five return `len(prices) - 1`, aligned to `returns_from_prices`; these align to the input grid and return `len(input)`. Stated in both artefacts.
 > - **Four spec facts corrected**: the 2022 hole is panel-wide (87.3 % in nine symbols, 87.0 % in XRP; panel null 18.4 %, not BTC's diluted 14.9 %); "none before 2022-01-30" is true only within 2022; the B2 quote is master-plan **§5**, not §12; B1's band is **4h only**, so D3's grid choice survives on a different and stated reason.
-> - **Two bookkeeping errors**: the spec's claim about the catalog was already discharged by its own commit `523a4034`, and `T0023` is already `partial` so Task 6's flip was a no-op — its real work is the `## Done so far` entry and the next-steps trim.
+> - **Two bookkeeping errors**: the spec's claim about the catalog was already discharged by its own commit `523a4034`, and `T0023` is already `partial` so the closeout task's status flip was a no-op — its real work is the `## Done so far` entry and the next-steps trim.
 >
-> The pin's full fact file is at `.tmp/plan-review/00110/pin-facts.md` — gitignored, so this block is the durable record.
+> **Round 2** (contract re-pin) found the spec promised a family the plan never built: the ratio carry-through and the `binperp_` prefix (now Task 5), `_validate_levels` declared but never implemented (now Task 1 Step 3b), and D10's panel-start proof mapped to no task (now Task 7 Step 4).
+>
+> **Round 3** (two lens reviews) found one defect shape running through both artefacts — **a guard whose fixture the defect cannot move**:
+>
+> - **`[-1]`-only assertions**, in six of the plan's feature tests. At the final index a window that peeks one bar ahead clamps to the correct window, so a look-ahead passes them all. Every one now asserts the **full output list**, and Tasks 3 and 4 each carry the truncating-prefix property over the functions they add — Task 2's covered `align_asof` alone. **Proven on both arms**: four look-ahead defects (a `+1` on the z-score slice end, a forward-summing carry, a centred OI window, a momentum reading `k+1`) each trip the prefix test; two warm-up defects (`0.0` head, copied from `cli/features/momentum.py`) trip the full-list assertions; the causal reference passes all twelve.
+> - **`_validate_levels` refused `0.0`, and the substrate publishes it** — 2,329 rows of `sum_open_interest` and 45 of `sum_taker_long_short_vol_ratio`. Spec D5 now rules on both, in opposite directions, and the plan carries the split: OI zeros are venue holes mapped to `None` by `oi_levels_from_raw`, ratios are validated as finite-or-null.
+> - **Three claims measured false or unmeasurable**: the ratio docstring's "87.3 % null across 2022" holds for two of the four columns and overstates `count_long_short_ratio` 17×; `coverage_by_year`'s 2-tuple could not carry D6's two timestamps; and Task 7 Step 4's data gate pointed at `data/derivatives-oi`, which is absent here, so the one substrate-reading guard would have skipped on the machine that is its only home.
 
 
 **Goal:** Build the funding + OI feature harness B2 will be measured with, proven on known answers before any verdict counts.
 
-**Architecture:** Pure functions on plain Python lists in `cli/features/derivatives.py`, matching the existing `cli/features/` convention in the three traits that transfer — keyword-only params after the data, a docstring stating the causality property, `_validate_*` raising `FeatureError` — and **deliberately NOT in output length**: the existing five return `len(prices) - 1` because they align to `returns_from_prices`, while these align to the input grid and return `len(input)` with `None` where undefined (spec D7). No polars, no frames, no I/O — the substrate readers already exist in `cli/derivatives/`.
+**Architecture:** Pure functions on plain Python lists in `cli/features/derivatives.py`, matching the existing `cli/features/` convention in the three traits that transfer — keyword-only params after the data, a docstring stating the causality property, `_validate_*` raising `FeatureError` — and **deliberately NOT in output length**: the existing five return `len(prices) - 1` because they align to `returns_from_prices`, while these align to the input grid and return `len(input)` with `None` where undefined (spec D7). No polars, no frames, no I/O **inside the module** — the substrate readers already exist in `cli/derivatives/`. Two consequences the plan owns rather than leaves implicit. The glue that turns those readers' frames into these lists, builds the 1h/4h grid, and ships each frame with its `coverage_by_year` summary is **out of scope** (spec D6 / `## Out of scope`) and registered on `T0023` at Task 7 Step 3. And the one test that does read the substrate — Task 7 Step 4's data-gated panel-start and venue-hole assertions — lives in `tests/test_derivatives_oi.py`, outside this module, which is why it can use polars.
 
 **Tech Stack:** Python 3.14, stdlib only for the feature math; pytest.
 
@@ -26,8 +34,11 @@
 
 ## Global Constraints
 
-- **Causality is the product.** Every feature at index `k` reads only inputs at index `<= k`. Each function's docstring states this in the house form (`… uses only x[<= k] -> no look-ahead`), and Task 2's property test enforces it by construction.
+- **Causality is the product.** Every feature at index `k` reads only inputs at index `<= k`. Each function's docstring says so in the house form — `… uses only x[<= k]` is in all five existing `cli/features/` docstrings, the `-> no look-ahead` suffix in one (`momentum.py`); write both here.
+- **Every task that adds a windowed function carries its own truncating-prefix test.** For each function `f` it adds and every prefix length `n >= 2`, `f(x[:n], **kw) == f(x, **kw)[:n]`. Task 2's covers `align_asof` and nothing else, so Tasks 3 and 4 each schedule their own — an `[-1]`-only assertion cannot see a look-ahead, because at the final index a window peeking one bar ahead clamps to the correct window. Spec D10.
 - **No imputation, ever.** A null input yields a null output (`float | None`). Never 0.0, never a trailing mean. Spec D5.
+- **An undefined window is `None`, never `0.0` — a separate rule from the one above.** The head of every windowed output is `None` until the window is full. `cli/features/momentum.py` fills its warm-up with `0.0`; that convention does **not** carry here, because these return `float | None` and a `0.0` z-score reads as *exactly average* rather than *unknown*. Spec D7.
+- **A raw `0.0` in `sum_open_interest*` is a venue hole, not a level** (spec D5, 2,329 measured rows): it maps to `None` before validation. A `0.0` in `sum_taker_long_short_vol_ratio` is the opposite — a real all-sell bar, 45 measured rows — so the ratio family is validated finite-or-null, never positive.
 - **Windows are pre-registered at 30 days.** They are function parameters with no defaults baked into the math; the 30-day pre-registration lives in the spec, not in the code. Tuning one is a trial (spec D7).
 - **Funding rates are SIGNED.** `_validate_prices` rejects `<= 0` and must not be used for funding. Task 1 adds `_validate_rates`.
 - **Emitted column names are prefixed `binperp_`** (spec D8) — these describe Binance perpetuals, not Kraken spot.
@@ -45,6 +56,8 @@
 - Produces: `_validate_rates(name, values)` — finite floats of ANY sign, or `None`.
 - Produces: `_validate_levels(name, values)` — finite floats `> 0`, or `None`. Needed because `_validate_prices` raises on `None` and OI features must propagate it (spec D5).
 
+**`> 0` is deliberate and stays**, even though the substrate publishes 2,329 rows of `sum_open_interest == 0.0`: those are venue holes, and Task 4's `oi_levels_from_raw` maps them to `None` *before* this validator sees them (spec D5). A `0.0` reaching `_validate_levels` is a caller that skipped the mapping — which is exactly what it should refuse. The four **ratio** columns are the opposite case and do **not** use this validator: `sum_taker_long_short_vol_ratio` carries 45 real zeros, so Task 5 gates them with `_validate_rates`.
+
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -61,11 +74,17 @@ def test_validate_rates_rejects_nonfinite_and_bool():
             _validate_rates("funding", bad)
 
 def test_validate_levels_accepts_positive_and_none_but_not_zero_or_negative():
+    """`0.0` is rejected ON PURPOSE. Spec 00110 D5 rules a zero open interest a venue hole, which
+    `oi_levels_from_raw` maps to `None` before this runs, so a `0.0` arriving here is a caller that
+    skipped the mapping. Do not relax this to `>= 0`: `oi_log_delta` would then take `log(0)` and
+    `oi_momentum` would divide by zero."""
     _validate_levels("oi", [100.0, None, 110.0])
     for bad in ([100.0, 0.0], [100.0, -1.0], [100.0, float("nan")]):
         with pytest.raises(FeatureError):
             _validate_levels("oi", bad)
 ```
+
+`test_validate_rates_accepts_negative_and_none` already carries a `0.0`, so the ratio family's "a zero is a reading" contract needs no extra test here — the guard that bites if Task 5 reaches for the wrong validator is `test_ratio_features_carry_nulls_and_real_zeros_through_untouched`, which feeds `ratio_features` a `0.0`.
 
 - [ ] **Step 2: Run it, expect ImportError / failure**
 
@@ -90,8 +109,11 @@ def _validate_rates(name: str, values: list[float | None]) -> None:
 
 ```python
 def _validate_levels(name: str, values: list[float | None]) -> None:
-    """Positive-and-nullable: OI is strictly positive, but `_validate_prices` raises on `None`
-    and these features must propagate it (spec 00110 D5)."""
+    """Positive-and-nullable: an OI LEVEL is strictly positive, but `_validate_prices` raises on
+    `None` and these features must propagate it (spec 00110 D5). The substrate's `0.0` open-interest
+    rows are venue holes, not levels; `oi_levels_from_raw` maps them to `None` before this runs, so
+    a `0.0` here is a caller that skipped that step. Ratios are NOT levels -- a ratio may
+    legitimately be zero, so they are gated by `_validate_rates`."""
     if not isinstance(values, list) or len(values) < 2:
         raise FeatureError(f"{name} must be a list of >= 2 values, got {values!r}")
     for v in values:
@@ -210,8 +232,9 @@ def align_asof(
 - Test: `tests/test_features_derivatives.py`
 
 **Interfaces:**
-- Consumes: `_validate_rates` from Task 1.
-- Produces: `funding_zscore(rates, *, window)`, `funding_sign_persistence(rates)`, `funding_accrued_carry(rates, *, window)` — all `list[float | None]`, same length as input, null-propagating.
+- Consumes: `_validate_rates` from Task 1. **This task owns the import** — put `from cli.features._validate import _validate_rates` in `cli/features/derivatives.py` at Step 3; Task 5 reuses it and adds none of its own.
+- Produces: `funding_zscore(rates, *, window)` and `funding_accrued_carry(rates, *, window)` — `list[float | None]`; `funding_sign_persistence(rates)` — `list[int | None]` (a run length is a count). All three are **the same length as the input** and `None` where an input is null; the two windowed forms are additionally `None` until the window is full (spec D7 — these are two different rules; see Global Constraints). `funding_sign_persistence` takes no window and so has no warm-up head.
+- **Sign of zero, pinned by spec D7:** sign is drawn from `{-1, 0, +1}`, so a `0.0` print breaks a positive run and starts its own run at 1. 659 of the 68,281 real prints are exactly `0.0`, so this is not a corner case.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -222,30 +245,54 @@ def test_funding_zscore_recovers_a_planted_value():
     """Planted signal (spec D10) under D7's pinned window: inclusive trailing window ending at k,
     sample stdev. Nine identical prints then one outlier scores exactly 2.8460498941515410 --
     verified by computation, not asserted as a threshold. An earlier draft asserted `> 3.0`, which
-    no window definition can produce: population stdev gives exactly 3.0, exclusive is undefined."""
+    no window definition can produce: population stdev gives exactly 3.0, exclusive is undefined.
+
+    The assertion is the FULL list, not `z[-1]`: it pins the length, the nine-`None` warm-up head
+    that separates "undefined" from "exactly average", and the value -- and a `[-1]`-only form
+    passes under a window that peeks one bar ahead, because at the last index it clamps."""
     rates = [0.0001] * 10 + [0.0009]
-    z = funding_zscore(rates, window=10)
-    assert z[-1] == pytest.approx(2.8460498941515410)
+    assert funding_zscore(rates, window=10) == [None] * 9 + [0.0, pytest.approx(2.8460498941515410)]
 
 def test_funding_zscore_of_a_constant_series_is_zero_not_spurious():
-    z = funding_zscore([0.0001] * 12, window=10)
-    assert z[-1] == 0.0
+    assert funding_zscore([0.0001] * 12, window=10) == [None] * 9 + [0.0, 0.0, 0.0]
 
 def test_funding_zscore_propagates_null():
-    z = funding_zscore([0.0001] * 10 + [None], window=10)
-    assert z[-1] is None
+    assert funding_zscore([0.0001] * 10 + [None], window=10) == [None] * 9 + [0.0, None]
 
 def test_sign_persistence_counts_consecutive_same_sign_prints():
-    assert funding_sign_persistence([0.1, 0.2, 0.3, -0.1, -0.2]) == [1, 2, 3, 1, 2]
+    """A zero print is its own sign (spec D7), and a null breaks the run without joining one."""
+    assert funding_sign_persistence([0.1, 0.2, 0.0, -0.1, -0.2]) == [1, 2, 1, 1, 2]
+    assert funding_sign_persistence([0.1, 0.2, None, -0.1, -0.2]) == [1, 2, None, 1, 2]
 
 def test_accrued_carry_sums_the_window():
-    assert funding_accrued_carry([1.0, 2.0, 3.0, 4.0], window=2)[-1] == 7.0
+    assert funding_accrued_carry([1.0, 2.0, 3.0, 4.0], window=2) == [None, 3.0, 5.0, 7.0]
+    assert funding_accrued_carry([1.0, 2.0, None, 4.0, 5.0], window=2) == [None, 3.0, None, None, 9.0]
+
+def test_every_funding_feature_reproduces_itself_on_a_truncated_prefix():
+    """The causality guard for this task's three functions (spec D2/D10), in the only form that
+    bites. Task 2 has the same property for `align_asof`; it covers nothing here.
+
+    Every assertion above is a fixed-input equality, and a window that reads one bar into the
+    future agrees with the causal form at the last index -- so recompute over each prefix and
+    demand the answers match. The fixture is deliberately non-degenerate: distinct magnitudes,
+    both signs, and a zero, so no two candidate window offsets coincide."""
+    rates = [0.0003, -0.0001, 0.0004, 0.0, 0.0009, -0.0002, 0.0011, 0.0005]
+    cases = (
+        (funding_zscore, {"window": 3}),
+        (funding_sign_persistence, {}),
+        (funding_accrued_carry, {"window": 3}),
+    )
+    for f, kw in cases:
+        full = f(rates, **kw)
+        for n in range(2, len(rates) + 1):
+            assert f(rates[:n], **kw) == full[:n], f"{f.__name__} disagrees at n={n}"
 ```
 
 - [ ] **Step 2: Run, expect failure**
-- [ ] **Step 3: Implement all three, each with a causality docstring in the house form**
+- [ ] **Step 3: Implement all three**, each with a causality docstring in the house form. Add `from cli.features._validate import _validate_rates` and the `math` / `statistics` imports the z-score needs — `cli/features/derivatives.py` carries only Task 2's `FeatureError` import at this point.
 - [ ] **Step 4: Run, expect pass**
-- [ ] **Step 5: Commit** — `feat(features): funding level, z-score, sign persistence and accrued carry`
+- [ ] **Step 5: Prove the prefix guard is not inert.** Temporarily write `funding_accrued_carry` as `sum(rates[k : k + window])` — a forward-summing window — and confirm **two** tests fail: `test_accrued_carry_sums_the_window` and `test_every_funding_feature_reproduces_itself_on_a_truncated_prefix`, the latter naming `funding_accrued_carry` in its message. Then restore and confirm the whole file is green again. A guard is unproven until the defect it names is constructed and seen to trip it (`.claude/rules/agent-ops.md`), and the green run is the true-positive that a permanently-refusing guard would not produce.
+- [ ] **Step 6: Commit** — `feat(features): funding z-score, sign persistence and accrued carry`
 
 ---
 
@@ -256,32 +303,69 @@ def test_accrued_carry_sums_the_window():
 - Test: `tests/test_features_derivatives.py`
 
 **Interfaces:**
-- Produces: `oi_log_delta(levels)`, `oi_zscore(levels, *, window)`, `oi_momentum(levels, *, lookback)` — `list[float | None]`, null-propagating. OI is strictly positive **and nullable**, which `_validate_prices` cannot express — it raises `FeatureError` on `None` (verified). Task 1 therefore adds `_validate_levels` alongside `_validate_rates`: finite, `> 0`, or `None`.
+- Consumes: `_validate_levels` from Task 1. **This task owns the import** — add `from cli.features._validate import _validate_levels` to the `_validate_rates` import Task 3 put in `cli/features/derivatives.py`.
+- Produces: `oi_log_delta(levels)`, `oi_zscore(levels, *, window)`, `oi_momentum(levels, *, lookback)` — `list[float | None]`, **the same length as the input**, `None` where an input is null **and** `None` where the window is not yet full (spec D7 — two different rules; see Global Constraints). An OI *level* is strictly positive **and** nullable, which `_validate_prices` cannot express — it raises `FeatureError` on `None` (verified). Task 1 therefore adds `_validate_levels` alongside `_validate_rates`: finite, `> 0`, or `None`.
+- Produces: `oi_levels_from_raw(values) -> list[float | None]` — maps the substrate's `0.0` open-interest placeholders to `None` and passes everything else through. Spec D5 rules these venue holes, not readings: 2,329 rows of `sum_open_interest` and 2,430 of `sum_open_interest_value` are exactly `0.0`, in all ten symbols, and on those stamps the account-ratio columns are null while the neighbouring bars read a normal level. **Without it the harness raises `FeatureError` on its own substrate at first real use**, and the cheapest-looking repair at that point — dropping or filling those rows — is the imputation spec D5 forbids. Mapping to `None` is the opposite of imputation: it removes a fabricated reading rather than inventing one. It runs **before** validation and so validates nothing itself — calling `_validate_levels` inside it would reject the very rows it exists to map.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 import math
-from cli.features.derivatives import oi_log_delta, oi_momentum, oi_zscore
+from cli.features.derivatives import oi_levels_from_raw, oi_log_delta, oi_momentum, oi_zscore
 
-def test_oi_log_delta_is_the_log_ratio_and_starts_none():
-    out = oi_log_delta([100.0, 110.0])
-    assert out[0] is None
-    assert out[1] == math.log(110.0 / 100.0)
+def test_oi_log_delta_is_the_log_ratio_starts_none_and_propagates_null():
+    assert oi_log_delta([100.0, 110.0, None, 120.0]) == [
+        None, pytest.approx(math.log(110.0 / 100.0)), None, None
+    ]
 
 def test_oi_zscore_recovers_a_planted_spike():
-    """Same pinned definition, same arithmetic as the funding case."""
-    out = oi_zscore([100.0] * 10 + [180.0], window=10)
-    assert out[-1] == pytest.approx(2.8460498941515410)
+    """Same pinned definition, same arithmetic as the funding case -- and the same full-list
+    assertion, which pins the nine-`None` warm-up head a `0.0`-filling implementation would
+    replace with `exactly average`."""
+    assert oi_zscore([100.0] * 10 + [180.0], window=10) == [None] * 9 + [
+        0.0, pytest.approx(2.8460498941515410)
+    ]
 
-def test_oi_momentum_is_causal_over_the_lookback():
-    assert oi_momentum([100.0, 100.0, 100.0, 125.0], lookback=3)[-1] == 0.25
+def test_oi_zscore_propagates_null():
+    assert oi_zscore([100.0] * 10 + [None], window=10) == [None] * 9 + [0.0, None]
+
+def test_oi_momentum_pins_its_head_its_base_index_and_its_nulls():
+    """Keep every level distinct: `lookback` 1, 2 and 3 then give three different answers, so an
+    off-by-one base index cannot hide. A fixture whose head is constant makes them agree."""
+    assert oi_momentum([100.0, 110.0, 121.0, 125.0], lookback=2) == [
+        None, None, pytest.approx(0.21), pytest.approx(0.13636363636363646)
+    ]
+    assert oi_momentum([100.0, 110.0, None, 125.0, 140.0], lookback=2) == [
+        None, None, None, pytest.approx(0.13636363636363646), None
+    ]
+
+def test_oi_levels_from_raw_maps_the_venue_hole_to_null():
+    """Spec 00110 D5: a `0.0` open interest is a hole the venue wrote as a zero, not a market with
+    no open interest. Without this mapping `_validate_levels` raises on the canonical substrate at
+    first real use, and the cheapest-looking repair there is the imputation D5 forbids."""
+    assert oi_levels_from_raw([100.0, 0.0, 110.0, None]) == [100.0, None, 110.0, None]
+
+def test_every_oi_feature_reproduces_itself_on_a_truncated_prefix():
+    """The causality guard for this task's three windowed functions (spec D2/D10). See Task 3's
+    twin for why `[-1]` cannot carry it. The fixture rises and falls so no two candidate window
+    offsets coincide."""
+    levels = [100.0, 104.0, 99.0, 130.0, 128.0, 90.0, 155.0, 151.0]
+    cases = (
+        (oi_log_delta, {}),
+        (oi_zscore, {"window": 3}),
+        (oi_momentum, {"lookback": 2}),
+    )
+    for f, kw in cases:
+        full = f(levels, **kw)
+        for n in range(2, len(levels) + 1):
+            assert f(levels[:n], **kw) == full[:n], f"{f.__name__} disagrees at n={n}"
 ```
 
 - [ ] **Step 2: Run, expect failure**
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Implement all four**, adding `_validate_levels` to the import Task 3 created.
 - [ ] **Step 4: Run, expect pass**
-- [ ] **Step 5: Commit** — `feat(features): OI log-delta, z-score and momentum`
+- [ ] **Step 5: Prove both guards bite, on defects that separate them.** (a) Write `oi_momentum`'s numerator as `levels[min(len(levels) - 1, k + 1)]` — the look-ahead — and confirm **both** `test_oi_momentum_pins_its_head_its_base_index_and_its_nulls` and `test_every_oi_feature_reproduces_itself_on_a_truncated_prefix` FAIL, the latter naming `oi_momentum`. (b) Write its warm-up as `0.0` instead of `None` — the `cli/features/momentum.py` form — and confirm **only** `test_oi_momentum_pins_its_head_its_base_index_and_its_nulls` fails: a `0.0` head is causal, so the prefix test is blind to it. (b) is why the full-list assertions are not redundant with the prefix property, and (a) is why the prefix property is not redundant with them. Restore after each and confirm the file is green.
+- [ ] **Step 6: Commit** — `feat(features): OI log-delta, z-score, momentum, and the zero-is-a-hole mapping`
 
 ---
 
@@ -294,7 +378,11 @@ def test_oi_momentum_is_causal_over_the_lookback():
 **Interfaces:**
 - Produces: `ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[float | None]]` — carries the four Binance ratio columns through unchanged, re-keyed with the `binperp_` prefix (spec D8). Null-propagating by construction: a carried column is the same list.
 
-This family is small but it is the only **null-bearing** one, so it is what exercises D5's no-imputation rule against the real data shape — the 2022 hole is 87.3 % panel-wide in exactly these columns. It also lands the `binperp_` prefix, which spec D8 requires and which no other task emits.
+This family is small but it is the only **null-bearing** one, so it is what exercises D5's no-imputation rule against the real data shape. It also lands the `binperp_` prefix, which spec D8 requires and which no other task emits.
+
+**The 2022 hole is per-column, not uniform.** Measured panel-wide over 2022's 1,051,199 rows: `count_toptrader_long_short_ratio` **87.24 %** null, `sum_toptrader_long_short_ratio` **87.24 %**, `sum_taker_long_short_vol_ratio` **35.03 %**, `count_long_short_ratio` **5.09 %**. A single "87.3 % in these columns" overstates the hole 17× for `count_long_short_ratio`, which is 94.9 % *present* through 2022 and is the one ratio usable across that regime — the figures belong in spec D5 and here, not in a shipped docstring, where a substrate refresh would rot them silently.
+
+**Ratios are gated by `_validate_rates`, not `_validate_levels`** — `sum_taker_long_short_vol_ratio` is exactly `0.0` on 45 real rows (all-sell bars, every one on a healthy-OI stamp), which the positive-level validator would reject. Spec D5.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -312,17 +400,27 @@ def test_ratio_features_prefix_every_column_with_its_venue():
     out = ratio_features({name: [1.0, 2.0] for name in _RATIOS})
     assert set(out) == {f"binperp_{name}" for name in _RATIOS}
 
-def test_ratio_features_carry_nulls_through_untouched():
-    """Spec D5: no imputation. A null in, a null out -- never 0.0, never a trailing mean."""
-    out = ratio_features({name: [1.0, None, 3.0] for name in _RATIOS})
+def test_ratio_features_carry_nulls_and_real_zeros_through_untouched():
+    """Spec 00110 D5: no imputation. A null in, a null out -- never 0.0, never a trailing mean.
+    And a `0.0` in, a `0.0` out: D5 rules a ratio zero a real reading (an all-sell bar), unlike a
+    zero in `sum_open_interest`, which is a venue hole."""
+    out = ratio_features({name: [1.0, None, 0.0, 3.0] for name in _RATIOS})
     for name in _RATIOS:
-        assert out[f"binperp_{name}"] == [1.0, None, 3.0]
+        assert out[f"binperp_{name}"] == [1.0, None, 0.0, 3.0]
 
 def test_ratio_features_rejects_an_unknown_column():
     import pytest
     from cli.features.errors import FeatureError
     with pytest.raises(FeatureError):
         ratio_features({"not_a_ratio": [1.0, 2.0]})
+
+def test_ratio_features_rejects_a_dropped_column():
+    """The other half of the guard. Without it a caller that lost a column gets a silently smaller
+    frame, and `coverage_by_year` reports nothing about a column that is not there."""
+    import pytest
+    from cli.features.errors import FeatureError
+    with pytest.raises(FeatureError):
+        ratio_features({name: [1.0, 2.0] for name in _RATIOS[:3]})
 ```
 
 - [ ] **Step 2: Run, expect failure**
@@ -342,14 +440,22 @@ _RATIO_COLUMNS: tuple[str, ...] = (
 
 def ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[float | None]]:
     """Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
-    imputation: these columns are 87.3 % null across 2022 panel-wide, and filling one would
-    manufacture a reading the venue never published (spec 00110 D5). The prefix is spec D8 -- the
-    features describe Binance perpetuals, not the Kraken spot book they will sit beside."""
+    imputation: these columns carry genuine venue gaps, concentrated in one year and differing by
+    an order of magnitude between columns, and filling one would manufacture a reading the venue
+    never published (spec 00110 D5). Call `coverage_by_year` to see the shape for the substrate in
+    hand rather than trusting a figure written here. All four are required: a caller that dropped
+    one would otherwise get a silently smaller frame. The prefix is spec D8 -- the features
+    describe Binance perpetuals, not the Kraken spot book they will sit beside."""
     unknown = set(ratios) - set(_RATIO_COLUMNS)
     if unknown:
         raise FeatureError(f"unknown ratio column(s): {sorted(unknown)}")
+    missing = set(_RATIO_COLUMNS) - set(ratios)
+    if missing:
+        raise FeatureError(f"missing ratio column(s): {sorted(missing)}")
     for name, values in ratios.items():
-        _validate_levels(name, values)  # ratios are positive and nullable
+        # A ratio is finite or null -- never gated as a positive level: a zero is a real all-sell
+        # bar, while a zero OI is a venue hole (spec 00110 D5).
+        _validate_rates(name, values)
     return {f"binperp_{name}": list(values) for name, values in ratios.items()}
 ```
 
@@ -365,7 +471,11 @@ def ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[floa
 - Test: `tests/test_features_derivatives.py`
 
 **Interfaces:**
-- Produces: `coverage_by_year(ts, values) -> dict[int, tuple[int, int]]` — year -> (non_null, total). Spec D6.
+- Produces: `YearCoverage(non_null, total, first_non_null, last_non_null)` — a `NamedTuple`, so it still compares equal to a plain tuple in a test — and `coverage_by_year(ts, values) -> dict[int, YearCoverage]`. Spec D6 names four things per column and this carries all four: the count, the two timestamps, and the null fraction, which is **derived** (`1 - non_null / total`) rather than stored, so the two cannot disagree.
+
+**Why the timestamps, and not just the count.** A `(non_null, total)` pair cannot tell a late start from an interior outage — the distinction D5 had to reopen the parquet to settle, and the one deciding whether a 2022 CPCV fold is unusable or merely thin. Without them the round trip to the substrate that D6 exists to remove is still required.
+
+**Nothing in this plan calls `coverage_by_year`.** That is deliberate and recorded: binding the summary to an emitted frame needs the substrate→list read this harness does not do, so spec `## Out of scope` carries it and Task 7 Step 3 registers it on `T0023`. The *shape* is fixed here so the family cannot narrow it later.
 
 - [ ] **Step 1: Write the failing test, built on the real defect this exists to surface**
 
@@ -373,18 +483,20 @@ def ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[floa
 from datetime import datetime, timezone
 from cli.features.derivatives import coverage_by_year
 
-def test_coverage_by_year_exposes_a_single_bad_year():
+def test_coverage_by_year_separates_a_late_start_from_an_interior_outage():
     """The shape that motivated D6: an overall null rate reads as a nuisance while one year is
-    almost entirely missing. Coverage must show the year, not the aggregate."""
+    almost entirely missing. Coverage must show the year, not the aggregate -- and within a year,
+    the two timestamps, because 2021 and 2022 below have similar counts and opposite meanings.
+    2021 runs from January to October with a hole in the middle; 2022 does not start until
+    October. A count alone cannot tell them apart."""
     UTC = timezone.utc
-    ts = ([datetime(2021, 6, 1, tzinfo=UTC)] * 10
-          + [datetime(2022, 6, 1, tzinfo=UTC)] * 10
-          + [datetime(2023, 6, 1, tzinfo=UTC)] * 10)
-    vals = [1.0] * 10 + [None] * 9 + [1.0] + [1.0] * 10
+    ts = [datetime(y, m, 1, tzinfo=UTC) for y in (2021, 2022, 2023) for m in range(1, 11)]
+    vals = [1.0] + [None] * 8 + [1.0] + [None] * 9 + [1.0] + [1.0] * 10
     cov = coverage_by_year(ts, vals)
-    assert cov[2021] == (10, 10)
-    assert cov[2022] == (1, 10)
-    assert cov[2023] == (10, 10)
+    assert cov[2021] == (2, 10, datetime(2021, 1, 1, tzinfo=UTC), datetime(2021, 10, 1, tzinfo=UTC))
+    assert cov[2022] == (1, 10, datetime(2022, 10, 1, tzinfo=UTC), datetime(2022, 10, 1, tzinfo=UTC))
+    assert cov[2023] == (10, 10, datetime(2023, 1, 1, tzinfo=UTC), datetime(2023, 10, 1, tzinfo=UTC))
+    assert 1 - cov[2022].non_null / cov[2022].total == 0.9
 ```
 
 - [ ] **Step 2: Run, expect failure**
@@ -398,6 +510,9 @@ def test_coverage_by_year_exposes_a_single_bad_year():
 
 - [ ] **Step 1:** Append the iterations-history entry to `docs/iterations-history-phase4.md` (B-family is Phase 4 subject matter) via the `iteration-closeout` skill.
 - [ ] **Step 2:** Append the Phase-4 decisions-log entry to `docs/research/10.phase4-decisions.md` for the subject-matter decisions this iteration made (the 2022 coverage finding and its consequence for feature selection).
-- [ ] **Step 3:** `T0023` is ALREADY `partial` (set at iter-090) and its `ripe_when` — "the B2 derivatives-positioning family is picked for an iteration" — is satisfied by this branch, so there is no status flip to make. The real work is the `## Done so far` entry recording the harness and trimming `## Suggested next steps`, whose second bullet is exactly this harness, to the remainder (the family, the trials, liquidations).
-- [ ] **Step 4:** Add the data-gated panel-start assertion (spec D10) beside the `cli/derivatives/` substrate tests, not in the pure-function module: it reads the substrate, so it skips where the mount is absent and therefore runs locally and never in CI. Assert the balanced-panel start is 2021-12-01 and that `sum_open_interest` has zero nulls, so a substrate refresh cannot move either silently.
-- [ ] **Step 5:** Run `uv run pre-commit run -a` and the full reachable test set — including the data-gated family, which CI cannot run; commit.
+- [ ] **Step 3:** `T0023` is ALREADY `partial` (set at iter-090) and its `ripe_when` — "the B2 derivatives-positioning family is picked for an iteration" — is satisfied by this branch, so there is no status flip to make. The real work is the `## Done so far` entry recording the harness and trimming `## Suggested next steps`, whose second bullet is exactly this harness, to the remainder. **The remainder now includes one item this branch created**: the substrate→feature emission — reading the two `read_*_series` frames into lists, building the 1h/4h grid, and shipping each frame with its `coverage_by_year` summary (spec D6, `## Out of scope`). Register it as its own `## Suggested next steps` bullet; a deferral whose only home is prose is not tracked (`.claude/rules/open-topics.md`).
+- [ ] **Step 4:** Add the data-gated substrate assertions (spec D10) to `tests/test_derivatives_oi.py` — beside the `cli/derivatives/` substrate tests, not in the pure-function module, because they read the substrate.
+  - **Gate on the canonical root, which is the NFS mount.** `data/derivatives-oi` is **absent** from this workstation's data root, so the house `Path("data/…").exists()` form would skip here exactly as it skips in CI, and Step 5 would record the skip as coverage. Use `resolve_hot_source(load_config()) / "derivatives-oi"` (`cli/config.py` — returns `<nfs_mount_dir>/hot`), which resolves to `/mnt/zhao-crypto/hot/derivatives-oi`, falling back to `Path("data/derivatives-oi")` if a local copy is ever promoted. `tests/test_data_manifest.py` and `tests/test_engine_soak.py` already gate on `/mnt/zhao-crypto` paths; every fixture currently in `tests/test_derivatives_oi.py` is `tmp_path`, so there is no in-file precedent to copy.
+  - **Assert**: (a) the balanced-panel start is 2021-12-01 — BTCUSDT begins 2020-09-01, the other nine on 2021-12-01, so the balanced start is the latest first stamp; (b) `sum_open_interest` has zero nulls (spec D5's density claim); (c) over the closed window `ts < 2026-01-01` — a past window a forward refresh cannot move — `sum_open_interest` is exactly `0.0` on **2,329** rows and `sum_taker_long_short_vol_ratio` on **45**. (c) is what stops D5's venue-hole ruling drifting silently under a re-fetch; (a) and (b) stop a coverage extension doing the same.
+  - **Run it and read `passed`, not `skipped`.** A skip is not coverage (`CLAUDE.md`), and this is the only substrate-reading guard in the plan.
+- [ ] **Step 5:** Run `uv run pre-commit run -a` and the full reachable test set — including the data-gated family, which CI cannot run. Record Step 4's outcome as `passed`; a `skipped` there means the gate is pointed at the wrong root and Step 4 is not done. Commit.
