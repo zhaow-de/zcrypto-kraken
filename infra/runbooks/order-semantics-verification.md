@@ -40,8 +40,8 @@ curl -s https://status.kraken.com/api/v2/scheduled-maintenances.json \
   | python3 -c 'import json,sys; [print(m["name"], m["scheduled_for"], [c["name"] for c in m["components"]]) for m in json.load(sys.stdin)["scheduled_maintenances"]]'
 ```
 
-Abort if a window carrying `WebSocket` or `REST` **in `components`, or in its `name` (an API, not a ticker)** overlaps your run — an empty `components` array is not an absent impact (measured 2026-09-02: *"Scheduled maintenance for Kraken Prime REST, WebSocket, and FIX API"* ships `components: []`). Entries have appeared 41–145 h (1.7–6 days)
-ahead, so an empty feed proves nothing — neither a week out nor two days out — **check again immediately before step 4**.
+Abort if a window carrying `WebSocket` or `REST` **in `components`, or in its `name` (an API, not a ticker)** overlaps your run — an empty `components` array is not an absent impact (measured 2026-09-02: *"Scheduled maintenance for Kraken Prime REST, WebSocket, and FIX API"* ships `components: []`). Entries have appeared as little as 41 h (1.7 days)
+ahead — measured, not promised — so an empty feed proves nothing, neither a week out nor two days out — **check again immediately before step 4**.
 
 ### 1.2 The engine's 4-hour boundary
 
