@@ -47,6 +47,21 @@ def test_a_null_source_row_erases_the_carry_rather_than_being_skipped():
     assert align_asof(src_ts, src_v, grid) == [1.0, 1.0, None, None]
 
 
+def test_align_asof_refuses_a_length_mismatch_and_either_unsorted_input_but_permits_a_tie():
+    """The three preconditions the as-of walk rests on, and the one it deliberately does not
+    impose. The source-order guard is the load-bearing refusal: `i` only ever advances, so an
+    unsorted source is not a crash but a silently wrong carry from the first out-of-order row
+    onward. Equal adjacent stamps are permitted on purpose (`b < a`, not `b <= a`) -- a venue may
+    print twice at one stamp -- and the walk consumes both, so the later row is the one carried."""
+    with pytest.raises(FeatureError):
+        align_asof([_t(0), _t(4)], [1.0], [_t(0)])
+    with pytest.raises(FeatureError):
+        align_asof([_t(4), _t(0)], [1.0, 2.0], [_t(0)])
+    with pytest.raises(FeatureError):
+        align_asof([_t(0), _t(4)], [1.0, 2.0], [_t(4), _t(0)])
+    assert align_asof([_t(0), _t(0)], [1.0, 2.0], [_t(0)]) == [2.0]
+
+
 def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
     """The look-ahead guard (spec D2/D10), in the form that actually bites.
 
@@ -313,3 +328,16 @@ def test_coverage_by_year_rejects_a_length_mismatch_and_reports_an_empty_year():
     with pytest.raises(FeatureError):
         coverage_by_year(ts, [1.0, 2.0])
     assert coverage_by_year(ts, [None, None, None])[2021] == (0, 3, None, None)
+
+
+def test_coverage_by_year_reports_the_span_not_the_positional_ends():
+    """`coverage_by_year`'s EARLIEST/LATEST contract, on the only input shape that can refute the
+    positional reading: the two non-null rows arrive Oct-then-Jan, so a `seen[0]`/`seen[-1]`
+    implementation reports the span inverted -- `(Oct, Jan)` -- while `min`/`max` report the
+    `(Jan, Oct)` the column actually covers. An in-order fixture cannot tell the two apart -- the
+    out-of-order `ts` is the whole point of this case. `coverage_by_year` imposes no ordering
+    precondition (unlike `align_asof`), so the span is what it owes on any input."""
+    UTC = timezone.utc
+    ts = [datetime(2021, 10, 1, tzinfo=UTC), datetime(2021, 1, 1, tzinfo=UTC), datetime(2021, 5, 1, tzinfo=UTC)]
+    cov = coverage_by_year(ts, [1.0, 1.0, None])
+    assert cov[2021] == (2, 3, datetime(2021, 1, 1, tzinfo=UTC), datetime(2021, 10, 1, tzinfo=UTC))
