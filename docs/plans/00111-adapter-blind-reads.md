@@ -28,7 +28,9 @@
 | `cli/engine/probeplan.py` | `plan_refusals` gains the untrustworthy-balance refusal and the `locked > 0` assertion |
 | `tests/test_engine_probeplan.py` | Guard tests: refuses while orders rest; asserts loudly when `locked` becomes real |
 | `cli/engine/venuestate.py` | `VenueState` carries `balances_locked` so the guard can see holds — a live field, **not** journalled by `to_payload()` |
-| `cli/engine/executor.py`, `cli/engine/command.py` | The two `plan_refusals` call sites, threaded |
+| `cli/engine/executor.py`, `cli/engine/command.py` | The two `plan_refusals` call sites, threaded — and `command.py`'s `flatten` docstring is `--help`, which carries the exit-3 clause Task 2 widens |
+| `infra/runbooks/engine-procedures.md` | The exit-code table's row 3, and step 5's per-`reason` residual triage list, which the new residual joins |
+| `README.md` | The Usage row for `flatten`, which restates the same exit-3 clause |
 | `infra/scripts/kraken-fixture.sh` | Mints, verifies and closes the fixture over `kraken-cli`; `--validate` default |
 | `infra/scripts/flatten-with-vaulted-key.sh` | **New**, so Task 5 can run this branch's flatten with the vaulted key. A second entry point rather than a mode on `probe-with-vaulted-key.sh`, and **deliberately not allowlisted** — see Task 4 Step 4 |
 | `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md` | Gains the order + position verification row |
@@ -153,7 +155,7 @@ No commit here — see the note under Interfaces. The double's proof that it bit
 ### Task 2: Flatten populates the cache before it reads
 
 **Files:**
-- Modify: `cli/engine/flatten.py` (`run_flatten`)
+- Modify: `cli/engine/flatten.py` (`run_flatten`), `cli/engine/command.py` (the `flatten` docstring, which is `--help`), `infra/runbooks/engine-procedures.md`, `README.md`
 - Test: `tests/test_engine_flatten.py`
 
 **Interfaces:**
@@ -179,7 +181,8 @@ Two more, for the containment's two ends. Without them the `except Exception` is
 def test_a_listing_nothing_can_be_cached_refuses_before_the_first_write(tmp_path):
     """Every row failing is not a contained row -- it is the pre-fix blind state, in which the
     order read comes back a silent empty list and the run judges itself flat on it. Refused at
-    exit 3, which is the code for a venue that could not be read BEFORE the cancel."""
+    exit 3, which is the code for a read that could not be prepared BEFORE the cancel."""
+    _armed(tmp_path)
     client = _client_with(orders=[SimpleNamespace(raw_symbol="SOLEUR")], symbols=("SOL/EUR",))
     client.raises["cache_instrument"] = RuntimeError("no")
 
@@ -193,6 +196,7 @@ def test_a_partly_uncacheable_listing_cannot_read_flat(tmp_path):
     invisible to `read_open_orders`, `judge_final` sees no order residual and `exit_code` would
     return 0 -- printing that the account reads flat over exposure nothing looked at. The uncached
     row reaches the verdict instead, and the journal names it."""
+    _armed(tmp_path)
     client = _client_with(symbols=("SOL/EUR", "BTC/EUR"))
     client.raises["cache_instrument"] = RuntimeError("no")
 
@@ -206,10 +210,12 @@ def test_a_partly_uncacheable_listing_cannot_read_flat(tmp_path):
 
 `(path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))` is this file's own idiom for reading the one journal a run wrote — used at seventeen sites already, including `test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_sweep_one`. Add no helper for it. The second test's account is otherwise **empty**, which is deliberate: exit 2 there can only come from the cache residual, so a degenerate fixture cannot pass it.
 
+**`_armed(tmp_path)` is the first line of both, and `execute` stays at its default.** These two are execute-mode tests — the whole-listing arm must show a refusal that precedes the cancel, and the partial arm must leave a journal, which `_dry_exit` never writes. In execute mode `run_flatten` reaches `check_kill_file(state_dir)` before any client call; with no kill file that raises `FlattenRefused` and the run returns **1** having called nothing, so both tests would read 1 before and after Step 3 and neither would touch the code under test. `_armed` is what every other execute-mode `_run` site in the file calls first. Do **not** reach for `execute=False` instead when a red does not match: a dry run calls neither `cancel_all_orders` nor `submit_order` under any implementation, so the first test's two corroborating assertions would become assertions nothing can fail.
+
 - [ ] **Step 2: Run it and see it fail**
 
 Run: `uv run pytest tests/test_engine_flatten.py -k "caches_the_listing_before or nothing_can_be_cached or partly_uncacheable" -v`
-Expected: all three FAIL. `caches_the_listing_before` on `names.index` raising `ValueError` — `cache_instrument` is never called. The other two on the **exit code**, which is 0 both times: nothing calls `cache_instrument`, so nothing raises, so neither the refusal nor the residual exists. **Read which assertion fired**: a red on the journal glob unpacking, or a `KeyError` for `uncached`, is also what a half-implementation shows, and only the exit-code line separates the two. Confirm the selection collects exactly 3 first: same command with `--collect-only -q`.
+Expected: all three FAIL. `caches_the_listing_before` on `names.index` raising `ValueError` — `cache_instrument` is never called. The other two on the **exit code**, which is 0 both times: the kill file is in place (`_armed`) and the confirmation matches, so the run completes over an account nothing raised on, and neither the refusal nor the residual exists. **A red reading exit 1 means the `_armed` line was dropped**, not that the fix is missing. **Read which assertion fired**: a red on the journal glob unpacking, or a `KeyError` for `uncached`, is also what a half-implementation shows, and only the exit-code line separates the two. Confirm the selection collects exactly 3 first: same command with `--collect-only -q`.
 
 - [ ] **Step 3: Implement**
 
@@ -272,6 +278,22 @@ and, immediately after `residuals = judge_final(...)` further down `run_flatten`
 
 Enumerated so it is not re-derived: this loop is the **only** place in the branch that touches the whole listing, so the family of whole-listing guards this plan could get wrong has exactly one member.
 
+**Then land the two contract edits the code above makes owed, in this same step.** Both are prose the operator meets and the code does not check, so nothing turns red if they are skipped.
+
+*Exit 3 gains a cause that is not the venue.* Today every surface spells it "the venue could not be reached or read", and an operator who reads that during an incident goes and checks `status.kraken.com` while the venue is healthy and our own cache writer is not. Widen each to say the account could not be **read** before anything was sent — the venue unreachable, **or** the reads not preparable — and let the run's own message say which. Keep the semantic and change nothing else in the sentence; the exit-code RULE is spec `00106`'s and is untouched. **Family, five surfaces — `grep -rn "could not be reached or read\|could not be read before" cli/ infra/ README.md` returns exactly these and nothing else** (widening the same clause under `docs/` is Task 6's, and spec `00106` and the phase-6 changelog are point-in-time records that keep their wording):
+
+| surface | what it is |
+|---|---|
+| `cli/engine/flatten.py`, `FlattenUnreachable`'s class docstring | the in-code contract the new raise reuses |
+| `cli/engine/flatten.py`, `run_flatten`'s docstring | the same sentence on the function that returns the code |
+| `cli/engine/command.py`, the `flatten` command's docstring | **`zcrypto engine flatten --help`** — the only exit-code map an operator reaches without the repo |
+| `infra/runbooks/engine-procedures.md`, the exit-code table's row 3 | what the incident runbook says to do |
+| `README.md`, the `flatten` Usage row | the same clause again (`readme-usage.md` requires it in this change) |
+
+*Exit 2 gains a residual `reason` the runbook's triage list does not carry.* Step 5 of `infra/runbooks/engine-procedures.md` is an exhaustive per-`reason` list, and its nearest neighbours (`resting_order`, `sellable_balance`, `unjudgeable: …`) all end in "run it again" — which against an unchanged cause reproduces the same residual. Add a bullet for `uncached_listing_rows` naming the action that is actually owed: the symbols are in the record's `uncached` list, and each named pair is hand-checked on Kraken's own pages, because this run could not see it. **Family: one member** — `grep -rn "unjudgeable" cli/ infra/` returns that list and the balance raise in `flatten.py` and nothing else, so the per-`reason` triage list has exactly one home.
+
+`.claude/rules/operator-facing-text.md` applies to all five surfaces and to the new bullet: no decision token in the text, the citation on the adjacent comment where one is wanted.
+
 - [ ] **Step 4: Pin the eighth real-client call, and re-tense the seven-call table**
 
 Step 3 makes `cache_instrument` the **eighth** call the red button makes on the real client, and the only one with no pin on its shape. `_real_calls` is a hardcoded table of the other seven and nothing joins it to what `flatten.py` actually calls, so an eighth added to production turns no test red. The offline suite cannot see it either — `FakeClient.cache_instrument` is a plain `def`, so the double models the shape rather than measuring it. **What that leaves live:** if a version bump makes the real `cache_instrument` awaitable-returning, the un-awaited call **returns** instead of raising, Step 3's `except Exception` never fires, `uncached` stays empty, the cache is never populated, and the whole branch silently reverts to the empty order list it exists to fix — with a green suite.
@@ -322,13 +344,14 @@ Measured on the pinned version: the call returns `None`, `isawaitable(None)` is 
 
 - [ ] **Step 5: Run the full flatten suite**
 
-Run: `uv run pytest tests/test_engine_flatten.py -q`
-Expected: all pass — including Task 1 Step 4's two known reds, which this fix is what turns green. Several existing tests assert on `client.calls` ordering — update any whose expectations the new call legitimately changes, and **read each one before changing it**: a test that now fails because the sequence genuinely changed is correct to update; one failing because the fix broke it is not.
+Run: `uv run pytest tests/test_engine_flatten.py tests/test_internal_terms_not_operator_visible.py -q`
+Expected: all pass — including Task 1 Step 4's two known reds, which this fix is what turns green. Several existing tests assert on `client.calls` ordering — update any whose expectations the new call legitimately changes, and **read each one before changing it**: a test that now fails because the sequence genuinely changed is correct to update; one failing because the fix broke it is not. The second file is the reason the `--help` and README edits are run rather than eyeballed: it scans exactly those surfaces for the decision vocabulary.
 
 - [ ] **Step 6: Commit — Task 1's work lands here too**
 
 ```bash
-git add cli/engine/flatten.py tests/test_engine_flatten.py
+git add cli/engine/flatten.py tests/test_engine_flatten.py cli/engine/command.py \
+        infra/runbooks/engine-procedures.md README.md
 git commit -m "fix(engine_flatten): cache the listing before reading, or every order is dropped"
 ```
 
@@ -339,12 +362,16 @@ After the commit, because `mutate-probe.sh` refuses a dirty worktree (its `git s
 ```bash
 infra/scripts/mutate-probe.sh \
   --file cli/engine/flatten.py \
-  --control 's/listing = await read_listing(client, rec)/listing = {}/' \
+  --control 's/client\.cache_instrument(row)/pass/' \
   --mutation 's/for symbol, row in listing\.items():/for symbol, row in []:/' \
   -- uv run pytest tests/test_engine_flatten.py -k caches_the_listing_before -q
 ```
 
-Expected: KILLED. The mutation leaves the loop **present and syntactically valid** while caching nothing, which reproduces the pre-fix behaviour exactly; `uncached` stays empty so the whole-listing refusal does not fire either, and `names.index("cache_instrument")` raises `ValueError`. The control empties the listing, so nothing is cached — it reaches the same red by a different route, since an empty `listing` also makes `len(uncached) == len(listing)` true and the run exits 3 before the call the test looks for. Before trusting either verdict, confirm the `-k` filter collects the test: `uv run pytest tests/test_engine_flatten.py -k caches_the_listing_before --collect-only -q` must report exactly 1.
+Expected: KILLED. The mutation leaves the loop **present and syntactically valid** while caching nothing, which reproduces the pre-fix behaviour exactly; `uncached` stays empty so the whole-listing refusal does not fire either, and `names.index("cache_instrument")` raises `ValueError`. The control drops the call out of a loop that still runs, so `uncached` is likewise empty and the same `ValueError` fires — it reaches the red **through** the guard, one statement earlier than the mutation does.
+
+**Not `'s/listing = await read_listing(client, rec)/listing = {}/'`, which is the operand this control replaced.** It empties the listing, so `len(uncached) == len(listing)` is `0 == 0` and control reaches the whole-listing raise — whose message interpolates `uncached[0]` on an empty list. That is an `IndexError`, raised while the argument is being built, so no `FlattenUnreachable` is ever constructed and `except FlattenUnreachable` does not catch it: it escapes a `run_flatten` that promises to raise nothing and the test ERRORS. `mutate-probe.sh` scores that a failing control and proceeds, which is exactly the class the paragraph below excludes — a control that fails *around* the guard rather than through it. (Production is unaffected: `read_listing` raises on an empty listing, so `len(listing)` is never 0 there, which is what the comment in Step 3 says.)
+
+Before trusting either verdict, confirm the `-k` filter collects the test: `uv run pytest tests/test_engine_flatten.py -k caches_the_listing_before --collect-only -q` must report exactly 1.
 
 **The operand must be checked against the block Step 3 actually writes, not against the loop in isolation.** `mutate-probe.sh` decides on `if "$@" >/dev/null 2>&1` with all output discarded, so an `IndentationError` scores KILLED exactly as a real detection does and the guard ships recorded as proven having proven nothing. A line-range deletion (`'/for …/,+1d'`) is the shape that produces one: applied to Step 3's block it removes the loop header and the `try:` under it, leaving `client.cache_instrument(row)` over-indented — reproduced, `py_compile` reports `IndentationError: unexpected indent`, and the probe would have scored that KILLED. Rule for **every** probe in this plan: apply the sed to the block as written, `python -m py_compile` the result, and only then run `mutate-probe.sh`. Task 3 Step 7's three probes were checked the same way and their six operands are sound — each is a same-line expression substitution that changes no indentation: `'s/resting_orders > 0 and //'` leaves a valid `elif`, `'s/cannot be trusted/is fine/'` a valid literal, and the four in probes (b) and (c) swap one call or one argument value inside an expression that stays on its own line.
 
@@ -400,7 +427,7 @@ Give each a `balances_locked` returning `dict[Currency, Money]` — the real typ
 
 So both stand-ins take the map as an argument:
 
-- **`_fake_account(balances_free, balances_locked=None)`**, and the `fake_cache` fixture passes `{"EUR": 2.757}` beside its existing free map `{"EUR": 987.65, "BTC": 0.5}`. The locked map is deliberately **different from the free map in both keys and values**, so a `balances_free()` copy-paste in the reader is caught as well as a hardcoded `{}`. The other two `_fake_account(...)` sites keep the default, which is `{}`.
+- **`_fake_account(balances_free, balances_locked=None)`**, and the `fake_cache` fixture passes `{"EUR": 2.757}` beside its existing free map `{"EUR": 987.65, "BTC": 0.5}`. The locked map is deliberately **different from the free map in both keys and values**, so a `balances_free()` copy-paste in the reader is caught as well as a hardcoded `{}`. The other **three** `_fake_account(...)` sites keep the default, which is `{}` — `grep -n "_fake_account(" tests/test_engine_venuestate.py` returns the definition plus four call sites, and the three that are not the `fake_cache` fixture are `fake_cache_missing_dot`, `test_no_account_cached_raises`' neighbour, and — the one an enumeration stopping at "the fixtures" misses — the `_library_standins()` registration `("_fake_account", _fake_account({"EUR": 1.0}), MarginAccount, frozenset())`, which is a fidelity registration rather than a fixture and is the site that makes the new `balances_locked` legal at all.
 - **`StubCache(..., locked=None)`**, threaded into the namespace `account_for_venue` returns rather than hardcoded there. `{}` stays the default, which is the fail-closed value Step 2's first `_pickup` test keys on; Step 2's third test passes a real hold. **Add `"_locked"` to `_STUB_CACHE_PLUMBING` in the same edit** — `nautilus_trader.common.Cache` carries neither `_locked` nor `locked` (measured), and that file's `test_no_stub_in_this_file_offers_a_name_its_real_nautilus_type_lacks` fails on any name the stub offers that the real type lacks. This is the same trap Task 1 Step 1 closes for `cached_symbols`, in the other file.
 
 **Write the source assertion here, before the line that satisfies it**, beside `test_balances_are_read_by_currency_code` in `tests/test_engine_venuestate.py` — the file's own one-line precedent for exactly this read:
@@ -416,7 +443,7 @@ def test_locked_balances_are_read_by_currency_code_and_differ_from_the_free_map(
 
 `2.76`, not `2.757`: `Money` at EUR precision 2 quantizes, exactly as the `{'EUR': 2.76}` measured at the top of this step. Run it before adding the production line and read the failure — `AttributeError: 'VenueState' object has no attribute 'balances_locked'` — then add the line and see it green. It is green from here on, so it is **not** part of Step 3's red run; what proves it bites is Step 7's second mutation probe.
 
-**Only one of the two is pinned.** `tests/test_engine_stub_fidelity.py` registers `_fake_account` against `nautilus_trader.model.MarginAccount`, which carries `balances_locked` — so that addition is legal and running the file confirms it. The executor stand-in is the **anonymous `SimpleNamespace`** `StubCache.account_for_venue` returns; the table registers `StubCache` itself and no account stand-in, so nothing checks its shape. Match `_fake_account`'s shape there by hand; running `tests/test_engine_stub_fidelity.py` will not catch a wrong one.
+**Only one of the two is pinned, and the run that pins it is not the file whose name says so.** `tests/test_engine_stub_fidelity.py` *classifies* `_fake_account` as standing in for `nautilus_trader.model.MarginAccount` and names the guard — it never constructs the stub and never imports the library (its own docstring: "Nothing here imports the modules it classifies: the walk reads them as source"), so it cannot tell a legal attribute from a fabricated one. The run that can is **`tests/test_engine_venuestate.py`'s `test_no_stub_in_the_venue_reader_suite_offers_a_name_its_real_library_type_lacks`**, which builds `_library_standins()` in that file and checks each offered name against the real class. `MarginAccount` carries `balances_locked` (measured), so the addition is legal and that test is where a green says so. The executor stand-in is the **anonymous `SimpleNamespace`** `StubCache.account_for_venue` returns; neither file registers an account stand-in for it, so nothing checks its shape. Match `_fake_account`'s shape there by hand; no fidelity run will catch a wrong one.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -645,7 +672,7 @@ Then update the **fifteen** existing `plan_refusals` calls in `tests/test_engine
 - [ ] **Step 5: Run every suite this task can reach**
 
 Run: `uv run pytest tests/test_engine_probeplan.py tests/test_engine_venuestate.py tests/test_engine_venueledger.py tests/test_engine_executor.py tests/test_engine_cycle.py tests/test_engine_execledger.py tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_node.py -q`
-Expected: all pass. The venuestate/venueledger pair is what proves `to_payload()` was left alone; executor/cycle/execledger/command are the `VenueState` construction sites and the threaded call sites; stub_fidelity pins `_fake_account` against the real `MarginAccount`; node is the third `venue_state_from_cache` caller.
+Expected: all pass. The venuestate/venueledger pair is what proves `to_payload()` was left alone; executor/cycle/execledger/command are the `VenueState` construction sites and the threaded call sites; **venuestate again is where the `balances_locked` addition is proved legal**, by `test_no_stub_in_the_venue_reader_suite_offers_a_name_its_real_library_type_lacks` — stub_fidelity only classifies `_fake_account` and imports nothing, so it is in the list to confirm the classification still resolves and not to check the attribute; node is the third `venue_state_from_cache` caller.
 
 Then run the two announcement tests **in CI's order as well**, because that order is what would break them and the list above hides it:
 
@@ -658,11 +685,11 @@ Expected: all pass. `tests/test_engine_command.py` first is what CI's alphabetic
 git add cli/engine/probeplan.py cli/engine/venuestate.py cli/engine/executor.py cli/engine/command.py \
         tests/test_engine_probeplan.py tests/test_engine_venuestate.py tests/test_engine_venueledger.py \
         tests/test_engine_executor.py tests/test_engine_cycle.py tests/test_engine_execledger.py \
-        tests/test_engine_command.py tests/test_engine_stub_fidelity.py
+        tests/test_engine_command.py
 git commit -m "fix(probeplan): the margin floor fails closed when free cannot be trusted"
 ```
 
-Stage every file Step 1 and Step 4 touched — a `git add` short of that leaves the tree dirty, which the next step's `mutate-probe.sh` refuses outright.
+Stage every file Step 1 and Step 4 touched — a `git add` short of that leaves the tree dirty, which the next step's `mutate-probe.sh` refuses outright. `tests/test_engine_stub_fidelity.py` is deliberately **not** in that list: no step here edits it. Its `TABLE` classifies `_fake_account` and `StubCache`, both of which keep their names through this task, and its walk reads only top-level classes plus top-level non-test functions that build a `SimpleNamespace` — so Step 2's `_announcements`, whose `_Collect(logging.Handler)` is nested inside a function, adds no discoverable double either. Run it (Step 5 does); stage nothing.
 
 - [ ] **Step 7: Mutation-prove the guard — three probes, one per link in the chain**
 
@@ -740,7 +767,7 @@ Behaviour:
 
 - [ ] **Step 2: Exercise all three modes in their default (validate) mode — bracketed, because this is the first-ever run**
 
-`kraken-cli` is **not on the default PATH** (the binary is `~/.cargo/bin/kraken`). Step 1 settles that for the script itself — it resolves the binary in its own header, so **no `bash infra/scripts/kraken-fixture.sh …` invocation anywhere in this plan needs a PATH prefix**, at Task 5 Steps 1, 3, 4 and 7 included. What still needs one is a **bare** `kraken …` call, and the plan has exactly two places with those: this step's four before/after captures, and Task 5 Step 7's `query-orders`. Both carry the `export PATH` line, which holds for the rest of that shell. Without it these runs abort with `kraken: command not found`, and the venue-side `--validate` rehearsal this step exists for slides into the attended window under the rollover clock.
+`kraken-cli` is **not on the default PATH** (the binary is `~/.cargo/bin/kraken`). Step 1 settles that for the script itself — it resolves the binary in its own header, so **no `bash infra/scripts/kraken-fixture.sh …` invocation anywhere in this plan needs a PATH prefix**, at Task 5 Steps 1, 3, 4 and 7 included. What still needs one is a **bare** `kraken …` call, and the plan has exactly two places with those: this step's six before/mid/after captures, and Task 5 Step 7's `query-orders`. Both carry the `export PATH` line, which holds for the rest of that shell. Without it these runs abort with `kraken: command not found`, and the venue-side `--validate` rehearsal this step exists for slides into the attended window under the rollover clock.
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -749,15 +776,23 @@ kraken extended-balance -o json > /tmp/fixture-before-balance.json
 
 bash infra/scripts/kraken-fixture.sh verify
 bash infra/scripts/kraken-fixture.sh mint
+
+kraken positions -o json > /tmp/fixture-mid-positions.json
+kraken extended-balance -o json > /tmp/fixture-mid-balance.json
+diff /tmp/fixture-before-positions.json /tmp/fixture-mid-positions.json   # THE discriminator
+diff /tmp/fixture-before-balance.json /tmp/fixture-mid-balance.json
+
 bash infra/scripts/kraken-fixture.sh close
 
 kraken positions -o json > /tmp/fixture-after-positions.json
 kraken extended-balance -o json > /tmp/fixture-after-balance.json
-diff /tmp/fixture-before-positions.json /tmp/fixture-after-positions.json
-diff /tmp/fixture-before-balance.json /tmp/fixture-after-balance.json
+diff /tmp/fixture-mid-positions.json /tmp/fixture-after-positions.json
+diff /tmp/fixture-mid-balance.json /tmp/fixture-after-balance.json
 ```
 
-Both diffs must be **empty**. The captures bracket the runs rather than following them: this is the script's first-ever execution and its `--validate` default is exactly what is unproven, so a capture taken afterwards would already contain anything a wrongly-submitted `mint` created and `before == after` would report the safety default proven. (`extended-balance` moves with the venue's own hold accounting, so a non-empty balance diff is a finding to read, not noise to wave through.)
+All four diffs must be **empty**. The balance pair is split at the same point as the positions pair for one reason: a non-empty balance diff has to be attributable to `mint` or to `close` before it can be read at all. The captures bracket the runs rather than following them: this is the script's first-ever execution and its `--validate` default is exactly what is unproven, so a capture taken afterwards would already contain anything a wrongly-submitted `mint` created and `before == after` would report the safety default proven. (`extended-balance` moves with the venue's own hold accounting, so a non-empty balance diff is a finding to read, not noise to wave through.)
+
+**The mid capture is what carries the proof, and it is why `mint` and `close` are not bracketed together.** `mint` is `--type market`, so a submitted leg *fills*; `close` is the exact `--reduce-only` netting order for it, so a submitted close fills too. Bracketed as one, a broken `--validate`/`--execute` inversion opens and closes the position **inside** the bracket and `positions` before == after == empty — the one diff left non-empty would be `extended-balance`, which the paragraph above pre-licenses as venue hold accounting. Split, the mint-only interval is the interval in which a wrongly-submitted leg must be visible, and an empty diff there is a reading that could have come out otherwise. The `mid`→`after` diff is then the close's own check and nothing more.
 
 `verify` is read-only and costs nothing to run now — the spec makes it the witness every D4 assertion rests on, so it must not first execute inside the attended window.
 
@@ -767,7 +802,7 @@ Both diffs must be **empty**. The captures bracket the runs rather than followin
 
 - [ ] **Step 3: Prove the safety default against what a submitted order actually moves**
 
-Read Step 2's two diffs, then grep the script for `order buy`/`order sell` and check every occurrence is guarded by the `--validate`/`--execute` inversion. `open-orders` is the control that cannot see this defect and is therefore not the one used: the leg is `--type market`, and a market order that submits **fills** — it appears in `positions`, never in the open-order list. A script whose dangerous mode is reachable by default is the defect this step exists to catch, and a control that cannot see it is how it ships.
+Read Step 2's four diffs — the `before`→`mid` positions one first, since it is the only one taken while a wrongly-submitted `mint` would still be open — then grep the script for `order buy`/`order sell` and check every occurrence is guarded by the `--validate`/`--execute` inversion. `open-orders` is the control that cannot see this defect and is therefore not the one used: the leg is `--type market`, and a market order that submits **fills** — it appears in `positions`, never in the open-order list. A script whose dangerous mode is reachable by default is the defect this step exists to catch, and a control that cannot see it is how it ships.
 
 - [ ] **Step 4: A SECOND vaulted-key entry point — never a mode on the allowlisted one**
 
@@ -775,10 +810,11 @@ Task 5 must run **this branch's** flatten against the live account, and the host
 
 **Why a mode flag on it is refused, since the cheaper edit looks obviously right.** `.claude/settings.json` carries `"Bash(infra/scripts/probe-with-vaulted-key.sh:*)"` and its `./`-prefixed twin: the grant is **wildcarded on arguments**. Any mode that script gains widens what an already-granted, no-prompt pre-approval authorises. Today no argument to it can cancel or close anything — the harness needs `--apply` **and** `--probe5` and carries its own refusing notional rail. With a flatten mode on it, that one allowlist entry would additionally authorise, unprompted, a program that cancels account-wide and closes every position by design and carries no notional rail at all. Securing the flag so it can never name a path is necessary and **not sufficient**; the question the property never asked is what the grant matches.
 
-- **Create `infra/scripts/flatten-with-vaulted-key.sh`.** Its program vector is hardcoded to `[venv_python, "-m", "cli", "engine", "flatten", *forwarded]` and there is no second target and no mode flag, so it has exactly the fixed-target property the original has. `-m cli`, not the `zcrypto` console script: the loader `chdir`s to `repo` before exec and `venv_python` is the interpreter it has already validated.
-- **Give it NO entry in `.claude/settings.json`, and add none.** Its absence is the point: every invocation prompts, and Task 5 is attended by construction, so the prompt costs nothing and is the correct gate for the red button. **Do not edit that file at all** — it is not named in `CLAUDE.md`, whose rule is that a config's absence there is the signal not to touch it. Narrowing the existing entry is not the remedy either; leave it meaning exactly what it means today.
+- **Create `infra/scripts/flatten-with-vaulted-key.sh`.** Its program vector is hardcoded to `[venv_python, "-m", "cli", "engine", "flatten", *forwarded]` and there is no second target and no mode flag, so it has the original's fixed-**program** property. `-m cli`, not the `zcrypto` console script: the loader `chdir`s to `repo` before exec and `venv_python` is the interpreter it has already validated.
+- **A fixed program is not a fixed blast radius, and this one needs its own rail.** The original's target is money-gated *inside itself* — `kraken-order-semantics-probe.py` needs `--apply` before any order reaches the venue, `--probe5` on top of that for the one probe that spends, and its own refusing notional ceiling. This target's write mode is reachable through the very `*forwarded` slot, and it cancels account-wide and market-closes every position by design with no notional rail at all. It also skips both orderings `zcrypto-flatten.sh.j2` performs *before* flatten runs: the kill file written first, then `systemctl stop zcrypto-engine.service` **proven** inactive within 60 s or it refuses — "one key means one client, and a second live client fights the engine over nonces". This script writes no kill file, stops no unit and proves nothing. **So it refuses any forwarded argument equal to `--execute`**, exiting non-zero and naming `sudo zcrypto-flatten --execute` on the engine host as the only supported execute path — that one latches the halt and proves the unit stopped first. The plan's only use of this script is a dry read (Task 5 Step 5), so the rail costs the branch nothing.
+- **Give it NO entry in `.claude/settings.json`, and add none.** No pre-approval exists for it, and none is to be added — an `allow` entry is unconditional pre-approval in *every* permission mode, which is why widening the original's wildcarded grant was the worse edit. What the absence buys is bounded and stated as such: it removes a pre-approval, it does not by itself create a prompt, since whether an un-allowlisted Bash command prompts depends on the session's permission mode and nothing in this repo fixes that. **The gates this script actually carries, all of which hold in every mode**: the `--execute` refusal above; and, on the engine's own path, `flatten`'s `check_kill_file` and the `FLATTEN` word it reads from `/dev/tty` (`cli/engine/flatten.py`). **Do not edit that file at all** — it is not named in `CLAUDE.md`, whose rule is that a config's absence there is the signal not to touch it. Narrowing the existing entry is not the remedy either; leave it meaning exactly what it means today.
 - **Duplicate the ~40-line vault loader rather than extracting it, and leave it duplicated.** The judgement, so it is not "improved" later: extraction requires editing `probe-with-vaulted-key.sh` — the one script whose exec vector a wildcarded grant covers — into a form that reads its target from an argument slot of a shared helper, i.e. a program-selecting argument one indirection below the wildcarded layer. Forty duplicated lines in a script with no allowlist entry is the cheaper mistake to make. If the loader is ever changed, both copies change together.
-- Its header carries the same discipline as the original's: what whitelisting it would grant (which is why it is not whitelisted), why the target is fixed, and that the credential is IP-bound with closure a numbered step.
+- **Copy `probe-with-vaulted-key.sh` whole rather than writing a header from a list of its properties**, then change exactly three things: the exec vector, the header's target sentence (which gains the `--execute` refusal above), and the forwarded-argument slice — `sys.argv[4:]` becomes `sys.argv[3:]`, because the original passes `"$repo" "$venv_python" "$harness" "$@"` and a copy with no `$harness` slot passes one argument fewer. Copying is what carries the two properties a hand-written header reliably drops, and they are the two that matter if the script is ever edited: *the decrypted values go straight into the exec'd child's environment — never echoed, never written to a file, never on a command line, one process throughout so they never cross a pipe*, and *it refuses outside the repo root, so neither the target nor the vault path can be shadowed* (a bash-preamble guard, not part of the vault loader below it).
 - There is **no `--` handling** and none is added: `"$@"` is forwarded verbatim, so a `--` would reach `zcrypto engine flatten` as an argument and click would end option parsing there — measured, `['--', '--state-dir', '/tmp/x']` gives `MissingParameter: Missing option '--state-dir'`. Task 5's command carries no `--`.
 
 Two prose surfaces state `probe-with-vaulted-key.sh`'s single-fixed-target property — `infra/scripts/kraken-order-semantics-probe.py`'s credential refusal and `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`'s "executes a hardcoded target" sentence. **Both stay true and neither is edited**, which is a consequence of leaving that script alone rather than an omission.
@@ -839,7 +875,7 @@ Expected: one open SOL/EUR long, and `hold_trade` still reflecting the resting s
 bash infra/scripts/flatten-with-vaulted-key.sh --state-dir <a scratch dir>
 ```
 
-It has no allowlist entry, so this prompts for permission — that is the design (Task 4 Step 4), not a misconfiguration to route around. No `--execute`, and **no `--`** — the script forwards `"$@"` verbatim, so a `--` would reach click and end option parsing before `--state-dir` (Task 4 Step 4). The read shares the trade key with the running engine — the same accepted exposure `zcrypto-flatten`'s own dry-run banner names — and the engine was **confirmed** unable to submit at Step 1.3, not assumed to be.
+It has no allowlist entry, and none is to be added — if the session prompts, that is the design (Task 4 Step 4) and not a misconfiguration to route around. No `--execute`: the script refuses it outright (Task 4 Step 4), and the supported execute path is `sudo zcrypto-flatten --execute` on the engine host. And **no `--`** — the script forwards `"$@"` verbatim, so a `--` would reach click and end option parsing before `--state-dir` (Task 4 Step 4). The read shares the trade key with the running engine — the same accepted exposure `zcrypto-flatten`'s own dry-run banner names — and the engine was **confirmed** unable to submit at Step 1.3, not assumed to be.
 
 Three readings, then the one deliberately not taken:
 
@@ -847,7 +883,7 @@ Three readings, then the one deliberately not taken:
   - **cold / pre-fix**: on the engine host, `sudo zcrypto-flatten` with **no arguments** — a dry run that reads the account, prints the plan and sends nothing. It execs the deployed digest, whose flatten predates this branch, which is exactly what makes it the control here rather than a hazard. Checkable before running it: `git show 8f4ac521:cli/engine/flatten.py | grep -c cache_instrument` is **0** for the revision `docs/reference/fleet-pins.md`'s engine row names. Expect `0 resting order(s) will be cancelled account-wide`.
   - **warm / this branch**: the worktree command above. Expect `2 resting order(s) will be cancelled account-wide`.
   - **identity**: from `bash infra/scripts/kraken-fixture.sh verify`'s `open-orders` read, taken between the two arms — the non-adapter witness naming both fixture txids. The count moving 0→2 against an unchanged witness is the discriminator; either arm alone reads the same whether the defect is present or not, which is how the earlier version of this defect was retracted.
-- **Positions: the minted long present, by symbol and side**, in the warm run's plan.
+- **Positions: the minted long present in the warm run's plan, by symbol and by the CLOSING side that corresponds to it.** Never side-equality: `render_plan` prints no position's own side. `margin_legs` maps the position to its closer — `sides = {"LONG": "SELL", "SHORT": "BUY"}` — and `_leg_line` renders that mapped value, so the minted long appears as `  margin SOL/EUR SELL 0.06000000 -- market, reduce-only, …` beside a `kraken-cli` `positions` row that says long. The two surfaces disagree by construction on that field and the mapping is the reconciliation; a `BUY` there would be the finding, because it is what an inverted side produces. (A position's own side reaches the terminal only through `plan.unclosable`, which is the failure branch: a row printed there is a position flatten could size no closer for, and is itself a stop.)
 - **The engine's own view of the resting book.** D2's `resting_orders` comes from the Cache the node's reconciliation fills through this same adapter, so a cold node cache makes the guard inert. Read it directly, through the probe wrapper this branch leaves unchanged: `bash infra/scripts/probe-with-vaulted-key.sh --probes 2 --evidence-dir /tmp` — read-only without `--apply`, and probe 2 prints `open orders N` plus one `pre-existing open order:` line per order from `cache.orders_open(venue=KRAKEN_VENUE)`, which is the exact surface `_pickup` counts. Expect the two fixture orders listed and the probe's own verdict **REVIEW**, which is what it records when the account carries pre-existing state — here that verdict is the reading wanted, not a failure. `open orders 0` is the finding: it would mean the node's cache is cold the way flatten's was and D2's guard ships inert. This is the live half; the offline half is Task 3 Step 2's three `_pickup` tests, and neither substitutes for the other. `--evidence-dir` is not decoration: it defaults to the cwd, the wrapper `chdir`s to the repo root immediately before `exec`, and the harness's own help says to pass a path outside the repo — without it an untracked `evidence-*.json` lands in the working tree, invisible to Step 9's `git add`.
 - **No fills leg.** Nothing in `cli/` reads fills — `request_fill_reports` appears in no file under `cli/`, `tests/` or `infra/` — so the named run produces no fill row to assert on, and the committed record holds order txids (four of them `filled_qty=0.0`), not fill identities. Spec D4 records the drop and its reason.
 
@@ -867,9 +903,12 @@ bash infra/scripts/kraken-fixture.sh close --execute
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"   # the one bare `kraken` call in Task 5
-kraken query-orders "$txid" -o json    # $txid: the close's own `-o json` names it -- read it there
+txid=<the txid the close's own `-o json` printed -- paste it, this line is not optional>
+kraken query-orders "$txid" -o json
 bash infra/scripts/kraken-fixture.sh verify
 ```
+
+**Assign `txid` before running the query, not after reading it.** `[TXIDS]...` is optional in `kraken query-orders [OPTIONS] [TXIDS]...`, so an unset variable expands to an empty argument and the call parses, reaches the venue and answers about no order — a reading that "does not say closed", which this step's own stop-condition reads as *the position is still open*, on a position that is in fact closed and under the rollover clock.
 
 `query-orders` must report that order `closed` and fully filled — that is the reading no failed submission can produce. `verify` then supplies the corroboration in one read: `positions` empty, and `extended-balance` moved back toward its pre-mint value. It is used rather than a hand-typed `kraken positions -o json` for the same reason as Steps 2 and 4 — the spec makes this subcommand the witness — and it needs no PATH prefix, which is why the export above is scoped to the one bare call beside it. **If `query-orders` does not say closed, the position is still open** — that is a stop, not a reading to average against the empty `positions` list. **Leave the two original resting orders untouched**; `verify`'s `open-orders` leg is where that is read.
 
@@ -894,7 +933,7 @@ Load the `iteration-closeout` skill; append to `docs/iterations-history-phase6.m
 
 - [ ] **Step 2: Update the topics**
 
-`T0159` gains the cache finding.
+`T0159` gains the cache finding, and its exit-code contract bullet — which restates exit 3 as "the venue could not be reached or read" — is re-tensed to the widened wording Task 2 Step 3 landed on the five surfaces under `cli/`, `infra/` and `README.md`. That bullet is the only restatement of the clause under `docs/` that is a live record rather than a point-in-time one; spec `00106` and `docs/iterations-history-phase6.md` keep theirs.
 
 **`T0160`'s three sub-items are already registered** — spec D7's two upstream reports and the `_classify_spot_close` fail-open D2 leaves standing, each with its own `ripe_when`, landed when the spec asserted them rather than deferred to here, because the spec claims them in the present tense and a claim that is not yet true is the failure the registration rule names. So this step **re-reads** them against what the branch actually did and re-tenses anything the implementation moved — it does not add them again. Register no **new** topic without the approver's word (`zcrypto-main` holds that call).
 
