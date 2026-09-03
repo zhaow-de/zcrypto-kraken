@@ -1,5 +1,6 @@
 # CLAUDE.md, rules, and markdown style
 
+- **Necessity is the first gate for every new sentence** in a spec, plan, report, or doc: if it changes nobody's action it does not belong, however correct — a point-in-time record that helps no cold reader is deleted, not corrected. Revising an existing sentence applies the same test before precision.
 - **Markdown: one line per paragraph/bullet** — never hard-wrap to a column width; let the renderer wrap.
 - **Escape `|` as `\|` inside a table's code spans** — GFM otherwise splits the row and silently discards the surplus cells, and `docs/reference/` is outside mdformat's reach; after editing a table carrying code, check the rendered cell count.
 - **A living reference doc records current state** — per-event evidence (checks read, values quoted, deploy narrative) goes in the updating commit's MESSAGE, so the file never contradicts itself and `git log --follow` on it is the chronicle.
