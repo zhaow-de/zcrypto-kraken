@@ -12,6 +12,7 @@ from cli.features.derivatives import (
     oi_log_delta,
     oi_momentum,
     oi_zscore,
+    ratio_features,
 )
 from cli.features.errors import FeatureError
 
@@ -219,3 +220,61 @@ def test_every_oi_feature_reproduces_itself_on_a_truncated_prefix():
         full = f(levels, **kw)
         for n in range(2, len(levels) + 1):
             assert f(levels[:n], **kw) == full[:n], f"{f.__name__} disagrees at n={n}"
+
+
+_RATIOS = (
+    "count_toptrader_long_short_ratio",
+    "sum_toptrader_long_short_ratio",
+    "count_long_short_ratio",
+    "sum_taker_long_short_vol_ratio",
+)
+
+
+def test_ratio_features_prefix_every_column_with_its_venue():
+    out = ratio_features({name: [1.0, 2.0] for name in _RATIOS})
+    assert set(out) == {f"binperp_{name}" for name in _RATIOS}
+
+
+def test_ratio_features_carry_nulls_and_real_zeros_through_untouched():
+    """Spec 00110 D5: no imputation. A null in, a null out -- never 0.0, never a trailing mean.
+    And a `0.0` in, a `0.0` out: D5 rules a ratio zero a real reading (an all-sell bar), unlike a
+    zero in `sum_open_interest`, which is a venue hole.
+
+    Every column gets a DIFFERENT head, and each is asserted against its own input rather than a
+    shared literal. The four columns are not interchangeable -- through 2022 one is 5.09 % null and
+    another 87.24 % -- so an implementation that broadcast one input list across all four output
+    keys would hand a trial the wrong column's values. Give them all the same list and that defect
+    cannot move this fixture.
+
+    Mis-keying has a second shape the distinct heads alone cannot catch: pairing output keys with
+    input values POSITIONALLY -- zipping the module's canonical column order against
+    `ratios.values()` -- agrees with the correct implementation for as long as the input arrives in
+    `_RATIOS` order. So the call below hands the dict REVERSED; do not "simplify" it back to
+    `ratio_features(inputs)`, which re-blinds this fixture to that half while the assertions still
+    read as thorough. The ratio family has exactly two guards and this is the one that catches a
+    mis-key at all: `test_ratio_features_prefix_every_column_with_its_venue` asserts `set(out)`
+    alone and is blind to both shapes by design -- it pins the naming, not the pairing."""
+    inputs = {name: [float(i + 1), None, 0.0, 3.0] for i, name in enumerate(_RATIOS)}
+    out = ratio_features(dict(reversed(list(inputs.items()))))
+    for name, values in inputs.items():
+        assert out[f"binperp_{name}"] == values
+
+
+def test_ratio_features_rejects_an_unknown_column():
+    import pytest
+
+    from cli.features.errors import FeatureError
+
+    with pytest.raises(FeatureError):
+        ratio_features({"not_a_ratio": [1.0, 2.0]})
+
+
+def test_ratio_features_rejects_a_dropped_column():
+    """The other half of the guard. Without it a caller that lost a column gets a silently smaller
+    frame, and `coverage_by_year` reports nothing about a column that is not there."""
+    import pytest
+
+    from cli.features.errors import FeatureError
+
+    with pytest.raises(FeatureError):
+        ratio_features({name: [1.0, 2.0] for name in _RATIOS[:3]})

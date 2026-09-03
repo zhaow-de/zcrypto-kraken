@@ -225,3 +225,32 @@ def oi_momentum(levels: list[float | None], *, lookback: int) -> list[float | No
             continue
         out.append(levels[k] / base - 1)
     return out
+
+
+_RATIO_COLUMNS: tuple[str, ...] = (
+    "count_toptrader_long_short_ratio",
+    "sum_toptrader_long_short_ratio",
+    "count_long_short_ratio",
+    "sum_taker_long_short_vol_ratio",
+)
+
+
+def ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[float | None]]:
+    """Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
+    imputation: these columns carry genuine venue gaps, concentrated in one year and differing by
+    an order of magnitude between columns, and filling one would manufacture a reading the venue
+    never published (spec 00110 D5). Call `coverage_by_year` to see the shape for the substrate in
+    hand rather than trusting a figure written here. All four are required: a caller that dropped
+    one would otherwise get a silently smaller frame. The prefix is spec D8 -- the features
+    describe Binance perpetuals, not the Kraken spot book they will sit beside."""
+    unknown = set(ratios) - set(_RATIO_COLUMNS)
+    if unknown:
+        raise FeatureError(f"unknown ratio column(s): {sorted(unknown)}")
+    missing = set(_RATIO_COLUMNS) - set(ratios)
+    if missing:
+        raise FeatureError(f"missing ratio column(s): {sorted(missing)}")
+    for name, values in ratios.items():
+        # A ratio is finite or null -- never gated as a positive level: a zero is a real all-sell
+        # bar, while a zero OI is a venue hole (spec 00110 D5).
+        _validate_rates(name, values)
+    return {f"binperp_{name}": list(values) for name, values in ratios.items()}
