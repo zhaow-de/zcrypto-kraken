@@ -7,13 +7,13 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 - **`zcrypto-main` — the coordinator.** Runs no payload work: no SDD loop, no plan-review loop, no drill, no daily-ops pass, no investigation. It grooms the backlog, assigns work, holds the authorities below, and runs the hourly tick. Git ownership is coordination: main opens and merges PRs.
 - **`zcrypto-alpha`, `zcrypto-bravo` — payload sessions.** Idle until main assigns; execute one assignment at a time in their own worktree; report by message.
 - **`zcrypto-zebra` — the owner's own session.** Never in the assignment pool. Main assigns it nothing unless the owner names it.
-- **Subagents** belong to the session that dispatched them and cannot read `docs/memo.local.md` or `docs/coordination.local.md` — the dispatcher inlines whatever context the task needs.
+- **Subagents** belong to the session that dispatched them and are not handed `docs/memo.local.md` or `docs/coordination.local.md` — a dispatch inlines the task's own context and never pastes the memo (`.claude/skills/zcrypto-grooming/references/memo-protocol.md`).
 
 ## Authorities held only by main
 
-- **PRs.** A payload session never opens or merges a PR. It sends main the component name (`branch-workflow.md`'s gate, step 1) and its branch state; main answers open, hold, or a reason.
+- **PRs.** A payload session never opens or merges a PR. It sends main the component name (`branch-workflow.md`'s gate, step 1) and its branch state; main answers open, hold, or a reason — it holds the owner's PR word by delegation (`.claude/rules/branch-workflow.md` names it).
 - **T-topics.** A payload session never registers a topic. A finding it cannot resolve in-branch goes to main as the topic's `Context` + `Why this matters`; main registers, folds, or drops — **with the word recorded**. The request is the queue; silent drop is impossible because dropping now needs main's explicit answer.
-- **Memory.** Only main writes `~/.claude/projects/…/memory/`. A payload session sends the lesson; main files it.
+- **Memory.** Only main writes `~/.claude/projects/…/memory/`. A payload session's lessons go to `docs/reference/agent-lessons.jsonl` on its branch, never by message; main files in memory what the harvest shows belongs there.
 - **The memo.** Written under the token below. `docs/coordination.local.md` is main's alone and needs no token.
 
 ## The memo token
