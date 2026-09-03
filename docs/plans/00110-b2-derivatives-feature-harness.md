@@ -41,6 +41,8 @@
 
 ## Global Constraints
 
+- **The fenced blocks are CONTENT, not formatting.** None is commit-gate-clean, so the first `pre-commit run` of each task will rewrite what you pasted and report **Failed**; that is the hook doing its job. Re-run until clean, stage what it rewrote, then commit — never `--no-verify`.
+
 - **Causality is the product.** Every feature at index `k` reads only inputs at index `<= k`. Each function's docstring says so in the house form — `… uses only x[<= k]` is in all five existing `cli/features/` docstrings, the `-> no look-ahead` suffix in one (`momentum.py`); write both here.
 - **Every task that adds a windowed function carries its own truncating-prefix test.** For each function `f` it adds and every prefix length `n >= 2`, `f(x[:n], **kw) == f(x, **kw)[:n]`. Task 2's covers `align_asof` and nothing else, so Tasks 3 and 4 each schedule their own — an `[-1]`-only assertion cannot see a look-ahead, because at the final index a window peeking one bar ahead clamps to the correct window. Spec D10.
 - **No imputation, ever.** A null input yields a null output (`float | None`). Never 0.0, never a trailing mean. Spec D5.
@@ -59,7 +61,7 @@
 
 **Files:**
 - Modify: `cli/features/_validate.py`
-- Test: `tests/test_features_validate.py`
+- Create (test): `tests/test_features_validate.py`
 
 **Interfaces:**
 - Produces: `_validate_rates(name, values)` — finite floats of ANY sign, or `None`.
@@ -141,7 +143,7 @@ def _validate_levels(name: str, values: list[float | None]) -> None:
 
 **Files:**
 - Create: `cli/features/derivatives.py`
-- Test: `tests/test_features_derivatives.py`
+- Create (test): `tests/test_features_derivatives.py`
 
 **Interfaces:**
 - Produces: `align_asof(source_ts, source_values, grid_ts) -> list[float | None]` — for each grid stamp `g`, the value of the latest source row with `ts <= g`, else `None`. Both inputs must be sorted ascending; forward-fill only, never interpolate (spec D2).
@@ -314,7 +316,7 @@ def test_every_funding_feature_reproduces_itself_on_a_truncated_prefix():
 - [ ] **Step 5: Commit** — `feat(features): funding z-score, sign persistence and accrued carry`
 - [ ] **Step 6: Prove the prefix guard is not inert — AFTER the commit, through `infra/scripts/mutate-probe.sh`** (contract in Global Constraints).
 
-The defect is the forward-summing window: `funding_accrued_carry` must sum the `window` prints **ending at** `k`, so make it sum the `window` prints **starting at** `k`. This task's implementation text is not pinned here, so **derive the sed from the code you just committed** and prove it addresses exactly one line — `grep -c '<the slice you are replacing>' cli/features/derivatives.py` must print `1` — before any verdict counts.
+The defect is the forward-summing window: `funding_accrued_carry` must sum the `window` prints **ending at** `k`, so make it sum the `window` prints **starting at** `k`. This task's implementation text is not pinned here, so **derive the sed from the code you just committed** and prove it addresses exactly one line before any verdict counts. **Derive it from the line that SUMS the window, not from the window slice**: the slice is the same expression in `funding_zscore` and `funding_accrued_carry`, so `grep -c` on it prints 2 and the uniqueness check cannot pass, while the summation line is unique to each function. `grep -c '<the summing line you are replacing>' cli/features/derivatives.py` must print `1`.
 
 ```bash
 uv run pytest tests/test_features_derivatives.py -q -p no:cacheprovider --collect-only -k funding_feature_reproduces   # expect exactly 1
@@ -431,7 +433,7 @@ infra/scripts/mutate-probe.sh --file cli/features/derivatives.py --control "$CTR
   --mutation '<the same sed>' -- "${HEAD_T[@]}"
 # (b) the warm-up head: 0.0 where the contract says None -- the cli/features/momentum.py form
 infra/scripts/mutate-probe.sh --file cli/features/derivatives.py --control "$CTRL" \
-  --mutation '<oi_momentum warm-up value -> 0.0>' -- "${HEAD_T[@]}"
+for (b) count over the FUNCTION, not the file — `sed -n '/^def oi_momentum(/,$p' cli/features/derivatives.py | grep -c 'out.append(None)'` must print 1; a bare `out.append(None)` appears in several functions, so a file-wide count cannot be 1.0>' -- "${HEAD_T[@]}"
 infra/scripts/mutate-probe.sh --file cli/features/derivatives.py --control "$CTRL" \
   --mutation '<the same sed>' -- "${PREFIX[@]}"
 # (c) the validator calls: swap all three for the signed validator, which accepts 0.0
