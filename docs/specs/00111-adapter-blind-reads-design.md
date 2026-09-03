@@ -36,6 +36,8 @@ The fix is flatten's, not a reordering: after fetching the listing, feed it to t
 
 **Not** a workaround for an upstream defect we are hiding — the upstream silent-drop is separately reported (see D7). This is our code failing to meet a contract the adapter documents by having a public `cache_instrument` at all.
 
+**A row that cannot be cached is contained, and the containment reaches the verdict.** Caching runs over the whole ~1600-row listing, so one bad row must not abort a button that has cancelled nothing — but a row nothing cached is a row this run cannot SEE, and the run computes its own flat/not-flat verdict from reads that row is missing from. Silent containment would therefore let flatten print *the account reads flat* over exposure it never looked at, which is the failure this spec exists to close. So: an uncached row is named in the journal, told to the operator, and **counts as a residual**, so the run cannot be called flat. And the case where **no** row could be cached is not containment at all — it is the pre-fix blind state, and it refuses before the first write. This adds an INPUT to flatten's existing exit rule; the rule itself, the write sequence and the confirmation gate stay spec `00106`'s and are untouched.
+
 ### D2 — The funding gate fails CLOSED when the free balance is known to be untrustworthy
 
 `plan_refusals` gains a refusal: when the account reports `locked == 0` **and** any order is resting, `free_zeur` cannot be trusted and the plan is refused. This converts a fail-open safety gate into a fail-closed one **without replicating Kraken's reservation semantics**, which are non-obvious — measured, the spot order held 2.757 EUR and the 2:1 margin order held nothing.
@@ -109,6 +111,6 @@ Both fixture orders come back with `price=0.00` where the venue shows 45.95. Irr
 
 ## Out of scope
 
-- Any change to `flatten`'s write sequence, exit codes, or confirmation gate — spec `00106` owns those and none of them is implicated.
+- Any change to `flatten`'s write sequence, exit-code RULE, or confirmation gate — spec `00106` owns those and none of them is implicated. D1's uncached rows are a new input to that rule, not a change to it: a run that could not cache part of the listing exits 2 rather than 0, on the same "any residual" rule that already produced 2 for a resting order.
 - The upstream PR itself (D7) — different repository, different conventions, tracked in `T0160`.
 - `px=0.00` (D8).
