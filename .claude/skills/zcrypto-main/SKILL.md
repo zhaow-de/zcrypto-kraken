@@ -28,7 +28,7 @@ last tick: <ISO-8601 UTC>
 
 | session | status | branch | topic / spec | warm context | last report |
 |---|---|---|---|---|---|
-| zcrypto-alpha | idle | — | — | — | — |
+| zcrypto-alex | idle | — | — | — | — |
 | zcrypto-bravo | idle | — | — | — | — |
 | zcrypto-zebra | owner's — never assigned | — | — | — | — |
 ```
