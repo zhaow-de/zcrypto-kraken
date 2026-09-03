@@ -1659,8 +1659,8 @@
     {
       "id": 55,
       "type": "stat",
-      "title": "Venue status — last cached reading",
-      "description": "Whether the engine's own last read of the Kraken system status said the venue is online -- cached for up to 30 seconds, so this can lag the capture board's own venue reading by that much. NOT ONLINE forces the gate level to 0 regardless of arming. This is a gating INPUT, not the venue alert itself: `Capture · Kraken reports the venue is not online` already pages on the underlying condition from the capture side, so this tile carries no alert of its own -- one would only double-page the same event. Published only by the trading engine on the capture primary.",
+      "title": "Venue status — last evaluated reading",
+      "description": "Whether the engine's own last read of the Kraken system status said the venue is online. It moves ONLY when the execution gate is evaluated -- at process start, after each cycle (roughly four-hourly), and on every tick while a plan is running; an idle engine reads no gate at all. So between cycles this reading can be hours old, in EITHER direction: ONLINE right through a venue outage the capture side is already paging on, or NOT ONLINE long after the venue came back. The gate evaluation heartbeat beside it is this tile's age -- read the two together or neither. A stale tile is never a stale gate: every submission evaluates the gate itself first, on a venue read cached at most 30 seconds, before any order goes out. NOT ONLINE forces the gate level to 0 regardless of arming. This is a gating INPUT, not the venue alert itself: `Capture · Kraken reports the venue is not online` already pages on the underlying condition from the capture side, so this tile carries no alert of its own -- one would only double-page the same event. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
