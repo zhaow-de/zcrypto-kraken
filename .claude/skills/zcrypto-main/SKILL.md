@@ -1,6 +1,7 @@
 ---
 name: zcrypto-main
 description: Start or resume the coordinator session — load the multi-agent protocol, rebuild the coordination table, install the hourly tick
+disable-model-invocation: true
 ---
 
 # zcrypto-main

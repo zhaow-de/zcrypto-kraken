@@ -72,7 +72,7 @@ Then, and only then, delete the staged memory files and update `MEMORY.md`.
 
 ## Closing
 
-The round's closing commit carries the watermark trailer — `Refine-Round-Closed: <ISO-8601 UTC>` — placed above the `Co-Authored-By:` line (which stays last). Verify end-to-end before reporting done:
+The round's closing commit carries the watermark trailer — `Refine-Round-Closed: <ISO-8601 UTC>` — placed above `Co-Authored-By:`; `Reviewed-by:` stays last when present (`commit-messages.md`). Verify end-to-end before reporting done:
 
 ```bash
 test "$(git log -1 --grep='^Refine-Round-Closed:' --format=%H)" = "$(git rev-parse HEAD)"

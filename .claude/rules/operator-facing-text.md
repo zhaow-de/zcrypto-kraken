@@ -1,6 +1,6 @@
 # Operator-facing text
 
-Internal traceability vocabulary — `Phase <N>`, `T<NNNN>`, `iter-<NNN>`, `spec <NNNNN>` and its D-numbers — never appears on a surface read by an operator who does not have the repo open — an alert, a phone, a shell.
+Internal traceability vocabulary — `Phase <N>`, `T<NNNN>`, `iter-<NNN>`, `spec <NNNNN>` and its D-numbers — never appears on a surface read by an operator who does not have the repo open — a pager, a phone, a terminal with nothing checked out.
 
 - **In scope**: systemd `Description=`, CLI `--help`, runtime output from `cli/` and `infra/` (Python *and* shell — a textfile exporter's `# HELP` lines are printed by `printf`), Prometheus metric HELP text, Grafana alert summaries and panel titles/descriptions/legends (`legendFormat`), Grafana notification templates (`infra/grafana/notification-templates/*.tmpl`), compose `${VAR:?message}` errors, ansible task `name:` fields (printed by every play and every `--check --diff` preview) and `msg:`/`fail_msg:`/`success_msg:` values (a `fail_msg` IS the refusal text a tripped guard shows), README. A new operator-visible surface joins this list **and** the test together.
 - **Out of scope**: source comments, docstrings, `docs/`, commit messages, PR titles and bodies — there the tokens are load-bearing, and stripping them destroys traceability for no operator gain.
