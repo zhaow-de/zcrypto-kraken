@@ -3177,10 +3177,10 @@ rules:
       # capture path produces it -- so the bar can be tight here where a per-pair bar cannot be. The
       # gauge reads 0 for every pair at process start, so a restart cannot false-fire it either.
       # What DOES produce it is the venue, on a published calendar: every firing in this rule's life
-      # -- 2026-08-06 and 2026-08-20, both hosts each time -- fell inside a "Kraken Website and API
-      # Maintenance" window announced 48-145 h ahead, and no unexplained crossing has been observed.
-      # They are true positives (L2 is genuinely gone: ~882 s and ~521 s of booked both_streams_silent
-      # per stream), which is why
+      # -- 2026-08-06, 2026-08-20 and 2026-09-03, both hosts each time -- fell inside a "Kraken
+      # Website and API Maintenance" window announced 41-49 h ahead, and no unexplained crossing has
+      # been observed. They are true positives (L2 is genuinely gone: ~882 s, ~521 s and ~178 s of
+      # booked both_streams_silent per stream), which is why
       # the answer is a runbook that says "read the venue calendar first" rather than a wider bar.
       - refId: A
         queryType: ""
@@ -3742,9 +3742,13 @@ rules:
       # PRESENCE, not increase(). The daemon emits a series only for `system` values it has actually
       # seen, so a non-online series is BORN at 1 -- and Prometheus inserts no implicit zero before a
       # series' first sample, so increase() over it returns nothing on one sample and 0 on N equal
-      # samples. Kraken pushes `status` on connect and on state change, so a clean online->maintenance
-      # transition is exactly ONE frame per host: an increase() form would sit green through the very
-      # event this rule exists for. An increase() form reads a counter only where a 0 sample precedes
+      # samples. The per-transition frame count is NOT fixed -- on 2026-09-03 each host logged five
+      # `maintenance` lines, two `post_only` and one `cancel_only` -- so whether increase() finds a
+      # step inside such a burst is decided by scrape phase rather than by what the host saw: it read
+      # the maintenance rise on zcrypto, nothing on zcrypto-red whose first sample already carried all
+      # five, and nothing on either host for the single-line `cancel_only`. An increase() form would
+      # therefore sit green through the very event this rule exists for, on whichever hosts the scrape
+      # happened not to favour. An increase() form reads a counter only where a 0 sample precedes
       # the step INSIDE the window, and that needs three things at once: the series already exists, the
       # host has already published it at 0, and the step lands far enough after process start to be
       # scraped at 0 first. A label that materialises on the event fails the first; a host new to an
