@@ -24,7 +24,7 @@ status: open   # one of: open | partial | resolved
 ---
 ```
 
-`ripe_when:` (when present) is the bare condition — one clause a reviewer evaluates true/false at a glance. Its history, reasoning, and measurements live under `## Findings so far`; when the trigger changes, rewrite the key in place and put the why in the body.
+`ripe_when:` (when present) is the bare condition plus the one check that evaluates it — a clause a reviewer runs and reads true/false at a glance. Its history, reasoning, and what the check read live under `## Findings so far`; when the trigger changes, rewrite the key in place and put the why in the body.
 
 …followed by, in order:
 
