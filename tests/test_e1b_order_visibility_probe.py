@@ -204,6 +204,12 @@ def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text(
     # `print(key)` or `print(os.environ)`, both reachable in `_main`. Nor a name split across a
     # concatenation: `"cancel_all_" + "orders"` is one constant to CPython but two strings to a
     # reader of the source, and this scan is a reader of the source.
+    # No parse replaces this, and the reason is not the `getattr` case -- a parse unioning string
+    # constants with attribute names would catch that one. It is that this scan reads COMMENTS and
+    # docstrings, which are absent from every AST and which it is MEANT to read: the message below
+    # tells an editor who trips it on prose to reword the prose. A parse would also turn a syntax
+    # error in the probe into a collection error here instead of a refusal.
+    # config-selector-ok: containment IS the semantics -- the needle is a name in arbitrary text
     present = sorted(name for name in FORBIDDEN | CREDENTIAL_ACCESSORS if name in text)
     assert not present, f"write or credential-accessor names in the probe's source: {present}"
     # A write that names no client method at all -- a hand-rolled signed REST call built with httpx --
@@ -213,6 +219,9 @@ def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text(
     # The concatenation limit named above applies here too. Both scans read prose as source, so a
     # comment or docstring naming an endpoint path trips this one -- the message says so, because
     # that is what the tripped editor reads first.
+    # A hand-rolled signed call offers no syntax to parse for: these tokens can appear in a URL, a
+    # header dict key, or a bare variable.
+    # config-selector-ok: containment over the lowercased text is the only selector spanning all three
     signing = sorted(t for t in ("private/", "api-sign") if t in text.lower())
     assert not signing, (
         f"hand-rolled venue signing in the probe's source: {signing} -- or prose naming an endpoint "
