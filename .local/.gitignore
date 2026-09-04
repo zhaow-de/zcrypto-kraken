@@ -1,5 +1,2 @@
-# Everything under .local/ is gitignored and KEPT (unlike the disposable .tmp/): the memo, the
-# coordination table, the per-session lesson inboxes, retro artefacts. Only this file is tracked,
-# so the directory exists in every clone.
 *
 !.gitignore

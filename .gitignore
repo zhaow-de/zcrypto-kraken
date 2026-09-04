@@ -1,4 +1,4 @@
-# Project-specific (.local/ carries its own .gitignore: kept local state, the directory itself tracked)
+# Project-specific
 .tmp
 .superpowers
 .ansible/
