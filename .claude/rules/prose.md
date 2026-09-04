@@ -8,7 +8,7 @@
 - **A claim that can be an assertion, a test or a hook becomes one, and the sentence goes** — the interpreter checks code for free; nothing checks prose but a second reader.
 - **No coverage claims.** What a guard catches is what its assertions assert, and what it does not catch is never written — an enumerated blind spot is a completeness claim by omission; a blind spot that matters gets a test or a topic.
 - **A number only where the reader needs a VALUE to act**, with the command that produced it and an it-drifts note — the latest value, never superseded ones stacked beside it; a property ("costs per inode") is stated and its measurement named, never quantified.
-- **Every citation resolves from the repo alone** — a symbol, a test name, `T<NNNN>`, `spec NNNNN`, a path; a plan-task number carries its serial on the same line (`tests/test_code_prose_citations.py`); a hash is copied from git output, only for a commit that will not be rewritten. **A closed citation is re-tensed, never deleted.**
+- **Every citation resolves from the repo alone** — a symbol, a test name, `T<NNNN>`, `spec NNNNN`, a path; a plan-task number carries its serial on the same line or the one it wraps from (`tests/test_code_prose_citations.py`); a hash is copied from git output, only for a commit that will not be rewritten. **A closed citation is re-tensed, never deleted.**
 - **Never describe live host state** — config prose says what a setting does, not what a host currently is.
 
 ## Code (`cli/`, `tests/`, `infra/`)
@@ -22,7 +22,7 @@
 ## Docs (`docs/`, runbooks)
 
 - **A living reference records current state; the event goes to the updating commit's message**, so the file never contradicts itself and `git log --follow` is its chronicle. A table row is its cells plus one clause; a topology doc carries paths, endpoints and access, nothing dated.
-- **A changelog entry is one-line bullets, one per surface that changed, each saying what an operator or agent now does differently** — no code detail, counts, measurements or review narrative. Owed whenever such a surface changed (`spec-plan-locations.md`'s test), as the plan's final task; the file and format are the `iteration-closeout` skill's.
+- **A changelog entry is one-line bullets, one per surface that changed, each saying what an operator or agent now does differently** — no code detail, counts, measurements or review narrative. Owed whenever such a surface changed (`spec-plan-locations.md`'s test), as the plan's final task; the file mechanics are the `iteration-closeout` skill's.
 - **A completed-work sentence flips with the step that makes it true** — the push, the converge — never the merge: until that step runs, the old sentence is still true of the live stack. On a long-lived branch closeout is the branch's END: re-verify every status claim against the full branch log immediately before PR-open. Codifying a convention already in practice is not a completion claim.
 - Markdown: one line per paragraph or bullet, never hard-wrapped; escape `|` as `\|` inside a table's code spans — GFM otherwise splits the row and silently drops cells, and `docs/reference/` is outside mdformat's reach.
 
