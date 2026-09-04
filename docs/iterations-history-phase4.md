@@ -1,6 +1,6 @@
 # Iterations history — Phase 4 (Alpha Research Sprints)
 
-Per-iteration changelog for Phase 4. Appended at each iteration's close-out; see `.claude/rules/iterations-history.md`.
+Per-iteration changelog for Phase 4. Appended at each iteration's close-out; see `.claude/rules/prose.md`.
 
 ## 2026-07-08 — iter-036: longer-history basket robustness check (Phase-4 prep)
 
@@ -141,7 +141,7 @@ Per-iteration changelog for Phase 4. Appended at each iteration's close-out; see
 
 ______________________________________________________________________
 
-**Continuation — Phase-4 backlog resumed during a later phase's era** (iters 74+, routed here by subject matter per `.claude/rules/iterations-history.md`).
+**Continuation — Phase-4 backlog resumed during a later phase's era** (iters 74+, routed here by subject matter per the `iteration-closeout` skill).
 
 ______________________________________________________________________
 

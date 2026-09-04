@@ -1,6 +1,6 @@
 # Iterations history — Phase 6 (Execution Engine, Paper Trading & Go-Live)
 
-Per-iteration changelog for Phase 6. Appended at each iteration's close-out; see `.claude/rules/iterations-history.md`.
+Per-iteration changelog for Phase 6. Appended at each iteration's close-out; see `.claude/rules/prose.md`.
 
 ## 2026-07-10 — iter-079: Phase-6 kickoff — adapter verified, key ceremony, go-live pre-registered
 

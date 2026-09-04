@@ -1,6 +1,6 @@
 # Iterations history — Phase 0 (Preparation & Ratification)
 
-Per-iteration changelog for Phase 0. Appended at each iteration's close-out; see `.claude/rules/iterations-history.md`.
+Per-iteration changelog for Phase 0. Appended at each iteration's close-out; see `.claude/rules/prose.md`.
 
 ## 2026-07-07 — iter-001: trial registry (Phase 0 · P0-1)
 

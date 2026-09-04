@@ -1,6 +1,6 @@
 # Iterations history — Phase 1 (Data Foundation)
 
-Per-iteration changelog for Phase 1. Appended at each iteration's close-out; see `.claude/rules/iterations-history.md`.
+Per-iteration changelog for Phase 1. Appended at each iteration's close-out; see `.claude/rules/prose.md`.
 
 ## 2026-07-07 — iter-004: OHLC ingestion → canonical Parquet (Phase 1 · v0)
 

@@ -1,6 +1,6 @@
 # Iterations history — Phase 3 (Benchmarks & the Bar to Beat)
 
-Per-iteration changelog for Phase 3. Appended at each iteration's close-out; see `.claude/rules/iterations-history.md`.
+Per-iteration changelog for Phase 3. Appended at each iteration's close-out; see `.claude/rules/prose.md`.
 
 ## 2026-07-08 — iter-024: explicit-cost backtester engine (Phase 3)
 

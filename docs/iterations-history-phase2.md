@@ -1,6 +1,6 @@
 # Iterations history — Phase 2 (Validation Harness & Cost Model)
 
-Per-iteration changelog for Phase 2. Appended at each iteration's close-out; see `.claude/rules/iterations-history.md`.
+Per-iteration changelog for Phase 2. Appended at each iteration's close-out; see `.claude/rules/prose.md`.
 
 ## 2026-07-08 — iter-013: CPCV splitter — validation harness opens (Phase 2)
 
