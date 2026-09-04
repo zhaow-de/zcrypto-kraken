@@ -1,6 +1,4 @@
-# Project-specific
-memo.local.md
-coordination.local.md
+# Project-specific (.local/ carries its own .gitignore: kept local state, the directory itself tracked)
 .tmp
 .superpowers
 .ansible/

@@ -80,11 +80,6 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-      - id: agent-lessons-shape
-        name: agent-lessons.jsonl is one record per line with the required keys
-        entry: python3 infra/scripts/check-agent-lessons.py
-        language: system
-        files: ^docs/reference/agent-lessons\.jsonl$
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0

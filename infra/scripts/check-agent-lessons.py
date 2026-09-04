@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Pre-commit guard for docs/reference/agent-lessons.jsonl.
+"""Shape check for an agent-lessons inbox (`.local/agent-lessons/<session>.jsonl`), run at harvest.
 
 Every line is one JSON object with exactly the required keys, `kind` from the enum, `cites`
 a list of strings, every other value a non-empty string. Refuses prose, blank lines and extra
-keys: the registry is a harvest input for the refine-rules round, not a story board.
+keys: an inbox is a harvest input for the refine-rules round, not a story board.
 """
 
 import json
 import sys
 
 REQUIRED = {"ts", "session", "branch", "kind", "cites", "what", "why"}
-KINDS = {"self-correction", "rule-deviation", "rule-feedback", "skill-feedback"}
+KINDS = {"self-correction", "rule-deviation", "rule-feedback", "skill-feedback", "miscount"}
 
 
 def check(path: str) -> int:
