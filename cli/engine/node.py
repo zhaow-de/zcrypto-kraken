@@ -324,8 +324,9 @@ class ExternalOrderObserver(Strategy):
     a previous process's resting order the startup pass adopted, and the account owner's own
     hand-placed settling orders alike -- and forwards each to `handler`, which is the shadow
     strategy's `_on_external_order_event` and through it the executor's disposition filter. That
-    filter acts only on rows this engine's own ledger vouches for; the hand settle matches none,
-    so it is counted and dropped before any row write, cancel, or trip arithmetic.
+    filter acts only on the rows the adopt pass re-attached and this session's own submissions --
+    a subset of what the ledger vouches for; the hand settle matches none, so it is counted and
+    dropped before any row write, cancel, or trip arithmetic.
 
     **Every order-mutating method is sealed to raise.** This class holds a strategy's full
     submit/cancel/modify/close powers, and registered under this id every one of their scoping

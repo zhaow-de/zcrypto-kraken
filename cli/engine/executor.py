@@ -829,10 +829,12 @@ class ProbeExecutor:
         A row whose order the cache holds no record of at all is left exactly as it is -- there is
         no venue-truth source for it at this point in startup, and inventing one would be worse than
         an open row a human can read. That miss is SILENT and it is not rare: on the legs
-        `_cancel_resting` names it is what happens to every row whose order was still resting when
-        this process started, so such a row is neither repaired nor terminated here, and the order
-        behind it is neither attached nor cancelled by the pass above. `_on_external_event` says what
-        becomes of its later fills.
+        `_cancel_resting` names it is what happens to every row whose order the startup reconciliation
+        read cannot resolve, and the order's state does not narrow it -- still resting at the start, or
+        filled/canceled/expired while this process was down, the lookup answers `None` either way. So
+        such a row is neither repaired nor terminated here, and the order behind it is neither attached
+        nor cancelled by the pass above. `_on_external_event` says what becomes of its later fills;
+        `_reconcile_finished_rows` loses the withdrawal sweep to the same miss.
 
         Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
         lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
@@ -969,6 +971,11 @@ class ProbeExecutor:
         the order before this process has a strategy subscribed to anything, so what arrives is a
         venue order whose own `filled_qty` has come DOWN -- and the ledger row beside it still
         carries the quantity this engine recorded, published and sized against.
+
+        This sweep is blind wherever `_reconcile_adopted_rows` is, and for the same reason: a row
+        this engine closed names an order the read cannot resolve on the legs `_cancel_resting`
+        names, so the lookup below answers `None` and the withdrawal this exists to latch on is
+        never compared there.
 
         Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
         ledger write carries its own `try` for the same one: the trip stands behind it, so a
