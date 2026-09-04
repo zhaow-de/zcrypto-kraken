@@ -84,8 +84,8 @@ CONFIRM_WORD = "MINT"
 
 # The longest client order id this venue is RECORDED as having accepted: the order-semantics probe's
 # `O-<YYYYMMDD>-<HHMMSS>-901-P6V-<seq>` at one-digit seq, whose passing runs the adapter-verification
-# rows carry. Not a limit -- no limit is recorded anywhere -- which is why it is printed beside this
-# script's own longer ids rather than used to size them.
+# rows carry. It is a measurement, not a limit, which is why it is printed beside this script's own
+# longer ids rather than used to size them.
 _PROVEN_COID_LENGTH = 27
 
 # Flooring can drop a target under a floor it cleared; a few steps is ample and a runaway is a
@@ -379,16 +379,17 @@ def render_plan(legs: list[Leg], existing: AccountState, pair: str, stamp: str) 
         )
     total = sum(leg.notional_eur for leg in legs if leg.order_type == "MARKET")
     lines.append(f"  spends at market: EUR {total:.2f} (the resting leg rests, it does not spend)")
-    # The ids are printed, and so is the one comparison the repo can actually make about them. No
-    # accepted LIMIT is recorded anywhere; what is recorded is a shape that was accepted -- the
-    # order-semantics probe's `O-<stamp>-901-P6V-<seq>`, whose passing runs the adapter-verification
-    # rows carry. These ids are longer than that, so a rejection naming the id is a finding for the
-    # row this attended pass writes rather than a puzzle to debug mid-run.
+    # What the repo actually holds about id length is one MEASURED acceptance and one unmeasured
+    # claim that contradicts it: the order-semantics probe's ids passed at `_PROVEN_COID_LENGTH`,
+    # while a comment in that same probe asserts an 18-character venue truncation which those very
+    # ids would not have survived. The operator gets the measured number and the caveat, because
+    # picking one silently is how a contradiction becomes a fact.
     longest = max(len(mint_client_order_id(leg.kind, stamp)) for leg in legs)
     lines.append(
-        f"  longest client order id here: {longest} characters. The longest shape recorded as "
-        f"accepted on this adapter is the order-semantics probe's, at {_PROVEN_COID_LENGTH}; no "
-        f"limit is recorded. A rejection naming an id belongs in the version's "
+        f"  longest client order id here: {longest} characters. The only MEASURED acceptance on "
+        f"this adapter is the order-semantics probe's shape, at {_PROVEN_COID_LENGTH}; a comment in "
+        f"that probe also claims an 18-character truncation, which is unmeasured and inconsistent "
+        f"with those ids passing. A rejection naming an id belongs in the version's "
         f"docs/reference/adapter-verification/ row."
     )
     return "\n".join(lines)
@@ -497,11 +498,16 @@ def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tup
         code = str(getattr(getattr(row, "currency", None), "code", "") or "")
         if not code or code in ("EUR", "ZEUR"):
             continue
+        free = float(getattr(row, "free", 0.0) or 0.0)
+        # A zero row is not a holding. The venue lists an asset the account no longer has, and
+        # `flatten` skips a leg whose free amount is not positive -- so printing it as held would be
+        # the mirror of the defect the per-row floors fixed: a line the operator cannot trust.
+        if free <= 0.0:
+            continue
         resolved = resolve_base(code, frozenset({base})) or code
         if resolved != base:
             held.add(resolved)
             continue
-        free = float(getattr(row, "free", 0.0) or 0.0)
         # BOTH floors, because `flatten` classifies a balance against both and this guard exists to
         # predict what `flatten` will find sellable. A quantity over `ordermin` whose notional is
         # under `costmin` is `dust` there and is not sold, so counting it here would skip the spot

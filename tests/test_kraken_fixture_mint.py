@@ -387,13 +387,21 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
 
     WRAPPERS = ("mint-with-vaulted-key.sh", "probe-with-vaulted-key.sh")
 
-    # The two lines that actually carry the target to the child. Pinned VERBATIM, because a guard
-    # that reads only the `harness=` assignment pins the shape of one line and not the target: a
-    # selector can sit on either of these instead and leave that assignment untouched. This was
-    # measured -- the first version of this test caught `harness="$1"` and passed four other
-    # selector forms, which is a guard proven against one defect rather than against its class.
+    # Two rounds of review took this guard apart, and the lesson is that enumerating forbidden
+    # FORMS does not work: each round I pinned what the mutation I had imagined would touch, and
+    # each round a form I had not imagined walked through -- a selector on the argv line, one inside
+    # `os.execve`, one on `venv_python` (which is the program `execve` actually runs), a symmetric
+    # edit to BOTH files, and a shell function named `exec` declared ABOVE the anchor, which bash
+    # resolves before the builtin. So this pins the SURFACE instead of the forms: everything above
+    # the anchor must be comment, the executable body must match the sibling's byte for byte save
+    # one line, and the sibling's own body is pinned by digest -- which is what makes a two-file
+    # edit fail. A legitimate change to either wrapper is meant to break this and be re-verified.
     _ARGV_LINE = '\' "$repo" "$venv_python" "$harness" "$@"'
-    _EXEC_LINE = "os.execve(python, [python, harness, *sys.argv[4:]],"
+    _EXEC_LINE = 'os.execve(python, [python, "-I", harness, *sys.argv[4:]],'
+    _PYTHON_LINE = 'venv_python="$repo/.venv/bin/python"'
+    # sha256 of `probe-with-vaulted-key.sh` from its `set -euo pipefail` line down, read from the
+    # tree on 2026-09-04. Update it only with a deliberate, re-verified change to that wrapper.
+    _PROBE_BODY_SHA256 = "7b4e19d8a370ea794167b2f86f73ea1f45cc9cc63d792cb839747bacfac7ad8c"
 
     def _src(self, name: str) -> str:
         return (_REPO / "infra" / "scripts" / name).read_text()
@@ -415,11 +423,37 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
         assert re.fullmatch(r'"\$repo/infra/scripts/[^"$]+\.py"', assignments[0]), assignments[0]
 
     @pytest.mark.parametrize("name", WRAPPERS)
-    def test_nothing_but_that_literal_routes_the_target_to_the_child(self, name: str) -> None:
-        """The argv line and the `execve` line are where a selector reaches the exec'd program."""
+    def test_nothing_but_those_literals_routes_the_target_to_the_child(self, name: str) -> None:
+        """Both halves of what gets exec'd: the interpreter and the program it is handed."""
         src = self._src(name)
-        for line in (self._ARGV_LINE, self._EXEC_LINE):
+        for line in (self._ARGV_LINE, self._EXEC_LINE, self._PYTHON_LINE):
             assert src.count(line) == 1, f"{name} does not carry {line!r} exactly once"
+
+    @pytest.mark.parametrize("name", WRAPPERS)
+    def test_both_interpreters_are_isolated(self, name: str) -> None:
+        """`-I` on BOTH, or the cwd leads `sys.path` and `PYTHONINSPECT` keeps the credential in a
+        prompt. A flag missing from either invocation reopens those routes and says nothing."""
+        src = self._src(name)
+        assert src.count('exec "$venv_python" -I -c') == 1, f"{name}: the -c invocation is not -I"
+        assert src.count('[python, "-I", harness') == 1, f"{name}: the execve argv is not -I"
+
+    @pytest.mark.parametrize("name", WRAPPERS)
+    def test_nothing_executable_sits_above_the_anchor(self, name: str) -> None:
+        """`_body` starts at `set -euo pipefail`, so anything above it is invisible to every other
+        assertion here -- and a shell function named `exec` declared there shadows the builtin."""
+        lines = self._src(name).split("\n")
+        above = lines[: lines.index("set -euo pipefail")]
+        # The shebang is itself a `#` line, so a comment-and-blank filter leaves nothing at all.
+        offenders = [ln for ln in above if ln.strip() and not ln.lstrip().startswith("#")]
+        assert offenders == [], offenders
+
+    def test_the_sibling_body_is_the_one_this_was_copied_from(self) -> None:
+        """The transitive pin. Without it, a selector added to BOTH wrappers keeps them identical
+        and every other assertion here stays green -- which is how a two-file edit would ship."""
+        import hashlib
+
+        body = "\n".join(self._body("probe-with-vaulted-key.sh"))
+        assert hashlib.sha256(body.encode()).hexdigest() == self._PROBE_BODY_SHA256
 
     def test_the_two_wrappers_differ_in_exactly_one_line_below_the_shebang_block(self) -> None:
         """The identity claim in the header, as an assertion. It is also what closes the selector
@@ -686,9 +720,14 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
         """
         import asyncio
 
-        rec = _Recorder()
-        raw = asyncio.run(rec.request_order_status_reports(None))
-        state = mint.AccountState(resting_pairs=tuple({str(o.instrument_id).split(".")[0] for o in raw}))
+        # Driven through `read_account`, not by calling the stub: a test that calls the stub proves
+        # what the stub does. `_Blind` is the defect itself -- a client that drops `open_only`.
+        class _Blind(_Recorder):
+            async def request_order_status_reports(self, account, **kw):
+                return await super().request_order_status_reports(account)
+
+        state = asyncio.run(mint.read_account(_Blind(), "SOL/EUR", _LIMITS, _BEST_BID))
+        assert state.resting_pairs == ("SOL/EUR",)
         kinds = [leg.kind for leg in mint.plan_legs(pair="SOL/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=state)]
         assert "resting" not in kinds
 

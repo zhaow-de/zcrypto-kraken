@@ -7,8 +7,17 @@
 # It is a SECOND wrapper rather than a `--target` on the first one, and that is the whole point.
 # `.claude/settings.json` carries `Bash(infra/scripts/probe-with-vaulted-key.sh --probes:*)`, whose
 # wildcard covers everything after `--probes`: a selector there would ride an already-granted command
-# line and turn a standing pre-approval into "run any program with the live trade key present". Two scripts, each with a FIXED target, keep the property that makes either one
-# safe to whitelist. Never add a selector to either.
+# line and turn a standing pre-approval into "run any program with the live trade key
+# present". Two scripts, each with a FIXED target, keep the property that makes either
+# one safe to whitelist. Never add a selector to either, and never to any line above
+# `set -euo pipefail` either -- a shell function named `exec` there shadows the builtin.
+#
+# BOTH interpreters run `-I` (isolated), and the flag is load-bearing rather than tidy.
+# Without it the cwd leads `sys.path` and the environment is honoured, so a file in the
+# operator's cwd shadows an import, `PYTHONPATH` redirects one, and `PYTHONINSPECT=1`
+# drops to an interactive prompt after the program exits with the credential still in
+# `os.environ` -- the "shell you keep" the refusal text promises this is not. Measured
+# under a pty: without `-I` the prompt appears, with it there is none.
 #
 # This one is deliberately NOT in `.claude/settings.json`, and that absence is the design. The probe
 # reads and places test orders under its own harness's controls; this script SENDS ORDERS that stay
@@ -37,7 +46,7 @@ venv_python="$repo/.venv/bin/python"
 [ -f "$harness" ] || { echo "refusing: $harness is missing" >&2; exit 2; }
 [ -x "$venv_python" ] || { echo "refusing: $venv_python is missing -- run 'uv sync'" >&2; exit 2; }
 
-exec "$venv_python" -c '
+exec "$venv_python" -I -c '
 import os, subprocess, sys
 
 from ansible.parsing.dataloader import DataLoader
@@ -75,6 +84,6 @@ if not key or not secret:
     sys.exit("refusing: the vaulted trade credential is empty")
 
 os.chdir(repo)
-os.execve(python, [python, harness, *sys.argv[4:]],
+os.execve(python, [python, "-I", harness, *sys.argv[4:]],
           dict(os.environ, KRAKEN_SPOT_API_KEY=key, KRAKEN_SPOT_API_SECRET=secret))
 ' "$repo" "$venv_python" "$harness" "$@"

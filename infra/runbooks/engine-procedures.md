@@ -522,14 +522,14 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 Not part of a press — nothing is sent. This is what produces the record the SECOND of the three limits above waits on — the first waits on the row the first real press writes, and the third is deliberately unfixed and waits on nothing, so its by-eye confirmation after a press stays mandatory.
 
 1. **After the engine converge that carries the wrapper, never before.** `/usr/local/sbin/zcrypto-flatten` reaches the host with that converge and not earlier.
-2. **With the engine running and a NON-EUR spot balance the command can sell.** `spot_legs` skips the euro, skips a zero free balance, and skips a code it cannot resolve to a listed `/EUR` or `/BTC` pair — and the book read, the fifth shape, is made only for a leg. With no leg at all — nothing sellable and no margin position open — four of the five are proven while the row would say five.
+2. **With the engine running and a NON-EUR spot balance the command can sell.** `spot_legs` skips the euro, skips a zero free balance, and skips a code it cannot resolve to a listed `/EUR` or `/BTC` pair — and the book read, the fifth shape, is made only for a leg. With no leg at all — nothing sellable and no margin position open — four of the five are proven while the row would say five. If the account has none, `infra/scripts/mint-with-vaulted-key.sh` mints one — and, for the full fixture, a resting order and a margin position too. It is attended, run from a workstation rather than on the host, and prints its plan without sending anything until `--execute` and a typed word; it places orders and cannot cancel them, so read the plan before confirming. The key it uses is IP-bound: `order-semantics-verification.md` section 1.3 owns adding the workstation's address and removing it again.
 3. **On the engine host, through the wrapper:**
 
 ```
 sudo zcrypto-flatten
 ```
 
-4. **Record it**, in the shape drill G's extra reading uses: discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table, as a row proving the five read shapes against the real venue.
+4. **Record it**, in the shape drill G's extra reading uses: discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table, as a row proving the five read shapes against the real venue. When a margin position is present, record the positions read **twice** — once as the command makes it and once with the adapter's default mode — because the default answers with an empty list whatever the account holds, and only the pair of answers distinguishes a read that works from one that cannot see. Record the accepted client order id length in the same row: the ids the minter sends are longer than any this repository has measured the venue accepting.
 
 That row is the operand \[[T0160]\]'s bump sub-item evaluates — it is the operand that completes that trigger, so it is live, not a stale record to tidy away.
 
