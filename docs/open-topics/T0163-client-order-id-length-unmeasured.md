@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'an adapter-verification row quotes a minted client order id as the venue returned it: grep -l "FIXMINT-" docs/reference/adapter-verification/*.md is non-empty'
+ripe_when: 'an adapter-verification row quotes a minted client order id as the venue returned it: grep -l "FIXMINT-" docs/reference/adapter-verification/[0-9]*.md is non-empty'
 ---
 
 # Client order id length — the probe's 18-character truncation comment contradicts its own 27-character acceptance
@@ -21,5 +21,5 @@ Every id shape this repository sends is sized against a limit nobody has measure
 
 ## Suggested next steps
 
-- At the fixture-minter's first attended `--execute`, record in that version's `docs/reference/adapter-verification/<version>.md` row what the venue did with each 32-, 31- and 29-character id: accepted unchanged, refused, or echoed back shortened. Read the ids from Kraken's own open-orders page as well as from the adapter, and quote each id verbatim both as sent and as the venue shows it — the point is the venue's spelling, not ours, and quoting the sent id is what makes this topic's trigger readable.
+- At the fixture-minter's first attended `--execute`, record in that version's `docs/reference/adapter-verification/<version>.md` row what the venue did with each 32-, 31- and 29-character id: accepted unchanged, refused, or echoed back shortened. Read the ids from Kraken's own order pages as well as from the adapter — the resting id under Open Orders, the two market legs' under Closed Orders, since both are IOC and are filled or expired before the run ends — and quote each id verbatim both as sent and as the venue shows it — the point is the venue's spelling, not ours, and quoting the sent id is what makes this topic's trigger readable.
 - Then re-tense the probe comment to whatever that row measured, or cut it. If a truncation is real, the recovery read's infix must move inside the surviving prefix in the same change, because that read is what a crashed probe depends on.
