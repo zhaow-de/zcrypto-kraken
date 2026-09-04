@@ -24,46 +24,6 @@ Standard single-package uv project: `pyproject.toml`, `uv.lock`, `.python-versio
 
 **Never print a container's environment on the engine host `zcrypto`** — `docker inspect … {{json .Config.Env}}` / `{{json .Config}}`, `docker exec … env`, `docker compose config`: `zcrypto-engine` carries the live Kraken trade key and the Loki push password as env vars. Scope every inspect to the field you need — `.Mounts`, `.State`, `.Config.Image`, `.Config.Entrypoint`, `.RestartCount` — and **name those fields in a subagent's dispatch prompt**, since an unscoped "gather `docker inspect` evidence" invites the whole-object form. Vault- and deploy-specific hazards (`ansible-inventory --host`/`--list`) are in `fleet-deploys.md`.
 
-## Rules
-
-### 1. Think Before Coding
-
-**Don't assume. Surface tradeoffs. Ask when unclear.**
-
-- State assumptions; mark each *validated* (by which command) / *assumed* / *unknown*.
-- Multiple interpretations → present 2–3 with tradeoffs; don't pick silently.
-- Distinguish symptom from root problem.
-- Unclear? Stop, name what's confusing, and ask the session's authority — the owner attended, `zcrypto-main` as a payload session; an unattended `zcrypto-auto-exec` run decides reversible forks itself and parks only irreversible steps.
-
-### 2. Simplicity First
-
-**Minimum mechanism that solves the problem. Nothing speculative — the proofs the rules require (tests, guards, refusals over silent defaults) are part of the problem, never extras to trim.**
-
-- No features beyond what was asked. No "while I'm here."
-- No abstractions for single-use code.
-- No speculative flexibility or configurability.
-- 200 lines that could be 50? Rewrite it.
-
-### 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style — copy the sibling that already solves the mechanism before writing your own.
-- Remove imports / variables / functions that *your* changes made unused.
-- Don't delete pre-existing dead code — mention it instead.
-
-The test: every changed line traces to the user's request or to a rule that requires it.
-
-### 4. Define Done by Outcome, Not Output
-
-**"Merged" is not "done." Done is "it works and we can tell."**
-
-- Turn vague tasks into verifiable goals: a failing test that reproduces the bug then passes; tests pass identically before/after a refactor; a real flow completes end-to-end.
-- Confirm the outcome on the surface it lands on, after the step that makes it live — never at the merge.
-- For multi-step work, state a brief plan as `step → verify` lines.
-
 ## Tooling
 
 - Package/dependency manager: **uv** (`pyproject.toml` + `uv.lock`). Do not edit `uv.lock` by hand.
@@ -88,7 +48,7 @@ Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
 **The pre-PR full-suite run is CI's — do not duplicate it locally.** `.github/workflows/coverage.yml` runs the whole suite on every PR into `develop` and a failing suite fails that check. Locally run the tests the diff can reach, targeting one with `uv run pytest path::test` while iterating. The full run takes ~19 minutes with both local data sources present.
 
-**Except what CI cannot run.** Tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage: `tests/test_costmin_drift.py` is COSTMIN's only guard, sits on the live trade path, and skips in CI.
+**Except what CI cannot run.** Tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage: `tests/test_costmin_drift.py` is COSTMIN's only guard against venue-side drift, sits on the live trade path, and skips in CI.
 
 **A network-gated test is not data-gated** — one that reaches a live venue endpoint runs in CI, where it is a flake source, and skips silently if the venue ever blocks the runner. Gate such a test on an explicit opt-in env var rather than on reachability, so a skip is a decision and never an outage read as coverage.
 
@@ -98,4 +58,4 @@ Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
 - **The commit gate is `uv run pre-commit run -a`** — run the full suite before committing, not individual hooks; it runs ruff (lint + format), yamllint, ansible-lint, mdformat, and standard hygiene hooks. A run that rewrites files reports **Failed** and leaves the rewrites **unstaged**: re-run until clean, then **stage everything the hooks rewrote** (re-stage even if you'd staged before) and commit. Semantics: `-a` checks all tracked files, bare `pre-commit run` only the staged set, and a brand-new file is invisible to both until `git add`ed. If the commit-time hook still rewrites something, re-stage and re-commit — never `--no-verify`.
 - **Versioning** is commitizen-managed (`.cz.toml`). `cz bump` (run by the `/release` skill) is the source of truth for the version and updates both `pyproject.toml` and the README `Version` badge — don't hand-edit either or they'll drift.
-- **Workflow conventions** live in `.claude/rules/`: branch model (`branch-workflow.md`), PR title/body + co-author trailer (`pull-requests.md`), commit messages (`commit-messages.md`), README Usage (`readme-usage.md`), when/where to write specs & plans (`spec-plan-locations.md`), the open-topics convention for parking follow-up items (`open-topics.md`), and the decisions-log convention for recording subject-matter research decisions in the per-phase `docs/research/<serial>.phase<N>-decisions.md` logs (`decisions-log.md`). Fleet deploy discipline — the canary rule, converge windows for every tier, the alert-rule lifecycle — lives in `fleet-deploys.md`; host access (ssh aliases, the passwordless-sudo deploy user) and the attended-reboot discipline are `docs/reference/fleet.md`; shell/subagent operating lessons in `agent-ops.md`; every sentence of comment, docstring, doc and rule — the one principle, the bars, and the changelog entry every plan ends with — in `prose.md`; keeping internal traceability vocabulary off operator-visible surfaces in `operator-facing-text.md`. Consult them before branching, opening a PR, or releasing.
+- **Workflow conventions** live in `.claude/rules/`: branch model (`branch-workflow.md`), PR title/body + co-author trailer (`pull-requests.md`), commit messages (`commit-messages.md`), README Usage (`readme-usage.md`), when/where to write specs & plans (`spec-plan-locations.md`), the general working discipline — think before coding, simplicity, surgical changes, done by outcome — in `general.md`, the open-topics convention for parking follow-up items (`open-topics.md`), and the decisions-log convention for recording subject-matter research decisions in the per-phase `docs/research/<serial>.phase<N>-decisions.md` logs (`decisions-log.md`). Fleet deploy discipline — the canary rule, converge windows for every tier, the alert-rule lifecycle — lives in `fleet-deploys.md`; host access (ssh aliases, the passwordless-sudo deploy user) and the attended-reboot discipline are `docs/reference/fleet.md`; shell/subagent operating lessons in `agent-ops.md`; every sentence of comment, docstring, doc and rule — the one principle, the bars, and the changelog entry every plan ends with — in `prose.md`; keeping internal traceability vocabulary off operator-visible surfaces in `operator-facing-text.md`. Consult them before branching, opening a PR, or releasing.
