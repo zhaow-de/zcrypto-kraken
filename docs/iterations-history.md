@@ -1,6 +1,6 @@
 # Iterations history
 
-Per-iteration changelog of the zcrypto project, **split by master-plan §12 phase**. Each iteration's entry is appended (at its close-out) to its **subject-matter** phase's file; a closed phase that receives later backlog entries carries them under a **Continuation** divider. See `.claude/rules/iterations-history.md`. CLAUDE.md's project-state notes point here.
+Per-iteration changelog of the zcrypto project, **split by master-plan §12 phase**. Each iteration's entry is appended (at its close-out) to its **subject-matter** phase's file; a closed phase that receives later backlog entries carries them under a **Continuation** divider. See `.claude/rules/prose.md`. CLAUDE.md's project-state notes point here.
 
 - [Phase 0 — Preparation & Ratification](iterations-history-phase0.md)
 - [Phase 1 — Data Foundation](iterations-history-phase1.md)
