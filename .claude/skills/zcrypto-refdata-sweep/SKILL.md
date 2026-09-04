@@ -80,6 +80,7 @@ print("REFUSALS:", refusals or "none"); print("ANNOUNCED DELISTINGS:", announced
    At \$0 30-day volume the tier *cannot* move, so run it cheaply now; it is load-bearing once real fills flow.
 
 8. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
+9. **The closeout the routine owes**: the register is an operator-and-agent surface, so the sweep's iterations-history entry is part of the sweep, never a later fold; and every count or "all N" in the register's prose is generated from the same rendered data as the table it describes, never typed beside it — sweep #1 shipped a hand-typed count that stood for 31 days.
 
 ## What this sweep does and does not cover
 
