@@ -183,11 +183,12 @@ class ShadowStrategy(Strategy):
     only orders this engine submitted and the unknown-order trip still runs only there. The second
     stream is `ExternalOrderObserver`, a separate strategy registered under the venue's external
     order identity, and it forwards into `_on_external_order_event` -> the executor's disposition
-    filter, which acts only on the orders this engine's own ledger vouches for -- the rows the adopt
-    pass re-attached and this session's own submissions -- and everything else it counts, logs, and
-    drops before any row write, cancel, or trip arithmetic. So the hand settle remains structurally
-    unable to reach the trip: it matches no ledgered row, and no widening of the claim list is what
-    admits it. tests/test_engine_node.py pins each of these.
+    filter, which acts only on the rows the adopt pass re-attached plus this session's own
+    submissions -- a SUBSET of what the ledger vouches for, and a strict one on the legs
+    `executor._cancel_resting` names -- and everything else it counts, logs, and drops before any
+    row write, cancel, or trip arithmetic. So the hand settle remains structurally unable to reach
+    the trip: it matches no ledgered row, and no widening of the claim list is what admits it.
+    tests/test_engine_node.py pins each of these.
     """
 
     def __new__(cls, *args, **kwargs):

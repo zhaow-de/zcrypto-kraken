@@ -78,8 +78,10 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 ### [`engine-procedures.md`](engine-procedures.md) — the engine's attended procedures
 
 - [`engine-probe-window`](engine-procedures.md#engine-probe-window) — PROCEDURE: the attended live-order probe window, and the only sanctioned way to run one. Nothing fires this; you open it deliberately, and real money moves.
+  - [`adopt-pass-blind-legs`](engine-procedures.md#adopt-pass-blind-legs) — inside the arm step: the five pairs on which the startup pass does not see an order left resting across a restart, so a restart is not a way to clear one and its later fills are counted `unmatched`.
 - [`engine-tracking-band`](engine-procedures.md#engine-tracking-band) — PROCEDURE: the weekly tracking-error trip — what its verdict tile is saying, and what has to be true before a band is set. Nothing fires this; a breach pages through the kill-switch alert above.
 - [`engine-flatten`](engine-procedures.md#engine-flatten) — PROCEDURE: the emergency halt — one command that stops the engine and closes the whole account at market. Nothing fires this; you open it deliberately, and real money moves at whatever price the market gives.
+  - [`flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs) — the third limit: the five pairs the flat verdict cannot see, so exit 0 can be a false all-clear. The account-wide cancel is unaffected, which is why confirming on Kraken and pressing again is a real mitigation.
 
 ### [`order-semantics-verification.md`](order-semantics-verification.md) — the adapter's order semantics on a new nautilus version
 
@@ -156,11 +158,11 @@ Nothing fires these; you open one deliberately, in an attended window, and no mo
 
 Every section below runs inside an attended probe window ([`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window)) and exposes real money. Read that file's standing rules first — its A and B are not the window's own A and B.
 
-- [`drill-a1`](drills-order-path.md#drill-a1) — PROCEDURE: the primary reboots with an order resting and no fill — the capture gap healed from the secondary, the reduce-only hold latched, the resting opener cancelled by the startup adopt pass.
+- [`drill-a1`](drills-order-path.md#drill-a1) — PROCEDURE: the primary reboots with an order resting and no fill — the capture gap healed from the secondary, the reduce-only hold latched, the resting opener cancelled by the startup adopt pass — which requires the order to rest on a leg that pass can see.
 - [`drill-a2`](drills-order-path.md#drill-a2) — PROCEDURE: the primary reboots and a fill lands while it is down — a fill the engine was not present to hear, reconciled at startup into a **real position** the operator is left holding.
 - [`drill-b`](drills-order-path.md#drill-b) — PROCEDURE: the red button — decision-to-flat in wall-clock minutes. Nothing in this system has ever produced that number, and nothing can be promised about a bad afternoon without it.
 - [`drill-d`](drills-order-path.md#drill-d) — PROCEDURE: the engine goes dark with a position open — that the page nothing else covers reaches a phone, and how long an operator stays unaware of an unwatched position.
 - [`drill-e`](drills-order-path.md#drill-e) — PROCEDURE: the kill switch — a hand-placed kill file revoking a resting order inside the executor's tick, and the alert half reaching Slack inside its bound.
 - [`drill-e-prime`](drills-order-path.md#drill-e-prime) — PROCEDURE: E′, the phone-reachable halt — the same placement made from a phone over the fleet's access path, timed from the decision. Run inside E; an access path that refuses is this drill's finding, not a failed setup.
 - [`drill-f2`](drills-order-path.md#drill-f2) — PROCEDURE: the engine loses its socket with an order resting — one cancel attempt, then an `ambiguous` intent, and an order that may still be resting at Kraken with nothing in the process able to reach it.
-- [`drill-g`](drills-order-path.md#drill-g) — PROCEDURE: restart with an order resting — what the venue does with a GTC opener across an engine stop, the reduce-only hold latching, and the adopt pass attaching every matched row before it cancels.
+- [`drill-g`](drills-order-path.md#drill-g) — PROCEDURE: restart with an order resting — what the venue does with a GTC opener across an engine stop, the reduce-only hold latching, and the adopt pass attaching every matched row before it cancels. Runs on a one-way-spelled pair, per that page's standing rules — on five of the twelve legs the pass never sees the order and the drill measures nothing.

@@ -828,7 +828,11 @@ class ProbeExecutor:
 
         A row whose order the cache holds no record of at all is left exactly as it is -- there is
         no venue-truth source for it at this point in startup, and inventing one would be worse than
-        an open row a human can read.
+        an open row a human can read. That miss is SILENT and it is not rare: on the legs
+        `_cancel_resting` names it is what happens to every row whose order was still resting when
+        this process started, so such a row is neither repaired nor terminated here, and the order
+        behind it is neither attached nor cancelled by the pass above. `_on_external_event` says what
+        becomes of its later fills.
 
         Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
         lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
@@ -1809,13 +1813,15 @@ class ProbeExecutor:
         tripped switch has no order it is willing to leave working, however well justified.
 
         THAT INVARIANT HAS A HOLE, and it is spelling-shaped rather than restart-shaped. An order
-        this process did not place -- a previous process's, or a hand-placed one -- reaches the Cache
-        only through startup reconciliation, and reconciliation obtains open orders through the same
-        adapter read `cli/engine/flatten.py`'s `read_open_orders` documents: the instrument lookup
-        compares Kraken's `AssetPairs` key against the order's altname and drops the row on a miss,
-        silently and with a successful return. On the legs spelled both ways -- `BLIND_ORDER_READ_LEGS`
-        there, BTC/EUR among them -- such an order never enters the Cache, so `orders_open` never
-        lists it and `cancel_order` is never called for it.
+        ALREADY RESTING at the venue when this process started -- a previous process's, or one placed
+        by hand before the start -- reaches the Cache only through startup reconciliation (the
+        executions subscription carries `snap_orders:false`, so no WS event heals it afterwards), and
+        reconciliation obtains open orders through the same adapter read `cli/engine/flatten.py`'s
+        `read_open_orders` documents: the instrument lookup compares Kraken's `AssetPairs` key
+        against the order's altname and drops the row on a miss, silently and with a successful
+        return. On the legs spelled both ways -- `BLIND_ORDER_READ_LEGS` there, BTC/EUR among them --
+        such an order never enters the Cache, so `orders_open` never lists it and `cancel_order` is
+        never called for it. `_adopt_resting_orders` reads the same list and is blind the same way.
 
         This is the OPPOSITE failure to flatten's, and the difference decides what an operator does.
         Flatten's cancel is account-wide and reaches a blind leg; only its verdict is blind, so a
@@ -2255,6 +2261,10 @@ class ProbeExecutor:
         Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and
         NOTHING else -- it must never reach `_trip_on_fill`, a row write, or a cancel. That filter
         is what keeps the unknown-order trip scoped while this second stream exists at all.
+        The set is wider than "no ledgered row", and the difference is the hole `_cancel_resting`
+        names: on those legs the pass could not see the order, so its LEDGERED row was never
+        attached, and a fill on it lands here -- no row write, no counters, no overfill trip -- with
+        nothing in the log line saying the ledger knew the order.
         """
         client_order_id = str(getattr(event, "client_order_id", ""))
         attached = self._attached.get(client_order_id)

@@ -641,7 +641,8 @@ class _ExecutionMetrics:
             "Order events arriving on the external strategy topic, by disposition: matched means the "
             "event belonged to a restart-adopted order this engine's ledger vouches for; unmatched "
             "means it belonged to no such order and was acted on nowhere -- the account owner's own "
-            "hand settle, or equally activity nobody sanctioned.",
+            "hand settle, activity nobody sanctioned, or a fill on an order the startup pass could "
+            "not see.",
             ["disposition"],
             registry=registry,
         )
