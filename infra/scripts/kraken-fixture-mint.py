@@ -15,10 +15,14 @@ row dropped. A fixture resting there is invisible to the very verdict the attend
 pass would report clean against an account it cannot see. `assert_same_key` refuses at plan time,
 before anything is sized or printed.
 
-EVERY SIZE COMES FROM THE VENUE AT RUN TIME. `ordermin`, `costmin` and the price step are read from
-AssetPairs on the run that uses them, and the resting price is a stated fraction below the run's own
-best bid. A remembered figure is rejected at submit if it has fallen below a floor, and silently
-accepted at a notional nobody chose if it has not.
+EVERY SIZE COMES FROM THE VENUE'S OWN ROW AT RUN TIME. `ordermin`, `costmin` and both steps come
+from the raw AssetPairs row on the run that uses them -- never from a remembered figure, which is
+rejected at submit if it has fallen below a floor and silently accepted at a notional nobody chose if
+it has not; and never from the adapter's instrument object, which is a TRANSLATION of that row and
+can hand back None for a field it did not populate. A floor this script cannot read is a refusal:
+defaulted to zero it would size a leg at nothing and report it clear of a minimum the venue still
+enforces. The resting leg is sized at the price it will REST at, not at the bid -- `costmin` binds on
+what an order is worth, and this one is worth a stated fraction of the market.
 
 The client is the bare `KrakenSpotHttpClient` -- the same construction `flatten` reads with, so the
 legs land on the surface that will be asked about them. It is deliberately not the order-semantics
@@ -54,6 +58,8 @@ from cli.engine.instruments import (
     _floor_to_step,
     size_order,
 )
+from cli.snapshot.assetpairs import _COMMON_TO_KRAKEN, _wsname_index
+from cli.snapshot.fetch import fetch_public
 
 API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
@@ -87,7 +93,11 @@ class Refusal(Exception):
 
 @dataclass(frozen=True)
 class PairLimits:
-    """What AssetPairs publishes about one pair, read on the run that uses it."""
+    """What the venue's own AssetPairs row publishes about one pair, read on the run that uses it.
+
+    The two steps are the row's `lot_decimals`/`pair_decimals` as a step, because that is the shape
+    `size_order` quantizes in; the two floors are its `ordermin`/`costmin` verbatim.
+    """
 
     ordermin: float
     costmin: float
@@ -153,6 +163,46 @@ def require_eur_quote(pair: str) -> None:
         )
 
 
+def _row_field(row: dict, field: str, pair: str) -> str:
+    """One published field, or a refusal. Never a default.
+
+    A floor that is absent and a floor that is zero are the same number to `size_order` and opposite
+    facts about the venue: the second says any size clears, the first says this script does not know.
+    Defaulting the first to the second sizes a leg at nothing and prints it clear of a minimum the
+    venue still enforces at submit, which is the failure this whole script exists to avoid staging.
+    """
+    value = row.get(field)
+    if value is None:
+        raise Refusal(
+            f"REFUSING: {pair}'s AssetPairs row publishes no {field}. A floor this script cannot "
+            f"read is not one it may assume -- re-run when the listing carries it.",
+        )
+    return value
+
+
+def pair_limits(assetpairs_result: dict, pair: str) -> PairLimits:
+    """This pair's floors and steps, off the raw listing that the venue enforces at submit.
+
+    Resolved through the snapshot register's own `wsname` index and its alias map, so a pair whose
+    key, altname and wsname disagree (`XXBTZEUR` / `XBTEUR` / `XBT/EUR`) is found the one way that
+    works for all of them -- and so this lookup cannot drift from the register's.
+    """
+    base, quote = pair.split("/")
+    ws_key = f"{_COMMON_TO_KRAKEN.get(base, base)}/{_COMMON_TO_KRAKEN.get(quote, quote)}"
+    hit = _wsname_index(assetpairs_result).get(ws_key)
+    if hit is None:
+        raise Refusal(
+            f"REFUSING: {pair} is in no AssetPairs row under the wsname {ws_key}",
+        )
+    _pair_key, row = hit
+    return PairLimits(
+        ordermin=float(_row_field(row, "ordermin", pair)),
+        costmin=float(_row_field(row, "costmin", pair)),
+        lot_step=10.0 ** -int(_row_field(row, "lot_decimals", pair)),
+        price_step=10.0 ** -int(_row_field(row, "pair_decimals", pair)),
+    )
+
+
 def resting_price(best_bid: float, price_step: float) -> float:
     """A stated fraction below the run's own best bid, floored to the venue's price step."""
     return _floor_to_step(best_bid * (1 - AWAY_FRACTION), price_step)
@@ -197,8 +247,11 @@ def plan_legs(*, pair: str, limits: PairLimits, best_bid: float, existing: Accou
     legs: list[Leg] = []
 
     if pair not in existing.resting_pairs:
-        qty, notional = size_leg(limits, price=best_bid)
+        # Priced first, then sized AT that price. `costmin` is a floor on the order's own notional,
+        # and this order's notional is a stated fraction of the market's: sizing it at the bid
+        # clears a floor the resting leg itself would miss, and the venue rejects it at submit.
         price = resting_price(best_bid, limits.price_step)
+        qty, notional = size_leg(limits, price=price)
         legs.append(
             Leg(
                 kind="resting",
@@ -207,7 +260,7 @@ def plan_legs(*, pair: str, limits: PairLimits, best_bid: float, existing: Accou
                 order_type="LIMIT",
                 quantity=qty,
                 price=price,
-                notional_eur=qty * price,
+                notional_eur=notional,
                 leverage=None,
                 account_type="CASH",
                 time_in_force="GTC",
@@ -306,13 +359,14 @@ def require_credentials() -> tuple[str, str]:
 # --------------------------------------------------------------------------------------------
 
 
-async def read_pair(client, pair: str) -> tuple[PairLimits, float, object]:
-    """The pair's floors and the run's own best bid, both read now rather than remembered.
+async def read_pair(client, pair: str) -> tuple[float, object]:
+    """The run's own best bid, and the instrument object -- for `cache_instrument` and nothing else.
 
-    The instrument is returned with them because `submit_order` needs it cached: the client
-    documents `The instrument is not found in cache.` among its errors, and the cache's only writer
-    is `cache_instrument`. That is a requirement of MINTING, and says nothing about what any other
-    reader of this account can see.
+    The object is needed because `submit_order` documents `The instrument is not found in cache.`
+    among its errors and the cache's only writer is `cache_instrument`. It is NOT where a size comes
+    from: it is the adapter's translation of the listing, and a field the translation does not
+    populate arrives as None rather than as an error -- `min_quantity` came back None for SOL/EUR
+    when this was measured. `pair_limits` reads the row the venue enforces instead.
     """
     from nautilus_trader.model import InstrumentId
 
@@ -322,12 +376,6 @@ async def read_pair(client, pair: str) -> tuple[PairLimits, float, object]:
     if not match:
         raise Refusal(f"REFUSING: {pair} is not in the venue's listing")
     row = match[0]
-    limits = PairLimits(
-        ordermin=float(row.min_quantity),
-        costmin=float(row.min_notional),
-        lot_step=float(row.size_increment),
-        price_step=float(row.price_increment),
-    )
 
     book = await client.request_book_snapshot(instrument_id, depth=1)
     # `bids`/`asks` are METHODS on the real `OrderBook`, not sequences -- reading the attribute
@@ -335,7 +383,7 @@ async def read_pair(client, pair: str) -> tuple[PairLimits, float, object]:
     bids = book.bids()
     if not bids:
         raise Refusal(f"REFUSING: {pair}'s book has no bid to price the resting leg from")
-    return limits, float(bids[0].price), row
+    return float(bids[0].price), row
 
 
 async def read_account(client, pair: str) -> AccountState:
@@ -390,16 +438,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-async def _run(args: argparse.Namespace) -> int:
+def _live_client(key: str, secret: str):
+    """The bare client `flatten` reads with. Imported here so the module loads without the adapter."""
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
+    return KrakenSpotHttpClient(key, secret)
+
+
+def _live_listing() -> dict:
+    """The venue's AssetPairs `result`, through the repo's own public reader."""
+    return fetch_public("AssetPairs")
+
+
+async def _run(
+    args: argparse.Namespace,
+    *,
+    client_factory,
+    listing_factory,
+    prompt=input,
+) -> int:
+    """Injected the way `run_flatten` injects its readers, so a test can drive the whole path with a
+    recording client and assert on what was NOT sent -- which is the property that matters here.
+
+    Both factories are REQUIRED, with no default between them: a default binds the live one at
+    definition, so a test that patches the module attribute instead of passing the argument gets a
+    real client built and a real request sent, silently and successfully. That has happened here.
+    `main` is the only caller that names the live pair.
+    """
     assert_same_key(args.pair)
     require_eur_quote(args.pair)
     key, secret = require_credentials()
     print(f"credentials: {API_KEY_VAR} and {API_SECRET_VAR} are present (never printed)")
 
-    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
-
-    client = KrakenSpotHttpClient(key, secret)
-    limits, best_bid, instrument = await read_pair(client, args.pair)
+    client = client_factory(key, secret)
+    limits = pair_limits(listing_factory(), args.pair)
+    best_bid, instrument = await read_pair(client, args.pair)
     print(
         f"{args.pair} now: best bid {best_bid}, ordermin {limits.ordermin}, "
         f"costmin {limits.costmin} (read this run, not remembered)"
@@ -415,7 +488,7 @@ async def _run(args: argparse.Namespace) -> int:
         return 0
     if not sys.stdin.isatty():
         raise Refusal("REFUSING: --execute needs a terminal for the confirmation")
-    check_confirmation(input(f"\nType {CONFIRM_WORD} to send the plan above: ").strip())
+    check_confirmation(prompt(f"\nType {CONFIRM_WORD} to send the plan above: ").strip())
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     for leg in legs:
@@ -428,7 +501,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        return asyncio.run(_run(parse_args(argv)))
+        return asyncio.run(_run(parse_args(argv), client_factory=_live_client, listing_factory=_live_listing))
     except Refusal as exc:
         print(str(exc), file=sys.stderr)
         return 1

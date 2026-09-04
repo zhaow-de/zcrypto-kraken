@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -30,12 +32,44 @@ sys.modules[_spec.name] = mint
 _spec.loader.exec_module(mint)
 
 
-# SOL/EUR's limits as the venue published them on 2026-09-01. They are a FIXTURE, not a constant the
-# script may read: every test that asserts a size derives it from these numbers, so a script that
-# hardcoded the same figures would pass here and drift silently at the venue. `test_sizing_follows
-# _the_listing_rather_than_a_remembered_figure` is what separates the two.
+# Two AssetPairs rows as the venue published them, recorded verbatim: SOL/EUR (the pair this script
+# mints on) and XXBTZEUR, whose key, altname and wsname are three different strings.
+_LISTING = json.loads((_REPO / "tests" / "fixtures" / "kraken_assetpairs_mint.json").read_text())
+
+# The same limits written out independently of the reader that parses them. They are a FIXTURE, not
+# a constant the script may read: every test that asserts a size derives it from these numbers, so a
+# script that hardcoded the same figures would pass here and drift silently at the venue.
+# `test_sizing_follows_the_listing_rather_than_a_remembered_figure` is what separates the two, and
+# `test_the_reader_and_the_hand_written_limits_agree` is what keeps this copy honest.
 _LIMITS = mint.PairLimits(ordermin=0.06, costmin=0.45, lot_step=0.00000001, price_step=0.01)
 _BEST_BID = 85.76
+
+# Both live doors are shut for this module unless the run opts in. `ZCRYPTO_LIVE_VENUE_TESTS` is the
+# repo's existing name for that opt-in (`test_engine_node.py`).
+_LIVE_OPT_IN = "ZCRYPTO_LIVE_VENUE_TESTS"
+
+
+@pytest.fixture(autouse=True)
+def _no_unintended_dialling(monkeypatch):
+    """Every live door raises unless the venue opt-in is set, so a missed patch fails loudly.
+
+    `_run` takes both factories with no default, so a missed argument is already a TypeError there.
+    This covers the rest: a test that reaches `main`, or any later caller that names a live door
+    directly. It is not hypothetical -- a test in this module bound `_live_client` as a default at
+    definition, built a real client and sent two real requests. Patching `socket` could not see it:
+    the client's I/O lives in a compiled extension and never passes through Python's socket layer,
+    so a raise on the door itself is the only evidence available from this side.
+    """
+    if os.environ.get(_LIVE_OPT_IN) == "1":
+        return
+
+    def _refuse(*_args, **_kwargs):
+        raise AssertionError(
+            f"a test reached a live venue door; set {_LIVE_OPT_IN}=1 to allow it deliberately",
+        )
+
+    monkeypatch.setattr(mint, "_live_client", _refuse)
+    monkeypatch.setattr(mint, "_live_listing", _refuse)
 
 
 class TestTheSameKeyGuard:
@@ -78,6 +112,58 @@ class TestTheSameKeyGuard:
         """The guard runs at plan time, so a dry run on a blind leg refuses rather than printing."""
         with pytest.raises(mint.Refusal):
             mint.plan_legs(pair="BTC/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=mint.AccountState())
+
+
+class TestTheFloorsComeFromTheRow:
+    """Both floors and both steps are the venue's own published row, or the run refuses.
+
+    The adapter's instrument object is the other candidate source and it is the wrong one: it is a
+    translation, and it answered None for `min_quantity` on this very pair. A None read as 0.0 is a
+    floor that always clears, on the one path where clearing wrongly is a rejected order at best.
+    """
+
+    def test_it_reads_both_floors_off_the_row(self) -> None:
+        limits = mint.pair_limits(_LISTING, "SOL/EUR")
+        assert limits.ordermin == 0.06
+        assert limits.costmin == 0.45
+
+    def test_it_derives_both_steps_from_the_row_decimals(self) -> None:
+        """`lot_decimals` 8 and `pair_decimals` 2 are what SOL/EUR publishes; a step is 10**-that."""
+        limits = mint.pair_limits(_LISTING, "SOL/EUR")
+        assert limits.lot_step == 0.00000001
+        assert limits.price_step == 0.01
+
+    def test_the_reader_and_the_hand_written_limits_agree(self) -> None:
+        """Two independent producers of the same four numbers. A disagreement IS the finding."""
+        assert mint.pair_limits(_LISTING, "SOL/EUR") == _LIMITS
+
+    @pytest.mark.parametrize("field", ["ordermin", "costmin", "lot_decimals", "pair_decimals"])
+    def test_a_missing_floor_refuses_rather_than_defaulting(self, field: str) -> None:
+        listing = {"SOLEUR": {k: v for k, v in _LISTING["SOLEUR"].items() if k != field}}
+        with pytest.raises(mint.Refusal) as exc:
+            mint.pair_limits(listing, "SOL/EUR")
+        assert field in str(exc.value)
+
+    @pytest.mark.parametrize("field", ["ordermin", "costmin", "lot_decimals", "pair_decimals"])
+    def test_a_null_floor_refuses_too(self, field: str) -> None:
+        """Present-and-null is how a translation reports a field it did not fill. Same refusal."""
+        listing = {"SOLEUR": {**_LISTING["SOLEUR"], field: None}}
+        with pytest.raises(mint.Refusal) as exc:
+            mint.pair_limits(listing, "SOL/EUR")
+        assert field in str(exc.value)
+
+    def test_a_pair_absent_from_the_listing_refuses(self) -> None:
+        with pytest.raises(mint.Refusal):
+            mint.pair_limits(_LISTING, "ADA/EUR")
+
+    def test_it_finds_a_row_whose_key_altname_and_wsname_all_differ(self) -> None:
+        """The reader resolves by wsname, so `XXBTZEUR` / `XBTEUR` / `XBT/EUR` is one row to it.
+
+        That is a separate question from whether this script will MINT there -- it will not, and
+        `TestTheSameKeyGuard` is the refusal that says so. Keeping them independent is the point:
+        a reader that could not find the row would hide the guard behind a lookup failure.
+        """
+        assert mint.pair_limits(_LISTING, "BTC/EUR").ordermin == 0.00005
 
 
 class TestSizing:
@@ -177,6 +263,42 @@ class TestThePlan:
             assert leg.notional_eur > 0
 
 
+class TestTheRestingLegClearsBothFloorsAtItsOwnPrice:
+    """`costmin` is a floor on the ORDER's notional, and this order is priced far below the market.
+
+    Sizing it at the best bid clears a floor the resting leg itself misses, and the venue rejects it
+    at submit -- an attended pass that gets two of its three ingredients and a rejection.
+    """
+
+    # `ordermin` 0.06 clears at the bid on its own, so `costmin` 4.00 is what the resting price has
+    # to be sized against: at 85.76 the ordermin-sized 0.06 is worth 5.15 and clears, at the 47.16
+    # it will rest at it is worth 2.83 and does not. A costmin either leg clears would prove nothing.
+    _SPLIT = mint.PairLimits(ordermin=0.06, costmin=4.0, lot_step=0.00000001, price_step=0.01)
+
+    def _resting(self, limits) -> object:
+        legs = mint.plan_legs(pair="SOL/EUR", limits=limits, best_bid=_BEST_BID, existing=mint.AccountState())
+        return next(leg for leg in legs if leg.kind == "resting")
+
+    def test_the_notional_at_the_resting_price_clears_costmin(self) -> None:
+        leg = self._resting(self._SPLIT)
+        assert leg.quantity * leg.price >= self._SPLIT.costmin
+
+    def test_the_quantity_still_clears_ordermin(self) -> None:
+        leg = self._resting(self._SPLIT)
+        assert leg.quantity >= self._SPLIT.ordermin
+
+    def test_the_printed_notional_is_the_one_the_venue_will_see(self) -> None:
+        """The dry run's EUR figure is what the operator approves; it must be the resting one."""
+        leg = self._resting(self._SPLIT)
+        assert leg.notional_eur == pytest.approx(leg.quantity * leg.price)
+
+    def test_the_live_listing_passes_too(self) -> None:
+        """The true positive: SOL/EUR's real floors, where both clear and nothing is walked."""
+        leg = self._resting(_LIMITS)
+        assert leg.quantity >= _LIMITS.ordermin
+        assert leg.quantity * leg.price >= _LIMITS.costmin
+
+
 class TestTheDoubleMintGuard:
     """A re-run must not double the fixture; it reports what is already there and skips it."""
 
@@ -223,3 +345,182 @@ class TestTheConfirmGate:
     def test_the_word_is_not_yes(self) -> None:
         """A gate answerable by reflex is not a gate."""
         assert mint.CONFIRM_WORD.lower() not in {"y", "yes", "ok"}
+
+
+class _Recorder:
+    """A client that records every call and sends nothing.
+
+    It answers the reads with a listing shaped like the venue's and refuses to grow a cancel method:
+    the property under test is what this script does NOT do, and a stub carrying `cancel_order`
+    would let a regression that called it pass unnoticed.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.submitted: list[dict] = []
+        self.cached: list[object] = []
+
+    async def request_instruments(self, pairs=None):
+        self.calls.append("request_instruments")
+        return [_Instrument()]
+
+    async def request_book_snapshot(self, instrument_id, depth=1):
+        self.calls.append("request_book_snapshot")
+        return _Book()
+
+    async def request_order_status_reports(self, account, **kw):
+        self.calls.append("request_order_status_reports")
+        return []
+
+    async def request_position_status_reports(self, account, **kw):
+        self.calls.append("request_position_status_reports")
+        return []
+
+    async def request_account_state(self, account, **kw):
+        self.calls.append("request_account_state")
+        return _AccountReport()
+
+    def cache_instrument(self, instrument) -> None:
+        self.calls.append("cache_instrument")
+        self.cached.append(instrument)
+
+    async def submit_order(self, **kwargs):
+        self.calls.append("submit_order")
+        self.submitted.append(kwargs)
+
+
+class _Instrument:
+    """The adapter's instrument object, recorded as the venue actually answered for SOL/EUR.
+
+    Every floor is None because that is what came back, and they are left None deliberately: the
+    object is cached and never read for a size, so any sizing path that reached back into it would
+    raise on `float(None)` here rather than freeze a floor to zero against real money.
+    """
+
+    id = "SOL/EUR.KRAKEN"
+    min_quantity = None
+    min_notional = None
+    size_increment = None
+    price_increment = None
+
+
+class _Level:
+    price = 85.76
+
+
+class _Book:
+    def bids(self):
+        return [_Level()]
+
+
+class _AccountReport:
+    balances = ()
+
+
+def _args(execute: bool):
+    import argparse
+
+    return argparse.Namespace(pair="SOL/EUR", execute=execute)
+
+
+def _factories(rec: object) -> dict:
+    """Both live doors, replaced. Neither has a default, so a forgotten one is a TypeError."""
+    return {"client_factory": lambda _k, _s: rec, "listing_factory": lambda: _LISTING}
+
+
+@pytest.fixture
+def _creds(monkeypatch):
+    monkeypatch.setenv(mint.API_KEY_VAR, "not-a-real-key")
+    monkeypatch.setenv(mint.API_SECRET_VAR, "not-a-real-secret")
+
+
+class TestTheDoorsAreShut:
+    """The positive trace. A guard nobody saw fire is a guard nobody has evidence of."""
+
+    @pytest.mark.skipif(
+        os.environ.get(_LIVE_OPT_IN) == "1",
+        reason=f"{_LIVE_OPT_IN}=1 deliberately opens the doors this asserts are shut",
+    )
+    def test_both_live_doors_raise_for_this_module(self) -> None:
+        for door in (mint._live_client, mint._live_listing):
+            with pytest.raises(AssertionError, match=_LIVE_OPT_IN):
+                door()
+
+    def test_run_cannot_be_called_without_being_told_which_doors_to_use(self) -> None:
+        """No default binds the live pair at definition, so a missed patch is a TypeError here.
+
+        This is the assertion the earlier defaulted signature could not carry: a test that patched
+        the module attribute and forgot the argument built a real client and sent real requests, and
+        nothing in the suite said so.
+        """
+        with pytest.raises(TypeError):
+            mint._run(_args(execute=False))
+
+
+class TestNothingIsSentWithoutExecute:
+    """The dry run is the default, and the default must reach the venue's READS and nothing else."""
+
+    def test_the_dry_run_submits_nothing(self, _creds) -> None:
+        import asyncio
+
+        rec = _Recorder()
+        rc = asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
+        assert rc == 0
+        assert rec.submitted == []
+        assert "submit_order" not in rec.calls
+
+    def test_the_dry_run_cancels_nothing(self, _creds) -> None:
+        """`_Recorder` has no cancel method at all, so a call would raise rather than pass quietly."""
+        import asyncio
+
+        rec = _Recorder()
+        asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
+        assert not any("cancel" in call for call in rec.calls)
+
+    def test_the_dry_run_still_reads_the_account(self, _creds) -> None:
+        """A plan printed without reading the account cannot know what is already there."""
+        import asyncio
+
+        rec = _Recorder()
+        asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
+        assert "request_order_status_reports" in rec.calls
+        assert "request_instruments" in rec.calls
+
+
+class TestTheExecutePath:
+    """With the flag AND the typed word: exactly the three legs, and still nothing cancelled."""
+
+    def _run_execute(self, rec, typed=None):
+        import asyncio
+
+        monkey_prompt = lambda _msg: mint.CONFIRM_WORD if typed is None else typed  # noqa: E731
+        return asyncio.run(mint._run(_args(execute=True), **_factories(rec), prompt=monkey_prompt))
+
+    def test_it_submits_exactly_three_legs(self, _creds, monkeypatch) -> None:
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+        rec = _Recorder()
+        assert self._run_execute(rec) == 0
+        assert len(rec.submitted) == 3
+
+    def test_it_cancels_nothing(self, _creds, monkeypatch) -> None:
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+        rec = _Recorder()
+        self._run_execute(rec)
+        assert not any("cancel" in call for call in rec.calls)
+
+    def test_it_caches_the_instrument_before_submitting(self, _creds, monkeypatch) -> None:
+        """`submit_order` documents `The instrument is not found in cache.` among its errors."""
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+        rec = _Recorder()
+        self._run_execute(rec)
+        assert rec.calls.index("cache_instrument") < rec.calls.index("submit_order")
+
+    def test_a_wrong_confirmation_sends_nothing(self, _creds, monkeypatch) -> None:
+        """`_run` refuses; `main` is what turns that into a non-zero exit. Both halves matter, and
+        the one that matters here is that the plan was printed and NOTHING followed it."""
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+        rec = _Recorder()
+        with pytest.raises(mint.Refusal):
+            self._run_execute(rec, typed="yes")
+        assert rec.submitted == []
+        assert "submit_order" not in rec.calls
