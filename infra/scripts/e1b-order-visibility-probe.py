@@ -46,9 +46,10 @@ order-semantics harness, which places and cancels orders.
 Its eight order-status reads share the trade key with the still-running engine, so one engine order
 or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary. Run
 it in the window an engine converge takes, which is narrower than "between boundaries": start at
-least 30 minutes after a boundary (00/04/08/12/16/20 UTC) — those 30 belong to the boundary cycle,
-which can hold the thread for about 25 of them — and finish at least 10 minutes before the next one.
-`infra/ansible/site.yml` states the same window as the engine play's own guard.
+least 30 minutes after a boundary (00/04/08/12/16/20 UTC) — those belong to the boundary cycle — and
+finish at least 10 minutes before the next one. That is the conservative FLOOR of the guard in
+`infra/ansible/site.yml`, which releases earlier when the boundary cycle has journaled its
+completion; this probe runs in seconds, so the floor costs nothing to honour.
 
 Nine venue calls: eight order-status reads, plus the one `request_instruments` the populated arm
 needs to obtain an instrument to cache.

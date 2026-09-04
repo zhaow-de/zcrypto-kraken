@@ -162,7 +162,7 @@ LIVE_OPT_IN = "ZCRYPTO_E1B_LIVE"
 
 @pytest.mark.skipif(os.environ.get(LIVE_OPT_IN) != "1", reason=f"{LIVE_OPT_IN}=1 not set; this reaches the live venue")
 def test_the_live_sweep_returns_every_shape():
-    """Attended only, on the engine host, with the credentials in the environment. Asserts shape,
+    """Attended only, against the engine host, with the credentials in the environment. Asserts shape,
     not content: how many rows each shape returns is the RESULT of the run, never something a test
     should pin — pinning it here would make the probe's own finding a precondition of its passing."""
     m = _load()
@@ -198,10 +198,19 @@ def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
     file, so it can rot silently if the wrapper ever grows a program selector — this is what would
     notice."""
     wrapper = (REPO / "infra/scripts/probe-with-vaulted-key.sh").read_text()
-    # Comment and blank lines come out first, so re-wording that file's header -- its own subject is
-    # which program it runs, so its comments name `.py` files -- never reddens this.
-    code = [ln.rstrip() for ln in wrapper.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
-    body = "\n".join(code)
+    lines = wrapper.splitlines()
+    # Everything from `exec ` down is ONE single-quoted bash string carrying a python program. A `#`
+    # there is string data, not a comment, and an apostrophe on such a line ENDS THE STRING -- two of
+    # the python comments already inside it would do that if reworded to use one. So comment- and
+    # blank-stripping is applied only to the shell preamble above it; the shebang and the whole
+    # `exec ` region are pinned exactly as typed, trailing whitespace included (a space after the
+    # line-34 continuation changes what bash parses, and the commit gate's trailing-whitespace hook
+    # keeps that from being noise).
+    exec_lines = [i for i, ln in enumerate(lines) if ln.startswith("exec ")]
+    assert len(exec_lines) == 1, f"the wrapper's single exec line is now {len(exec_lines)} lines"
+    cut = exec_lines[0]
+    preamble = [ln for ln in lines[1:cut] if ln.strip() and not ln.lstrip().startswith("#")]
+    body = "\n".join([lines[0], *preamble, *lines[cut:]])
     # Named first because a digest alone says nothing about WHAT is protected: this wrapper runs one
     # program and the probe's docstring tells operators so.
     programs = sorted(set(re.findall(r"[\w-]+\.py", body)))
@@ -209,17 +218,16 @@ def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
         f"the wrapper now names {programs}; the probe's docstring says it targets only the "
         "order-semantics harness, and that sentence must change with it"
     )
-    # Then the whole executable content, as one value. Six review rounds each closed one spelling of
-    # "add a program selector" and each found another: a default-plus-override, an `&&` twin, an
+    # Then the whole executable content, as one value. Four rounds of review each closed one spelling
+    # of "add a program selector" and each found more -- a default-plus-override, an `&&` twin, an
     # annotated rebind, a write to `sys.argv[3]`, an alias in the handoff, an interpreter override, a
-    # repo override, `sys.argv.insert`, `printf -v`, a tuple unpack, a loop variable -- and `del
-    # sys.argv[3]`, which makes the FIRST CALLER-SUPPLIED ARGUMENT the program. The set of spellings
-    # is not enumerable, and every enumeration of it shipped a comment claiming the class. So this
-    # stops describing the shape and pins the content: any change to what this wrapper executes,
-    # however spelled, lands here. Its code has changed twice in its life (both 2026-08-26), so a
-    # real edit costs one paste.
+    # repo override, `sys.argv.insert`, `printf -v`, a tuple unpack, a loop variable, and `del
+    # sys.argv[3]`, which makes the FIRST CALLER-SUPPLIED ARGUMENT the program. That question has no
+    # bounded answer, so this pins content instead of describing shape. Measured: the file's
+    # executable content has never changed since it was written -- its one later commit rewrote the
+    # header, which this canonicalisation deliberately ignores -- so re-pinning is not a routine cost.
     digest = hashlib.sha256(body.encode()).hexdigest()
-    assert digest == "b62790151caec841fcd6270a8d1e079cc153ffeb0e4fed49cbf78b7bb5c2521f", (
+    assert digest == "81a92f9671cadb40647d73fbc9a5d8c06c33c424442ba4b49554a007fd3baf26", (
         f"probe-with-vaulted-key.sh's executable content changed (now {digest}).\n"
         "This is not a prompt to paste the new digest. Read the wrapper's diff first and answer the "
         "question the probe's docstring makes an operator act on: does it STILL run only "
@@ -248,8 +256,11 @@ def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text(
     # is invisible to the stub AND to the scan above, since it borrows neither the adapter's methods
     # nor its credential properties. Both sides lowercased: HTTP header names are case-insensitive and
     # HTTP/2 lowercases every one on the wire, so `api-sign` is the spelling that actually goes out.
-    # The concatenation limit named above applies here too. And unlike the scan above, this one CAN
-    # redden on prose -- a comment or docstring writing `private/OpenOrders` trips it -- so say what
-    # the calls do ("the eight order-status reads"), never the endpoint path.
+    # The concatenation limit named above applies here too. Both scans read prose as source, so a
+    # comment or docstring naming an endpoint path trips this one -- the message says so, because
+    # that is what the tripped editor reads first.
     signing = sorted(t for t in ("private/", "api-sign") if t in text.lower())
-    assert not signing, f"hand-rolled venue signing in the probe's source: {signing}"
+    assert not signing, (
+        f"hand-rolled venue signing in the probe's source: {signing} -- or prose naming an endpoint "
+        'path, in which case say what the calls do ("the eight order-status reads") instead'
+    )
