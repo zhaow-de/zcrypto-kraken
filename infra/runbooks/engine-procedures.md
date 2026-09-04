@@ -462,7 +462,7 @@ Real money moves, at whatever price the market gives. This closes the **whole ac
 
 **What it does not do**: it does not clear the kill file, does not restart the engine, does not touch the engine's execution ledger, and does not close anything partially — it is the whole account or nothing.
 
-**Three limits it carries today.** The reduce-only market close on a margin position has never been sent live from this repository on any order type; the first real press through this wrapper — on a position minted for the purpose against the current pin, with a margin leg wherever `ordermin` allows — is where that is first proven, and until its `docs/reference/adapter-verification/` row records it, treat a margin close as unverified and read Kraken's own positions page afterwards by eye. The drill program's decision-to-flat drill is a later, separate measurement and does not lift this caveat. And the five account reads have been proven against the live venue only once the read-only dry-run recorded in `docs/reference/adapter-verification/` has been run through this wrapper; until that row exists, a live `--execute` is being run against read shapes nothing has confirmed.
+**Three limits it carries today.** The reduce-only market close on a margin position has never been sent live from this repository on any order type; the first real press through this wrapper — on a position minted for the purpose against the current pin, with a margin leg wherever `ordermin` allows — is where that is first proven, and until its `docs/reference/adapter-verification/` row records it, treat a margin close as unverified and read Kraken's own positions page afterwards by eye. The drill program's decision-to-flat drill is a later, separate measurement and does not lift this caveat. And the five account reads have been proven against the live venue only once the [read-only dry run](#flatten-read-only-dry-run) recorded in `docs/reference/adapter-verification/` has been run through this wrapper; until that row exists, a live `--execute` is being run against read shapes nothing has confirmed.
 
 <a name="flat-verdict-blind-legs"></a>
 
@@ -514,6 +514,24 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 - **The record says a read after the cancel failed?** The account may have moved and the run stopped where it stood. Read Kraken's own pages, then run it again.
 
 6. **Do not clear the kill file to restart the engine until you have decided the reason no longer holds.** Clearing it is the same procedure as for any other latched halt, in [`engine.md`](engine.md#zcrypto-engine-exec-kill-tripped).
+
+<a name="flatten-read-only-dry-run"></a>
+
+### The read-only dry run that proves the five reads
+
+Not part of a press — nothing is sent. This is what produces the record the three limits above wait on.
+
+1. **After the engine converge that carries the wrapper, never before.** `/usr/local/sbin/zcrypto-flatten` reaches the host with that converge and not earlier.
+2. **With the engine running and a spot balance present on the account.**
+3. **On the engine host, through the wrapper:**
+
+```
+sudo zcrypto-flatten
+```
+
+4. **Record it**, in the shape drill G's extra reading uses: discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table, as a row proving the five read shapes against the real venue.
+
+That row is the operand \[[T0160]\]'s bump sub-item evaluates — it is what makes that trigger read true, so it is live, not a stale record to tidy away.
 
 ### Retire when
 
