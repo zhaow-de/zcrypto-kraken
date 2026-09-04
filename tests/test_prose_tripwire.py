@@ -68,6 +68,25 @@ class TestCommentBlock:
         src = "\n".join(["# c"] * n + ["run: true"]) + "\n"
         assert tw.offenders_for(f"a{suffix}", src) == []
 
+    @pytest.mark.parametrize("suffix", [".sh", ".yml"])
+    def test_indented_hash_comments_trip_one_over(self, suffix: str) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        src = "\n".join(["top: 1"] + ["  # c"] * n + ["  x: 1"]) + "\n"
+        offs = tw.offenders_for(f"a{suffix}", src)
+        assert [(o.line, o.kind, o.measured) for o in offs] == [(2, "comment-block", n)]
+
+    def test_a_run_of_trailing_comments_is_not_a_block(self) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        src = "\n".join(f"x{i} = {i}  # c" for i in range(n)) + "\n" + "z = 0\n" * (6 * n)
+        assert tw.offenders_for("a.py", src) == []
+
+    @pytest.mark.parametrize("opener", ['r"""', "'''"])
+    def test_raw_and_single_quote_docstrings_are_blocks(self, opener: str) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        doc = [opener + "d"] + ["d"] * (n - 2) + [opener[-3:]]
+        offs = tw.offenders_for("a.py", _py(doc, 6 * n))
+        assert [(o.kind, o.measured) for o in offs] == [("comment-block", n)]
+
     def test_the_shebang_is_not_a_comment_line(self) -> None:
         n = tw.COMMENT_BLOCK_LINES
         src = "\n".join(["#!/usr/bin/env bash"] + ["# c"] * n + ["true"]) + "\n"
@@ -117,6 +136,7 @@ class TestFileProse:
         assert tw.offenders_for("a.py", self._src(tw.FILE_PROSE_PERCENT, 100)) == []
 
     def test_an_unparseable_file_is_skipped_not_reported(self) -> None:
+        assert tw.measure_python("def (:\n") is None
         assert tw.offenders_for("a.py", "def (:\n") == []
 
 
@@ -129,6 +149,10 @@ class TestTableRow:
 
     def test_passes_at_threshold(self) -> None:
         row = "|" + "a" * (tw.TABLE_ROW_CHARS - 2) + "|"
+        assert tw.offenders_for("a.md", f"# t\n\n{row}\n") == []
+
+    def test_width_is_characters_not_bytes(self) -> None:
+        row = "|" + "—" * (tw.TABLE_ROW_CHARS - 2) + "|"
         assert tw.offenders_for("a.md", f"# t\n\n{row}\n") == []
 
     def test_a_row_inside_a_fence_is_not_a_row(self) -> None:
@@ -148,11 +172,23 @@ class TestSection:
     def test_passes_at_threshold(self) -> None:
         assert tw.offenders_for("a.md", self._md(tw.SECTION_BYTES)) == []
 
-    def test_a_subsection_belongs_to_its_parent(self) -> None:
+    def test_a_subsection_is_measured_on_its_own(self) -> None:
         half = tw.SECTION_BYTES // 2 + 10
         src = "## P\n" + "b" * half + "\n### C\n" + "b" * half + "\n"
-        offs = tw.offenders_for("a.md", src)
-        assert [(o.line, o.kind) for o in offs] == [(1, "section")]
+        assert tw.offenders_for("a.md", src) == []
+
+    def test_a_long_child_trips_at_its_own_line_and_not_at_its_parents(self) -> None:
+        big = "b" * tw.SECTION_BYTES
+        src = f"## P\nshort\n### C\n{big}\n"
+        assert [(o.line, o.kind) for o in tw.offenders_for("a.md", src)] == [(3, "section")]
+
+    def test_text_before_the_first_heading_is_a_body(self) -> None:
+        big = "b" * tw.SECTION_BYTES
+        assert [(o.line, o.kind) for o in tw.offenders_for("a.md", f"{big}\n## H\nshort\n")] == [(1, "section")]
+
+    def test_a_file_with_no_headings_is_one_body(self) -> None:
+        big = "b" * tw.SECTION_BYTES
+        assert [(o.line, o.kind) for o in tw.offenders_for("a.md", f"{big}\n")] == [(1, "section")]
 
     def test_a_sibling_heading_ends_the_section(self) -> None:
         half = tw.SECTION_BYTES // 2 + 10
@@ -164,6 +200,12 @@ class TestSection:
         src = f"## A\n```\n# not a heading\n```\n{big}\n"
         offs = tw.offenders_for("a.md", src)
         assert [(o.line, o.kind) for o in offs] == [(1, "section")]
+
+    def test_a_language_tagged_fence_still_opens_and_closes(self) -> None:
+        big = "b" * tw.SECTION_BYTES
+        src = f"## A\n```bash\n# not a heading\n```\n## B\n{big}\n"
+        offs = tw.offenders_for("a.md", src)
+        assert [(o.line, o.kind) for o in offs] == [(5, "section")]
 
     def test_bytes_not_characters(self) -> None:
         body = "é" * (tw.SECTION_BYTES // 2)
@@ -187,6 +229,12 @@ class TestChangelogEntry:
     def test_nested_bullets_are_not_top_level(self) -> None:
         src = "## e\n\n- b\n  - nested\n  - nested\n" + "- b\n" * (tw.CHANGELOG_BULLETS - 1)
         assert tw.offenders_for(self.PATH, src) == []
+
+    def test_a_bullet_right_after_a_fence_is_counted_and_a_fenced_one_is_not(self) -> None:
+        n = tw.CHANGELOG_BULLETS
+        src = "## e\n\n" + "- b\n" * n + "```\n- fenced\n```\n- b\n"
+        offs = tw.offenders_for(self.PATH, src)
+        assert [(o.kind, o.measured) for o in offs] == [("changelog-entry", n + 1)]
 
     def test_only_changelog_files_carry_the_check(self) -> None:
         assert tw.offenders_for("docs/reference/x.md", self._entry(tw.CHANGELOG_BULLETS + 1)) == []
@@ -251,6 +299,13 @@ class TestScope:
         assert "docs/open-topics/archive/T0000-y.md" not in got
         assert "docs/reference/f.md" in got
 
+    def test_an_explicit_walk_skips_dot_directories(self, repo: Path) -> None:
+        (repo / ".venv").mkdir()
+        (repo / ".venv" / "x.py").write_text("x = 1\n")
+        got = tw.expand_paths(["."])
+        assert ".venv/x.py" not in got
+        assert "cli/a.py" in got
+
     def test_an_explicit_file_is_scanned_as_named(self, repo: Path) -> None:
         assert tw.expand_paths(["docs/specs/00001-z.md"]) == ["docs/specs/00001-z.md"]
 
@@ -282,6 +337,16 @@ class TestTheCommandLine:
         assert tw.main(["z.py", "a.py"]) == 1
         lines = [ln.split(":")[0:2] for ln in capsys.readouterr().out.splitlines()[:-1]]
         assert lines == sorted(lines, key=lambda p: (p[0], int(p[1])))
+
+    def test_an_absolute_path_is_reported_relative(self, tree: Path, capsys) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (tree / "b.py").write_text(_py(["# c"] * n, 6 * n))
+        assert tw.main([str(tree / "b.py")]) == 1
+        assert capsys.readouterr().out.splitlines()[0].startswith("b.py:1:")
+
+    def test_large_measures_render_without_an_exponent(self) -> None:
+        o = tw.Offender("a.md", 1, "section", 1234567, tw.SECTION_BYTES, "h")
+        assert tw.render([o]).splitlines()[0] == f"a.md:1: section 1234567 > {tw.SECTION_BYTES}"
 
     def test_help_prints_every_threshold(self, capsys) -> None:
         with pytest.raises(SystemExit) as exc:
@@ -316,6 +381,28 @@ class TestSince:
         out = capsys.readouterr().out.splitlines()
         assert [ln.split(" ")[0] for ln in out[:-1]] == ["fresh.py:1:", f"old.py:{6 * n + n + 1}:"]
         assert out[-1].endswith("(total 2)")
+
+    def test_a_moved_offender_is_not_new(self, repo: Path) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (repo / "old.py").write_text("y = 0\ny = 1\ny = 2\n" + _py(["# old"] * n, 6 * n))
+        assert tw.main(["--since", "HEAD", "old.py"]) == 0
+
+    def test_a_second_offender_with_the_same_anchor_is_new(self, repo: Path, capsys) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        block = _py(["# old"] * n, 6 * n)
+        (repo / "old.py").write_text(block + block)
+        assert tw.main(["--since", "HEAD", "old.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[-1].endswith("(total 1)")
+
+    def test_an_offender_that_grew_is_new(self, repo: Path, capsys) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (repo / "old.py").write_text(_py(["# old"] * (3 * n), 18 * n))
+        assert tw.main(["--since", "HEAD", "old.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[0] == f"old.py:1: comment-block {3 * n} > {tw.COMMENT_BLOCK_LINES}"
+
+    def test_an_unknown_revision_exits_two_and_says_so(self, repo: Path, capsys) -> None:
+        assert tw.main(["--since", "no-such-rev", "old.py"]) == 2
+        assert "no-such-rev" in capsys.readouterr().err
 
     def test_without_since_everything_is_shown(self, repo: Path, capsys) -> None:
         assert tw.main(["old.py"]) == 1

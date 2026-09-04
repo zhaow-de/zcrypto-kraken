@@ -125,6 +125,8 @@ def python_offenders(path: str, src: str) -> list[Offender]:
 
 def markdown_offenders(path: str, src: str, changelog: bool) -> list[Offender]:
     text = src.splitlines()
+    if not text:
+        return []
     fenced, inside = [], False
     for line in text:
         if line.lstrip().startswith("```"):
@@ -144,13 +146,16 @@ def markdown_offenders(path: str, src: str, changelog: bool) -> list[Offender]:
         m = _HEADING.match(line)
         if m:
             headings.append((i, len(m.group(1))))
-    for n, (start, level) in enumerate(headings):
-        end = next((s for s, lv in headings[n + 1 :] if lv <= level), len(text) + 1)
-        body = text[start - 1 : end - 1]
-        size = sum(len(line.encode()) + 1 for line in body)
+    starts = [1] + [s for s, _ in headings if s > 1]
+    for n, start in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(text) + 1
+        size = sum(len(line.encode()) + 1 for line in text[start - 1 : end - 1])
         if size > SECTION_BYTES:
             out.append(Offender(path, start, "section", size, SECTION_BYTES, text[start - 1].strip()))
+    for n, (start, level) in enumerate(headings):
         if changelog and level == 2:
+            end = next((s for s, lv in headings[n + 1 :] if lv <= 2), len(text) + 1)
+            body = text[start - 1 : end - 1]
             bullets = sum(1 for k, line in enumerate(body, start) if line.startswith("- ") and not fenced[k - 1])
             if bullets > CHANGELOG_BULLETS:
                 out.append(Offender(path, start, "changelog-entry", bullets, CHANGELOG_BULLETS, text[start - 1].strip()))
@@ -169,7 +174,7 @@ def offenders_for(path: str, src: str) -> list[Offender]:
 
 
 def _norm(path: str) -> str:
-    return os.path.normpath(path).replace(os.sep, "/")
+    return os.path.normpath(os.path.relpath(path)).replace(os.sep, "/")
 
 
 def _excluded(path: str) -> bool:
@@ -209,17 +214,31 @@ def scan(paths: list[str]) -> list[Offender]:
     return out
 
 
-def baseline(rev: str, paths: list[str]) -> set[tuple[str, str, str]]:
-    keys: set[tuple[str, str, str]] = set()
+def baseline(rev: str, paths: list[str]) -> dict[tuple[str, str, str], list[float]]:
+    known: dict[tuple[str, str, str], list[float]] = {}
     for path in paths:
-        shown = subprocess.run(["git", "show", f"{rev}:./{path}"], capture_output=True, text=True)
+        shown = subprocess.run(["git", "show", f"{rev}:./{path}"], capture_output=True, encoding="utf-8", errors="replace")
         if shown.returncode == 0:
-            keys |= {o.key for o in offenders_for(path, shown.stdout)}
-    return keys
+            for o in offenders_for(path, shown.stdout):
+                known.setdefault(o.key, []).append(o.measured)
+    return known
+
+
+def new_since(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]) -> list[Offender]:
+    """Each offender consumes one baseline entry at least as large as itself, or it is new."""
+    fresh = []
+    for o in sorted(offenders):
+        pool = known.get(o.key, [])
+        match = next((m for m in sorted(pool) if m >= o.measured), None)
+        if match is None:
+            fresh.append(o)
+        else:
+            pool.remove(match)
+    return fresh
 
 
 def render(offenders: list[Offender]) -> str:
-    lines = [f"{o.path}:{o.line}: {o.kind} {o.measured:g} > {o.threshold}" for o in offenders]
+    lines = [f"{o.path}:{o.line}: {o.kind} {o.measured:.10g} > {o.threshold}" for o in offenders]
     counts = " ".join(f"{kind}={sum(1 for o in offenders if o.kind == kind)}" for kind in KINDS)
     lines.append(f"offenders: {counts} (total {len(offenders)})")
     return "\n".join(lines)
@@ -237,8 +256,10 @@ def main(argv: list[str] | None = None) -> int:
     paths = expand_paths(args.paths) if args.paths else default_paths()
     offenders = scan(paths)
     if args.since:
-        known = baseline(args.since, paths)
-        offenders = [o for o in offenders if o.key not in known]
+        if subprocess.run(["git", "rev-parse", "--verify", "--quiet", args.since], capture_output=True).returncode != 0:
+            print(f"{args.since}: not a revision this repository knows", file=sys.stderr)
+            return 2
+        offenders = new_since(offenders, baseline(args.since, paths))
     offenders.sort()
     print(render(offenders))
     return 1 if offenders else 0
