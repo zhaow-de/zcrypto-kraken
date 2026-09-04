@@ -279,9 +279,15 @@ would make and stop there.
 - every `client_order_id` has the shape `O-<stamp>-901-P6V-<n>` — **never** `…-001-000-…`, which is
   the production engine's.
 
-Also read probe 2's row: it lists any **pre-existing** open order or position at the venue. Anything
-there must be explained before you place a probe order — a `REVIEW` verdict on probe 2 is a stop
-sign, not a footnote.
+Also read probe 2's row: it lists any **pre-existing** open order or position that read can see.
+Anything there must be explained before you place a probe order — a `REVIEW` verdict on probe 2 is a
+stop sign, not a footnote. **An empty row is a floor, not a clear venue.** Probe 2 reads the same
+startup-reconciliation cache §5.4 describes, so it cannot see an order resting on BTC/EUR, ETH/EUR,
+XRP/EUR, LTC/EUR or ETH/BTC
+([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), and
+`--pair` defaults to **BTC/EUR** — so a leftover from an earlier run, on the pair you are about to
+trade, is exactly what this row cannot list. Read Kraken → Trade → Open Orders by eye before §5.2
+places anything. The harness prints that caveat beneath the row.
 
 **Verdicts you should see:** 1 `PASS`, 2 `PASS`, 3 `PASS`, 4a–4d `DRY-RUN`, 5 `GATED`, 6 `PASS`.
 Probe 5 reads `GATED` rather than `DRY-RUN` because `--probe5` without `--apply` is refused at

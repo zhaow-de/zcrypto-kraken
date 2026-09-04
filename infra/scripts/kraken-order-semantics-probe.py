@@ -1109,6 +1109,13 @@ class ProbeStrategy(Strategy):
             self.record(label, name, expected, "skipped: --no-exec", VERDICT_SKIP)
             self._advance()
             return
+        # A FLOOR, never a total -- the same startup-reconciliation cache probe 6 reads, one probe
+        # earlier. That read cannot see an order resting on `RECONCILE_BLIND_LEGS`, and `--pair`
+        # defaults to one of them, so a previous run's leftover on the very pair this run is about to
+        # trade is exactly what this row cannot list. The banner below is unconditional: probe 6
+        # gates its own on the anchor, but nothing has been submitted here yet, so the anchor always
+        # holds -- and a REVIEW naming one order is no evidence about a second on a blind leg.
+        # Section 5.1 of infra/runbooks/order-semantics-verification.md owns the by-eye read.
         orders = self.cache.orders_open(venue=KRAKEN_VENUE)
         positions = self.cache.positions_open(venue=KRAKEN_VENUE)
         for o in orders:
@@ -1118,6 +1125,9 @@ class ProbeStrategy(Strategy):
             )
         for p in positions:
             print(f"      pre-existing open position: {p.instrument_id} {p.side} {p.quantity}")
+        print(f"      !! this read CANNOT see an order resting on {', '.join(RECONCILE_BLIND_LEGS)},")
+        print("      !! so the list above is a floor. Read Kraken -> Trade -> Open Orders by eye")
+        print("      !! before you place a probe order.")
         observed = f"open orders {len(orders)}, open positions {len(positions)}"
         if orders or positions:
             observed += " -- PRE-EXISTING venue state, listed above; adjudicate before ordering"
