@@ -15,7 +15,8 @@
 # WHY CODE AND DOC KINDS ARE SPLIT, AND WHY ONLY CODE FAILS THE EXIT
 #
 # The rule grants exactly four exemptions, and one of them cannot be computed here: "spec/plan/
-# closeout-docs commits whose content the user explicitly approved in the producing flow." Whether
+# closeout-docs commits whose content the session's authority explicitly approved in the producing
+# flow." Whether
 # that approval happened lives in a conversation, not in the repo — no trailer records it and no
 # query can recover it. A script that failed on every `docs`/`claude` commit would therefore be
 # wrong a large fraction of the time and would be routed around within a week; one that passed them

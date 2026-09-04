@@ -192,6 +192,7 @@ src_memo_sum="$(md5sum "$REPO_DIR/.local/memo.md" 2>/dev/null | cut -d' ' -f1 ||
 dst_memo_sum="$(remote "md5sum ${(q)REPO_DIR}/.local/memo.md 2>/dev/null | cut -d' ' -f1" || true)"
 claude_deletes="$("${RSYNC[@]}" -n --delete "${CLAUDE_EXCLUDES[@]}" \
   "$HOME/.claude/" "$DEST:.claude/" 2>/dev/null | grep -c '^deleting ' || true)"
+local_deletes="$("${RSYNC[@]}" -n --delete "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/" 2>/dev/null | grep -c '^deleting ' || true)"
 dest_sentinel="$(remote "cat ${(q)SENTINEL} 2>/dev/null" || true)"
 
 # --- the plan, then the gate -------------------------------------------------------------------
@@ -219,6 +220,7 @@ else
 fi
 print -r -- "  ~/.claude/    : rsync --delete would remove $claude_deletes destination path(s)
                   (transcripts + memory live here and exist on no remote)"
+print -r -- "  .local/       : rsync --delete would remove $local_deletes destination-only path(s) (inboxes, coordination, retro)"
 [[ -z "$dest_sentinel" ]] \
   && print -r -- "  last transport: destination has no record of a previous transport" \
   || print -r -- "  last transport: $dest_sentinel"
