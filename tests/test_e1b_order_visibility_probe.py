@@ -197,30 +197,44 @@ def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
     file, so it can rot silently if the wrapper ever grows a program selector — this is what would
     notice."""
     wrapper = (REPO / "infra/scripts/probe-with-vaulted-key.sh").read_text()
-    programs = sorted(set(re.findall(r"[\w-]+\.py", wrapper)))
+    # Comment lines come out first. That wrapper's whole subject is which program it runs, so a
+    # future comment naming another `.py` -- or writing `harness=` while explaining one -- is the
+    # likeliest edit it will ever get, and a pin that reddens on one teaches its next reader to
+    # delete the pin rather than read it.
+    code = [ln for ln in wrapper.splitlines() if not ln.lstrip().startswith("#")]
+    body = "\n".join(code)
+    programs = sorted(set(re.findall(r"[\w-]+\.py", body)))
     assert programs == ["kraken-order-semantics-probe.py"], (
         f"the wrapper now names {programs}; the probe's docstring says it targets only the "
         "order-semantics harness, and that sentence must change with it"
     )
-    # The name check alone catches only a SECOND literal. The likelier way a selector grows keeps
-    # the literal as a default and adds an override -- `harness="${PROBE_HARNESS:-...}"`, the `&&`
-    # twin `[ -n "${PROBE_HARNESS:-}" ] && harness="$PROBE_HARNESS"`, or an `os.environ.get` on the
-    # python side -- and the set of names is unchanged by any of them. So pin what BINDS the name.
-    # `re.search`, never `re.match`: an anchored pattern reads a rebind sitting after a condition on
-    # the same line as no binding at all, which is exactly that `&&` form. The lookarounds hold
-    # `$harness` and `==` out. Known spurious trip: a trailing comment on either pinned line, whose
-    # whole stripped text is compared -- the assertion prints what it found, so the repair is to
-    # re-read this docstring's claim and paste the new list in.
-    bindings = [ln.strip() for ln in wrapper.splitlines() if re.search(r"(?<![\w$])harness\s*=(?!=)", ln)]
+    # The name check alone catches only a SECOND literal. A selector likelier grows by keeping the
+    # literal as a default and adding an override -- `harness="${PROBE_HARNESS:-...}"`, the `&&` twin
+    # `[ -n "${PROBE_HARNESS:-}" ] && harness="$PROBE_HARNESS"`, or an `os.environ.get` on the python
+    # side, annotated or not -- and the set of names is unchanged by any of them. So pin what BINDS
+    # the name. `re.search`, never `re.match`: an anchored pattern reads a rebind sitting after a
+    # condition on the same line as no binding at all, which is exactly that `&&` form. The optional
+    # `: str` is why the annotation group is there; the lookarounds hold `$harness` and `==` out.
+    bindings = [ln.strip() for ln in code if re.search(r"(?<![\w$])harness\s*(?::\s*\w*\s*)?=(?!=)", ln)]
     assert bindings == [
         'harness="$repo/infra/scripts/kraken-order-semantics-probe.py"',
         "repo, python, harness = sys.argv[1], sys.argv[2], sys.argv[3]",
     ], f"the wrapper's harness bindings changed: {bindings}"
-    assert wrapper.count("os.execve(python, [python, harness, *sys.argv[4:]]") == 1
+    # `harness` is only as fixed as what it is READ FROM. A write to `sys.argv[3]` ahead of the unpack
+    # leaves both bindings byte-identical and still swaps the program the execve runs.
+    argv_writes = [ln.strip() for ln in code if re.search(r"sys\.argv\s*(?:\[[^\]]*\])?\s*=(?!=)", ln)]
+    assert not argv_writes, f"the wrapper writes sys.argv before the unpack reads it: {argv_writes}"
+    assert body.count("os.execve(python, [python, harness, *sys.argv[4:]]") == 1
     # Both bindings can stay untouched while an alias carries an override into the handoff instead --
     # `"${PROBE_HARNESS:-$harness}" "$@"`, or a second variable passed in `$harness`'s place. This is
     # the argument the python side actually receives, so it is the last place a target can be swapped.
-    assert wrapper.count('"$harness" "$@"') == 1
+    assert body.count('"$harness" "$@"') == 1
+    # Left outside this pin on purpose: an INDIRECT rebind -- `globals()["harness"] = ...`, a shell
+    # `read` into the name, an alias of the `sys.argv` list. Each reads as odd on sight, which is the
+    # property a regex cannot supply. Known spurious trips are all edits to the four pinned lines
+    # themselves -- a trailing comment, a reflow, renaming `python`, an added fixed flag. Every
+    # assertion prints what it found: the repair is to re-read the docstring's claim above and paste
+    # the new value in, never to loosen the check.
 
 
 def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text():
@@ -239,3 +253,8 @@ def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text(
     # reader of the source, and this scan is a reader of the source.
     present = sorted(name for name in FORBIDDEN | CREDENTIAL_ACCESSORS if name in text)
     assert not present, f"write or credential-accessor names in the probe's source: {present}"
+    # A write that names no client method at all -- a hand-rolled signed REST call built with httpx --
+    # is invisible to the stub AND to the scan above, since it borrows neither the adapter's methods
+    # nor its credential properties. These two tokens are what such a call cannot do without.
+    signing = sorted(t for t in ("private/", "API-Sign") if t in text)
+    assert not signing, f"hand-rolled venue signing in the probe's source: {signing}"

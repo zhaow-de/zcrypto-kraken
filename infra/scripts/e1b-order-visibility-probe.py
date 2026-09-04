@@ -22,16 +22,28 @@ probe builds and this one does not — and adding any argument flatten does not 
 like-for-like comparison this run exists to make.
 
 Credentials come from the environment and are never stored, echoed or logged; the refusal names the
-VARIABLES. On the engine host, run inside the engine image with the flatten wrapper's own shape —
-`--env-file /opt/zcrypto-engine/engine.env` and this script mounted in read-only — but with
-`--entrypoint python`, NOT flatten's value: flatten overrides to `zcrypto` because it runs a
+VARIABLES. On the engine host, run it inside the engine image, source on stdin:
+
+    sudo docker run --rm -i --env-file /opt/zcrypto-engine/engine.env --entrypoint python <the engine image@digest> - < e1b-order-visibility-probe.py
+
+Stdin rather than a mount because the engine host carries no repo checkout (`docs/reference/fleet.md`
+puts that on the workstation), so a mount would need the file copied there first and would leave it
+behind; this script registers no arguments, so `-` needs no argv after it. The image@digest the
+engine actually runs is the engine row of `docs/reference/fleet-pins.md`.
+
+`--entrypoint python` is NOT flatten's value: flatten overrides to `zcrypto` because it runs a
 subcommand, this is a plain script, and bare `python` is the image's venv interpreter
-(`infra/docker/Dockerfile` puts `/app/.venv/bin` first on PATH). The override itself is the
+(`infra/docker/Dockerfile` puts `/app/.venv/bin` first on PATH). Having an override at all is the
 load-bearing part, for the reason the flatten template also states: the image's ENTRYPOINT is a
-`sh -c` launcher that `set --`s over whatever you appended and execs `zcrypto capture` with the
-trade key in its environment — omit it and your arguments are discarded and this never runs.
+`sh -c` launcher that builds its own argument list and execs `zcrypto capture` with the trade key in
+its environment, never reading what follows the image — omit the override and this does not run.
 `infra/scripts/probe-with-vaulted-key.sh` must not be used for this: its target is fixed to the
 order-semantics harness, which places and cancels orders.
+
+Its nine reads run beside the still-running engine and share the trade key with it, so one engine
+order or cancel may be rejected around them; the engine reconciles that at its next 4-hourly
+boundary. Run it inside the inter-cycle gap rather than across a boundary (00/04/08/12/16/20 UTC),
+which is the same window the engine's own converges take.
 
 Nine venue calls: eight order-status reads, plus the one `request_instruments` the populated arm
 needs to obtain an instrument to cache.
