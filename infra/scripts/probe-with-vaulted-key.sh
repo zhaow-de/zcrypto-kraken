@@ -9,11 +9,13 @@
 # Properties, each load-bearing:
 #   * the target is FIXED. Arguments are forwarded to the harness; none of them selects a program.
 #   * BOTH interpreters run `-I` (isolated), and the flag is load-bearing rather than tidy.
-#     Without it the cwd leads `sys.path` and the environment is honoured, so a file in the
+#     Without it the cwd leads `sys.path` and PYTHON's environment is honoured, so a file in the
 #     operator's cwd shadows an import, `PYTHONPATH` redirects one, and `PYTHONINSPECT=1`
 #     drops to an interactive prompt after the program exits with the credential still in
 #     `os.environ` -- the "shell you keep" the refusal text promises this is not. Measured
-#     under a pty: without `-I` the prompt appears, with it there is none.
+#     under a pty: without `-I` the prompt appears, with it there is none. What `-I` does NOT
+#     close is bash's and the loader's environment -- `BASH_ENV`, `LD_PRELOAD`, `PATH` are
+#     the operator's own and no flag in this file reaches them.
 #   * the decrypted values go straight into the exec'd child's environment. They are never echoed,
 #     never written to a file, and never placed on a command line -- `ps` shows the harness's flags
 #     and nothing else. One process throughout, so they never cross a pipe either.

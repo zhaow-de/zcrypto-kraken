@@ -13,11 +13,13 @@
 # `set -euo pipefail` either -- a shell function named `exec` there shadows the builtin.
 #
 # BOTH interpreters run `-I` (isolated), and the flag is load-bearing rather than tidy.
-# Without it the cwd leads `sys.path` and the environment is honoured, so a file in the
+# Without it the cwd leads `sys.path` and PYTHON's environment is honoured, so a file in the
 # operator's cwd shadows an import, `PYTHONPATH` redirects one, and `PYTHONINSPECT=1`
 # drops to an interactive prompt after the program exits with the credential still in
 # `os.environ` -- the "shell you keep" the refusal text promises this is not. Measured
-# under a pty: without `-I` the prompt appears, with it there is none.
+# under a pty: without `-I` the prompt appears, with it there is none. What `-I` does NOT
+# close is bash's and the loader's environment -- `BASH_ENV`, `LD_PRELOAD`, `PATH` are
+# the operator's own and no flag in this file reaches them.
 #
 # This one is deliberately NOT in `.claude/settings.json`, and that absence is the design. The probe
 # reads and places test orders under its own harness's controls; this script SENDS ORDERS that stay

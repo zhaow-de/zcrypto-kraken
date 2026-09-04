@@ -399,12 +399,30 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
     _ARGV_LINE = '\' "$repo" "$venv_python" "$harness" "$@"'
     _EXEC_LINE = 'os.execve(python, [python, "-I", harness, *sys.argv[4:]],'
     _PYTHON_LINE = 'venv_python="$repo/.venv/bin/python"'
-    # sha256 of `probe-with-vaulted-key.sh` from its `set -euo pipefail` line down, read from the
-    # tree on 2026-09-04. Update it only with a deliberate, re-verified change to that wrapper.
+    _SHEBANG = "#!/usr/bin/env bash"
+    # sha256 of `probe-with-vaulted-key.sh` from its `set -euo pipefail` line down, over the RAW
+    # BYTES, read from the tree on 2026-09-04.
+    #
+    # This pin drops NOTHING, on purpose. There are two options and no third: a raw digest cannot be
+    # blind but reddens on a comment edit; a canonicalised one survives comment edits and is blind in
+    # exactly what it drops. The pressure this one will feel is deletion -- "it trips on a comment".
+    # If canonicalisation is ever added to relieve that, strip ONLY above the anchor and leave the
+    # quoted interpreter payload byte for byte: in that region a `#` is data and an apostrophe ends
+    # the string, so the dropping rule earns the same adversarial read as the guard it serves.
     _PROBE_BODY_SHA256 = "7b4e19d8a370ea794167b2f86f73ea1f45cc9cc63d792cb839747bacfac7ad8c"
 
     def _src(self, name: str) -> str:
         return (_REPO / "infra" / "scripts" / name).read_text()
+
+    def _body_bytes(self, name: str) -> bytes:
+        """The body from the anchor line down, as BYTES.
+
+        Bytes rather than decoded text because `read_text()` decodes with universal newlines: a CRLF
+        rewrite of the whole file decodes to the same string and hashes identically -- measured, not
+        assumed. A digest that cannot see a line-ending rewrite is not pinning the bytes it claims.
+        """
+        raw = (_REPO / "infra" / "scripts" / name).read_bytes()
+        return raw[raw.index(b"\nset -euo pipefail\n") + 1 :]
 
     def _body(self, name: str) -> list[str]:
         """Everything from the `set -euo pipefail` LINE down.
@@ -420,7 +438,9 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
     def test_the_target_is_assigned_exactly_once_from_a_literal(self, name: str) -> None:
         assignments = re.findall(r"^\s*harness=(.*)$", self._src(name), re.MULTILINE)
         assert len(assignments) == 1, f"{name} assigns its target {len(assignments)} times"
-        assert re.fullmatch(r'"\$repo/infra/scripts/[^"$]+\.py"', assignments[0]), assignments[0]
+        # `[^"$]+` excluded `$` but not a backtick or `..` -- `\`printenv X\`.py` and a traversal
+        # both passed. The target is a plain filename in one known directory; spell that.
+        assert re.fullmatch(r'"\$repo/infra/scripts/[A-Za-z0-9_-]+\.py"', assignments[0]), assignments[0]
 
     @pytest.mark.parametrize("name", WRAPPERS)
     def test_nothing_but_those_literals_routes_the_target_to_the_child(self, name: str) -> None:
@@ -443,8 +463,12 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
         assertion here -- and a shell function named `exec` declared there shadows the builtin."""
         lines = self._src(name).split("\n")
         above = lines[: lines.index("set -euo pipefail")]
-        # The shebang is itself a `#` line, so a comment-and-blank filter leaves nothing at all.
-        offenders = [ln for ln in above if ln.strip() and not ln.lstrip().startswith("#")]
+        # The shebang EXECUTES and is also a `#` line, so a comment-and-blank filter waves it
+        # through -- which is a hole, not a detail: `#!/usr/bin/env -S BASH_ENV=... bash` makes bash
+        # source a file before line 1, and a function named `exec` defined there shadows the builtin
+        # and receives this script's whole command line. Pinned verbatim rather than filtered.
+        assert lines[0] == self._SHEBANG, lines[0]
+        offenders = [ln for ln in above[1:] if ln.strip() and not ln.lstrip().startswith("#")]
         assert offenders == [], offenders
 
     def test_the_sibling_body_is_the_one_this_was_copied_from(self) -> None:
@@ -452,8 +476,14 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
         and every other assertion here stays green -- which is how a two-file edit would ship."""
         import hashlib
 
-        body = "\n".join(self._body("probe-with-vaulted-key.sh"))
-        assert hashlib.sha256(body.encode()).hexdigest() == self._PROBE_BODY_SHA256
+        digest = hashlib.sha256(self._body_bytes("probe-with-vaulted-key.sh")).hexdigest()
+        assert digest == self._PROBE_BODY_SHA256, (
+            "the sibling wrapper's body changed. Recompute with\n"
+            "  sed -n '/^set -euo pipefail$/,$p' infra/scripts/probe-with-vaulted-key.sh | sha256sum\n"
+            "and READ THE BODY DIFF before touching the constant: this pin exists so an edit to that "
+            "file cannot ride into this one unseen, and updating the hex without reading the diff is "
+            "the one way to defeat it."
+        )
 
     def test_the_two_wrappers_differ_in_exactly_one_line_below_the_shebang_block(self) -> None:
         """The identity claim in the header, as an assertion. It is also what closes the selector
@@ -767,6 +797,18 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
         """The true positive beside it -- a guard that never counts anything skips nothing."""
         rec = _Recorder(balances=[_Balance("SOL", _LIMITS.ordermin)])
         assert self._state(rec).non_eur_assets == ("SOL",)
+
+    def test_a_zero_balance_on_another_asset_is_not_reported_as_held(self) -> None:
+        """The venue lists an asset the account no longer holds; printing it as held is the mirror
+        of judging every row by this pair's floors."""
+        rec = _Recorder(balances=[_Balance("XXBT", 0.0)])
+        assert self._state(rec).non_eur_assets == ()
+
+    def test_a_foreign_asset_held_in_size_is_reported_whatever_this_pairs_floors_say(self) -> None:
+        """The true positive: 0.01 BTC is under SOL's `ordermin`, and the plan header is also how
+        the operator reads the account. Judging it by this pair's floors is what printed `(none)`."""
+        rec = _Recorder(balances=[_Balance("XXBT", 0.01)])
+        assert self._state(rec).non_eur_assets == ("XXBT",)
 
     def test_a_balance_whose_notional_misses_costmin_does_not_satisfy_it(self) -> None:
         """`flatten` classifies that balance `dust` and does not sell it, so counting it here would

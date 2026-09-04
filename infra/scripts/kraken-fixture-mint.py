@@ -379,17 +379,20 @@ def render_plan(legs: list[Leg], existing: AccountState, pair: str, stamp: str) 
         )
     total = sum(leg.notional_eur for leg in legs if leg.order_type == "MARKET")
     lines.append(f"  spends at market: EUR {total:.2f} (the resting leg rests, it does not spend)")
-    # What the repo actually holds about id length is one MEASURED acceptance and one unmeasured
-    # claim that contradicts it: the order-semantics probe's ids passed at `_PROVEN_COID_LENGTH`,
-    # while a comment in that same probe asserts an 18-character venue truncation which those very
-    # ids would not have survived. The operator gets the measured number and the caveat, because
-    # picking one silently is how a contradiction becomes a fact.
+    # What the repo holds about id length is one measurement and one claim that cannot both be read
+    # as written. The probe's ids were ACCEPTED AT SUBMIT at `_PROVEN_COID_LENGTH`; a comment in that
+    # same probe asserts an 18-character venue truncation. Acceptance at submit does not refute a
+    # truncation in what the venue STORES -- no run has ever read an id back -- so the two are not
+    # strictly contradictory; what is self-inconsistent is the comment, which relies on an infix
+    # sitting past character 18 surviving that very cut. The operator gets the measured number and
+    # the open question, because picking one silently is how a contradiction becomes a fact.
     longest = max(len(mint_client_order_id(leg.kind, stamp)) for leg in legs)
     lines.append(
         f"  longest client order id here: {longest} characters. The only MEASURED acceptance on "
-        f"this adapter is the order-semantics probe's shape, at {_PROVEN_COID_LENGTH}; a comment in "
-        f"that probe also claims an 18-character truncation, which is unmeasured and inconsistent "
-        f"with those ids passing. A rejection naming an id belongs in the version's "
+        f"this adapter is the order-semantics probe's shape, at {_PROVEN_COID_LENGTH}, and that is "
+        f"acceptance AT SUBMIT -- no id has ever been read back from the venue. A comment in that "
+        f"probe also claims an 18-character truncation. Record what the venue does with these ids "
+        f"-- accepted, refused, or echoed back shortened -- in the version's "
         f"docs/reference/adapter-verification/ row."
     )
     return "\n".join(lines)
@@ -489,9 +492,10 @@ def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tup
     second copy of it here.
 
     The floors belong to the mint pair and to no other row. Every OTHER non-EUR code is listed as
-    held whatever its size, because this line is also what the operator reads to see the account,
-    and judging a BTC balance by SOL's `ordermin` at SOL's bid would print `non-EUR: (none)` over an
-    account holding a thousand euros of it. Nothing is gated on those codes -- only `base` is.
+    held at any size above zero, because this line is also what the operator reads to see the
+    account, and judging a BTC balance by SOL's `ordermin` at SOL's bid would print
+    `non-EUR: (none)` over an account holding a thousand euros of it. A zero row is still not a
+    holding. Nothing is gated on those codes -- only `base` is.
     """
     held = set()
     for row in balances:
