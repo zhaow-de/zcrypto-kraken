@@ -353,7 +353,7 @@ def check_confirmation(typed: str) -> None:
         )
 
 
-def render_plan(legs: list[Leg], existing: AccountState, pair: str) -> str:
+def render_plan(legs: list[Leg], existing: AccountState, pair: str, stamp: str) -> str:
     """What the operator reads before deciding. Every leg states what it would spend."""
     lines = [
         f"account already holds -- resting: {existing.resting_pairs or '(none)'} - "
@@ -366,12 +366,23 @@ def render_plan(legs: list[Leg], existing: AccountState, pair: str) -> str:
     for leg in legs:
         price = f"@ {leg.price}" if leg.price is not None else "@ market"
         lev = f" leverage {leg.leverage}" if leg.leverage is not None else ""
+        coid = mint_client_order_id(leg.kind, stamp)
         lines.append(
             f"  {leg.kind:<8} {leg.side} {leg.quantity} {leg.pair} {price} "
-            f"= EUR {leg.notional_eur:.2f} [{leg.account_type} {leg.time_in_force}]{lev}"
+            f"= EUR {leg.notional_eur:.2f} [{leg.account_type} {leg.time_in_force}]{lev} as {coid}"
         )
     total = sum(leg.notional_eur for leg in legs if leg.order_type == "MARKET")
     lines.append(f"  spends at market: EUR {total:.2f} (the resting leg rests, it does not spend)")
+    # The ids are printed, and so is what nobody has established about them: no accepted client
+    # order id LENGTH is recorded anywhere in this repo -- not in the adapter-verification rows, not
+    # in cli/. So a rejection naming the id is a finding rather than a bug in this run, and its home
+    # is the adapter-verification row this attended pass writes.
+    longest = max(len(mint_client_order_id(leg.kind, stamp)) for leg in legs)
+    lines.append(
+        f"  longest client order id: {longest} characters. No accepted length is recorded for this "
+        f"adapter -- if a leg is rejected on its id, record the limit in the version's "
+        f"docs/reference/adapter-verification/ row."
+    )
     return "\n".join(lines)
 
 
@@ -386,9 +397,10 @@ def require_credentials() -> tuple[str, str]:
     if missing:
         raise Refusal(
             f"REFUSING: {' and '.join(missing)} not set in the environment.\n"
-            f"Run through infra/scripts/probe-with-vaulted-key.sh, which puts the vaulted trade "
+            f"Run through infra/scripts/mint-with-vaulted-key.sh, which puts the vaulted trade "
             f"key into this process's environment and nothing else -- it never reaches a file, a "
-            f"shell you keep, or a command line.",
+            f"shell you keep, or a command line. It is this script's own wrapper: the probe's "
+            f"names a different program and cannot run this one.",
         )
     return os.environ[API_KEY_VAR], os.environ[API_SECRET_VAR]
 
@@ -427,7 +439,7 @@ async def read_pair(client, pair: str) -> tuple[float, object]:
     return float(bids[0].price), row
 
 
-async def read_account(client, pair: str, limits: PairLimits) -> AccountState:
+async def read_account(client, pair: str, limits: PairLimits, best_bid: float) -> AccountState:
     """What the account already holds, so a re-run adds nothing it already has.
 
     Every kwarg here is `flatten`'s own, verbatim, because a read this script makes in a different
@@ -452,11 +464,11 @@ async def read_account(client, pair: str, limits: PairLimits) -> AccountState:
     return AccountState(
         resting_pairs=tuple({str(getattr(o, "instrument_id", "")).split(".")[0] for o in orders or ()}),
         position_pairs=tuple({str(getattr(p, "instrument_id", "")).split(".")[0] for p in positions or ()}),
-        non_eur_assets=_held_bases(getattr(state, "balances", ()) or (), base, limits.ordermin),
+        non_eur_assets=_held_bases(getattr(state, "balances", ()) or (), base, limits, best_bid),
     )
 
 
-def _held_bases(balances, base: str, ordermin: float) -> tuple[str, ...]:
+def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tuple[str, ...]:
     """The non-EUR bases held in a size the fixture's sell path could actually use.
 
     Two things a bare currency-code set gets wrong, both in the direction of SKIPPING the spot leg
@@ -471,7 +483,12 @@ def _held_bases(balances, base: str, ordermin: float) -> tuple[str, ...]:
         code = str(getattr(getattr(row, "currency", None), "code", "") or "")
         if not code or code in ("EUR", "ZEUR"):
             continue
-        if float(getattr(row, "free", 0.0) or 0.0) < ordermin:
+        free = float(getattr(row, "free", 0.0) or 0.0)
+        # BOTH floors, because `flatten` classifies a balance against both and this guard exists to
+        # predict what `flatten` will find sellable. A quantity over `ordermin` whose notional is
+        # under `costmin` is `dust` there and is not sold, so counting it here would skip the spot
+        # leg and leave the sell path with a balance the command declines to touch.
+        if free < limits.ordermin or free * best_bid < limits.costmin:
             continue
         held.add(resolve_base(code, frozenset({base})) or code)
     return tuple(sorted(held))
@@ -486,9 +503,14 @@ async def submit(client, leg: Leg, instrument, client_order_id: str) -> None:
     price = Price.from_str(str(leg.price)) if leg.price is not None else None
     # `from_str` parses a repr, and a float whose shortest repr runs past the venue's precision
     # comes back as a DIFFERENT number without raising. Both operands are `_floor_to_step` outputs
-    # today, whose reprs are exact decimals, so this asserts the property rather than fixing it.
-    assert float(quantity) == leg.quantity, f"{leg.kind} quantity changed in translation"
-    assert price is None or float(price) == leg.price, f"{leg.kind} price changed in translation"
+    # today, whose reprs are exact decimals, so this states the property rather than fixing it -- and
+    # it is a raise rather than an `assert` because this is the last check on the number that reaches
+    # the venue, and `assert` is the one guard shape `-O` removes without touching the file.
+    if float(quantity) != leg.quantity or (price is not None and float(price) != leg.price):
+        raise Refusal(
+            f"REFUSING: the {leg.kind} leg's numbers changed in translation to the venue's types "
+            f"({leg.quantity} -> {quantity}, {leg.price} -> {price}); nothing further was sent.",
+        )
     await client.submit_order(
         account_id=AccountId(FIXTURE_ACCOUNT_ID),
         instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[leg.pair]),
@@ -561,9 +583,12 @@ async def _run(
         f"{args.pair} now: best bid {best_bid}, ordermin {limits.ordermin}, "
         f"costmin {limits.costmin} (read this run, not remembered)"
     )
-    existing = await read_account(client, args.pair, limits)
+    existing = await read_account(client, args.pair, limits, best_bid)
     legs = plan_legs(pair=args.pair, limits=limits, best_bid=best_bid, existing=existing)
-    print(render_plan(legs, existing, args.pair))
+    # Minted BEFORE the plan is printed and reused at submit, so the ids the operator reads are the
+    # ids that go out -- not a second set generated after they approved the first.
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    print(render_plan(legs, existing, args.pair, stamp))
 
     if not args.execute:
         print("\nDRY RUN -- nothing was sent. Re-run with --execute to mint.")
@@ -574,7 +599,6 @@ async def _run(
         raise Refusal("REFUSING: --execute needs a terminal for the confirmation")
     check_confirmation(prompt(f"\nType {CONFIRM_WORD} to send the plan above: ").strip())
 
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     for leg in legs:
         coid = mint_client_order_id(leg.kind, stamp)
         await submit(client, leg, instrument, coid)

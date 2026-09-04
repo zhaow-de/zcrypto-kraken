@@ -375,6 +375,53 @@ class TestTheDoubleMintGuard:
         return mint.plan_legs(pair="SOL/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=state)
 
 
+class TestTheVaultedKeyWrappersHaveFixedTargets:
+    """Neither wrapper may grow a selector, and this reads BOTH because the property is symmetric.
+
+    The sibling is the one carrying a wildcarded standing grant in `.claude/settings.json`, so it is
+    the more dangerous of the two to make selectable: an argument that chose a program would turn
+    that grant into "run anything with the live trade key". This script's own wrapper is not
+    allowlisted, which is deliberate and is the owner's to change -- so nothing here asserts on
+    `settings.json`; what is pinned is only that each wrapper's target is a literal path.
+    """
+
+    WRAPPERS = ("mint-with-vaulted-key.sh", "probe-with-vaulted-key.sh")
+
+    @pytest.mark.parametrize("name", WRAPPERS)
+    def test_the_target_is_assigned_exactly_once_from_a_literal(self, name: str) -> None:
+        src = (_REPO / "infra" / "scripts" / name).read_text()
+        assignments = re.findall(r"^harness=(.*)$", src, re.MULTILINE)
+        assert len(assignments) == 1, f"{name} assigns its target {len(assignments)} times"
+        target = assignments[0]
+        assert target.startswith('"$repo/infra/scripts/') and target.endswith('.py"'), target
+        for selector in ("$1", "$2", "$@", "$*", "${1", "$MINT", "$HARNESS"):
+            assert selector not in target, f"{name}'s target is selectable via {selector}"
+
+    @pytest.mark.parametrize("name", WRAPPERS)
+    def test_the_target_exists(self, name: str) -> None:
+        src = (_REPO / "infra" / "scripts" / name).read_text()
+        target = re.search(r'^harness="\$repo/(.*)"$', src, re.MULTILINE)
+        assert target, f"{name}'s target is not the expected literal shape"
+        assert (_REPO / target.group(1)).is_file(), target.group(1)
+
+    def test_the_two_wrappers_do_not_point_at_the_same_program(self) -> None:
+        """Two fixed targets is the design; two wrappers onto one program is a copy nobody needs."""
+        targets = {
+            re.search(r"^harness=(.*)$", (_REPO / "infra" / "scripts" / n).read_text(), re.MULTILINE).group(1)
+            for n in self.WRAPPERS
+        }
+        assert len(targets) == 2, targets
+
+    def test_this_scripts_refusal_names_the_wrapper_that_can_run_it(self, monkeypatch) -> None:
+        """The refusal named the sibling, whose target is a different program -- so the operator was
+        sent to a wrapper that cannot run this script, at the one moment they need it to."""
+        for var in (mint.API_KEY_VAR, mint.API_SECRET_VAR):
+            monkeypatch.delenv(var, raising=False)
+        with pytest.raises(mint.Refusal) as exc:
+            mint.require_credentials()
+        assert "mint-with-vaulted-key.sh" in str(exc.value)
+
+
 class TestTheConfirmGate:
     """`--execute` alone sends nothing; the typed word is the second half of the gate."""
 
@@ -417,8 +464,13 @@ class _Recorder:
         return _Book()
 
     async def request_order_status_reports(self, account, **kw):
+        """`open_only` is a MODE here too, and answering the same in both is how the position read
+        hid its own defect. Without it the venue also returns CLOSED orders -- the previous pass's
+        cancelled FIXMINT rows -- and the resting guard would skip its leg on every later run."""
         self.calls.append("request_order_status_reports")
         self.read_kwargs["orders"] = kw
+        if kw.get("open_only") is not True:
+            return [*self._orders, _Order("CLOSED-LEFTOVER.KRAKEN")]
         return list(self._orders)
 
     async def request_position_status_reports(self, account, **kw):
@@ -582,7 +634,7 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
     def _state(self, rec) -> object:
         import asyncio
 
-        return asyncio.run(mint.read_account(rec, "SOL/EUR", _LIMITS))
+        return asyncio.run(mint.read_account(rec, "SOL/EUR", _LIMITS, _BEST_BID))
 
     def test_positions_are_requested_in_margin_mode(self) -> None:
         """The client returns an empty vector in the cash default, whatever the account holds."""
@@ -590,6 +642,17 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
         self._state(rec)
         assert rec.read_kwargs["positions"]["account_type"] is AccountType.MARGIN
         assert rec.read_kwargs["positions"]["use_spot_position_reports"] is False
+
+    def test_orders_are_requested_open_only(self) -> None:
+        rec = _Recorder()
+        self._state(rec)
+        assert rec.read_kwargs["orders"] == {"open_only": True}
+
+    def test_an_existing_resting_order_is_actually_SEEN(self) -> None:
+        """The resting guard's own positive trace: until now it had only plan-level ones, so the
+        projection from an order row to a pair was never exercised against a row that exists."""
+        rec = _Recorder(orders=[_Order()])
+        assert self._state(rec).resting_pairs == ("SOL/EUR",)
 
     def test_an_existing_margin_position_is_actually_SEEN(self) -> None:
         """The guard proven on a position that exists, not on an empty list that proves nothing."""
@@ -614,12 +677,23 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
         rec = _Recorder(balances=[_Balance("SOL", _LIMITS.ordermin)])
         assert self._state(rec).non_eur_assets == ("SOL",)
 
+    def test_a_balance_whose_notional_misses_costmin_does_not_satisfy_it(self) -> None:
+        """`flatten` classifies that balance `dust` and does not sell it, so counting it here would
+        leave the sell path a balance the command declines to touch. Quantity alone is not enough."""
+        import asyncio
+
+        limits = mint.PairLimits(ordermin=1.0, costmin=20.0, lot_step=0.001, price_step=0.0001)
+        rec = _Recorder(balances=[_Balance("SOL", 1.5)])
+        state = asyncio.run(mint.read_account(rec, "SOL/EUR", limits, best_bid=2.0))
+        assert 1.5 >= limits.ordermin and 1.5 * 2.0 < limits.costmin
+        assert state.non_eur_assets == ()
+
     def test_the_venues_own_spelling_of_an_asset_is_resolved(self) -> None:
         """`XXDG` is how the venue spells DOGE; compared raw it never equals the pair's base."""
         import asyncio
 
         rec = _Recorder(balances=[_Balance("XXDG", 1000.0)])
-        state = asyncio.run(mint.read_account(rec, "DOGE/EUR", _LIMITS))
+        state = asyncio.run(mint.read_account(rec, "DOGE/EUR", _LIMITS, _BEST_BID))
         assert state.non_eur_assets == ("DOGE",)
 
     def test_eur_never_counts_as_the_non_eur_balance(self) -> None:
@@ -661,6 +735,7 @@ class TestWhatIsSentIsWhatWasPlanned:
         for leg, kw in zip(legs, sent, strict=True):
             assert float(kw["quantity"]) == leg.quantity, leg.kind
             assert (None if kw["price"] is None else float(kw["price"])) == leg.price, leg.kind
+            assert str(kw["instrument_id"]) == mint.INSTRUMENT_IDS[leg.pair], leg.kind
 
     def test_leverage_and_account_type_reach_the_venue_as_planned(self) -> None:
         """The margin leg is the only one carrying either; a spot leg that did is a position
