@@ -37,7 +37,7 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 
 Main runs it from an in-session `CronCreate` job — session-only, fires only while main is idle, **expires after seven days**: reinstall it at every restart and every week.
 
-1. `ListAgents`. A session missing for one tick is tolerated; missing for two is reported to the owner.
+1. `ListAgents`, then prove each listed session ALIVE — `kill -0` on the PID in its `/tmp/cc-socks/<pid>.sock` name. `ListAgents` keeps listing a registered session after its process has exited, so a listed session with no process is DEAD, never idle, and its row is stale. A session missing or dead for one tick is tolerated; for two it is reported to the owner.
 2. **Poke first.** A payload session that is idle with an open assignment gets a one-line message: what it last declared and a request to continue. This is the whole enforcement mechanism for announced-but-not-started work — a stalled turn resumes on any message, and the owner measured this working where inspection would have been overkill.
 3. Read git state — branches moved, worktrees, open PRs — and the memo's work-package markers.
 4. Post one report to the owner: per session, what it is on (branch / topic / spec) and whether the branch moved since last tick; the backlog's next three items; anything flagged.
