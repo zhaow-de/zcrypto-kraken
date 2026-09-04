@@ -210,6 +210,15 @@ def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
     assert len(exec_lines) == 1, f"the wrapper's single exec line is now {len(exec_lines)} lines"
     cut = exec_lines[0]
     preamble = [ln for ln in lines[1:cut] if ln.strip() and not ln.lstrip().startswith("#")]
+    # Dropping those comment lines is sound only while no string SPANS preamble lines -- if one did,
+    # a `#`-leading line there would be data, which is precisely how the `exec ` region caught this
+    # pin out. Balanced quotes across the lines actually kept is that condition. (Apostrophes inside
+    # preamble comments do not count: bash ignores a comment to end-of-line, so they open nothing.)
+    for quote in ("'", '"'):
+        assert sum(ln.count(quote) for ln in preamble) % 2 == 0, (
+            f"a {quote} string now spans preamble lines, so dropping the comment lines above it is "
+            "no longer sound -- pin the preamble verbatim too"
+        )
     body = "\n".join([lines[0], *preamble, *lines[cut:]])
     # Named first because a digest alone says nothing about WHAT is protected: this wrapper runs one
     # program and the probe's docstring tells operators so.
