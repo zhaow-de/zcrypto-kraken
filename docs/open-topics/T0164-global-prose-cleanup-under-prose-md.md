@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'refine-rules round 8 is on develop: `git log origin/develop --grep="^Refine-Round-Closed: 2026-09-05" --format=%h` is non-empty'
+ripe_when: 'refine-rules round 8 is on develop: `git log origin/develop --grep="^Refine-Round-Closed: 2026-09-04T23:52:07Z" --format=%h` is non-empty'
 ---
 
 # The global prose cleanup under `prose.md`

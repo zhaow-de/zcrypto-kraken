@@ -107,7 +107,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0163 — client order id length is unmeasured](T0163-client-order-id-length-unmeasured.md) — the probe's 18-character truncation comment cannot be squared with its own 27-character ids passing; ripe when a versioned adapter-verification row quotes a minted id as the venue returned it.
 
-- [T0164 — the global prose cleanup under `prose.md`](T0164-global-prose-cleanup-under-prose-md.md) — every existing comment, docstring and living doc brought under the round-8 bar in three assignments, measured by the tripwire before and after; ripe when refine-rules round 8 is on develop (`git log origin/develop --grep="^Refine-Round-Closed: 2026-09-05"` non-empty).
+- [T0164 — the global prose cleanup under `prose.md`](T0164-global-prose-cleanup-under-prose-md.md) — every existing comment, docstring and living doc brought under the round-8 bar in three assignments, measured by the tripwire before and after; ripe when refine-rules round 8 is on develop (`git log origin/develop --grep="^Refine-Round-Closed: 2026-09-04T23:52:07Z"` non-empty).
 
 ### Partially done<a name="partially-done-1"></a>
 
