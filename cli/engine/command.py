@@ -641,7 +641,8 @@ class _ExecutionMetrics:
             "Order events arriving on the external strategy topic, by disposition: matched means the "
             "event belonged to a restart-adopted order this engine's ledger vouches for; unmatched "
             "means it belonged to no such order and was acted on nowhere -- the account owner's own "
-            "hand settle, or equally activity nobody sanctioned.",
+            "hand settle, activity nobody sanctioned, or a fill on an order the startup pass could "
+            "not see.",
             ["disposition"],
             registry=registry,
         )
@@ -1945,7 +1946,9 @@ def flatten(
 ) -> None:
     """Close every open position and sell every non-EUR balance at market, account-wide.
 
-    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, 1 refused with nothing sent, 2 something is still open, 3 the venue could not be read before anything was sent."""
+    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, 1 refused with nothing sent, 2 something is still open, 3 the venue could not be read before anything was sent.
+
+    The cancel is account-wide and complete; the flat verdict is not. Neither the plan nor the final read can see a resting order on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC, so exit 0 is not proof those pairs are clear -- confirm open orders on Kraken's own page, and re-run if one is there."""
     # Imported HERE, not at module scope: `cli.engine.flatten` pulls nautilus (~1 s) and
     # `zcrypto --help` must never pay it -- the same reason `cli.engine.node` is lazy above.
     from cli.engine.flatten import run_flatten

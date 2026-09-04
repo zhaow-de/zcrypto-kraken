@@ -728,7 +728,10 @@ class ProbeExecutor:
         At level NONE the pass cancels EVERYTHING, ledgered reducers included: a trip cancels
         resting orders, `_poll` already revokes even a resting close when the level drops there, and
         "nothing is working at the venue" must not have a restart-shaped hole -- a kill file that
-        survived the restart is exactly the state the operator pulled the switch for.
+        survived the restart is exactly the state the operator pulled the switch for. The hole this
+        paragraph forbids exists today in a different shape, and it reaches this pass through the
+        same `orders_open` list: `_cancel_resting` states it. "EVERYTHING" is everything the Cache
+        holds, and on a leg Kraken spells two ways a previous process's order is not in it.
 
         EVERY matched row is attached, canceled ones included, before any cancel goes out: a cancel
         is a request, not an outcome, and an order can still fill between it and the venue's answer.
@@ -777,7 +780,7 @@ class ProbeExecutor:
             # startup, including idle ones where nothing could be canceled at all.
             logger.critical(
                 "the exec ledger could not be read at startup -- no row can be reconciled against venue truth%s",
-                " and every resting order will be canceled" if resting else "",
+                " and every resting order the Cache holds will be canceled" if resting else "",
                 exc_info=True,
             )
             rows, finished = {}, {}
@@ -825,7 +828,13 @@ class ProbeExecutor:
 
         A row whose order the cache holds no record of at all is left exactly as it is -- there is
         no venue-truth source for it at this point in startup, and inventing one would be worse than
-        an open row a human can read.
+        an open row a human can read. That miss is SILENT and it is not rare: on the legs
+        `_cancel_resting` names it is what happens to every row whose order the startup reconciliation
+        read cannot resolve, and the order's state does not narrow it -- still resting at the start, or
+        filled/canceled/expired while this process was down, the lookup answers `None` either way. So
+        such a row is neither repaired nor terminated here, and the order behind it is neither attached
+        nor cancelled by the pass above. `_on_external_event` says what becomes of its later fills;
+        `_reconcile_finished_rows` loses the withdrawal sweep to the same miss.
 
         Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
         lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
@@ -962,6 +971,11 @@ class ProbeExecutor:
         the order before this process has a strategy subscribed to anything, so what arrives is a
         venue order whose own `filled_qty` has come DOWN -- and the ledger row beside it still
         carries the quantity this engine recorded, published and sized against.
+
+        This sweep is blind wherever `_reconcile_adopted_rows` is, and for the same reason: a row
+        this engine closed names an order the read cannot resolve on the legs `_cancel_resting`
+        names, so the lookup below answers `None` and the withdrawal this exists to latch on is
+        never compared there.
 
         Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
         ledger write carries its own `try` for the same one: the trip stands behind it, so a
@@ -1743,8 +1757,9 @@ class ProbeExecutor:
     # --- the kill switch -----------------------------------------------------------------------
 
     def _trip_kill(self, reason: str) -> None:
-        """Latch the execution kill switch: create the kill file, pull everything that may still be
-        working at the venue, and stop the plan.
+        """Latch the execution kill switch: create the kill file, pull everything the Cache reports
+        still working at the venue, and stop the plan. "Everything the Cache reports" is narrower
+        than "everything working" on the legs `_cancel_resting` names.
 
         The file's semantics are `00088`'s, untouched -- presence is the whole protocol, the contents
         are for the human who finds it, and NO code path anywhere clears it. That is what makes this
@@ -1803,6 +1818,28 @@ class ProbeExecutor:
         the Cache reports open, which after a restart includes orders the startup pass deliberately
         left resting. That pass makes the same call when it starts up onto a latched kill -- a
         tripped switch has no order it is willing to leave working, however well justified.
+
+        THAT INVARIANT HAS A HOLE, and it is spelling-shaped rather than restart-shaped. An order
+        ALREADY RESTING at the venue when this process started -- a previous process's, or one placed
+        by hand before the start -- reaches the Cache only through startup reconciliation (the
+        executions subscription carries `snap_orders:false`, so no WS event heals it afterwards), and
+        reconciliation obtains open orders through the same adapter read `cli/engine/flatten.py`'s
+        `read_open_orders` documents: the instrument lookup compares Kraken's `AssetPairs` key
+        against the order's altname and drops the row on a miss, silently and with a successful
+        return. On the legs spelled both ways -- `BLIND_ORDER_READ_LEGS` there, BTC/EUR among them --
+        such an order never enters the Cache, so `orders_open` never lists it and `cancel_order` is
+        never called for it. `_adopt_resting_orders` reads the same list and is blind the same way.
+
+        This is the OPPOSITE failure to flatten's, and the difference decides what an operator does.
+        Flatten's cancel is account-wide and reaches a blind leg; only its verdict is blind, so a
+        re-run mitigates. Here the cancel is issued PER ORDER off that list, so an order the list
+        omits is never requested at all: a capability gap, which no retry of the trip closes.
+        `filter_unclaimed_external_orders=False` in `cli/engine/node.py` is necessary for this sweep
+        to reach such an order and is not sufficient.
+
+        Not repaired here. The repair owes a venue-side open-order read at trip time, independent of
+        the Cache -- not a wider Cache query, which reads the same populated set. `T0160` carries the
+        registration and the reading that would settle it.
 
         Best-effort throughout, and never able to stop the trip: a cancel is a request rather than an
         outcome, the rows keep their open states, and a fill racing a cancel still lands through the
@@ -2231,6 +2268,10 @@ class ProbeExecutor:
         Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and
         NOTHING else -- it must never reach `_trip_on_fill`, a row write, or a cancel. That filter
         is what keeps the unknown-order trip scoped while this second stream exists at all.
+        The set is wider than "no ledgered row", and the difference is the hole `_cancel_resting`
+        names: on those legs the pass could not see the order, so its LEDGERED row was never
+        attached, and a fill on it lands here -- no row write, no counters, no overfill trip -- with
+        nothing in the log line saying the ledger knew the order.
         """
         client_order_id = str(getattr(event, "client_order_id", ""))
         attached = self._attached.get(client_order_id)

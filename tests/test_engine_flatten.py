@@ -1749,6 +1749,44 @@ def test_a_clean_sweep_of_a_flat_account_exits_zero(tmp_path):
     assert _run(client, tmp_path) == 0
 
 
+def test_the_blind_legs_are_the_two_way_spelled_basket_legs():
+    """`BLIND_ORDER_READ_LEGS` is frozen text; this recomputes it, so a basket change cannot leave
+    the caveat naming the wrong pairs and the claim stays falsifiable from repo state alone.
+
+    The adapter scans its instrument cache by `raw_symbol` -- Kraken's `AssetPairs` KEY, which is
+    what `PAIR_KEYS` carries -- while an open order is looked up by its own `descr.pair`, the
+    altname, which is what `dump_pair_name` derives. A leg whose two spellings differ is a leg the
+    lookup misses.
+    """
+    from cli.backfill.read import dump_pair_name
+    from cli.engine.store import BASKET, PAIR_KEYS
+
+    two_way = {symbol for symbol in BASKET if dump_pair_name(symbol) != PAIR_KEYS[symbol]}
+    assert two_way == set(flatten.BLIND_ORDER_READ_LEGS)
+    # Not a degenerate fixture: a basket spelled one way throughout would make the set empty and let
+    # the equality above pass against a caveat that named nothing.
+    assert len(BASKET) == 12 and len(two_way) == 5
+
+
+@pytest.mark.parametrize(("orders", "code", "caveats"), [([[], [], []], 0, 1), ([[], [], [object()]], 2, 0)])
+def test_only_the_flat_verdict_carries_the_legs_the_final_read_cannot_see(tmp_path, orders, code, caveats):
+    """Exit 0 is the one answer that ends an incident, and it is derived from a read blind to an
+    order resting on five legs -- so the caveat rides the zero, or the operator acts on a false
+    all-clear. Exit 2 already sends them back to the venue and is deliberately left alone.
+
+    Asserted on what was ECHOED, and on the line carrying every leg: a caveat computed into a
+    constant and never printed, or one printed without the pairs to go and look at, is the failure
+    this pins.
+    """
+    _armed(tmp_path)
+    lines: list[str] = []
+    assert _run(_flat_client(orders=orders), tmp_path, lines=lines) == code
+    named = [line for line in lines if "cannot see a resting order" in line]
+    assert len(named) == caveats
+    if caveats:
+        assert all(leg in named[0] for leg in flatten.BLIND_ORDER_READ_LEGS)
+
+
 def test_a_flat_row_alone_in_the_final_snapshot_exits_zero(tmp_path):
     """A FLAT row is not a leg and is not a residual; reading it as one would report a flat account
     as partial forever."""
