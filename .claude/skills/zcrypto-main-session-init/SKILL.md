@@ -1,10 +1,10 @@
 ---
-name: zcrypto-main
+name: zcrypto-main-session-init
 description: Start or resume the coordinator session — load the multi-agent protocol, rebuild the coordination table, install the hourly tick
 disable-model-invocation: true
 ---
 
-# zcrypto-main
+# zcrypto-main-session-init
 
 Run this at the start of every `zcrypto-main` session and after every resume. The protocol itself is `docs/reference/multi-agent-protocol.md` — read it first; this skill is only the startup sequence and the tick's text.
 
