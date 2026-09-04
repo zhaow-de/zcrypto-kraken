@@ -5,6 +5,7 @@ client when the credentials are absent. Both are asserted here against a stubbed
 only other place they could be checked is an attended run against real money."""
 
 import asyncio
+import hashlib
 import importlib.util
 import os
 import re
@@ -197,44 +198,34 @@ def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
     file, so it can rot silently if the wrapper ever grows a program selector — this is what would
     notice."""
     wrapper = (REPO / "infra/scripts/probe-with-vaulted-key.sh").read_text()
-    # Comment lines come out first. That wrapper's whole subject is which program it runs, so a
-    # future comment naming another `.py` -- or writing `harness=` while explaining one -- is the
-    # likeliest edit it will ever get, and a pin that reddens on one teaches its next reader to
-    # delete the pin rather than read it.
-    code = [ln for ln in wrapper.splitlines() if not ln.lstrip().startswith("#")]
+    # Comment and blank lines come out first, so re-wording that file's header -- its own subject is
+    # which program it runs, so its comments name `.py` files -- never reddens this.
+    code = [ln.rstrip() for ln in wrapper.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
     body = "\n".join(code)
+    # Named first because a digest alone says nothing about WHAT is protected: this wrapper runs one
+    # program and the probe's docstring tells operators so.
     programs = sorted(set(re.findall(r"[\w-]+\.py", body)))
     assert programs == ["kraken-order-semantics-probe.py"], (
         f"the wrapper now names {programs}; the probe's docstring says it targets only the "
         "order-semantics harness, and that sentence must change with it"
     )
-    # The name check alone catches only a SECOND literal. A selector likelier grows by keeping the
-    # literal as a default and adding an override -- `harness="${PROBE_HARNESS:-...}"`, the `&&` twin
-    # `[ -n "${PROBE_HARNESS:-}" ] && harness="$PROBE_HARNESS"`, or an `os.environ.get` on the python
-    # side, annotated or not -- and the set of names is unchanged by any of them. So pin what BINDS
-    # the name. `re.search`, never `re.match`: an anchored pattern reads a rebind sitting after a
-    # condition on the same line as no binding at all, which is exactly that `&&` form. The optional
-    # `: str` is why the annotation group is there; the lookarounds hold `$harness` and `==` out.
-    bindings = [ln.strip() for ln in code if re.search(r"(?<![\w$])harness\s*(?::\s*\w*\s*)?=(?!=)", ln)]
-    assert bindings == [
-        'harness="$repo/infra/scripts/kraken-order-semantics-probe.py"',
-        "repo, python, harness = sys.argv[1], sys.argv[2], sys.argv[3]",
-    ], f"the wrapper's harness bindings changed: {bindings}"
-    # `harness` is only as fixed as what it is READ FROM. A write to `sys.argv[3]` ahead of the unpack
-    # leaves both bindings byte-identical and still swaps the program the execve runs.
-    argv_writes = [ln.strip() for ln in code if re.search(r"sys\.argv\s*(?:\[[^\]]*\])?\s*=(?!=)", ln)]
-    assert not argv_writes, f"the wrapper writes sys.argv before the unpack reads it: {argv_writes}"
-    assert body.count("os.execve(python, [python, harness, *sys.argv[4:]]") == 1
-    # Both bindings can stay untouched while an alias carries an override into the handoff instead --
-    # `"${PROBE_HARNESS:-$harness}" "$@"`, or a second variable passed in `$harness`'s place. This is
-    # the argument the python side actually receives, so it is the last place a target can be swapped.
-    assert body.count('"$harness" "$@"') == 1
-    # Left outside this pin on purpose: an INDIRECT rebind -- `globals()["harness"] = ...`, a shell
-    # `read` into the name, an alias of the `sys.argv` list. Each reads as odd on sight, which is the
-    # property a regex cannot supply. Known spurious trips are all edits to the four pinned lines
-    # themselves -- a trailing comment, a reflow, renaming `python`, an added fixed flag. Every
-    # assertion prints what it found: the repair is to re-read the docstring's claim above and paste
-    # the new value in, never to loosen the check.
+    # Then the whole executable content, as one value. Six review rounds each closed one spelling of
+    # "add a program selector" and each found another: a default-plus-override, an `&&` twin, an
+    # annotated rebind, a write to `sys.argv[3]`, an alias in the handoff, an interpreter override, a
+    # repo override, `sys.argv.insert`, `printf -v`, a tuple unpack, a loop variable -- and `del
+    # sys.argv[3]`, which makes the FIRST CALLER-SUPPLIED ARGUMENT the program. The set of spellings
+    # is not enumerable, and every enumeration of it shipped a comment claiming the class. So this
+    # stops describing the shape and pins the content: any change to what this wrapper executes,
+    # however spelled, lands here. Its code has changed twice in its life (both 2026-08-26), so a
+    # real edit costs one paste.
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    assert digest == "b62790151caec841fcd6270a8d1e079cc153ffeb0e4fed49cbf78b7bb5c2521f", (
+        f"probe-with-vaulted-key.sh's executable content changed (now {digest}).\n"
+        "This is not a prompt to paste the new digest. Read the wrapper's diff first and answer the "
+        "question the probe's docstring makes an operator act on: does it STILL run only "
+        "kraken-order-semantics-probe.py, with the target fixed and unselectable? If yes, re-pin. If "
+        "no, the docstring's 'must not be used for this' sentence is what has to change."
+    )
 
 
 def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text():
@@ -255,6 +246,10 @@ def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text(
     assert not present, f"write or credential-accessor names in the probe's source: {present}"
     # A write that names no client method at all -- a hand-rolled signed REST call built with httpx --
     # is invisible to the stub AND to the scan above, since it borrows neither the adapter's methods
-    # nor its credential properties. These two tokens are what such a call cannot do without.
-    signing = sorted(t for t in ("private/", "API-Sign") if t in text)
+    # nor its credential properties. Both sides lowercased: HTTP header names are case-insensitive and
+    # HTTP/2 lowercases every one on the wire, so `api-sign` is the spelling that actually goes out.
+    # The concatenation limit named above applies here too. And unlike the scan above, this one CAN
+    # redden on prose -- a comment or docstring writing `private/OpenOrders` trips it -- so say what
+    # the calls do ("the eight order-status reads"), never the endpoint path.
+    signing = sorted(t for t in ("private/", "api-sign") if t in text.lower())
     assert not signing, f"hand-rolled venue signing in the probe's source: {signing}"

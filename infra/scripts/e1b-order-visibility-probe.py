@@ -22,14 +22,17 @@ probe builds and this one does not — and adding any argument flatten does not 
 like-for-like comparison this run exists to make.
 
 Credentials come from the environment and are never stored, echoed or logged; the refusal names the
-VARIABLES. On the engine host, run it inside the engine image, source on stdin:
+VARIABLES. Run it FROM the workstation, not on the engine host: ssh forwards local stdin into the
+container, so the source never lands on the host and nothing is left behind to delete. This script
+registers no arguments, so `-` needs no argv after it.
 
-    sudo docker run --rm -i --env-file /opt/zcrypto-engine/engine.env --entrypoint python <the engine image@digest> - < e1b-order-visibility-probe.py
+    IMAGE=$(ssh zcrypto sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine)
+    ssh zcrypto sudo docker run --rm -i --env-file /opt/zcrypto-engine/engine.env --entrypoint python "$IMAGE" - < infra/scripts/e1b-order-visibility-probe.py
 
-Stdin rather than a mount because the engine host carries no repo checkout (`docs/reference/fleet.md`
-puts that on the workstation), so a mount would need the file copied there first and would leave it
-behind; this script registers no arguments, so `-` needs no argv after it. The image@digest the
-engine actually runs is the engine row of `docs/reference/fleet-pins.md`.
+The image comes from the RUNNING container, never from a pins file. A rollback re-pins a host without
+re-truing any row, so a file can name a wheel the engine is not on — and which wheel it is on is this
+probe's entire subject. `.Config.Image` is one of the narrow fields CLAUDE.md `## Secrets` allows on
+that host; the whole-object inspect forms print the trade key.
 
 `--entrypoint python` is NOT flatten's value: flatten overrides to `zcrypto` because it runs a
 subcommand, this is a plain script, and bare `python` is the image's venv interpreter
@@ -40,10 +43,12 @@ its environment, never reading what follows the image — omit the override and 
 `infra/scripts/probe-with-vaulted-key.sh` must not be used for this: its target is fixed to the
 order-semantics harness, which places and cancels orders.
 
-Its nine reads run beside the still-running engine and share the trade key with it, so one engine
-order or cancel may be rejected around them; the engine reconciles that at its next 4-hourly
-boundary. Run it inside the inter-cycle gap rather than across a boundary (00/04/08/12/16/20 UTC),
-which is the same window the engine's own converges take.
+Its eight order-status reads share the trade key with the still-running engine, so one engine order
+or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary. Run
+it in the window an engine converge takes, which is narrower than "between boundaries": start at
+least 30 minutes after a boundary (00/04/08/12/16/20 UTC) — those 30 belong to the boundary cycle,
+which can hold the thread for about 25 of them — and finish at least 10 minutes before the next one.
+`infra/ansible/site.yml` states the same window as the engine play's own guard.
 
 Nine venue calls: eight order-status reads, plus the one `request_instruments` the populated arm
 needs to obtain an instrument to cache.
