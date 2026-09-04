@@ -23,9 +23,13 @@ like-for-like comparison this run exists to make.
 
 Credentials come from the environment and are never stored, echoed or logged; the refusal names the
 VARIABLES. On the engine host, run inside the engine image with the flatten wrapper's own shape —
-`--env-file /opt/zcrypto-engine/engine.env`, this script mounted in read-only, and an `--entrypoint`
-override, which is load-bearing: the image's own ENTRYPOINT is the capture daemon, so omitting it
-starts a capture daemon holding the trade key instead of running this.
+`--env-file /opt/zcrypto-engine/engine.env` and this script mounted in read-only — but with
+`--entrypoint python`, NOT flatten's value: flatten overrides to `zcrypto` because it runs a
+subcommand, this is a plain script, and bare `python` is the image's venv interpreter
+(`infra/docker/Dockerfile` puts `/app/.venv/bin` first on PATH). The override itself is the
+load-bearing part, for the reason the flatten template also states: the image's ENTRYPOINT is a
+`sh -c` launcher that `set --`s over whatever you appended and execs `zcrypto capture` with the
+trade key in its environment — omit it and your arguments are discarded and this never runs.
 `infra/scripts/probe-with-vaulted-key.sh` must not be used for this: its target is fixed to the
 order-semantics harness, which places and cancels orders.
 

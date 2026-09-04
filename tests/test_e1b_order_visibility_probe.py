@@ -203,15 +203,24 @@ def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
         "order-semantics harness, and that sentence must change with it"
     )
     # The name check alone catches only a SECOND literal. The likelier way a selector grows keeps
-    # the literal as a default and adds an override -- `harness="${PROBE_HARNESS:-...}"`, or an
-    # `os.environ.get` on the python side -- and the set of names is unchanged by either. So pin
-    # what BINDS the name, and the exec that consumes it.
-    bindings = [ln.strip() for ln in wrapper.splitlines() if re.match(r"\s*(?:\w+\s*,\s*)*harness\s*=", ln)]
+    # the literal as a default and adds an override -- `harness="${PROBE_HARNESS:-...}"`, the `&&`
+    # twin `[ -n "${PROBE_HARNESS:-}" ] && harness="$PROBE_HARNESS"`, or an `os.environ.get` on the
+    # python side -- and the set of names is unchanged by any of them. So pin what BINDS the name.
+    # `re.search`, never `re.match`: an anchored pattern reads a rebind sitting after a condition on
+    # the same line as no binding at all, which is exactly that `&&` form. The lookarounds hold
+    # `$harness` and `==` out. Known spurious trip: a trailing comment on either pinned line, whose
+    # whole stripped text is compared -- the assertion prints what it found, so the repair is to
+    # re-read this docstring's claim and paste the new list in.
+    bindings = [ln.strip() for ln in wrapper.splitlines() if re.search(r"(?<![\w$])harness\s*=(?!=)", ln)]
     assert bindings == [
         'harness="$repo/infra/scripts/kraken-order-semantics-probe.py"',
         "repo, python, harness = sys.argv[1], sys.argv[2], sys.argv[3]",
     ], f"the wrapper's harness bindings changed: {bindings}"
     assert wrapper.count("os.execve(python, [python, harness, *sys.argv[4:]]") == 1
+    # Both bindings can stay untouched while an alias carries an override into the handoff instead --
+    # `"${PROBE_HARNESS:-$harness}" "$@"`, or a second variable passed in `$harness`'s place. This is
+    # the argument the python side actually receives, so it is the last place a target can be swapped.
+    assert wrapper.count('"$harness" "$@"') == 1
 
 
 def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text():
@@ -225,7 +234,8 @@ def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text(
     # so the two guards together would both be green on a real write. Measured: the bare form has
     # zero hits on this script today, so it costs nothing. What this does NOT see: a name built at
     # runtime (`"cancel_all_" + orders_var`), and a credential leaked without naming an accessor —
-    # `print(key)` or `print(os.environ)`, both reachable in `_main`. A literal `"a" + "b"` IS seen,
-    # because CPython folds it into one constant, so the limit is runtime assembly, not concatenation.
+    # `print(key)` or `print(os.environ)`, both reachable in `_main`. Nor a name split across a
+    # concatenation: `"cancel_all_" + "orders"` is one constant to CPython but two strings to a
+    # reader of the source, and this scan is a reader of the source.
     present = sorted(name for name in FORBIDDEN | CREDENTIAL_ACCESSORS if name in text)
     assert not present, f"write or credential-accessor names in the probe's source: {present}"
