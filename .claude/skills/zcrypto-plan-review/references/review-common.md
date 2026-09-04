@@ -12,7 +12,7 @@ The blast radius of this pair — anything outside these is Minor by constructio
 
 ## Evidence
 
-A finding that cannot quote the line it judges is not a finding. Verify every claim against the real file before writing it. A claim about runtime behaviour is verified by running it, never by reading it: an introspection predicate, a docstring and a name are claims, not behaviour. A docstring that names a function's callers is not an enumeration of its callers.
+A finding that cannot quote the line it judges is not a finding. Verify every claim against the real file before writing it. A claim about runtime behaviour is verified by running it, never by reading it: an introspection predicate, a docstring and a name are claims, not behaviour. A docstring that names a function's callers is not an enumeration of its callers. A report names the test files it RAN and the rule that selected them — a green inherited from a prior report is not a run.
 
 A review that must MUTATE to prove a guard is dispatched write-capable in its own worktree; a read-only reviewer reports the probe as not run, never as passed. The reviewer's `Reviewed-by:` trailer is amended onto the commits it read the turn its report returns, and `infra/scripts/review-trailer-audit.sh` is run before anything is pushed — the trailer records who looked, never that they approved.
 

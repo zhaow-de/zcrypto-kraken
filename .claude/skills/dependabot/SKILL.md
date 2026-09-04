@@ -2,7 +2,7 @@
 name: dependabot
 description: Manage Dependabot dependency-update PRs — list, check out, rebase onto develop, run uv tests + ruff, auto-fix lint/format, push, wait for CI, merge with squash
 disable-model-invocation: true
-allowed-tools: Bash(git fetch:*), Bash(git checkout:*), Bash(git rebase:*), Bash(git status:*), Bash(git stash:*), Bash(git push:*), Bash(git add:*), Bash(git commit:*), Bash(git log:*), Bash(git branch:*), Bash(gh pr:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(date:*), Bash(echo:*), Read, Glob, Grep, Edit, Write, AskUserQuestion
+allowed-tools: Bash(git fetch:*), Bash(git checkout:*), Bash(git rebase:*), Bash(git status:*), Bash(git stash:*), Bash(git push:*), Bash(git add:*), Bash(git commit:*), Bash(git log:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(gh pr:*), Bash(gh api:*), Bash(timeout:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(date:*), Bash(echo:*), Bash(grep:*), Bash(head:*), Bash(cut:*), Read, Glob, Grep, Edit, Write, AskUserQuestion
 ---
 
 # Dependabot PR Management
@@ -125,8 +125,9 @@ PR_NUMBER=<the number for this PR>
 # then merge in a SEPARATE command only after reading `success` — a fresh shell per call means
 # `$state` does not survive to the `if` below, which fails closed but merges nothing.
 SHA=$(git rev-parse HEAD)
+# default filter=latest: one run per name
 timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
-  --jq '[.check_runs[] | {n: .name, s: .status, c: (.conclusion // "")}]'  # default filter=latest: one run per name | python3 -c '
+  --jq '[.check_runs[] | {n: .name, s: .status, c: (.conclusion // "")}]' | python3 -c '
 import sys, json
 runs = json.load(sys.stdin)
 REQUIRED = "Full test suite"          # the context branch protection requires on develop
@@ -144,9 +145,9 @@ print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed (
 # Squash so each dependency bump is a single commit on develop (the deliberate exception to
 # merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
 gh pr merge <number> --squash --delete-branch    # the number from the sorted list, not a variable
-# Anything other than `success` — including every `pending` and the 10-minute deadline expiring
-# with it still pending — is escalation trigger #4: surface the PR and stop. Never merge on a
-# state you did not read, and never on an empty check list.
+# Anything other than `success` stops the merge: a red check is escalation trigger #4, and a check
+# still pending past the full suite's duration (CLAUDE.md states it) is reported as stalled. Never
+# merge on a state you did not read, and never on an empty check list.
 ```
 
 ### Phase 3 — Cleanup

@@ -35,7 +35,7 @@ Walk every memory item — candidates and standing ones alike. Per item, exactly
 | Disposition | Action |
 |---|---|
 | → CLAUDE.md | The shortest imperative form lands there; note the net-growth invariant |
-| → a rule | Lands in the owning `.claude/rules/` file, docs-style |
+| → a rule | Lands in the owning `.claude/rules/` file, per `prose.md` |
 | → an existing skill | Lands at the step where it applies (P4) |
 | → a new skill | Only with the description-is-ambient cost acknowledged |
 | → a hook proposal | Shown to the user; on approval, lands with the settings change |

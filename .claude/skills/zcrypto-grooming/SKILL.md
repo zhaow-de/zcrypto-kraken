@@ -3,7 +3,7 @@ name: zcrypto-grooming
 description: Drain and groom .local/memo.md together with the user. Bare /zcrypto-grooming runs the full three-step flow; an argument ("T9999 is done", "T9999 is partially done", "T9999 registered — insert into queue", "iter-290 (PR #1332) has been merged") applies one mechanical queue procedure.
 disable-model-invocation: true
 model: claude-fable-5
-allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Bash(git log:*), Bash(git show:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(date:*), Bash(uv run pre-commit:*)
+allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Skill, Bash(git log:*), Bash(git show:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(date:*), Bash(uv run pre-commit:*)
 ---
 
 # zcrypto-grooming
@@ -39,8 +39,8 @@ Parse the points and present your understanding of each; ask where unclear. Then
 | Agreed outcome | Action |
 |---|---|
 | Not pursuing | **Rewrite** into `ABANDONED ITEMS` — a summary reflecting the discussion (never a cut-and-paste), the subject, the decision date, and the drop date |
-| Enhances / changes / invalidates an existing T\<NNNN\> | Remove the point from the memo; revise the topic file **interactively** so it stays internally consistent; index sync per `.claude/rules/open-topics.md` |
-| New, deserves its own topic | Remove the point from the memo; create the T\<NNNN\> per `.claude/rules/open-topics.md` (serial check spans `archive/` **and** unmerged branches) |
+| Enhances / changes / invalidates an existing T\<NNNN\> | Remove the point from the memo; revise the topic file **interactively** so it stays internally consistent; index sync through the `topic-ops` skill, which `.claude/rules/open-topics.md` reserves every topic-file operation for |
+| New, deserves its own topic | Remove the point from the memo; create the T\<NNNN\> through the `topic-ops` skill (its serial check spans `archive/` **and** unmerged branches) |
 | Undecided — any reason (no time, needs thought, no consensus yet) | Stays in `NEW IDEAS`, untouched — **the default**: a point leaves the inbox only through one of the other four outcomes |
 | Already addressed (memory gap or changed context) | Cite the evidence — iter-N, T-topic, or PR — and drop **only after the user confirms the citation** |
 
