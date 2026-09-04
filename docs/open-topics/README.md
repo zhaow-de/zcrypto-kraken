@@ -105,7 +105,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0161 — the quarantined-rows counter is blind to the spill that happens as the process dies](T0161-rows-quarantined-counter-unscraped-on-close.md) — `zcrypto-capture-rows-quarantined` reads a counter with two increment sites that do not behave alike: the `_hold()` one is scraped normally and works, while the `close()` one lands in an exiting process that is gone before the next 60 s scrape, with no `stop_grace_period` anywhere under `infra/`. A value never published cannot be read by any expression, so a shutdown-time spill — the case most correlated with a re-pin or a crash near an hour boundary — reads healthy. Excluded from spec `00109` D3 on purpose, since absolute-value does not repair it. All three candidate fixes owe a capture converge — there is no cheap option: the writer emits no critical-level logging at all, so "rule the CRITICAL log line the detector" means first ADDING the emission, making it the broadest of the three. Ripe when a capture converge is scheduled after `00109`'s for its own reasons.
 
-- [T0163 — client order id length is unmeasured](T0163-client-order-id-length-unmeasured.md) — the probe's 18-character truncation comment cannot be squared with its own 27-character ids passing; ripe when an adapter-verification row quotes an id as the venue echoed it.
+- [T0163 — client order id length is unmeasured](T0163-client-order-id-length-unmeasured.md) — the probe's 18-character truncation comment cannot be squared with its own 27-character ids passing; ripe when an adapter-verification row quotes a minted id as the venue returned it.
 
 ### Partially done<a name="partially-done-1"></a>
 

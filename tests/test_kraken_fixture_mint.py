@@ -118,9 +118,10 @@ class TestTheSameKeyGuard:
 class TestTheFloorsComeFromTheRow:
     """Both floors and both steps are the venue's own published row, or the run refuses.
 
-    The adapter's instrument object is the other candidate source and it is the wrong one: it is a
-    translation, and it answered None for `min_quantity` on this very pair. A None read as 0.0 is a
-    floor that always clears, on the one path where clearing wrongly is a rejected order at best.
+    The adapter's instrument object is the other candidate source and it is the wrong one: this
+    adapter never maps `costmin` into `min_notional`, so the object cannot supply one of the two
+    floors for any pair -- it answers None, always. A None read as 0.0 is a floor that always
+    clears, on the one path where clearing wrongly is a rejected order at best.
     """
 
     def test_it_reads_both_floors_off_the_row(self) -> None:
@@ -597,11 +598,13 @@ class _Recorder:
 
 
 class _Instrument:
-    """The adapter's instrument object, recorded as the venue actually answered for SOL/EUR.
+    """The adapter's instrument object as this script uses it: cached, and never read for a size.
 
-    Every floor is None because that is what came back, and they are left None deliberately: the
-    object is cached and never read for a size, so any sizing path that reached back into it would
-    raise on `float(None)` here rather than freeze a floor to zero against real money.
+    Every field is None as a TRIPWIRE, not as a recording. What the adapter actually returns for
+    SOL/EUR, measured on the pinned wheel over a loopback server fed this repo's own AssetPairs
+    fixture, is `min_quantity=Quantity(0.06)` and `min_notional=None` -- it fills the quantity floor
+    correctly and never maps `costmin` at all. Nulling all four here means any sizing path that
+    reached back into the object raises on `float(None)` instead of freezing a floor to zero.
     """
 
     id = "SOL/EUR.KRAKEN"
@@ -652,6 +655,11 @@ def _args(execute: bool):
     import argparse
 
     return argparse.Namespace(pair="SOL/EUR", execute=execute)
+
+
+async def _answer_none(*_args, **_kwargs):
+    """A read that answers nothing at all -- distinct from one that answers an empty list."""
+    return None
 
 
 def _factories(rec: object) -> dict:
@@ -832,6 +840,25 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
     def test_eur_never_counts_as_the_non_eur_balance(self) -> None:
         rec = _Recorder(balances=[_Balance("ZEUR", 5000.0)])
         assert self._state(rec).non_eur_assets == ()
+
+    @pytest.mark.parametrize(
+        ("method", "what"),
+        [
+            ("request_order_status_reports", "open orders"),
+            ("request_position_status_reports", "positions"),
+            ("request_account_state", "the account state"),
+        ],
+    )
+    def test_a_read_that_answers_nothing_refuses_rather_than_reading_as_flat(self, method: str, what: str) -> None:
+        """`None` is not an empty account. Read as one it re-mints the leg on every run, and for the
+        margin leg that is another leveraged position each time -- while the plan prints `(none)`."""
+        import asyncio
+
+        rec = _Recorder()
+        setattr(rec, method, _answer_none)
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint.read_account(rec, "SOL/EUR", _LIMITS, _BEST_BID))
+        assert what in str(exc.value)
 
     def test_the_instrument_is_cached_before_the_account_is_read(self, _creds) -> None:
         """The order-report read resolves rows through the cache and drops what it cannot resolve

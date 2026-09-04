@@ -429,9 +429,12 @@ async def read_pair(client, pair: str) -> tuple[float, object]:
 
     The object is needed because `submit_order` documents `The instrument is not found in cache.`
     among its errors and the cache's only writer is `cache_instrument`. It is NOT where a size comes
-    from: it is the adapter's translation of the listing, and a field the translation does not
-    populate arrives as None rather than as an error -- `min_quantity` came back None for SOL/EUR
-    when this was measured. `pair_limits` reads the row the venue enforces instead.
+    from, and the reason is categorical rather than incidental: this adapter never maps `costmin`
+    into `min_notional` at all, so the object cannot supply one of the two floors -- it answers None,
+    always, for every pair. (`min_quantity` IS filled correctly; measured on the pinned wheel by
+    serving this repo's own AssetPairs fixture over loopback, which also confirms on 2.0.0rc4 what
+    `cli/engine/venuestate.py` recorded on 1.230.0.) A floor that arrives as None and is read as 0.0
+    always clears. `pair_limits` reads the row the venue enforces instead.
     """
     from nautilus_trader.model import InstrumentId
 
@@ -472,6 +475,12 @@ async def read_account(client, pair: str, limits: PairLimits, best_bid: float) -
         quote_currency=QUOTE_CURRENCY,
     )
     state = await client.request_account_state(account, account_type=AccountType.CASH)
+    # `flatten` refuses a read that answers nothing rather than reading it as a flat account, and
+    # so does this: `None` here would mean "no resting order / no position / no balance" and re-mint
+    # the leg on every run. An empty list is an answer; an absent one is not.
+    for what, answer in (("open orders", orders), ("positions", positions), ("the account state", state)):
+        if answer is None:
+            raise Refusal(f"REFUSING: {what} could not be read -- the venue answered nothing")
     base = pair.split("/")[0]
     return AccountState(
         resting_pairs=tuple({str(getattr(o, "instrument_id", "")).split(".")[0] for o in orders or ()}),
