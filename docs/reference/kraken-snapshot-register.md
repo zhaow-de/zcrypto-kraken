@@ -35,8 +35,9 @@ without a live account; the account-gated facts remain parked (see below).
 
 All twelve §3 candidate symbols resolve to an **online, margin-enabled** Kraken pair as of the fetch above — none are
 missing and none have lost margin eligibility since the master plan was drafted. Leverage caps split into two bands:
-2–10× on the ten EUR-quoted majors, and a lower 2–4×/2–5× band on the two BTC-quoted relative-value legs (ETH/BTC,
-SOL/BTC) — consistent with §3's "leverage caps per pair to be pulled from `AssetPairs` as ground truth" note.
+2–10× on nine of the ten EUR-quoted majors, and a lower 2–4×/2–5× band on the two BTC-quoted relative-value legs
+(ETH/BTC, SOL/BTC) plus DOT/EUR, the one EUR major that caps at 2–5× — consistent with §3's "leverage caps per pair
+to be pulled from `AssetPairs` as ground truth" note.
 
 ## Endpoint-reported fee ladder, borrow rate & margin bands
 
@@ -71,7 +72,10 @@ SOL/BTC) — consistent with §3's "leverage caps per pair to be pulled from `As
 Borrow and margin columns carry no such caveat and **agree** with the account-confirmed figures:
 `margin_rate` is the per-4h rollover rate on the **extended** currency, and the endpoint's per-asset
 point values sit inside `kraken-fee-schedule.md`'s ranges (BTC 0.01 vs its 0.01–0.02 %; alts
-0.02 vs its 0.02–0.04 %). **Both sides are rendered because they price opposite trades**: a
+0.02 vs its 0.02–0.04 %) — EUR excepted: that file's borrow table is keyed on the extended **base** currency (BTC
+plus nine alts) and its only fiat figure is a worked example for a **USD** leg (~0.025 %), so the ten EUR rows' 0.02
+long-leg rate is rendered here with no band in the schedule to sit inside, while the two /BTC rows' 0.01 quote does
+sit inside BTC's band. **Both sides are rendered because they price opposite trades**: a
 SHORT sells the borrowed base, so the base column prices it; a **LONG on margin buys with borrowed
 quote currency**, so the quote column is the one that prices the book's long leg — rendering only
 the base side left that leg unpriced while the table looked complete. That agreement is worth keeping, because the borrow rate is the term
@@ -83,7 +87,7 @@ on the *asset*, not the pair. Rendered as base tier plus ladder depth; the full 
 in the snapshot JSON so a future diff can name *which* tier moved.
 
 **Still account-gated:** the account's realised fee **tier** depends on 30-day volume and needs the
-live account. It is re-read as the **attended half of the monthly sweep** and recorded in the log above;
+live account. It is re-read as the **attended half of the monthly sweep** and recorded in the log below;
 `kraken-fee-schedule.md` holds the standing value (tier 1, \$0 volume, as of 2026-07-07). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
 re-reads at the go/no-go.
 
