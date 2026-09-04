@@ -387,29 +387,58 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
 
     WRAPPERS = ("mint-with-vaulted-key.sh", "probe-with-vaulted-key.sh")
 
+    # The two lines that actually carry the target to the child. Pinned VERBATIM, because a guard
+    # that reads only the `harness=` assignment pins the shape of one line and not the target: a
+    # selector can sit on either of these instead and leave that assignment untouched. This was
+    # measured -- the first version of this test caught `harness="$1"` and passed four other
+    # selector forms, which is a guard proven against one defect rather than against its class.
+    _ARGV_LINE = '\' "$repo" "$venv_python" "$harness" "$@"'
+    _EXEC_LINE = "os.execve(python, [python, harness, *sys.argv[4:]],"
+
+    def _src(self, name: str) -> str:
+        return (_REPO / "infra" / "scripts" / name).read_text()
+
+    def _body(self, name: str) -> list[str]:
+        """Everything from the `set -euo pipefail` LINE down.
+
+        Anchored on the whole line, not on the text: this wrapper's own header quotes the phrase
+        while describing the identity below it, and a substring search lands there instead.
+        """
+        lines = self._src(name).split("\n")
+        start = lines.index("set -euo pipefail")
+        return lines[start:]
+
     @pytest.mark.parametrize("name", WRAPPERS)
     def test_the_target_is_assigned_exactly_once_from_a_literal(self, name: str) -> None:
-        src = (_REPO / "infra" / "scripts" / name).read_text()
-        assignments = re.findall(r"^harness=(.*)$", src, re.MULTILINE)
+        assignments = re.findall(r"^\s*harness=(.*)$", self._src(name), re.MULTILINE)
         assert len(assignments) == 1, f"{name} assigns its target {len(assignments)} times"
-        target = assignments[0]
-        assert target.startswith('"$repo/infra/scripts/') and target.endswith('.py"'), target
-        for selector in ("$1", "$2", "$@", "$*", "${1", "$MINT", "$HARNESS"):
-            assert selector not in target, f"{name}'s target is selectable via {selector}"
+        assert re.fullmatch(r'"\$repo/infra/scripts/[^"$]+\.py"', assignments[0]), assignments[0]
+
+    @pytest.mark.parametrize("name", WRAPPERS)
+    def test_nothing_but_that_literal_routes_the_target_to_the_child(self, name: str) -> None:
+        """The argv line and the `execve` line are where a selector reaches the exec'd program."""
+        src = self._src(name)
+        for line in (self._ARGV_LINE, self._EXEC_LINE):
+            assert src.count(line) == 1, f"{name} does not carry {line!r} exactly once"
+
+    def test_the_two_wrappers_differ_in_exactly_one_line_below_the_shebang_block(self) -> None:
+        """The identity claim in the header, as an assertion. It is also what closes the selector
+        forms a per-line regex misses: any added override is a second differing line."""
+        mint, probe = (self._body(n) for n in self.WRAPPERS)
+        assert len(mint) == len(probe), "the two wrapper bodies differ in length"
+        differing = [(a, b) for a, b in zip(mint, probe, strict=True) if a != b]
+        assert len(differing) == 1, differing
+        assert differing[0][0].startswith("harness="), differing[0]
 
     @pytest.mark.parametrize("name", WRAPPERS)
     def test_the_target_exists(self, name: str) -> None:
-        src = (_REPO / "infra" / "scripts" / name).read_text()
-        target = re.search(r'^harness="\$repo/(.*)"$', src, re.MULTILINE)
+        target = re.search(r'^harness="\$repo/(.*)"$', self._src(name), re.MULTILINE)
         assert target, f"{name}'s target is not the expected literal shape"
         assert (_REPO / target.group(1)).is_file(), target.group(1)
 
     def test_the_two_wrappers_do_not_point_at_the_same_program(self) -> None:
         """Two fixed targets is the design; two wrappers onto one program is a copy nobody needs."""
-        targets = {
-            re.search(r"^harness=(.*)$", (_REPO / "infra" / "scripts" / n).read_text(), re.MULTILINE).group(1)
-            for n in self.WRAPPERS
-        }
+        targets = {re.search(r"^harness=(.*)$", self._src(n), re.MULTILINE).group(1) for n in self.WRAPPERS}
         assert len(targets) == 2, targets
 
     def test_this_scripts_refusal_names_the_wrapper_that_can_run_it(self, monkeypatch) -> None:
@@ -470,7 +499,9 @@ class _Recorder:
         self.calls.append("request_order_status_reports")
         self.read_kwargs["orders"] = kw
         if kw.get("open_only") is not True:
-            return [*self._orders, _Order("CLOSED-LEFTOVER.KRAKEN")]
+            # On the MINT pair, so the leftover can actually produce the skip: a closed row on some
+            # other pair fails the kwarg assertion but never reaches the guard it is meant to fool.
+            return [*self._orders, _Order("SOL/EUR.KRAKEN")]
         return list(self._orders)
 
     async def request_position_status_reports(self, account, **kw):
@@ -648,6 +679,19 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
         self._state(rec)
         assert rec.read_kwargs["orders"] == {"open_only": True}
 
+    def test_a_closed_leftover_would_skip_the_resting_leg(self) -> None:
+        """The money-shaped consequence, not just the kwarg. Read without `open_only` the venue also
+        returns the previous pass's cancelled FIXMINT rows, and the plan then silently drops the one
+        leg the pass most needs -- indistinguishable, in the printed plan, from a real resting order.
+        """
+        import asyncio
+
+        rec = _Recorder()
+        raw = asyncio.run(rec.request_order_status_reports(None))
+        state = mint.AccountState(resting_pairs=tuple({str(o.instrument_id).split(".")[0] for o in raw}))
+        kinds = [leg.kind for leg in mint.plan_legs(pair="SOL/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=state)]
+        assert "resting" not in kinds
+
     def test_an_existing_resting_order_is_actually_SEEN(self) -> None:
         """The resting guard's own positive trace: until now it had only plan-level ones, so the
         projection from an order row to a pair was never exercised against a row that exists."""
@@ -658,6 +702,14 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
         """The guard proven on a position that exists, not on an empty list that proves nothing."""
         rec = _Recorder(positions=[_Position()])
         assert self._state(rec).position_pairs == ("SOL/EUR",)
+
+    def test_the_balances_read_names_its_mode(self) -> None:
+        """Pinned like its two neighbours. The mode does not change what `balances` returns, so this
+        guards the like-for-like with flatten rather than a behaviour -- but an unpinned kwarg is
+        how the position read's defect survived, and the claim that all three match must be true."""
+        rec = _Recorder()
+        self._state(rec)
+        assert rec.read_kwargs["state"] == {"account_type": AccountType.CASH}
 
     def test_the_quote_currency_is_flattens(self) -> None:
         from cli.engine.flatten import QUOTE_CURRENCY

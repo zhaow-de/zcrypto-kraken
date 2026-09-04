@@ -82,6 +82,12 @@ FIXTURE_ORDER_TAG = "FIXMINT"
 # Typed in full, and deliberately not a word a reflex answers.
 CONFIRM_WORD = "MINT"
 
+# The longest client order id this venue is RECORDED as having accepted: the order-semantics probe's
+# `O-<YYYYMMDD>-<HHMMSS>-901-P6V-<seq>` at one-digit seq, whose passing runs the adapter-verification
+# rows carry. Not a limit -- no limit is recorded anywhere -- which is why it is printed beside this
+# script's own longer ids rather than used to size them.
+_PROVEN_COID_LENGTH = 27
+
 # Flooring can drop a target under a floor it cleared; a few steps is ample and a runaway is a
 # listing that is not what this script assumes, which is a refusal rather than a loop.
 _SIZE_WALK_LIMIT = 8
@@ -373,14 +379,16 @@ def render_plan(legs: list[Leg], existing: AccountState, pair: str, stamp: str) 
         )
     total = sum(leg.notional_eur for leg in legs if leg.order_type == "MARKET")
     lines.append(f"  spends at market: EUR {total:.2f} (the resting leg rests, it does not spend)")
-    # The ids are printed, and so is what nobody has established about them: no accepted client
-    # order id LENGTH is recorded anywhere in this repo -- not in the adapter-verification rows, not
-    # in cli/. So a rejection naming the id is a finding rather than a bug in this run, and its home
-    # is the adapter-verification row this attended pass writes.
+    # The ids are printed, and so is the one comparison the repo can actually make about them. No
+    # accepted LIMIT is recorded anywhere; what is recorded is a shape that was accepted -- the
+    # order-semantics probe's `O-<stamp>-901-P6V-<seq>`, whose passing runs the adapter-verification
+    # rows carry. These ids are longer than that, so a rejection naming the id is a finding for the
+    # row this attended pass writes rather than a puzzle to debug mid-run.
     longest = max(len(mint_client_order_id(leg.kind, stamp)) for leg in legs)
     lines.append(
-        f"  longest client order id: {longest} characters. No accepted length is recorded for this "
-        f"adapter -- if a leg is rejected on its id, record the limit in the version's "
+        f"  longest client order id here: {longest} characters. The longest shape recorded as "
+        f"accepted on this adapter is the order-semantics probe's, at {_PROVEN_COID_LENGTH}; no "
+        f"limit is recorded. A rejection naming an id belongs in the version's "
         f"docs/reference/adapter-verification/ row."
     )
     return "\n".join(lines)
@@ -469,19 +477,29 @@ async def read_account(client, pair: str, limits: PairLimits, best_bid: float) -
 
 
 def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tuple[str, ...]:
-    """The non-EUR bases held in a size the fixture's sell path could actually use.
+    """Every non-EUR base the account holds, with the MINT pair's own base judged against its floors.
 
-    Two things a bare currency-code set gets wrong, both in the direction of SKIPPING the spot leg
-    and leaving the attended pass with nothing to sell. A code with a dust balance still satisfies
-    a presence test: `flatten` drops a leg whose free amount is not positive and the venue refuses
-    one under `ordermin`, so a residual left by a partial fill would satisfy this forever. And the
-    venue spells assets its own way -- `XXDG` for DOGE -- so a raw code never equals the common base
-    it stands for; the mapping is `flatten`'s `resolve_base` rather than a second copy of it here.
+    Two things a bare currency-code set gets wrong about THIS pair's base, both in the direction of
+    SKIPPING the spot leg and leaving the attended pass with nothing to sell. A code with a dust
+    balance still satisfies a presence test: `flatten` drops a leg whose free amount is not positive
+    and the venue refuses one under `ordermin`, so a residual left by a partial fill would satisfy
+    this forever. And the venue spells assets its own way -- `XXDG` for DOGE -- so a raw code never
+    equals the common base it stands for; the mapping is `flatten`'s `resolve_base` rather than a
+    second copy of it here.
+
+    The floors belong to the mint pair and to no other row. Every OTHER non-EUR code is listed as
+    held whatever its size, because this line is also what the operator reads to see the account,
+    and judging a BTC balance by SOL's `ordermin` at SOL's bid would print `non-EUR: (none)` over an
+    account holding a thousand euros of it. Nothing is gated on those codes -- only `base` is.
     """
     held = set()
     for row in balances:
         code = str(getattr(getattr(row, "currency", None), "code", "") or "")
         if not code or code in ("EUR", "ZEUR"):
+            continue
+        resolved = resolve_base(code, frozenset({base})) or code
+        if resolved != base:
+            held.add(resolved)
             continue
         free = float(getattr(row, "free", 0.0) or 0.0)
         # BOTH floors, because `flatten` classifies a balance against both and this guard exists to
@@ -490,7 +508,7 @@ def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tup
         # leg and leave the sell path with a balance the command declines to touch.
         if free < limits.ordermin or free * best_bid < limits.costmin:
             continue
-        held.add(resolve_base(code, frozenset({base})) or code)
+        held.add(resolved)
     return tuple(sorted(held))
 
 

@@ -5,9 +5,9 @@
 # the two shows only the target.
 #
 # It is a SECOND wrapper rather than a `--target` on the first one, and that is the whole point.
-# `.claude/settings.json` carries `Bash(infra/scripts/probe-with-vaulted-key.sh:*)`, wildcarded over
-# arguments: a selector there would turn a standing pre-approval into "run any program with the live
-# trade key present". Two scripts, each with a FIXED target, keep the property that makes either one
+# `.claude/settings.json` carries `Bash(infra/scripts/probe-with-vaulted-key.sh --probes:*)`, whose
+# wildcard covers everything after `--probes`: a selector there would ride an already-granted command
+# line and turn a standing pre-approval into "run any program with the live trade key present". Two scripts, each with a FIXED target, keep the property that makes either one
 # safe to whitelist. Never add a selector to either.
 #
 # This one is deliberately NOT in `.claude/settings.json`, and that absence is the design. The probe
