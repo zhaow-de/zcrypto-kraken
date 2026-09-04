@@ -40,8 +40,8 @@ subcommand, this is a plain script, and bare `python` is the image's venv interp
 load-bearing part, for the reason the flatten template also states: the image's ENTRYPOINT is a
 `sh -c` launcher that builds its own argument list and execs `zcrypto capture` with the trade key in
 its environment, never reading what follows the image — omit the override and this does not run.
-`infra/scripts/probe-with-vaulted-key.sh` must not be used for this: its target is fixed to the
-order-semantics harness, which places and cancels orders.
+This script is never run through `infra/scripts/probe-with-vaulted-key.sh`, whose target is the
+order-placing harness.
 
 Its eight order-status reads share the trade key with the still-running engine, so one engine order
 or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary. Run

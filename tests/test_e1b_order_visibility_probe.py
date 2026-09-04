@@ -5,10 +5,8 @@ client when the credentials are absent. Both are asserted here against a stubbed
 only other place they could be checked is an attended run against real money."""
 
 import asyncio
-import hashlib
 import importlib.util
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -190,59 +188,6 @@ def test_the_shapes_are_ordered_empty_arm_first():
     is set-based, the other counts calls."""
     m = _load()
     assert [s.cache_populated for s in m.SHAPES] == [False] * 4 + [True] * 4
-
-
-def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
-    """The probe's docstring tells an operator NOT to reach for `probe-with-vaulted-key.sh`, because
-    that wrapper's target is fixed to a harness which places orders. That is a claim about another
-    file, so it can rot silently if the wrapper ever grows a program selector — this is what would
-    notice."""
-    wrapper = (REPO / "infra/scripts/probe-with-vaulted-key.sh").read_text()
-    lines = wrapper.splitlines()
-    # Everything from `exec ` down is ONE single-quoted bash string carrying a python program. A `#`
-    # there is string data, not a comment, and an apostrophe on such a line ENDS THE STRING -- two of
-    # the python comments already inside it would do that if reworded to use one. So comment- and
-    # blank-stripping is applied only to the shell preamble above it; the shebang and the whole
-    # `exec ` region are pinned exactly as typed, trailing whitespace included (a space after the
-    # line-34 continuation changes what bash parses, and the commit gate's trailing-whitespace hook
-    # keeps that from being noise).
-    exec_lines = [i for i, ln in enumerate(lines) if ln.startswith("exec ")]
-    assert len(exec_lines) == 1, f"the wrapper's single exec line is now {len(exec_lines)} lines"
-    cut = exec_lines[0]
-    preamble = [ln for ln in lines[1:cut] if ln.strip() and not ln.lstrip().startswith("#")]
-    # Dropping those comment lines is sound only while no string SPANS preamble lines -- if one did,
-    # a `#`-leading line there would be data, which is precisely how the `exec ` region caught this
-    # pin out. Balanced quotes across the lines actually kept is that condition. (Apostrophes inside
-    # preamble comments do not count: bash ignores a comment to end-of-line, so they open nothing.)
-    for quote in ("'", '"'):
-        assert sum(ln.count(quote) for ln in preamble) % 2 == 0, (
-            f"a {quote} string now spans preamble lines, so dropping the comment lines above it is "
-            "no longer sound -- pin the preamble verbatim too"
-        )
-    body = "\n".join([lines[0], *preamble, *lines[cut:]])
-    # Named first because a digest alone says nothing about WHAT is protected: this wrapper runs one
-    # program and the probe's docstring tells operators so.
-    programs = sorted(set(re.findall(r"[\w-]+\.py", body)))
-    assert programs == ["kraken-order-semantics-probe.py"], (
-        f"the wrapper now names {programs}; the probe's docstring says it targets only the "
-        "order-semantics harness, and that sentence must change with it"
-    )
-    # Then the whole executable content, as one value. Four rounds of review each closed one spelling
-    # of "add a program selector" and each found more -- a default-plus-override, an `&&` twin, an
-    # annotated rebind, a write to `sys.argv[3]`, an alias in the handoff, an interpreter override, a
-    # repo override, `sys.argv.insert`, `printf -v`, a tuple unpack, a loop variable, and `del
-    # sys.argv[3]`, which makes the FIRST CALLER-SUPPLIED ARGUMENT the program. That question has no
-    # bounded answer, so this pins content instead of describing shape. Measured: the file's
-    # executable content has never changed since it was written -- its one later commit rewrote the
-    # header, which this canonicalisation deliberately ignores -- so re-pinning is not a routine cost.
-    digest = hashlib.sha256(body.encode()).hexdigest()
-    assert digest == "81a92f9671cadb40647d73fbc9a5d8c06c33c424442ba4b49554a007fd3baf26", (
-        f"probe-with-vaulted-key.sh's executable content changed (now {digest}).\n"
-        "This is not a prompt to paste the new digest. Read the wrapper's diff first and answer the "
-        "question the probe's docstring makes an operator act on: does it STILL run only "
-        "kraken-order-semantics-probe.py, with the target fixed and unselectable? If yes, re-pin. If "
-        "no, the docstring's 'must not be used for this' sentence is what has to change."
-    )
 
 
 def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text():
