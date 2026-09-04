@@ -30,6 +30,8 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 - **Availability and affinity.** Main keeps the coordination table: session → status (idle / busy) → branch → topic or spec → warm-context tags → last report. A subject goes to the idle session that already holds its context; else the idle one; never zebra.
 - **One assignment per payload session at a time.** An assignment message carries: the component name; the worktree to use; the boundary list — paths it must not write, actions it must not take (venue, credentials, converges, PRs, topics); where output lands; and who to message about what.
 - **Every payload status message names its branch and latest commit hash**, so main can read progress from git without asking.
+- **The table records what each branch has GROWN, not only what it was assigned** — a new guard, file or claimed property named in a payload report goes into the topic column, and the tick compares the columns pairwise: a property pinned on two branches is a merge collision and a doubled review cost before it is anything else (two sessions built the same wrapper guard on 2026-09-04, seven and four rounds apart, unseen from either branch).
+- **A dispatched assignment whose pre-push loop reaches its third round carrying a Critical or Important gets a transcript retro by main before that session's next assignment** — rounds, findings by class, minutes per round, what the author's own tier could have caught; the output is registry records and a proposed rule or skill change, never a verbal note.
 
 ## The hourly tick
 
