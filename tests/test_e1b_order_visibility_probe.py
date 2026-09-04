@@ -190,5 +190,10 @@ def test_no_write_method_name_appears_in_the_script_text():
     object never passes through the stub. Scanning the source closes exactly that gap, and it is the
     check the commit message and the changelog entry claim exists."""
     text = PROBE.read_text()
-    present = sorted(name for name in FORBIDDEN if f"{name}(" in text or f".{name}" in text)
+    # A bare substring, not `f"{name}("` or `f".{name}"`: those two miss
+    # `getattr(client, "cancel_all_orders")`, which on a SECOND client the stub cannot see either —
+    # so the two guards together would both be green on a real write. Measured: the bare form has
+    # zero hits on this script today, so it costs nothing. A name assembled from parts
+    # ("cancel_all_" + "orders") is beyond any source scan and is not claimed.
+    present = sorted(name for name in FORBIDDEN if name in text)
     assert not present, f"write method names in the probe's source: {present}"

@@ -22,10 +22,10 @@ probe builds and this one does not — and adding any argument flatten does not 
 like-for-like comparison this run exists to make.
 
 Credentials come from the environment and are never stored, echoed or logged; the refusal names the
-VARIABLES. `infra/scripts/probe-with-vaulted-key.sh` CANNOT run this script and must not be used to
-try: its target is fixed to the order-semantics harness by design, arguments select no program, and
-that harness places and cancels orders. How the key reaches this process is the attended run
-procedure's business, not this script's.
+VARIABLES. On the engine host, run inside the engine image with `--env-file
+/opt/zcrypto-engine/engine.env` — the flatten wrapper's own shape.
+`infra/scripts/probe-with-vaulted-key.sh` must not be used for this: its target is fixed to the
+order-semantics harness, which places and cancels orders.
 
 Nine venue calls: eight order-status reads, plus the one `request_instruments` the populated arm
 needs to obtain an instrument to cache.
