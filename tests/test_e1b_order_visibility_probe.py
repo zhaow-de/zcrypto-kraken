@@ -7,6 +7,7 @@ only other place they could be checked is an attended run against real money."""
 import asyncio
 import importlib.util
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -35,6 +36,12 @@ VENUE_WRITES = frozenset(
     {"submit_order", "submit_orders_batch", "cancel_order", "cancel_orders_batch", "cancel_all_orders", "modify_order"}
 )
 FORBIDDEN = VENUE_WRITES | {"cancel_all_requests"}
+
+# Not methods and not writes: `api_key` is an unmasked getter on the real client, so a stray
+# `print(client.api_key)` would put the live trade key on a terminal without touching anything the
+# write guards watch. The probe takes its credentials as positionals and never needs either name,
+# so their absence is checkable and free.
+CREDENTIAL_ACCESSORS = frozenset({"api_key", "api_secret"})
 
 
 class _Instrument:
@@ -184,7 +191,20 @@ def test_the_shapes_are_ordered_empty_arm_first():
     assert [s.cache_populated for s in m.SHAPES] == [False] * 4 + [True] * 4
 
 
-def test_no_write_method_name_appears_in_the_script_text():
+def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
+    """The probe's docstring tells an operator NOT to reach for `probe-with-vaulted-key.sh`, because
+    that wrapper's target is fixed to a harness which places orders. That is a claim about another
+    file, so it can rot silently if the wrapper ever grows a program selector — this is what would
+    notice."""
+    wrapper = (REPO / "infra/scripts/probe-with-vaulted-key.sh").read_text()
+    programs = sorted(set(re.findall(r"[\w-]+\.py", wrapper)))
+    assert programs == ["kraken-order-semantics-probe.py"], (
+        f"the wrapper now names {programs}; the probe's docstring says it targets only the "
+        "order-semantics harness, and that sentence must change with it"
+    )
+
+
+def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text():
     """The stub above guards the client handed to `sweep`. It cannot see a write on a SECOND client
     built inside the script — a bare `KrakenSpotHttpClient(...)` in `_main`, say — because that
     object never passes through the stub. Scanning the source closes exactly that gap, and it is the
@@ -195,5 +215,5 @@ def test_no_write_method_name_appears_in_the_script_text():
     # so the two guards together would both be green on a real write. Measured: the bare form has
     # zero hits on this script today, so it costs nothing. A name assembled from parts
     # ("cancel_all_" + "orders") is beyond any source scan and is not claimed.
-    present = sorted(name for name in FORBIDDEN if name in text)
-    assert not present, f"write method names in the probe's source: {present}"
+    present = sorted(name for name in FORBIDDEN | CREDENTIAL_ACCESSORS if name in text)
+    assert not present, f"write or credential-accessor names in the probe's source: {present}"
