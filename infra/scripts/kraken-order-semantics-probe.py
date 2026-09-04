@@ -2146,7 +2146,9 @@ def preflight(args) -> None:
     print(f"client order id shape: O-<stamp>{PROBE_ORDER_ID_INFIX}<n>  (engine's is ...{ENGINE_ORDER_ID_INFIX}...)")
     print("reminder: the production engine reconciles this same account. Our orders reach it as")
     print("          events.order.EXTERNAL with no ledgered row -> its unmatched branch (counts, logs,")
-    print("          returns). Anything left RESTING would be cancelled by its adopt pass at a restart.")
+    print("          returns). Anything left RESTING would be cancelled by its adopt pass at a restart --")
+    print(f"          except on {', '.join(RECONCILE_BLIND_LEGS)}, which that pass")
+    print("          cannot see either, so a leftover there keeps working. Cancel it by hand.")
 
 
 def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
