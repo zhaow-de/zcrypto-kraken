@@ -82,6 +82,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`engine-tracking-band`](engine-procedures.md#engine-tracking-band) — PROCEDURE: the weekly tracking-error trip — what its verdict tile is saying, and what has to be true before a band is set. Nothing fires this; a breach pages through the kill-switch alert above.
 - [`engine-flatten`](engine-procedures.md#engine-flatten) — PROCEDURE: the emergency halt — one command that stops the engine and closes the whole account at market. Nothing fires this; you open it deliberately, and real money moves at whatever price the market gives.
   - [`flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs) — the third limit: the five pairs the flat verdict cannot see, so exit 0 can be a false all-clear. The account-wide cancel is unaffected, which is why confirming on Kraken and pressing again is a real mitigation.
+  - [`flatten-read-only-dry-run`](engine-procedures.md#flatten-read-only-dry-run) — beside the press: who runs the read-only dry run that proves the five account reads, and the adapter-verification row it discharges into.
 
 ### [`order-semantics-verification.md`](order-semantics-verification.md) — the adapter's order semantics on a new nautilus version
 
