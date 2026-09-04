@@ -26,7 +26,7 @@
 
 - Don't "improve" adjacent code, comments, or formatting.
 - Don't refactor things that aren't broken.
-- Match existing style — copy the sibling that already solves the mechanism before writing your own.
+- Match existing style, even if you'd do it differently — copy the sibling that already solves the mechanism before writing your own.
 - Remove imports / variables / functions that *your* changes made unused.
 - Don't delete pre-existing dead code — mention it instead.
 
