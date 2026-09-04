@@ -51,7 +51,7 @@ Write to the ledger, in this order, and refuse to hand off without every line:
 - the last union's counts, the sweep's folded/left counts, its spec amendments (or `none`) and commit, each floor pass's counts, its fix cycles and their scoped reports' counts;
 - **the consequence statement** — quote each remaining finding's `Consequence:` line and state that none threatens any `{BLAST_RADIUS}` item. That sentence is the stopping signal; a zero on a counter is not.
 - `infra/scripts/review-trailer-audit.sh develop` output: every code-kind commit carries its trailer.
-- every self-correction and rule deviation the ledger records, appended to `docs/reference/agent-lessons.jsonl` before `{REPORT_DIR}` is removed — the ledger is deleted at merge and the round that harvests lessons cannot read a transcript.
+- every self-correction, rule deviation and miscount the ledger records, appended to the dispatching session's inbox (`.local/agent-lessons/<session>.jsonl` in the main checkout) before `{REPORT_DIR}` is removed — the ledger is deleted at merge and the round that harvests lessons cannot read a transcript.
 
 Then remove `{EXEC_WT}` (the floor's command) and hand off to `superpowers:subagent-driven-development`. `{REPORT_DIR}` stays until the branch merges — the SDD ledger cites it.
 

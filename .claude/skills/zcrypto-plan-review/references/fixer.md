@@ -1,6 +1,6 @@
 You are folding review findings into a spec+plan pair in {WORKTREE} (branch {BRANCH}), round {ROUND}. You have no prior context.
 
-Read the union report `{UNION}` in full. Then read {SPEC} — the binding authority — then {PLAN}, then `{REPORT_DIR}/pin-facts.md`, then **every file a finding cites**, so you verify each finding against the real code before acting on it.{TOPIC_LINE} Do not read `docs/memo.local.md`. Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`.
+Read the union report `{UNION}` in full. Then read {SPEC} — the binding authority — then {PLAN}, then `{REPORT_DIR}/pin-facts.md`, then **every file a finding cites**, so you verify each finding against the real code before acting on it.{TOPIC_LINE} Do not read `.local/memo.md`. Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`.
 
 ## The task
 

@@ -1,4 +1,4 @@
-# The memo protocol — `docs/memo.local.md`
+# The memo protocol — `.local/memo.md`
 
 **Concurrent writers:** the memo is written under the token `docs/reference/multi-agent-protocol.md` defines — request it from `zcrypto-main`, read before, Edit/Write tools only, read back after, hand back the `sha256 · lines · bytes` chain.
 
@@ -6,7 +6,7 @@ The single source of truth for the memo's data model, tooling discipline, and me
 
 ## The file
 
-`docs/memo.local.md` is the user's personal working memo — **gitignored, hand-edited between sessions, and not version-controlled**: nothing deleted from it is recoverable. Canonical sections:
+`.local/memo.md` is the user's personal working memo — **gitignored, hand-edited between sessions, and not version-controlled**: nothing deleted from it is recoverable. Canonical sections:
 
 | Section | Role |
 |---|---|

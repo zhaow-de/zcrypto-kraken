@@ -1,6 +1,6 @@
 ---
 name: zcrypto-grooming
-description: Drain and groom docs/memo.local.md together with the user. Bare /zcrypto-grooming runs the full three-step flow; an argument ("T9999 is done", "T9999 is partially done", "T9999 registered — insert into queue", "iter-290 (PR #1332) has been merged") applies one mechanical queue procedure.
+description: Drain and groom .local/memo.md together with the user. Bare /zcrypto-grooming runs the full three-step flow; an argument ("T9999 is done", "T9999 is partially done", "T9999 registered — insert into queue", "iter-290 (PR #1332) has been merged") applies one mechanical queue procedure.
 disable-model-invocation: true
 model: claude-fable-5
 allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Bash(git log:*), Bash(git show:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(date:*), Bash(uv run pre-commit:*)
@@ -10,7 +10,7 @@ allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Bash(git log:*), 
 
 ## What this is
 
-`docs/memo.local.md` is the user's personal working memo. Its data model, tooling discipline, and the mechanical ad-hoc procedures live in **`references/memo-protocol.md`** — the single source of truth, also loaded by `/zcrypto-auto-exec`. Read it before touching the file.
+`.local/memo.md` is the user's personal working memo. Its data model, tooling discipline, and the mechanical ad-hoc procedures live in **`references/memo-protocol.md`** — the single source of truth, also loaded by `/zcrypto-auto-exec`. Read it before touching the file.
 
 Grooming is a **joint conversation**: this skill structures it, the user decides. Nothing in the memo is disposed of unilaterally — the memo is the user's memory, and an item silently mis-filed is worse than one left untouched.
 
