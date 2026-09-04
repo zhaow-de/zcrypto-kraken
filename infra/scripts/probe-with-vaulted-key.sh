@@ -8,6 +8,14 @@
 #
 # Properties, each load-bearing:
 #   * the target is FIXED. Arguments are forwarded to the harness; none of them selects a program.
+#   * BOTH interpreters run `-I` (isolated), and the flag is load-bearing rather than tidy.
+#     Without it the cwd leads `sys.path` and PYTHON's environment is honoured, so a file in the
+#     operator's cwd shadows an import, `PYTHONPATH` redirects one, and `PYTHONINSPECT=1`
+#     drops to an interactive prompt after the program exits with the credential still in
+#     `os.environ` -- the "shell you keep" the refusal text promises this is not. Measured
+#     under a pty: without `-I` the prompt appears, with it there is none. What `-I` does NOT
+#     close is bash's and the loader's environment -- `BASH_ENV`, `LD_PRELOAD`, `PATH` are
+#     the operator's own and no flag in this file reaches them.
 #   * the decrypted values go straight into the exec'd child's environment. They are never echoed,
 #     never written to a file, and never placed on a command line -- `ps` shows the harness's flags
 #     and nothing else. One process throughout, so they never cross a pipe either.
@@ -39,7 +47,7 @@ venv_python="$repo/.venv/bin/python"
 [ -f "$harness" ] || { echo "refusing: $harness is missing" >&2; exit 2; }
 [ -x "$venv_python" ] || { echo "refusing: $venv_python is missing -- run 'uv sync'" >&2; exit 2; }
 
-exec "$venv_python" -c '
+exec "$venv_python" -I -c '
 import os, subprocess, sys
 
 from ansible.parsing.dataloader import DataLoader
@@ -77,6 +85,6 @@ if not key or not secret:
     sys.exit("refusing: the vaulted trade credential is empty")
 
 os.chdir(repo)
-os.execve(python, [python, harness, *sys.argv[4:]],
+os.execve(python, [python, "-I", harness, *sys.argv[4:]],
           dict(os.environ, KRAKEN_SPOT_API_KEY=key, KRAKEN_SPOT_API_SECRET=secret))
 ' "$repo" "$venv_python" "$harness" "$@"
