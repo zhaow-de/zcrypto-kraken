@@ -17,14 +17,15 @@ engine's own account id. That shape is marked in the table — it is the row tha
 flatten see", and the other seven are the context that makes it interpretable.
 
 `KrakenEnvironment` is deliberately absent: `KrakenSpotHttpClient.__init__` takes no such parameter
-(api_key, api_secret, base_url, timeout_secs, retries, proxy_url, max_requests_per_second). The
-environment selector belongs to `KrakenExecutionClientConfig`, which the order-semantics probe
-builds and this one does not — and adding any argument flatten does not pass would end the
+at all. The environment selector belongs to `KrakenExecutionClientConfig`, which the order-semantics
+probe builds and this one does not — and adding any argument flatten does not pass would end the
 like-for-like comparison this run exists to make.
 
 Credentials come from the environment and are never stored, echoed or logged; the refusal names the
-VARIABLES. Run it through `infra/scripts/probe-with-vaulted-key.sh`, which is the only sanctioned
-way to put them there.
+VARIABLES. `infra/scripts/probe-with-vaulted-key.sh` CANNOT run this script and must not be used to
+try: its target is fixed to the order-semantics harness by design, arguments select no program, and
+that harness places and cancels orders. How the key reaches this process is the attended run
+procedure's business, not this script's.
 
 Nine venue calls: eight order-status reads, plus the one `request_instruments` the populated arm
 needs to obtain an instrument to cache.

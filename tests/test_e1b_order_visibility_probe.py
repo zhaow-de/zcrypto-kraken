@@ -173,3 +173,22 @@ def test_the_live_sweep_returns_every_shape():
     assert len(results) == 8
     assert all(isinstance(count, int) for _, count, _ in results)
     print(m._render(results))
+
+
+def test_the_shapes_are_ordered_empty_arm_first():
+    """`sweep` populates the cache once, on the first shape that asks for it, and never un-populates.
+    So the ORDER is load-bearing: a populated shape moved earlier would have every later
+    empty-labelled shape read against a populated cache, and both tests above would stay green — one
+    is set-based, the other counts calls."""
+    m = _load()
+    assert [s.cache_populated for s in m.SHAPES] == [False] * 4 + [True] * 4
+
+
+def test_no_write_method_name_appears_in_the_script_text():
+    """The stub above guards the client handed to `sweep`. It cannot see a write on a SECOND client
+    built inside the script — a bare `KrakenSpotHttpClient(...)` in `_main`, say — because that
+    object never passes through the stub. Scanning the source closes exactly that gap, and it is the
+    check the commit message and the changelog entry claim exists."""
+    text = PROBE.read_text()
+    present = sorted(name for name in FORBIDDEN if f"{name}(" in text or f".{name}" in text)
+    assert not present, f"write method names in the probe's source: {present}"
