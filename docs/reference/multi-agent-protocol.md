@@ -7,18 +7,18 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 - **`zcrypto-main` — the coordinator.** Runs no payload work: no SDD loop, no plan-review loop, no drill, no daily-ops pass, no investigation. It grooms the backlog, assigns work, holds the authorities below, and runs the hourly tick. Git ownership is coordination: main opens and merges PRs. Its own hands-on work is the coordination corpus itself — grooming, refine-rules rounds, this protocol.
 - **`zcrypto-alex`, `zcrypto-bravo` — payload sessions.** Idle until main assigns; execute one assignment at a time in their own worktree; report by message.
 - **`zcrypto-zebra` — the owner's own session.** Never in the assignment pool. Main assigns it nothing unless the owner names it.
-- **Subagents** belong to the session that dispatched them and are not handed `docs/memo.local.md` or `docs/coordination.local.md` — a dispatch inlines the task's own context and never pastes the memo (`.claude/skills/zcrypto-grooming/references/memo-protocol.md`).
+- **Subagents** belong to the session that dispatched them and are not handed `.local/memo.md` or `.local/coordination.md` — a dispatch inlines the task's own context and never pastes the memo (`.claude/skills/zcrypto-grooming/references/memo-protocol.md`).
 
 ## Authorities held only by main
 
 - **PRs.** A payload session never opens or merges a PR. It sends main the component name (`branch-workflow.md`'s gate, step 1) and its branch state; main answers open, hold, or a reason — it holds the owner's PR word by delegation (`.claude/rules/branch-workflow.md` names it) — and main opens it. The one carve-out: the owner's direct word to a payload session, which then opens the PR itself and names that word in the body.
 - **T-topics.** A payload session never registers a topic. A finding it cannot resolve in-branch goes to main as the topic's `Context` + `Why this matters`; main registers, folds, or drops — **with the word recorded**. The request is the queue; silent drop is impossible because dropping now needs main's explicit answer. With no coordinator reachable, the session registers it and names it in its hand-back for confirm-or-kill (`open-topics.md`).
-- **Memory.** Only main writes `~/.claude/projects/…/memory/`. A payload session's lessons go to `docs/reference/agent-lessons.jsonl` on its branch — by message to main only for branchless work, per the payload contract; a record's `session` names the origin and its `branch` names where the WORK happened — `(branchless: <what>)` when there was none, the carrier branch being git's to know, never the field's; main files in memory what the harvest shows belongs there.
-- **The memo.** Written under the token below. `docs/coordination.local.md` is main's alone and needs no token.
+- **Memory.** Only main writes `~/.claude/projects/…/memory/`. A session's lessons go to its inbox, `.local/agent-lessons/<session>.jsonl` in the MAIN checkout — the first line of `git worktree list`; a worktree is removed after merge and takes its `.local/` with it — a record's `session` naming the origin and its `branch` where the WORK happened, `(branchless: <what>)` when there was none; the refine-rules round harvests every inbox, and main files in memory what the harvest shows belongs there.
+- **The memo.** Written under the token below. `.local/coordination.md` is main's alone and needs no token.
 
 ## The memo token
 
-`docs/memo.local.md` is gitignored — a clobber has no undo — so writes are serialized by a token main holds.
+`.local/memo.md` is gitignored — a clobber has no undo — so writes are serialized by a token main holds.
 
 1. A writer requests the token from main, naming the exact edit.
 2. Main grants it to one session at a time.
@@ -52,4 +52,4 @@ Main runs it from an in-session `CronCreate` job — session-only, fires only wh
 
 ## The payload contract
 
-A payload session, on receiving an assignment: works only in the worktree named; never writes outside the boundary list; never opens a PR, registers a topic, or writes memory — it asks main, except as `## Authorities held only by main` carves out; reports at start, at each commit, when blocked, and at completion, each report carrying branch and commit hash; ends a turn only with its state reported, never with work announced and not begun; appends its own self-corrections, rule deviations, and rule or skill feedback to `docs/reference/agent-lessons.jsonl` on its branch as they happen — branchless work (a review, a read) sends the record to main, who appends it with the `session` field naming its origin.
+A payload session, on receiving an assignment: works only in the worktree named; never writes outside the boundary list; never opens a PR, registers a topic, or writes memory — it asks main, except as `## Authorities held only by main` carves out; reports at start, at each commit, when blocked, and at completion, each report carrying branch and commit hash; ends a turn only with its state reported, never with work announced and not begun; appends its own self-corrections, rule deviations, miscounts, and rule or skill feedback to its inbox `.local/agent-lessons/<session>.jsonl` in the main checkout as they happen — a review or a read included, with `(branchless: <what>)` in the `branch` field.
