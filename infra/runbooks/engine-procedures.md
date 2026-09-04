@@ -519,10 +519,10 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 
 ### The read-only dry run that proves the five reads
 
-Not part of a press — nothing is sent. This is what produces the record the three limits above wait on.
+Not part of a press — nothing is sent. This is what produces the record the SECOND of the three limits above waits on — the first waits on the row the first real press writes, and the third is deliberately unfixed and waits on nothing, so its by-eye confirmation after a press stays mandatory.
 
 1. **After the engine converge that carries the wrapper, never before.** `/usr/local/sbin/zcrypto-flatten` reaches the host with that converge and not earlier.
-2. **With the engine running and a spot balance present on the account.**
+2. **With the engine running and a NON-EUR spot balance present on the account.** `spot_legs` skips the euro, so an EUR-only account produces no sell leg and the book read — the fifth shape — is never made; the run would prove four of the five while the row said five.
 3. **On the engine host, through the wrapper:**
 
 ```
@@ -531,7 +531,7 @@ sudo zcrypto-flatten
 
 4. **Record it**, in the shape drill G's extra reading uses: discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table, as a row proving the five read shapes against the real venue.
 
-That row is the operand \[[T0160]\]'s bump sub-item evaluates — it is what makes that trigger read true, so it is live, not a stale record to tidy away.
+That row is the operand \[[T0160]\]'s bump sub-item evaluates — it is the operand that completes that trigger, so it is live, not a stale record to tidy away.
 
 ### Retire when
 
