@@ -522,7 +522,7 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 Not part of a press — nothing is sent. This is what produces the record the SECOND of the three limits above waits on — the first waits on the row the first real press writes, and the third is deliberately unfixed and waits on nothing, so its by-eye confirmation after a press stays mandatory.
 
 1. **After the engine converge that carries the wrapper, never before.** `/usr/local/sbin/zcrypto-flatten` reaches the host with that converge and not earlier.
-2. **With the engine running and a NON-EUR spot balance the command can sell.** `spot_legs` skips the euro, skips a zero free balance, and skips a code it cannot resolve to a listed `/EUR` or `/BTC` pair — and the book read, the fifth shape, is made only for a leg. Nothing sellable means four of the five proven while the row would say five.
+2. **With the engine running and a NON-EUR spot balance the command can sell.** `spot_legs` skips the euro, skips a zero free balance, and skips a code it cannot resolve to a listed `/EUR` or `/BTC` pair — and the book read, the fifth shape, is made only for a leg. With no leg at all — nothing sellable and no margin position open — four of the five are proven while the row would say five.
 3. **On the engine host, through the wrapper:**
 
 ```
