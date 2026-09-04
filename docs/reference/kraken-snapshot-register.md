@@ -7,10 +7,10 @@ ledger, fetched live from Kraken's public `AssetPairs`/`Assets` endpoints (no AP
 without a live account; the account-gated facts remain parked (see below).
 
 **Fetched from:** `GET https://api.kraken.com/0/public/AssetPairs`, `GET https://api.kraken.com/0/public/Assets`
-(1429 pairs / 824 assets in the full response at fetch time).
+(1446 pairs / 840 assets in the full response at fetch time).
 
-**Fetched at:** 2026-08-04T10:40:09+00:00 (UTC)
-**Raw snapshot sha256:** `89e15dba5edeb9766d5cefbbfe9fd80b807ace6a1585599664958c8414922f24`
+**Fetched at:** 2026-09-04T08:11:18+00:00 (UTC)
+**Raw snapshot sha256:** `bb84ee1a30cc637d614be9b07a2589e1be74ccfaf1922c8c40fd65d9968c9fbc`
 
 > **This header always carries the LATEST sweep.** The re-confirmation log at the foot of this file
 > records every sweep with its own counts and hash, so "re-confirmed, identical" is distinguishable
@@ -59,19 +59,19 @@ SOL/BTC) — consistent with §3's "leverage caps per pair to be pulled from `As
 | ETH/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.99 | 80 | 40 | 2300 | 2300 |
 | SOL/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 16000 | 16000 |
 | XRP/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.95 | 80 | 40 | 1400000 | 1400000 |
-| ADA/EUR | 0.4 | 0.25 | 12 | 0.04 | 0.02 | 0.925 | 80 | 40 | 4400000 | 3100000 |
-| LINK/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.9 | 80 | 40 | 63000 | 32000 |
-| DOGE/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 18000000 | 11000000 |
-| LTC/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 17000 | 11000 |
-| DOT/EUR | 0.4 | 0.25 | 12 | 0.024 | 0.02 | 0.925 | 80 | 40 | 390000 | 340000 |
-| AVAX/EUR | 0.4 | 0.25 | 12 | 0.03 | 0.02 | 0.9 | 80 | 40 | 79000 | 29000 |
+| ADA/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 4800000 | 4100000 |
+| LINK/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.9 | 80 | 40 | 98000 | 80000 |
+| DOGE/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 19000000 | 15000000 |
+| LTC/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 14000 | 13000 |
+| DOT/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 300000 | 270000 |
+| AVAX/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.9 | 80 | 40 | 98000 | 63000 |
 | ETH/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.01 | 0.99 | 80 | 40 | 1000 | 800 |
-| SOL/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.01 | 0.925 | 80 | 40 | 6900 | 5100 |
+| SOL/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.01 | 0.925 | 80 | 40 | 5600 | 5000 |
 
 Borrow and margin columns carry no such caveat and **agree** with the account-confirmed figures:
 `margin_rate` is the per-4h rollover rate on the **extended** currency, and the endpoint's per-asset
 point values sit inside `kraken-fee-schedule.md`'s ranges (BTC 0.01 vs its 0.01–0.02 %; alts
-0.02–0.04 vs its 0.02–0.04 %). **Both sides are rendered because they price opposite trades**: a
+0.02 vs its 0.02–0.04 %). **Both sides are rendered because they price opposite trades**: a
 SHORT sells the borrowed base, so the base column prices it; a **LONG on margin buys with borrowed
 quote currency**, so the quote column is the one that prices the book's long leg — rendering only
 the base side left that leg unpriced while the table looked complete. That agreement is worth keeping, because the borrow rate is the term
@@ -100,9 +100,9 @@ asset's Kraken altname matches its common ticker directly (no alias).
 
 ## Provenance
 
-- **Raw snapshot file:** `data/snapshots/kraken-refdata-20260804T104009Z.json` (gitignored; not committed — regenerate
+- **Raw snapshot file:** `data/snapshots/kraken-refdata-20260904T081118Z.json` (gitignored; not committed — regenerate
   via `cli.snapshot.fetch_public("AssetPairs")` + `fetch_public("Assets")` fed into `build_snapshot(...)`).
-- **Raw snapshot sha256:** `89e15dba5edeb9766d5cefbbfe9fd80b807ace6a1585599664958c8414922f24` — a sha256 over the
+- **Raw snapshot sha256:** `bb84ee1a30cc637d614be9b07a2589e1be74ccfaf1922c8c40fd65d9968c9fbc` — a sha256 over the
   canonical JSON of the raw `AssetPairs`/`Assets` results only (not `fetched_at`), so it is reproducible from the raw
   responses alone.
 - **Derivation code:** `cli/snapshot/` (`fetch.py`, `assetpairs.py`, `register.py`), unit-tested against a trimmed,
@@ -119,6 +119,7 @@ changed** — otherwise the next reader cannot tell a re-confirmed register from
 | -- | -- | -- | -- | -- | --- |
 | #0 (Phase 0, iter-002) | 2026-07-07T03:29:00+00:00 | 1509 pairs / 809 assets | `e1510e98…3226e3` | 12/12 online + margin-enabled; the reference all later sweeps compare against | **Tier 1, \$0 30-day volume** — read from the logged-in Fee tab the same day (T0000), which is what makes `kraken-fee-schedule.md` authoritative |
 | #1 (monthly, 2026-08-04) | 2026-08-04T10:40:09+00:00 | 1429 pairs / 824 assets | `89e15dba…922f24` | **UNCHANGED** — all 12 still online and margin-enabled, identical leverage bands, `ordermin`, `costmin` and aliases (re-rendered and diffed against the committed table: no cell moved) | **not re-read** — recorded blank rather than inherited; at \$0 volume the tier cannot have moved, but *cannot have* is not *was checked* |
+| #2 (monthly, 2026-09-04) | 2026-09-04T08:11:18+00:00 | 1446 pairs / 840 assets | `bb84ee1a…8c9fbc` | **UNCHANGED (basket)** — all 12 still online and margin-enabled; leverage bands, `ordermin`, `costmin` and the alias ledger identical cell-by-cell. **The endpoint's borrow and limit columns moved**: `margin_rate` for shorts fell to 0.02 on ADA (was 0.04), AVAX (0.03) and DOT (0.024), so all ten alts now sit at the FLOOR of `kraken-fee-schedule.md`'s 0.02–0.04 % band — inside it, so no downstream figure is re-priced and `cli/costs/margin.py`'s bands still bound it; position limits moved on 7 legs (nothing outside this table reads them). Fee columns unchanged, so the drift detector is quiet. Venue churn: 4 pairs / 2 assets gone (CGN, ICX), 21 / 18 added — no candidate among them | **not re-read** — the attended half is the owner's (Kraken Pro → Fee tab: current tier + 30-day USD spot volume). Left explicitly unfilled, never inherited |
 
 The last column exists because the account's own tier is the one fact here that **no endpoint can supply** — it sits behind a login, and `cli/costs/fees.py` encodes the ladder it selects from. A sweep that silently carried the previous row's tier forward would manufacture exactly the false confirmation this log was built to make impossible, so an unperformed read is recorded as *not re-read*, never as unchanged.
 
