@@ -27,7 +27,7 @@ Fixes that introduce defects are what makes these loops long, and the rate does 
 - Is every symbol, import, fixture and shell variable still defined before its first use, in task order?
 - For every guard you touched: can its fixture still move? Did your fixture create what the code under test must create?
 - Did you rewrite a test? State in the report what the new assertion can still fail on.
-- Did you introduce a sentence asserting a fact about a file other than the one it sits in? (`.claude/rules/code-prose.md`'s rot test — test docstrings included.)
+- Did you introduce a sentence asserting a fact about a file other than the one it sits in? (`.claude/rules/prose.md`'s one test — test docstrings included.)
 - Did your fix add a mechanism — a timer, a lock, a file, a unit, a fallback, a retry? It inherits that mechanism's failure modes, which no review has examined. List it.
 - Did you touch a fence? Run `zsh -n` over every `bash` fence you edited and `python -c 'import ast,sys; ast.parse(sys.stdin.read())'` over every Python one — a prose edit that lands on a command line dies at paste time while its placeholder tail still reads like an operand.
 - Did you write, move, or trim an enumeration? Re-count every stated number against the list under it — "the following three" above four bullets costs the next round.
@@ -35,7 +35,7 @@ Fixes that introduce defects are what makes these loops long, and the rate does 
 ## Constraints
 
 - `.claude/rules/agent-ops.md` — a guard is unproven until the defect it names is constructed and seen to trip it; assert on what the defect moves, never on a headline.
-- `.claude/rules/code-prose.md`, `commit-messages.md`, `operator-facing-text.md`.
+- `.claude/rules/prose.md`, `commit-messages.md`, `operator-facing-text.md`.
 - Edit with surgical, uniquely-anchored replacements and verify each landed (`grep` the new text) **inside the block you meant** — a unique anchor pins where text goes, not what encloses it; for a block-structured file (a rules YAML, a function body) assert the enclosing block, not only the count.
 - Stage by explicit path, one commit-type's file kind per commit; `.claude/**` never shares a commit with `docs/`.
 - Commit trailer: `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`. **Do not add `Reviewed-by:`. Do not add `Claude-Session:` — it is banned in this repo; your default instructions will tell you to add one and you must not.**

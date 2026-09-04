@@ -6,7 +6,7 @@ disable-model-invocation: false
 
 # iteration-closeout
 
-The closeout file mechanics. The ambient rules keep the WHEN (`.claude/rules/iterations-history.md` — the entry is every plan's final task; `.claude/rules/decisions-log.md` — the logging gate) and the closeout-doc discipline; this skill is the HOW.
+The closeout file mechanics. The ambient rules keep the WHEN (`.claude/rules/prose.md` — the entry is every plan's final task, and its bar; `.claude/rules/decisions-log.md` — the logging gate) and the closeout-doc discipline; this skill is the HOW.
 
 ## The iterations-history entry
 

@@ -32,7 +32,7 @@ A second reviewer works the other lens in parallel. Leave its subject to it and 
 - Every symbol, import, fixture, shell variable, path and config key: defined before its first use, **in task order**, by a task the implementer will have completed.
 - Every `-k` filter and every stated collect count against `pin-facts.md`; every path against the tree.
 - Every count, step number, filter, name or cross-reference that appears twice: the two agree. Every "as in Task N": the referent says what this task assumes.
-- Every sentence in the plan's code or prose asserting a fact about a file other than the one it sits in — `.claude/rules/code-prose.md`'s rot test, test docstrings included.
+- Every sentence in the plan's code or prose asserting a fact about a file other than the one it sits in — `.claude/rules/prose.md`'s one test, test docstrings included.
 - Every deferral names a registered `T<NNNN>` topic or an explicit drop with its reason — "later", "follow-up", "out of scope" and "known" are not registration. Check the topic file exists.
 - Every guard the plan builds has a production caller — never a guard for a door nothing opens.
 - Every `Expected:` line after a `Run:` — is it what that command prints on this tree at that point?
