@@ -28,12 +28,11 @@ The receiver split landed on `fix/loki-dead-men-notify-clear`, in the commit `fi
 
 A guard landed with it, coupling the two files rather than restating either: `tests/test_infra_alert_rules.py::test_a_rule_that_fires_on_absence_can_notify_its_clear` refuses a rule that fires on absence while pinning a receiver `grafana-push.sh` mints with `disableResolveMessage: true`, and reads that receiver set from the script, so it fails if either the pin or the flag moves. The two families are separated structurally — `lt` for a dead-man, `gt` for a burst — so a ninth dead-man added later is caught too; that case was proven by mutation rather than assumed. `test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve` is its true positive and guards against the over-correction of moving the whole Loki family.
 
-**The push ran on 2026-09-04** (`grafana-push.sh` from merged `develop` `efa9d098`, on the owner's word, after both capture rows passed `fleet-deploys.md`'s bar on revision `4925e060`) and was verified by value against the live stack: all eight dead-men pin `metrics` live as in `alerts.yaml`, every one inactive at the read, no orphaned rule. The receiver that can announce a clear is now the one the live rules use. The runbook sentence describing what an operator sees flips with the induction below, which is the reading that proves it, not with the push.
+**The push ran on 2026-09-04** (`grafana-push.sh` from merged `develop` `efa9d098`, on the owner's word, after both capture rows passed `fleet-deploys.md`'s bar on revision `4925e060`) and was verified by value against the live stack: all eight dead-men pin `metrics` live as in `alerts.yaml`, every one inactive at the read, no orphaned rule. The receiver that can announce a clear is now the one the live rules use. The runbook sentence that says a Loki dead-man never sends a resolved notice became false at the push; it is re-tensed in the same change as the induction below, whose reading is the proof.
 
 ## Suggested next steps
 
 - **The induction — attended, the owner's window.** Verify by induction rather than by reading config: page one of the eight (drill N's procedure in `infra/runbooks/drills-telemetry.md` is repeatable), clear it, and confirm a resolved notice arrives in `#zcrypto`.
 - **Re-tense the docs in that same change.** `infra/runbooks/drills-telemetry.md` records that no resolved notice arrives for a Loki dead-man — true of the live stack until the push, false after it.
-
 
 **Do not "fix" this by editing rule expressions.** That was tried and disproved; `alerts.yaml`'s comment beside `nas-archive-pull-stalled` records why, and re-deriving it from this file's git history would reach the wrong answer.
