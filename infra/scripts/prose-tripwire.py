@@ -225,9 +225,15 @@ def baseline(rev: str, paths: list[str]) -> dict[tuple[str, str, str], list[floa
 
 
 def new_since(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]) -> list[Offender]:
-    """Each offender consumes one baseline entry at least as large as itself, or it is new."""
-    fresh = []
+    """Each offender consumes one baseline entry -- its exact size first, else the smallest at least as large."""
+    fresh, pending = [], []
     for o in sorted(offenders):
+        pool = known.get(o.key, [])
+        if o.measured in pool:
+            pool.remove(o.measured)
+        else:
+            pending.append(o)
+    for o in pending:
         pool = known.get(o.key, [])
         match = next((m for m in sorted(pool) if m >= o.measured), None)
         if match is None:

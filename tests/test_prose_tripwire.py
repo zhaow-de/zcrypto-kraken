@@ -357,17 +357,52 @@ class TestTheCommandLine:
             assert f"{name}={getattr(tw, name)}" in text
 
 
+_GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+
+
+def _commit(*paths: str) -> None:
+    subprocess.run([*_GIT, "add", *paths], check=True)
+    subprocess.run([*_GIT, "commit", "-q", "-m", "baseline"], check=True)
+
+
 class TestSince:
     @pytest.fixture
     def repo(self, tmp_path: Path, monkeypatch) -> Path:
         monkeypatch.chdir(tmp_path)
-        git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
-        subprocess.run([*git, "init", "-q"], check=True)
+        subprocess.run([*_GIT, "init", "-q"], check=True)
         n = tw.COMMENT_BLOCK_LINES + 1
         (tmp_path / "old.py").write_text(_py(["# old"] * n, 6 * n))
-        subprocess.run([*git, "add", "old.py"], check=True)
-        subprocess.run([*git, "commit", "-q", "-m", "baseline"], check=True)
+        _commit("old.py")
         return tmp_path
+
+    def test_two_same_anchor_blocks_reordered_are_not_new(self, repo: Path, capsys) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        small, big = _py(["# old"] * n, 6 * n), _py(["# old"] * (n + 2), 6 * n)
+        (repo / "two.py").write_text(big + small)
+        _commit("two.py")
+        (repo / "two.py").write_text(small + big)
+        assert tw.main(["--since", "HEAD", "two.py"]) == 0
+        assert capsys.readouterr().out.splitlines()[-1].endswith("(total 0)")
+
+    def test_two_shrunken_same_anchor_blocks_are_not_new(self, repo: Path, capsys) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        big, small = _py(["# old"] * (n + 4), 6 * n), _py(["# old"] * (n + 2), 6 * n)
+        (repo / "shrunk.py").write_text(big + small)
+        _commit("shrunk.py")
+        (repo / "shrunk.py").write_text(_py(["# old"] * (n + 1), 6 * n) + _py(["# old"] * (n + 3), 6 * n))
+        assert tw.main(["--since", "HEAD", "shrunk.py"]) == 0
+        assert capsys.readouterr().out.splitlines()[-1].endswith("(total 0)")
+
+    def test_the_reported_line_is_the_new_block_not_the_unchanged_one(self, repo: Path, capsys) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        old = "y = 0\n" * 3 + _py(["# old"] * (n + 2), 6 * n)
+        (repo / "id.py").write_text(old)
+        _commit("id.py")
+        (repo / "id.py").write_text(_py(["# old"] * n, 6 * n) + old)
+        assert tw.main(["--since", "HEAD", "id.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"id.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[-1].endswith("(total 1)")
 
     def test_only_baseline_offenders_means_clean(self, repo: Path, capsys) -> None:
         assert tw.main(["--since", "HEAD", "old.py"]) == 0
