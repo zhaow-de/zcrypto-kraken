@@ -190,9 +190,9 @@ CLAUDE_EXCLUDES=(
 )
 src_memo_sum="$(md5sum "$REPO_DIR/.local/memo.md" 2>/dev/null | cut -d' ' -f1 || true)"
 dst_memo_sum="$(remote "md5sum ${(q)REPO_DIR}/.local/memo.md 2>/dev/null | cut -d' ' -f1" || true)"
-claude_deletes="$("${RSYNC[@]}" -n --delete "${CLAUDE_EXCLUDES[@]}" \
+claude_deletes="$("${RSYNC[@]}" -n --delete --info=del "${CLAUDE_EXCLUDES[@]}" \
   "$HOME/.claude/" "$DEST:.claude/" 2>/dev/null | grep -c '^deleting ' || true)"
-local_deletes="$("${RSYNC[@]}" -n --delete "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/" 2>/dev/null | grep -c '^deleting ' || true)"
+local_deletes="$("${RSYNC[@]}" -n --delete --info=del "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/" 2>/dev/null | grep -c '^deleting ' || true)"
 dest_sentinel="$(remote "cat ${(q)SENTINEL} 2>/dev/null" || true)"
 
 # --- the plan, then the gate -------------------------------------------------------------------
