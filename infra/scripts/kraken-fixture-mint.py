@@ -50,7 +50,7 @@ from nautilus_trader.model import (
     TimeInForce,
 )
 
-from cli.engine.flatten import BLIND_ORDER_READ_LEGS
+from cli.engine.flatten import BLIND_ORDER_READ_LEGS, QUOTE_CURRENCY, resolve_base
 from cli.engine.instruments import (
     INSTRUMENT_IDS,
     BelowMinimum,
@@ -141,12 +141,45 @@ def assert_same_key(pair: str) -> None:
     raw equality with no miss branch, so a row on one of these legs is dropped and the read returns
     success. A fixture there is invisible to the verdict it exists to exercise.
     """
+    if pair not in INSTRUMENT_IDS:
+        raise Refusal(
+            f"REFUSING: {pair} is not one of the basket's instruments, so this guard has no opinion "
+            f"about it. Mint on a basket pair; {DEFAULT_PAIR} is the default.",
+        )
     if pair in BLIND_ORDER_READ_LEGS:
         raise Refusal(
             f"REFUSING: {pair} is spelled two ways at the venue, so a resting order on it is "
             f"dropped by the order-report read and the attended pass would read clean against an "
             f"account it cannot see. Mint on a same-key pair; {DEFAULT_PAIR} is the default.",
         )
+
+
+def assert_row_is_same_key(pair: str, pair_key: str, row: dict) -> None:
+    """The same property as `assert_same_key`, measured from the venue's row instead of remembered.
+
+    `assert_same_key` reads a list this repo maintains; this reads the property that list describes,
+    off the row the run has already fetched. Two producers of one fact are the check on each other,
+    and each refusal names which fired: a leg the list has not learned about yet is caught here, and
+    a disagreement between the two is a finding about the list rather than a duplicate refusal.
+
+    It cannot replace the list. It needs the listing, so it fires later than `assert_same_key`,
+    which refuses before anything is read at all -- and the list's identity with `flatten`'s own
+    constant is what keeps this script and the engine talking about the same five legs.
+    """
+    altname = _row_field(row, "altname", pair)
+    if altname == pair_key:
+        return
+    remembered = (
+        "the hardcoded list agrees"
+        if pair in BLIND_ORDER_READ_LEGS
+        else "and BLIND_ORDER_READ_LEGS does NOT carry this leg -- the list in cli/engine/flatten.py "
+        "is behind the venue, which is a finding about the list"
+    )
+    raise Refusal(
+        f"REFUSING (measured from the listing, not from the list): {pair} is keyed {pair_key} and "
+        f"spelled {altname}, so an order on it is dropped by the adapter's order-report read and a "
+        f"fixture there is invisible to the verdict it exists to exercise; {remembered}.",
+    )
 
 
 def require_eur_quote(pair: str) -> None:
@@ -180,6 +213,20 @@ def _row_field(row: dict, field: str, pair: str) -> str:
     return value
 
 
+def resolve_row(assetpairs_result: dict, pair: str) -> tuple[str, dict]:
+    """This pair's `(key, row)` from the raw listing, resolved by wsname.
+
+    Split from `pair_limits` so the lookup and the refusal it feeds are separately checkable: a
+    lookup that could not find a two-way-spelled row would hide the refusal behind a miss.
+    """
+    base, quote = pair.split("/")
+    ws_key = f"{_COMMON_TO_KRAKEN.get(base, base)}/{_COMMON_TO_KRAKEN.get(quote, quote)}"
+    hit = _wsname_index(assetpairs_result).get(ws_key)
+    if hit is None:
+        raise Refusal(f"REFUSING: {pair} is in no AssetPairs row under the wsname {ws_key}")
+    return hit
+
+
 def pair_limits(assetpairs_result: dict, pair: str) -> PairLimits:
     """This pair's floors and steps, off the raw listing that the venue enforces at submit.
 
@@ -187,14 +234,8 @@ def pair_limits(assetpairs_result: dict, pair: str) -> PairLimits:
     key, altname and wsname disagree (`XXBTZEUR` / `XBTEUR` / `XBT/EUR`) is found the one way that
     works for all of them -- and so this lookup cannot drift from the register's.
     """
-    base, quote = pair.split("/")
-    ws_key = f"{_COMMON_TO_KRAKEN.get(base, base)}/{_COMMON_TO_KRAKEN.get(quote, quote)}"
-    hit = _wsname_index(assetpairs_result).get(ws_key)
-    if hit is None:
-        raise Refusal(
-            f"REFUSING: {pair} is in no AssetPairs row under the wsname {ws_key}",
-        )
-    _pair_key, row = hit
+    pair_key, row = resolve_row(assetpairs_result, pair)
+    assert_row_is_same_key(pair, pair_key, row)
     return PairLimits(
         ordermin=float(_row_field(row, "ordermin", pair)),
         costmin=float(_row_field(row, "costmin", pair)),
@@ -386,23 +427,54 @@ async def read_pair(client, pair: str) -> tuple[float, object]:
     return float(bids[0].price), row
 
 
-async def read_account(client, pair: str) -> AccountState:
-    """What the account already holds, so a re-run adds nothing it already has."""
+async def read_account(client, pair: str, limits: PairLimits) -> AccountState:
+    """What the account already holds, so a re-run adds nothing it already has.
+
+    Every kwarg here is `flatten`'s own, verbatim, because a read this script makes in a different
+    MODE than the reader it is minting for answers a different question and this guard cannot tell
+    the two apart -- an answer of "nothing" from the wrong mode is indistinguishable from a flat
+    account, and it fails in the expensive direction: a leg minted again on every run.
+    """
     account = AccountId(FIXTURE_ACCOUNT_ID)
     orders = await client.request_order_status_reports(account, open_only=True)
-    positions = await client.request_position_status_reports(account)
-    state = await client.request_account_state(account)
+    # WITHOUT these three the client's own docstring says it "returns an empty vector" -- the CASH
+    # default with spot reports off reads no leveraged position at all. This guard would then pass
+    # against an account already carrying one and open another 2x position on every `--execute`,
+    # while the printed plan says `positions: (none)`.
+    positions = await client.request_position_status_reports(
+        account,
+        account_type=AccountType.MARGIN,
+        use_spot_position_reports=False,
+        quote_currency=QUOTE_CURRENCY,
+    )
+    state = await client.request_account_state(account, account_type=AccountType.CASH)
+    base = pair.split("/")[0]
     return AccountState(
         resting_pairs=tuple({str(getattr(o, "instrument_id", "")).split(".")[0] for o in orders or ()}),
         position_pairs=tuple({str(getattr(p, "instrument_id", "")).split(".")[0] for p in positions or ()}),
-        non_eur_assets=tuple(
-            {
-                code
-                for code in (str(getattr(b, "currency", "")) for b in getattr(state, "balances", ()) or ())
-                if code and code not in ("EUR", "ZEUR")
-            }
-        ),
+        non_eur_assets=_held_bases(getattr(state, "balances", ()) or (), base, limits.ordermin),
     )
+
+
+def _held_bases(balances, base: str, ordermin: float) -> tuple[str, ...]:
+    """The non-EUR bases held in a size the fixture's sell path could actually use.
+
+    Two things a bare currency-code set gets wrong, both in the direction of SKIPPING the spot leg
+    and leaving the attended pass with nothing to sell. A code with a dust balance still satisfies
+    a presence test: `flatten` drops a leg whose free amount is not positive and the venue refuses
+    one under `ordermin`, so a residual left by a partial fill would satisfy this forever. And the
+    venue spells assets its own way -- `XXDG` for DOGE -- so a raw code never equals the common base
+    it stands for; the mapping is `flatten`'s `resolve_base` rather than a second copy of it here.
+    """
+    held = set()
+    for row in balances:
+        code = str(getattr(getattr(row, "currency", None), "code", "") or "")
+        if not code or code in ("EUR", "ZEUR"):
+            continue
+        if float(getattr(row, "free", 0.0) or 0.0) < ordermin:
+            continue
+        held.add(resolve_base(code, frozenset({base})) or code)
+    return tuple(sorted(held))
 
 
 async def submit(client, leg: Leg, instrument, client_order_id: str) -> None:
@@ -410,15 +482,22 @@ async def submit(client, leg: Leg, instrument, client_order_id: str) -> None:
     from nautilus_trader.model import InstrumentId
 
     client.cache_instrument(instrument)
+    quantity = Quantity.from_str(str(leg.quantity))
+    price = Price.from_str(str(leg.price)) if leg.price is not None else None
+    # `from_str` parses a repr, and a float whose shortest repr runs past the venue's precision
+    # comes back as a DIFFERENT number without raising. Both operands are `_floor_to_step` outputs
+    # today, whose reprs are exact decimals, so this asserts the property rather than fixing it.
+    assert float(quantity) == leg.quantity, f"{leg.kind} quantity changed in translation"
+    assert price is None or float(price) == leg.price, f"{leg.kind} price changed in translation"
     await client.submit_order(
         account_id=AccountId(FIXTURE_ACCOUNT_ID),
         instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[leg.pair]),
         client_order_id=ClientOrderId(client_order_id),
         order_side=OrderSide.BUY if leg.side == "BUY" else OrderSide.SELL,
         order_type=OrderType.LIMIT if leg.order_type == "LIMIT" else OrderType.MARKET,
-        quantity=Quantity.from_str(str(leg.quantity)),
+        quantity=quantity,
         time_in_force=getattr(TimeInForce, leg.time_in_force),
-        price=Price.from_str(str(leg.price)) if leg.price is not None else None,
+        price=price,
         leverage=leg.leverage,
         account_type=AccountType.MARGIN if leg.account_type == "MARGIN" else AccountType.CASH,
     )
@@ -473,11 +552,16 @@ async def _run(
     client = client_factory(key, secret)
     limits = pair_limits(listing_factory(), args.pair)
     best_bid, instrument = await read_pair(client, args.pair)
+    # Warmed BEFORE the account reads, not just before `submit`. The order-report read resolves
+    # rows through this cache, and the adapter drops a row it cannot resolve while returning
+    # success -- so a cold cache would empty the resting-order guard rather than fail it. Cheap,
+    # and it closes the question from this side rather than leaving it to the live run.
+    client.cache_instrument(instrument)
     print(
         f"{args.pair} now: best bid {best_bid}, ordermin {limits.ordermin}, "
         f"costmin {limits.costmin} (read this run, not remembered)"
     )
-    existing = await read_account(client, args.pair)
+    existing = await read_account(client, args.pair, limits)
     legs = plan_legs(pair=args.pair, limits=limits, best_bid=best_bid, existing=existing)
     print(render_plan(legs, existing, args.pair))
 

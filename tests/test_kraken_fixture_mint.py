@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from nautilus_trader.model import AccountType, OrderSide, OrderType, TimeInForce
 
 _REPO = Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO / "infra" / "scripts" / "kraken-fixture-mint.py"
@@ -156,14 +157,57 @@ class TestTheFloorsComeFromTheRow:
         with pytest.raises(mint.Refusal):
             mint.pair_limits(_LISTING, "ADA/EUR")
 
-    def test_it_finds_a_row_whose_key_altname_and_wsname_all_differ(self) -> None:
-        """The reader resolves by wsname, so `XXBTZEUR` / `XBTEUR` / `XBT/EUR` is one row to it.
+    def test_the_lookup_finds_a_row_whose_key_altname_and_wsname_all_differ(self) -> None:
+        """`resolve_row` resolves by wsname, so `XXBTZEUR` / `XBTEUR` / `XBT/EUR` is one row to it.
 
-        That is a separate question from whether this script will MINT there -- it will not, and
-        `TestTheSameKeyGuard` is the refusal that says so. Keeping them independent is the point:
-        a reader that could not find the row would hide the guard behind a lookup failure.
+        Whether this script will MINT there is a separate question, refused twice over by
+        `TestTheMeasuredSameKeyRefusal` and `TestTheSameKeyGuard`. Keeping the lookup separately
+        checkable is the point: a lookup that could not find the row would hide both refusals
+        behind a miss, and a miss looks like a guard working.
         """
-        assert mint.pair_limits(_LISTING, "BTC/EUR").ordermin == 0.00005
+        pair_key, row = mint.resolve_row(_LISTING, "BTC/EUR")
+        assert pair_key == "XXBTZEUR"
+        assert row["altname"] == "XBTEUR"
+        assert row["ordermin"] == "0.00005"
+
+
+class TestTheMeasuredSameKeyRefusal:
+    """The second producer of the same fact, read off the venue's row rather than off a list.
+
+    The two are deliberately independent: the list refuses before anything is read, the row refuses
+    what the list has not learned. Where they disagree the refusal says so, because a disagreement
+    is a finding about the list and not a duplicate refusal.
+    """
+
+    def test_a_two_way_spelled_row_refuses(self) -> None:
+        with pytest.raises(mint.Refusal) as exc:
+            mint.pair_limits(_LISTING, "BTC/EUR")
+        assert "XXBTZEUR" in str(exc.value)
+        assert "XBTEUR" in str(exc.value)
+
+    def test_the_refusal_says_the_two_guards_agree(self) -> None:
+        with pytest.raises(mint.Refusal) as exc:
+            mint.pair_limits(_LISTING, "BTC/EUR")
+        assert "the hardcoded list agrees" in str(exc.value)
+
+    def test_a_leg_the_list_has_not_learned_names_the_list_as_the_finding(self) -> None:
+        """The case that justifies a second producer at all: the venue re-spells a leg and the
+        hardcoded list is behind. The refusal must not read as a routine two-way leg."""
+        listing = {"SOLEUR": {**_LISTING["SOLEUR"], "altname": "SOLXEUR"}}
+        with pytest.raises(mint.Refusal) as exc:
+            mint.pair_limits(listing, "SOL/EUR")
+        assert "is behind the venue" in str(exc.value)
+        assert "SOL/EUR" not in mint.BLIND_ORDER_READ_LEGS
+
+    def test_the_healthy_row_passes(self) -> None:
+        """The true positive. SOL/EUR's key and altname are the same string, so nothing fires."""
+        assert mint.pair_limits(_LISTING, "SOL/EUR").ordermin == 0.06
+
+    def test_a_row_with_no_altname_refuses_rather_than_comparing_to_none(self) -> None:
+        listing = {"SOLEUR": {k: v for k, v in _LISTING["SOLEUR"].items() if k != "altname"}}
+        with pytest.raises(mint.Refusal) as exc:
+            mint.pair_limits(listing, "SOL/EUR")
+        assert "altname" in str(exc.value)
 
 
 class TestSizing:
@@ -355,10 +399,14 @@ class _Recorder:
     would let a regression that called it pass unnoticed.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, positions=(), balances=(), orders=()) -> None:
         self.calls: list[str] = []
         self.submitted: list[dict] = []
         self.cached: list[object] = []
+        self.read_kwargs: dict[str, dict] = {}
+        self._positions = tuple(positions)
+        self._balances = tuple(balances)
+        self._orders = tuple(orders)
 
     async def request_instruments(self, pairs=None):
         self.calls.append("request_instruments")
@@ -370,15 +418,27 @@ class _Recorder:
 
     async def request_order_status_reports(self, account, **kw):
         self.calls.append("request_order_status_reports")
-        return []
+        self.read_kwargs["orders"] = kw
+        return list(self._orders)
 
     async def request_position_status_reports(self, account, **kw):
+        """Answers what the venue answers, which is NOT the same in every mode.
+
+        The client's own docstring: margin mode calls `OpenPositions`; cash mode with spot reports
+        off "returns an empty vector". A stub that returned the positions whatever it was asked
+        would let a script reading in the wrong mode pass here and re-mint a leveraged position on
+        every run at the venue -- the defect this reproduces rather than hides.
+        """
         self.calls.append("request_position_status_reports")
-        return []
+        self.read_kwargs["positions"] = kw
+        if kw.get("account_type") is not AccountType.MARGIN:
+            return []
+        return list(self._positions)
 
     async def request_account_state(self, account, **kw):
         self.calls.append("request_account_state")
-        return _AccountReport()
+        self.read_kwargs["state"] = kw
+        return _AccountReport(self._balances)
 
     def cache_instrument(self, instrument) -> None:
         self.calls.append("cache_instrument")
@@ -404,6 +464,29 @@ class _Instrument:
     price_increment = None
 
 
+class _Currency:
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+
+class _Balance:
+    """A balance row shaped as the venue's is: the code is a level down, under `currency.code`."""
+
+    def __init__(self, code: str, free: float) -> None:
+        self.currency = _Currency(code)
+        self.free = free
+
+
+class _Position:
+    def __init__(self, instrument_id: str = "SOL/EUR.KRAKEN") -> None:
+        self.instrument_id = instrument_id
+
+
+class _Order:
+    def __init__(self, instrument_id: str = "SOL/EUR.KRAKEN") -> None:
+        self.instrument_id = instrument_id
+
+
 class _Level:
     price = 85.76
 
@@ -414,7 +497,8 @@ class _Book:
 
 
 class _AccountReport:
-    balances = ()
+    def __init__(self, balances=()) -> None:
+        self.balances = tuple(balances)
 
 
 def _args(execute: bool):
@@ -485,6 +569,114 @@ class TestNothingIsSentWithoutExecute:
         asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
         assert "request_order_status_reports" in rec.calls
         assert "request_instruments" in rec.calls
+
+
+class TestTheAccountIsReadTheWayFlattenReadsIt:
+    """A read made in a different MODE than the reader this mints for answers a different question.
+
+    Each of these fails in the same expensive direction -- an ingredient re-minted on every run,
+    or one skipped so the attended pass has nothing to exercise -- and each is invisible from the
+    output, because "nothing there" is what a flat account looks like too.
+    """
+
+    def _state(self, rec) -> object:
+        import asyncio
+
+        return asyncio.run(mint.read_account(rec, "SOL/EUR", _LIMITS))
+
+    def test_positions_are_requested_in_margin_mode(self) -> None:
+        """The client returns an empty vector in the cash default, whatever the account holds."""
+        rec = _Recorder()
+        self._state(rec)
+        assert rec.read_kwargs["positions"]["account_type"] is AccountType.MARGIN
+        assert rec.read_kwargs["positions"]["use_spot_position_reports"] is False
+
+    def test_an_existing_margin_position_is_actually_SEEN(self) -> None:
+        """The guard proven on a position that exists, not on an empty list that proves nothing."""
+        rec = _Recorder(positions=[_Position()])
+        assert self._state(rec).position_pairs == ("SOL/EUR",)
+
+    def test_the_quote_currency_is_flattens(self) -> None:
+        from cli.engine.flatten import QUOTE_CURRENCY
+
+        rec = _Recorder()
+        self._state(rec)
+        assert rec.read_kwargs["positions"]["quote_currency"] == QUOTE_CURRENCY
+
+    def test_a_balance_below_ordermin_does_not_satisfy_the_spot_leg(self) -> None:
+        """A residual from a partial fill is not a sellable balance; flatten drops it and the venue
+        refuses it, so counting it would skip the spot leg forever."""
+        rec = _Recorder(balances=[_Balance("SOL", _LIMITS.ordermin / 2)])
+        assert self._state(rec).non_eur_assets == ()
+
+    def test_a_balance_at_ordermin_does_satisfy_it(self) -> None:
+        """The true positive beside it -- a guard that never counts anything skips nothing."""
+        rec = _Recorder(balances=[_Balance("SOL", _LIMITS.ordermin)])
+        assert self._state(rec).non_eur_assets == ("SOL",)
+
+    def test_the_venues_own_spelling_of_an_asset_is_resolved(self) -> None:
+        """`XXDG` is how the venue spells DOGE; compared raw it never equals the pair's base."""
+        import asyncio
+
+        rec = _Recorder(balances=[_Balance("XXDG", 1000.0)])
+        state = asyncio.run(mint.read_account(rec, "DOGE/EUR", _LIMITS))
+        assert state.non_eur_assets == ("DOGE",)
+
+    def test_eur_never_counts_as_the_non_eur_balance(self) -> None:
+        rec = _Recorder(balances=[_Balance("ZEUR", 5000.0)])
+        assert self._state(rec).non_eur_assets == ()
+
+    def test_the_instrument_is_cached_before_the_account_is_read(self, _creds) -> None:
+        """The order-report read resolves rows through the cache and drops what it cannot resolve
+        while returning success, so a cold cache would empty this guard rather than fail it."""
+        import asyncio
+
+        rec = _Recorder()
+        asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
+        assert rec.calls.index("cache_instrument") < rec.calls.index("request_order_status_reports")
+
+
+class TestWhatIsSentIsWhatWasPlanned:
+    """The plan the operator approves and the orders that go out must be the same set.
+
+    Nothing asserted this before: a `submit` that dropped `leverage`, swapped the side, or sent
+    every leg as MARGIN passed the whole suite, because the tests only ever counted the submissions.
+    """
+
+    def _sent(self):
+        import asyncio
+
+        rec = _Recorder()
+        legs = mint.plan_legs(pair="SOL/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=mint.AccountState())
+        asyncio.run(mint._run(_args(execute=True), **_factories(rec), prompt=lambda _m: mint.CONFIRM_WORD))
+        return legs, rec.submitted
+
+    @pytest.fixture(autouse=True)
+    def _tty(self, monkeypatch, _creds):
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+
+    def test_every_planned_leg_is_sent_with_the_numbers_it_was_planned_with(self) -> None:
+        legs, sent = self._sent()
+        assert len(sent) == len(legs)
+        for leg, kw in zip(legs, sent, strict=True):
+            assert float(kw["quantity"]) == leg.quantity, leg.kind
+            assert (None if kw["price"] is None else float(kw["price"])) == leg.price, leg.kind
+
+    def test_leverage_and_account_type_reach_the_venue_as_planned(self) -> None:
+        """The margin leg is the only one carrying either; a spot leg that did is a position
+        nobody planned, and this is the assertion that watches the wire rather than the plan."""
+        legs, sent = self._sent()
+        for leg, kw in zip(legs, sent, strict=True):
+            assert kw["leverage"] == leg.leverage, leg.kind
+            expected = AccountType.MARGIN if leg.account_type == "MARGIN" else AccountType.CASH
+            assert kw["account_type"] is expected, leg.kind
+
+    def test_side_type_and_time_in_force_reach_the_venue_as_planned(self) -> None:
+        legs, sent = self._sent()
+        for leg, kw in zip(legs, sent, strict=True):
+            assert kw["order_side"] is (OrderSide.BUY if leg.side == "BUY" else OrderSide.SELL)
+            assert kw["order_type"] is (OrderType.LIMIT if leg.order_type == "LIMIT" else OrderType.MARKET)
+            assert kw["time_in_force"] is getattr(TimeInForce, leg.time_in_force), leg.kind
 
 
 class TestTheExecutePath:
