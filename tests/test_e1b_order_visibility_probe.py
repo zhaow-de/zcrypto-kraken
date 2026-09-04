@@ -202,6 +202,16 @@ def test_the_credential_wrapper_targets_only_the_order_semantics_harness():
         f"the wrapper now names {programs}; the probe's docstring says it targets only the "
         "order-semantics harness, and that sentence must change with it"
     )
+    # The name check alone catches only a SECOND literal. The likelier way a selector grows keeps
+    # the literal as a default and adds an override -- `harness="${PROBE_HARNESS:-...}"`, or an
+    # `os.environ.get` on the python side -- and the set of names is unchanged by either. So pin
+    # what BINDS the name, and the exec that consumes it.
+    bindings = [ln.strip() for ln in wrapper.splitlines() if re.match(r"\s*(?:\w+\s*,\s*)*harness\s*=", ln)]
+    assert bindings == [
+        'harness="$repo/infra/scripts/kraken-order-semantics-probe.py"',
+        "repo, python, harness = sys.argv[1], sys.argv[2], sys.argv[3]",
+    ], f"the wrapper's harness bindings changed: {bindings}"
+    assert wrapper.count("os.execve(python, [python, harness, *sys.argv[4:]]") == 1
 
 
 def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text():
@@ -213,7 +223,9 @@ def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text(
     # A bare substring, not `f"{name}("` or `f".{name}"`: those two miss
     # `getattr(client, "cancel_all_orders")`, which on a SECOND client the stub cannot see either —
     # so the two guards together would both be green on a real write. Measured: the bare form has
-    # zero hits on this script today, so it costs nothing. A name assembled from parts
-    # ("cancel_all_" + "orders") is beyond any source scan and is not claimed.
+    # zero hits on this script today, so it costs nothing. What this does NOT see: a name built at
+    # runtime (`"cancel_all_" + orders_var`), and a credential leaked without naming an accessor —
+    # `print(key)` or `print(os.environ)`, both reachable in `_main`. A literal `"a" + "b"` IS seen,
+    # because CPython folds it into one constant, so the limit is runtime assembly, not concatenation.
     present = sorted(name for name in FORBIDDEN | CREDENTIAL_ACCESSORS if name in text)
     assert not present, f"write or credential-accessor names in the probe's source: {present}"

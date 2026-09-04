@@ -22,8 +22,10 @@ probe builds and this one does not — and adding any argument flatten does not 
 like-for-like comparison this run exists to make.
 
 Credentials come from the environment and are never stored, echoed or logged; the refusal names the
-VARIABLES. On the engine host, run inside the engine image with `--env-file
-/opt/zcrypto-engine/engine.env` — the flatten wrapper's own shape.
+VARIABLES. On the engine host, run inside the engine image with the flatten wrapper's own shape —
+`--env-file /opt/zcrypto-engine/engine.env`, this script mounted in read-only, and an `--entrypoint`
+override, which is load-bearing: the image's own ENTRYPOINT is the capture daemon, so omitting it
+starts a capture daemon holding the trade key instead of running this.
 `infra/scripts/probe-with-vaulted-key.sh` must not be used for this: its target is fixed to the
 order-semantics harness, which places and cancels orders.
 
