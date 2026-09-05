@@ -24,7 +24,7 @@ def scan_delistings(feed: dict, selected_assets: tuple[str, ...] | list[str]) ->
         name = entry.get("name") or ""
         if not any(word in name.lower() for word in _DELISTING_WORDS):
             continue
-        # `incident_updates[].affected_components[]` stays unread: measured, its tickers repeated the name or a body -- no new hits.
+        # Bodies are scanned: an entry has named its assets only there; `affected_components[]` stays unread, measured.
         tickerish = name + " " + " ".join(c.get("name", "") for c in entry.get("components", []))
         prose = " ".join(u.get("body", "") for u in entry.get("incident_updates", []))
         for asset in selected_assets:

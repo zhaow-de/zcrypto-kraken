@@ -254,7 +254,7 @@ def weekly_tracking(
         # supplies nothing decides nothing, while every week still carries its floor p95 and mean.
         gate_eligible = complete and rung == 3 and not straddles
         realized_mean = real_weeks[key]["mean_drift_bps"] if started else None
-        # p95, not a median: the edge was pinned by T0116's amendment (spec 00091), not chosen here.
+        # p95, not a median: the edge was pinned by T0116's amendment (resolved) (spec 00091), not chosen here.
         floor_p95 = _p95(floor_cycles[key])
         weeks.append(
             {
@@ -334,13 +334,13 @@ class LedgerRow(NamedTuple):
 # The columns this reader USES, not the whole documented header: a venue that ADDS a column must
 # not break the read, while one that drops a column the arithmetic depends on must.
 _LEDGER_COLUMNS = ("txid", "refid", "time", "type", "asset", "amount", "fee")
-# Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so an unknown type is
-# reported rather than passed over, while failing on a deposit would fail every real export.
+# Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so an unknown type is reported rather than passed
+# over (`margin` shares its trade's refid: counted, never matched), while failing on a deposit would fail every export.
 _NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer"})
 
 
 def read_ledger_export(path: Path) -> list[LedgerRow]:
-    """The owner's hand-exported Kraken ledger CSV, read by HEADER NAME and refusing rather than defaulting."""
+    """Read by HEADER NAME and refusing: a defaulted column reads as a confident zero, not a window with no rollovers."""
     row_no = 0  # 0 while the header is being read; the first data row is 1
     try:
         # `utf-8-sig`: the runbook has the owner opening this file by hand, and an Excel

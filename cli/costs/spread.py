@@ -39,7 +39,8 @@ _PINNED_SIZES: tuple[int, ...] = (100, 1_000, 10_000)
 
 def effective_spread_bps(pair: str, notional_eur: float) -> float:
     """Mean effective spread in bps per side for `pair` at `notional_eur`: interpolated linearly in LOG notional
-    between the pinned sizes because cost is convex in size, clamped below the first rung, refused above the last.
+    between the pinned sizes because cost is convex in size, clamped below the first rung, refused above the last --
+    extrapolating a convex curve understates cost precisely where the error is most expensive.
     """
     table = SPREAD_CALIBRATION.get(pair.upper() if isinstance(pair, str) else pair)
     if table is None:

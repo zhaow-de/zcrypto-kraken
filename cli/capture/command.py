@@ -96,7 +96,8 @@ def resolve_universe_path(data_root: Path) -> Path:
 
 
 def _default_pairs(universe_path: Path) -> list[str]:
-    """The EUR-majors default: the EUR-quoted symbols of the point-in-time universe's `selected` list (master-plan §3 / T0003)."""
+    """The EUR-majors default: the EUR-quoted symbols of the point-in-time universe's `selected` list
+    (master-plan §3 / T0003, resolved)."""
     if not universe_path.exists():
         raise CaptureError(
             f"no point-in-time universe file at {universe_path} to derive default pairs from — pass --pairs explicitly"
@@ -254,7 +255,7 @@ async def _consume(
         elif category in ("trade_snapshot", "trade_update"):
             _handle_trade_message(msg, trade_writers, watermark)
         elif category in ("subscribe_ack", "unsubscribe_ack", "subscribe_error", "unsubscribe_error"):
-            # T0102: route every reply back to the resubscribe that asked for it -- correlation releases the deferred
+            # T0102 (resolved): route every reply back to the resubscribe that asked for it -- correlation releases the deferred
             # `subscribe` and makes a rejection countable; a reply carrying no req_id of ours no-ops in `note_reply`.
             client.note_reply(msg)
             if category == "subscribe_error":
@@ -352,7 +353,7 @@ async def _desync_recovery_loop(
     now_fn=None,
     once: bool = False,
 ) -> None:
-    """Drive the recovery ladder for pairs still desynced (spec 00072, T0008). TIME-driven, not message-driven: a grace
+    """Drive the recovery ladder for pairs still desynced (spec 00072, T0008, resolved). TIME-driven, not message-driven: a grace
     keyed on incoming messages would depend on the stuck pair still receiving traffic, and would re-evaluate hundreds of
     times a second at depth-100. Live book state is authoritative -- a pair that healed between ticks is dropped here,
     so the ladder's record cannot outlive the fault. Never raises: as a bare task, an escape kills recovery silently."""
@@ -361,7 +362,7 @@ async def _desync_recovery_loop(
         now = now_fn()
         for pair, book in books.items():
             # PER-PAIR, never around the whole sweep: `books` is insertion-ordered, so a wrapping try/except starves
-            # every pair after the raising one -- deterministically the same pairs, forever, which is T0008's own defect.
+            # every pair after the raising one -- deterministically the same pairs, forever, which is T0008's own defect (resolved).
             try:
                 if not book.desynced:
                     recovery.note_recovered(pair, at=now)
@@ -574,7 +575,8 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     venue_status: dict[str, int] = {}
 
     # Opt-in exporter (spec 00069 D5): an unset ZCRYPTO_METRICS_PORT means no server, no thread, no collector. A
-    # registration failure must leave capture running and the process metrics served.
+    # registration failure must leave capture running and the process metrics served -- `register()` runs a describe-less
+    # collector's `collect()` synchronously, so this is where a live-object read can raise.
     port = metrics_port_from_env()
     if port is not None:
         registry = build_registry()
