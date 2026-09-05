@@ -21,9 +21,10 @@ offset=NaN
 synced=0
 
 if tracking=$("$chronyc" tracking 2>/dev/null); then
-  # The human-readable form, not `chronyc -c tracking`, whose CSV column carries the offset as a
-  # bare signed number that reads a leading clock as a lagging one. "System time" is the clock's
-  # CURRENT error, where "Last offset" is its error at the most recent measurement.
+  # The human-readable form, not `chronyc -c tracking`: the CSV column carries the offset as a bare
+  # signed number, and reading its direction backwards reports a leading clock as a lagging one.
+  # "System time" is the clock's CURRENT error, where "Last offset" is its error at the most recent
+  # measurement.
   magnitude=$(awk '$1 == "System" && $2 == "time" {print $4}' <<<"$tracking")
   direction=$(awk '$1 == "System" && $2 == "time" {print $6}' <<<"$tracking")
   leap=$(sed -n 's/^Leap status *: *//p' <<<"$tracking")
@@ -45,7 +46,8 @@ else
 fi
 
 # Atomic publish: the collector globs this directory continuously and must never read a half-written
-# file. mktemp as a SIBLING so the mv is a same-filesystem rename, never a copy.
+# file. mktemp as a SIBLING so the mv is a same-filesystem rename, never a copy. The exit status
+# stays 0 even when chronyc failed -- the published values ARE the report.
 tmp=$(mktemp "${out}.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
 {
