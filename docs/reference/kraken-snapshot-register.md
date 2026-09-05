@@ -89,7 +89,7 @@ in the snapshot JSON so a future diff can name *which* tier moved.
 
 **Account-gated, but not human-gated:** the account's realised fee **tier** depends on 30-day volume and needs the
 live account — served by authenticated `kraken volume`, so the sweep reads it **automatically** and records it in the log below;
-`kraken-fee-schedule.md` holds the standing value (tier 1, \$46.71 30-day spot volume, as of 2026-09-04). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
+the log below holds the standing value (tier 1, \$46.71 30-day spot volume, read 2026-09-04), and `kraken-fee-schedule.md` owns the ladder that value selects from (⏱ account-confirmed 2026-07-07). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
 re-reads at the go/no-go.
 
 ## Symbol-alias ledger
@@ -148,5 +148,5 @@ qualification rule, or the observed margin opening/rollover bands on majors — 
 `docs/reference/kraken-fee-schedule.md`, and `cli/costs/fees.py` encodes that ladder verbatim. What
 remains is keeping them current: the tier, the 30-day spot and futures volumes and the AoP held value are
 the **automated** part of the monthly sweep (`/zcrypto-refdata-sweep` step 7, via `kraken volume`), and the
-ladder's shape plus AoP qualification stay attended — the re-read that lost its trigger when T0000 was
+ladder's shape plus the AoP qualification ladder stay attended — the re-read that lost its trigger when T0000 was
 archived, and now has one again.
