@@ -1,8 +1,7 @@
 """Spec 00082: converge guards evaluated through Ansible's own templar.
 
 The test boundary is the guard's REAL condition expression fed constructed probe outcomes --
-never a re-implementation of the logic. `load_task` reads the committed YAML; a guard whose
-expression is edited drifts here immediately.
+never a re-implementation of the logic; `load_tasks` reads the committed YAML.
 """
 
 import json
@@ -40,9 +39,8 @@ def find_task(tasks: list[dict], name: str) -> dict:
 
 def truthy(expr, variables: dict) -> bool:
     # ansible-core 2.19+ Data-Tagging: a plain str is UNTRUSTED and comes back unrendered -- bool()
-    # of the unrendered template string would be True for every fixture, making every test vacuous.
-    # trust_as_template is mandatory (measured on the locked 2.21.2; cold review C1). Never
-    # re-implement guard logic in Python instead -- the committed expression is the test subject.
+    # of the unrendered template string would be True for every fixture, making every test vacuous,
+    # so trust_as_template is mandatory.
     from ansible.template import trust_as_template
 
     t = Templar(loader=DataLoader(), variables=variables)
@@ -120,12 +118,10 @@ def test_canary_parity_passes_when_secondary_runs_the_candidate():
     assert truthy(assert_that(task), ok)
 
 
-# An UNREACHABLE secondary is the whole reason the probe carries `ignore_unreachable: true` (I1): the
-# result is REGISTERED but carries no `stdout`. Two independent halves make that refuse, and each is
-# pinned below, because either one written differently passes the re-pin open:
-#   * the assert's `when:` is `is not skipped` -- the natural-looking `stdout is defined` would SKIP
-#     the guard on exactly the host it cannot read;
-#   * the parity expression's `| default('')` supplies the empty string there is nothing to match in.
+# An UNREACHABLE secondary registers a result with no `stdout`, which `ignore_unreachable: true`
+# exists to allow. Two halves refuse there: the assert's `when:` is `is not skipped` -- `stdout is
+# defined` would SKIP the guard on the one host it cannot read -- and the parity expression's
+# `| default('')` supplies the empty string there is nothing to match in.
 CANARY_PARITY = "canary parity — refuse a primary re-pin the secondary has not baked"
 CANARY_UNREACHABLE = {"unreachable": True, "msg": "Failed to connect to the host via ssh"}
 CANARY_SKIPPED = {"skipped": True, "skip_reason": "Conditional result was False"}
@@ -181,10 +177,10 @@ def test_pins_recording_semantics(pins_text, override, expected):
     assert truthy(assert_that(task), variables) is expected
 
 
-# --- spec D1's second half: an ACCEPTED override must reach the play log, or the canary fail_msg's
-# own promise ("it lands in this log") is false. The echo's `when:` is the assert's scoping AND the
-# override fragment AND the primary condition NEGATED -- an echo that fires whenever the override is
-# merely PRESENT would log a "why" on runs that overrode nothing, which is the failure these cover.
+# --- spec 00082 D1's second half: an ACCEPTED override must reach the play log, or the canary
+# fail_msg's own promise ("it lands in this log") is false. The echo's `when:` is the assert's
+# scoping AND the override fragment AND the primary condition NEGATED -- an echo firing whenever
+# the override is merely PRESENT would log a "why" on runs that overrode nothing.
 CANARY_ECHO_BASE = {
     "inventory_hostname": "zcrypto",
     "groups": {"engine_host": ["zcrypto"], "capture_host": ["zcrypto", "zcrypto-red"]},
@@ -296,8 +292,7 @@ def test_engine_window_guard(since_boundary, override, expected):
 
 # The two floors ARE the guard -- 1800 s (the cycle-completion window [B, B+30 min] may still be
 # running) and 600 s (a stop→start begun inside 10 min of the next boundary risks straddling it).
-# Every fixture above sits far from both, so a weakening edit (1800 -> 1000, 600 -> 100) passes them
-# all unchanged. These sit ON the comparison boundary, which is the only place a constant is pinned.
+# These fixtures sit ON the comparison boundary, which is the only place a constant is pinned.
 @pytest.mark.parametrize(
     ("since_boundary", "expected"),
     [
@@ -318,8 +313,7 @@ def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary
 
 # --- window floor from the boundary cycle's completion (spec 00083 D6) --------------------------
 # When the boundary's cycle-HH.json already carries completed_at, the floor BECOMES completed_at+300
-# in place of B+1800 -- usually earlier, but LATER when the cycle itself ran long (the last two tests
-# in this section pin that direction, which no fixture below covers).
+# in place of B+1800 -- usually earlier, LATER when the cycle itself ran long.
 # Absent probe, failed probe, or garbage stdout -> the CONSERVATIVE B+1800 floor.
 
 BOUNDARY = 1785744000  # 2026-08-03 08:00:00 UTC, divisible by 14400
@@ -370,9 +364,8 @@ def test_garbage_stdout_keeps_conservative_floor():
     assert not truthy(assert_that(guard), v)
 
 
-# The `{10}` in the stdout regex is what the fixture above is blind to: measured by flipping the
-# committed expression's `^[0-9]{10}$` to `^[0-9]+$`, the Traceback fixture still passes while THIS
-# one flips to allowed -- a short all-digit token becomes a floor in the distant past, i.e. no floor.
+# This fixture pins the `{10}` in the stdout regex: under `^[0-9]+$` a short all-digit token parses
+# as a floor in the distant past, i.e. no floor at all.
 def test_short_all_digit_stdout_keeps_conservative_floor():
     guard = _window_guard()
     v = {
@@ -386,9 +379,7 @@ def test_short_all_digit_stdout_keeps_conservative_floor():
 # The floor FOLLOWS the journal in both directions — it is not a monotone relaxation of B+1800.
 # A cycle that itself ran long (completed_at = B+1700) puts the floor at B+2000, ABOVE the fixed
 # one: the 5 min of post-completion clearance is unconditional, and refusing at B+1900 there is the
-# point, not a bug. Every fixture above has completed_at early enough that a `min(completion+300,
-# B+1800)` expression — the reading the old fail_msg's "when that is sooner" promised — would agree
-# with the committed one, so nothing else in this file can tell the two apart.
+# point, not a bug.
 def test_a_long_running_cycle_raises_the_floor_above_the_fixed_1800():
     guard = _window_guard()
     v = {
@@ -436,11 +427,10 @@ def test_old_floor_still_passes_after_1800_without_journal():
 
 
 def test_journal_probe_path_matches_the_engine_role_default():
-    """The journal path is a LITERAL in site.yml — the probe stays self-contained, readable without
-    resolving what the engine role happens to default to (a statically-listed role's defaults ARE
-    play-wide on this ansible-core, so the literal is a choice, not a necessity). This test is the
-    drift pin that choice owes: a relocation of engine_state_dir cannot silently turn the floor
-    permanently conservative (probe rc!=0 forever, guard 'working' but never early)."""
+    """The journal path site.yml probes must be the engine role's `engine_state_dir` default — the
+    literal in site.yml is a deliberate choice, and a relocation of that default would otherwise
+    leave the floor permanently conservative (probe rc!=0 forever, guard 'working' but never early).
+    """
     site_text = SITE.read_text()
     defaults = (SITE.parent / "roles" / "engine" / "defaults" / "main.yml").read_text()
     m = re.search(r"^engine_state_dir:\s*(\S+)", defaults, re.M)
@@ -448,8 +438,7 @@ def test_journal_probe_path_matches_the_engine_role_default():
     assert f"{m.group(1)}/journal/" in site_text
 
 
-# --- when-scoping (cold review M4): the `that:` tests never exercise the scoping, and a mis-scoped
-# guard fires on the wrong host or never.
+# --- when-scoping: a mis-scoped guard fires on the wrong host, or never.
 def test_untagged_refusal_scopes_to_engine_host_members_only():
     task = find_task(load_tasks(SITE), "refuse an un-tagged run on the live primary")
     on_primary = {"inventory_hostname": "zcrypto", "groups": {"engine_host": ["zcrypto"]}}
@@ -490,10 +479,9 @@ def test_pair_add_delegated_probe_engages_only_when_adding_pairs():
     assert not truthy(when_conditions(task), unchanged)
 
 
-# --- spec D1's second half for the overridable window guard, same shape as the two capture echoes
-# above: the echo's `when:` is the assert's scoping AND the window condition NEGATED AND the override
-# fragment. An echo that fires whenever the override is merely PRESENT would log a "why" on runs that
-# overrode nothing, which is the failure these cover.
+# --- spec 00082 D1's second half for the overridable window guard, same shape as the two capture
+# echoes above: the echo's `when:` is the assert's scoping AND the window condition NEGATED AND the
+# override fragment.
 WINDOW_ECHO = "engine window override accepted — the reason, on the record"
 WINDOW_REASON = "cycle confirmed complete, converging late on purpose"
 
@@ -659,7 +647,7 @@ def test_engine_parity_echo_mirrors_the_negated_assert():
         "canary_override": "rollback to the only digest carrying the fix",
     }
     conds = " and ".join("(%s)" % c for c in when_conditions(echo))
-    # a dict fixture is `not skipped` under Templar — wave-1's echo tests evaluate this directly
+    # a dict fixture is `not skipped` under Templar
     assert truthy(conds, v_overridden)
     assert not truthy(conds, {**v_overridden, "canary_override": "true"})
     # The third case every sibling echo test carries: the gate is ACCEPTANCE, not presence. Parity
@@ -669,11 +657,9 @@ def test_engine_parity_echo_mirrors_the_negated_assert():
     assert not truthy(conds, baked)
 
 
-# --- fix round 1 (cold review M1): the mirror's original 7 tests never read the assert's/probe's
-# `when:` side, so a fail-open rewrite of `is not skipped` or a typo'd register name left all 90
-# green while the gate silently stood down. These three pin exactly what wave-1's own when-side
-# tests pin for the capture block (test_canary_parity_refuses_an_unreachable_secondary and
-# test_canary_probe_activates_only_on_an_actual_repin).
+# --- the engine mirror's when-side, mirroring test_canary_parity_refuses_an_unreachable_secondary
+# and test_canary_probe_activates_only_on_an_actual_repin for the capture block: a fail-open rewrite
+# of `is not skipped`, or a typo'd register name, stands the gate down silently.
 ENGINE_UNREACHABLE = {"unreachable": True, "msg": "Failed to connect to the host via ssh"}
 
 
@@ -710,8 +696,7 @@ def test_engine_parity_when_references_the_correct_probe_register_name():
 
 # --- the arming backstop. The one guard here whose subject is real money rather than a digest: it
 # refuses a converge that would render the engine ARMED on a nautilus version whose attended
-# order-semantics pass has not run. Fixtures are the REAL committed files wherever the guard reads
-# one, so a drift between the record, the pin and the template fails here rather than at the host.
+# order-semantics pass has not run.
 ARMING = "arming backstop — refuse an ARMED converge on a nautilus version whose order-semantics pass has not run"
 ARMING_REASON = "venue incident replay, re-run booked for the same day"
 
@@ -727,11 +712,10 @@ NO_PIN = 'dependencies = [\n    "polars==1.0.0",\n]\n'
 # A pin that is a PREFIX of the recorded version. This is the only shape that exercises Jinja's
 # substring containment in the direction that used to vouch: "1.230" IS in "1.230.0".
 PREFIX_PIN = 'dependencies = [\n    "nautilus-trader==1.230",\n]\n'
-# PEP 440 arbitrary equality, which is what the committed pyproject uses. The guard must read the
-# VERSION out of it and not the third `=`: a pin the guard mis-reads is in no record, so an armed
-# converge on a version whose pass really did run is refused with a message naming that very
-# version as recorded -- a contradiction whose only exit is arming_override, i.e. the money guard
-# routed around at exactly the moment it is supposed to hold.
+# PEP 440 arbitrary equality, which the committed pyproject uses. The guard must read the VERSION
+# out of it and not the third `=`: a mis-read pin is in no record, so an armed converge on a version
+# whose pass really did run is refused as unrecorded, and the only exit is arming_override -- the
+# money guard routed around at exactly the moment it is supposed to hold.
 TRIPLE_EQUALS_VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.230.0",\n]\n'
 TRIPLE_EQUALS_UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.231.0",\n]\n'
 RECORD = ["1.230.0"]
@@ -752,45 +736,30 @@ def _pinned_nautilus_version() -> str:
     ("record", "why"),
     [
         # Jinja's `in` is SUBSTRING containment on a string, so a record whose list degraded to a
-        # comma-joined string VOUCHES for a version it never verified -- measured: this exact shape
-        # passed an armed converge on 1.231.0 before the shape check landed.
+        # comma-joined string VOUCHES for a version it never verified.
         ("1.230.0, 1.231.0", "a comma-joined string"),
         # ...and KEY containment on a mapping, which vouches the same way.
         ({"1.231.0": "note"}, "a mapping keyed by version"),
         (None, "null"),
         (42, "a scalar that is not even a sequence"),
-        # A MIXED list passes every structural test -- proper sequence, not a string, not a
-        # mapping -- so without an element-type check the Jinja half vouched for the real version
-        # in it while cli.engine.execgate collapsed the same record to the empty set and refused
-        # everything. Measured, not theorised: the composed system still failed closed, but the
-        # two guards disagreed about one record, which three surfaces claim is impossible.
-        # The pin must be IN the list, or the assert refuses because it is absent and the case
-        # proves nothing about the shape check. With it present beside a non-string, an unguarded
-        # ternary vouches and a guarded one refuses -- which is the only difference under test.
+        # A MIXED list passes every structural test -- proper sequence, not a string, not a mapping
+        # -- so without an element-type check the Jinja half vouches for the real version in it while
+        # cli.engine.execgate collapses the same record to the empty set. The pin must be IN the list:
+        # beside a non-string, an unguarded ternary vouches and a guarded one refuses.
         ([UNVERIFIED_PIN_VERSION, 1231], "a list whose elements are not all strings"),
         ("", "an empty string"),
     ],
 )
 def test_arming_backstop_refuses_a_record_that_is_not_a_proper_list(record, why):
-    """A malformed record is a CANNOT-VOUCH, and this guard's contract is cannot-vouch => refuse.
-
-    Without the shape check the assert fails OPEN on these: `in` against a string or a mapping is
-    containment, not membership, so the guard would vouch for an unverified version. The Python
-    half (cli/engine/execgate) rejects the same shapes via isinstance, so the two agree.
-    """
+    """A malformed record is a CANNOT-VOUCH, and this guard's contract is cannot-vouch => refuse."""
     task = find_task(load_tasks(ENGINE), ARMING)
     variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, record=record)
     assert not truthy(assert_that(task), variables), why
 
 
 def test_arming_backstop_refuses_a_pin_that_is_only_a_PREFIX_of_a_string_record():
-    """The one case that pins substring containment in the direction that actually failed open.
-
-    A bare string record against an UNVERIFIED pin is not evidence: "1.231.0" is not a substring of
-    "1.230.0", so it refuses under the committed expression, under a string-check-removed mutant,
-    and under the original unfixed expression alike. Only a pin that is a PREFIX of the recorded
-    version discriminates -- measured, `"1.230" in "1.230.0"` is True, so before the shape check
-    this exact input passed an ARMED converge on a version nobody ever verified.
+    """A pin that is only a PREFIX of the recorded version never vouches, string record or list —
+    `"1.230" in "1.230.0"` is True under Jinja's substring containment.
     """
     task = find_task(load_tasks(ENGINE), ARMING)
     variables = _arming_vars(ARMED_TEMPLATE, PREFIX_PIN, record="1.230.0")
@@ -824,8 +793,7 @@ def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSE
         (DISARMED_TEMPLATE, UNVERIFIED_PIN, True, "disarmed on an unverified version"),
         (DISARMED_TEMPLATE, VERIFIED_PIN, True, "disarmed on a verified version"),
         (DISARMED_TEMPLATE, NO_PIN, True, "disarmed with no nautilus pin at all"),
-        # THE CONSTRUCTED DEFECT: an armed converge on a version absent from the record. (1.231.0
-        # is verified in the REAL record since 2026-08-23; here RECORD is the synthetic ['1.230.0'].)
+        # THE CONSTRUCTED DEFECT: an armed converge on a version absent from the synthetic RECORD.
         (ARMED_TEMPLATE, UNVERIFIED_PIN, False, "armed on an unverified version"),
         # TRUE POSITIVE: a healthy armed converge on a verified version must PASS, or the guard
         # refuses every legitimate probe window and would simply be routed around.
@@ -873,22 +841,16 @@ def test_arming_override_echo_fires_only_on_an_accepted_override(template, pypro
 
 
 def test_arming_backstop_reads_the_real_committed_files():
-    """The fixtures above are synthetic; this pins the guard to the tree it will actually read.
+    """Both directions from the REAL role, template and pyproject: a recorded version passes, an
+    absent one refuses.
 
-    Both directions are proved from the REAL role, template and pyproject, with the membership
-    list fed state-agnostically: the true positive gets the pinned version present, the bite gets
-    it absent. That is deliberate. "The repo may sit on a bumped version indefinitely while
-    disarmed" is a blessed state, so a test that asserted the pin IS recorded would go red for the
-    whole legitimate interim between a bump landing and its attended pass running -- pressuring
-    whoever met it into either editing the record early or routing around a red test. Whether the
-    pass has run is the RECORD's business, not this test's; this test only proves the guard reads
-    the real files and still bites.
+    The membership list is fed state-agnostically -- the true positive gets the pinned version
+    present, the bite gets it absent -- because a bumped-but-disarmed repo is a blessed state, and
+    asserting the pin IS recorded would go red for the whole legitimate interim between a bump
+    landing and its attended pass running.
 
-    The pinned version is read with tomllib, NOT with a copy of the guard's own regex. Re-deriving
-    it the way the guard does made this test blind to the guard's parsing: whatever the regex
-    extracted was fed straight back in as the recorded version, so it matched itself and both
-    halves passed on a mangled read. The version the guard must find is a property of the pin, so
-    it is taken from the pin -- by a parser that cannot share the guard's mistakes.
+    The pinned version is read with tomllib, never a copy of the guard's own regex: a re-derivation
+    matches itself and passes on a mangled read.
     """
     record = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())
     versions = record["verified_nautilus_versions"]
@@ -914,10 +876,9 @@ def test_arming_backstop_reads_the_real_committed_files():
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
-# The ops role's own convention (roles/ops/defaults/main.yml: ops_image_digest has NO default) is
-# that a digestless config/alloy-only converge SKIPS every image-consuming task -- so each guard
-# here carries `when: ops_image_digest is defined`, and the three skip tests below pin that (one per
-# guard), since a guard that refuses a legitimate alloy-only converge is a broken role, not a strict one.
+# The ops role's convention (roles/ops/defaults/main.yml: ops_image_digest has NO default) is that a
+# digestless config/alloy-only converge SKIPS every image-consuming task, so each guard here carries
+# `when: ops_image_digest is defined` -- refusing such a converge is a broken role, not a strict one.
 OPS = ANSIBLE / "roles" / "ops" / "tasks" / "main.yml"
 OPS_DIGEST_PREFLIGHT = "preflight — refuse a digest the host has not pulled"
 
@@ -991,13 +952,9 @@ def test_unreadable_compose_refuses():
     assert not truthy(assert_that(_liq_readable_guard()), v)
 
 
-# The stat MODULE's own failure is a fourth shape, distinct from the three the rc split names.
-# Measured on the locked ansible-core: an EACCES on the path (an unreadable PARENT dir stats
-# EACCES, not ENOENT) registers {"failed": false, "msg": "Permission denied"} with NO `stat` key --
-# `failed_when: false` rewrites the flag, so nothing can arm on `.failed`, and the ABSENT KEY is the
-# only signal there is. Read through `stat.exists | default(false)` that shape is indistinguishable
-# from "absent", so both guards stood down and the repin proceeded undecided on the one file whose
-# pin it moves. The when-chain now engages on the missing key, and the `that:` refuses there.
+# The stat MODULE's own failure is a fourth shape, distinct from the three the rc split names: an
+# EACCES on the path (an unreadable PARENT dir stats EACCES, not ENOENT) registers no `stat` key at
+# all, and `stat.exists | default(false)` cannot tell that shape from "absent".
 def test_a_failed_stat_probe_reaches_the_refusal():
     v = {
         "ops_image_digest": "sha256:" + "ab" * 32,
@@ -1039,15 +996,12 @@ def test_decision_guard_engages_when_file_exists():
 
 
 def test_stat_probe_resolves_symlinks():
-    # Textual pin, not a Templar fixture: without `follow: true` the real stat module lstats a
-    # dangling compose.yaml symlink as exists=True, readable=False, tripping the readability guard's
-    # chmod/chown fail_msg on a target that was never a permission fault. `follow: true` restores
-    # spec D9's `test -e`/`test -r` semantics (both resolve symlinks), so a dangling link reads as
-    # absent -> stand-down, matching the old grep behavior.
+    # Textual pin, not a Templar fixture: `follow: true` is what makes a dangling compose.yaml
+    # symlink read as absent -- spec 00083 D9's `test -e`/`test -r` semantics -- instead of tripping
+    # the readability guard's chmod/chown fail_msg on a target that was never a permission fault.
     task = find_task(load_tasks(OPS), "probe — the deployed liquidations compose file (existence vs readability)")
     assert task["ansible.builtin.stat"]["follow"] is True
-    # Spec D9 also specifies `failed_when: false`, which every sibling probe in this role carries: a
-    # stat MODULE failure (an unreadable PARENT dir stats EACCES, not ENOENT) would otherwise abort
+    # Spec 00083 D9 also specifies `failed_when: false`: a stat MODULE failure would otherwise abort
     # the play — dropping the host from every later play — instead of letting the two guards below
     # decide from what the probe registered.
     assert task["failed_when"] is False
@@ -1094,8 +1048,8 @@ def test_panel_regenerate_is_installed_by_the_ops_role():
 
 
 OPS_PINS = "pins recording — refuse to replace a digest fleet-pins.md does not record"
-# The probe behind this is `docker inspect` of the liquidations-poll CONTAINER, never the compose
-# file: the recorded incident had the file pinning one digest while the container ran another.
+# The probe behind this inspects the liquidations-poll CONTAINER, never the compose file: the file
+# can pin one digest while the container runs another.
 OPS_PINS_BASE = {
     "ops_image_digest": "sha256:" + "c" * 64,
     "ops_running_digest_probe": {"rc": 0, "stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "a" * 64},
@@ -1144,11 +1098,8 @@ def test_ops_pins_override_echo_fires_only_on_an_accepted_override(pins_text, ov
 
 # --- docker-role guard. The docker role is SHARED by every play, but the hazard is capture-specific:
 # its daemon.json template task notifies `restart docker`, and bouncing dockerd under live capture is
-# an unbackfillable data gap. `docker_daemon_json_diff` carries the role prefix ansible-lint's
-# var-naming[no-role-prefix] forces; `daemon_json_ack` is an operator `-e` var, unprefixed like
-# `pins_override`. The ack is a BOOLEAN here, unlike the D1 free-text overrides: the debug task
-# displays the diff first, so the ack acknowledges specific shown content rather than substituting
-# for absent evidence.
+# an unbackfillable data gap. The ack is a BOOLEAN, unlike the D1 free-text overrides: the debug task
+# displays the diff first, so it acknowledges shown content rather than substituting for evidence.
 DOCKER = ANSIBLE / "roles" / "docker" / "tasks" / "main.yml"
 DAEMON_JSON_ACK = "daemon.json — refuse an unacknowledged change (its handler bounces dockerd)"
 
@@ -1159,8 +1110,8 @@ DAEMON_JSON_ACK = "daemon.json — refuse an unacknowledged change (its handler 
         (1, False, False),  # rendered output differs, nothing acked -> refuse
         (0, False, True),  # identical render -> no handler fires, no ack owed
         (1, True, True),  # differs, operator acked the displayed diff -> proceed
-        # rc 2 is diff's "trouble" exit, which on this host means /etc/docker/daemon.json is ABSENT
-        # (first provision). That is a change the handler would act on, so it must refuse, not pass.
+        # rc 2 is diff's "trouble" exit -- here, an absent /etc/docker/daemon.json (first provision).
+        # That is a change the handler would act on, so it must refuse, not pass.
         (2, False, False),
     ],
 )
@@ -1178,9 +1129,8 @@ def test_daemon_json_diff_is_displayed_only_when_it_would_change(rc, expected):
     assert truthy(when_conditions(task), {"docker_daemon_json_diff": {"rc": rc}}) is expected
 
 
-# One contract, so one test: probe -> show -> ask -> act. ORDER is the whole of it -- every expression
-# test above still passes with the guard sitting AFTER the template task it exists to protect, at
-# which point dockerd has already been notified and the guard is decorative.
+# One contract, so one test: probe -> show -> ask -> act. ORDER is the whole of it -- a guard sitting
+# AFTER the template task it protects is decorative, dockerd having already been notified.
 def test_daemon_json_guard_precedes_the_task_whose_handler_bounces_dockerd():
     tasks = load_tasks(DOCKER)
     probe = task_index(tasks, "probe — diff the pending daemon.json against the deployed one")
@@ -1235,10 +1185,9 @@ def test_rebootstrap_guard_follows_the_primary_refusal_and_its_probe():
 
 
 # --- the ops role's new-timer check-mode guard ------------------------------------------------
-# Its absence made ANY newly added timer unconvergeable through the sanctioned path: under --check
-# the unit file is never really written, so enable+start cannot find it, the preview fails, and
-# converge.sh refuses the real pass while the preview is red. Nothing pinned that before, so the
-# defect was found by hitting it on a live converge rather than in CI.
+# Without it ANY newly added timer is unconvergeable through the sanctioned path: under --check the
+# unit file is never really written, so enable+start cannot find it, the preview fails, and
+# converge.sh refuses the real pass while the preview is red.
 OPS_TIMER_ENABLE = "enable + start the replay + panel + tape-bars timers"
 
 
@@ -1261,17 +1210,9 @@ def test_the_new_timer_guard_never_skips_a_real_run(check_mode, units_changed, e
 
 
 # --- The probe must name a container that EXISTS ------------------------------------------------
-#
-# `test_pins_recording_semantics` above feeds the assert CONSTRUCTED probe outcomes, so it is
-# structurally blind to what the probe actually inspects. That blindness had a cost: the ops pins
-# probe named `liquidations-poll` -- the entrypoint COMMAND -- while the role's own compose template
-# rendered `zcrypto-ops-liquidations`. `docker inspect` therefore always returned rc=1, and the
-# guard's `when: ... rc == 0` gate skipped the assert on every ops converge this host ever ran. A
-# fail-OPEN guard on what its own fail_msg calls "the only rollback operand this host has", found
-# 2026-08-20 on a live converge.
-#
-# Both sites now read `ops_liquidations_container`. This test pins that they agree, so a future
-# edit to either one cannot silently re-open the hole.
+# A pins probe naming a literal the compose template does not render makes `docker inspect` return
+# rc=1 forever, so the guard's `when: ... rc == 0` gate skips the assert on every ops converge --
+# fail-OPEN. Both sites read `ops_liquidations_container` so they cannot disagree.
 OPS_TASKS = ANSIBLE / "roles" / "ops" / "tasks" / "main.yml"
 OPS_DEFAULTS = ANSIBLE / "roles" / "ops" / "defaults" / "main.yml"
 OPS_COMPOSE_TEMPLATE = ANSIBLE / "roles" / "ops" / "templates" / "compose.yaml.j2"
@@ -1334,9 +1275,7 @@ def _relay_vars(running: str | None, rendered: str | None, **extra) -> dict:
         ("/usr/lib/systemd/systemd-socket-proxyd", "10.99.0.2:22", False, "argv carried no target at all"),
         ("", "", False, "both empty -- equal, but proves nothing; must not read as healthy"),
         # a reader that did not run at all: the gate's `| default('')` fallbacks are what decide
-        # here, and nothing else exercises them. Mutating the running side to
-        # `default('__not_running__')` -- a gate that passes whenever its probe is skipped -- is
-        # invisible without these rows.
+        # these two rows, and an absent read must never count as a healthy one.
         (None, "10.99.0.7:22", False, "the running reader never ran; an absent read is not a healthy one"),
         ("10.99.0.7:22", None, False, "the rendered reader never ran; nothing to compare against"),
     ],
@@ -1344,26 +1283,15 @@ def _relay_vars(running: str | None, rendered: str | None, **extra) -> dict:
 def test_the_ssh_relay_drift_gate_separates_drift_from_health(running, rendered, expected, why):
     """The gate must pass BOTH healthy shapes and fail every drifted one.
 
-    `__not_running__` is the true-positive an earlier cut got wrong: the socket is `Accept=no` and
-    the service has no `[Install]`, so it is inactive from boot until the first connection and
-    `MainPID` reads 0 -- failing there would fail a healthy converge on any host that rebooted
-    without an intervening remote session.
-
-    The rendered-moved row is what stops this set from passing a gate that ignores the rendered side
-    altogether: it is the drift shape the sibling relay actually had (an IP->FQDN swap of the
-    template's own target), and it is the only row where the two sides differ because the TEMPLATE
-    changed rather than the process.
+    `__not_running__` is healthy, not drifted: the socket is `Accept=no` and the service has no
+    `[Install]`, so it is inactive from boot until the first connection and `MainPID` reads 0.
     """
     gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
     assert truthy(assert_that(gate), _relay_vars(running, rendered)) is expected, why
 
 
 def test_the_ssh_relay_drift_gate_takes_no_override():
-    """spec 00082 D1 reserves overrides for canary/pins/engine-window and gives every other guard none.
-
-    An override here would also be inert: the gate is skipped under check mode and runs last, so it
-    reports after the converge has applied -- there is no refusal left to bypass.
-    """
+    """spec 00082 D1 reserves overrides for canary/pins/engine-window; this gate takes none."""
     gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
     rendered = " ".join(assert_that(gate)) + " " + str(gate["ansible.builtin.assert"].get("fail_msg", ""))
     assert "override" not in rendered.lower(), f"the relay gate must not grow an override (spec 00082 D1): {rendered}"
@@ -1373,12 +1301,11 @@ def test_the_ssh_relay_drift_gate_takes_no_override():
 
 
 def test_the_ssh_relay_drift_gate_is_skipped_under_check_and_runs_last():
-    """`converge.sh` previews with `--check --diff` and ABORTS the run if the preview fails.
+    """The gate skips under check mode and is the role's last task, so nothing it can fail sits below it.
 
-    A gate that tripped in check mode would block the whole converge -- including the pinned-leaves
-    and Caddyfile tasks that are the client-cert revocation path -- which is the blast radius this
-    file's 2026-08-20 note records. It must skip under check mode, and be the role's last task so
-    nothing it can fail sits below it.
+    `converge.sh` previews with `--check --diff` and ABORTS the run if the preview fails, so a gate
+    that tripped there would block the whole converge -- including the pinned-leaves and Caddyfile
+    tasks that are the client-cert revocation path.
     """
     tasks = load_tasks(ACCESS_TASKS)
     gate = find_task(tasks, _RELAY_GATE)
@@ -1396,14 +1323,11 @@ def test_the_ssh_relay_drift_gate_is_skipped_under_check_and_runs_last():
 
 
 def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice():
-    """The gate compares a running argv against a rendered unit; the tests above only pin the compare.
+    """The running reader must read the PROCESS's argv and the rendered reader the unit FILE.
 
-    The trap the task's own comment names is repointing the running reader at the unit file — then
-    both sides read the same bytes, the gate passes on every converge, and the relay drifts unbounded.
-    That is the Alloy drift failure the `Shared converge mechanics` block records
-    (`.claude/skills/zcrypto-rollout-image/SKILL.md`; duplicated verbatim in `zcrypto-bump-alloy`),
-    where the assert compared the deployed FILE rather than what the process had loaded. Pinned as
-    data so the readers cannot quietly become the same read.
+    Repointing the running reader at the unit file makes both sides read the same bytes: the gate
+    then passes on every converge while the relay drifts unbounded -- the Alloy drift failure the
+    `Shared converge mechanics` block records (`.claude/skills/zcrypto-rollout-image/SKILL.md`).
     """
     tasks = load_tasks(ACCESS_TASKS)
     running = find_task(tasks, "read the ssh relay's running target")["ansible.builtin.shell"]["cmd"]
@@ -1440,11 +1364,10 @@ def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice(
     ],
 )
 def test_the_ssh_relay_running_reader_emits_the_sentinel_only_when_not_running(tmp_path, stub_pid, expect_sentinel, why):
-    """Behavioural, because the string checks cannot see an inverted condition.
+    """The reader emits `__not_running__` only when the unit is not running (MainPID 0).
 
-    Flipping `[ "$pid" = "0" ]` to `!=` keeps every structural assertion green while making the
-    reader emit `__not_running__` for every live relay — the silent-pass class this file's own
-    docstring cites from the Alloy failure. So run the committed `cmd` with a stub `systemctl`.
+    Behavioural, against the committed `cmd` with a stub `systemctl`: an inverted `[ "$pid" = "0" ]`
+    keeps every structural assertion green while making a live relay read as not-running.
     """
     import os
     import subprocess
@@ -1464,21 +1387,16 @@ def test_the_ssh_relay_running_reader_emits_the_sentinel_only_when_not_running(t
 
     assert (out == "__not_running__") is expect_sentinel, f"{why} -- reader emitted {out!r}"
     if not expect_sentinel:
-        # ...and it must be THIS process's own LAST argv token. Asserting only "not the sentinel"
-        # lets `| tail -1` become `| head -1` -- argv[0], the interpreter path, never the target.
-        # removesuffix, not rstrip: cmdline is `arg0\0...\0argN\0`, and when argN is the EMPTY string
-        # the file ends `\0\0` -- rstrip eats both and argv[-1] becomes the PREVIOUS arg, while the
-        # reader correctly yields "". The test would then fail for a reason that is not the defect.
+        # ...and it must be THIS process's own LAST argv token: asserting only "not the sentinel"
+        # lets `| tail -1` become `| head -1`. removesuffix, not rstrip: cmdline is `arg0\0...\0argN\0`
+        # and ends `\0\0` when argN is EMPTY -- rstrip eats both, so argv[-1] becomes the PREVIOUS arg
+        # while the reader correctly yields "", failing the test for something that is not the defect.
         argv = Path(f"/proc/{os.getpid()}/cmdline").read_bytes().removesuffix(b"\0").split(b"\0")
         assert out == argv[-1].decode(), f"expected the real last argv token {argv[-1].decode()!r}, got {out!r}"
 
 
 def test_the_ssh_relay_gate_cannot_be_neutered_by_a_task_modifier():
-    """This gate's only effect is failing the play, so `failed_when: false` reduces it to decoration.
-
-    Every other assertion here reaches `that`/`fail_msg`/`when`/position, all of which stay green
-    under that edit.
-    """
+    """This gate's only effect is failing the play, so `failed_when: false` reduces it to decoration."""
     gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
     assert "failed_when" not in gate, f"failed_when would make this gate a no-op: {gate.get('failed_when')!r}"
     assert not gate.get("ignore_errors"), "ignore_errors would make this gate a no-op"
@@ -1512,11 +1430,10 @@ def _directives(unit: str) -> dict[str, list[str]]:
 def test_agentboard_killmode_and_mainpid_stay_coupled():
     """`KillMode=process` is only safe because the unit ExecStarts the SERVER, not the node shim.
 
-    The two halves live in two files with nothing coupling them, and both regressions are silent
-    until an operator restarts — which is rare and outside CI. Dropping `KillMode=process` restores
-    the control-group SIGKILL that destroyed four tmux sessions on 2026-08-27; reverting the ExecStart
-    to the shim while KillMode stays gives the worse mode the script's own header names, where systemd
-    kills the wrapper and the real server keeps `:4040` so the next start cannot bind.
+    The two halves live in two files with nothing coupling them. Dropping `KillMode=process`
+    restores the control-group SIGKILL that takes the operator's tmux sessions with it; reverting
+    the ExecStart to the shim while KillMode stays lets systemd kill the wrapper while the real
+    server keeps `:4040`, so the next start cannot bind.
     """
     unit = AGENTBOARD_UNIT.read_text()
     start = AGENTBOARD_START.read_text()
@@ -1577,13 +1494,10 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     assert execs == ['exec "$bin"'], f"the start script must exec the resolved server binary: {execs}"
     assert not any("exec agentboard" in l for l in code), "exec'ing the PATH shim makes MainPID the wrapper again"
 
-    # ...and what is resolved INTO $bin, which pinning the exec line alone does not cover:
-    # `bin="$(command -v agentboard)"` keeps `exec "$bin"` intact and restores the wrapper as
-    # MainPID -- the shape KillMode=process makes WORSE than the default, because systemd would kill
-    # the wrapper while the real server kept :4040 and the next start could not bind.
-    # EVERY assignment feeding the exec, not just the first: the fallback at `[ -x "$bin" ] || bin=…`
-    # does not start with `bin=`, and `root=` is upstream of both. Any one of them repointed at the
-    # shim restores the wrapper as MainPID while `exec "$bin"` stays untouched.
+    # ...and what is resolved INTO $bin: `bin="$(command -v agentboard)"` keeps `exec "$bin"` intact
+    # while restoring the wrapper as MainPID. EVERY assignment feeding the exec, not just the first
+    # -- the fallback at `[ -x "$bin" ] || bin=…` does not start with `bin=`, and `root=` is upstream
+    # of both.
     assigns = [l for l in code if re.search(r"\b(?:bin|root)=", l)]  # \b excludes pkg_root=
     assert len(assigns) >= 3, f"expected root= plus both bin= assignments, found: {assigns}"
     for a in assigns:
