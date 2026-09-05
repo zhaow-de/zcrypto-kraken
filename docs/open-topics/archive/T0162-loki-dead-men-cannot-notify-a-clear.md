@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # A Loki-sourced dead-man can never notify its clear
@@ -30,9 +30,8 @@ A guard landed with it, coupling the two files rather than restating either: `te
 
 **The push ran on 2026-09-04** (`grafana-push.sh` from merged `develop` `efa9d098`, on the owner's word, after both capture rows passed `fleet-deploys.md`'s bar on revision `4925e060`) and was verified by value against the live stack: all eight dead-men pin `metrics` live as in `alerts.yaml`, every one inactive at the read, no orphaned rule. The receiver that can announce a clear is now the one the live rules use. The runbook sentence that says a Loki dead-man never sends a resolved notice became false at the push; it is re-tensed in the same change as the induction below, whose reading is the proof.
 
+**The induction ran 2026-09-05** (drill N, `docs/reference/drill-log.md`): the dead-man fired at 23:20:40Z on 2026-09-04, cleared at 00:04:40Z after the restore, and its RESOLVED notice reached `#zcrypto` at 00:06:11Z, 91 s after the clear — the reading the 2026-09-02 run could not produce on `logs`. `infra/runbooks/drills-telemetry.md`'s standing rule and the runbooks' receiver claims for the two dead-men are re-tensed in the same change.
+
 ## Suggested next steps
 
-- **The induction — attended, the owner's window.** Verify by induction rather than by reading config: page one of the eight (drill N's procedure in `infra/runbooks/drills-telemetry.md` is repeatable), clear it, and confirm a resolved notice arrives in `#zcrypto`.
-- **Re-tense the docs in that same change.** `infra/runbooks/drills-telemetry.md` records that no resolved notice arrives for a Loki dead-man — true of the live stack until the push, false after it.
-
-**Do not "fix" this by editing rule expressions.** That was tried and disproved; `alerts.yaml`'s comment beside `nas-archive-pull-stalled` records why, and re-deriving it from this file's git history would reach the wrong answer.
+_(none — resolved.)_ **Do not "fix" a silent clear by editing rule expressions.** That was tried and disproved; `alerts.yaml`'s comment beside `nas-archive-pull-stalled` records why.

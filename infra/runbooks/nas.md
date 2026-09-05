@@ -166,7 +166,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A critical Grafana alert on the **logs** receiver (`NAS · archive-pull stalled (dead-man)`, panel `zcrypto-logs`/103): Loki holds no line matching `pull complete` **and** `failed=0` from `{container="archive-pull"}` in the last 3 hours.
+A critical Grafana alert on the **metrics** receiver (`NAS · archive-pull stalled (dead-man)`, panel `zcrypto-logs`/103): Loki holds no line matching `pull complete` **and** `failed=0` from `{container="archive-pull"}` in the last 3 hours.
 
 The value is `0`, and the `host` label on the page is **empty** — the firing arm is the rule's `or on() vector(0)` fallback, which carries no labels. The host is the NAS; the summary names it in words for this reason.
 

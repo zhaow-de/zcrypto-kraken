@@ -438,7 +438,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **critical** Grafana alert (`Engine · log pipeline dead`) on the `logs` receiver: Loki holds **not one line of any level** from `{host="zcrypto", container="engine"}` in the last 6 hours. Panel 103 on the `zcrypto-logs` board carries the count; read it against the threshold of 1, not against its height.
+A **critical** Grafana alert (`Engine · log pipeline dead`) on the `metrics` receiver: Loki holds **not one line of any level** from `{host="zcrypto", container="engine"}` in the last 6 hours. Panel 103 on the `zcrypto-logs` board carries the count; read it against the threshold of 1, not against its height.
 
 ### What it means
 
