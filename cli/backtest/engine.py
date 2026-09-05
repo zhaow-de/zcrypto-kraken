@@ -7,11 +7,9 @@ from cli.validation import ValidationError, annualized_return, max_drawdown, sha
 
 
 def run_backtest(asset_returns: list[float], positions: list[float], *, fee_rate: float = 0.0, periods_per_year: int) -> dict:
-    """Turn a strategy's target positions into a net-return series (explicit per-turnover fee) + metrics.
+    """Net returns and metrics from target positions, less fee_rate per unit of turnover from a flat start (spec 00016).
 
-    Timing (fixed): positions[t] is held during period t and earns asset_returns[t]; the caller must set
-    positions[t] from information available before period t. turnover[t] = |positions[t] - positions[t-1]|
-    (positions[-1] = 0). See docs/specs/00016. Never returns NaN — a degenerate/blown-up backtest raises.
+    positions[t] is held during period t and must be set from pre-t information; a degenerate or blown-up run raises, never NaN.
     """
     if len(asset_returns) != len(positions):
         raise BacktestError(f"asset_returns and positions must match in length ({len(asset_returns)} != {len(positions)})")
