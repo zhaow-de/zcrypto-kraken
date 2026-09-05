@@ -1,15 +1,7 @@
-"""Drawdown governor — master-plan §10's drawdown-governance ladder as a pure returns overlay.
+"""Master-plan §10's drawdown-governance ladder as a pure returns overlay; semantics: docs/specs/00034-drawdown-governor-design.md.
 
-The multiplier for bar t is fixed from the GOVERNED path through bar t-1 (the live book only ever
-sees its own equity), then governed_returns[t] = multipliers[t] * returns[t] — no look-ahead by
-construction. Semantics per docs/specs/00034-drawdown-governor-design.md: a pure threshold ladder
-on drawdown from the governed high-water mark (inclusive boundaries, no hysteresis); a daily-loss
-rule (governed return <= -daily_loss_limit) holding daily_loss_multiplier for daily_loss_cooldown
-bars, renewed by each new trigger bar; min-composition of the two (the most restrictive control
-governs); a ladder rung of exactly 0.0 is terminal — flat for restart_after bars, then re-arm with
-the HWM reset to current governed equity (a flat book's drawdown is frozen, so re-arm cannot key
-on recovery); restart_after=None stays flat to the end of the series.
-"""
+Bar t's multiplier is fixed from the GOVERNED path through t-1 (the live book sees only its own equity) — no look-ahead.
+A flat book's drawdown is frozen, so the terminal rung re-arms after restart_after bars with the HWM reset, never on recovery."""
 
 from __future__ import annotations
 
