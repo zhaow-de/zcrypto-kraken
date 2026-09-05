@@ -607,6 +607,17 @@ def test_every_runbook_link_in_an_alert_summary_resolves():
     )
 
 
+def test_the_runbook_link_pattern_truncates_a_dot_bearing_anchor_so_it_cannot_resolve():
+    """`_RUNBOOK_LINK`'s anchor class excludes `.`, so an anchor carrying one is captured TRUNCATED
+    and the resolve test fails on it rather than skipping it."""
+    assert _RUNBOOK_LINK.findall("infra/runbooks/capture.md#some.anchor") == [("capture.md", "some")]
+    assert "some" not in _runbook_anchors(), "the truncated anchor resolved -- the fail-closed claim is false"
+    # The true positive: a dot-free anchor is captured whole.
+    assert _RUNBOOK_LINK.findall("infra/runbooks/capture.md#zcrypto-capture-stream-silent") == [
+        ("capture.md", "zcrypto-capture-stream-silent")
+    ]
+
+
 def test_every_runbook_link_in_a_dashboard_description_resolves():
     """The panel descriptions cite sections the same way the summaries do, and they are read at the
     same moment -- a responder who followed the notification's panel link is already on the board.
@@ -962,7 +973,82 @@ def test_the_restart_rule_is_the_only_restart_signal_and_absorbs_a_datasource_hi
     assert rule["noDataState"] == "OK" and rule["execErrState"] == "Alerting"
 
 
+# --- the ops ERROR rule's selector covers every container the ops log plane can label -------------
+OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
+OPS_COMPOSE = REPO / "infra/ansible/roles/ops/templates/compose.yaml.j2"
+
+
+def _ops_log_containers() -> set[str]:
+    """Every `container` label the ops host's log plane can emit: the journal units the keep-regex
+    admits (their unit stem), Alloy's own stream, and the poller's direct-ship service name."""
+    keep = next(ln for ln in OPS_ALLOY.read_text().splitlines() if re.search(r'regex\s*=\s*"zcrypto-\(', ln))
+    units = re.search(r"zcrypto-\(([^)]+)\)", keep)
+    assert units and re.search(r"grafana-alloy", keep), f"the ops journal keep-regex changed shape: {keep!r}"
+    poller = re.search(r"ZCRYPTO_LOG_SERVICE:\s*(\S+)", OPS_COMPOSE.read_text())
+    assert poller, "the poller's direct-ship service label moved out of the ops compose"
+    return {f"zcrypto-{u}" for u in units.group(1).split("|")} | {"alloy", poller.group(1)}
+
+
+def test_the_ops_error_rule_selects_every_container_the_ops_log_plane_can_emit():
+    """A container the journal keep-regex or the poller's direct-ship can label, but the ERROR
+    rule's selector omits, ships errors nothing watches."""
+    rule = _rule("zcrypto-ops-error-logs")
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    selector = re.search(r'container=~"([^"]+)"', expr)
+    assert selector, f"the ops ERROR rule no longer selects on container: {expr!r}"
+    admitted = _ops_log_containers()
+    assert len(admitted) >= 5, f"the log plane derivation found only {sorted(admitted)} -- vacuous"
+    unmatched = sorted(c for c in admitted if not re.fullmatch(selector.group(1), c))  # Loki's =~ is anchored
+    assert not unmatched, f"the ops log plane can label {unmatched}; the ERROR rule's selector {selector.group(1)!r} misses them"
+
+
+# --- every memory-LIMITED job has a headroom leg, or is named absent with its reason ----------------
+# compose source carrying a `memory:` limit -> the (host, job) pairs it renders to. The local
+# infra/docker compose is nobody's host.
+_LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
+    "infra/ansible/roles/capture/templates/compose.yaml.j2": (("zcrypto", "capture_app"), ("zcrypto-red", "capture_app")),
+    "infra/ansible/roles/engine/templates/compose.yaml.j2": (("zcrypto", "engine_app"),),
+    "infra/ansible/roles/capture/templates/alloy-compose.yaml.j2": (
+        ("zcrypto", "integrations/self"),
+        ("zcrypto-red", "integrations/self"),
+    ),
+    "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2": (("ops", "integrations/self"),),
+    "infra/nas/compose.yaml": (("nas", "integrations/self"),),
+    "infra/docker/compose.yaml": (),
+}
+# (host, job) with a limit and no headroom leg, each with the reason it is left out.
+_HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {}
+
 _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
+
+
+def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
+    """A compose service with a `memory:` limit is a container the OOM-killer can take; every
+    (host, job) it renders to divides by a limit in one of the two headroom rules, or is named in
+    `_HEADROOM_DELIBERATELY_ABSENT` with its reason."""
+    # config-selector-ok: presence of any `memory:` line is the question, not a value to parse
+    limited = sorted(str(p.relative_to(REPO)) for p in REPO.glob("infra/**/*compose*.y*ml*") if "memory:" in p.read_text())
+    assert limited == sorted(_LIMITED_JOBS), f"the memory-limited compose sources changed: {limited} -- update the map"
+    exprs = " ".join(
+        str(n.get("model", {}).get("expr", "")) for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM) for n in _rule(uid)["data"]
+    )
+    legs = re.findall(r"process_resident_memory_bytes\{([^}]*)\}\s*/\s*\d+", exprs)
+    assert len(legs) >= 4, f"the two headroom rules carry only {len(legs)} legs -- the parse is broken"
+
+    def covered(host: str, job: str) -> bool:
+        for leg in legs:
+            h, j = re.search(r'host(=~?)"([^"]+)"', leg), re.search(r'job="([^"]+)"', leg)
+            if not (h and j) or j.group(1) != job:
+                continue
+            if host in (h.group(2).split("|") if h.group(1) == "=~" else [h.group(2)]):
+                return True
+        return False
+
+    pairs = [pair for pairs in _LIMITED_JOBS.values() for pair in pairs]
+    missing = [pair for pair in pairs if not covered(*pair) and pair not in _HEADROOM_DELIBERATELY_ABSENT]
+    assert not missing, f"memory-limited but no headroom leg and no recorded absence: {missing}"
+    stale = [pair for pair in _HEADROOM_DELIBERATELY_ABSENT if covered(*pair)]
+    assert not stale, f"named absent but a leg exists -- the excuse outlived the gap: {stale}"
 
 
 def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
