@@ -107,8 +107,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0163 — client order id length is unmeasured](T0163-client-order-id-length-unmeasured.md) — the probe's 18-character truncation comment cannot be squared with its own 27-character ids passing; ripe when a versioned adapter-verification row quotes a minted id as the venue returned it.
 
-- [T0164 — the global prose cleanup under `prose.md`](T0164-global-prose-cleanup-under-prose-md.md) — every existing comment, docstring and living doc brought under the round-8 bar in three assignments, measured by the tripwire before and after; ripe when refine-rules round 8 is on develop (`git log origin/develop --grep="^Refine-Round-Closed: 2026-09-04T23:52:07Z"` non-empty).
-
 - [T0165 — engine test claims no assertion carries](T0165-engine-test-claims-no-assertion-carries.md) — four live-path invariants stated only in test prose (the single writer of the resting phase, the IOC fallback through the gate, the running-nautilus input, the flatten prompt under `-s`); each becomes a test.
 
 - [T0166 — the alert-rule guard's blind spots](T0166-alert-rule-guard-blind-spots.md) — the dead-man classifier reads threshold nodes only, a dot-bearing runbook anchor is untested, the ops ERROR selector is a list nothing reconciles, the memory-limit pin has no headroom-leg assertion.
@@ -138,6 +136,12 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0158 — the go-live drill program, executing spec 00105](T0158-go-live-drill-program-execution.md) — the spec's residual holder. The telemetry tier is **executed**: all ten autonomous inductions run, recorded and `pass` on 2026-08-31; P ran 2026-09-04 inside the capture rollout (partial pending the reconciler's book, then pass); Ripe per sub-item, not as a whole — **C′'s `/fail` route and Q are DISCHARGED 2026-09-01** (11 s probe-to-phone, and 62 s more before the metric moved); **P** rides the next capture converge happening for its own reasons, since its restore IS a secondary converge; the **order-path tier** at rung 1 after 00106 and `rest-hold` converge.
 
 - [T0159 — `zcrypto engine flatten`, the red button](T0159-engine-flatten-the-red-button.md) — ruled 2026-08-29 whole account, market orders, kill file first, overriding spec `00090` D6's MARKET rejection for this command only. **Partial: the build half is delivered** (spec `00106`) — the command with its dry-run default and its four-code contract, the `/usr/local/sbin/zcrypto-flatten` host wrapper, the runbook procedure, and the guard that stops the unattended daily pass pressing it. It has never touched Kraken: remainder = the attended engine converge that first puts the wrapper on the host, the live read-only dry-run through it that confirms the five read shapes, and the first real press on a position minted for the purpose — reduce-only market on margin is unproven live until that reads a pass. Drill B measures decision-to-flat at rung 1 and is T0158's, not a gate here. Ripe per sub-item — the engine converge carrying `00106` + `rest-hold` now, waiting only on an inter-cycle gap; the dry-run and the first press after it, the wrapper not existing until it has run.
+
+# \<<\<<\<<< HEAD
+
+- [T0164 — the global prose cleanup under `prose.md`](T0164-global-prose-cleanup-under-prose-md.md) — **partial 2026-09-05**: the first `tests/` + `infra/` batch is merged (four files, T0165–T0167 registered from it); `cli/`, the rest of `tests/` + `infra/` and the three docs remain; ripe when refine-rules round 8 is on develop (`git log origin/develop --grep="^Refine-Round-Closed: 2026-09-04T23:52:07Z"` non-empty).
+
+> > > > > > > 9718b9cd (docs(open-topics): T0164 is partial — the first tests and infra batch is done, the remainder named)
 
 ### Resolved<a name="resolved-1"></a>
 
