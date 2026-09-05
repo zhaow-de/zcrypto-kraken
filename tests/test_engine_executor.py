@@ -89,11 +89,9 @@ _LIQUIDITY_CASES = (
 _VERIFIED_VERSION = "1.230.0"  # in cli/engine/order-semantics-verified.json
 
 
-# Every test below is about some OTHER gate input -- control files, the venue reader, clock skew.
-# The running-nautilus input is held VERIFIED for them so it contributes no reason; if it were left
-# to the real interpreter, this file would be asserting against whatever version happens to be
-# installed, and it would flip wholesale on the next bump. The tests that are ABOUT that input
-# override this fixture explicitly and are grouped at the end of the file.
+# The running-nautilus gate input is held VERIFIED so it contributes no reason to any verdict below:
+# left to the real interpreter this file would assert against whatever version happens to be
+# installed, and would flip wholesale on the next bump.
 @pytest.fixture(autouse=True)
 def _nautilus_verified(monkeypatch):
     monkeypatch.setattr("cli.engine.execgate._installed_nautilus_version", lambda: _VERIFIED_VERSION)
@@ -146,12 +144,10 @@ def test_a_below_costmin_result_names_the_floor():
 # --- the structural pin -------------------------------------------------------------------------
 
 
-# The ATTRIBUTE REACH, dot included, not the bare word: what escapes is a second module reaching a
-# venue-mutating attribute on a strategy, client or factory, and every such reach is dotted --
-# `self._client.submit_order(...)`, `strategy.order_factory.limit(...)`, a commented-out line of
-# either. `cli/engine/node.py` seals that surface by DEFINING those names to raise, and a definition
-# is the opposite of a reach; matching the bare word would make the seal itself the offender and the
-# only way back would be an allowance, which is how a guard stops being one.
+# The dotted ATTRIBUTE REACH, never the bare word: `cli/engine/node.py` seals this surface by
+# DEFINING those names to raise, and matching the bare word would make the seal itself the offender,
+# leaving an allowance as the only way back. `cancel_order` is here because a cancel reaches the
+# venue exactly as a submit does, `cancel_all_orders` because an account-wide cancel is the largest.
 _VENUE_MUTATING_NAMES = (".submit_order", ".cancel_order", ".cancel_all_orders", ".order_factory")
 # The engine's order machine and the red button, and nothing else. `cli/engine/flatten.py` is a
 # second venue-mutating module BY DESIGN (spec 00106 D7): the button has to work when the machine
@@ -161,12 +157,9 @@ _VENUE_MUTATING_MODULES = frozenset({"cli/engine/executor.py", "cli/engine/flatt
 
 
 def test_the_venue_mutating_names_have_exactly_one_module():
-    """D4's structural pin, widened by spec 00106 D7: all venue-mutating calls live in
-    cli/engine/executor.py or cli/engine/flatten.py. A text walk, not an import walk -- a reference
-    in a comment is still a reference a refactor can activate. `cancel_order` is on the list because
-    the maker-first ladder cancels: a cancel reaches the venue exactly as a submit does, so a second
-    module learning to cancel is the same escape. `cancel_all_orders` is on it because an
-    account-wide cancel is the largest cancel there is."""
+    """Spec 00090 D4's structural pin, widened by spec 00106 D7: every venue-mutating call lives in
+    `cli/engine/executor.py` or `cli/engine/flatten.py`. A text walk, not an import walk -- a
+    reference in a comment is still one a refactor can activate."""
     offenders = []
     for path in sorted(Path("cli").rglob("*.py")):
         if path.as_posix() in _VENUE_MUTATING_MODULES:
@@ -282,11 +275,10 @@ class StubCache:
 
     @staticmethod
     def _position_key(instrument_id):
-        """The installed Cache's accessors are typed and REFUSE a str -- `TypeError:
-        Argument 'instrument_id' has incorrect type`. This stub used to coerce with `str()`, which
-        accepted what production could not: every live `_publish_fill` raised into its swallowing
-        `except` and the position/PnL gauges never moved, with the whole suite green. Refusing here
-        is what makes that class of defect visible at all."""
+        """The installed Cache's accessors are typed and REFUSE a str (`TypeError: Argument
+        'instrument_id' has incorrect type`), so this stub refuses one too: a coercing stub accepts
+        what production cannot, and every live `_publish_fill` would raise into its swallowing
+        `except` with the whole suite green."""
         if not isinstance(instrument_id, InstrumentId):
             raise TypeError(
                 f"Argument 'instrument_id' has incorrect type (expected InstrumentId, got {type(instrument_id).__name__})"
@@ -294,10 +286,9 @@ class StubCache:
         return str(instrument_id)
 
     def positions_open(self, *, instrument_id=None, strategy_id=None, **kwargs):
-        """Honours `strategy_id` because production now depends on it: NETTING position ids are
-        `f"{instrument_id}-{strategy_id}"`, so an external fill lands in a SEPARATE position and a
-        strategy-scoped read is what excludes the operator's book. A stub that swallowed the filter
-        would return the operator's holding to a scoped read, and the test could not tell a fixed
+        """Honours `strategy_id`: NETTING position ids are `f"{instrument_id}-{strategy_id}"`, so an
+        external fill lands in a SEPARATE position and only a strategy-scoped read excludes the
+        operator's book -- a stub that swallowed the filter could not tell a fixed
         `_reconcile_terminal` from a broken one."""
         if strategy_id is not None and not isinstance(strategy_id, StrategyId):
             raise TypeError(f"Argument 'strategy_id' has incorrect type (expected StrategyId, got {type(strategy_id).__name__})")
@@ -341,19 +332,14 @@ class StubCache:
         self.set_position(symbol, sum(float(p.signed_qty) for p in held) + delta, realized_pnl=realized)
 
     def apply_fill(self, symbol, fill):
-        """Move the held position the way a fill does -- with the library's own `Position` doing the
-        arithmetic, and this fixture supplying neither the sign nor the size.
+        """Move the held position the way a fill does, with the library's own `Position` doing the
+        arithmetic off the event's `order_side` and `last_qty` -- a fixture that named the delta
+        itself would agree with a mis-signed or mis-sized fill.
 
-        Both come off the event: `Position(instrument, fill).signed_qty` reads the fill's own
-        `order_side` and `last_qty`. A fixture that named the delta itself could agree with a
-        mis-signed or mis-sized fill, because the number it moved the Cache by would be the number
-        the test author meant rather than the one the event carries.
-
-        The NETTING position id is stamped onto a copy for this arithmetic and only here -- opening
-        a `Position` needs one, and a dispatched fill that carries one cannot be voided afterwards.
-        Rebuilt field by field rather than round-tripped through `to_dict`/`from_dict`, which cannot
-        carry every fill this file delivers: `from_dict` answers `Unknown currency` for the venue's
-        alias codes, so a commission denominated `ZEUR` or `XXBT` never survives the trip."""
+        The NETTING position id is stamped onto a copy only here: opening a `Position` needs one, and
+        a dispatched fill carrying one cannot be voided afterwards. Rebuilt field by field rather
+        than round-tripped through `to_dict`/`from_dict`, which answers `Unknown currency` for the
+        venue's alias codes, so a commission denominated `ZEUR` or `XXBT` never survives the trip."""
         identified = OrderFilled(
             fill.trader_id, fill.strategy_id, fill.instrument_id, fill.client_order_id, fill.venue_order_id,
             fill.account_id, fill.trade_id, fill.order_side, fill.order_type, fill.last_qty, fill.last_px,
@@ -364,16 +350,13 @@ class StubCache:
         self.move_position(symbol, delta)
 
     def order(self, client_order_id):
-        """One order by id, across the whole index -- the installed `Cache.order` serves closed
-        orders as readily as open ones, and returns None for an id it does not hold. Serving the
-        closed half is what every closed-while-down test rests on: such an order is by definition
-        absent from `orders_open`, and a stub answering only the open half would hand those tests
-        the empty population that made the case invisible before the sweep existed.
+        """One order by id across the whole index, open or closed, and None for an id it does not
+        hold -- the closed half is what every closed-while-down test rests on, since such an order is
+        by definition absent from `orders_open`.
 
         Typed like the real one, which REFUSES a str (`'str' object is not an instance of
         'ClientOrderId'`): a stub that accepted one would let production hand it the plain string it
-        carries everywhere else, and every live read would raise into a swallowing `except` with the
-        whole suite green."""
+        carries everywhere else, and every live read would raise into a swallowing `except`."""
         if not isinstance(client_order_id, ClientOrderId):
             raise TypeError(
                 f"Argument 'client_order_id' has incorrect type (expected ClientOrderId, got {type(client_order_id).__name__})"
@@ -559,11 +542,9 @@ def _venue_record(tmp_path: Path, *, balances, positions=None, when: datetime = 
 
 
 def _open_order(client_order_id, *, is_reduce_only=False, filled_qty=0.0):
-    """A resting order as reconciliation adopts it. `is_reduce_only` is present because the real
-    adopted report carries it -- and the startup pass must be seen NOT to consult it. `filled_qty`
-    and `is_open`/`status` are what the startup reconciliation reads: the real `Order` carries the
-    quantity applied to it during reconciliation, and its own open predicate is what the pass now
-    derives the resting population from."""
+    """A resting order as reconciliation adopts it. `is_reduce_only` is here because the real adopted
+    report carries it and the startup pass must be seen NOT to consult it; `filled_qty`, `is_open`
+    and `status` are what that pass reads instead."""
     return SimpleNamespace(
         client_order_id=client_order_id,
         is_reduce_only=is_reduce_only,
@@ -658,12 +639,9 @@ _EVENT_DEFAULTS = {
 
 
 def _event(cls, **overrides):
-    """One of the library's own order events, with the identity fields every kind carries baked in
-    -- a real `OrderFilled` needs sixteen keywords, so a per-test literal is not viable.
-
-    The class IS the fixture: the executor dispatches on `type(event).__name__`, and building the
-    library's own class means nothing here can wear a name the library does not define, nor answer
-    an attribute it does not carry."""
+    """One of the library's own order events, with the identity fields every kind carries baked in.
+    The class IS the fixture: the executor dispatches on `type(event).__name__`, so nothing here can
+    wear a name the library does not define, nor answer an attribute it does not carry."""
     kwargs = {
         "trader_id": _TRADER_ID,
         "strategy_id": _STUB_STRATEGY_ID,
@@ -734,11 +712,9 @@ def _advance_ticks(ex, *, minutes):
 
 
 def _advance_with_quotes(ex, client, clock, *, minutes, bid=30000.0, ask=30001.0):
-    """Ticks carrying a live quote on every one. The time-box (15 min) can only be reached this way:
-    quote silence (30 s) would otherwise revoke the resting order first.
-
-    Stops the moment a cancel goes out, so each test delivers the venue's answer itself -- ticking
-    on past an unanswered cancel is the ack watchdog's subject, not this helper's."""
+    """Ticks carrying a live quote on every one -- the only way to reach the time-box, since quote
+    silence would otherwise revoke the resting order first. Stops the moment a cancel goes out, so
+    each test delivers the venue's answer itself."""
     end = clock.now + timedelta(minutes=minutes)
     while clock.now < end:
         clock.now += timedelta(seconds=10)
@@ -759,19 +735,14 @@ def _reset_executor_hooks():
 
 @pytest.fixture(autouse=True)
 def _the_tick_backstop_never_fires():
-    """`on_timer`'s catch-all is a backstop for the unforeseen, not a mechanism any test may lean
-    on: every refusal below has its own named path. It masked a missing method during development
-    -- twenty-six tests stayed green while an intent silently never refused -- so a test that goes
-    green WHILE the backstop fires fails instead.
+    """`on_timer`'s catch-all is a backstop for the unforeseen, not a mechanism any test may lean on:
+    every refusal below has its own named path, so a test that goes green WHILE the backstop fires
+    fails instead.
 
-    Deliberately NOT `caplog`, which is blind here for two independent reasons. Its handler sits on
-    the ROOT logger, and `cli.logging.config.configure` sets `zcrypto.propagate = False` -- so every
-    record stops arriving as soon as any CliRunner test has run earlier in the session (and
-    `tests/test_engine_command.py` sorts ahead of this file). And `caplog.records` is PHASE-scoped:
-    pytest calls `caplog_handler.reset()` entering each phase, so a teardown-time read returns a
-    list emptied moments earlier -- vacuous even when this file runs alone. An own handler on the
-    executor's own logger, with the logger's level forced for the duration, dodges both.
-    """
+    Deliberately NOT `caplog`, blind here twice over: its handler sits on the ROOT logger and
+    `cli.logging.config.configure` sets `zcrypto.propagate = False`, and `caplog.records` is
+    PHASE-scoped, so a teardown-time read returns a list emptied moments earlier. An own handler on
+    the executor's own logger, with the logger's level forced for the duration, dodges both."""
     records: list[logging.LogRecord] = []
 
     class _Collect(logging.Handler):
@@ -800,14 +771,10 @@ def kill_trip_expected():
 
 @pytest.fixture(autouse=True)
 def _no_unannounced_kill_trip(request):
-    """A trip creates a latching file no code may clear and stops this engine for good. Every OTHER
-    test in this file is a healthy neighbour that must not cause one -- so the quiet direction is
-    proven once, here, against all of them, rather than only against the single external-fill
-    construction D11 names. Runs both ways: an announcing test that does NOT trip fails too.
-
-    Watches the executor's own logger for the two reasons `_the_tick_backstop_never_fires` documents
-    -- caplog's handler sits on a root the CLI tests have detached, and its records are phase-scoped
-    so a teardown read comes back empty."""
+    """A trip creates a latching file no code may clear and stops this engine for good, so every
+    OTHER test in this file is a healthy neighbour that must not cause one. Runs both ways: an
+    announcing test that does NOT trip fails too. Watches the executor's own logger for the reasons
+    `_the_tick_backstop_never_fires` gives."""
     records: list[logging.LogRecord] = []
 
     class _Collect(logging.Handler):
@@ -913,13 +880,10 @@ def test_a_sell_intent_joins_the_ask_and_a_margin_intent_carries_the_leverage_pa
 # --- the venue value objects: what quantity and price actually reach the order factory -----------
 
 # `instrument.make_price` / `instrument.make_qty` round HALF-EVEN on the decimal the value is
-# WRITTEN as -- 0.045 -> 0.04, 1.015 -> 1.02 (101.5 -> the even 102). The bare `Price(value,
-# precision)` / `Quantity(value, precision)` constructors round the binary float instead and
-# DISAGREE at half-increments, in both directions. Measured on the installed wheel against a real
-# CurrencyPair at the basket's own precisions, which is the only place the rule is observable: a
-# hand-built value object answers the other question. Both columns are pinned because the pair of
-# them is the finding -- reading `Quantity(x, instrument.size_precision)` as a free substitute for
-# `instrument.make_qty(x)` changes the submitted quantity by one whole increment.
+# WRITTEN as; the bare `Price(value, precision)` / `Quantity(value, precision)` constructors round
+# the binary float and DISAGREE at half-increments, in both directions. Both columns are pinned
+# because the pair is the finding -- reading `Quantity(x, instrument.size_precision)` as a free
+# substitute for `instrument.make_qty(x)` changes the submitted quantity by one whole increment.
 _MAKE_PRICE_CASES = (
     # (value, instrument.make_price at price_precision=2, Price(value, 2))
     (0.015, "0.02", "0.02"),
@@ -968,12 +932,11 @@ def test_the_instruments_quantity_rounding_is_not_the_bare_constructors(value, m
 
 
 def test_a_submitted_order_carries_the_floored_price_and_quantity_as_venue_value_objects(tmp_path):
-    """The whole chokepoint in one order: `size_order` FLOORS to the venue step, and what reaches
-    the order factory is that floored number wrapped by the instrument's own maker. Both operands
-    are chosen so the two roundings answer differently -- an ask of 30000.15 floors to 30000.1 but
-    make_price's half-even sends the raw touch UP to 30000.2, and a disposal of 0.001000015 floors
-    to 0.00100001 while the raw quantity rounds up to 0.00100002. A `_place` that lost the floor, or
-    that priced off the raw touch, submits a different order and this test says which."""
+    """`size_order` FLOORS to the venue step and what reaches the order factory is that floored
+    number wrapped by the instrument's own maker. Both operands are chosen so the two roundings
+    answer differently -- the raw touch and the raw quantity each round UP where the floor sends them
+    down -- so a `_place` that lost the floor, or that priced off the raw touch, submits a different
+    order and this test says which."""
     _venue_record(tmp_path, balances={"ZEUR": 1000.0})
     client = StubClient()
     ex = _executor(tmp_path, client=client)
@@ -992,12 +955,10 @@ def test_a_submitted_order_carries_the_floored_price_and_quantity_as_venue_value
 
 
 def test_the_floor_is_what_keeps_make_qty_away_from_the_quantity_it_refuses(tmp_path):
-    """`instrument.make_qty(sized.qty)` in `_place` sits OUTSIDE the try that wraps sizing, and
-    `make_qty` raises on a value under half an increment -- so the containment argument has to be
-    that such a value cannot arrive. It cannot: `size_order` floors the quantity to `lot_step` and
-    then refuses anything under `ordermin`, and `ordermin` is at least one lot on every venue shape,
-    so the survivor is a whole number of increments and at least one of them. Asserted at the
-    tightest legal shape (`ordermin == lot_step`), where the two bounds coincide."""
+    """`instrument.make_qty(sized.qty)` in `_place` sits OUTSIDE the try that wraps sizing and raises
+    under half an increment, so the containment argument is that such a value cannot arrive:
+    `size_order` floors to `lot_step` and then refuses anything under `ordermin`, which is at least
+    one lot on every venue shape. Asserted at the tightest legal shape (`ordermin == lot_step`)."""
     instrument = _rounding_delegate("BTC/EUR", 0.00000001, 0.1)
     with pytest.raises(ValueError, match="rounded to zero"):
         instrument.make_qty(0.4 * 0.00000001)
@@ -1105,13 +1066,10 @@ def test_reduce_only_refuses_an_open_intent(tmp_path):
 
 
 def test_reduce_only_permits_a_close_intent(tmp_path):
-    """The other half of the level rule -- without it, a `_level_permits` that refused everything
-    at REDUCE_ONLY would pass the test above. The 0.001 qty is load-bearing: this intent's EUR
-    notional only exists at sizing time, and 0.01 at the fixture touch would be refused by the plan
-    cap instead, greening this test for the wrong reason. The venue record is load-bearing too: at
-    REDUCE_ONLY the disposal takes the full `qty <= balance` bound (D10), so without a record
-    showing the coin this intent is refused by the classification rather than permitted by the
-    level -- which is the opposite of what this test is about."""
+    """The other half of the level rule: a `_level_permits` that refused everything at REDUCE_ONLY
+    would pass the test above. Both the 0.001 qty and the venue record are load-bearing -- a larger
+    qty is refused by the plan cap and a missing record by the disposal classification (spec 00090
+    D10), either of which greens this test for the wrong reason."""
     client = StubClient()
     _venue_record(tmp_path, balances={"XXBT": 0.002, "ZEUR": 1000.0})
     ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
@@ -1173,11 +1131,9 @@ def test_a_raising_submit_marks_the_row_ambiguous_and_leaves_it_in_the_re_attach
 
 
 def test_an_ambiguous_submit_drops_the_rest_of_the_plan(tmp_path):
-    """Owner ruling: an ambiguous outcome stops the plan. The order may be live, so the position and
-    free balance the notional cap and margin floor authorized every LATER intent against are
-    unknown -- and authorizing an order on unknown state is what refusal by default forbids. The
-    remaining intents are journaled naming the ambiguous predecessor, so the ledger says why they
-    never ran."""
+    """Owner ruling: an ambiguous outcome stops the plan -- the order may be live, so the position
+    and free balance every LATER intent was authorized against are unknown. The remaining intents are
+    journaled naming the ambiguous predecessor."""
     client = StubClient(submit_raises=RuntimeError("connection reset"))
     ex = _executor(tmp_path, client=client)
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]))
@@ -1233,17 +1189,13 @@ def test_a_raising_venue_read_refuses_the_plan_with_no_subscribe_and_no_submit(t
 
 
 def test_a_raising_own_position_read_refuses_the_intent_with_no_subscribe_and_no_submit(tmp_path):
-    """`_start_intent` reads the Cache TWICE -- the venue-truth read above, then the strategy-scoped
-    own-position read that seeds `own_position_before` -- and guards them separately. Only the
-    second guard is under test here, and no cache that simply fails reaches it: `StubCache(raises=
-    True)` fails `instrument()`, which the FIRST guard catches, leaving the second one unreachable
-    and its deletion invisible to every other test in this file. So this cache answers everything
-    instrument-scoped and refuses exactly the strategy-scoped read.
+    """`_start_intent` guards its two Cache reads separately and this cache refuses exactly the
+    strategy-scoped one: `StubCache(raises=True)` fails `instrument()`, which the FIRST guard
+    catches, leaving the second unreachable.
 
-    The refusal is the assertion. Unguarded, the exception leaves `_start_intent` with `_active`
-    unarmed and `_index` unadvanced -- the plan neither refused nor progressed -- and the guard's
-    other reason for standing before the subscribe is that a raise after it would leak the quote
-    subscription until restart."""
+    Unguarded, the exception leaves `_active` unarmed and `_index` unadvanced -- the plan neither
+    refused nor progressed -- and a raise after the subscribe would leak the quote subscription until
+    restart."""
 
     class _OwnPositionUnreadable(StubCache):
         def positions_open(self, *, instrument_id=None, strategy_id=None, **kwargs):
@@ -1357,13 +1309,11 @@ def test_a_margin_floor_violating_plan_is_refused_naming_the_floor(tmp_path):
 
 
 def test_an_eur_only_balance_is_the_free_cash_figure_the_margin_floor_is_measured_against(tmp_path):
-    """The LIVE spelling: the pre-merge read against the engine returned `{'EUR': 99.84}`, so the
-    `ZEUR`-then-`EUR` fallback resolves on its SECOND arm in production. Every other fixture here
-    spells it `ZEUR`, which left the live-resolving arm unpinned -- deleting it would have left this
-    suite green while production sized every plan against 0.00 free EUR and refused it.
-
-    The assertion is the figure inside the reason, not the word 'margin floor': dropping the `EUR`
-    arm still refuses (0.00 is under any floor), so only the VALUE separates the two worlds."""
+    """The LIVE spelling: production's free-cash read resolves on the `ZEUR`-then-`EUR` fallback's
+    SECOND arm, which every other fixture here leaves unpinned -- deleting that arm would leave this
+    suite green while production sized every plan against 0.00 free EUR. The assertion is the figure
+    inside the reason, not the words 'margin floor': dropping the arm still refuses, so only the
+    VALUE separates the two worlds."""
     client = StubClient(StubCache(balances={"EUR": 99.84}))
     ex = _executor(tmp_path, client=client)
     _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=90.0, leverage=2)]))
@@ -1529,34 +1479,18 @@ def _fill(
     """A REAL `OrderFilled`, carrying every field the executor's fill row reads in the venue's own
     types.
 
-    `fee_code` is `EUR` -- the currency a Kraken fill's commission carries, measured on both legs of
-    a live round trip (`docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, observation 4).
-    The venue's `ZEUR` spelling belongs to its asset and instrument-quote surfaces, not to a
-    commission; `cli.engine.instruments.EUR_CODES` accepts both, and the fill that pins the second
-    spelling says so by name.
+    `fee_code` is `EUR`, the currency a Kraken fill's commission carries
+    (`docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, observation 4); the venue's
+    `ZEUR` spelling belongs to its asset and instrument-quote surfaces, and
+    `cli.engine.instruments.EUR_CODES` accepts both. Fee values are amounts two decimals can hold,
+    for the reason `test_a_real_money_answers_both_accessors_the_fill_row_reads` measures; `fee=None`
+    builds the commission-less fill that reaches the row builder's absent-fee branch.
 
-    The fee VALUES follow from that, because a `Money` quantizes to its currency's precision: `EUR`
-    mints at 2 decimals, so every fee written in this file is an amount two decimals can hold, and
-    `0.08` is what that round trip was actually charged. A finer fixture fee is not a finer
-    measurement -- `Money(0.012, EUR)` is `0.01`, and the assertion would be reading the fixture's
-    own rounding back.
-
-    `fee=None` builds the commission-less fill the event type permits: `commission` is `Money |
-    None`, so a fixture that can only produce a Money cannot reach the row builder's absent-fee
-    branch at all.
-
-    `liquidity_side` is a `LiquiditySide` member and `instrument_id` a real `InstrumentId` -- the
-    library accepts nothing else for either. Only a member has the `.name` the ledger row and the
-    metric label are written from, and the Cache accessors `_publish_fill` hands the id to refuse
-    anything that is not one.
-
-    `order_side` follows `side` rather than sitting at a constant: it is what lets the library's own
-    `Position` compute what this fill does to a holding, instead of the fixture asserting it.
-
-    No `position_id`. `Position` needs one and `apply_fill` mints it there, deliberately not here: a
-    fill carrying one makes a subsequent `OrderFillVoided` raise `Invalid event for order type`, so
-    stamping it on every fixture fill would quietly put the venue's fill-reversal event out of this
-    harness's reach."""
+    `liquidity_side` is a `LiquiditySide` member -- only a member has the `.name` the ledger row and
+    the metric label are written from -- and `order_side` follows `side` so the library's own
+    `Position` can compute what this fill does to a holding instead of the fixture asserting it. No
+    `position_id`: `apply_fill` mints it there, because a fill carrying one makes a subsequent
+    `OrderFillVoided` raise `Invalid event for order type`."""
     return _event(
         OrderFilled,
         client_order_id=client_order_id,
@@ -1574,34 +1508,25 @@ def _fill(
 
 def _deliver_fill(ex, client, client_order_id, qty, *, symbol="BTC/EUR", side="buy", px=30000.0, **kwargs):
     """Deliver a fill the way the venue does: the Cache position moves FIRST, then the strategy sees
-    the event.
+    the event -- the ordering `test_the_cache_already_carries_the_fill_when_the_strategy_handler_sees_it`
+    measures, and the one `_reconcile_terminal` bets on, since it runs synchronously inside this
+    dispatch and latches the kill switch on a disagreement.
 
-    That ordering is MEASURED, not assumed --
-    `test_the_cache_already_carries_the_fill_when_the_strategy_handler_sees_it` drives a real order
-    through a real engine and reads the Cache from inside the handler. It matters because
-    `_reconcile_terminal` runs synchronously inside this dispatch and latches the kill switch on a
-    disagreement: a harness that left the Cache untouched would model a divergence that never
-    happens and trip on every healthy fill.
-
-    The MOVE is derived too. The fill goes to `apply_fill`, where the library's own `Position` reads
-    the event's side and quantity -- so this helper's `side` reaches the Cache only through the
-    event it stamps, and cannot move the position one way while the event says the other."""
+    The MOVE is derived: `apply_fill` lets the library's own `Position` read the event's side and
+    quantity, so this helper cannot move the position one way while the event says the other."""
     fill = _fill(client_order_id, qty, px=px, symbol=symbol, side=side, **kwargs)
     client.cache.apply_fill(symbol, fill)
     ex.on_order_event(fill)
 
 
 def _cache_reads_at_dispatch() -> dict:
-    """Run a real order through a real engine and read the Cache from inside the strategy's own
-    event handler, at the instant each event is dispatched.
-
-    A REAL `BacktestEngine` is the only construction that can answer this: it carries the real
-    ExecutionEngine, Portfolio and Cache, and every one of them is compiled, so there is no source
+    """Run a real order through a real engine and read the Cache from inside the strategy's own event
+    handler, at the instant each event is dispatched. A REAL `BacktestEngine` is the only construction
+    that can answer this: its ExecutionEngine, Portfolio and Cache are compiled, so there is no source
     to read the ordering off. Two orders: one crosses and fills, one rests and is canceled.
 
-    The readings are RECORDED and asserted by the caller, never asserted here -- a raising handler
-    is swallowed by the library (measured), so an assertion inside one is invisible and its test
-    passes green."""
+    The readings are RECORDED and asserted by the caller, never here -- the library swallows a raising
+    handler, so an assertion inside one is invisible and its test passes green."""
     from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
     from nautilus_trader.model import AccountType, OmsType, Venue
     from nautilus_trader.trading import Strategy
@@ -1690,21 +1615,13 @@ def _cache_reads_at_dispatch() -> dict:
 
 
 def test_the_cache_already_carries_the_fill_when_the_strategy_handler_sees_it():
-    """The premise `_deliver_fill` is built on, and the one `_reconcile_terminal` bets the kill
-    switch on: by the time a handler is dispatched an order event, the Cache has already applied it.
+    """By the time a handler is dispatched an order event, the Cache has already applied it -- the
+    premise `_deliver_fill` is built on and the one `_reconcile_terminal` bets the kill switch on,
+    since a Cache that moved AFTER the handler would leave every healthy round trip short by the fill
+    it is standing in, and nothing in the stubbed harness could tell the two orderings apart.
 
-    `_reconcile_terminal` runs synchronously inside this dispatch and compares what the intent's
-    fills say this engine holds against what `cache.positions_open` returns. If the Cache moved
-    AFTER the handler instead of before it, that comparison would see a position short by the fill
-    it is standing in and latch the kill switch on every healthy round trip -- and nothing in the
-    stubbed harness could tell the two orderings apart, because the stub moves the Cache itself.
-
-    The fixture is not degenerate: the position is 0.0 before the fill and 0.001 after, and the
-    order is ACCEPTED before and FILLED after, so each reading below has a different value under the
-    other ordering.
-
-    The cancel half is the same premise for terminal events, which is what lets the row's terminal
-    state be read off the venue's own order status."""
+    The fixture is not degenerate: the position is 0.0 before the fill and 0.001 after, and the order
+    is ACCEPTED before and FILLED after. The cancel half is the same premise for terminal events."""
     readings = _cache_reads_at_dispatch()
 
     assert set(readings) == {"OrderFilled", "OrderCanceled"}, readings  # the run really produced both
@@ -1767,13 +1684,9 @@ def test_a_fills_liquidity_side_is_named_not_numbered_in_both_the_row_and_the_me
     would make any rendering the emit site produced look correct.
 
     A number in the forensic row outlives the probe, and a numeric metric child mints an unadmitted
-    series while the pre-registered maker/taker ones read zero for the whole window -- the board
-    reporting nothing traded while money moves, and the maker-vs-taker blend is the measurement this
-    ladder exists to produce.
-
-    The case list is checked against the enum first: a side the venue can report but this file never
-    names would otherwise go uncovered silently. `variants()` is the enumeration -- the class itself
-    is not iterable."""
+    series while the pre-registered maker/taker ones read zero -- the board reporting nothing traded
+    while money moves. The case list is checked against `LiquiditySide.variants()` first, which is
+    the enumeration; the class itself is not iterable."""
     assert {case[1] for case in _LIQUIDITY_CASES} == {member.name for member in LiquiditySide.variants()}
     client = StubClient()
     metrics = RecordingMetrics()
@@ -1792,16 +1705,13 @@ def test_a_fills_liquidity_side_is_named_not_numbered_in_both_the_row_and_the_me
 
 def test_an_unrecognisable_liquidity_side_is_recorded_verbatim_rather_than_raised():
     """`_liquidity` sits on the write-ahead path, where a raise costs the fill its row, and it reads
-    an attribute off a value that arrives from outside this process. A value the enum cannot name is
+    an attribute off a value arriving from outside this process: a value the enum cannot name is
     recorded verbatim and logged, never dropped. `tracking.py` is where a liquidity outside the
-    venue's own names is refused; refusing it here would cost the row that proves it.
+    venue's own names is refused.
 
-    Driven at the function rather than through a fill, because the library will not build the input.
-    An `OrderFilled` takes a `LiquiditySide` member and nothing else -- a string is `TypeError:
-    'str' object is not an instance of 'LiquiditySide'`, and the dict round trip answers `Matching
-    variant not found`. The branch is reachable only from a value no real event can carry, so the
-    honest place to prove it is the function itself. Guard-proving: WHICH log line fired is read,
-    not merely that one did."""
+    Driven at the function rather than through a fill, because the library will not build the input --
+    an `OrderFilled` takes a `LiquiditySide` member and nothing else -- so the branch is reachable
+    only from a value no real event can carry."""
     with _executor_errors(logging.WARNING) as records:
         assert executor_module._liquidity("WHO KNOWS") == "WHO KNOWS"
 
@@ -1826,13 +1736,10 @@ def test_a_non_eur_commission_reaches_the_metric_as_no_fee_at_all(tmp_path):
 
 
 def test_the_venues_other_euro_spelling_reaches_the_metric_as_a_euro_fee(tmp_path):
-    """`EUR_CODES` carries both spellings and `_fee_eur` reads the constant, not a literal. The
-    fills here are `EUR`, the spelling a commission was measured carrying, so nothing else in this
-    file exercises the second entry -- and a `_fee_eur` narrowed to `== "EUR"` would drop every
-    `ZEUR` fee out of the counter with the whole module still green.
-
-    The counter is what is read: a fee excluded from a EUR total is `None`, not zero, so asserting
-    the value distinguishes the two outcomes where a fill count could not."""
+    """`EUR_CODES` carries both spellings and `_fee_eur` reads the constant, not a literal -- the
+    fills elsewhere in this file are `EUR`, so a `_fee_eur` narrowed to `== "EUR"` would drop every
+    `ZEUR` fee out of the counter with the whole module still green. The counter's VALUE is what is
+    read: a fee excluded from a EUR total is `None`, not zero."""
     client = StubClient()
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -1847,12 +1754,10 @@ def test_the_venues_other_euro_spelling_reaches_the_metric_as_a_euro_fee(tmp_pat
 
 
 def test_a_commission_less_fill_still_gets_its_forensic_row_with_a_null_fee(tmp_path):
-    """Guard-proving: `OrderFilled.commission` is `Money | None` on the pinned wheel -- constructed
-    absent, it builds fine. Reading it bare raises inside `on_order_event`'s blanket except, which
-    logs and continues, so the fill's row is DROPPED. `_on_fill` credits `active.filled` before the
-    payload is built, so the ladder would carry a quantity the ledger cannot describe: no fill
-    without a record has no exemption, and a null fee is the truthful way to say the venue reported
-    none. The fill still counts, and the EUR total is untouched by a fee that does not exist."""
+    """`OrderFilled.commission` is `Money | None`, and reading it bare would raise inside
+    `on_order_event`'s blanket except, DROPPING the fill's row after `_on_fill` already credited
+    `active.filled` -- a quantity the ledger cannot describe. A null fee is the truthful way to say
+    the venue reported none, and the EUR total is untouched by a fee that does not exist."""
     client = StubClient()
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -2083,9 +1988,7 @@ def test_every_returned_ioc_remainder_counts_its_outcome_so_the_board_still_bala
     """The operator surface, not the ledger: during an unfilled fallback ladder the board must not
     show `submitted` advancing with nothing terminal behind it. Each IOC's unfilled remainder comes
     back as an unrequested cancel, writes row state `venue_canceled`, and must count that outcome --
-    exactly as the resting-phase arm of the same ack already does. The label test derives its set
-    from the executor's `_inc_order` call sites, so it passes whether or not this arm counts; only
-    driving the ladder and reading the counter can tell."""
+    which only driving the ladder and reading the counter can establish."""
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex, client, clock = _resting_executor(tmp_path)
@@ -2327,17 +2230,15 @@ def test_the_resting_order_age_is_published_under_its_own_mode_and_returns_to_ze
 
 
 def test_an_outstanding_cancel_zeroes_the_resting_age_though_the_order_may_still_be_at_the_venue(tmp_path):
-    """The publish reads a THREE-part condition -- `_active` is set, its phase is `resting`, and
-    `placed_at` is stamped -- and this fixture satisfies exactly the phase one's negation: the kill
-    file revoked the order, so the intent is live and `placed_at` still holds NOW, but the phase is
-    `cancelling` and a cancel is outstanding at the venue. Zero is the declared reading: the gauge is
-    the engine's BELIEF about an order it is still holding, and it has already asked for this one
-    back. Without the phase term the age would keep climbing through a cancel and past a revocation,
-    which is the opposite of what the panel's zero is supposed to mean.
+    """The publish reads a THREE-part condition -- `_active` set, phase `resting`, `placed_at`
+    stamped -- and this fixture negates exactly the phase term: the kill file revoked the order, so
+    the intent is live and `placed_at` still holds NOW, but a cancel is outstanding at the venue.
+    Zero is the declared reading, because the gauge is the engine's BELIEF about an order it has
+    already asked back; without the phase term the age would climb through a cancel and past a
+    revocation.
 
-    The third term cannot be fixtured and is not meant to be: `_enter` is the only writer of the
-    `resting` phase and it stamps `placed_at` in the same breath, so a resting order with no
-    placement time is unreachable. It guards the `None` deref in the arithmetic below it."""
+    The third term is unreachable by construction: `_enter` is the only writer of the `resting` phase
+    and stamps `placed_at` in the same breath. It guards the `None` deref below it."""
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
@@ -2355,11 +2256,10 @@ def test_an_outstanding_cancel_zeroes_the_resting_age_though_the_order_may_still
 
 
 def test_a_raise_inside_the_resting_age_publish_never_ends_the_running_plan(tmp_path, monkeypatch):
-    """`on_timer`'s catch-all drops the plan and nulls `_active`, so an exception raised anywhere in
-    the publish would leave a live order at the venue with nothing tracking it: `_poll` is
-    unreachable with no `_active`, the adopt pass has already run, and a kill file would then sweep
-    nothing. The publish is wrapped WHOLE -- `_set_resting_age`'s own try/except is a helper-level
-    guard and does not cover the loop, the phase read or the arithmetic around it."""
+    """`on_timer`'s catch-all drops the plan and nulls `_active`, so a raise anywhere in the publish
+    would leave a live order at the venue with nothing tracking it -- `_poll` is unreachable with no
+    `_active`. The publish is wrapped WHOLE: `_set_resting_age`'s own try/except covers neither the
+    loop, the phase read, nor the arithmetic around it."""
 
     def _boom(mode, seconds):
         raise RuntimeError("the resting-age publish is broken")
@@ -2378,11 +2278,10 @@ def test_a_raise_inside_the_resting_age_publish_never_ends_the_running_plan(tmp_
 
 
 def test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase(tmp_path):
-    """Any age bound on a resting order reads `placed_at`, so it must track the ORDER: a post-only
-    rejection's reprice replaces the order, and the replacement's age starts with it -- an
-    intent-scoped stamp would age the new order from the old one's placement. The second half is
-    `_enter`'s `resting` test doing its job: `cancelling` is a phase this intent passes through,
-    never a placement."""
+    """Any age bound reads `placed_at`, so it must track the ORDER: a post-only rejection's reprice
+    replaces the order and the replacement's age starts with it, where an intent-scoped stamp would
+    age the new order from the old one's placement. `cancelling` is a phase this intent passes
+    through, never a placement."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
     assert ex._active.placed_at == NOW
 
@@ -2548,17 +2447,14 @@ def _time_boxed_cancel_answered_by(tmp_path, event) -> dict:
 
 
 def test_a_cancel_ack_the_engine_minted_halts_where_the_venues_own_ack_falls_back(tmp_path):
-    """The pair that can tell reading the flag from ignoring it: the same event class, the same
-    time-boxed intent waiting on the same cancel, `reconciliation` false and true, opposite
-    outcomes. A one-sided fixture proves nothing here -- an implementation that halted on EVERY
-    cancel ack would pass the true arm and break maker-first outright.
+    """The pair that can tell reading the `reconciliation` flag from ignoring it: the same event
+    class, the same time-boxed intent waiting on the same cancel, the flag false and true, opposite
+    outcomes -- an implementation that halted on EVERY cancel ack would pass the true arm and break
+    maker-first outright.
 
-    False is the venue's ack: the maker attempt is over, so the bounded IOC fires at the opposite
-    touch, which is the whole reason maker-first is acceptable. True is the execution engine giving
-    up on an unanswered cancel and minting the ack itself -- nobody at the venue confirmed it, the
-    original may still be resting, and crossing there would put a second order on the book against
-    the first.
-    """
+    False is the venue's ack, so the bounded IOC fires at the opposite touch. True is the execution
+    engine minting the ack itself: nobody at the venue confirmed it, the original may still be
+    resting, and crossing there would put a second order on the book against the first."""
     venue = _time_boxed_cancel_answered_by(tmp_path / "venue", _canceled)
     minted = _time_boxed_cancel_answered_by(
         tmp_path / "minted",
@@ -2572,13 +2468,11 @@ def test_a_cancel_ack_the_engine_minted_halts_where_the_venues_own_ack_falls_bac
 
 
 def test_a_kraken_coded_rejection_the_engine_minted_is_ambiguous_rather_than_terminal(tmp_path):
-    """`_on_rejected` reads the venue's error text to decide a rejection is a positive verdict. A
-    rejection the engine minted for itself carries no verdict at all, whatever its text says, so it
-    must not reach that classification -- and the guard is placed above the dispatch precisely so a
-    marker added to `_KRAKEN_ERROR_MARKERS` later cannot silently promote one.
-
-    The reason string here would classify as terminal on the venue-sourced side, which is what makes
-    the two arms differ on the same words."""
+    """`_on_rejected` reads the venue's error text to decide a rejection is a positive verdict; a
+    rejection the engine minted carries no verdict at all, so the guard sits ABOVE the dispatch and a
+    marker added to `_KRAKEN_ERROR_MARKERS` later cannot silently promote one. The reason string here
+    would classify as terminal on the venue-sourced side, which is what makes the two arms differ on
+    the same words."""
     reason = "EOrder:Insufficient funds"
     venue = _time_boxed_cancel_answered_by(tmp_path / "venue", lambda coid: _rejected(coid, reason))
     minted = _time_boxed_cancel_answered_by(
@@ -2594,12 +2488,11 @@ def test_a_kraken_coded_rejection_the_engine_minted_is_ambiguous_rather_than_ter
 
 
 def test_a_fill_the_engine_reconciled_still_gets_its_row_its_credit_and_its_counter(tmp_path):
-    """The deliberate exception to the rule above. A reconciled fill is the venue's own report
-    transcribed late rather than an outcome invented, so it is money that MOVED -- routing it to the
-    ambiguous exit would drop the row, the quantity credit and the published fill, which is a worse
-    failure than the one that exit exists to prevent. `reconciliation` true and false must therefore
-    produce the SAME reading here, and the sizing assertion is why it matters: a dropped credit
-    makes the next resubmission over-ask by exactly the fill."""
+    """The deliberate exception to the rule above: a reconciled fill is the venue's own report
+    transcribed late, so it is money that MOVED and the ambiguous exit would drop the row, the
+    quantity credit and the published fill. `reconciliation` true and false must produce the SAME
+    reading, and the sizing assertion is why -- a dropped credit makes the next resubmission over-ask
+    by exactly the fill."""
     readings = []
     for reconciled in (False, True):
         path = tmp_path / f"reconciled-{reconciled}"
@@ -2637,11 +2530,9 @@ def test_a_refused_resubmission_journals_the_fills_that_already_happened(tmp_pat
 
 
 def test_a_rejection_during_a_time_box_cancel_still_proceeds_to_the_fallback(tmp_path):
-    """The other side of the same branch. A time-box cancel declares the maker attempt over and says
-    CROSS NOW; a revoke declares the book untradeable and says STOP. Conflating the two silently
-    drops the fallback -- and the fallback existing at all is why maker-first was acceptable, since
-    an unfilled leg strands the probe. The safety envelope does not depend on this branch: the IOC
-    still goes through `_submit`, which evaluates the gate as its first act."""
+    """A time-box cancel declares the maker attempt over and says CROSS NOW; a revoke declares the
+    book untradeable and says STOP. Conflating the two silently drops the fallback, and the fallback
+    existing at all is why maker-first was acceptable, since an unfilled leg strands the probe."""
     ex, client, clock = _resting_executor(tmp_path)
     ex.on_order_event(_accepted(client.last_order_id))
     _advance_with_quotes(ex, client, clock, minutes=16)
@@ -2966,16 +2857,14 @@ def test_an_unreadable_ledger_cancels_every_resting_order(tmp_path, monkeypatch)
 
 
 def test_a_post_restart_fill_on_a_re_attached_order_lands_in_its_own_boundarys_row(tmp_path):
-    """D5 across a restart: an adopted order left resting must still have an appender, and the
-    appender must write the row's OWN boundary -- the row lives in the 08:00 record, four hours
-    behind the tick that adopted it.
+    """Spec 00090 D5 across a restart: an adopted order left resting must still have an appender, and
+    the appender must write the row's OWN boundary -- the row lives four hours behind the tick that
+    adopted it.
 
-    The event is injected DIRECTLY into the own-topic handler, which is the whole scope of the
-    claim: what this pins is the appender and its boundary arithmetic, not the delivery. On the live
-    engine a reconciled venue order is assigned the EXTERNAL strategy id and its fills arrive on
-    `events.order.EXTERNAL` instead -- subscribed, matched against the re-attached rows, and handed
-    to this same appender at the end of it. That route is pinned by its own tests, here and in
-    tests/test_engine_node.py."""
+    The event is injected DIRECTLY into the own-topic handler, which is the whole scope of the claim:
+    what this pins is the appender and its boundary arithmetic, not the delivery. On the live engine
+    a reconciled venue order wears the EXTERNAL strategy id and its fills arrive on
+    `events.order.EXTERNAL` instead."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
     client = StubClient(StubCache(open_orders=[_open_order("O-attached")]))
@@ -3018,11 +2907,9 @@ def test_a_late_fill_on_a_superseded_order_shrinks_the_next_resubmission(tmp_pat
 
 
 class _FlakyOrdersCache(StubCache):
-    """`orders_open` raises the first time and answers the second -- the transient a startup pass
-    must survive rather than latch through. It is `orders_open`, not `orders`, because that is the
-    read the pass takes for its population and the only one it takes at all: aimed at the other
-    accessor this class would raise nowhere the pass can see, and its test would prove the retry
-    against a read that never happens."""
+    """`orders_open` raises the first time and answers the second -- the transient a startup pass must
+    survive rather than latch through. It is `orders_open` because that is the only read the pass
+    takes for its population; aimed elsewhere this class would raise nowhere the pass can see."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -3101,11 +2988,9 @@ def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, 
 
 @contextmanager
 def _executor_errors(level=logging.ERROR):
-    """The executor logger's own records at `level` and above, for the tests that must see a
-    swallowed failure LOGGED rather than merely swallowed -- and, at WARNING, for the one that must
-    see NOTHING logged. Deliberately not `caplog`, blind here for the two reasons
-    `_the_tick_backstop_never_fires` documents: a root logger the CLI tests have detached, and
-    phase-scoped records."""
+    """The executor logger's own records at `level` and above -- for the tests that must see a
+    swallowed failure LOGGED, and at WARNING for the one that must see NOTHING logged. Not `caplog`,
+    blind here for the reasons `_the_tick_backstop_never_fires` gives."""
     records: list[logging.LogRecord] = []
 
     class _Collect(logging.Handler):
@@ -3127,11 +3012,9 @@ def _executor_errors(level=logging.ERROR):
 def _resting_limit_order(client_order_id, *, quantity="1.0"):
     """A REAL `LimitOrder` resting at the venue, driven to ACCEPTED by the library's own events.
 
-    Real because the terminal-state write reads `cache.order(...).status`, and only the library's
-    own state machine can say what a given event does to that status. A namespace carrying a
-    hand-set status would answer whatever the test author expected -- including for the stale and
-    replayed acks the state machine REFUSES, which is exactly where reading the order rather than
-    the event's name earns its place."""
+    Real because the terminal-state write reads `cache.order(...).status`, and only the library's own
+    state machine can say what an event does to that status -- including for the stale and replayed
+    acks it REFUSES, which is where reading the order rather than the event's name earns its place."""
     head = (_TRADER_ID, _STUB_STRATEGY_ID, InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]), ClientOrderId(client_order_id))
     order = LimitOrder(
         *head, OrderSide.BUY, Quantity.from_str(quantity), Price.from_str("30000.0"), TimeInForce.GTC,
@@ -3158,13 +3041,11 @@ def _adopted_executor(tmp_path, *, client_order_id="O-attached", reduce_only=Tru
 
 
 def _deliver_external_event(ex, client, event):
-    """Deliver an event on the external topic the way the venue does: the order the Cache holds
-    takes it FIRST, then the strategy sees it -- the same measured ordering `_deliver_fill` rests on.
-
-    The resulting status is DERIVED, never stated: the fixture hands the library's own order the
-    library's own event and lets the state machine decide. That is what makes a stale ack behave
-    here as it does in production -- the transition is refused, the order keeps the status it had,
-    and the event is dispatched anyway."""
+    """Deliver an event on the external topic the way the venue does: the order the Cache holds takes
+    it FIRST, then the strategy sees it. The resulting status is DERIVED, never stated -- the
+    library's own state machine decides it, which is what makes a stale ack behave here as it does in
+    production: the transition is refused, the order keeps the status it had, and the event is
+    dispatched anyway."""
     order = client.cache.order(event.client_order_id)
     assert order is not None, f"{event.client_order_id} is not in the cache -- the delivery would prove nothing"
     try:
@@ -3175,14 +3056,12 @@ def _deliver_external_event(ex, client, event):
 
 
 def test_an_external_fill_completing_an_adopted_order_appends_counts_and_closes_the_row(tmp_path):
-    """The matched clean path end to end -- and the pin on the DELEGATION ORDER, which nothing else
-    catches: the trip runs FIRST, so this fill (exactly the ledgered quantity) is measured against a
-    row not yet credited with it. Swap the two and the mirrored quantity is counted twice, latching
-    the kill switch on a perfectly healthy final fill.
+    """The matched clean path end to end, and the pin on the DELEGATION ORDER: the trip runs FIRST,
+    so this fill is measured against a row not yet credited with it -- swap the two and the mirrored
+    quantity is counted twice, latching the kill switch on a perfectly healthy final fill.
 
     The row's STATE closes here because nautilus publishes no terminal event after a resting order's
-    last fill -- without that it would read open forever and re-attach on every future scan. The
-    entry itself stays attached: neither path ever pops, so a fill racing the close still journals."""
+    last fill. The entry itself stays attached, so a fill racing the close still journals."""
     ex, client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -3205,9 +3084,8 @@ def test_an_external_fill_completing_an_adopted_order_appends_counts_and_closes_
 def test_a_partial_external_fill_leaves_the_adopted_row_open_and_attached(tmp_path):
     """The completion rule's other direction, without which a rule that closed the row on ANY fill
     would ship green: a fill short of the ledgered quantity makes no state claim and keeps the entry
-    attached -- the remainder is still working at the venue, and its own fill needs this same row and
-    this same overfill bound. The pair also exercises the tolerance across two float additions,
-    which is the only reason the second fill completes rather than reading an ulp short."""
+    attached for the remainder's own fill. The pair also exercises the tolerance across two float
+    additions."""
     ex, _client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -3314,21 +3192,15 @@ def test_an_external_overfill_on_an_adopted_row_trips_the_kill_and_still_journal
     [(OrderCanceled, "canceled"), (OrderExpired, "venue_canceled"), (OrderRejected, "rejected")],
 )
 def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_racing_fill(tmp_path, event_cls, expected_state):
-    """The ruled map, written from `validate_exec_record`'s own state names -- no new state string is
-    minted here, and `_store` would refuse one anyway. `canceled` makes no we-requested claim on this
-    path, which is why the adopt pass's OWN cancel acks may wear it, and that those acks now CLOSE
-    their rows (they used to stay open and re-read as possibly-live on every future scan) is the side
-    effect worth its own assertion.
-
-    The state is reached through the venue's order, not through the event's class name: the event is
-    applied to the real `LimitOrder` the Cache holds, its status moves by the library's own state
-    machine, and the row's state is what that status maps to.
+    """The ruled map, written from `validate_exec_record`'s own state names -- `_store` would refuse a
+    minted one anyway -- and reached through the venue's ORDER rather than the event's class name: the
+    event is applied to the real `LimitOrder` the Cache holds, its status moves by the library's own
+    state machine, and the row's state is what that status maps to.
 
     The row's STATE closes; the ATTACHMENT does not. `ownTrades` and `openOrders` are separate Kraken
-    WS channels with no cross-stream ordering guarantee, so a fill can land after the terminal ack --
-    and popping here would send it to the unmatched branch to be counted and never journaled, which
-    is the no-fill-without-a-record invariant broken on the very path built to restore it. Retained,
-    it journals as a detached append exactly as an own order's late fill does."""
+    WS channels with no cross-stream ordering guarantee, so a fill can land after the terminal ack,
+    and popping here would send it to the unmatched branch to be counted and never journaled -- the
+    no-fill-without-a-record invariant broken on the path built to restore it."""
     ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
     assert [str(cid) for cid in client.canceled] == ["O-opener"]  # the pass's own cancel
     metrics = RecordingMetrics()
@@ -3354,18 +3226,13 @@ def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_r
 
 
 def test_a_terminal_ack_after_the_completing_fill_never_demotes_the_row(tmp_path):
-    """The row is COMPLETE, and no later terminal ack may un-say that. Completion is inferred from
-    the LEDGERED quantity, so a venue order can outlive it and be canceled afterwards -- the adopt
-    pass cancels a non-reducer adopted opener, the order fills its ledgered quantity in the race, and
-    the pass's OWN cancel ack arrives matched. An unconditional terminal write there rewrites
-    `state` to `canceled` on a row whose `filled_qty` is full and whose completion
-    `zcrypto_exec_orders_total{outcome="filled"}` has already counted -- and the row is terminal, so
-    it never re-attaches and the misstatement is permanent. That is exactly the counter-vs-record
-    disagreement `_publish_fill`'s docstring forbids, on the losing side it names.
+    """A row that is COMPLETE may not be un-said by a later terminal ack: completion is inferred from
+    the LEDGERED quantity, so a venue order can outlive it and be canceled afterwards, and an
+    unconditional terminal write would rewrite `state` to `canceled` on a full row whose completion
+    has already been counted -- permanently, since a terminal row never re-attaches.
 
-    Replayed acks reach here too, so this is not only a race: a non-fill event the order's own state
-    machine REFUSES is still published -- the duplicate-fill and overfill guards that protect fills
-    do not cover terminal events, and the refusal leaves the order's status where it was."""
+    Replayed acks reach here too: a non-fill event the order's own state machine REFUSES is still
+    published, and the duplicate-fill and overfill guards do not cover terminal events."""
     ex, client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -3385,21 +3252,13 @@ def test_a_terminal_ack_after_the_completing_fill_never_demotes_the_row(tmp_path
 
 def test_a_stale_terminal_ack_never_overwrites_the_state_the_venues_order_actually_reached(tmp_path):
     """Where reading the ORDER and reading the event's NAME part company, on the live trade path.
-
     `ownTrades` and `openOrders` are separate Kraken WS channels with no cross-stream ordering
-    guarantee, so a stale `OrderExpired` can land after a cancel this engine asked for and the venue
-    took. The order's own state machine REFUSES that transition -- measured: it stays CANCELED --
-    and the event is published anyway, so this handler is dispatched an event whose name says
-    `venue_canceled` about an order that is `canceled`.
+    guarantee, so a stale `OrderExpired` can land after a cancel the venue already took; the order's
+    own state machine REFUSES that transition and the event is published anyway.
 
-    Keyed on the name, the second ack silently rewrites the row to `venue_canceled`, and the ledger
-    then says the venue ended an order this engine cancelled. Nothing catches it afterwards: the
-    ledger permits any terminal state to overwrite any other, and a terminal row never re-attaches,
-    so the misstatement is permanent. Keyed on the order's status, the row keeps what actually
-    happened.
-
-    The fixture is not degenerate: the two readings of the SAME event differ -- `venue_canceled`
-    from the name, `canceled` from the order."""
+    Keyed on the name, the second ack rewrites the row to `venue_canceled` and the ledger then says
+    the venue ended an order this engine cancelled -- permanently, since a terminal row never
+    re-attaches. The fixture is not degenerate: the two readings of the SAME event differ."""
     ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
     assert [str(cid) for cid in client.canceled] == ["O-opener"]  # the pass's own cancel went out
 
@@ -3418,11 +3277,8 @@ def test_a_stale_terminal_ack_never_overwrites_the_state_the_venues_order_actual
 def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_row(tmp_path):
     """The venue positively says the cancel did NOT take, so the order may still rest: the event is
     evidence, the row keeps its open state, and the entry stays attached for the fill that can still
-    arrive.
-
-    Nothing special-cases it. The venue's order is still ACCEPTED after a refused cancel -- measured
-    -- and no OPEN status is in the terminal map, so the omission the old class-name map had to
-    spell out falls out of reading the order instead."""
+    arrive. Nothing special-cases it -- the venue's order is still ACCEPTED after a refused cancel
+    and no OPEN status is in the terminal map."""
     ex, client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -3449,22 +3305,17 @@ def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_ro
 def test_a_terminal_the_engine_minted_leaves_the_adopted_row_open_where_the_venues_ack_closes_it(
     tmp_path, reconciled, expected_state, expected_open
 ):
-    """The adopted surface's half of the same property the own-order surface holds: a terminal the
-    execution engine minted for itself is not a venue outcome, so it writes no venue outcome down.
+    """A terminal the execution engine minted for itself is not a venue outcome, so it writes no venue
+    outcome down -- the adopted surface's half of the property the own-order surface holds.
 
-    The construction is the production one. The startup pass cancels an adopted non-reducer; the
-    venue never answers; past the in-flight retry budget the engine gives up waiting and publishes
-    the `OrderCanceled` itself. That event is applied to the order before it is dispatched, so the
-    Cache's order says CANCELED either way -- which is exactly why reading the ORDER cannot tell the
-    two apart, and why the flag has to be read. Closing the row on it would put a venue claim in the
-    ledger that nobody at the venue made, and `_OPEN_ORDER_STATES` holds no terminal state, so the
-    row would never re-attach again while an order that may still be resting keeps filling.
+    The construction is the production one: the startup pass cancels an adopted non-reducer, the
+    venue never answers, and past the in-flight retry budget the engine publishes the `OrderCanceled`
+    itself. It is applied to the order before dispatch, so the Cache says CANCELED either way and
+    only the flag can tell the two apart. Closing the row on it would put a venue claim in the ledger
+    nobody made, and `_OPEN_ORDER_STATES` holds no terminal state, so the row would never re-attach.
 
-    Read as a pair. The false arm is the true positive and it is not decoration: an implementation
-    that simply stopped writing terminal states here would pass the minted arm and silently strand
-    every venue-acked cancel as an open row forever. The `open_submitted_rows` reading is the
-    property itself rather than a proxy for it -- that set IS what the next startup re-attaches
-    from."""
+    Read as a pair: the false arm is the true positive, and the `open_submitted_rows` reading IS what
+    the next startup re-attaches from."""
     ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
     assert [str(cid) for cid in client.canceled] == ["O-opener"]  # this process asked; the venue is what did not answer
     metrics = RecordingMetrics()
@@ -3491,11 +3342,9 @@ def test_a_terminal_the_engine_minted_leaves_the_adopted_row_open_where_the_venu
 class _UnreadableOrderCache(StubCache):
     """A Cache whose `order()` refuses the way the real one does from INSIDE an order-event handler:
     `RuntimeError("Already mutably borrowed")`, because the Cache is still mutably borrowed for the
-    write that produced the very event being dispatched -- which this process's own cancel command
-    is what generates, from the adopt pass and from a trip.
-
-    Switchable, because the startup pass reads the same accessor: the row has to attach against a
-    readable Cache first, so the refusal lands exactly where production puts it and nowhere else."""
+    write that produced the event -- which this process's own cancel command generates, from the
+    adopt pass and from a trip. Switchable, because the startup pass reads the same accessor and the
+    row has to attach against a readable Cache first."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -3521,17 +3370,12 @@ class _UnreadableOrderCache(StubCache):
 def test_an_unreadable_cache_costs_the_terminal_state_and_never_the_event(tmp_path, unreadable, expected_state, expected_warnings):
     """A Cache read that RAISES must cost the row its terminal state and nothing else.
 
-    The raise is not hypothetical and it is not rare: the dominant source of a terminal ack on this
-    path is a cancel this very process sent, and a read taken inside the handler for an event this
-    process's own command generated finds the Cache still mutably borrowed for the write that
-    produced it. Letting it escape would abandon the whole handler -- and with it the event payload,
-    which is the forensic record this path exists to keep -- to decide a state the event never
-    carried anyway. So the event still appends, the entry stays attached for a fill that can still
-    arrive, and the row keeps the state it has rather than acquiring a wrong one.
-
-    Read as a pair. Without the readable arm, an implementation that returned `None` unconditionally
-    -- or one whose `try` never ran -- would pass the raising arm and prove nothing; without the
-    raising arm, narrowing the `except` to a type nothing throws is invisible."""
+    The dominant source of a terminal ack on this path is a cancel this very process sent, and a read
+    taken inside that handler finds the Cache still mutably borrowed for the write that produced it.
+    Letting it escape would abandon the whole handler, and with it the forensic event payload, to
+    decide a state the event never carried -- so the event still appends, the entry stays attached,
+    and the row keeps the state it has. Read as a pair: without the readable arm an unconditional
+    `None` would pass, and without the raising arm a narrowed `except` is invisible."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
     cache = _UnreadableOrderCache(open_orders=[_resting_limit_order("O-attached")])
@@ -3596,14 +3440,12 @@ def _reconciling_executor(
     client_order_id="O-attached",
     reduce_only=True,
 ):
-    """A previous process's ledgered row plus the cache order reconciliation left behind for it,
-    with the two quantities set independently -- which is the whole point: the delta between them is
-    what the startup sweep exists to read. `closed_status` builds the closed-while-down shape, where
-    the order is absent from `orders_open` and reachable only through the wide read.
+    """A previous process's ledgered row plus the cache order reconciliation left behind for it, with
+    the two quantities set independently -- the delta between them is what the startup sweep reads.
+    `closed_status` builds the closed-while-down shape, reachable only through the wide read.
 
-    The executor is returned BEFORE the first tick, so a test can install its metrics hooks first --
-    the completion counter fires inside `on_timer`, and hooks installed after it would record
-    nothing while every assertion still read green."""
+    Returned BEFORE the first tick so a test can install its metrics hooks first: the completion
+    counter fires inside `on_timer`."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, client_order_id, reduce_only=reduce_only, when=earlier)
     if ledgered_filled:
@@ -3627,17 +3469,15 @@ def _reconciling_executor(
     ],
 )
 def test_a_sub_tolerance_difference_between_ledger_and_venue_is_reconciled_silently(tmp_path, ledgered, venue):
-    """The dead-band, and the arm that must produce NOTHING. The ledgered figure is a sum of
-    per-fill floats and the venue's is one exactly-rounded `float(Quantity)`, so a clean multi-fill
-    restart differs by ulps -- a repair arm without the dead-band journals a phantom repair and
-    shouts a WARNING on every healthy restart. An exact-equality construction would not catch that,
-    which is why the two figures here differ by a tenth of the tolerance rather than by zero.
+    """The dead-band, and the arm that must produce NOTHING: the ledgered figure is a sum of per-fill
+    floats and the venue's is one exactly-rounded `float(Quantity)`, so a clean multi-fill restart
+    differs by ulps and a repair arm without the dead-band journals a phantom repair on every healthy
+    restart. The two figures differ by a tenth of the tolerance rather than by zero, which an
+    exact-equality construction would not catch.
 
-    BOTH SIGNS are pinned, because only one of them is survivable to get wrong. The venue-ahead case
-    costs a phantom repair; the LEDGER-ahead case is the ordinary shape of a healthy multi-fill
-    restart -- three BTC fills summed in Python float exceed the venue's rounded total in 59 of 343
-    realistic combinations -- and the arm it reaches when the dead-band is one-sided is `_trip_kill`,
-    which latches at boot and cannot be cleared by any code."""
+    BOTH SIGNS are pinned because only one is survivable to get wrong: the venue-ahead case costs a
+    phantom repair, while the LEDGER-ahead case is the ordinary shape of a healthy multi-fill restart
+    and reaches `_trip_kill`, which latches at boot and cannot be cleared by any code."""
     ex, _client, earlier = _reconciling_executor(tmp_path, ledgered_filled=ledgered, venue_filled=venue)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -3654,11 +3494,10 @@ def test_a_sub_tolerance_difference_between_ledger_and_venue_is_reconciled_silen
 
 
 def test_a_positive_reconciliation_delta_is_journaled_as_a_repair_and_mirrored(tmp_path):
-    """The down-window fill, recovered. The quantity is resident in the reconciled order's own
-    `filled_qty` because the engine applies the fill and publishes it in one synchronous body -- the
-    publish reached no subscriber, the quantity survived. It is journaled as a REPAIR, not a fill:
-    there is no per-fill detail and no fee behind it, and a fills increment with no fee would make
-    the two counters disagree in a way the row cannot explain."""
+    """The down-window fill, recovered: the quantity is resident in the reconciled order's own
+    `filled_qty` because the engine applies the fill and publishes it in one synchronous body. It is
+    journaled as a REPAIR, not a fill -- there is no per-fill detail or fee behind it, and a fills
+    increment with no fee would make the two counters disagree in a way the row cannot explain."""
     ex, _client, earlier = _reconciling_executor(tmp_path, venue_filled=0.0004)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -3772,21 +3611,17 @@ _FINISHED_QTY = 0.001
 
 
 def _finished_row_executor(tmp_path, *, withdrawn):
-    """A row a previous process CLOSED on `_FINISHED_QTY`, plus the venue order left behind for it --
-    with the venue's own fill withdrawal applied, or without.
+    """A row a previous process CLOSED on `_FINISHED_QTY`, plus the venue order left behind for it,
+    with the venue's own fill withdrawal applied or without.
 
-    The order is a REAL `LimitOrder` driven through the library's own events, because only the
-    library's state machine can say what a withdrawal does to one: `OrderFillVoided` for the fill
-    that completed it lands `OrderStatus.VOIDED` with `filled_qty` back at zero, while the arm that
-    skips it stays `FILLED` at the full quantity. The event carries `reconciliation=True`, which is
-    what the framework mints -- the flag changes nothing here, and a fixture claiming otherwise
-    would be lying about the only shape this engine can meet.
+    The order is a REAL `LimitOrder` driven through the library's own events, because only the state
+    machine can say what a withdrawal does to one: `OrderFillVoided` lands `OrderStatus.VOIDED` with
+    `filled_qty` back at zero, while the arm that skips it stays `FILLED` at the full quantity. The
+    event carries `reconciliation=True`, the only shape the framework mints.
 
-    THE PAIR IS THE FIXTURE. Both arms are closed, so neither order appears in `orders_open` and
-    both are reachable only through the wide read; both rows are identical on disk; and the two
-    differ in exactly the quantity the sweep compares. An order the withdrawal does not move -- a
-    voided PARTIAL fill, say, which returns the order to `ACCEPTED` and leaves the row in the
-    re-attach set -- would pass under either behaviour and prove nothing."""
+    THE PAIR IS THE FIXTURE: both arms are closed and identical on disk, and differ in exactly the
+    quantity the sweep compares -- an order the withdrawal does not move would pass under either
+    behaviour and prove nothing."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-finished", reduce_only=True, when=earlier)
     update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=_FINISHED_QTY)
@@ -3814,19 +3649,15 @@ def _fill_voided(client_order_id, qty, *, trade_id="T-1"):
 
 
 def test_a_withdrawn_fill_on_a_row_this_engine_closed_latches_the_kill_switch(tmp_path, kill_trip_expected):
-    """The one correction that lands on a FINISHED order, and the row `open_submitted_rows` cannot
-    show anyone: the venue reports the order filled for less than the quantity this engine recorded,
+    """The one correction that lands on a FINISHED order, which `open_submitted_rows` cannot show
+    anyone: the venue reports the order filled for less than the quantity this engine recorded,
     published and sized against.
 
     The engine never sees the withdrawal as an event -- the library applies it during the node's
-    startup reconciliation, which completes before the trader starts and therefore before any
-    handler is subscribed -- so the venue order's own lowered `filled_qty` is the whole signal, and
-    the sweep over the rows the re-attach set omits is the only thing that reads it.
-
-    NOTHING is reversed, and that is asserted rather than assumed: the row keeps `filled` and keeps
-    its quantity, because the ledger records what the venue reported when it reported it and the
-    disagreement between the two figures is what the kill is about. A ledger silently corrected to
-    match would no longer show that they ever disagreed."""
+    startup reconciliation, before any handler is subscribed -- so the venue order's own lowered
+    `filled_qty` is the whole signal. NOTHING is reversed: the ledger records what the venue reported
+    when it reported it, and a row silently corrected to match would no longer show that the two
+    figures ever disagreed."""
     ex, client, earlier = _finished_row_executor(tmp_path, withdrawn=True)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -3848,12 +3679,9 @@ def test_a_withdrawn_fill_on_a_row_this_engine_closed_latches_the_kill_switch(tm
 
 
 def test_a_finished_row_the_venue_still_agrees_with_is_swept_silently(tmp_path):
-    """The true positive, and the arm that makes the pair able to tell the behaviours apart: the
-    same closed row, the same completed order, the withdrawal alone removed.
-
-    A sweep that latched on every finished row -- or on the mere fact that a row is closed -- would
-    pass the test above and kill the engine at every boot after any order ever filled. Nothing
-    happens here at all: no kill, no journal write, no counter."""
+    """The true positive: the same closed row and the same completed order, the withdrawal alone
+    removed. A sweep that latched on every finished row -- or on the mere fact that a row is closed --
+    would pass the test above and kill the engine at every boot after any order ever filled."""
     ex, client, earlier = _finished_row_executor(tmp_path, withdrawn=False)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -3887,14 +3715,12 @@ def test_a_ledger_the_finished_row_sweep_cannot_write_still_latches_the_kill_swi
 
 
 def _limit_orders_by_status():
-    """One REAL `LimitOrder` per `OrderStatus` the library defines, driven there by applying the
-    library's own events, plus the refusals for the statuses this order type cannot wear.
-
-    `LimitOrder` is the concrete class this engine's orders are (`order_factory.limit`) and the only
-    class the startup pass adopts -- it matches the cache against rows this engine's own ledger
-    wrote. Returns `(reached, refused)`: requested status -> the order wearing it, and requested
-    status -> the exception the library raised refusing to put it there. Built inside a function so
-    the extra library imports are paid only by the test that needs them."""
+    """One REAL `LimitOrder` per `OrderStatus` the library defines, driven there by the library's own
+    events, plus the refusals for the statuses this order type cannot wear. `LimitOrder` is the class
+    this engine's orders are and the only one the startup pass adopts. Returns `(reached, refused)`:
+    requested status -> the order wearing it, and requested status -> the exception the library raised
+    refusing to put it there. Built inside a function so the extra library imports are paid only by
+    the test that needs them."""
     from nautilus_trader.model import (
         OrderDenied,
         OrderEmulated,
@@ -3991,25 +3817,15 @@ def _limit_orders_by_status():
 
 def test_the_terminal_state_map_is_total_over_the_librarys_own_closed_statuses():
     """The ONE map both row-state paths write through -- the startup reconciliation and the live
-    external stream -- and the proof that it covers everything either can be handed.
+    external stream -- covers every closed status the installed library defines.
 
-    Totality against the installed library rather than against a hand-written list: an order
-    status the map does not carry leaves a closed order's row open forever, and the failure is
-    silent. So the closed set is the library's own answer -- an order is driven into each status it
-    defines and asked `is_closed`, which is the same predicate reconciliation's caller consults.
-    This proof is the reason the live path reads the order's status rather than the event's class
-    name: a name is an open string space and no totality statement over it is even expressible.
-
-    Three things keep the domain from quietly shrinking, which is how this proof would decay into an
-    assertion. The statuses come from `OrderStatus.variants()`, so a member the library adds is one
-    no path here reaches and the first assert names it. Every member must be either reached or
-    refused, so a path that stops working cannot just drop out. And a refusal counts only when it is
-    the library declining the EVENT for this order type -- a constructor whose signature moved would
-    otherwise land in `refused` and silently take its status out of the domain.
+    Totality against the library rather than against a hand-written list: a status the map does not
+    carry leaves a closed order's row open forever, and the failure is silent. It is also why the
+    live path reads the order's status rather than the event's class name -- a name is an open string
+    space over which no totality statement is expressible.
 
     `TRIGGERED` is the one status outside the domain, and it costs the proof nothing: a limit order
-    has no trigger, the library refuses the event, and the rows this pass adopts are this engine's
-    own limit orders."""
+    has no trigger, and the rows this pass adopts are this engine's own limit orders."""
     reached, refused = _limit_orders_by_status()
 
     assert set(reached) | set(refused) == set(OrderStatus.variants())
@@ -4027,11 +3843,11 @@ def test_the_terminal_state_map_is_total_over_the_librarys_own_closed_statuses()
 
 
 def test_a_repair_then_an_external_fill_for_the_remainder_completes_the_row_exactly_once(tmp_path):
-    """D7 meeting D1, the sequence where a mis-mirror costs money. The sweep repairs the down-window
-    partial and the subscription delivers the remainder: the row must read the full ledgered
-    quantity, state `filled`, counted once, with no trip. Unmirrored, the repair never moves the
-    trip base and the completion never fires; double-mirrored, this fill overshoots and false-kills.
-    Both are invisible to a test that only reads the STORED row."""
+    """Spec 00098's D7 meeting D1, the sequence where a mis-mirror costs money: the sweep repairs the
+    down-window partial and the subscription delivers the remainder, so the row must read the full
+    ledgered quantity, state `filled`, counted once, with no trip. Unmirrored, the repair never moves
+    the trip base and the completion never fires; double-mirrored, this fill overshoots and
+    false-kills."""
     ex, _client, earlier = _reconciling_executor(tmp_path, venue_filled=0.0004)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -4100,11 +3916,11 @@ def test_a_row_the_sweep_cannot_read_at_all_is_logged_and_the_pass_classifies_an
 
 
 def test_a_ledger_that_cannot_be_written_never_costs_the_overshoot_trip(tmp_path, monkeypatch, kill_trip_expected):
-    """A ledger failure may never cost the trip -- `_record_trip_fill`'s ruling, and the reason its
-    own `try` is scoped to the write alone. The repair write comes FIRST on this arm, so a wrapper
-    spanning both would let a read-only journal swallow the latch: one CRITICAL logged, no kill file,
-    and the gate then reads normal over a live venue-vs-ledger divergence. The in-process quantity is
-    credited either way, since it tracks what filled rather than what could be written down."""
+    """A ledger failure may never cost the trip, which is why `_record_trip_fill`'s own `try` is
+    scoped to the write alone: the repair write comes FIRST on this arm, so a wrapper spanning both
+    would let a read-only journal swallow the latch and the gate would then read normal over a live
+    venue-vs-ledger divergence. The in-process quantity is credited either way, since it tracks what
+    filled rather than what could be written down."""
     overfilled = 0.001 + 2 * executor_module._OVERFILL_TOLERANCE
     ex, _client, _earlier = _reconciling_executor(tmp_path, venue_filled=overfilled)
 
@@ -4345,12 +4161,10 @@ def test_a_closer_that_flattens_its_position_reconciles_against_what_it_started_
 
 
 def test_a_kill_file_that_could_not_be_written_still_refuses_the_next_plan(tmp_path, kill_trip_expected):
-    """The kill FILE is the durable latch; when it cannot be written there is still one thing left,
-    and it must be a refusal. A directory sitting in the kill file's place stands in for any write
-    failure -- a read-only mount, a full disk, a permission error -- and it is removed afterwards so
-    the gate reads `full` again: from there the ONLY thing refusing is this process's own memory
-    that it tripped. Without that memory the next plan is picked up, submitted, and the published
-    gauge still reads zero, while the log claims the engine stopped."""
+    """The kill FILE is the durable latch; when it cannot be written the only thing left is this
+    process's own memory that it tripped, and that must be a refusal. A directory in the kill file's
+    place stands in for any write failure, and it is removed afterwards so the gate reads `full`
+    again -- from there nothing on disk refuses anything, which is what makes the memory the subject."""
     ex, client, clock = _resting_executor(tmp_path)
     ex.on_order_event(_accepted(client.last_order_id))
     obstruction = exec_dir(tmp_path) / KILL_FILE
@@ -4443,9 +4257,8 @@ def test_a_ledger_row_with_no_readable_order_quantity_trips_on_any_fill(tmp_path
 
 # --- the weekly tracking-error trip --------------------------------------------------------------
 #
-# The call site is the 4-HOURLY BOUNDARY ALERT, never `on_timer`: every `_evaluate` on the tick path
-# sits behind an operator-written probe-plan.json, so a trip hooked there could only fire while a
-# plan existed -- i.e. never in the stopped-placing state this exists to catch.
+# The call site is the 4-HOURLY BOUNDARY ALERT, never `on_timer`: a tick-path trip would sit behind
+# an operator-written probe-plan.json and could never fire in the stopped-placing state it exists for.
 
 _TRACK_MONDAY = datetime(2026, 9, 7, tzinfo=timezone.utc)  # ISO 2026-W37, the week under test
 _TRACK_LEAD = _TRACK_MONDAY - timedelta(days=1)  # six boundaries before it, so the book is built
@@ -4853,9 +4666,8 @@ def test_the_idle_tick_never_evaluates_tracking(tmp_path):
 
 
 # The ramp an operator arming exactly ON a week boundary produces: the first slice lands at the
-# week's own first boundary, the rest ten boundaries in. 8748 bps a cycle until the book is built,
-# 46.35 after -- a 2118.2 bps week, which is the WEEK THE SERIES STARTED IN wearing a settled
-# week's clothes.
+# week's own first boundary, the rest ten boundaries in -- an undeployed book averaged with a
+# deployed one, which is the WEEK THE SERIES STARTED IN wearing a settled week's clothes.
 _BOUNDARY_RAMP_FILLS = {
     _TRACK_MONDAY: [("BTC/EUR", "buy", 0.00042)],
     _IN_WEEK: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
@@ -4864,14 +4676,13 @@ _BOUNDARY_RAMP_FILLS = {
 
 def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path):
     """The retention prune turns the true positive into a latched false kill, and this is that
-    construction: the HEALTHY fixture -- 46.35 bps, the week that must pass -- with the two oldest
-    boundaries deleted exactly as `zcrypto-engine-journal-prune.sh` deletes day-dirs at 60 days.
-    The opening slice goes with them, `held` is short by it, and the same journal reads 298.4 bps
-    against the 120 bps band.
+    construction: the HEALTHY fixture -- the week that must pass -- with the two oldest boundaries
+    deleted as `zcrypto-engine-journal-prune.sh` deletes day-dirs. The opening slice goes with them,
+    `held` is short by it, and the same journal reads a breach.
 
-    Nothing on disk distinguishes that from a real breach, and asking "does the oldest surviving
-    boundary carry a fill" cannot tell them apart -- it passes whenever the prune happens to cut at
-    a quiet boundary. The birth record answers the question actually being asked."""
+    Nothing on disk distinguishes that from a real breach, and asking whether the oldest surviving
+    boundary carries a fill passes whenever the prune cuts at a quiet one. The birth record answers
+    the question actually being asked."""
     journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
     healthy, healthy_states = _tracking_states(tmp_path)
     assert not healthy and healthy_states == [executor_module._TRACKING_WITHIN_BAND]
@@ -4909,14 +4720,11 @@ def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_pa
 
 
 def test_a_malformed_fill_event_does_not_raise_onto_the_trade_path(tmp_path):
-    """The outer catch's own defect, constructed rather than assumed: `validate_exec_record` checks
-    a row's KEY SET and that `events` is a list, never an event's contents -- so a fill event
-    missing `px` passes every ledger check and `KeyError`s inside `extract_fills`, which is not an
-    EngineError and escapes the refusal arm.
-
-    Two properties, and the second is why the catch publishes: a measurement may never take the
-    engine down, and it may never leave the previous verdict standing on the board either -- a trip
-    that has stopped working would otherwise read exactly like one that keeps passing."""
+    """The outer catch's own defect, constructed rather than assumed: `validate_exec_record` checks a
+    row's KEY SET and that `events` is a list, never an event's contents -- so a fill event missing
+    `px` passes every ledger check and `KeyError`s inside `extract_fills`, which is not an
+    `EngineError` and escapes the refusal arm. The catch publishes because a measurement may neither
+    take the engine down nor leave the previous verdict standing on the board."""
     journal = _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
     path = journal / f"{_BUILD_OUT:%Y-%m-%d}" / f"exec-{_BUILD_OUT:%H}.json"
     doc = read_exec_record(path)
@@ -4934,16 +4742,14 @@ def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
     """The missing-file path, which is NOT the same event as "the series has not started".
 
     The recorder is gated on the record being absent, so an engine that lost it -- a rebuilt state
-    directory, a restore -- runs the mint against whatever the journal still holds. Here the whole
-    day-dir carrying the opening slice is gone, exactly as `zcrypto-engine-journal-prune.sh`
-    deletes it, and the day that survives opens on a QUIET 00:00: the "oldest boundary carries no
-    fill" evidence is satisfied perfectly, and the earliest surviving fill would be minted as a
-    birth it never was. The scorer would then agree with its own reconstruction and latch the kill
-    file at 298.4 bps on an engine that tracked its targets the whole time.
+    directory, a restore -- runs the mint against whatever the journal still holds. Here the day-dir
+    carrying the opening slice is gone and the surviving day opens on a QUIET 00:00, so the "oldest
+    boundary carries no fill" evidence is satisfied perfectly and the earliest surviving fill would
+    be minted as a birth it never was.
 
-    What stops it is that a birth is something a boundary WITNESSES, hours after the fill -- so a
-    candidate a week old is refused, and the trip refuses permanently and loudly instead of
-    latching. Nothing is written: an engine that cannot date itself must not invent a date."""
+    What stops it is that a birth is something a boundary WITNESSES hours after the fill, so a
+    week-old candidate is refused and nothing is written: an engine that cannot date itself must not
+    invent a date."""
     journal = _journal_week(tmp_path, fills=_PRUNABLE_FILLS, lead=12)
     shutil.rmtree(journal / f"{_EARLY_OPENING:%Y-%m-%d}")
 
@@ -4985,15 +4791,12 @@ def _terminal_intent(*, filled, symbol="BTC/EUR", side="buy", position_before=0.
 
 
 def test_an_operator_holding_present_at_intent_start_never_reaches_the_terminal_comparison(tmp_path):
-    """The CAPTURE end of the scoping, driven through production instead of handed in.
-
-    The three `_reconcile_terminal` tests below build `_ActiveIntent` directly, so they pin the
-    comparison's arithmetic and never execute `_start_intent`'s own read. Deleting the scoping from
-    that read passes all of them. Here the operator is already holding when the intent starts and
-    the intent fills exactly what it asked for: an instrument-scoped capture would carry the
-    operator's 0.5 into `own_position_before`, the strategy-scoped terminal read would exclude it,
-    and the kill switch would latch on a sanctioned hand settle.
-    """
+    """The CAPTURE end of the scoping, driven through production because the three
+    `_reconcile_terminal` tests below never execute `_start_intent`'s own read. The operator is
+    already holding when the intent starts and the intent fills exactly what it asked for: an
+    instrument-scoped capture would carry the operator's 0.5 into `own_position_before`, the
+    strategy-scoped terminal read would exclude it, and the kill switch would latch on a sanctioned
+    hand settle."""
     cache = StubCache()
     cache.set_external_position("BTC/EUR", 0.5)
     ex, client, clock = _resting_executor(tmp_path, client=StubClient(cache))
@@ -5009,13 +4812,10 @@ def test_an_operator_holding_present_at_intent_start_never_reaches_the_terminal_
 
 
 def test_reconcile_terminal_ignores_a_holding_this_engine_never_ordered(tmp_path):
-    """The operator hand-settles on a symbol this engine also trades, while an intent is running.
-
-    Spec 00098 D1's scope property says that reaches no trip, no row and no cancel. An
-    instrument-scoped position read breaks that promise on a path D1 never covered: the operator's
-    holding lands in the post-terminal comparison, diverges from what this engine's own fills
-    account for, and latches the kill switch on a sanctioned action.
-    """
+    """The operator hand-settles on a symbol this engine also trades, while an intent is running:
+    spec 00098 D1's scope property says that reaches no trip, no row and no cancel, and an
+    instrument-scoped position read breaks it -- the operator's holding lands in the post-terminal
+    comparison and latches the kill switch on a sanctioned action."""
     cache = StubCache()
     cache.set_position("BTC/EUR", 0.001)  # exactly what our own fill bought
     cache.set_external_position("BTC/EUR", 0.5)  # the operator's, mid-intent
@@ -5030,11 +4830,9 @@ def test_reconcile_terminal_ignores_a_holding_this_engine_never_ordered(tmp_path
 
 
 def test_reconcile_terminal_still_trips_when_our_own_position_diverges(tmp_path, kill_trip_expected):
-    """The true positive: without it the scoping fix above could ship as an always-passing guard.
-
-    Same shape, but the divergence is in THIS engine's own position -- a fill it never saw or one it
-    mis-accounted, which is the condition the check exists for and must still stop on.
-    """
+    """The true positive, without which the scoping fix above could ship as an always-passing guard:
+    the same shape with the divergence in THIS engine's own position -- a fill it never saw or one it
+    mis-accounted."""
     cache = StubCache()
     cache.set_position("BTC/EUR", 0.002)  # twice what our fills account for
     ex = _executor(tmp_path, client=StubClient(cache=cache))
@@ -5045,13 +4843,10 @@ def test_reconcile_terminal_still_trips_when_our_own_position_diverges(tmp_path,
 
 
 def test_reconcile_terminal_baselines_against_our_own_holding_not_the_instrument(tmp_path):
-    """Scoping the READ alone is not the fix: the baseline has to be scoped too.
-
-    Here the operator was already holding 0.5 when the intent started, so the instrument-scoped
-    `position_before` (0.5) and this engine's own (0.0) genuinely disagree. A fix that narrowed only
-    the post-terminal read would expect 0.501, see its own 0.001, and trip -- so this construction is
-    what makes the two ends provably scoped rather than only the one.
-    """
+    """Scoping the READ alone is not the fix: the baseline has to be scoped too. The operator was
+    already holding 0.5 when the intent started, so the instrument-scoped `position_before` and this
+    engine's own genuinely disagree, and a fix that narrowed only the post-terminal read would expect
+    0.501, see its own 0.001, and trip."""
     cache = StubCache()
     cache.set_position("BTC/EUR", 0.001)
     cache.set_external_position("BTC/EUR", 0.5)
@@ -5085,18 +4880,12 @@ def _client_surface_reached_by_the_executor() -> set[str]:
 
 
 def test_every_client_surface_the_executor_reaches_exists_on_the_real_strategy():
-    """The client handle production hands `ProbeExecutor` is a nautilus `Strategy`; every test in
-    this file hands it `StubClient`. A stub is a restatement of that contract, and an unverified
-    restatement drifts silently -- production raises on a name the library does not have, inside an
-    `except` that refuses an intent or trips the kill switch, while the whole suite stays green
-    because the stub still carries it.
-
-    So this reads production's call set against the REAL class and never against the stub. The two
-    halves are deliberately independent: a name planted in the stub cannot trip this test, and a
-    name planted in production cannot be rescued by the stub carrying it.
-
-    The derived set is asserted non-empty first -- a walk that stopped matching `self._client` would
-    otherwise satisfy this by checking nothing at all."""
+    """Production hands `ProbeExecutor` a nautilus `Strategy` and every test here hands it
+    `StubClient`, so this reads production's call set against the REAL class and never against the
+    stub: a name the library does not have raises inside an `except` that refuses an intent or trips
+    the kill switch, while the suite stays green because the stub still carries it. The two halves
+    are deliberately independent -- a name planted in the stub cannot trip this test, and one planted
+    in production cannot be rescued by the stub."""
     from nautilus_trader.trading import Strategy
 
     surface = _client_surface_reached_by_the_executor()
@@ -5183,11 +4972,10 @@ def _limit_call_the_executor_makes() -> tuple[int, set[str]]:
 
 
 def test_the_limit_call_the_executor_makes_binds_against_the_real_order_factory():
-    """`StubOrderFactory` stands in for the library's `OrderFactory`, and its whole surface is
-    `limit(**kwargs)` -- a signature that agrees with every keyword, including one the real factory
-    would reject. Binding production's call against the REAL signature is what makes the keywords
-    checkable at all: a renamed or dropped parameter is red here instead of raising at the first
-    live submission, inside the `except` that refuses the intent."""
+    """`StubOrderFactory`'s whole surface is `limit(**kwargs)`, which agrees with every keyword
+    including one the real factory would reject, so binding production's call against the REAL
+    signature is what makes the keywords checkable: a renamed or dropped parameter is red here
+    instead of raising at the first live submission, inside the `except` that refuses the intent."""
     import inspect
 
     from nautilus_trader.common import OrderFactory
@@ -5202,18 +4990,11 @@ def test_a_real_money_answers_both_accessors_the_fill_row_reads():
     """The two accessors the fill path takes off a commission -- `float(...)` for the amount and
     `.currency.code` for its denomination -- pinned by VALUE rather than by a name-existence walk:
     both reads are wrapped in `getattr(..., default)`, so a dropped accessor does not raise in
-    production. It silently reports a fee of None, and the EUR fee total quietly stops
-    accumulating. A name check cannot see that; a value can.
+    production, it silently reports a fee of None while the EUR fee total stops accumulating.
 
-    The second half is the arithmetic every fee number in this file rests on. A `Money` quantizes
-    to its currency's precision, and a commission arrives denominated `EUR`, which carries 2: the
-    `0.08` the fills default to survives that quantization, and a finer fee like `0.012` does not --
-    it comes back 0.01, so a fixture written that way would be asserting its own rounding. The
-    `XXBT` reading is the same check for the non-EUR fill: 8 decimals hold its 0.00002 exactly, so
-    that fixture excludes a fee that is really there rather than one that quantized to nothing.
-
-    Measured here rather than assumed, so a changed precision stops the sentence being true out
-    loud instead of quietly re-rounding every fee assertion in the file."""
+    The second half is the quantization every fee number in this file rests on: a `Money` quantizes
+    to its currency's precision, so a `EUR` fee written to two decimals survives it and a finer one
+    does not -- a fixture written that way would be asserting its own rounding."""
     real = Money(1.25, Currency.from_str("EUR"))
     assert float(real) == pytest.approx(1.25)
     assert real.currency.code == "EUR"
@@ -5227,8 +5008,8 @@ def test_a_real_money_answers_both_accessors_the_fill_row_reads():
 
 # Names each stub below carries for the harness's own sake, modelling nothing on the real type: the
 # storage it answers from, and the mutators tests drive it with. Listed one by one on purpose -- a
-# blanket "underscore-prefixed names are plumbing" rule would exempt exactly the shape that has
-# already slipped through this suite once (a fabricated `_config` on the stub node).
+# blanket "underscore-prefixed names are plumbing" rule would exempt exactly the shape this guard
+# exists to catch.
 _STUB_CACHE_PLUMBING = frozenset(
     {
         "_instruments",
@@ -5277,14 +5058,10 @@ def _nautilus_standins():
 
 
 def test_no_stub_in_this_file_offers_a_name_its_real_nautilus_type_lacks():
-    """The direction nothing else covers. A stub MISSING something production calls fails loudly
-    the first time a test runs it -- the call raises. A stub OFFERING something the real type lacks
-    fails NOTHING: every test believes the fabricated attribute, forever, and production is the only
-    place the read comes back wrong. That asymmetry is how a node stub carrying an attribute the
-    library never had survived a whole suite while production raised on that same read at start.
-
-    Every violation is collected rather than raised at the first: one red run should name all of
-    them, not send the reader round the loop once per stub."""
+    """A stub MISSING something production calls fails loudly the first time a test runs it; a stub
+    OFFERING something the real type lacks fails NOTHING -- every test believes the fabricated
+    attribute forever, and production is the only place the read comes back wrong. Every violation is
+    collected rather than raised at the first, so one red run names all of them."""
     violations = []
     for label, stub, real, plumbing in _nautilus_standins():
         offered = {name for name in dir(stub) if not name.startswith("__")} - plumbing
@@ -5299,17 +5076,12 @@ def test_no_stub_in_this_file_offers_a_name_its_real_nautilus_type_lacks():
 
 
 def test_the_offers_walk_reaches_every_stub_the_fidelity_table_points_at_it():
-    """`_nautilus_standins` is the entire reach of the guard above, and tests/test_engine_stub_fidelity.py's
-    table is what CLAIMS that guard covers a given stub. Nothing joined the two: the table asks only
-    whether the guard's NAME exists somewhere in the engine suite, never whether it iterates the stub
-    the row is about. A stub can therefore wear the claim while sitting outside the list -- measured,
-    not hypothetical: a fabricated accessor on a cache stub in exactly that position survived a
-    mutation probe with the whole suite green.
-
-    The join, as a set equality both ways. A table row the walk omits is coverage claimed and not
-    delivered; a walked stub the table does not point here is a library stand-in nobody classified.
-    Imported rather than restated: the fidelity module imports none of what it classifies, so
-    reading it from here costs no library import and cannot be satisfied by a copy that drifts."""
+    """`_nautilus_standins` is the entire reach of the guard above, and
+    tests/test_engine_stub_fidelity.py's table is what CLAIMS that guard covers a given stub; nothing
+    joined the two, so a stub could wear the claim while sitting outside the list. The join is a set
+    equality both ways: a table row the walk omits is coverage claimed and not delivered, and a
+    walked stub the table does not point here is a library stand-in nobody classified. Imported
+    rather than restated, so it cannot be satisfied by a copy that drifts."""
     from test_engine_stub_fidelity import _OFFERS_EXECUTOR, TABLE
 
     named = {name for name, entry in TABLE[Path(__file__).name].items() if _OFFERS_EXECUTOR in entry.guards}

@@ -1,8 +1,7 @@
 """The red button's fake-client suite (spec 00106 D8): every read is parsed by named fields it
-requires, and a field the venue stopped sending aborts rather than being guessed through.
-
-The fake records every call in order, so the assertions here are about what actually reached the
-venue -- never only about a return value."""
+requires, and a field the venue stopped sending aborts rather than being guessed through. The fake
+records every call in order, so the assertions here are about what reached the venue, never only
+about a return value."""
 
 from __future__ import annotations
 
@@ -31,12 +30,9 @@ class _Level:
 
 
 class _Book:
-    """`request_book_snapshot()`'s answer. `bids`/`asks` are METHODS, exactly as they are on the
-    real `OrderBook` -- restated as plain lists they made every test agree with a module that read
-    `book.bids` and got a bound method, which is the shape the venue never sends.
-
-    The level lists are held on `_bids`/`_asks` so a test can install an adversarial side without
-    re-declaring the method; `_BOOK_PLUMBING` exempts exactly those two from the offers guard.
+    """`request_book_snapshot()`'s answer. `bids`/`asks` are METHODS, exactly as on the real
+    `OrderBook`; the level lists sit on `_bids`/`_asks` so a test can install an adversarial side
+    without re-declaring them, and `_BOOK_PLUMBING` exempts exactly those two from the offers guard.
     """
 
     def __init__(self, bid: float, ask: float) -> None:
@@ -93,15 +89,10 @@ def _norm(value: Any) -> Any:
 
 
 class FakeClient:
-    """Answers from a script and records every call. `raises` maps a method name to an exception
-    instance the next call to it will raise.
-
-    Every request method is `async def`, as every one of the real client's seven is: they schedule
-    onto the running loop and answer with an awaitable, and outside a loop each raises
-    `RuntimeError: no running event loop`. Restated synchronously here they let the whole module be
-    written as blocking code that cannot make a single call live --
-    `test_every_client_call_the_red_button_makes_needs_a_running_loop` is the pin that says so
-    against the real class, since `inspect.iscoroutinefunction` answers False for all seven.
+    """Answers from a script and records every call; `raises` maps a method name to an exception the
+    next call to it raises. Every request method is `async def`, as all seven of the real client's
+    are -- `test_every_client_call_the_red_button_makes_needs_a_running_loop` pins that against the
+    real class, where `inspect.iscoroutinefunction` answers False for all seven.
     """
 
     api_key_masked = "kr***xy"
@@ -189,12 +180,10 @@ def names(client: FakeClient) -> list[str]:
 
 
 def _sync(coro):
-    """Drive one of the module's coroutines to completion.
-
-    Production opens exactly one loop, at the CLI boundary (`cli/engine/command.py`'s `flatten`),
-    because every client call needs a running one. A unit test calling a single function opens its
-    own here; the whole-button tests below go through `_run`, which drives `run_flatten` in one loop
-    exactly as the command does."""
+    """Drive one of the module's coroutines to completion. Production opens exactly one loop, at the
+    CLI boundary (`cli/engine/command.py`'s `flatten`); a unit test opens its own here, while the
+    whole-button tests go through `_run`, which drives `run_flatten` in one loop as the command
+    does."""
     return asyncio.run(coro)
 
 
@@ -258,13 +247,9 @@ def test_positions_are_read_by_named_fields_and_a_missing_one_aborts():
 
 
 def test_a_position_read_that_answers_nothing_aborts_rather_than_reading_as_flat():
-    """`None` is not an account with no positions, and read as `[]` it is the one shape that
-    confirms itself: the plan shows no margin leg, the operator confirms, the cancel and the spot
-    sells run, and then `judge_final` re-reads through this same function, finds no residual and
-    reports the account flat at exit 0 with leveraged positions still open.
-
-    The fake's answer script is a queue of whole answers, so `None` is scriptable with no special
-    case -- the `[[]]` default applies only when no script is given and cannot mask this."""
+    """`None` is not an account with no positions: read as `[]` it confirms itself all the way to
+    exit 0 over open leverage, so the read aborts -- and it aborts on the answer, with the request
+    already made."""
     client = FakeClient(positions=[None])
     with pytest.raises(flatten.FlattenUnreachable) as exc:
         _sync(flatten.read_positions(client, flatten.Recorder()))
@@ -275,9 +260,7 @@ def test_a_position_read_that_answers_nothing_aborts_rather_than_reading_as_flat
 
 def test_the_position_read_is_scoped_to_margin_with_spot_reports_off():
     """The three parameters that scope this read are asserted rather than assumed: MARGIN, spot
-    position reports off, and the euro quote. Whether they actually keep a spot holding out of the
-    report is a live property no fake can show; spec 00106 D8.2's read-only dry-run establishes
-    that, and until it runs the parameters are all that is pinned here."""
+    position reports off, and the euro quote."""
     client = FakeClient(positions=[[]])
     _sync(flatten.read_positions(client, flatten.Recorder()))
     _, params = client.calls[0]
@@ -287,8 +270,9 @@ def test_the_position_read_is_scoped_to_margin_with_spot_reports_off():
 
 
 def test_balances_are_read_from_the_cash_account():
-    """Under MARGIN the account reports one EUR figure, not per-asset balances (the same record,
-    observation 2), so the spot enumeration reads CASH."""
+    """Under MARGIN the account reports one EUR figure, not per-asset balances
+    (`docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, observation 2), so the spot
+    enumeration reads CASH."""
     client = FakeClient(balances=[[_Balance("XXBT", 0.5), _Balance("ZEUR", 100.0)]])
     read = _sync(flatten.read_balances(client, flatten.Recorder()))
     assert [(r.code, r.free) for r in read] == [("XXBT", 0.5), ("ZEUR", 100.0)]
@@ -417,11 +401,10 @@ def test_a_flat_row_is_not_a_leg():
 
 
 def test_an_unrecognised_position_side_is_named_and_never_read_as_flat_or_aborted_on():
-    """Two failures at once are refused here. Reading an unknown side as 'nothing to do' would call
-    an open position flat; RAISING on it would abort the sweep before the cancel, costing every
-    other leg. The installed build's `PositionSide` carries a fourth member, `NO_POSITION_SIDE`,
-    and which members the Kraken adapter emits is unmeasured -- so the row is named and the rest of
-    the account is still flattened."""
+    """Neither failure: reading an unrecognised side as 'nothing to do' would call an open position
+    flat, and raising on it would abort the sweep before the cancel and cost every other leg -- so
+    the row is named (`NO_POSITION_SIDE` is a member the installed `PositionSide` carries) and the
+    rest of the account is still flattened."""
     legs, unclosable = flatten.margin_legs(
         [
             flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "NO_POSITION_SIDE", 1.0),
@@ -535,10 +518,8 @@ _UNLISTED = flatten.PairConstraints("WEIRD/EUR", "WEIRD/EUR.KRAKEN", ordermin=1.
 
 def test_costmin_comes_from_the_committed_constant_and_only_when_the_quote_matches(monkeypatch):
     """The adapter never maps costmin onto min_notional, so it is committed per symbol and
-    quote-explicit; comparing a BTC-quoted floor against a EUR notional would pass everything.
-
-    The mismatch is CONSTRUCTED here rather than found: every quote-matching entry would pass under
-    a `costmin_for` that dropped the check, so the last two lines are the only ones that read it."""
+    quote-explicit; comparing a BTC-quoted floor against a EUR notional would pass everything, and
+    the monkeypatched quote is what reads that check."""
     from cli.engine import instruments
 
     assert flatten.costmin_for("ADA/EUR") == 0.45
@@ -617,12 +598,10 @@ def test_a_btc_quoted_leg_estimates_in_btc_and_never_in_euros():
 
 
 def test_an_unpriced_leg_is_sized_and_sent_with_no_estimate_invented():
-    """`plan.prices` carries no entry for a leg whose book read was refused, and `size_leg` is
-    still called on it. Nothing may crash on the missing price and nothing may print a number
-    standing in for it -- an estimate of 0.0 reads to an operator as a leg worth nothing.
-
-    Both kinds run: the spot path reaches `classify_balance` with no price, the margin path skips
-    it, and only the spot one could be silently downgraded to dust by an invented zero notional."""
+    """`plan.prices` carries no entry for a leg whose book read was refused, and `size_leg` is still
+    called on it: nothing may crash and nothing may print a number standing in for the missing price
+    -- an estimate of 0.0 reads to an operator as a leg worth nothing. Both kinds are sized, since
+    only the spot path could be downgraded to dust by an invented zero notional."""
     spot = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.0, "CASH", "account_state.free")
     sized = flatten.size_leg(spot, _ADA, None)
     assert sized.send is True and sized.reason is None
@@ -676,10 +655,8 @@ def test_the_send_decision_and_the_residual_verdict_cannot_disagree():
 
 def test_the_estimate_is_computed_at_the_tick_floored_price_never_the_raw_book_one():
     """A book price is floored to the tick before anything reads it, so the printed estimate cannot
-    contradict the verdict printed beside it. 10 units at a raw 0.049 EUR is 0.49 EUR -- ABOVE the
-    0.45 EUR costmin -- while the tick-floored 0.04 makes it 0.40, which is what the dust verdict is
-    computed from. Printed raw, the operator reads `dust_below_venue_minimum` next to a notional
-    over the minimum it names."""
+    contradict the verdict beside it: 10 units at a raw 0.049 EUR is 0.49 EUR, above the 0.45 EUR
+    costmin, while the tick-floored 0.04 makes it the 0.40 the dust verdict is computed from."""
     coarse_tick = flatten.PairConstraints("ADA/EUR", "ADA/EUR.KRAKEN", ordermin=1.0, lot_step=1.0, tick_size=0.01)
     leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 10.0, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, coarse_tick, 0.049)
@@ -701,12 +678,9 @@ def test_a_spot_quantity_is_floored_to_the_lot_step_before_it_is_sent():
 
 def test_the_estimate_is_the_floored_quantity_s_notional_never_the_balance_s():
     """The other axis of the same contradiction: an estimate multiplied out of the raw balance sits
-    beside a verdict computed from the floored one. 1.9 units floor to 1.0, so 0.40 EUR is the
-    notional the refusal names -- printed off 1.9 it reads 0.76, above the 0.45 costmin the same
-    line refuses the leg for.
-
-    The lot step is coarse deliberately: at a 1e-8 step the two products differ by less than
-    `pytest.approx`'s default tolerance, and the assertion below would not discriminate.
+    beside a verdict computed from the floored one -- 1.9 floors to 1.0, so the refusal names 0.40
+    EUR where the raw 1.9 would read 0.76, over the 0.45 costmin it refuses the leg for. The coarse
+    lot step is deliberate: at 1e-8 the two products differ by less than `pytest.approx`'s tolerance.
     """
     coarse = flatten.PairConstraints("ADA/EUR", "ADA/EUR.KRAKEN", ordermin=1.0, lot_step=1.0, tick_size=0.01)
     spot = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1.9, "CASH", "account_state.free")
@@ -726,13 +700,10 @@ def test_the_estimate_is_the_floored_quantity_s_notional_never_the_balance_s():
 
 
 def test_a_price_the_tick_floor_leaves_at_nothing_degrades_to_unpriced_and_is_sold():
-    """A price paired with another pair's tick floors to 0.0, every notional then reads as nothing,
-    and half a bitcoin is judged dust -- with `judge_final` reading the same predicate at the same
-    price and agreeing the account is flat. A live book price is a multiple of its own pair's tick,
-    so only a mis-keyed pairing reaches this; the degradation is where the two cannot disagree.
-
-    Unpriced is the direction that SELLS, which is the same direction `read_book_price` takes when
-    it refuses a zero one step earlier."""
+    """A price paired with another pair's tick floors to 0.0, and carried on, every notional would
+    read as nothing -- half a bitcoin judged dust, with `judge_final` reading the same predicate and
+    agreeing the account is flat. So the leg degrades to unpriced, the direction that SELLS, the
+    same one `read_book_price` takes when it refuses a zero a step earlier."""
     assert flatten.classify_balance(0.5, _BTC, 0.03) == "residual"
 
     leg = flatten.Leg("spot", "BTC", "BTC/EUR", "SELL", 0.5, "CASH", "account_state.free")
@@ -984,11 +955,9 @@ def _exec_dir(tmp_path: Path) -> Path:
 
 
 def _drain(fd: int) -> bytes:
-    """Everything the child wrote to the pty, read after it exited.
-
-    Linux hands back the buffered output first and only then raises EIO on the master, so a read
-    loop that stops at the OSError sees what the child printed (measured on cpython 3.14.6).
-    """
+    """Everything the child wrote to the pty, read after it exited: Linux hands back the buffered
+    output before raising EIO on the master, so a loop that stops at the OSError still sees what the
+    child printed."""
     seen = b""
     try:
         while True:
@@ -1092,12 +1061,10 @@ def test_the_confirm_reads_the_controlling_terminal_and_never_stdin(tmp_path):
 
 
 def test_the_prompt_is_written_to_the_terminal_and_not_to_this_process_s_stdout(tmp_path):
-    """The read is only half the confirm: a prompt that goes to stdout is a prompt the operator
-    never sees when the wrapper has captured stdout to a log, and the button then waits at a blank
-    screen for a word nobody knows to type. pytest's default fd-level capture has already taken
-    this process's fd 1, so a prompt printed rather than written to `/dev/tty` reaches the capture
-    file and never the terminal drained below. That is also this guard's limit: run under `-s` the
-    child's fd 1 IS the pty slave, and a prompt sent to stdout would reach the drain and pass."""
+    """The read is only half the confirm: a prompt that goes to stdout is one the operator never
+    sees when the wrapper has captured stdout to a log. pytest's fd-level capture already holds this
+    process's fd 1, so a prompt printed rather than written to `/dev/tty` reaches the capture file
+    and never the terminal drained here."""
     out = tmp_path / "reply.txt"
     pid, fd = pty.fork()
     if pid == 0:
@@ -1296,13 +1263,9 @@ def test_a_rejected_margin_leg_is_journaled_and_the_sweep_continues_to_the_spot_
 
 
 def test_a_rejected_sub_ordermin_closer_is_labelled_from_the_arithmetic_not_from_the_venue_s_words():
-    """The other side of the test above, and the label an operator acts on: this closer was sized
-    BELOW the pair's own `ordermin` before it was sent, so its refusal routes to Kraken's
-    settle-position action rather than to a second run.
-
-    The rejection text deliberately says nothing about a minimum -- which Kraken message means
-    "below the minimum" is unmeasured here, so the label may only come from the pre-send
-    arithmetic. Read off the venue's words instead, this leg would wear no label at all."""
+    """The label an operator acts on comes from the pre-send arithmetic, never from the venue's
+    words: this closer was sized BELOW the pair's own `ordermin`, and the rejection text deliberately
+    says nothing about a minimum -- read off it the leg would wear no label at all."""
     client = _sweep_client(
         orders=[[]],
         positions=[[_Position("BTC/EUR", "LONG", 0.00005)], [_Position("BTC/EUR", "LONG", 0.00005)], [], []],
@@ -1337,12 +1300,8 @@ def test_a_failing_cancel_does_not_stop_the_closes():
 def test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order():
     """The first-write boundary is the cancel, not the first order: after it, a read that cannot be
     parsed leaves the account possibly changed, so nothing further is sent and nothing reads flat.
-
-    The ADA balance is what makes `submitted == []` a claim rather than a restatement of the
-    fixture. Without something else to sell it is empty under the defect too -- and the defect here
-    is real and adjacent: `_read_for_the_record` widened to cover THIS read sizes the closers off an
-    empty list, sends none of them, and sells the spot book anyway. That mutant passed this test
-    until the balance was added."""
+    The ADA balance is what makes `submitted == []` a claim -- with nothing else to sell it is empty
+    under a `_read_for_the_record` widened to cover this read as well."""
     broken = _Position("BTC/EUR", "LONG", 0.5)
     del broken.quantity
     client = _sweep_client(
@@ -1381,13 +1340,10 @@ def test_the_second_spot_pass_sells_the_btc_the_first_pass_produced():
 
 
 def test_a_leg_below_the_venue_minimum_is_recorded_and_never_reaches_the_venue():
-    """Two of `_send`'s three verdicts on one read, and the third is every other test here.
-
-    The DOT balance is dust -- 0.001 at 4.00 EUR is 0.004 EUR against the 0.45 EUR costmin -- so no
-    order is constructed for it and it carries no client order id: an id minted for an order that
-    was never sent is an id an operator looks for at the venue. The ADA balance beside it has no
-    reference price (its book is absent) and is sent anyway, which is what keeps this from being a
-    fixture that would pass under a `_send` refusing everything."""
+    """A leg below the venue minimum is recorded and never sent: the DOT balance is dust -- 0.001 at
+    4.00 EUR against the 0.45 EUR costmin -- so no order is constructed and no client order id is
+    minted for one an operator would then hunt at the venue. The ADA leg beside it has no reference
+    price and is sent anyway, so a `_send` that refused everything would fail here."""
     client = _sweep_client(
         orders=[[]],
         positions=[[]],
@@ -1425,12 +1381,9 @@ def test_the_client_order_id_cannot_collide_with_the_engine_s_or_the_probe_harne
 
 def test_every_order_in_one_run_carries_its_own_client_order_id_across_all_three_passes():
     """The id counter runs over the WHOLE run, not per pass: Kraken refuses a client order id it has
-    already seen, so two legs sharing one id is one leg silently unsent -- recorded as sent, with
-    the venue's duplicate refusal the only trace.
-
-    Three orders across all three passes -- the margin close, pass one's BTC-quoted sell, and pass
-    two's sale of the BTC it produced -- so a counter that restarts at a pass boundary is visible
-    where one restarting per leg would not be."""
+    already seen, so two legs sharing one is one leg silently unsent. The fixture spans all three
+    passes -- the margin close, pass one's BTC-quoted sell, pass two's sale of the BTC it produced --
+    so a counter that restarts at a pass boundary is visible."""
     client = _sweep_client(
         orders=[[]],
         positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
@@ -1473,18 +1426,13 @@ def test_the_journal_records_the_scoping_of_the_order_that_actually_went_out():
 
 
 def test_the_submit_call_carries_the_library_s_own_types_and_binds_against_the_real_client():
-    """`FakeClient.submit_order` takes `**kw`, so it accepts every keyword including ones the real
-    client does not have, and `_norm` reduces a plain `"MARKET"` to the same text a real
-    `OrderType.MARKET` gives. Every other assertion in this section therefore passes under an
-    implementation that sends strings at a compiled signature and fails only at the venue, on the
-    one call that moves money.
-
-    Both halves the send depends on: the seven positionals land on the parameters they are meant
-    for -- a parameter inserted upstream would slide the client order id into another slot with
-    every fake-driven test still green -- and the scoping keywords exist on the real signature.
-    `instrument_id` is deliberately not type-asserted: it is handed back verbatim from the listing
-    row the venue answered with, so its type is the venue's to choose. `cancel_all_orders` is bound
-    beside it because it is the other venue-mutating call this module makes."""
+    """The submitted objects are the library's own types and the call binds against the real
+    `KrakenSpotHttpClient` signature: the fake takes `**kw` and `_norm` flattens a plain `"MARKET"`
+    to the text `OrderType.MARKET` gives, so every other assertion here passes under an
+    implementation that sends strings at a compiled signature and fails only at the venue.
+    `instrument_id` is deliberately not type-asserted -- it comes back verbatim from the listing row,
+    so its type is the venue's to choose -- and `cancel_all_orders` is bound beside it as the other
+    venue-mutating call this module makes."""
     import inspect
 
     from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
@@ -1524,14 +1472,10 @@ def test_the_submit_call_carries_the_library_s_own_types_and_binds_against_the_r
 
 
 def test_a_failing_read_that_nothing_consumes_does_not_cost_the_spot_passes():
-    """The position read taken after the closes feeds only the journal. Inside the one post-write
-    try it took both spot passes and the final snapshot with it: the margin close went out, a
-    1200 ADA balance was left unsold, and the run returned no verdict at all -- because a read
-    nobody reads failed.
-
-    `test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order` is the other half of the
-    asymmetry, and it still holds: the read that SIZES the closers must abort, because a degraded
-    one would size them off an empty list and call the account flat."""
+    """The position read taken after the closes feeds only the journal, so its failure costs neither
+    spot pass nor the final verdict. The other half of the asymmetry is
+    `test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order`: the read that SIZES the
+    closers must abort, or they are sized off an empty list and the account reads flat."""
     broken = _Position("BTC/EUR", "LONG", 0.5)
     del broken.quantity
     client = _sweep_client(
@@ -1571,14 +1515,11 @@ def test_a_failing_post_cancel_order_count_does_not_cost_the_closes():
 
 
 def test_a_leg_side_this_module_cannot_map_sends_nothing_and_is_named():
-    """Unreachable from `margin_legs`/`spot_legs` -- the only two places a `Leg` is built, both
-    writing a literal side -- so this pins the direction a defect would take rather than a live
-    path. A conditional's else-branch turns an unmapped side into a real market order the other way;
-    the lookup sends nothing and puts the side in the record.
-
-    `sent` stays True on a purely local failure by design (nothing here can tell one from a request
-    that left and was refused), so the assertion that the venue saw nothing is the one that carries
-    the claim."""
+    """Unreachable from `margin_legs`/`spot_legs`, the only two places a `Leg` is built, so this
+    pins the direction a defect would take: a conditional's else-branch would turn an unmapped side
+    into a real market order the other way, where the lookup sends nothing and names the side.
+    `sent` stays True on a purely local failure by design, so the assertion that the venue saw
+    nothing is the one that carries the claim."""
     client = FakeClient()
     leg = flatten.Leg("margin", "BTC", "BTC/EUR", "SIDEWAYS", 0.5, "MARGIN", "position_status_report.quantity")
     sized = flatten.size_leg(leg, _BTC, 60000.0)
@@ -1623,13 +1564,10 @@ def _run(client, tmp_path, *, execute=True, reply="FLATTEN", venue=_online, tty=
 
 
 class _StdoutThatDies:
-    """An echo that starts raising the moment `trigger()` says so, and remembers what landed
-    before that.
-
-    ENOSPC on the wrapper's captured log and EPIPE from a wrapper that died are the incident-day
-    conditions; what the two fixtures below vary is the TIMING relative to the first write, which
-    is the whole of the asymmetry being pinned. `lines` is what makes each one bite: it names the
-    line that would have been there had the trigger never fired.
+    """An echo that starts raising the moment `trigger()` says so, and remembers what landed before
+    that. ENOSPC on the wrapper's captured log and EPIPE from a dead wrapper are the incident-day
+    conditions; what the tests vary is the TIMING relative to the first write, and `lines` is what
+    makes each bite -- it names the line that would have been there had the trigger never fired.
     """
 
     def __init__(self, trigger) -> None:
@@ -1750,13 +1688,11 @@ def test_a_clean_sweep_of_a_flat_account_exits_zero(tmp_path):
 
 
 def test_the_blind_legs_are_the_two_way_spelled_basket_legs():
-    """`BLIND_ORDER_READ_LEGS` is frozen text; this recomputes it, so a basket change cannot leave
-    the caveat naming the wrong pairs and the claim stays falsifiable from repo state alone.
-
-    The adapter scans its instrument cache by `raw_symbol` -- Kraken's `AssetPairs` KEY, which is
-    what `PAIR_KEYS` carries -- while an open order is looked up by its own `descr.pair`, the
-    altname, which is what `dump_pair_name` derives. A leg whose two spellings differ is a leg the
-    lookup misses.
+    """`BLIND_ORDER_READ_LEGS` is frozen text; recomputing it here keeps a basket change from
+    leaving the caveat naming the wrong pairs. The adapter scans its instrument cache by
+    `raw_symbol` -- Kraken's `AssetPairs` KEY, which `PAIR_KEYS` carries -- while an open order is
+    looked up by its own `descr.pair`, the altname `dump_pair_name` derives, so a leg whose two
+    spellings differ is a leg the lookup misses.
     """
     from cli.backfill.read import dump_pair_name
     from cli.engine.store import BASKET, PAIR_KEYS
@@ -1771,12 +1707,10 @@ def test_the_blind_legs_are_the_two_way_spelled_basket_legs():
 @pytest.mark.parametrize(("orders", "code", "caveats"), [([[], [], []], 0, 1), ([[], [], [object()]], 2, 0)])
 def test_only_the_flat_verdict_carries_the_legs_the_final_read_cannot_see(tmp_path, orders, code, caveats):
     """Exit 0 is the one answer that ends an incident, and it is derived from a read blind to an
-    order resting on five legs -- so the caveat rides the zero, or the operator acts on a false
-    all-clear. Exit 2 already sends them back to the venue and is deliberately left alone.
-
-    Asserted on what was ECHOED, and on the line carrying every leg: a caveat computed into a
-    constant and never printed, or one printed without the pairs to go and look at, is the failure
-    this pins.
+    order resting on a two-way-spelled leg -- so the caveat rides the zero, or the operator acts on
+    a false all-clear; exit 2 already sends them back to the venue and is left alone. Asserted on
+    what was ECHOED and on the line carrying every leg, since a caveat computed into a constant and
+    never printed is the failure this pins.
     """
     _armed(tmp_path)
     lines: list[str] = []
@@ -1842,11 +1776,9 @@ def test_a_broken_shape_on_the_post_cancel_re_read_exits_two_with_no_order_sent(
 
 
 def test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two(tmp_path):
-    """The engine's own machine produces sub-ordermin remainders by design, and a remainder left
-    open is exposure -- so it is sent, and the venue rules on it. The label is minted from the
-    pre-send arithmetic and the venue's own words are kept beside it: the exit code says 2 for a
-    hundred reasons, an operator reading a bare `EOrder:` string is never routed to the venue's
-    settle-position action, and the words are what say whether the refusal was about the size."""
+    """A sub-ordermin remainder is sent and the venue rules on it, and its rejection still reads 2:
+    the label is minted from the pre-send arithmetic and the venue's own words are kept beside it,
+    since a bare `EOrder:` string routes nobody to the settle-position action."""
     _armed(tmp_path)
     tiny = [_Position("BTC/EUR", "LONG", 0.00002)]  # under _Instrument's 0.0001 ordermin
     client = _flat_client(positions=[tiny, tiny, tiny, tiny])
@@ -1984,13 +1916,10 @@ def test_the_journal_records_the_snapshots_the_requests_the_confirm_and_the_exit
 
 
 def test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_sweep_one(tmp_path):
-    """`run_flatten` holds both snapshots, so it is the first place the stale one can be judged --
-    and residuals read off the pre-sweep snapshot would name positions the sweep has since closed
-    while missing an order that outlived the cancel.
-
-    The fixture makes the two snapshots disagree in BOTH directions, so the exit code alone cannot
-    tell them apart -- it is 2 either way. Pre-sweep: no resting order, one LONG 0.5. Final: one
-    resting order, no position. The residual KINDS are what differ, and are what is asserted."""
+    """Residuals are judged against the final snapshot: read off the pre-sweep one they would name
+    positions the sweep has since closed while missing an order that outlived the cancel. The two
+    snapshots disagree in BOTH directions here and the code is 2 either way, so the residual KINDS
+    are what discriminate."""
     _armed(tmp_path)
     row = [_Position("BTC/EUR", "LONG", 0.5)]
     client = _flat_client(orders=[[], [], [object()]], positions=[row, row, [], []])
@@ -2005,20 +1934,11 @@ def test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_s
 
 
 def test_the_journal_payload_is_json_serializable_without_the_dump_s_str_fallback(tmp_path, monkeypatch):
-    """`write_journal` is the first code in this module to serialize the recorded request params,
-    and it dumps with `default=str` -- a net that would quietly stringify a value nobody converted.
-    This round-trips the REAL payload strictly, so the explicit conversions the record depends on
-    are pinned rather than assumed: `_journalled`'s `str()` on `AccountType`, and `submit_leg`'s on
-    the order side, the order type, the time in force and the quantity. Every one of those objects
-    raises `TypeError` under a bare `json.dumps`.
-
-    NOT the instrument id: `_Instrument.id` is a plain `str` here where production hands
-    `constraints_for` a real `InstrumentId`, so that conversion is invisible from any fixture built
-    on this fake and is pinned by
-    `test_the_recorded_instrument_id_is_converted_where_the_fake_cannot_show_it` instead.
-
-    A margin leg is the fixture because it is the only path carrying BOTH an `AccountType` and the
-    `leverage` int -- a spot-only sweep never records the enum at all."""
+    """`write_journal` dumps with `default=str`, a net that would quietly stringify a value nobody
+    converted; round-tripping the REAL payload strictly pins the conversions the record depends on
+    -- `_journalled`'s `str()` on `AccountType` and `submit_leg`'s on the order side, the order
+    type, the time in force and the quantity, each of which a bare `json.dumps` refuses. A margin
+    leg is the fixture because it is the only path carrying both the enum and the `leverage` int."""
     _armed(tmp_path)
     row = [_Position("BTC/EUR", "LONG", 0.5)]
     client = _flat_client(positions=[row, row, [], []])
@@ -2082,13 +2002,10 @@ def test_the_journal_filename_needs_no_shell_quoting(tmp_path):
 
 @pytest.mark.parametrize("execute", [True, False])
 def test_a_stdout_that_dies_while_the_plan_is_printed_refuses_cleanly_and_never_tracebacks(tmp_path, execute):
-    """Pre-write, so aborting is free -- but cleanly. Unguarded this is an `OSError` out of a
-    function whose contract says it raises nothing, and the traceback carries Python's own exit 1:
-    the code this command defines as "refused with nothing sent", with no journal beside it.
-
-    The trigger fires on the FIRST line, which `render_plan` writes before anything else, so
-    `echo.lines == []` is what says it bit: the plan's opening line is unconditional and would be
-    there under any implementation that got past it. The dry run reaches the same gate and keeps
+    """Pre-write a display failure aborts cleanly: unguarded it is an `OSError` out of a function
+    whose contract says it raises nothing, and the traceback carries Python's own exit 1 -- the code
+    this command defines as "refused with nothing sent" -- with no journal beside it. `echo.lines ==
+    []` is what says the trigger bit on the plan's unconditional first line, and the dry run keeps
     its own contract of leaving no artifact."""
     _armed(tmp_path)
     client = _flat_client(positions=[[_Position("BTC/EUR", "LONG", 0.5)]] * 4)
@@ -2105,17 +2022,11 @@ def test_a_stdout_that_dies_while_the_plan_is_printed_refuses_cleanly_and_never_
 
 
 def test_a_stdout_that_dies_after_the_orders_went_out_keeps_the_true_code_and_the_record(tmp_path):
-    """The instance that costs the most. Post-write a display failure may cost neither the exit
-    code nor the journal: the cancel and the market sells have reached a real account, and an
-    operator told "refused, nothing sent" -- which is what Python's exit 1 on a traceback says --
-    acts on the opposite of what happened, with nothing to reconstruct from.
-
-    `client.submitted` is the trigger, so every line up to and including the plan lands and the
-    first line AFTER the sweep raises. Two values make it bite: `submitted` is non-empty (the
-    margin closer went out, so the trigger certainly fires) and the summary's own opening line is
-    absent from `echo.lines` (it would be there had it not). The residual position is what makes
-    the true code 2 rather than 0 -- a code a traceback could never produce, and the one an
-    operator has to see."""
+    """Post-write a display failure may cost neither the exit code nor the journal: the cancel and
+    the market sells have reached a real account, and an operator told "refused, nothing sent" --
+    which is what Python's exit 1 on a traceback says -- acts on the opposite of what happened.
+    `client.submitted` is the trigger, so the first line after the sweep raises; the residual
+    position is what makes the true code 2 rather than 0, a code a traceback could never produce."""
     _armed(tmp_path)
     row = [_Position("BTC/EUR", "LONG", 0.5)]
     client = _flat_client(positions=[row, row, row, row])
@@ -2130,16 +2041,12 @@ def test_a_stdout_that_dies_after_the_orders_went_out_keeps_the_true_code_and_th
 
 
 def test_the_journal_s_own_fallback_survives_the_stdout_that_broke_the_file_write(tmp_path, monkeypatch, caplog):
-    """`write_journal`'s last act may not be able to raise. The two failures arrive together on an
+    """`write_journal`'s last act may not be able to raise: the two failures arrive together on an
     incident day -- a full filesystem takes the wrapper's captured log with the artifact, a dead
-    wrapper takes the pipe -- so a fallback that prints is a fallback that dies on the very
-    condition it exists to survive, and it dies INSIDE `_finish`, taking the exit code with it.
-
-    Two fixture values, and removing either makes this green under the defect: `exec_dir` points
-    THROUGH a regular file, so `mkdir` raises `NotADirectoryError` and the file write really does
-    fail; and `print` really does raise, so the fallback really is the thing under test. The
-    payload's own marker in the log is what says the record survived rather than merely not
-    crashing -- `logging` handles a failing handler internally and cannot raise out of here."""
+    wrapper takes the pipe -- so a fallback that prints dies inside `_finish` on the very condition
+    it exists to survive, taking the exit code with it. `exec_dir` points THROUGH a regular file so
+    the write really fails, `print` really raises, and the payload's own marker in the log is what
+    says the record survived rather than merely not crashing."""
     (tmp_path / "blocker").write_text("not a directory")
 
     def through_a_file(_state_dir):
@@ -2164,13 +2071,10 @@ def test_the_journal_s_own_fallback_survives_the_stdout_that_broke_the_file_writ
 
 
 def test_a_terminal_that_dies_between_the_check_and_the_prompt_refuses_and_journals(tmp_path):
-    """`tty_available()` passed a moment ago and the confirm still raised -- a wrapper killed in
-    between, a pty that went. Every other exit-1 refusal is pinned by a fixture; this handler sits
-    on the same contract, on the gate between an operator and a real account, so it gets one too.
-
-    Without it the raise leaves a traceback and Python's own exit 1, which reads identically to a
-    refusal and leaves nothing behind: the journal and the recorded `unreadable` are what tell the
-    two apart afterwards."""
+    """A terminal that dies between the check and the prompt refuses and journals: without the
+    handler the raise leaves a traceback and Python's own exit 1, which reads identically to a
+    refusal and leaves nothing behind, where the journal's recorded `unreadable` tells the two
+    apart."""
     _armed(tmp_path)
     client = _flat_client()
 
@@ -2193,9 +2097,8 @@ def test_a_terminal_that_dies_between_the_check_and_the_prompt_refuses_and_journ
 _runner = CliRunner()
 
 # `--help` renders through Rich, which UNDER COLOUR styles an option's leading `--` as its own span:
-# `\x1b[1;36m-\x1b[0m\x1b[1;36m-execute\x1b[0m`. The literal `--execute` is then not a substring of
-# the output at all. Colour is on in CI and off in a plain shell, which is the whole reason a green
-# local run and a red CI run disagreed here -- not width, and not a dependency version.
+# `\x1b[1;36m-\x1b[0m\x1b[1;36m-execute\x1b[0m`, so the literal `--execute` is then not a substring
+# of the output at all. Colour is on in CI and off in a plain shell.
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -2212,14 +2115,10 @@ def test_the_subcommand_is_registered_and_its_help_says_what_pressing_it_does():
 
 
 def test_the_help_gives_exit_one_the_same_words_the_module_contract_does():
-    """`--help` is the only documentation inside the container, and three exit-1 paths -- the
-    confirm mismatch, the unreadable confirm and the display failure -- follow the plan's signed
-    account reads. Help promising the venue was untouched there sends a mid-incident operator
-    hunting a second client on the one live trade key.
-
-    Pinned against `run_flatten`'s own docstring, so the two surfaces cannot drift apart again.
-    Whitespace is normalised first: Typer wraps the paragraph to the terminal width, and the clause
-    lands split across lines at every width this runs at."""
+    """`--help` is the only documentation inside the container, and its exit-1 clause follows the
+    plan's signed account reads -- help promising the venue was untouched there sends a mid-incident
+    operator hunting a second client on the one live trade key. Pinned against `run_flatten`'s own
+    docstring, with whitespace normalised first because Typer wraps the clause across lines."""
     result = _runner.invoke(app, ["engine", "flatten", "--help"])
     assert result.exit_code == 0
     clause = "1 refused with nothing sent"
@@ -2234,13 +2133,10 @@ def test_the_state_dir_is_required_so_the_button_never_depends_on_a_config_mount
 
 
 def test_absent_credentials_refuse_with_exit_one_and_never_construct_a_client(monkeypatch, tmp_path):
-    """Exit 1 is the refusal code, and it lands here before a client exists: one built without a
-    key is a single request away from the venue.
-
-    The unconstructed client is asserted SEPARATELY from the code, because the code alone cannot
-    see this defect: drop the credential check and the constructor is reached with `None`, and the
-    exception that follows reaches `CliRunner` as exit code 1 as well -- identical from the outside,
-    with the object that holds a venue session already built."""
+    """Exit 1 is the refusal code and it lands before a client exists: one built without a key is a
+    single request away from the venue. The unconstructed client is asserted SEPARATELY from the
+    code, because the code alone cannot see the defect -- without the check the constructor is
+    reached with `None` and the exception that follows reaches `CliRunner` as exit 1 as well."""
     monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
     constructed: list[tuple] = []
@@ -2256,12 +2152,9 @@ def test_the_command_never_names_a_credential_value(monkeypatch, tmp_path, caplo
     """The refusal goes through `_abort`, which LOGS and never echoes, so the log record is the only
     surface a key could leak on -- an assertion on `result.output` alone stays green on an
     implementation that prints the value into it (`tests/test_error_paths_are_logged.py`).
-
-    `caplog.handler` is attached to the "zcrypto" logger by hand, and the presence half is asserted
-    before the containment half. `cli.logging.config.configure()` sets `propagate = False` there on
-    the CLI's first invocation in the process while caplog's own handler sits on the root, so this
-    reads an EMPTY log depending only on what ran earlier in the session -- and an empty log
-    contains no key either, which is the whole test passing while looking at nothing."""
+    `caplog.handler` is attached to the "zcrypto" logger by hand and presence is asserted before
+    containment, because `cli.logging.config.configure()` sets `propagate = False` there and an
+    empty log contains no key either."""
     monkeypatch.setenv("KRAKEN_SPOT_API_KEY", "the-key-value")
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
     zcrypto_logger = logging.getLogger("zcrypto")
@@ -2307,14 +2200,10 @@ def _stub_the_button(monkeypatch, seen, *, code: int) -> None:
 
 @pytest.mark.parametrize("code", [0, 1, 2, 3])
 def test_the_code_run_flatten_returns_is_the_code_the_process_exits_with(monkeypatch, tmp_path, code):
-    """The four codes are the command's contract -- 0 flat, 1 refused, 2 something is still open,
-    3 the venue could not be read -- and a wrapper, a monitor and an operator all read the process's
-    code, never the return value.
-
-    A Typer command body that `return`s the number instead of raising `typer.Exit` exits 0 whatever
-    it returned, so 1/2/3 are the fixture values that bite and 0 is the true positive that must
-    still pass. Parametrized rather than asserted on one code: a command hardcoding `Exit(2)` would
-    pass a single-code test on 2."""
+    """The code `run_flatten` returns is the code the process exits with -- 0 flat, 1 refused, 2
+    something is still open, 3 the venue could not be read -- since a Typer body that `return`s the
+    number instead of raising `typer.Exit` exits 0 whatever it returned. Parametrized over all four:
+    a command hardcoding `Exit(2)` would pass a single-code test on 2."""
     seen: dict[str, Any] = {}
     _stub_the_button(monkeypatch, seen, code=code)
     result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
@@ -2322,15 +2211,11 @@ def test_the_code_run_flatten_returns_is_the_code_the_process_exits_with(monkeyp
 
 
 def test_the_command_opens_the_event_loop_every_venue_call_needs(monkeypatch, tmp_path):
-    """The loop is the command's job, and nothing below it can supply one. Every one of the
-    client's seven methods raises `RuntimeError: no running event loop` outside one
-    (`test_every_client_call_the_red_button_makes_needs_a_running_loop`), so a body that calls
-    `run_flatten` synchronously exits on its very first read having sent nothing and said nothing
-    -- `--execute` included, on the day the account has to be emptied.
-
-    The stub is `async def`, as `run_flatten` is, and records the loop it was awaited in. Called
-    synchronously it is never awaited at all: `seen` stays empty and `typer.Exit` is handed a
-    coroutine object where the exit code belongs. Both assertions move."""
+    """The loop is the command's job and nothing below it can supply one: every one of the client's
+    seven methods raises `RuntimeError: no running event loop` outside one
+    (`test_every_client_call_the_red_button_makes_needs_a_running_loop`), so a body calling
+    `run_flatten` synchronously exits on its first read having sent nothing. The stub is `async def`
+    and records the loop it was awaited in, so `seen` stays empty if it never was."""
     seen: dict[str, Any] = {}
     _stub_the_button(monkeypatch, seen, code=0)
     result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path), "--execute"])
@@ -2340,14 +2225,11 @@ def test_the_command_opens_the_event_loop_every_venue_call_needs(monkeypatch, tm
 
 @pytest.mark.parametrize(("argv", "execute"), [([], False), (["--execute"], True)])
 def test_the_typed_state_dir_and_the_execute_flag_are_what_run_flatten_is_handed(monkeypatch, tmp_path, argv, execute):
-    """Both parametrizations are needed: a body that hardcodes `execute=False` sends nothing on an
-    incident day and passes the flag-less case, and one that hardcodes `True` sends without the
-    operator asking and passes the `--execute` case.
-
-    `echo` is asserted to be `typer.echo` ITSELF: `run_flatten` wraps it internally in a guard that
-    swallows a dead stdout, so a caller that pre-wraps it double-wraps, and `CliRunner` redirects
-    `sys.stdout` -- which makes the module's own `print` default indistinguishable from `typer.echo`
-    in captured output. Identity is the only thing that can see the difference here."""
+    """Both parametrizations are needed: a body hardcoding `execute=False` sends nothing on an
+    incident day and passes the flag-less case, one hardcoding `True` sends without the operator
+    asking and passes the `--execute` case. `echo` is asserted to be `typer.echo` ITSELF, because
+    `run_flatten` wraps it internally and `CliRunner` redirects `sys.stdout`, so only identity
+    separates it from the module's own `print` default."""
     seen: dict[str, Any] = {}
     _stub_the_button(monkeypatch, seen, code=0)
     state_dir = tmp_path / "engine-state"
@@ -2417,17 +2299,12 @@ def _real_calls(client):
 
 
 def test_every_client_call_the_red_button_makes_needs_a_running_loop():
-    """The defect this pin exists for: the whole module was written as blocking code, so every
-    invocation -- `--execute` included -- died on its first read and exited 3 with nothing sent.
-
-    Each of the seven raises before anything is scheduled, which is why the two venue-MUTATING
-    calls are safe to make here: with no running loop nothing can be scheduled onto one, so no
-    request can leave, and the credentials authenticate nothing either. That is also the whole
-    reason this pin needs no network and no opt-in.
-
-    `inspect.iscoroutinefunction` is asserted False beside it, because it is the trap: all seven are
-    compiled, it answers False for every one, and a reader who trusts it concludes they are ordinary
-    synchronous methods. The shape is measured by CALLING.
+    """Every call this module makes needs a running loop, and each of the seven raises before
+    anything is scheduled -- which is why the two venue-MUTATING calls are safe to make here: with
+    no running loop nothing can be scheduled onto one, so no request can leave, and the credentials
+    authenticate nothing either. `inspect.iscoroutinefunction` is asserted False beside it because
+    it is the trap: all seven are compiled and it answers False for every one, so the shape is
+    measured by CALLING.
     """
     import inspect
 
@@ -2443,12 +2320,10 @@ def test_every_client_call_the_red_button_makes_needs_a_running_loop():
     reason=f"reaches Kraken's public listing endpoint -- set {_VENUE_CONTRACT_OPT_IN}=1 to run it",
 )
 def test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_await():
-    """The half no introspection can reach. `iscoroutinefunction` is False, so nothing short of
-    calling inside a loop shows that the answer is a `Future` and not the value -- and treated as
-    the value it would be journalled, counted and judged as the account's state.
-
-    Only the read-only public listing call. Nothing that moves money is ever driven against the
-    live venue from a test.
+    """The half no introspection can reach: `iscoroutinefunction` is False, so only a call inside a
+    loop shows the answer is a `Future` and not the value -- treated as the value it would be
+    journalled, counted and judged as the account's state. Only the read-only public listing call;
+    nothing that moves money is ever driven against the live venue from a test.
     """
     import inspect
 
@@ -2472,12 +2347,11 @@ def _real_order_book(bid: float, ask: float):
 
 
 def test_the_book_read_takes_its_side_from_the_real_order_book_type():
-    """Driven against the library's own `OrderBook`, so nothing here restates the venue's shape.
-
-    `bids`/`asks` are METHODS on it. Read as attributes -- which is all `_required`'s absent-only
-    check does -- they hand back the bound method, and `list()` of that raises a bare TypeError
-    where the exit-code contract promises a named unreachable. Both sides are read, so a
-    read that took one side for both would fail rather than pass on a symmetric fixture.
+    """Driven against the library's own `OrderBook`, so nothing here restates the venue's shape:
+    `bids`/`asks` are METHODS on it, and read as attributes -- which is all `_required`'s
+    absent-only check does -- they hand back the bound method, whose `list()` raises a bare
+    TypeError where the exit-code contract promises a named unreachable. Both sides are read, on a
+    book whose two sides differ.
     """
     listing = {"BTC/EUR": _Instrument("BTC/EUR")}
     client = FakeClient(instruments=[listing["BTC/EUR"]], books={"BTC/EUR.KRAKEN": _real_order_book(60000.0, 60010.0)})
@@ -2512,15 +2386,14 @@ def test_a_book_whose_side_is_a_plain_sequence_is_named_rather_than_raising_a_tr
 # --- stub fidelity ------------------------------------------------------------------------------
 
 
+# `_Book`'s level lists: a test installs an adversarial side -- empty, zero-priced -- without
+# re-declaring `bids()`/`asks()`, which are what the real `OrderBook` carries and production calls.
+_BOOK_PLUMBING = frozenset({"_asks", "_bids"})
+
 # `FakeClient`'s recording apparatus: names that exist so a test can read what happened, never
 # restatements of anything the real client offers. The guard below re-checks that claim in the
 # other direction too, so an entry the real client DOES carry reads as red rather than as a
 # standing exemption.
-# `_Book`'s two level lists. They exist so a test can install an adversarial side -- an empty one,
-# a zero-priced one -- without re-declaring `bids()`/`asks()`, which are what the real `OrderBook`
-# carries and what production calls.
-_BOOK_PLUMBING = frozenset({"_asks", "_bids"})
-
 _FAKE_CLIENT_PLUMBING = frozenset(
     {
         "calls",
@@ -2540,15 +2413,12 @@ _FAKE_CLIENT_PLUMBING = frozenset(
 
 
 def _nautilus_standins():
-    """(label, stub instance, real class, plumbing) for every double in this file that stands in
-    for the client or for one of the answers it hands back. Built inside a function so the library
-    imports are paid only by the tests that need them.
-
-    Every one of the client's methods is typed `-> typing.Any`, so the real answer classes are not
-    readable off a signature. `CurrencyPair` (the listing row) and `OrderBook`/`BookLevel` (the
-    book) were read from the installed adapter against its public endpoints. The three auth-gated
-    answers -- the order and position reports and the account state -- cannot be read that way;
-    they are named from the fields `cli/engine/flatten.py` requires plus
+    """(label, stub instance, real class, plumbing) for every double in this file that stands in for
+    the client or for one of the answers it hands back; imported inside the function so only the
+    tests that need the library pay for it. The client's methods are all typed `-> typing.Any`, so
+    the answer classes are not readable off a signature: the listing row and the book were read from
+    the installed adapter against its public endpoints, and the three auth-gated answers are named
+    from the fields `cli/engine/flatten.py` requires plus
     `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`'s probe 1, which records the
     account read arriving as an `AccountState`.
     """
@@ -2567,29 +2437,22 @@ def _nautilus_standins():
 
 
 def test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lacks():
-    """The direction nothing else covers. A stub MISSING something production reads fails loudly
-    the first time a test runs it -- `_required` raises and the test goes red. A stub OFFERING a
-    name the real type lacks fails NOTHING: every test believes the fabricated field forever, and
-    the live account is the only place the read comes back wrong. On this module that is the whole
-    button reading a shape the venue never sends.
-
-    Offering the right name as the wrong KIND fails nothing either, and is the half this file
-    learned the hard way: `_Book` restated `OrderBook`'s `bids`/`asks` methods as plain lists, every
-    hasattr check passed, and production read a bound method as the book's side.
-
-    Every violation is collected rather than raised at the first: one red run should name all of
-    them, not send the reader round the loop once per stub."""
+    """A stub MISSING something production reads goes red the first time a test runs it; a stub
+    OFFERING a name the real type lacks fails NOTHING -- every test believes the fabricated field
+    forever, and the live account is the only place the read comes back wrong. Offering the right
+    name as the wrong KIND fails nothing either: a method restated as a plain list passes every
+    hasattr check. Every violation is collected rather than raised at the first, so one red run
+    names them all."""
     violations = []
     for label, stub, real, plumbing in _nautilus_standins():
         offered = {name for name in dir(stub) if not name.startswith("__")} - plumbing
         assert offered, f"{label} offers nothing outside its plumbing list -- the check is vacuous"
         stale = sorted(name for name in plumbing if hasattr(real, name))
         extra = sorted(name for name in offered if not hasattr(real, name))
-        # The name alone is not the shape. `OrderBook.bids` exists and is a METHOD; restated as a
-        # plain list it satisfied every hasattr here while production read `book.bids` through an
-        # absent-only check, got the bound method back, and shipped ten green tasks on a button that
-        # could not price a single leg. `callable` separates a `method_descriptor` on the real class
-        # from a `getset_descriptor`, which is exactly the distinction that was missed.
+        # The name alone is not the shape: `OrderBook.bids` exists and is a METHOD, and restated as
+        # a plain list it satisfies every hasattr check here while production reads the bound method
+        # as the book's side. `callable` separates a `method_descriptor` on the real class from a
+        # `getset_descriptor`.
         kinds = sorted(
             name for name in offered if hasattr(real, name) and callable(getattr(stub, name)) != callable(getattr(real, name))
         )
@@ -2603,15 +2466,11 @@ def test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lac
 
 
 def test_the_offers_walk_reaches_every_stub_the_fidelity_table_points_here():
-    """`_nautilus_standins` is the entire reach of the guard above, and
-    tests/test_engine_stub_fidelity.py's table is what CLAIMS that guard covers a given stub.
-    Nothing else joins the two: the table asks only whether the guard's NAME exists somewhere in
-    the engine suite, never whether it iterates the stub the row is about, so a stub can wear the
-    claim while sitting outside the list.
-
-    The join, as a set equality both ways. A table row the walk omits is coverage claimed and not
-    delivered; a walked stub the table does not point here is a library stand-in nobody
-    classified."""
+    """`tests/test_engine_stub_fidelity.py`'s table is what CLAIMS the guard above covers a stub,
+    and it asks only whether the guard's NAME exists somewhere in the engine suite, never whether it
+    iterates the stub the row is about. So the join is a set equality both ways: a table row the
+    walk omits is coverage claimed and not delivered, a walked stub the table does not point here is
+    a library stand-in nobody classified."""
     from test_engine_stub_fidelity import _OFFERS_FLATTEN, TABLE
 
     named = {name for name, entry in TABLE[Path(__file__).name].items() if _OFFERS_FLATTEN in entry.guards}

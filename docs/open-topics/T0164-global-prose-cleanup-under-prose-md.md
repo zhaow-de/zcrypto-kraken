@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: 'refine-rules round 8 is on develop: `git log origin/develop --grep="^Refine-Round-Closed: 2026-09-04T23:52:07Z" --format=%h` is non-empty'
 ---
 
@@ -19,9 +19,13 @@ The retro study of 2026-09-04 measured the prose layer as the day's cost: 26 of 
 - Tripwire census at `b655d00e`, `uv run python infra/scripts/prose-tripwire.py`: comment-block 1909, file-prose 183, table-row 98, section 352 (in 51 files), changelog-entry 135 — 2,677 offenders, exit 1. `--since origin/develop` reports 0, so the tool gates new prose while this topic is open.
 - The docs half, measured 2026-09-04 on develop: `docs/iterations-history-phase6.md` 1,232 lines / 620 KB with entries of 1.9–7.5 KB; `docs/reference/fleet-pins.md` 45 lines / 14.5 KB with rows of 1,400–1,500 characters rewritten 38 times; `docs/reference/fleet.md` 80 lines / 20 KB.
 
+## Done so far
+
+The first `tests/` + `infra/` batch (PR by `zcrypto-bravo`, 2026-09-05): `tests/test_engine_executor.py`, `tests/test_infra_alert_rules.py`, `tests/test_engine_flatten.py` and `infra/grafana/alerts.yaml` under the bar — every block dispositioned against its code, the Python files AST-identical with docstrings stripped, the YAML's non-comment lines and parsed content byte-identical, one whole-branch and three scoped Fable reviews. Twelve sentences that claimed what nothing asserts became T0165, T0166 and T0167. Consciously left: the six sops `vault.yml` files (encrypted; a prose pass never edits them) and the two vaulted-key wrappers whose bodies `tests/test_kraken_fixture_mint.py` pins by sha256. Measured at the batch's tip: the tripwire over `tests infra` 1,501 → 1,413 offenders; `tests/` 16,235 → 15,688 prose lines.
+
 ## Suggested next steps
 
-- **Three assignments, one PR per directory group, dispatched by `zcrypto-main`**: `cli/`; `tests/` with `infra/`; the three docs. Worklist per assignment: the tripwire's report for that scope; order by `.local/retro/2026-09-04/study/churn.md` (most-changed files first).
+- **The remaining scope, one PR per batch, dispatched by `zcrypto-main`** — `cli/` (in flight), the rest of `tests/` + `infra/` (eight proposals drafted and waiting), the three docs: `cli/`; `tests/` with `infra/`; the three docs. Worklist per assignment: the tripwire's report for that scope; order by `.local/retro/2026-09-04/study/churn.md` (most-changed files first).
 - **Per file, `prose.md`'s four dispositions** (cut, condense, keep, relocate), findings agreed before editing, false-or-stale first; a config file's non-comment lines extracted before and after and byte-identical; a test docstring re-read against its assertions.
 - **The docs half**: each changelog entry collapses to one-line bullets naming what an operator or agent now does differently, with `git log` as the chronicle it collapses into; each `fleet-pins.md` row to its cells plus one clause of payload; `fleet.md` to topology, paths, endpoints and access, nothing dated.
 - **Measured before and after**: the tripwire's summary line and `prose-ratio.py` on the merge-base and on the tip of each PR, quoted in the PR body; the pre-commit hook for the tripwire lands with the last PR, once `--since` is no longer needed to make the tool pass.

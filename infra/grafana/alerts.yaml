@@ -1,11 +1,11 @@
-# Grafana alert-rule provisioning source (spec 00049, Role B / Task 4; boards split four ways by
-# spec 00084 -- every *-dashboard.json beside this file ships). Pushed by infra/scripts/grafana-push.sh,
-# ONE rule per `POST`/`PUT /api/v1/provisioning/alert-rules[/:uid]` call against Grafana's
-# **Alerting Provisioning HTTP API** -- that endpoint takes a single alert-rule JSON object per
-# call; it is NOT the `apiVersion: 1` / `groups:` file-provisioning shape (that shape is for
-# Grafana's config-file provisioner only and is rejected by this HTTP endpoint, which isn't
-# usable on Grafana Cloud SaaS anyway). This file is YAML (superset of JSON) purely for the
-# inline comments -- the script converts it to the API's per-rule JSON before each push. See:
+# Grafana alert-rule provisioning source (spec 00049; boards split by spec 00084 -- every
+# *-dashboard.json beside this file ships). Pushed by infra/scripts/grafana-push.sh, ONE rule per
+# `POST`/`PUT /api/v1/provisioning/alert-rules[/:uid]` call against Grafana's **Alerting
+# Provisioning HTTP API** -- that endpoint takes a single alert-rule JSON object per call and
+# REJECTS the `apiVersion: 1` / `groups:` file-provisioning shape, which is for Grafana's
+# config-file provisioner and is not usable on Grafana Cloud SaaS anyway. This file is YAML
+# (superset of JSON) purely for the inline comments -- the script converts it to the API's per-rule
+# JSON before each push. See:
 #   https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/
 #   https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/alerting_provisioning/
 #
@@ -16,44 +16,33 @@
 # find which prior refId to compare; an empty/misnamed field errors "no variable specified to
 # reference" and hard-fails the rule's condition on every evaluation.
 #
-# Placeholders wired at deploy time (see infra/nas/README.md for the vaulted Grafana Cloud creds
-# this instance already uses). These are literal `${VAR}` tokens that infra/scripts/grafana-push.sh
-# substitutes from its own environment before sending each rule -- Grafana's alert-rule
-# provisioning API has no server-side template substitution (unlike the dashboard JSON's
-# `${DS_PROMETHEUS}`/`${DS_LOKI}` variables, which Grafana itself resolves on dashboard import):
-#   - `${GRAFANA_PROM_DS_UID}` / `${GRAFANA_LOKI_DS_UID}` -- the two datasource UIDs on the
-#     already-provisioned Grafana Cloud instance.
+# Placeholders are literal `${VAR}` tokens that infra/scripts/grafana-push.sh substitutes from its
+# own environment before sending each rule -- the alert-rule provisioning API has no server-side
+# template substitution (unlike the dashboard JSON's `${DS_PROMETHEUS}`/`${DS_LOKI}` variables,
+# which Grafana itself resolves on dashboard import):
+#   - `${GRAFANA_PROM_DS_UID}` / `${GRAFANA_LOKI_DS_UID}` -- the two datasource UIDs.
 #   - `${GRAFANA_ALERT_FOLDER_UID}` -- the folder UID the rules provision into (the API needs
 #     the folder's UID, not its display name).
-#   - `notification_settings.receiver: metrics` (or `logs` for Loki-sourced rules; the `logs`
-#     receiver disables resolve messages -- log alerts resolve by aging, a resolve ping is noise)
-#     (both receivers' underlying Slack webhook is provisioned separately, not committed here).
+#   - `notification_settings.receiver: metrics` (or `logs` for the Loki-sourced ERROR-log rules;
+#     the `logs` receiver disables resolve messages -- a log alert resolves by ageing, so a
+#     resolve ping is noise) (both receivers' Slack webhook is provisioned separately, not here).
 #
-# Per-rule noDataState/execErrState reasoning: the four gate rules and the two host-resource
-# rules default to Alerting on both no-data and exec-error -- for these, a vanished series
-# (Alloy down, textfile exporter dead, cadvisor/node-exporter dead) is itself the failure worth
-# paging on, same posture as docs/specs/00043-observability-design.md's disk/memory/CPU rules.
-# The ERROR-logs rule uses `or on() vector(0)` (00043's own pattern) so a clean window evaluates
-# to 0 rather than NoData, and is marked noDataState: OK to match -- a blanket no-data->alert
-# would otherwise leave it permanently firing when healthy.
+# noDataState is per-rule, not boilerplate: Alerting only where nothing else owns the series'
+# absence; OK wherever a dead-man or canary already does, or where absence is legitimate.
 rules:
   - uid: zcrypto-gate-streak-reset
     title: "Gate · streak reset"
     ruleGroup: zcrypto-gate
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
-    # SUPERSEDES the old "Gate · not MET" rule (uid zcrypto-gate-not-met), which alerted on
-    # `zcrypto_gate_status == 0`. That rule's own NOTE conceded the flaw and it duly bit: the gate
-    # is MET only after >=14 consecutive clean days, so `status == 0` is the CORRECT, EXPECTED state
-    # for the entire accumulation window -- it would have emailed daily for ~12 days to report that
-    # we were, correctly, still waiting. That is alarm fatigue, and it trains the reader to ignore
-    # gate alerts exactly when one of them matters. It was also redundant: the real failure modes
-    # already have their own rules (mismatch / exporter stale / journal pull lag).
+    # SUPERSEDES the removed `Gate · not MET` rule (uid zcrypto-gate-not-met, `zcrypto_gate_status
+    # == 0`): status 0 is the CORRECT, EXPECTED state for the whole >=14-day accumulation window, so
+    # that rule would have paged daily while nothing was wrong, and the real failure modes already
+    # have their own rules (mismatch / exporter stale / journal pull lag).
     #
-    # The signal that actually means something BROKE is the streak going BACKWARDS. `streak_days`
-    # only ever increments (a clean complete UTC day) or resets to 0 (a day failed), so a negative
-    # delta IS the failure, and nothing else produces one. It fires once on the break and
-    # auto-resolves as the 6h window rolls past -- one alert per broken run, not a drumbeat.
+    # `streak_days` only ever increments (a clean complete UTC day) or resets to 0 (a day failed),
+    # so a negative delta IS the failure and nothing else produces one. It fires once on the break
+    # and auto-resolves as the 6h window rolls past -- one alert per broken run, not a drumbeat.
     condition: C
     data:
       - refId: A
@@ -158,14 +147,11 @@ rules:
           refId: C
           conditions:
             - evaluator: {type: gt, params: [21600]}  # 6h. DERIVED (T0069), not copied: the metric is now-minus-newest-journaled-cycle, so
-            # its floor is the ENGINE's 4h cycle cadence, not pull health -- measured ceiling 14767s (4.10h), p99 14512s, 175 samples
-            # above 4h and ZERO above 4.5h -- over ~14 DAYS, not the 30 the derivation said: the platform retains 14 d (a `[30d]`
-            # selector returns the same window, T0129) and the metric had only existed since 2026-07-12 anyway. So the ceiling is a
-            # LOWER bound on the true one; the 21600 margin is what absorbs that, and a re-derivation gains nothing until the
-            # engine's cadence changes. A pull period is 3600s + work (work p95 78s, max 791s on a post-recreate cold rebuild), so the
-            # old 18000 sat only ~0.9 periods above the ceiling: one slow or missed cycle at a near-ceiling moment paged with nothing wrong.
-            # 21600 = ceiling + one worst-case missed cycle + margin. A genuinely stalled pull grows lag without bound, so detection costs
-            # ~1h, not correctness. Keep in lockstep with gate-export's --lag-fail-seconds default -- that one gates the hc.io dead-man ping.
+            # its floor is the ENGINE's 4h cycle cadence, not pull health. 21600 = the measured
+            # ceiling + one worst-case missed cycle + margin; a genuinely stalled pull grows lag
+            # without bound, so that margin costs ~1h of detection, not correctness, and a
+            # re-derivation gains nothing until the engine's cadence changes. Keep in lockstep with
+            # gate-export's --lag-fail-seconds default -- that one gates the hc.io dead-man ping.
     noDataState: Alerting
     execErrState: Alerting
     for: 5m
@@ -255,11 +241,9 @@ rules:
             # long before the evidence is meaningfully stale.
             - evaluator: {type: gt, params: [259200]}
     # OK, NOT Alerting -- deliberately unlike its zcrypto-gate siblings. gate-export emits this
-    # metric only when --cache is active and non-empty. The NAS archive-pull loop passes `--cache`
-    # (infra/nas/pull-entrypoint.sh), so the series normally exists there; OK still stands because the metric is legitimately absent
-    # whenever the cache is off (any other invocation, or the first run after a container recreate
-    # discards the ephemeral cache), and paging on those is noise. "The exporter vanished entirely"
-    # is already owned by zcrypto-gate-exporter-stale above, so nothing is lost by this choice.
+    # metric only when --cache is active and non-empty (the NAS archive-pull loop passes `--cache`,
+    # infra/nas/pull-entrypoint.sh), so absence is legitimate whenever the cache is off or a
+    # container recreate has discarded it; "the exporter vanished" is zcrypto-gate-exporter-stale's.
     noDataState: OK
     execErrState: Alerting
     # 15m rather than the 5m its zcrypto-gate siblings use: the underlying value is monotonic and the
@@ -282,21 +266,14 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     # NOT `zcrypto-engine-sleeve-composition-changed`, the name this rule is called everywhere else:
-    # that string is 41 chars and Grafana's uid column is varchar(40), so the create call 400s (the
-    # same failure that cost an attended round-trip on 2026-07-20). The uid is immutable once the
-    # rule exists -- do not "restore" the longer spelling later.
+    # that string is 41 chars and Grafana's uid column is varchar(40), so the create call 400s. The
+    # uid is immutable once the rule exists -- do not "restore" the longer spelling later.
     #
-    # T0124: the deployable combines three sleeves at fixed 1/3 weights, and two of them (B, A1)
-    # have held exactly zero for months -- correct behaviour for long-only sleeves in a sustained
-    # downtrend, but it means the live book is structurally a ONE-sleeve book at a sixth of that
-    # sleeve's gross. The reversal is the event: it moves the placeability arithmetic and
-    # invalidates the drift band derived under the one-sleeve state. This comment used to predict
-    # that re-arming "roughly TRIPLES gross"; the 2026-08-22 transition falsified it -- the count
-    # went 1 -> 3 while book gross rose only x1.15, then fell below its starting point, because
-    # A2's own gross dropped as B and A1 armed. The composition change is the event; the gross
-    # change is a separate measurement (docs/reference/sleeve-composition-ledger.md).
-    # Nothing observed the original transition -- it was found ~9 months later by a measurement
-    # iteration that happened to decompose the book. This rule exists so the next one is announced.
+    # T0124: the deployable combines three sleeves at fixed 1/3 weights, and a sleeve arming or going
+    # flat moves the placeability arithmetic and invalidates a drift band derived under the previous
+    # composition. The composition change is the event; the gross change is a separate measurement
+    # (docs/reference/sleeve-composition-ledger.md) and does not follow from the count -- a sleeve's
+    # own gross can fall as others arm.
     #
     # `changes()` over a 26h window, not `delta()`: the count is not monotone (a sleeve can arm and
     # go flat again) and the DIRECTION does not matter -- both directions move gross materially, so
@@ -323,11 +300,10 @@ rules:
           refId: C
           conditions:
             - evaluator: {type: gt, params: [0]}  # the active-sleeve count stepped, either way == the event
-    # OK, not Alerting -- the same posture as the verify-replay rules. The series does not exist at
-    # all until the engine converge that ships it lands, and it is deliberately left unpublished
-    # until the first cycle actually measures a composition (an unlabelled Gauge would otherwise
-    # publish 0.0 from process start, i.e. "every sleeve is flat", which is a claim and a false
-    # one). Absence is the dead-man's business: the engine going dark is already owned by the
+    # OK, not Alerting -- the same posture as the verify-replay rules. The gauge is deliberately left
+    # unpublished until the first cycle actually measures a composition (an unlabelled Gauge would
+    # otherwise publish 0.0 from process start, i.e. "every sleeve is flat", which is a claim and a
+    # false one). Absence is the dead-man's business: the engine going dark is owned by the
     # healthchecks.io switch and the cycle-completed staleness, not by this rule.
     noDataState: OK
     execErrState: Alerting
@@ -351,32 +327,26 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
-      # An ANNOUNCEMENT, not a fault -- the runbook opens with "Nothing is broken". Without this it
-      # inherits the default repeat and re-notifies every 4 h across the whole 26 h window, so ONE
-      # composition change pages about seven times, which is how a channel gets ignored.
+      # An ANNOUNCEMENT, not a fault. Without this it inherits the default repeat and re-notifies
+      # every 4 h across the whole 26 h window, so ONE composition change pages about seven times.
       #
-      # 12h, not the full 26h window, and the reason is a trade worth stating: a SECOND composition
-      # step does not mint a new alert instance -- the labels are identical and the count lives in
-      # an annotation, invisible to Alertmanager's dedup -- so the repeat interval IS the detection
-      # latency for a second step. 26h would have silenced this rule for a whole window; 12h caps
-      # one event at three pages while bounding that latency at half a window. Raising it further
-      # needs a distinguishing label so a second step mints its own instance.
+      # 12h, not the full 26h window: a SECOND composition step does not mint a new alert instance --
+      # the labels are identical and the count lives in an annotation, invisible to Alertmanager's
+      # dedup -- so the repeat interval IS the detection latency for a second step. 12h caps one
+      # event at three pages while bounding that latency at half a window; raising it further needs a
+      # distinguishing label so a second step mints its own instance.
       repeat_interval: 12h
 
   # If you are here to add SCRAPE-level engine liveness (`up{job="engine_app"}`), scope it
   # `host="zcrypto"` or derive the host from `engine_host`. The capture role renders ONE
   # config.alloy to BOTH capture hosts, so `engine_app` is scraped on zcrypto-red too, where no
-  # engine runs and nothing listens on 9102: `up{job="engine_app",host="zcrypto-red"}` has read 0
-  # for every sample of its life (measured 336/336 hourly points, 2026-08-22 -- 336 hourly points is exactly the 14 d the
-  # platform retains, not the 30 d that reading was first labelled with; 30 d would be 720). An
-  # unscoped rule therefore pages forever on the secondary. An UNSCOPED, unconditional scrape-liveness
-  # rule is still refused, and for the reason it always was: unattended engine liveness rides
-  # zcrypto-engine-cycle-stale below, zcrypto-engine-log-dead, and the healthchecks.io dead-man
-  # switch, and a bare `up == 0` page would only add detection latency nothing needs. What the
-  # scrape-level signal DOES buy is a conjunction nothing else can express --
-  # zcrypto-engine-dark-with-exposure below pairs it with a non-zero position at last sight, so it
-  # pages only when the engine is unreachable AND money is exposed, and it is scoped `host="zcrypto"`
-  # on both halves for exactly the reason above.
+  # engine runs and nothing listens on 9102 -- that series reads 0 permanently and an unscoped rule
+  # would page forever on the secondary. An UNSCOPED, unconditional scrape-liveness rule is refused
+  # outright: unattended engine liveness rides zcrypto-engine-cycle-stale below, zcrypto-engine-log-
+  # dead, and the healthchecks.io dead-man switch, and a bare `up == 0` page would only add detection
+  # latency nothing needs. What the scrape-level signal DOES buy is a conjunction nothing else can
+  # express -- zcrypto-engine-dark-with-exposure below pairs it with a non-zero position at last
+  # sight, scoped `host="zcrypto"` on both halves for exactly the reason above.
   - uid: zcrypto-engine-cycle-stale
     title: "Engine · cycles have stopped"
     ruleGroup: zcrypto-gate
@@ -384,11 +354,9 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The larger of the two engine holes this file used to carry: NOTHING watched
-      # `zcrypto_engine_cycle_completed_at_seconds`. The only engine rule was the sleeve-composition
-      # one above, which is about composition, not liveness -- and a crash-looping engine leaves
-      # `active_sleeves` frozen at its last published value, so no page ever fired while cycles
-      # silently stopped.
+      # Cycle liveness is its own rule because a crash-looping engine leaves `active_sleeves` frozen
+      # at its last published value, so the sleeve-composition rule above stays green while cycles
+      # silently stop.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -417,8 +385,8 @@ rules:
     # at engine startup from the newest journal artifact (falling back to process start), so it is
     # never legitimately absent while the engine runs -- absence means the engine container is gone,
     # and nothing else owns that: `Fleet · Alloy dark — Capture primary` reads `count(up{host=...})`,
-    # which stays >= 1 while Alloy is up and the engine target merely scrapes `up = 0`. Accepted cost,
-    # named rather than discovered: a genuine Alloy-dark event on the primary double-pages.
+    # which stays >= 1 while Alloy is up and the engine target merely scrapes `up = 0`. Accepted
+    # cost: a genuine Alloy-dark event on the primary double-pages.
     noDataState: Alerting
     execErrState: Alerting
     for: 5m
@@ -446,35 +414,33 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     # The conjunction the comment above zcrypto-engine-cycle-stale describes: the engine unreachable
-    # AND money exposed. Both halves are written in the form that can actually fire, and neither
-    # obvious spelling can -- a first-sample read taken while the engine scrapes normally is green
-    # over both defects, so the discrimination replay in tests/test_infra_alert_rules.py is the only
-    # thing that sees them.
+    # AND money exposed. Neither obvious spelling of either half can fire -- a first-sample read taken
+    # while the engine scrapes normally is green over both defects -- so the discrimination replay in
+    # tests/test_infra_alert_rules.py is what holds the two forms below in place.
     #
     # Node A reads the position BACKWARDS. `zcrypto_exec_position` is published by the very engine
     # this rule detects the absence of, so an instant read holds its value only for Prometheus's ~5
-    # min staleness and then goes away -- the condition dies before `for` elapses, and the naive
-    # `zcrypto_exec_position != 0 unless up{...}` spelling is worse still: the right-hand side is
-    # present-at-0 rather than gone, so it subtracts on every sample and the rule fires on nothing at
-    # all. `last_over_time`, not `max_over_time`: the question is the exposure AT LAST SIGHT, and a
-    # max would keep paging over a position closed hours before the engine went dark. `abs`, because
-    # a short is exposure too.
+    # min staleness and then goes away -- the condition dies before `for` elapses; and the naive
+    # `zcrypto_exec_position != 0 unless up{...}` spelling is worse still, since the right-hand side
+    # is present-at-0 rather than gone, so it subtracts on every sample and the rule fires on nothing
+    # at all. `last_over_time`, not `max_over_time`: the question is the exposure AT LAST SIGHT, and
+    # a max would keep paging over a position closed hours before the engine went dark. `abs`,
+    # because a short is exposure too.
     #
     # Node B reads the scrape's VALUE, not its presence -- the one place this rule must NOT copy the
     # zcrypto-alloy-dark-* rules. `engine_app` is a STATIC scrape target (see the capture role's
     # config.alloy), so nothing removes it when the container stops: the series stays present reading
     # 0, `count()` would read 1, and the threshold could never go true on the one event this rule
-    # exists for. That is the same reading zcrypto-engine-cycle-stale's noDataState comment records,
-    # and the reason `up{job="engine_app",host="zcrypto-red"}` has read 0 for its whole life on a host
-    # where no engine runs -- so `host="zcrypto"` is load-bearing on BOTH halves.
+    # exists for. `host="zcrypto"` is load-bearing on BOTH halves, for the reason the comment above
+    # zcrypto-engine-cycle-stale gives.
     #
     # `min` is 0 on a dead exporter and, through the `or on() vector(0)` fallback, 0 again when the
     # primary's Alloy takes the series away, so BOTH darkness routes trip it. That double-page is
-    # accepted and named, not a defect: a dark telemetry plane and a dead host remove the series
-    # identically, so silencing the Alloy route would make this rule blind to losing the primary
-    # outright. The summary and the runbook section give the responder the discriminator instead.
-    # The fallback is also what lets noDataState stay Alerting -- a healthy fleet sits at an explicit
-    # 1, so NoData here can only mean the datasource itself is gone.
+    # accepted, not a defect: a dark telemetry plane and a dead host remove the series identically, so
+    # silencing the Alloy route would make this rule blind to losing the primary outright, and the
+    # summary and runbook give the responder the discriminator instead. The fallback is also what lets
+    # noDataState stay Alerting -- a healthy fleet sits at an explicit 1, so NoData here can only mean
+    # the datasource itself is gone.
     #
     # `for: 10m` is the only thing between a single missed scrape and a critical page: `up` falls to 0
     # on the FIRST failed scrape at a 60 s scrape interval, so this is ten attempts, and it is the
@@ -593,9 +559,7 @@ rules:
     # `cli/engine/node.py::startup_action` returns None for any boundary that already has a journal
     # artifact (success record OR failed sidecar), a check independent of the [B, B+25 min] window it
     # sits behind. So `cycle_success == 0` implies the sidecar exists implies no re-run is possible,
-    # ever, and the next boundary is 4 h away. `for: 35m` shipped first on the opposite premise --
-    # that a restart inside B+25 min could still flip the gauge back -- which bought 35 minutes of
-    # silence and a summary telling a 03:00 responder the engine had already retried and failed again.
+    # ever, and the next boundary is 4 h away.
     for: 0s
     annotations:
       summary: >-
@@ -622,22 +586,15 @@ rules:
     data:
       # The engine direct-ships its logs exactly as the capture daemon does -- `level` =
       # `record.levelname` at the source and `container` = ZCRYPTO_LOG_SERVICE, set to `engine` in
-      # infra/ansible/roles/engine/templates/compose.yaml.j2 -- and NOTHING selected them: the
-      # capture ERROR rule is `container="capture"` and the ops one is scoped to `host="ops"`, so an
-      # ERROR line from the process holding the live trade key paged nobody. The engine runs only on
-      # the capture primary, hence `host="zcrypto"` alongside the container label; `sum by (host,
-      # ...)` keeps the label the notification template maps to a display name.
+      # infra/ansible/roles/engine/templates/compose.yaml.j2. The engine runs only on the capture
+      # primary, hence `host="zcrypto"` alongside the container label; `sum by (host, ...)` keeps the
+      # label the notification template maps to a display name.
       #
-      # Shape is `zcrypto-capture-error-logs`'s, deliberately identical rather than re-derived: the
-      # `msg` hoist puts the log MESSAGE on the page -- the whole reason a log alert exists, since
-      # without it the page says "3" and the responder goes hunting -- `printf "%.200s"` bounds one
-      # message and `topk(5, ...)` bounds how many; `| json message="message"` parses the
-      # direct-ship JSON body (cli/logging/ship.py's JsonLineFormatter) instead of reading
-      # `__line__`, which would spend ~150 of the 200 characters on the JSON preamble; and `| drop
-      # __error__, __error_details__` is required, not decorative -- `| json` stamps
-      # `__error__="JSONParserErr"` on any line it cannot parse and the query then 400s, taking the
-      # whole rule to execErrState. `or on() vector(0)` keeps a clean window an explicit 0, and the
-      # rule fires on the COUNT arm only, so its labels are genuinely populated when it pages.
+      # Shape is `zcrypto-capture-error-logs`'s, deliberately identical rather than re-derived --
+      # that rule's comment below carries why the `msg` hoist, `topk(5, ...)`, `| json
+      # message="message"` and `| drop __error__, __error_details__` are each load-bearing. `or on()
+      # vector(0)` keeps a clean window an explicit 0, and this rule fires on the COUNT arm only, so
+      # its labels are genuinely populated when it pages.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
@@ -687,32 +644,21 @@ rules:
   # `zcrypto-capture-log-dead-primary` in shape; the WINDOW is derived differently and deliberately.
   #
   # THE ENGINE IS A BURST EMITTER, NOT A CONTINUOUS ONE -- the whole reason this window is derived
-  # rather than copied from the capture canary. Measured 2026-08-08 over the FULL 12.6 days Loki
-  # serves for this selector (974 lines): it emits ~11 lines within ~90 s of each 4-hourly cycle
-  # boundary and nothing between, so most hours carry zero lines and no gap anywhere exceeds 4.5 h.
-  # A window at or under 4 h would false-fire on every healthy inter-cycle gap.
+  # rather than copied from the capture canary. It emits its lines within ~90 s of each 4-hourly
+  # cycle boundary and nothing between, so most hours carry zero lines. A window at or under 4 h
+  # would false-fire on every healthy inter-cycle gap; 6h against the 4.00 h period is 2.00 h of
+  # slack and tolerates exactly zero missed cycles. Do NOT tighten it toward the 15m of the ERROR
+  # rule above: they watch different things.
   #
-  # 6h against a measured 4.00 h period = 2.00 h of slack, and the rolling 6 h count never dropped
-  # below 11 over those 12.6 days (max 34). Note this is by far the TIGHTEST window/period ratio of
-  # any log canary here (~1.5x, against capture's ~210x) -- it is sized to the cycle, and it
-  # tolerates exactly zero missed cycles. Do NOT tighten it toward the 15m of the ERROR rule above:
-  # they watch different things.
+  # ACCEPTED COST: a genuinely missed cycle double-pages. `zcrypto-engine-cycle-stale` fires first and
+  # correctly, both on receiver `metrics`; this rule then follows with a title saying the
+  # LOG PIPELINE is dead when it is fine. The summary's last sentence tells the responder how to tell
+  # them apart, but the phone shows the title first.
   #
-  # ACCEPTED COST, named rather than discovered: a genuinely missed cycle double-pages. The engine's
-  # own `zcrypto-engine-cycle-stale` fires first and correctly (B+40m..B+1h10m, receiver `metrics`);
-  # this rule then fires at ~B+2h01m on receiver `logs` with a title saying the LOG PIPELINE is dead
-  # when it is fine. The summary's last sentence tells the responder how to tell them apart, but the
-  # phone shows the title first.
-  #
-  # MEASURING THIS NEEDS CARE, and the trap is not what it looks like. `count_over_time` emits NO
-  # sample for a step whose range window is empty, so on a burst emitter the surviving points are
-  # just the burst hours -- 4 h apart -- and a range query reads back as a flat "every hour has
-  # lines", the exact opposite of the truth. The `step` is honored; Loki is not at fault. The cheap
-  # fix is the `or on() vector(0)` this rule already carries: with it, step=1h returns the zero hours
-  # (11,0,0,0,11,0,0,0,21,...). Without it, page raw entries and bucket them locally.
-  #
-  # `level=~".+"` verified present on this stream (values: INFO) before being relied on -- an absent
-  # label would make the selector match nothing and park the rule permanently firing.
+  # MEASURING THIS NEEDS CARE: `count_over_time` emits NO sample for a step whose range window is
+  # empty, so on a burst emitter the surviving points are just the burst hours and a range query
+  # reads back as "every hour has lines", the exact opposite of the truth. The `or on() vector(0)`
+  # this rule already carries is the fix -- with it, step=1h returns the zero hours.
   - uid: zcrypto-engine-log-dead
     title: "Engine · log pipeline dead"
     ruleGroup: zcrypto-gate
@@ -773,13 +719,10 @@ rules:
 
   # The execution safety envelope (cli/engine/execgate.py, `_ExecGauges` in cli/engine/command.py):
   # three rules over the six `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
-  # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so every
-  # summary below sends the responder to `zcrypto engine exec-status` on the engine host for the
-  # breakdown remote telemetry cannot show. `zcrypto_exec_gate_level`, `zcrypto_exec_venue_ok` and
-  # `zcrypto_exec_restart_hold` are deliberately NOT alerted here -- every value each can take is
-  # legitimate on its own (see the panel descriptions on the Engine board's execution-envelope row
-  # and NOT_A_FAULT_SIGNAL in tests/test_infra_alert_rules.py), and venue_ok's underlying condition
-  # already has a page from the capture side (zcrypto-capture-venue-not-online).
+  # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so every summary
+  # below sends the responder to `zcrypto engine exec-status` on the engine host for the breakdown
+  # remote telemetry cannot show. The three gauges carrying no rule are recorded with their reason in
+  # NOT_A_FAULT_SIGNAL (tests/test_infra_alert_rules.py).
   - uid: zcrypto-engine-exec-armed-too-long
     title: "Engine · order submission has been armed for over six hours"
     ruleGroup: zcrypto-gate
@@ -1044,13 +987,11 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # Scoped to host="nas" (re-keyed from the old empty-value matcher, spec 00069 D7):
-          # ops's Alloy also ships node_load1 (it sets `external_labels = { host = "ops" }` on
-          # prometheus.remote_write), and ops is a 24-thread box whose normal working load would
-          # trip this Atom-sized `gt 4` threshold constantly. The NAS's config.alloy now sets
-          # `external_labels = { host = "nas" }` too (it used to carry no `host` label at all,
-          # selected via an empty-value "label absent" matcher instead), so an explicit
-          # `host="nas"` selects the NAS's copy of the series only, same partition as before.
+          # Scoped to host="nas" (spec 00069 D7): ops's Alloy also ships node_load1 (it sets
+          # `external_labels = { host = "ops" }` on prometheus.remote_write), and ops is a 24-thread
+          # box whose normal working load would trip this Atom-sized `gt 4` threshold constantly. The
+          # NAS's config.alloy sets `external_labels = { host = "nas" }`, so an explicit `host="nas"`
+          # selects the NAS's copy of the series only.
           expr: node_load1{host="nas"}
           instant: true
           refId: A
@@ -1087,15 +1028,13 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Selects on the `level` LABEL, not a `|= "ERROR"` grep of the line. Alloy now parses our
-      # Python log format at ingest (infra/nas/config.alloy) and strips the level out of the message,
-      # so a text grep for "ERROR" would match NOTHING — silently blind, exactly the failure this rule
-      # already had once. The label also catches `critical`, which the grep never did.
+      # Selects on the `level` LABEL, not a `|= "ERROR"` grep of the line: Alloy parses our Python
+      # log format at ingest (infra/nas/config.alloy) and strips the level out of the message, so a
+      # text grep for "ERROR" would match NOTHING -- silently blind -- and would miss CRITICAL too.
       # `queryType: instant` is load-bearing and Loki-specific: the `instant: true` MODEL field that
-      # the Prometheus rules above use is a Prometheus-datasource setting, and Loki ignores it. Without
-      # this the query ran as a RANGE query and returned a time series, so the threshold node rejected
-      # it with "invalid format of evaluation results ... looks like time series data, only reduced
-      # data can be alerted on" -- the rule was erroring instead of evaluating.
+      # the Prometheus rules above use is a Prometheus-datasource setting and Loki ignores it, so
+      # without this the query runs as a RANGE query and the threshold node rejects the time series
+      # it returns -- the rule errors instead of evaluating.
       #
       # `by (host)` and not `by (host, container)`: the selector already pins the container to one
       # literal, so carrying it would add a label whose value the rule already knows. This rule fires
@@ -1161,56 +1100,31 @@ rules:
       # inverts that: it fires when the loop STOPS saying it succeeded.
       #
       # `failed=0` is load-bearing, not decoration. Matching `pull complete` alone would ALSO be
-      # satisfied by (a) the JOURNAL pull -- "archive pull complete (no verify) ..."
-      # (cli/archive/command.py:104) -- and (b) a CAPTURE pull whose hash verification FAILED, because
-      # :109 logs "pull complete ... failed=N" *before* the :118 check raises. Either would hold this
-      # rule quiet while the capture mirror -- the unbackfillable thing it exists to protect -- was not
-      # advancing at all. The journal line carries no `failed=` field, and a verify failure carries a
-      # non-zero one -- but `failed=0` is NOT capture-specific any more: the LIQUIDATIONS, PANEL, and
-      # (since the OPS-5 cutover, spec 00054 D4) RECONCILED pulls all run `zcrypto archive pull` WITH
-      # verification in this same
-      # container and emit the identical clean line, so any one of them keeps this dead-man green
-      # even if BOTH capture channels are broken. Known, accepted gap: a broken capture pull fails
-      # LOUDLY every cycle, so capture-specific failure is deliberately delegated to the
-      # warning-severity ERROR-logs rule above; this rule owns total silence (loop dead, container
-      # gone, NAS down, log pipeline dark). Tightening the LogQL to a capture-tree match (the line
-      # carries source= naming the tree -- source only; dest= appears on the --no-verify journal
-      # line, never on this one) would make it capture-specific again if that gap is
-      # ever deemed worth closing.
+      # satisfied by the JOURNAL pull -- "archive pull complete (no verify) ..."
+      # (cli/archive/command.py) -- and by a CAPTURE pull whose hash verification FAILED, because the
+      # "pull complete ... failed=N" line is logged BEFORE the check raises. Either would hold this
+      # rule quiet while the capture mirror was not advancing at all. It is NOT capture-specific: the
+      # liquidations, panel and reconciled pulls all run `zcrypto archive pull` WITH verification in
+      # this same container and emit the identical clean line, so capture-specific failure is
+      # deliberately delegated to the warning-severity ERROR-logs rule above, which fails loudly every
+      # cycle; this rule owns total silence (loop dead, container gone, NAS down, log pipeline dark).
+      # A capture-specific tightening would match `source=` naming the tree -- `dest=` appears on the
+      # --no-verify journal line, never on this one.
       #
       # 3h window against a pull that runs hourly (`${ARCHIVE_PULL_INTERVAL:-3600}` in
       # infra/nas/pull-entrypoint.sh): the loop gets three chances to report before this pages, so a
       # single slow or restarted cycle is not enough to wake anyone.
       #
       # `or on() vector(0)` is what makes the dead-man work at all: when the container is gone Loki
-      # returns NO series, and a bare `sum(count_over_time(...))` would then evaluate to NoData
-      # rather than to zero -- the rule would sit in NoData instead of firing, which is the precise
-      # failure it exists to catch. The `or` substitutes an explicit 0, which trips the `lt 1` below.
+      # returns NO series, and a bare `sum(count_over_time(...))` would then evaluate to NoData rather
+      # than to zero -- the rule would sit in NoData instead of firing, which is the precise failure it
+      # exists to catch. The `or` substitutes an explicit 0, which trips the `lt 1` below.
       #
-      # Both arms are unlabelled, so an interpolated `$labels.host` renders EMPTY -- which is why the
-      # summary names the host and container as literal words. Keep it that way.
+      # Keep the bare `sum()`: both arms are unlabelled, so an interpolated `$labels.host` renders
+      # EMPTY -- which is why the summary names the host and container as literal words.
       #
-      # `by (host)` is dropped here. Keep the bare `sum` -- it costs nothing and matches the
-      # `alloy-dark-*` shape -- but the reason once recorded here was WRONG, and the rollout it
-      # licensed is cancelled. Do not re-derive either from the git history of this comment.
-      #
-      # THIS RULE'S CLEAR SENT NO RESOLVED NOTICE, AND LABELS WERE NOT WHY. It pinned `logs`, and
-      # that contact point is minted `disableResolveMessage: true` -- deliberately, since T0047
-      # (`grafana-push.sh` states the reason; spec 00084 tabulates it). Every Loki-sourced rule
-      # pinned `logs`, so none could resolve-notify. Measured by drill-N re-induction 2026-09-02: this
-      # rule fired and cleared with BOTH arms already `{}` and no notice arrived, while
-      # `zcrypto-hcio-watchdog` -- `max(...) or on() vector(999)`, unlabelled on both arms, same
-      # shape, same channel, but on `metrics` -- resolved in ~1 min. The earlier
-      # `Alerting -> Normal (MissingSeries)` account was theorised from a real symptom.
-      #
-      # SO DO NOT ROLL THE SEVEN SIBLINGS. Editing their expressions changes nothing. T0162 fixed it
-      # as a ROUTING change instead: this rule and the seven -- engine-log-dead,
-      # ops-log-pipeline-dead, ops-poller-log-dead, ops-unit-parse-dead, ops-journal-transport-dead,
-      # capture-log-dead-primary, capture-log-dead-secondary -- now pin `metrics`, while the
-      # ERROR-log rules stay on `logs` ("a resolve ping is noise" holds for them, not for a
-      # dead-man). An as-code pin is not live until `grafana-push.sh` has run, so confirm that push
-      # before trusting a channel resolve; rule state (`/api/prometheus/grafana/api/v1/rules`) is
-      # authoritative either way.
+      # Receiver `metrics`, not `logs`: a dead-man's clear IS the news, and `logs` suppresses resolve
+      # notices -- the mechanism and its enforcing test are at `zcrypto-engine-log-dead` above (T0162).
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 10800, to: 0}
@@ -1253,13 +1167,11 @@ rules:
     notification_settings:
       receiver: metrics
 
-  # --- Reconciler: the redundant capture secondary + gap healing (spec 00050 Role C, task 11) -------
-  # Pushed only after the `zcrypto_reconcile_*` series were confirmed VISIBLE in Grafana Cloud. A rule
-  # armed before its metric exists evaluates against nothing and sits silent forever, looking healthy
-  # -- the same class of failure as T0034. Alloy's keep-regex on the WRITER's host must carry
-  # `zcrypto_reconcile_.*` or the series never ship -- the overlay writer runs on ops
-  # (infra/ansible/roles/ops/files/config.alloy); the NAS still lists the family in its own
-  # keep-regex but has published none of it since the spec 00054 D2 cutover.
+  # --- Reconciler: the redundant capture secondary + gap healing (spec 00050 Role C) ---------------
+  # A rule armed before its metric exists evaluates against nothing and sits silent forever, looking
+  # healthy (T0034) -- push only once the series are visible. Alloy's keep-regex on the WRITER's host
+  # must carry `zcrypto_reconcile_.*` or the series never ship; the overlay writer runs on ops
+  # (infra/ansible/roles/ops/files/config.alloy).
 
   - uid: zcrypto-reconcile-exporter-stale
     title: "Reconciler · exporter stale"
@@ -1312,11 +1224,10 @@ rules:
     condition: C
     data:
       # The ledger scan is O(ledger) and invisible inside cycle_duration until it dominates, which is
-      # far too late to be a warning. 10 s is comparable to a whole cycle today, so the ledger has
-      # stopped being a rounding error and become the cost driver. Not an outage: 10 s is 0.6% of the
-      # 1800 s tick, and by the measured fit ~3.3M records holding ~4 GiB, under a tenth of the
-      # MemAvailable the host had when the bar was set. PROVISIONAL -- a linear fit in infra/scripts/bench-ledger-scan.py, not a ledger
-      # ever observed at that size.
+      # far too late to be a warning. 10 s is comparable to a whole cycle, so the ledger has stopped
+      # being a rounding error and become the cost driver; it is not an outage (0.6% of the 1800 s
+      # tick). PROVISIONAL -- a linear fit from infra/scripts/bench-ledger-scan.py, not a ledger ever
+      # observed at that size.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -1358,11 +1269,9 @@ rules:
     data:
       # Why a SECOND rule rather than a higher threshold on the one above: this is the memory failure,
       # and zcrypto-reconcile-cycle-duration structurally cannot see it. Every record is held as a dict
-      # in a list at ~6x the file's on-disk size, so memory binds long before time does -- and a cycle
-      # the OOM reaper kills publishes nothing, leaving cycle_duration STALE rather than high. By the
-      # measured fit 30 s is ~10M records holding ~12 GiB, about a quarter of the MemAvailable read on
-      # zcrypto-ops (the value is docs/reference/fleet.md's ops row, not restated here), wall near 40M;
-      # time would not bind until ~600M. PROVISIONAL -- same fit, and the bar also encodes that
+      # in a list at several times the file's on-disk size, so memory binds long before time does --
+      # and a cycle the OOM reaper kills publishes nothing, leaving cycle_duration STALE rather than
+      # high. PROVISIONAL -- the same fit as the rule above, and the bar also encodes ops's
       # MemAvailable, which moves independently of this repo: read it live as
       # node_memory_MemAvailable_bytes{host="ops"}, never MemFree, which is ~10x smaller.
       - refId: A
@@ -1453,20 +1362,16 @@ rules:
       # for, hence `> 0` rather than a tolerance.
       #
       # The counter is derived by SUMMING an append-only ledger, so it normally only grows. The one
-      # thing that DECREASES it is a deliberate ledger correction (e.g. the classifier-bug record purged
-      # with the owner's approval on 2026-07-14, 6261.8 -> 2661.8 s). Prometheus reads that decrease as a
+      # thing that DECREASES it is a deliberate ledger correction. Prometheus reads that decrease as a
       # counter reset, and a bare `increase()` would then report the whole post-reset value as fresh
-      # permanent loss -- paging the highest-severity alert in the system on an artifact of a correction.
-      # The `and resets(...) == 0` guard suppresses exactly that: the rule fires only on an increase with
-      # NO reset in the window. A genuine new loss is monotone (no reset) and still fires; a correction
-      # (reset) is silenced for one window. Cost: a real loss in the same window as a correction is
-      # delayed until the reset ages out -- and that window is now 24h, not 1h, so the blind spot after
-      # any ledger correction or rebuild is a full day. Accepted deliberately, because at 1h the page
-      # self-resolved to MissingSeries an hour after firing on a real 2,437 s loss; the dashboard panel
-      # shows the trend regardless. The other side of the same widening: a SECOND event inside the same
-      # 24h produces no state transition, so this pages once per day rather than once per event -- the
-      # ledger is the per-event record, the page only has to reach a human.
-      # `or on() vector(0)` keeps the healthy state an explicit 0 rather than NoData. See T0044.
+      # permanent loss -- paging the highest-severity alert in the system on an artifact of a
+      # correction. `and resets(...) == 0` fires only on an increase with NO reset in the window: a
+      # genuine new loss is monotone and still fires; a correction is silenced for one window.
+      # Cost of the 24h window, accepted deliberately: a real loss in the same window as a correction
+      # or a ledger rebuild is delayed until the reset ages out, and a SECOND event inside one window
+      # produces no state transition -- so this pages once per day rather than once per event. The
+      # ledger is the per-event record; the page only has to reach a human. `or on() vector(0)` keeps
+      # the healthy state an explicit 0 rather than NoData. See T0044.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 86400, to: 0}
@@ -1552,27 +1457,26 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The degrading-primary detector -- the gap-rate alert T0003 called for (T0003, resolved, records the origin).
+      # The degrading-primary detector (T0003, resolved, records the origin).
       #
-      # A primary that is quietly falling apart -- reconnecting constantly, dropping seconds at a time --
-      # trips NOTHING else: every gap is healed by the secondary, so residual stays flat; it keeps
+      # A primary that is quietly falling apart -- reconnecting constantly, dropping seconds at a time
+      # -- trips NOTHING else: every gap is healed by the secondary, so residual stays flat; it keeps
       # pinging, so its dead-man stays green; it keeps producing finals, so source-lag stays low. The
       # RATE at which it needs healing is the only thing that reveals it.
       #
       # Reads `healable`, not `healed`: `healed_gap_seconds` counts minted repair only, so it reads 0
-      # wherever minting is off -- T0039's soak ran that way and `ops_reconcile_mint` selects the mode, so
-      # this signal must not depend on the mode. `healable` counts the
-      # seconds the secondary WITNESSED and could cover, in both modes.
+      # wherever minting is off, and `ops_reconcile_mint` selects the mode -- this signal must not
+      # depend on the mode. `healable` counts the seconds the secondary WITNESSED and could cover, in
+      # both modes.
       #
-      # 600s/24h is a starting threshold, not a measured one: ~10 minutes of primary silence a day that
-      # the secondary had to cover. Divided by the live pair count, so 600 really is 600 WALL-CLOCK
-      # seconds -- undivided it was a cross-stream sum, i.e. ~50 s at 12 pairs, tightening silently with
-      # every pair added. The number itself is re-derived only once the counters carry trustworthy
-      # steady-state history; until then treat a firing as "look at the ledger", not as a verdict.
+      # 600s/24h is a starting threshold, not a measured one: ~10 minutes of primary silence a day
+      # that the secondary had to cover. Divided by the live pair count, so 600 really is 600
+      # WALL-CLOCK seconds -- undivided it is a cross-stream sum that tightens silently with every
+      # pair added. Re-derive the number only once the counters carry trustworthy steady-state
+      # history; until then treat a firing as "look at the ledger", not as a verdict.
       #
-      # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule, and MORE so
-      # here: this window is 24h, so without the guard a ledger correction would false-page for a full
-      # day. A rebuild of the ledger resets this counter too. See T0044.
+      # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule (T0044),
+      # and MORE so here: this window is 24h, so a ledger correction would false-page for a full day.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 86400, to: 0}
@@ -1606,12 +1510,9 @@ rules:
       receiver: metrics
 
   # --- Trade backfill: daily trade_id-contiguous healing over Kraken's public REST /Trades ---------
-  # (spec 00053, iter-100; T0052). Provisioned in this file BEFORE the NAS deploy that will first
-  # emit `zcrypto_trade_backfill_*` -- unlike the reconciler block above (pushed only once its
-  # series were already confirmed visible), these two rules must not be pushed yet either, for the
-  # opposite-looking but equally bad reason: `zcrypto-trade-backfill-stale` below sets
-  # `noDataState: Alerting`, and with no series at all yet that would page immediately and forever
-  # until the NAS deploy happens. Push only after that deploy confirms the series are visible.
+  # (spec 00053; T0052.) `zcrypto-trade-backfill-stale` below sets `noDataState: Alerting`, so it
+  # pages immediately and continuously while no `zcrypto_trade_backfill_*` series exists -- push
+  # these two only once the deploy that emits them has landed.
 
   - uid: zcrypto-trade-backfill-stale
     title: "Trade backfill · last success stale"
@@ -1704,15 +1605,13 @@ rules:
       receiver: metrics
 
   # --- Ops node (spec 00054): the timer jobs, the logs pipeline, and the host itself ---------------
-  # Pushed only after Task 3 (the attended Alloy deploy) confirms the underlying series VISIBLE in
-  # Grafana Cloud -- same push-order caveat as the Reconciler/Trade-backfill blocks above: a rule armed
-  # before its metric exists sits silent forever, looking healthy. noDataState is per-rule, not
-  # boilerplate, and the split is a RULE, not a count (counts go stale as rules are added): a rule
-  # whose job is to detect silence -- the dead-men and staleness rules, where no data at all means the
-  # host, Alloy, a transport, or a timer is gone -- uses Alerting, because for it silence IS the
-  # alarm; a rule that grades an outcome (exit codes, ERROR log lines, load) uses OK, because it must
-  # not page a brand-new host for a job that has simply never run yet. Exactly the
-  # `zcrypto-trade-backfill-stale`/`zcrypto-trade-backfill-exit-nonzero` split above, applied here.
+  # A rule armed before its metric exists sits silent forever, looking healthy -- push after the
+  # deploy that emits the series. noDataState is per-rule, not boilerplate, and the split is a RULE,
+  # not a count (counts go stale as rules are added): a rule whose job is to detect silence -- the
+  # dead-men and staleness rules, where no data at all means the host, Alloy, a transport, or a timer
+  # is gone -- uses Alerting, because for it silence IS the alarm; a rule that grades an outcome (exit
+  # codes, ERROR log lines, load) uses OK, because it must not page a brand-new host for a job that
+  # has simply never run yet.
 
   - uid: zcrypto-ops-archive-pull-stalled
     title: "Ops · archive-pull stalled (dead-man)"
@@ -1721,15 +1620,14 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The dead-man for the ops node's overlay-WRITER cycle (T0058: the rsync mirror pull this
-      # rule was written for is retired; the unit/metric names are historical, kept because these
-      # rules are provisioned against them). archive-pull.timer fires at :12 and :42
-      # (infra/ansible/roles/ops/templates/archive-pull.timer.j2) -- 3h is ~6 missed half-hourly
-      # cycles of headroom (kept as provisioned at the cadence doubling, deliberately), same
-      # reasoning as the Gate/Reconciler exporter-stale rules above. A clean cycle AND a
-      # fail-closed gate-skip both bump last_success (a skip is a state, not a fault); a
-      # PERSISTENT skip pages via the reconcile exporter-stale rule instead, which a skipped cycle
-      # never refreshes.
+      # The dead-man for the ops node's overlay-WRITER cycle. The unit and metric names are
+      # historical -- the rsync mirror pull they were written for is retired (T0058) -- and are kept
+      # because these rules are provisioned against them. archive-pull.timer fires at :12 and :42
+      # (infra/ansible/roles/ops/templates/archive-pull.timer.j2), so 3h is ~6 missed half-hourly
+      # cycles of headroom, the same reasoning as the Gate/Reconciler exporter-stale rules above. A
+      # clean cycle AND a fail-closed gate-skip both bump last_success (a skip is a state, not a
+      # fault); a PERSISTENT skip pages via the reconcile exporter-stale rule instead, which a
+      # skipped cycle never refreshes.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -1818,7 +1716,7 @@ rules:
     orgId: 1
     condition: C
     data:
-      # D9's rule. verified-replay.timer fires daily at 05:23 UTC
+      # Spec 00054 D9's rule. verified-replay.timer fires daily at 05:23 UTC
       # (infra/ansible/roles/ops/templates/verified-replay.timer.j2) -- 48h is 2 missed days, matching
       # the trade-backfill staleness rule's reasoning for a daily-cadence job.
       - refId: A
@@ -1844,7 +1742,6 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      # 48h = two daily replay cycles; the invariant is D9 in the spec vocabulary.
       summary: "No successful verified-path journal replay in over 48h -- the daily replay has stopped running or has not succeeded in two cycles. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-verified-replay-stale"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "402"
@@ -1901,23 +1798,21 @@ rules:
     ruleGroup: zcrypto-ops
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
-    # SUPERSEDES `Ops · verify-replay non-zero exit` (uid zcrypto-ops-verify-replay-exit-nonzero,
-    # removed here): ops_verify_replay_exit_code stays 1 forever once any hour has ever failed, so
-    # that rule paged nightly for an already-triaged, unchanged finding exactly as often as for a
-    # real new one. Split into two rules instead (spec 00077 D1/D4): this one owns "a NEW hour
-    # stopped replaying that did not fail in the prior sweep" (mode i); `Ops · verify-replay run
-    # broken` below owns "the sweep itself did not complete" (mode iii). exit_code is deliberately
-    # no longer alerted on -- do not "restore" this rule against it; the two new rules are strictly
-    # more precise than it was.
+    # SUPERSEDES `Ops · verify-replay non-zero exit` (uid zcrypto-ops-verify-replay-exit-nonzero):
+    # ops_verify_replay_exit_code stays 1 forever once any hour has ever failed, so that rule could
+    # not tell a new finding from an already-triaged one and paged nightly for both. Split into two
+    # rules instead (spec 00077 D1/D4): this one owns "a NEW hour stopped replaying that did not fail
+    # in the prior sweep" (mode i); `Ops · verify-replay run broken` below owns "the sweep itself did
+    # not complete" (mode iii). exit_code is deliberately no longer alerted on -- do not "restore" a
+    # rule against it.
     #
-    # A known bad hour is a CONSTANT in ops_verify_replay_failed_hours, so it contributes zero to
-    # the delta; only a new failure moves the count. Same delta-over-a-window shape as `Gate ·
-    # streak reset` above.
+    # A known bad hour is a CONSTANT in ops_verify_replay_failed_hours, so it contributes zero to the
+    # delta; only a new failure moves the count. Same delta-over-a-window shape as `Gate · streak
+    # reset` above.
     #
     # Known blind spot, deliberate: NO rule watches ops_verify_replay_reused (nor duration /
-    # audit_mismatches) -- a busted checkpoint silently reverts every sweep to a ~8 h full rescan
-    # while all three rules read healthy. Reading `reused` stays a deliberately-human check on the
-    # ops host; if that ever changes, the rule belongs beside these three.
+    # audit_mismatches) -- a busted checkpoint silently reverts every sweep to a full rescan while
+    # all three rules read healthy. Reading `reused` stays a deliberately-human check on the ops host.
     condition: C
     data:
       - refId: A
@@ -2021,22 +1916,21 @@ rules:
     # `pending`. A backlog is normal and self-clearing -- a deliberate re-verification creates one by
     # design. What is not normal is one that stops SHRINKING, which means the instrument is degraded
     # (budget mis-set to 0, the drain broken, the state dir lost nightly), not that the data is bad.
-    # Hence warning: nothing here says the archive is wrong. This is why spec 00077 D8's "no standing
+    # Hence warning: nothing here says the archive is wrong, which is why spec 00077 D8's "no standing
     # known-bad-hours alert" precedent does not apply.
     #
     # The shape. 26h spans EXACTLY the last two nightly runs -- wide enough that night two's sample is
     # always inside it (24h plus slack for a late start), narrow enough that a third night's history
     # never is, so the sign of `delta` means "did the last run make progress" and nothing else.
     #
-    # `for: 27h` is arithmetic, not taste, and getting it wrong is how the first draft of this rule
-    # paged on healthy drains. `pending` is a PERSISTENT textfile gauge -- the runner prints it every
-    # run, so it is scraped continuously and holds its value between runs. The condition goes true at
-    # the bump night's publish T1 and CANNOT go false until the window's left edge passes T1: before
-    # then the window still contains a pre-bump sample, so `delta` stays positive even after night
-    # two's decrease has landed. A healthy drain therefore holds this condition true for exactly
-    # max(24h, window) = 26h, and `for` must STRICTLY exceed that -- `for: 25h` fires an hour after
-    # night two, identically to a stuck backlog, and even `for: 26h` trips on a 26h-long true run.
-    # 27h leaves an hour of margin. Do not shorten it, and if you widen the window, widen this too.
+    # `for: 27h` is arithmetic, not taste. `pending` is a PERSISTENT textfile gauge -- the runner
+    # prints it every run, so it is scraped continuously and holds its value between runs. The
+    # condition goes true at the bump night's publish T1 and CANNOT go false until the window's left
+    # edge passes T1: before then the window still contains a pre-bump sample, so `delta` stays
+    # positive even after night two's decrease has landed. A healthy drain therefore holds this
+    # condition true for exactly max(24h, window) = 26h, and `for` must STRICTLY exceed that -- even
+    # `for: 26h` trips on a 26h-long true run. 27h leaves an hour of margin. Do not shorten it, and if
+    # you widen the window, widen this too.
     #
     # Two query nodes rather than this file's usual one, because the condition is a conjunction:
     # without `$A > 0` a backlog drained to zero reads `delta == 0` forever and pages permanently on a
@@ -2244,18 +2138,15 @@ rules:
     condition: C
     data:
       # Scoped to host="ops": infra/ansible/roles/ops/files/config.alloy sets
-      # `external_labels = { host = "ops" }` on prometheus.remote_write, so every metrics series
-      # this Alloy ships carries host="ops" -- that's what makes this selector resolve. The NAS's
-      # own node_load1 now carries `host="nas"` too (infra/nas/config.alloy, spec 00069 D7), so
-      # `NAS · load high` above scopes itself with `{host="nas"}` (see that rule's own comment) --
-      # the two rules partition the metric between the two hosts.
+      # `external_labels = { host = "ops" }` on prometheus.remote_write, so every metrics series this
+      # Alloy ships carries host="ops" -- and `NAS · load high` above scopes itself `{host="nas"}`,
+      # so the two rules partition the metric between the two hosts.
       #
-      # Threshold: the ops box has 24 threads (specs 00050 and 00054; the role defaults record no CPU count), so the NAS
-      # rule's `gt 4` (100% of its 4 cores) would not mean the same thing here. `gt 20` is ~83% of 24
-      # threads rather than 100%: ops runs several concurrent services (Alloy, the ops timers, and
-      # the overlay writer among them) whose transient overlaps are normal, so full-saturation would be
-      # noisier than the NAS's single-purpose box; 20 keeps the same "sustained saturation, not a
-      # transient burst" intent with headroom for that cross-service scheduling noise.
+      # Threshold: the ops box has 24 threads (specs 00050 and 00054), so the NAS rule's `gt 4` (100%
+      # of its 4 cores) would not mean the same thing here. `gt 20` is ~83% of 24 threads rather than
+      # 100%: ops runs several concurrent services (Alloy, the ops timers, the overlay writer) whose
+      # transient overlaps are normal, so full-saturation would be noisier than on the NAS's
+      # single-purpose box; 20 keeps the same "sustained saturation, not a transient burst" intent.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -2295,57 +2186,38 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the
-      # parse stages strip the level out of the message line, so a grep would be silently blind;
+      # Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the parse
+      # stages strip the level out of the message line, so a grep would be silently blind;
       # `queryType: instant` for the same Loki-specific reason). It covers every container that ships
-      # from the ops node -- the `zcrypto-*` units (`{container=~"zcrypto-.*"}`, not a fixed count), Alloy's own logs, and the liquidations poller,
-      # a long-lived daemon whose errors flip NO exit-code metric, so this rule is its ONLY error
-      # channel.
+      # from the ops node: Alloy's own logs, the `zcrypto-*` units, and the liquidations poller, a
+      # long-lived daemon whose errors flip NO exit-code metric, so this rule is its ONLY error channel.
       #
-      # The container selector is ENUMERATED, not host-wide, and the enumeration was measured rather
-      # than guessed (`sum by (container) (count_over_time({host="ops"}[7d]))`): alloy, liquidations,
-      # zcrypto-archive-pull, zcrypto-panel-materialize, zcrypto-verified-replay, zcrypto-verify-replay.
-      # `zcrypto-.*` rather than an enumerated unit list, so a new unit is watched the day the journal
-      # keep-regex admits it -- tape-bars arrived exactly that way. The bound matters twice: a host-wide selector cannot say WHICH service
-      # errored, and under a storm it is a distinct-line cardinality hazard in Loki query cost as well
-      # as in Slack message length. The cost is stated: a container outside this list ships errors
-      # nothing watches -- but nothing ships from this host without an Alloy or compose change, and
-      # that change is where the list is extended. A read over the full 14 d retained shows several dead container labels
-      # (`alloy-alloy`, `zcrypto-ops-liquidations`, docker's random names) from the retired
-      # docker-socket path; none has produced a line in 7d and the enumeration deliberately omits them.
+      # The container selector is BOUNDED rather than host-wide, and `zcrypto-.*` rather than an
+      # enumerated unit list so a new unit is watched the day the journal keep-regex admits it. The
+      # bound matters twice: a host-wide selector cannot say WHICH service errored, and under a storm
+      # it is a distinct-line cardinality hazard in Loki query cost as well as in Slack message
+      # length. Nothing ships from this host without an Alloy or compose change, and that change is
+      # where the selector is extended.
       #
       # The `msg` label hoists the log MESSAGE onto the page, which is the whole reason a log alert
       # exists -- without it the page says "7" and the responder goes hunting. `printf "%.200s"`
       # bounds one message and `topk(5, ...)` bounds how many; topk is NOT optional, since without it
       # a log storm mints one alert instance per distinct line and blows past Slack's length limit.
       #
-      # Two stages stand between the line and the label, and both are load-bearing:
+      # `| json message="message"` and NOT a bare `__line__`, because this selector spans BOTH line
+      # shapes on this host: the liquidations poller direct-ships a JSON BODY (cli/logging/ship.py's
+      # JsonLineFormatter) while the journal units arrive already flattened by Alloy's parse stage.
+      # Reading `__line__` raw spends most of the 200 characters on the JSON preamble; the
+      # `{{ if .message }}` fallback keeps the raw line for the already-flat streams, so one
+      # expression serves both shapes. `| drop __error__, __error_details__` is required for the
+      # reason `Capture · daemon ERROR logs` below records, and here it is also what ADMITS the
+      # journal units at all -- `| __error__=""` would drop them instead.
       #
-      #   `| json message="message"` -- NOT a bare `__line__`. This selector spans both line shapes on
-      #   this host: the liquidations poller direct-ships a JSON BODY (cli/logging/ship.py's
-      #   JsonLineFormatter: ts/level/logger/file/line/message), while the journal units arrive already
-      #   flattened by Alloy's parse stage. Reading `__line__` raw spends ~150 of the 200 characters on
-      #   the JSON preamble and truncates the message mid-sentence -- a page that LOOKS like it answered
-      #   the question. Measured, not theorised. The `{{ if .message }}` fallback keeps the raw line for
-      #   the already-flat streams, so one expression serves both shapes.
-      #
-      #   `| drop __error__, __error_details__` -- required, and do not simplify it away. `| json` stamps
-      #   `__error__="JSONParserErr"` on every non-JSON line, and the query then fails with HTTP 400 the
-      #   moment one journal-unit line enters the pipeline; the whole rule goes to execErrState. Clearing
-      #   the label instead is impossible -- Loki rejects `label_format __error__=...` with "__error__
-      #   cannot be formatted" -- and `| __error__=""` would DROP the journal units rather than admit
-      #   them. `drop` is the only stage that keeps both shapes. All three behaviours confirmed against
-      #   live Loki before this shipped.
-      #
-      # The `level` label reaches this rule via TWO independent paths (00068 T6/T7/T8 review): the
-      # `zcrypto-*` units and Alloy's own logs get it from config.alloy's parse stages at ingest;
-      # the liquidations poller now direct-ships (spec 00068 D3/T6) and stamps `level` itself at the
-      # source (cli/logging/ship.py: `level` = `record.levelname`, always present) -- Alloy is not in
-      # that path at all. T0060: before this branch's fix both config.alloy stages' selectors were
-      # the NAS's container names, so the label was absent on every ops stream and this rule could
-      # never have fired -- which is why it lands together with that fix. NoData is normal here
-      # (quiet logs = healthy; liveness is owned by the dead-men below), and `or on() vector(0)`
-      # keeps a clean window an explicit 0 anyway.
+      # The `level` label reaches this rule via TWO independent paths: config.alloy's parse stages at
+      # ingest for the `zcrypto-*` units and Alloy's own logs, and the poller's own direct-ship
+      # handler at the source (cli/logging/ship.py: `level` = `record.levelname`, always present),
+      # which Alloy is not in at all. NoData is normal here (quiet logs = healthy; liveness is owned
+      # by the dead-men below), and `or on() vector(0)` keeps a clean window an explicit 0 anyway.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
@@ -2399,25 +2271,20 @@ rules:
     condition: C
     data:
       # The canary that closes the ERROR-logs rule's green-when-blind gap for the Alloy-fed half of
-      # its scope (Alloy's own logs + the `zcrypto-*` units (`{container=~"zcrypto-.*"}`, not a fixed count)). Scoped to `container="alloy"`
-      # (review finding, 00068 T6/T7/T8 review Critical 2) -- NOT host-wide any more: the liquidations
-      # poller now direct-ships (spec 00068 D3/T6) with its OWN `level` stamped at the source
-      # (cli/logging/ship.py), completely bypassing Alloy, so its ~5-min heartbeat alone would have
-      # kept a host-wide query green forever even if Alloy/loki.write died outright -- a dead-man
-      # pinned green is strictly worse than NoData, because NoData is visible. Alloy's own logfmt
-      # stream (config.alloy's `{container="alloy"}` parse stage) is continuous while Alloy lives, is
-      # Alloy-produced end to end, and cannot be faked by anything the poller does -- so THIS rule
-      # fires on the absence of ANY parsed Alloy-stream line in 6h, which means Alloy itself (or its
-      # own parse/ship path) is dead. Deliberately NOT `container=~"zcrypto-.*"` either: on a
-      # fail-closed skip-gate streak (archive-pull.sh.j2) the unit emits only unleveled echoes, so a
-      # level-filtered 6h query on the units alone would false-fire during a legitimate long skip
-      # streak -- `zcrypto-ops-unit-parse-dead` below covers that stream instead, at a wider 26h
-      # window sized to tolerate it. This rule is structurally blind to a journal-transport-only
-      # death (Alloy alive, journal reader wedged); `zcrypto-ops-journal-transport-dead` below owns
-      # that failure mode, and `zcrypto-ops-poller-log-dead` below owns the poller's own direct-ship
-      # path, which this rule can no longer see at all now that it is Alloy-scoped.
-      # `or on() vector(0)` keeps the query returning data while it is intact; execErrState
-      # Alerting still covers "Loki unreachable".
+      # its scope (Alloy's own logs plus the `zcrypto-*` units). Scoped to `container="alloy"`, NOT
+      # host-wide: the liquidations poller direct-ships with its OWN `level` stamped at the source
+      # (cli/logging/ship.py), bypassing Alloy entirely, so its ~5-min heartbeat alone would keep a
+      # host-wide query green even if Alloy/loki.write died outright -- and a dead-man pinned green is
+      # strictly worse than NoData, because NoData is visible. Alloy's own logfmt stream
+      # (config.alloy's `{container="alloy"}` parse stage) is continuous while Alloy lives and cannot
+      # be faked by anything the poller does, so the absence of ANY parsed line on it in 6h means
+      # Alloy itself, or its own parse/ship path, is dead. Deliberately NOT `container=~"zcrypto-.*"`
+      # either: on a fail-closed skip-gate streak (archive-pull.sh.j2) the unit emits only unleveled
+      # echoes, so a level-filtered 6h query on the units alone would false-fire during a legitimate
+      # long streak -- `zcrypto-ops-unit-parse-dead` below covers that stream at a wider 26h window.
+      # `zcrypto-ops-journal-transport-dead` and `zcrypto-ops-poller-log-dead` below own the journal
+      # transport and the poller's direct-ship path respectively. `or on() vector(0)` keeps the query
+      # returning data while it is intact; execErrState Alerting still covers "Loki unreachable".
       #
       # `by (host)` is for the notification's label line and is INERT at fire time -- the fire path is
       # the unlabelled `or on() vector(0)` arm -- so the summary names host and container literally.
@@ -2451,12 +2318,8 @@ rules:
           refId: C
           conditions:
             - evaluator: {type: lt, params: [1]}
-    # Alerting, not OK (review finding): this is a fires-on-silence dead-man of critical severity,
-    # the same class as zcrypto-nas-archive-pull-stalled above ("NoData here means the log pipeline
-    # itself died -- that IS the alarm"). While the `or on() vector(0)` fallback is intact the query
-    # always returns data, so Alerting never fires falsely; it is the belt-and-braces layer for the
-    # day a future edit drops the fallback, or a Grafana/Loki edge maps an empty response to NoData
-    # -- with OK the canary would park green in exactly the blind state it exists to page on.
+    # Alerting, not OK: a fires-on-silence dead-man of critical severity -- same posture and reason as
+    # `zcrypto-engine-log-dead` above, where it is recorded in full.
     noDataState: Alerting
     execErrState: Alerting
     for: 0s
@@ -2476,18 +2339,15 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The liquidations poller is now the ONLY ops workload that bypasses Alloy entirely
-      # (direct-ship, spec 00068 D3/T6) -- nothing watched its own shipping path in isolation until
-      # this rule (review finding, 00068 T6/T7/T8 review Critical 2): `zcrypto-ops-log-pipeline-dead`
-      # above is now scoped to Alloy only and structurally cannot see this container at all. Mirrors
-      # the capture hosts' own per-container canaries (`zcrypto-capture-log-dead-primary/secondary`):
-      # `level` comes from the poller's OWN direct-ship handler (cli/logging/ship.py: `level` =
-      # `record.levelname`, always present, no regex, Alloy not involved), so <1 line in 6h means the
-      # poller's ship path is dead (the --ship-logs flag lost at render time, its Loki credentials
-      # dead, or the container gone) -- not a quiet host, since the poller runs continuously on a
-      # ~5-min cycle. `or on() vector(0)` keeps the query returning data while intact.
-      #
-      # `by (host)` is inert at fire time -- see `zcrypto-ops-log-pipeline-dead` above for why.
+      # The liquidations poller is the ONLY ops workload that bypasses Alloy entirely (direct-ship,
+      # spec 00068 D3/T6), and `zcrypto-ops-log-pipeline-dead` above is scoped to Alloy and so
+      # structurally cannot see this container at all. Mirrors the capture hosts' own per-container
+      # canaries: `level` comes from the poller's OWN direct-ship handler (cli/logging/ship.py:
+      # `level` = `record.levelname`, always present, no regex, Alloy not involved), so <1 line in 6h
+      # means the poller's ship path is dead (the --ship-logs flag lost at render time, its Loki
+      # credentials dead, or the container gone) -- not a quiet host, since the poller runs
+      # continuously on a ~5-min cycle. `or on() vector(0)` keeps the query returning data while
+      # intact; `by (host)` is inert at fire time -- see `zcrypto-ops-log-pipeline-dead` above.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 21600, to: 0}
@@ -2540,27 +2400,23 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Restores the T0060 coverage `zcrypto-ops-log-pipeline-dead` used to carry for the four
-      # zcrypto-* units before this rework scoped that rule to Alloy only (review finding, 00068
-      # T6/T7/T8 review Critical 2) -- without this, a parse regression on config.alloy's zcrypto
-      # stage (the stage.regex line-shape, the container selector, the label scheme) would go
-      # completely undetected: Alloy itself stays alive and its OWN logfmt stream (watched by
-      # `zcrypto-ops-log-pipeline-dead` above) keeps flowing, so that canary would never notice, and
-      # `Ops · ERROR logs` would read 0 = healthy forever for the unit streams specifically.
+      # Covers the `zcrypto-*` units, which `zcrypto-ops-log-pipeline-dead` above cannot: a parse
+      # regression on config.alloy's zcrypto stage (the stage.regex line-shape, the container
+      # selector, the label scheme) leaves Alloy itself alive and its OWN logfmt stream flowing, so
+      # that canary never notices while `Ops · ERROR logs` reads 0 = healthy for the unit streams.
+      #
       # Deliberately level-filtered AND a wide 26h window (matching `zcrypto-ops-journal-transport-
-      # dead`'s own window below, for the same reason): during a fail-closed skip-gate streak
-      # archive-pull emits only unleveled echoes, but panel-materialize (hourly) and verify-replay/
-      # verified-replay (daily) run on independent schedules unaffected by that gate, so at least one
-      # of the `zcrypto-*` units produces a leveled line well within 26h even through an extended streak --
-      # a 6h window on this same selector would false-fire and was rejected for that reason.
+      # dead`'s window below, for the same reason): during a fail-closed skip-gate streak archive-pull
+      # emits only unleveled echoes, but panel-materialize (hourly) and verify-replay/verified-replay
+      # (daily) run on independent schedules unaffected by that gate, so at least one `zcrypto-*` unit
+      # produces a leveled line well within 26h even through an extended streak -- a 6h window on this
+      # same selector would false-fire and was rejected for that reason.
       #
       # `by (host, container)` -- container is a REGEX here, so it is real information on the label
       # line rather than something the rule already knows. It does not change when this rule fires:
       # `count_over_time` yields no series at all for a silent container (never a zero), so one live
-      # unit still leaves every series >= 1 and the `lt 1` false, exactly as the bare `sum()` did.
-      # And it is INERT at fire time for the same reason as its siblings -- all the `zcrypto-*` units going
-      # quiet empties the left arm and the unlabelled `or on() vector(0)` is what crosses the
-      # threshold -- so the summary names host and containers literally.
+      # unit still leaves every series >= 1 and the `lt 1` false, exactly as a bare `sum()` would. It
+      # is INERT at fire time like its siblings, so the summary names host and containers literally.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 93600, to: 0}
@@ -2611,31 +2467,25 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The journal-scoped companion to the canary above. `zcrypto-ops-log-pipeline-dead` is scoped to
-      # `container="alloy"` (00068 T6/T7/T8 review) -- it proves Alloy's OWN journald-driver stream
-      # is flowing, not that the SEPARATE journal-reader path carrying the `zcrypto-*` units (`{container=~"zcrypto-.*"}`, not a fixed count) is
-      # intact, so it cannot see a journal-transport-only death either -- and loki.source.journal is
-      # the SOLE carrier of those units' logs, including the reconcile skip-gate warning this
-      # pipeline exists to ship. The unit failure modes it covers are all silent everywhere else: a
-      # rebuilt host where /var/log/journal does not exist (docker CREATES an empty dir for the bind
-      # mount, so Alloy starts fine and tails an empty journal forever), journald flipping to volatile
-      # storage (/run/log/journal, outside the mount), systemd-journal gid drift after an OS
-      # reinstall, or the keep regex going stale after a unit rename. The units' exit-code and
-      # staleness metrics don't cover log SHIPPING, so no other rule fires for any of these.
+      # The journal-scoped companion to the canary above, which is scoped to `container="alloy"` and
+      # so proves Alloy's OWN journald-driver stream is flowing, not that the SEPARATE journal-reader
+      # path carrying the `zcrypto-*` units is intact. loki.source.journal is the SOLE carrier of those
+      # units' logs, including the reconcile skip-gate warning this pipeline exists to ship, and the
+      # failure modes are silent everywhere else -- a rebuilt host where /var/log/journal does not
+      # exist (docker CREATES an empty dir for the bind mount, so Alloy starts fine and tails an empty
+      # journal forever), journald flipping to volatile storage (/run/log/journal, outside the mount),
+      # systemd-journal gid drift after an OS reinstall, or the keep regex going stale after a unit
+      # rename -- because the units' exit-code and staleness metrics do not cover log SHIPPING.
       #
-      # Scoping: `container="zcrypto-archive-pull"` can ONLY come from the journal path -- not
-      # because a docker-discovery drop rule filters it out (there is no docker path left at all,
-      # discovery.docker retired fleet-wide, 00068 D6/D8), but because these units run their
-      # work as an ephemeral `docker run --rm` ATTACHED to the unit (T0060, config.alloy) -- their
-      # stdout is journal-stamped as part of the unit's own log stream, never a separately
-      # discoverable container. So 26h of silence from this stream isolates the journal transport
-      # specifically. Count ANY line, NOT level-parsed: the hourly archive-pull unit writes at
-      # least one line in every code path
-      # (reconcile CLI INFO on the happy path, the skip-gate/failure echoes otherwise), but its own
-      # echoes carry no level label, so a level-filtered query would false-fire during a
-      # pull-failure streak. 26h = a full day of hourly runs plus headroom.
-      #
-      # `by (host)` is inert at fire time -- see `zcrypto-ops-log-pipeline-dead` above for why.
+      # Scoping: `container="zcrypto-archive-pull"` can ONLY come from the journal path, because these
+      # units run their work as an ephemeral `docker run --rm` ATTACHED to the unit (T0060,
+      # config.alloy) -- their stdout is journal-stamped as part of the unit's own log stream, never a
+      # separately discoverable container. So 26h of silence from this stream isolates the journal
+      # transport specifically. Count ANY line, NOT level-parsed: the unit writes at least one line in
+      # every code path (reconcile CLI INFO on the happy path, the skip-gate/failure echoes
+      # otherwise), but its own echoes carry no level label, so a level-filtered query would
+      # false-fire during a pull-failure streak. 26h = a full day of runs plus headroom. `by (host)`
+      # is inert at fire time -- see `zcrypto-ops-log-pipeline-dead` above.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 93600, to: 0}
@@ -2681,21 +2531,19 @@ rules:
       receiver: metrics
 
   # ---- Capture hosts (zcrypto = primary + engine, zcrypto-red = secondary) --------------------
-  # First alert rules for the capture VPSes. They ship host metrics + container logs via Alloy only
-  # since iter-105 (spec 00057 D5); before that no rule selected host="zcrypto"/"zcrypto-red", so the
-  # unbackfillable L2 spool's disk-free and the capture daemon's ERROR logs were unwatched in Grafana.
-  # The three CONTENT rules (disk/load/error) carry host=~"zcrypto|zcrypto-red" (external_labels
-  # host=<hostname>, roles/capture/files/config.alloy) and fire per host. They are noDataState: OK,
-  # deliberately UNLIKE the NAS host-resource rules' Alerting -- and stay OK permanently, because
-  # "this host's telemetry went dark" is owned by the two per-host log-dead CANARIES below
-  # (noDataState: Alerting), not by making each content rule page on NoData (which would false-page on
-  # a transient Alloy remote_write gap, like the ops-node DNS incident). Division of labor: the content
-  # rules own "bad while alive"; the canaries own "this host's capture log plane is dark" -- a
-  # parse-chain regression on a live daemon (the T0060 class, which silently blinds the ERROR rule) OR
-  # that host's Alloy dying; the healthchecks.io dead-man (withheld-ping, T0032; independent domain)
-  # owns "the daemon itself died / the disk actually filled". The canaries are PER-HOST (not one
-  # collective) because a SINGLE host's Alloy death is otherwise invisible to everything: the content
-  # rules go NoData->OK and the daemon keeps pinging the dead-man.
+  # These hosts ship host metrics + container logs via Alloy (spec 00057 D5). The three CONTENT rules
+  # (disk/load/error) carry host=~"zcrypto|zcrypto-red" (external_labels host=<hostname>,
+  # roles/capture/files/config.alloy) and fire per host. They are noDataState: OK, deliberately UNLIKE
+  # the NAS host-resource rules' Alerting, and stay OK permanently, because "this host's telemetry
+  # went dark" is owned by the two per-host log-dead CANARIES below (noDataState: Alerting), not by
+  # making each content rule page on NoData -- which would false-page on a transient Alloy
+  # remote_write gap. Division of labor: the content rules own "bad while alive"; the canaries own
+  # "this host's capture log plane is dark" -- a parse-chain regression on a live daemon (the T0060
+  # class, which silently blinds the ERROR rule) OR that host's Alloy dying; the healthchecks.io
+  # dead-man (withheld-ping, T0032; an independent failure domain) owns "the daemon itself died / the
+  # disk actually filled". The canaries are PER-HOST (not one collective) because a SINGLE host's
+  # Alloy death is otherwise invisible to everything: the content rules go NoData->OK and the daemon
+  # keeps pinging the dead-man.
   - uid: zcrypto-capture-disk-low
     title: "Capture · spool disk low"
     ruleGroup: zcrypto-capture
@@ -2703,12 +2551,11 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The unbackfillable L2 spool (/var/lib/zcrypto-capture) is on the root fs -- mountpoint="/"
-      # resolves live for both hosts (verified 2026-07-19; free ratio 0.70 primary / 0.79 secondary).
-      # 10% free is ~8 GB / ~16 days of runway at the measured 0.48 GB/day -- a wide EARLY warning that
-      # fires long before the daemon's own 1 GiB DiskWatermark (whose breach withholds the dead-man
-      # ping, T0032) and the ~14-day prune ring (spec 00050 D8). Firing here means the ring broke or an
-      # unexpected consumer appeared.
+      # The unbackfillable L2 spool (/var/lib/zcrypto-capture) is on the root fs, which is why the
+      # selector is mountpoint="/". 10% free is a wide EARLY warning that fires long before the
+      # daemon's own 1 GiB DiskWatermark (whose breach withholds the dead-man ping, T0032) and the
+      # ~14-day prune ring (spec 00050 D8): firing here means the ring broke or an unexpected
+      # consumer appeared.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -3017,15 +2864,15 @@ rules:
       # rung 1 resubscribes the pair on the not-was_desynced transition, then a grace, then rung 2
       # and a backoff, then a cooldown -- deliberately bounded, because retrying in a loop trips
       # Kraken's rate limit. So a pair still desynced at 15 min is one the whole ladder failed to
-      # recover, not one attempt that went unretried. min_over_time, not max: a desync that HEALED within the
-      # window has a 0 in it, so only a pair desynced for the whole 15 min fires -- the stuck shape,
-      # not the transient one the daemon handles by itself 234/234 times.
+      # recover, not one attempt that went unretried. min_over_time, not max: a desync that HEALED
+      # within the window has a 0 in it, so only a pair desynced for the whole 15 min fires -- the
+      # stuck shape, not the transient one the daemon handles by itself.
       #
       # This is not one pair's problem. `gap_monitor.is_healthy()` is False while ANY pair has an
       # open gap and the healthcheck ping is gated on it, so one stuck pair silences this host's
-      # dead-man for ALL 12 -- the hc.io watchdog then fires and STAYS fired, and any later, worse
-      # fault on the same host produces no new page while that signal is saturated. This rule is
-      # what names the pair; the dead-man only says the host went quiet.
+      # dead-man for every pair -- the hc.io watchdog then fires and STAYS fired, and any later,
+      # worse fault on the same host produces no new page while that signal is saturated. This rule
+      # is what names the pair; the dead-man only says the host went quiet.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -3064,17 +2911,16 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The second half of T0008's trigger, self-evaluating. The ~200/day desync rate was OUR bug
-      # (an unpruned book resurfacing phantom levels, fixed 2026-07-13: replaying a real hour went
-      # 482/117/398 CRC failures to ZERO with the depth prune), so any post-fix resubscribe is a
-      # genuine venue/network event and should be rare. More than one in a day means either the rate
-      # is re-elevating or a pair is flapping desync/heal -- neither is visible in the stuck-pair
-      # rule above, which only sees a pair that never recovers. (At a 60 s scrape a fast flapper is
-      # invisible to both as a heal; this rule catches it through the counter, not the gauge.)
+      # The second half of T0008's trigger, self-evaluating. The desync rate this was written against
+      # was OUR bug -- an unpruned book resurfacing phantom levels, fixed by the depth prune -- so a
+      # resubscribe now is a genuine venue/network event and should be rare. More than one in a day
+      # means either the rate is re-elevating or a pair is flapping desync/heal, neither of which the
+      # stuck-pair rule above can see: it only catches a pair that never recovers, and at a 60 s
+      # scrape a fast flapper reads as a heal.
       #
-      # NOTE: this counter carries no `pair` label (one series per host), so it says THAT the rate
-      # rose, not which pair. Cross-reference zcrypto_capture_book_desynced to find it.
-      # `increase()` handles the counter reset on container recreate.
+      # This counter carries no `pair` label (one series per host), so it says THAT the rate rose, not
+      # which pair -- cross-reference zcrypto_capture_book_desynced to find it. `increase()` handles
+      # the counter reset on container recreate.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 86400, to: 0}
@@ -3118,18 +2964,18 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The recovery ladder's resubscribe leg has an alert for how OFTEN it runs (above) and, until
-      # now, none for whether it WORKS. Both counters mean the ladder is degraded, differently:
-      # a rejected frame (the venue answered subscribe/unsubscribe error, correlated by req_id) means
-      # the desync recovery did not happen at all and the book stays stale; a missing unsubscribe ack
-      # means the subscribe was sent blind into the race the ack exists to close, so the resubscribe
-      # may be silently rejected downstream. Summed because the response is the same -- read the
-      # capture log for which, the lines carry the pair.
+      # The recovery ladder's resubscribe leg has an alert for how OFTEN it runs (above) and this one
+      # for whether it WORKS. Both counters mean the ladder is degraded, differently: a rejected frame
+      # (the venue answered subscribe/unsubscribe error, correlated by req_id) means the desync
+      # recovery did not happen at all and the book stays stale; a missing unsubscribe ack means the
+      # subscribe was sent blind into the race the ack exists to close, so the resubscribe may be
+      # silently rejected downstream. Summed because the response is the same -- read the capture log
+      # for which, the lines carry the pair.
       #
       # A rejection also logs at ERROR and so already reaches the capture ERROR-log rule; this exists
       # because the ack TIMEOUT logs at WARNING and reaches nothing, and because a rate is what
-      # distinguishes one venue hiccup from a recovery path that has stopped working.
-      # `increase()` handles the counter reset on container recreate.
+      # distinguishes one venue hiccup from a recovery path that has stopped working. `increase()`
+      # handles the counter reset on container recreate.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 86400, to: 0}
@@ -3171,21 +3017,16 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The blackout class, and it is measured rather than imagined: on 2026-07-27 all 12 pairs went
-      # silent for ~209 s on BOTH hosts while the WS reported connected, the keepalive completed >=11
-      # round trips, and the cumulative gap counter read 0.0 -- so the dead-man, the desync rule and
-      # the gap counter all sat green through a total blackout.
+      # The blackout class: every pair on a host silent at once while the WS reports connected, the
+      # keepalive keeps completing round trips and the cumulative gap counter reads 0.0 -- so the
+      # dead-man, the desync rule and the gap counter all sit green through a total blackout.
       #
       # The MINIMUM across pairs is the discriminator, and that is the whole design: one thin leg
-      # being quiet is normal at any hour, all twelve simultaneously is not, and nothing in the
-      # capture path produces it -- so the bar can be tight here where a per-pair bar cannot be. The
-      # gauge reads 0 for every pair at process start, so a restart cannot false-fire it either.
-      # What DOES produce it is the venue, on a published calendar: every firing in this rule's life
-      # -- 2026-08-06, 2026-08-20 and 2026-09-03, both hosts each time -- fell inside a "Kraken
-      # Website and API Maintenance" window announced 41-49 h ahead, and no unexplained crossing has
-      # been observed. They are true positives (L2 is genuinely gone: ~882 s, ~521 s and ~178 s of
-      # booked both_streams_silent per stream), which is why
-      # the answer is a runbook that says "read the venue calendar first" rather than a wider bar.
+      # being quiet is normal at any hour, every leg simultaneously is not, and nothing in the capture
+      # path produces it -- so the bar can be tight here where a per-pair bar cannot be. The gauge
+      # reads 0 for every pair at process start, so a restart cannot false-fire it either. What DOES
+      # produce it is the venue, on a published calendar, which is why the answer is a runbook that
+      # says "read the venue calendar first" rather than a wider bar.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -3204,77 +3045,48 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # 120 s, WIDENED from 60 on 2026-08-05 against measurement. The pending period is NOT
-            # free here: the gauge is scraped every 60 s
+            # 120 s. The pending period is NOT free here: the gauge is scraped every 60 s
             # (infra/ansible/roles/capture/files/config.alloy), so it advances one sample per minute
-            # and the real silence at firing time is the bar + up to 60 s of scrape granularity +
-            # the pending period + the group's eval interval. That is why `for` is 0s below.
-            # Why 120 and not 60: `max_over_time(min by (host) (...)[30d:1m])` measured a fleet-wide
-            # silence of 30.261266 s on the primary -- all twelve pairs quiet at once.
-            # RE-DERIVED 2026-08-28 against the full 14 d the platform retains (T0129, resolved).
-            # `count_over_time(...[14d])` = 20159/20158 of a possible 20160, so the window is
-            # complete; `[30d]` returns 20202 on BOTH hosts -- the same ~14 days plus a few dozen
-            # boundary samples, never a fuller window -- which is the ceiling, restated.
-            # Over the 13 days of it that contain no venue window the fleet-wide minimum peaked at
-            # 6.134482 s, so 120 is ~20x the natural envelope rather than the 4x a single event
-            # suggested. The retention ceiling caps THIS GAUGE, never the phenomenon: the parquet
-            # archive holds the whole capture era at full resolution and `gap_distribution.py`
-            # measures book silence from it -- which is where a future re-derivation should start.
-            # Neither instrument is a basket-wide maximum for today's 12 pairs: T0039's 14.78 s
-            # covers BTC/DOT/AVAX over 136 h ending 2026-07-14, before the /BTC legs existed, and
-            # the gauge's binding pair is now SOL/BTC. They BRACKET the envelope at ~14-15 s; a
-            # basket-wide `gap_distribution.py` run is what would pin it, and none is owed.
-            # NOT a converge artefact, and better localized than "hours after": a 6 h bisection puts
-            # the event inside 2026-07-29 19:14-01:14 UTC, >=11.6 h after the primary's 07:36:13Z
-            # converge, with the adjacent 6 h windows maxing 0.12 / 0.20 / 0.14 s. The GAUGE
-            # reading of it has since aged out of the 14 d retention; the event itself remains
-            # measurable from the parquet archive, which is the whole point of the paragraph above.
-            # It is why 60 left only a 2x
-            # margin on the fleet's highest-severity capture signal. 120 is 4x it and
-            # the 209 s motivating event is still caught -- but the slack is ~29 s, not the 89 s a
-            # bar-only subtraction suggests: with a 60 s scrape the guaranteed detection floor is
-            # ~180 s of silence, not 120. Every other day of the series' life maxed between 0.18 s
-            # and 10.4 s on the primary.
+            # and the real silence at firing time is the bar + up to 60 s of scrape granularity + the
+            # pending period + the group's eval interval. That is why `for` is 0s below, and why the
+            # slack over the ~209 s motivating event is ~29 s rather than the 89 s a bar-only
+            # subtraction suggests: the guaranteed detection floor is ~180 s of silence, not 120.
+            # 120 is roughly twenty times the fleet-wide natural quiescence this gauge measures
+            # outside venue windows. The platform's metric retention caps THIS GAUGE, never the
+            # phenomenon: the parquet archive holds the whole capture era at full resolution and
+            # `infra/scripts/gap_distribution.py` measures book silence from it, which is where a
+            # future re-derivation starts. The two instruments BRACKET the envelope rather than pin
+            # it -- neither is a basket-wide maximum for today's pairs, and none is owed.
             - evaluator: {type: gt, params: [120]}
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
     # OK, and it is the SAME blindness class as noDataState above rather than a relaxation. When the
-    # datasource errors the query never ran, so `Alerting` cannot report a blackout -- it asserts
-    # one, in this rule's own words ("EVERY book stream ... silent for minutes"), about a fleet
-    # nothing observed. Measured 2026-08-05..08-28 from Grafana's ALERT STATE HISTORY (a different
-    # store from the 14 d metric retention; `GET /api/v1/rules/history?ruleUID=<uid>&from=&to=`,
-    # read in chunks and checked against the page limit): 24 execution-error firings here and 240 on
-    # the per-pair rule, against 4 and 48 genuine ones -- 264 of 316, every one of them Grafana
-    # Cloud failing to reach its own Prometheus. `for: 0s`, load-bearing below, is what made a
-    # one-minute hiccup page instantly.
+    # datasource errors the query never ran, so `Alerting` cannot report a blackout -- it asserts one,
+    # in this rule's own words ("EVERY book stream ... silent for minutes"), about a fleet nothing
+    # observed, and Grafana Cloud failing to reach its own Prometheus produced far more such firings
+    # than genuine ones. `for: 0s`, load-bearing below, is what made a one-minute hiccup page instantly.
     #
-    # Why not the guarded-summary form used on `zcrypto-capture-venue-state-recurrence` (2a899adb),
-    # which fixes the same falseness with a `{{ if $labels.<x> }}...{{ else }}...{{ end }}` branch:
-    # it removes the false CLAIM but not the volume, and here volume is the dominant term -- the
-    # per-pair rule mints 24 instances (12 pairs x 2 hosts) on every error where that rule mints one
-    # or two. Both halves matter, so the stronger instrument wins on these two specifically.
-    #
-    # What still covers a correlated datasource outage, measured rather than assumed: in `zcrypto-capture` only SIX rules
-    # carry `for: 0s` and can therefore fire on a ~1 min error at all -- every other rule in the group
-    # absorbs it (the group grows; the six is the load-bearing half, not the complement), which is why `zcrypto-capture-venue-not-online` (for: 5m)
-    # logged zero error firings over the same window. Four of those six keep `Alerting`, so an
-    # outage is still reported; what is removed is a fabricated blackout claim inside that report.
+    # Why not the guarded-summary form used on `zcrypto-capture-venue-state-recurrence`, which fixes
+    # the same falseness with a `{{ if $labels.<x> }}...{{ else }}...{{ end }}` branch: it removes the
+    # false CLAIM but not the volume, and here volume is the dominant term -- the per-pair rule mints
+    # one instance per pair per host on every affected evaluation where that rule mints one or two.
+    # Both halves matter, so the stronger instrument wins on these two specifically. A correlated
+    # datasource outage is still reported by the sibling rules in this group that keep `Alerting`.
     #
     # THE RESIDUAL, stated rather than implied: a RULE-SCOPED evaluation error -- an expression
-    # broken by a later edit, a permission or cardinality failure on this query alone -- now pages
-    # nothing, because the siblings above are only correlated cover. Nothing in the repo watches
-    # for that, deliberately; the runbook section names the shape so it is recognizable.
+    # broken by a later edit, a permission or cardinality failure on this query alone -- pages
+    # nothing, because the siblings above are only correlated cover. Nothing in the repo watches for
+    # that, deliberately; the runbook section names the shape so it is recognizable.
     execErrState: OK
-    # 0s, and it is arithmetic rather than impatience. `for: 2m` shipped first and put the GUARANTEED
-    # detection floor at 300 s against a 209 s motivating event: a phase sweep over scrape x eval
-    # alignments caught that event in only 12.1% of them, and a 180 s blackout in 0%. `for: 1m` is not
-    # the fix either -- it still misses 209 s in 12.9% of alignments. Nothing but real silence can put
-    # this minimum over 120: `_run` seeds last_seen for every pair before the collector registers, so a
-    # restart reads 0.0; a stop->start window replays the last healthy pre-stop sample through
-    # Prometheus' lookback; a longer stop goes NoData, which `noDataState: OK` swallows; and
-    # remote-write lag can only delay firing, never advance it. `zcrypto-capture-log-dead-primary`
-    # already carries 0s for the same reason.
+    # 0s, and it is arithmetic rather than impatience: a pending period is added directly to the
+    # guaranteed detection floor, which a phase sweep over scrape x eval alignments showed already
+    # misses the ~209 s motivating event at `for: 1m`. Nothing but real silence can put this minimum
+    # over 120: `_run` seeds last_seen for every pair before the collector registers, so a restart
+    # reads 0.0; a stop->start window replays the last healthy pre-stop sample through Prometheus'
+    # lookback; a longer stop goes NoData, which `noDataState: OK` swallows; and remote-write lag can
+    # only delay firing, never advance it. `zcrypto-capture-log-dead-primary` already carries 0s for
+    # the same reason.
     for: 0s
     annotations:
       summary: >-
@@ -3331,31 +3143,12 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # DERIVED 2026-08-05, replacing a provisional 900; RE-DERIVED 2026-08-28 on the full
-            # 14 d the platform retains (T0129, resolved, records the whole exercise) and LEFT
-            # UNCHANGED at 300. The 2026-08-05 base was one week, not the month its `[30d]` selector
-            # implied -- the gauge only started reaching Cloud with the 2026-07-29 converges. The
-            # re-derivation's value is not the newer window but that two INDEPENDENT instruments now
-            # bracket the same envelope: this 60 s-sampled gauge peaks at 14.160757 s (zcrypto-red
-            # SOL/BTC, no capture restart within 26 h), and the full-resolution parquet archive put
-            # single-host natural quiescence at 14.78 s over 7,847,932 messages (T0039,
-            # `infra/scripts/gap_distribution.py`) -- a THREE-pair run over 136 h ending 2026-07-14,
-            # before the two `/BTC` legs existed, so it brackets rather than pins today's basket. The retention ceiling caps THIS GAUGE, never the
-            # phenomenon -- the archive holds the whole capture era -- so a future re-derivation
-            # starts there and not here: a 60 s scrape censors short silences and is biased low.
-            # All twelve primary maxima (30.26-31.59 s) are ONE simultaneous fleet-wide event, not
-            # per-pair spacing, and the proof is exact rather than inferred: the min-by-host maximum
-            # is 30.261266, which equals AVAX/EUR's per-pair maximum to the digit, so at that
-            # instant every pair was silent. Excluding it, the BINDING natural per-pair maximum is
-            # the primary's 12.068981 s (AVAX/EUR) -- above the secondary's worst of 11.125801 s
-            # (ETH/BTC), and matching the 12.196 s worst NATURAL spacing the daemon's own
-            # BOOK_STALENESS_SECONDS comment records. That reading understated the envelope: the
-            # binding figure is the archive's full-resolution 14.78 s, so 300 is ~20x the natural
-            # maximum, not the ~25x recorded here until 2026-08-28. It remains ~10x the daemon's
-            # own 30 s mark. It deliberately SUPERSEDES the ~2.4x margin the design
-            # prescribed, which would have put this page bar at ~29 s: at the daemon's own
-            # gap-booking threshold, and BELOW the 30.26 s event above -- twelve false warning
-            # instances on 07-29 alone.
+            # 300 s -- roughly twenty times the natural per-pair maximum, and ~10x the daemon's own
+            # 30 s BOOK_STALENESS_SECONDS mark. Two independent instruments bracket that envelope:
+            # this 60 s-sampled gauge, and the full-resolution parquet archive
+            # (`infra/scripts/gap_distribution.py`, T0039), which is the binding one -- a 60 s scrape
+            # censors short silences and is biased low, and the platform's retention caps THIS GAUGE
+            # while the archive holds the whole capture era, so a future re-derivation starts there.
             # What 30 s actually is, read from the source, because the bar's warrant depends on it:
             # `_staleness_loop` BOOKS the silence (`monitor.start_silence`) and does nothing else.
             # Recovery -- resubscribe, then a forced reconnect -- is `_desync_recovery_loop`, which
@@ -3364,8 +3157,8 @@ rules:
             # never withholds the dead-man ping, at any age: it does not self-heal, which is exactly
             # why this rule is the only thing that catches it.
             # NO pending period, deliberately: the gauge advances one sample per minute, so a `for`
-            # spends the notice budget rather than buying confidence -- the same arithmetic that
-            # took `for: 2m` off the all-streams rule. Notice period is `300 + up to 60 s of scrape
+            # spends the notice budget rather than buying confidence -- the same arithmetic that took
+            # `for: 2m` off the all-streams rule. Notice period is `300 + up to 60 s of scrape
             # granularity + the group's eval interval`, ~5-7 min, so the summary's "over five
             # minutes" is its floor. Four surfaces carry this number and move together: this
             # evaluator, the `for`, the summary's duration, and the data-integrity board's per-pair
@@ -3374,12 +3167,10 @@ rules:
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
-    # OK, for the reason given in full on the all-streams rule above -- including why the guarded
-    # summary form was not used, what still covers a correlated outage, and the rule-scoped residual
-    # that is now unwatched. This rule is the volume: an execution error means the query never ran,
-    # yet `Alerting` here minted 240 instances over 2026-08-05..08-28 -- one per pair per host on
-    # every affected evaluation -- each naming a stuck stream that nothing had observed, against 48
-    # genuine ones on the two published venue windows.
+    # OK, for the reason given in full on the all-streams rule above. This rule is the volume half of
+    # that reading: an execution error means the query never ran, yet `Alerting` here mints one
+    # instance per pair per host on every affected evaluation, each naming a stuck stream that nothing
+    # had observed.
     execErrState: OK
     for: 0s
     annotations:
@@ -3406,16 +3197,15 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The most consequential unwatched signal on these hosts, and it was unwatched for months.
       # A breached watermark does not merely warn: cli/capture/command.py's book and trade handlers
       # `continue`/`return` past the writers while it holds, so incoming L2 and trades are DROPPED.
       # That data is unbackfillable -- every second breached is permanent loss.
       #
       # It also gates the dead-man ping, so hc.io does fire -- but that page says "this host went
-      # quiet", not "the disk hit the watermark and capture is discarding". Without this rule the
-      # operator has no way to tell those apart, and the 1 GiB watermark sits BELOW the
-      # `Capture - spool disk low` early warning (10% free), so that rule fires first only if the
-      # fill is gradual; a sudden consumer can breach the watermark with disk-low still green.
+      # quiet", not "the disk hit the watermark and capture is discarding", and without this rule the
+      # operator cannot tell those apart. The 1 GiB watermark sits BELOW the `Capture · spool disk
+      # low` early warning (10% free), so that rule fires first only if the fill is gradual; a sudden
+      # consumer can breach the watermark with disk-low still green.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -3441,14 +3231,13 @@ rules:
     # the daemon re-checks the watermark every 30 s in-process
     # (cli/capture/command.py's DISK_WATERMARK_INTERVAL_SECONDS) and Alloy scrapes the gauge every
     # 60 s (infra/ansible/roles/capture/files/config.alloy), so a true breach is already up to 90 s
-    # old before its first `1` sample exists, before Grafana evaluates anything. `for: 2m` shipped
-    # first and added >=2 further minutes of GUARANTEED discard to every real page, on a stream that
-    # is unbackfillable -- and at one sample per minute the condition has to hold across enough
-    # consecutive scrapes to fill that window, so the rule was also blind to any breach shorter than
-    # roughly 3 min. A breach that clears first is not a non-event: it dropped every message it
-    # lasted, and the only thing that would have spoken is the dead-man saying "this host went
-    # quiet". Nothing false-fires at 0s: the collector publishes the gauge straight off
-    # `watermark.breached`, so a `1` sample means the handlers are ALREADY dropping messages.
+    # old before its first `1` sample exists, before Grafana evaluates anything. A pending period adds
+    # that much more GUARANTEED discard to every real page on an unbackfillable stream, and at one
+    # sample per minute it would also blind the rule to any breach shorter than the window -- and a
+    # breach that clears first is not a non-event: it dropped every message it lasted, and the only
+    # thing that would have spoken is the dead-man saying "this host went quiet". Nothing false-fires
+    # at 0s: the collector publishes the gauge straight off `watermark.breached`, so a `1` sample
+    # means the handlers are ALREADY dropping messages.
     for: 0s
     annotations:
       summary: "CAPTURE IS DISCARDING DATA on this host: the disk watermark is breached, so the book and trade handlers drop every incoming message instead of writing it, and L2 is unbackfillable. This also withholds the dead-man ping, so hc.io is saturated and will not page for anything else here. Free space on the capture spool NOW -- check both prune timers and for an unexpected consumer. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-watermark-breached"
@@ -3470,12 +3259,10 @@ rules:
       # NOT rows that "arrived after their hour was finalized" -- that is the opposite direction in
       # time, and such a row is dropped by the late-event guard and counted nowhere. The two real
       # causes: a lone stream in a sparse hour, where nothing ever seconds its hour, and a capture
-      # process stopping inside CLOCK_WITNESS_MARGIN of a boundary.
-      #
-      # Baseline is zero on both hosts, so any nonzero value is a real event. Spilled rows are kept
-      # and never deleted, but they sit OUTSIDE the canonical tree -- the sweep, the merge, the
-      # recovery floor and `verify_tree` all skip a `.held` part -- and they are redeemed only when a
-      # live, quorum-confirmed stream next opens their hour.
+      # process stopping inside CLOCK_WITNESS_MARGIN of a boundary. Baseline is zero, hence `gt 0`
+      # with no rate bar. Spilled rows are kept and never deleted, but they sit OUTSIDE the canonical
+      # tree -- the sweep, the merge, the recovery floor and `verify_tree` all skip a `.held` part --
+      # and they are redeemed only when a live, quorum-confirmed stream next opens their hour.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 21600, to: 0}
@@ -3742,26 +3529,20 @@ rules:
     data:
       # Deliberately a NEGATIVE match rather than an enumeration of known states: the payload shape
       # for a real outage is unobserved, and a rule listing `maintenance|cancel_only|...` would be a
-      # guess that silently misses whatever Kraken actually sends. `!= "online"` cannot miss.
-      # The daemon's counting path IS validated for unseen values -- tests/test_capture_upstream_silence.py
+      # guess that silently misses whatever Kraken actually sends. `!= "online"` cannot miss. The
+      # daemon's counting path IS validated for unseen values -- tests/test_capture_upstream_silence.py
       # feeds synthetic `maintenance` and `cancel_only` frames and asserts a series per system value.
       #
-      # PRESENCE, not increase(). The daemon emits a series only for `system` values it has actually
-      # seen, so a non-online series is BORN at whatever its first scrape catches -- and Prometheus
-      # inserts no implicit zero before a
-      # series' first sample, so increase() over it returns nothing on one sample and 0 on N equal
-      # samples. The per-transition frame count is NOT fixed -- on 2026-09-03 each host logged five
-      # `maintenance` lines, two `post_only` and one `cancel_only` -- so whether increase() finds a
-      # step inside such a burst is decided by scrape phase rather than by what the host saw: it read
-      # the maintenance rise on zcrypto, nothing on zcrypto-red whose first sample already carried all
-      # five, and nothing on either host for the single-line `cancel_only`. An increase() form would
-      # therefore sit green through the very event this rule exists for, on whichever hosts the scrape
-      # happened not to favour. An increase() form reads a counter only where a 0 sample precedes
-      # the step INSIDE the window, and that needs three things at once: the series already exists, the
-      # host has already published it at 0, and the step lands far enough after process start to be
-      # scraped at 0 first. A label that materialises on the event fails the first; a host new to an
-      # eagerly-published metric fails the second, its first sample already carrying the step; and a
-      # start-correlated step fails the third, landing seconds after start where scrapes are 60 s apart.
+      # PRESENCE, not increase(). An increase() form reads a counter only where a 0 sample precedes
+      # the step INSIDE the window, and that needs three things at once: the series already exists,
+      # the host has already published it at 0, and the step lands far enough after process start to
+      # be scraped at 0 first. A label that materialises on the event fails the first; a host new to
+      # an eagerly-published metric fails the second, its first sample already carrying the step; and
+      # a start-correlated step fails the third, landing seconds after start where scrapes are 60 s
+      # apart. The daemon emits a series only for `system` values it has actually seen and the frame
+      # count per transition is not fixed, so whether an increase() form found a step would be decided
+      # by scrape phase rather than by what the host saw -- it would sit green through the very event
+      # this rule exists for, on whichever hosts the scrape happened not to favour.
       #
       # This LATCHES: the counter never decreases until the daemon restarts. That is deliberate -- the
       # point is to capture the first observation of a shape this fleet has never seen, and a
@@ -3769,9 +3550,8 @@ rules:
       #
       # `by (host, system)`, not a bare sum(): collapsing `system` discarded the one label the
       # responder acts on -- `maintenance` (planned, wait) versus `cancel_only`/`post_only` (degraded,
-      # act) demand opposite responses. Grouping preserves every property above: the negative match
-      # still cannot miss an unobserved payload shape, presence-not-increase() is unchanged, and the
-      # latch is unchanged. The host scope every sibling capture rule carries is added at the same time.
+      # act) demand opposite responses. Grouping preserves every property above, and the host scope
+      # every sibling capture rule carries is added at the same time.
       #
       # The grouping is also why the fallback carries `on()`, and dropping it is the tempting edit:
       # `vector(0)` produces an UNLABELLED element, so a bare `or vector(0)` suppresses it only while
@@ -3826,30 +3606,22 @@ rules:
       # on its digest, so a standing latch would mask every repeat for as long as that holds.
       #
       # increase() is exactly wrong as the PRIMARY form and exactly right as the SECOND one. The
-      # sibling's comment explains why it cannot lead: a non-online series is BORN at whatever its
-      # first scrape catches -- 2 on zcrypto and 5 on zcrypto-red on 2026-09-03, from frames 30 ms
-      # apart -- and Prometheus inserts no implicit zero before that first sample, so increase()
-      # returns nothing whenever the whole burst lands before it. That argument does not transfer to a
-      # series ALREADY sitting at a non-zero value -- a 1 -> 2 step is an ordinary counter increase and
+      # sibling's comment explains why it cannot lead; that argument does not transfer to a series
+      # ALREADY sitting at a non-zero value -- a 1 -> 2 step is an ordinary counter increase and
       # increase() reports it. So the split is NOT a clean partition and BOTH are needed: presence
       # catches every first sighting unconditionally (including the first after any restart, since the
       # counter is in-memory and resets with the process), while this form catches a first sighting
-      # only where a scrape happens to land mid-burst -- it did on zcrypto that day and did not on
-      # zcrypto-red -- and every sighting thereafter. Neither alone covers both, which is why this
-      # supplements rather than replaces -- swapping the sibling out for this form would lose
-      # first-observation detection entirely.
+      # only where a scrape happens to land mid-burst, and every sighting thereafter. Swapping the
+      # sibling out for this form would lose first-observation detection entirely.
       #
       # This one SELF-RESOLVES, the behavioural opposite of the latch, and that is the point: it
       # answers "is it happening again, right now?", so it must be able to say no. The [15m] window is
       # how long it stays up after the last sighting; `for: 5m` inside that leaves 10 minutes of margin
       # against the group's evaluation cadence. The window and `relativeTimeRange.from` must agree --
-      # the sibling increase()/delta() rules carry a test pinning exactly that coupling, and so does
-      # this one.
+      # a test pins exactly that coupling, here and on the sibling increase()/delta() rules.
       #
       # `by (host, system)` and the `on()` fallback carry over from the sibling for the reasons
-      # documented there: the responder acts on `system` (planned `maintenance` versus degraded
-      # `cancel_only`/`post_only`), and `vector(0)` is unlabelled, so a bare `or` would ride through as
-      # a permanent extra series beside the real one once the left arm carries labels.
+      # documented there.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 900, to: 0}
@@ -3889,16 +3661,14 @@ rules:
     condition: C
     data:
       # Liveness, and deliberately NOT the ship-success gauge: the worker skips the push when the
-      # buffer is empty, so last_success goes stale whenever logging is merely quiet -- which is
-      # what a healthy capture daemon looks like. This gauge advances on an idle cycle too, and
-      # stalls only while the worker is stuck RETRYING (5xx/429/network) or wedged. The worker
-      # cycles every second; 5 min is ~300 missed cycles.
+      # buffer is empty, so last_success goes stale whenever logging is merely quiet -- which is what
+      # a healthy capture daemon looks like. This gauge advances on an idle cycle too, and stalls only
+      # while the worker is stuck RETRYING (5xx/429/network) or wedged. The worker cycles every
+      # second; 5 min is ~300 missed cycles.
       #
-      # What it deliberately does NOT catch: a permanently-rejected batch (non-429 4xx -- a revoked
-      # token, a wrong path) still completes a cycle and still advances this gauge, so logs can be
-      # discarded at full rate while this reads green. That fault belongs to
-      # zcrypto-logship-lines-dropped, which counts exactly those discards. Two questions, two
-      # rules -- conflating them is what left last_success unable to answer either.
+      # A permanently-rejected batch (non-429 4xx -- a revoked token, a wrong path) still completes a
+      # cycle and still advances this gauge; that fault is zcrypto-logship-lines-dropped's, which
+      # counts exactly those discards. Two questions, two rules.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -3941,8 +3711,7 @@ rules:
       # 0 means that collector errored on its last scrape, so its whole metric family goes quietly
       # ABSENT -- and every rule keyed on those series then evaluates NoData, which this fleet maps
       # to OK. A failed `filesystem` collector silently disarms the disk-low rule; a failed
-      # `textfile` collector silently disarms every one-off timer alert. Baseline: 1 on all five
-      # hosts. This is the rule that keeps the other rules honest.
+      # `textfile` collector silently disarms every one-off timer alert.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -3981,12 +3750,11 @@ rules:
     orgId: 1
     condition: C
     data:
-      # NORMALIZED per core, because the two boxes differ: the primary has 2 vCPU, the secondary 1
-      # (measured live). Dividing load1 by the host's core count (count of idle-mode
-      # node_cpu_seconds_total series) makes one threshold mean the same on both. `on(host)
-      # group_left()` matches the per-host core count onto load1's richer label set. Baseline is
-      # ~0.02-0.11 per core; > 1.5 per core sustained 10m is clear saturation (a runaway/thrashing
-      # process), not the seconds-long hourly NAS rsync-pull spike (`for: 10m` outlasts that).
+      # NORMALIZED per core, because the two capture boxes differ in core count: dividing load1 by the
+      # host's core count (count of idle-mode node_cpu_seconds_total series) makes one threshold mean
+      # the same on both, and `on(host) group_left()` matches the per-host count onto load1's richer
+      # label set. > 1.5 per core sustained 10m is clear saturation (a runaway or thrashing process),
+      # not the seconds-long hourly pull spike, which `for: 10m` outlasts.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -4029,18 +3797,15 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Loki, level LABEL not a text grep -- no regex anywhere in this path (D4). The capture daemon's
-      # logs get their level label from its OWN direct-ship handler (cli/logging/ship.py, spec 00068
-      # D3/D4: `level` = `record.levelname` at the source, pushed straight to Grafana Cloud Loki --
-      # Alloy is not in this path at all any more) (verified live pre-rework: INFO/WARNING present,
-      # ZERO ERROR/CRITICAL in 7d -- a clean baseline; the label VALUES are unchanged by the rework, so
-      # this selector still holds). Scoped to container="capture": the daemon on both hosts, whose
-      # errors (desync storms, ENOSPC, reconnect failures) are the soak-critical signal. (Out of scope
-      # here: Alloy self-errors -- a separate instrument-health concern; and the engine's logs, which
-      # ship with the same labels today and are owned by `zcrypto-engine-error-logs`.)
-      # `sum by (host, ...)` names the firing host; `or on() vector(0)` keeps a clean window an
-      # explicit 0. This rule fires on the COUNT arm only (the vector(0) fallback is 0, which fails
-      # `gt 0`), so unlike the two dead-men below its labels are genuinely populated when it pages.
+      # Loki, level LABEL not a text grep -- no regex anywhere in this path (spec 00068 D4). The
+      # capture daemon's logs get their level label from its OWN direct-ship handler
+      # (cli/logging/ship.py: `level` = `record.levelname` at the source, pushed straight to Grafana
+      # Cloud Loki -- Alloy is not in this path at all). Scoped to container="capture": the daemon on
+      # both hosts, whose errors (desync storms, ENOSPC, reconnect failures) are the soak-critical
+      # signal. Out of scope here: Alloy self-errors, a separate instrument-health concern, and the
+      # engine's logs, owned by `zcrypto-engine-error-logs`. `sum by (host, ...)` names the firing
+      # host; `or on() vector(0)` keeps a clean window an explicit 0. This rule fires on the COUNT arm
+      # only, so unlike the two dead-men below its labels are genuinely populated when it pages.
       #
       # The `msg` label hoists the log MESSAGE onto the page -- the whole reason a log alert exists;
       # without it the page says "3" and the responder goes hunting on the unbackfillable stream.
@@ -4050,9 +3815,9 @@ rules:
       #
       # `| json message="message"` and NOT a bare `__line__`: this daemon direct-ships a JSON BODY
       # (cli/logging/ship.py's JsonLineFormatter -- ts/level/logger/file/line/message), so the raw line
-      # spends ~150 of the 200 characters on the JSON preamble and truncates the message mid-sentence.
+      # spends most of the 200 characters on the JSON preamble and truncates the message mid-sentence.
       # A page carrying metadata and no message is worse than one carrying no line at all: it LOOKS
-      # like it answered the question. Measured against live Loki, not theorised.
+      # like it answered the question.
       #
       # `| drop __error__, __error_details__` is required even though EVERY line on this selector is
       # JSON today, and it must not be simplified away: `| json` stamps `__error__="JSONParserErr"` on
@@ -4060,7 +3825,7 @@ rules:
       # the whole rule to execErrState. Clearing the label instead is impossible (Loki rejects
       # `label_format __error__=...` outright) and `| __error__=""` would silently DROP the offending
       # lines, which on this rule are exactly the ones worth seeing. The `{{ if .message }}` fallback
-      # is the same insurance one stage later. Sibling `Ops · ERROR logs` needs both for a live reason.
+      # is the same insurance one stage later.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
@@ -4106,22 +3871,18 @@ rules:
 
   # Two per-host canaries that make the ERROR rule above trustworthy (mirror zcrypto-ops-log-pipeline-dead).
   # The ERROR rule selects on the `level` label, which exists ONLY because the capture daemon's OWN
-  # direct-ship handler attaches it at the source (cli/logging/ship.py, spec 00068 D3/D4: `level` =
-  # `record.levelname`, no regex anywhere in this path -- Alloy is not involved) -- so if the daemon's
-  # ship path regresses (the T0060 class: the label scheme drifting, or the handler/formatter itself
-  # breaking), its lines stop arriving with a usable level and the ERROR rule reads 0 = healthy FOREVER.
-  # These fire on the absence of ANY parsed capture line (level matching anything). Scoped to
+  # direct-ship handler attaches it at the source (cli/logging/ship.py, spec 00068 D3/D4) -- so if
+  # that ship path regresses (the T0060 class: the label scheme drifting, or the handler/formatter
+  # itself breaking), its lines stop arriving with a usable level and the ERROR rule reads 0 = healthy
+  # FOREVER. These fire on the absence of ANY parsed capture line (level matching anything). Scoped to
   # container="capture" -- NOT host-wide -- on purpose: a capture-side regression leaves Alloy's OWN
   # leveled lines (its journald-driver stream) flowing, so a host-wide canary would stay green in
-  # exactly the blind state this exists to page on. The capture daemon emits ~35 parsed lines/hr
-  # (evidence: 342/341 INFO + 499/497 WARNING per 24h, pre-rework baseline), so <1 in 6h means the
-  # capture log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the
-  # container gone), not a quiet daemon. One rule per host: Loki cannot synthesize a per-host zero (an
-  # absent stream is no series, not a 0 series), so `or on() vector(0)` only injects a 0 for a
-  # SINGLE-host query -- a `sum by(host)` would fire only when BOTH hosts go dark and miss a single
-  # host's outage. The `by (host)` each of the two carries is NOT that: each selector still names one
-  # host, so the aggregation cannot span the pair. It is there for the notification's label line only,
-  # and it is INERT at exactly fire time -- the fire path is the unlabelled `or on() vector(0)` arm --
+  # exactly the blind state this exists to page on. One rule per host: Loki cannot synthesize a
+  # per-host zero (an absent stream is no series, not a 0 series), so `or on() vector(0)` only injects
+  # a 0 for a SINGLE-host query -- a `sum by(host)` would fire only when BOTH hosts go dark and miss a
+  # single host's outage. The `by (host)` each of the two carries is NOT that: each selector still
+  # names one host, so the aggregation cannot span the pair. It is there for the notification's label
+  # line only, and it is INERT at exactly fire time -- the fire path is the unlabelled fallback arm --
   # which is why each summary names its host in words rather than interpolating `$labels.host`.
   - uid: zcrypto-capture-log-dead-primary
     title: "Capture · log pipeline dead — Capture primary"
@@ -4160,10 +3921,8 @@ rules:
           refId: C
           conditions:
             - evaluator: {type: lt, params: [1]}
-    # Alerting (not OK): this is a fires-on-silence dead-man -- the `or on() vector(0)` fallback keeps
-    # the query returning data while intact, and Alerting is the belt-and-braces layer for the day an
-    # edit drops the fallback or Loki maps an empty response to NoData; with OK it would park green in
-    # exactly the blind state it exists to page on.
+    # Alerting (not OK): a fires-on-silence dead-man, same posture and reason as
+    # `zcrypto-engine-log-dead` above, where it is recorded in full.
     noDataState: Alerting
     execErrState: Alerting
     for: 0s
@@ -4225,25 +3984,20 @@ rules:
     notification_settings:
       receiver: metrics
 
-  # Fleet · Alloy dark (T0079) -- five rules, one per host, all `critical`.
-  # Uniform severity is deliberate: the responder's action is identical on every host (SSH, check the
-  # container, restart), so a differentiated severity would imply a differentiated response that does
-  # not exist. What differs is only what accumulates unseen meanwhile, which the per-host summary
-  # states. These own "not shipping" only -- a rule for "shipping but wedged" (`zcrypto-alloy-docker-
-  # sd-wedged`, T0048 defect 1: the T0048 incident was Alloy alive, discovery frozen) used to cover
-  # the other case, but it is *removed from this file*, retired on all four hosts once D7's
-  # converges run (spec 00068 D6/D8/D7) -- once that rollout completes, nothing re-detects that
-  # failure mode.
+  # Fleet · Alloy dark (T0079) -- one rule per host, all `critical`. Uniform severity is deliberate:
+  # the responder's action is identical on every host (SSH, check the container, restart), so a
+  # differentiated severity would imply a differentiated response that does not exist. What differs is
+  # only what accumulates unseen meanwhile, which the per-host summary states. These own "not
+  # shipping" only.
+  # The other case -- Alloy alive but its discovery wedged, the T0048 shape -- is detected by
+  # nothing here since `zcrypto-alloy-docker-sd-wedged` was retired (spec 00068 D6/D8).
 
   # --- memory, watched as a ROUTINE and never as a rollout read --------------------------------------
-  # The capture-image bake used to carry an RSS row read by hand -- T+24 h, T+50 h, against the
-  # host's own predecessor at equal process age -- and the next converge voided every open read, so
-  # the reads became a lock on the fleet: 88 commits on fleet-pins.md in a month, and not one real
-  # leak ever found (T0151: environmental; 2026-08-02: a cold-baseline read that nearly rolled back a
-  # healthy image). The four rules below are that routine as telemetry, running regardless of
-  # converges, and across the FLEET: both capture daemons, the engine, and the ops liquidations
-  # poller -- the app-daemon headroom rule below excludes Alloy, which gets its own rule covering the
-  # four Alloy containers. A bake owes no memory read; a rollout is closed at gate-close.
+  # The four rules below replace the capture-image bake's hand-read RSS rows, which every converge
+  # voided and which never found a real leak (T0151). They run regardless of converges and across the
+  # FLEET: both capture daemons, the engine, and the ops liquidations poller -- the app-daemon
+  # headroom rule below excludes Alloy, which gets its own rule covering the four Alloy containers.
+  # A bake owes no memory read; a rollout is closed at gate-close.
   - uid: zcrypto-fleet-memory-headroom
     title: "Fleet · a daemon is near its memory limit"
     ruleGroup: zcrypto-fleet
@@ -4255,13 +4009,13 @@ rules:
       # OOM-kill", which is a leak's one real harm. No metric carries the limit (no cadvisor here:
       # config.alloy says why), so the denominators are literal bytes, one leg per (host, job),
       # unioned with `or`; tests/test_infra_alert_rules.py pins each literal to the ansible var that
-      # renders the compose file (capture_memory_limit 2g / 1g, engine_memory_limit 1g), so a limit
-      # moved in ansible fails the test rather than silently re-scaling this ratio.
+      # renders the compose file (capture_memory_limit, engine_memory_limit), so a limit moved in
+      # ansible fails the test rather than silently re-scaling this ratio.
       # Alloy is NOT here -- it has its own rule below, at its own bar, because it genuinely runs
-      # near its ceiling where these three do not (measured: capture 0.08/0.14, engine 0.37).
-      # DELIBERATELY ABSENT: the ops liquidations poller (`liquidations_app`) -- its compose sets no
-      # memory limit, so there is no ceiling to measure headroom against; it is covered by the leak
-      # and restart rules below. The NAS archive-pull container exposes no metrics at all.
+      # near its ceiling where these do not. DELIBERATELY ABSENT: the ops liquidations poller
+      # (`liquidations_app`), whose compose sets no memory limit, so there is no ceiling to measure
+      # headroom against; it is covered by the leak and restart rules below. The NAS archive-pull
+      # container exposes no metrics at all.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -4315,16 +4069,12 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Alloy gets its OWN bar because it genuinely runs near its ceiling and the app daemons do not.
-      # Measured 2026-08-28 over 24 h, as a fraction of the `memory: 512m` every Alloy compose set at the time:
-      # ops 0.7525-0.7795 (it reads the most journal -- reconcile, panel, verify-replay, tape-bars,
-      # liquidations), zcrypto 0.5237-0.5708, zcrypto-red 0.2636-0.2726, nas 0.1441-0.1561. A shared
-      # 0.7 bar with the app daemons therefore paged ops on a HEALTHY fleet, every evaluation,
-      # forever -- caught by the rollout that first pushed it, before it had ever run.
-      # ops then took a LARGER CAP rather than a looser bar: 399.1 MiB peak against a 117 MiB swing
-      # left it 113 MiB from the ceiling, so `ops_alloy_memory_limit` is 1g and this leg divides by
-      # it. The other three stay at 512m -- the capture hosts hold 3.83 and 1.93 GiB total and
-      # already commit 3.5 g and 1.5 g of caps, so headroom there is not free the way it is on ops.
+      # Alloy gets its OWN bar because it genuinely runs near its ceiling and the app daemons do not:
+      # a shared 0.7 bar with them would page ops on a HEALTHY fleet, at every evaluation. ops took a
+      # LARGER CAP rather than a looser bar -- `ops_alloy_memory_limit` is 1g and this leg divides by
+      # it -- because ops reads the most journal (reconcile, panel, verify-replay, tape-bars,
+      # liquidations). The other three stay at 512m: the capture hosts already commit most of their
+      # RAM in caps, so headroom there is not free the way it is on ops.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -4374,18 +4124,15 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The bake's own hard-won reading method, as PromQL. Read the hourly FLOOR, never a sample --
-      # the segment-rotation sawtooth spans several MiB and swamps a point read. Compare across a
-      # 24 h band -- steps arrive as ~4 h ramps and their repeat lands a day later at the same clock
-      # offset, so a shorter window reads a trough as a plateau. And gate the rule OFF on process
-      # age for the first 30 h after a restart -- 24 h band + 6 h pending -- because `offset 24h`
-      # addresses the series by its labels, which a restart does not change: without the gate the
-      # subtraction reads the PREDECESSOR process's floor, so a new image's larger steady working
-      # set would page as a leak during the bake, and at the 24 h anniversary a warm floor would be
-      # compared against the converge-time cold one -- the exact cold-baseline read that once
-      # nearly rolled back a healthy image. (Review caught the first version claiming this was
-      # "blind by construction" with no gate; it was not.) The gate is `and on(host, job)`, so a
-      # host or job with no start time recorded cannot fire either.
+      # Read the hourly FLOOR, never a sample -- the segment-rotation sawtooth spans several MiB and
+      # swamps a point read. Compare across a 24 h band -- steps arrive as ~4 h ramps and their repeat
+      # lands a day later at the same clock offset, so a shorter window reads a trough as a plateau.
+      # And gate the rule OFF on process age for the first 30 h after a restart -- 24 h band + 6 h
+      # pending -- because `offset 24h` addresses the series by its labels, which a restart does not
+      # change: without the gate the subtraction reads the PREDECESSOR process's floor, so a new
+      # image's larger steady working set would page as a leak, and at the 24 h anniversary a warm
+      # floor would be compared against the converge-time cold one. The gate is `and on(host, job)`,
+      # so a host or job with no start time recorded cannot fire either.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -4413,9 +4160,8 @@ rules:
             # PROVISIONAL: 64 MiB of floor growth in a day. No real leak has ever been measured on
             # this fleet, so there is no distribution to derive from; the number is sized so that a
             # daemon starting at ~150 MiB would take over a week to reach the headroom bar above,
-            # giving this rule a week of notice ahead of that one. Healthy day-scale drift measured
-            # 2026-08-23/24 was 2.7-3.6 MiB per 8 h (T0151), an order below. What derives the real
-            # value: the first leak this fires on, or thirty days of floor deltas read from panel 602.
+            # giving this rule a week of notice ahead of that one. What derives the real value: the
+            # first leak this fires on, or thirty days of floor deltas read from panel 602.
             - evaluator: {type: gt, params: [67108864]}
     noDataState: OK
     execErrState: Alerting
@@ -4501,18 +4247,9 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # `{host="nas"}` (re-keyed from an empty-value matcher, spec 00069 D7 -- this comment
-          # used to forbid exactly this re-key; it is now the deliberate, done thing). ops and both
-          # capture hosts already set `external_labels = { host = ... }` on their
-          # prometheus.remote_write; the NAS's config.alloy now does too. The old empty-value
-          # matcher existed because adding a label to an already-live series changes its identity,
-          # which can read as a value jump under an `increase()`/`resets()` rule -- i.e. a FALSE
-          # permanent-data-loss page -- but the one series that risk was about,
-          # zcrypto_reconcile_residual_gap_seconds_total, no longer publishes from the NAS (the
-          # writer moved to ops at spec 00054 D2), so nothing left here sits under that shape of
-          # rule. The smaller seam this rule itself carries -- `up`'s own identity changing at the
-          # labeling moment -- is the accepted cost (D7): a possible one-off false page at this
-          # attended rollout window, cheap to dismiss.
+          # `{host="nas"}` (spec 00069 D7): the NAS's config.alloy sets
+          # `external_labels = { host = "nas" }` on prometheus.remote_write, as ops and both capture
+          # hosts already do.
           # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
           # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
           # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
@@ -4780,10 +4517,9 @@ rules:
       receiver: metrics
 
   # ---- Access bridgehead (zaccess) --------------------------------------------------------------
-  # First content rule for the internet edge (spec 00075). Like the capture/NAS disk rules, this
-  # owns "bad while alive"; zcrypto-alloy-dark-zaccess above owns "this host's telemetry plane is
-  # dark" -- so noDataState stays OK here rather than paging on a transient remote_write gap the
-  # canary already covers.
+  # Content rules for the internet edge (spec 00075) own "bad while alive"; zcrypto-alloy-dark-zaccess
+  # above owns "this host's telemetry plane is dark" -- which is why noDataState stays OK here rather
+  # than paging on a transient remote_write gap the canary already covers.
   - uid: zaccess-disk-high
     title: "Access · bridgehead disk high"
     ruleGroup: zcrypto-access
@@ -4883,9 +4619,7 @@ rules:
   #
   # `by (host, target)`, not a bare min(): collapsing both labels told the operator that A certificate
   # was expiring and not WHICH, across three tracked endpoints. Grouping makes each certificate its
-  # own alert instance and the summary names it. Consequence, stated: instance cardinality rises from
-  # 1 to up to 3, and the label change resolves the existing instance and re-fires under new labels at
-  # push time.
+  # own alert instance and the summary names it.
   - uid: zaccess-cert-expiring
     title: "Access · edge cert expiring"
     ruleGroup: zcrypto-access
