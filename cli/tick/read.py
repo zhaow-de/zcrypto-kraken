@@ -14,13 +14,8 @@ _MIN_UNIX_TS = 1e9  # a plausible Unix timestamp (2001+); crypto prices/volumes 
 
 
 def _sniff_has_header(data: bytes) -> bool:
-    """A trades CSV data row's leading fields (Price, Volume, Timestamp) are all numeric; a header
-    row's (`"Price"`, `"Volume"`, `"Timestamp"`) are all text. Treat line 1 as a header only when
-    *none* of its first three fields parses as a float — so a data row with a single corrupted leading
-    field (e.g. a garbled Price but a still-numeric Volume/Timestamp) is NOT mistaken for a header and
-    silently dropped via `skip_rows`; it instead flows to the malformed-row / cast-error guards below,
-    which raise `TickError`. Empty input parses as "has a header" (the caller ends up with zero data
-    rows either way, which the CSV read below turns into a `TickError`)."""
+    """True when none of line 1's first three fields parses as a float — a data row with one corrupted leading
+    field is then still read, and errors, rather than being dropped as a header row by `skip_rows`."""
     first_line = data.split(b"\n", 1)[0].split(b"\r", 1)[0]
     for field in first_line.split(b",")[:3]:
         try:
@@ -32,17 +27,10 @@ def _sniff_has_header(data: bytes) -> bool:
 
 
 def _detect_schema(data: bytes, has_header: bool) -> str:
-    """Which Kraken trades layout is this — `"complete"` or `"quarterly"`?
-
-    - **complete** — the full-history dump (`Kraken_Trading_History.zip:TimeAndSales_Combined/*.csv`):
-      headerless, **3** fields `Timestamp,Price,Volume` (no side).
-    - **quarterly** — the incremental ZIPs: **>= 4** fields `Price,Volume,Timestamp,Type[,...]`
-      (Type = `b`/`s`), with or without a header row.
-
-    A 3-field row is the complete schema only when its first field is a plausible Unix timestamp
-    (`>= 1e9`); a 3-field row whose first field is a small number is a malformed 4-field row (a
-    dropped side), which the quarterly path then rejects — so genuinely-short rows still error rather
-    than being silently reinterpreted as the complete layout."""
+    """`"complete"` — headerless 3-field `Timestamp,Price,Volume`, the `TimeAndSales_Combined/*.csv` full-history
+    dump — or `"quarterly"`, `Price,Volume,Timestamp,Type[,...]`; a 3-field row is complete only when its first
+    field is a plausible Unix timestamp (`>= _MIN_UNIX_TS`), so a quarterly row with a dropped side stays quarterly
+    and is rejected there rather than reinterpreted."""
     lines = data.split(b"\n")
     idx = 1 if has_header else 0
     while idx < len(lines) and not lines[idx].strip():
@@ -75,23 +63,10 @@ def _read_bytes(source: str | Path | tuple[str | Path, str]) -> tuple[bytes, str
 
 
 def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame:
-    """Read a Kraken trades CSV — a bare file at `source`, or a `(zip_path, member_name)` pair read
-    directly out of a ZIP without full extraction — into a canonical tick frame.
-
-    Two real Kraken layouts are handled (auto-detected, see `_detect_schema`):
-
-    - **quarterly** incremental ZIPs — `Price,Volume,Timestamp,Type[,OrderType,Misc,TradeID]`
-      (Timestamp = unix seconds with a fractional part; Type = `"b"`/`"s"`), with or without a header
-      row; any further Kraken columns are ignored positionally.
-    - **complete** full-history dump (`TimeAndSales_Combined/*.csv`) — headerless `Timestamp,Price,
-      Volume` (no side); `side` is returned as null for these rows.
-
-    Returns a frame with `ts` (`Datetime("us", "UTC")`), `price`/`volume` (`Float64`), `side` (`Utf8`,
-    `"b"`/`"s"`, or null for the complete layout), in the order read (no de-duplication or re-sort —
-    `cli.tick.aggregate` sorts before bucketing). Raises `TickError` on an empty input, a row missing a
-    required price/volume/timestamp field, an unparseable numeric value, a NaN price/volume/ts, or (in
-    the quarterly layout) a `side` value other than `"b"`/`"s"`.
-    """
+    """Read a Kraken trades CSV — a bare file, or a `(zip_path, member_name)` pair read out of the ZIP without full extraction —
+    into a `ts` (`Datetime("us", "UTC")`)/`price`/`volume`/`side` frame, rows in the order read, neither de-duplicated nor
+    re-sorted — `cli.tick.aggregate` sorts before bucketing. The layout is auto-detected (`_detect_schema`) and `side` is null
+    throughout the complete one. Raises `TickError` on an empty, malformed or unparseable input."""
     data, label = _read_bytes(source)
     has_header = _sniff_has_header(data)
     schema = _detect_schema(data, has_header)
@@ -121,8 +96,8 @@ def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame
     except pl.exceptions.PolarsError as exc:
         raise TickError(f"unreadable trades CSV {label}: {exc}") from exc
 
-    # A null in a required field means a row was too short. `side` is checked here for the quarterly
-    # layout (a dropped side is malformed) but not for the complete layout (side is legitimately null).
+    # A null in a required field means a row was too short; `side` is required only in the quarterly layout, where a
+    # missing side is malformed, not the complete layout's legitimate absence.
     null_cols = _COMPLETE_COLUMNS if schema == "complete" else _QUARTERLY_COLUMNS
     if raw.select(pl.any_horizontal(pl.col(null_cols).is_null())).to_series().any():
         raise TickError(f"malformed row (missing a required field) in {label}")
