@@ -1,12 +1,7 @@
-"""The capturing loader: dataset identity computed from the bytes a run actually reads.
-
-The one sanctioned way research reads frozen datasets (spec 00086 D1). Hashes every file it opens,
-applies any window itself, and accumulates per-dataset files/rows/span from what it RETURNS -- so
-rows-used cannot drift from rows-recorded by construction. It imports nothing from manifests: no
-manifest shape can reach the identity path. Where a manifest vouches per-series hashes, a computed
-hash absent from a non-empty vouched set means the file changed since the manifest was written --
-fitting on disputed bytes is exactly what should stop a run, so `read_series` refuses.
-"""
+"""The capturing loader: the one sanctioned way research reads frozen datasets (spec 00086 D1) — dataset identity is the sha256 of
+the bytes a run actually reads. It applies any window itself and accumulates per-dataset files/rows/span from what it RETURNS, so
+rows-used cannot drift from rows-recorded. A manifest is read only for `read_series`'s content cross-check, so no manifest shape
+reaches the identity path."""
 
 from __future__ import annotations
 
@@ -52,9 +47,7 @@ class ObservedReader:
         """Vouched hashes and their path bindings, from the same source the sync path uses.
 
         Shared deliberately: a read and a fetch that disagreed about what attests a dataset would
-        be a hole shaped exactly like the one this closes. A conformant manifest keys `series` by
-        path, so it contributes bindings; a legacy one can only contribute membership.
-        """
+        leave exactly the hole this closes."""
         if dataset not in self._vouched:
             try:
                 vouched, by_path = _attestations_for_set(self._root / dataset, dataset)
@@ -87,15 +80,10 @@ class ObservedReader:
         if key not in self._reads:
             digest = _sha256_file(path)  # the IDENTITY: file bytes as on disk
             vouched = self._vouched_for(dataset)
-            # The cross-check runs at the manifests' own grade: the frozen manifests vouch FRAME-CONTENT
-            # hashes (dataset_hash = sha256 of canonical CSV), never file-byte hashes -- a byte-grade
-            # membership test here refuses every healthy read of ohlc-full/ohlc-15m (the round-1 blocker).
-            # Checked on the FULL frame, before windowing: the freeze vouched the whole series.
-            # Path-BOUND when a committed attestation names this exact path: swapping two series
-            # inside one set leaves the hash SET unchanged, so a membership test passes on both
-            # halves of the swap and this does not. Sets attested only by their own manifest stay on
-            # membership, because deriving a path per hash needs per-set layout knowledge the
-            # manifests do not share a shape for (T0132 owns that).
+            # At the manifests' own grade: they vouch FRAME-CONTENT hashes (`dataset_hash`), never file-byte ones, so a
+            # byte-grade test here would refuse every healthy read; and on the FULL frame, because the freeze vouched the
+            # whole series. Path-BOUND where an attestation names this path -- a swap inside one set leaves the hash SET
+            # unchanged; a manifest predating the path-keyed contract offers only membership (T0132, resolved).
             if (expected := self._attestations(dataset)[1].get(relpath)) is not None:
                 if dataset_hash(full) != expected:
                     raise RegistryError(
@@ -108,9 +96,9 @@ class ObservedReader:
                 )
         frame = full
         if window is not None:
-            # A naive or unparseable bound is a caller mistake, not a corrupt dataset: refuse it
-            # typed, or polars raises a SchemaError comparing tz-aware `ts` against a naive literal
-            # and the paved door dies with a traceback on its most natural spelling.
+            # A naive or unparseable bound is a caller mistake, not a corrupt dataset, so both are refused typed: untyped, an
+            # unparseable one surfaces as fromisoformat's raw ValueError and a naive one as polars' SchemaError comparing tz-aware
+            # `ts` against a naive literal.
             bounds = []
             for w in window:
                 try:
@@ -118,10 +106,9 @@ class ObservedReader:
                 except ValueError as exc:
                     raise RegistryError(f"window bound {w!r} is not an ISO-8601 timestamp: {exc}") from exc
                 if parsed.tzinfo is None:
-                    # Do NOT interpolate the caller's own string into the suggestion: appending an
-                    # offset to a date-only bound yields '2020-01-03+00:00', which fromisoformat
-                    # reads as NAIVE (the '+' is taken as the date/time separator), so the advice
-                    # would loop the caller through the same refusal. Name a spelling that works.
+                    # Do NOT interpolate the caller's own bound into the suggestion: an offset appended to a
+                    # date-only bound yields '2020-01-03+00:00', which fromisoformat reads as NAIVE (the '+' is
+                    # taken as the date/time separator), looping the caller through the same refusal.
                     raise RegistryError(
                         f"window bound {w!r} has no timezone — bounds need an explicit offset, e.g. '2020-01-03 00:00:00+00:00'"
                     )
