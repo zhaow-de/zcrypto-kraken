@@ -433,7 +433,7 @@ Four things about it are worth knowing before you touch anything:
 Three standing conditions once it IS armed, each of which silently changes what a scored week means:
 
 - **A verdict needs 42 CONSECUTIVE boundaries at `full` — seven unbroken armed days.** No attended probe window is anywhere near that long, and `zcrypto-engine-exec-armed-too-long` pages after six unbroken hours armed. So an operator who satisfies all three preconditions above and arms during ordinary attended windows gets `NOT SCORED` forever, correctly. **Verdicts only ever arrive in continuous-trading mode**, and that alert's threshold is the thing to revisit first when that mode arrives — before the band, not after.
-- **Disarm the band across any `shadow_nav_eur` change, and re-arm a week later.** NAV sets both halves of the comparison and is read live rather than journaled per cycle, so a NAV converge re-scores weeks that closed under the old value against the new one — halving NAV roughly doubles every reading of a week nobody traded differently, straight into a latched kill file. Journalling NAV on the cycle record is the durable fix and belongs with the next schema widening.
+- **Disarm the band across a `shadow_nav_eur` change only while a cycle record predating the journal's `nav` key is still inside the scoring window.** Each cycle is now scored under the NAV journaled with it (`cli/engine/tracking.py`'s `cycle_nav`, T0150); older records fall back to the live scalar, and for those a converge still re-prices a week that closed under the old value — halving NAV roughly doubles every reading of a week nobody traded differently, straight into a latched kill file.
 - **Disarm the band across a basket widening.** The trip demands every model leg's target in every record it reads, so the first record written under a wider basket makes every earlier one un-scoreable. The refusal is the safe direction, but it lasts until the whole scored span post-dates the widening — a full week — and reads as a broken trip if nobody expects it.
 
 **To disarm it** — remove the key and converge. Nothing else clears it; the disarmed state is the absent key.
@@ -494,8 +494,8 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 
 | code | what it means | what to do |
 | -- | -- | -- |
-| **0** | the final read shows no resting order, no open position and nothing sellable left — and that read is blind to an order resting on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC ([the third limit](#flat-verdict-blind-legs)) | go to step 4, which is what catches that |
-| **1** | refused with nothing sent — no kill file, no terminal, the word did not match, the plan could not be shown, or no credentials in the container | nothing was sent; fix what it named and run it again |
+| **0** | no resting order, no open position, nothing sellable left — and blind to the five pairs [the third limit](#flat-verdict-blind-legs) names | go to step 4, which is what catches that |
+| **1** | refused with nothing sent, the refusal naming which gate stopped it | nothing was sent; fix what it named and run it again |
 | **2** | something is still open, or the account-wide cancel failed, or a read after the cancel failed | go to step 5 |
 | **3** | the venue could not be reached or read **before anything was sent** | nothing was sent; the account is as it was |
 
