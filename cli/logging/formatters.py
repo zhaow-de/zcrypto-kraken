@@ -8,11 +8,7 @@ _OMIT_EXTRA_KEYS = set(logging.LogRecord("x", logging.INFO, "x", 0, "", (), None
 
 
 def _extract_extra(record: logging.LogRecord) -> dict:
-    """User-supplied ``extra`` keys on a record (excludes stdlib/internal bookkeeping).
-
-    Underscore keys are reserved for stdlib/internal bookkeeping and never surface
-    as user extras.
-    """
+    """User-supplied ``extra`` keys on a record, minus stdlib fields and the underscore keys reserved for internal bookkeeping."""
     return {k: v for k, v in record.__dict__.items() if k not in _OMIT_EXTRA_KEYS and not k.startswith("_")}
 
 
@@ -41,8 +37,7 @@ class JsonLineFormatter(logging.Formatter):
 class PlainTextFormatter(logging.Formatter):
     """One line per record, PID/thread stripped (console mode)."""
 
-    # UTC timestamps, matching JsonLineFormatter (which uses time.gmtime); the stdlib
-    # default is time.localtime, which would make console and file logs disagree.
+    # UTC, matching JsonLineFormatter's time.gmtime; the stdlib default localtime would make console and file logs disagree.
     converter = time.gmtime
 
     def __init__(self) -> None:
@@ -51,9 +46,8 @@ class PlainTextFormatter(logging.Formatter):
         )
 
     def formatMessage(self, record: logging.LogRecord) -> str:
-        # Append user `extra` as logfmt-style key=value pairs so the console carries
-        # the same detail as the JSON logs. Done in formatMessage (not format) so the
-        # pairs land on the message line, before any exception traceback.
+        # The console carries the same user `extra` as the JSON logs, as logfmt-style key=value pairs; appended
+        # in formatMessage rather than format so they land on the message line, before any exception traceback.
         line = super().formatMessage(record)
         extra = _extract_extra(record)
         if extra:
