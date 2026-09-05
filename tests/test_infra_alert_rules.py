@@ -139,18 +139,29 @@ def test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve():
 
 # --- A shipped metric that nothing watches ------------------------------------------------------
 # `test_infra_alloy_series.py` proves a metric REACHES Grafana; this proves something looks at it
-# (T0008, T0100).
-#
-# The candidate set is DERIVED from the capture keep-regex, not hand-listed: a fixed list cannot see
-# the next fault gauge added to the regex. Every admitted series is a candidate until excluded below
-# with a written reason.
+# (T0008, T0100). The candidate set is DERIVED, never hand-listed, from the two sources that name
+# series one by one -- the capture hosts' keep-regex and the nightly sweep runner's `# TYPE` lines;
+# the ops keep-regex admits that family by wildcard, which names nothing. Every candidate is a fault
+# signal until excluded below with a written reason.
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
+VERIFY_REPLAY_RUNNER = REPO / "infra/ansible/roles/ops/templates/verify-replay.sh.j2"
 
 
 def _admitted_series() -> list[str]:
     """Every metric name the capture hosts' keep-regex admits to remote_write."""
     line = next(ln for ln in CAPTURE_ALLOY.read_text().splitlines() if ln.strip().startswith("regex") and "node_load1" in ln)
     return line.split('"')[1].split("|")
+
+
+def _verify_replay_series() -> list[str]:
+    """Every metric name the nightly sweep's runner publishes to its textfile: the `# TYPE` lines,
+    checked against the `# HELP` lines so a printf that lost one fails here instead of silently
+    dropping a candidate."""
+    text = VERIFY_REPLAY_RUNNER.read_text()
+    typed = re.findall(r"^\s*printf '# TYPE (ops_verify_replay_\w+) ", text, re.M)
+    helped = re.findall(r"^\s*printf '# HELP (ops_verify_replay_\w+) ", text, re.M)
+    assert typed and sorted(typed) == sorted(helped), f"TYPE/HELP lines disagree: {sorted(set(typed) ^ set(helped))}"
+    return typed
 
 
 # Not fault signals: context you read once something ELSE has paged, or state whose meaning is a
@@ -274,15 +285,35 @@ NOT_A_FAULT_SIGNAL = {
     # either directly would double-page the same event.
     "zcrypto_venue_instruments_loaded",
     "zcrypto_venue_instruments_expected",
+    # The nightly canonical sweep's textfile (spec 00077, spec 00078): every way the sweep fails has
+    # a rule -- failed_hours (new-breakage), run_ok (run-broken), pending_hours (backlog-stuck),
+    # last_run_timestamp (stale) -- and the rest is what a responder reads once one has paged.
+    #   exit_code: 1 on every run once any bad hour stands, so its rule paged daily (spec 00077 D1/D4).
+    "ops_verify_replay_exit_code",
+    #   last_success_timestamp: frozen while any bad hour stands (rc gates it, D5) -- a staleness rule
+    #   on it would be the exit-code page in a third channel; the stale rule reads last_run_timestamp.
+    "ops_verify_replay_last_success_timestamp",
+    #   hours_total, replayed_hours: the census denominators, legitimate at every value.
+    "ops_verify_replay_hours_total",
+    "ops_verify_replay_replayed_hours",
+    #   reused_hours, duration_seconds: a lost checkpoint reverts the sweep to a full rescan (reused
+    #   near zero, duration long) while every rule reads healthy -- a human read on the ops host, not
+    #   a rule (the owner's decision, T0167): a trend across nights, a step the backlog-stuck runbook names.
+    "ops_verify_replay_reused_hours",
+    "ops_verify_replay_duration_seconds",
+    #   audit_mismatches: a discriminator, not a signal -- nonzero withholds the summary, so run-broken
+    #   pages and its runbook reads this first to tell a cache disagreement from a crash.
+    "ops_verify_replay_audit_mismatches",
 }
 
-FAULT_SIGNAL_METRICS = sorted(set(_admitted_series()) - NOT_A_FAULT_SIGNAL)
+_ADMITTED = frozenset(_admitted_series()) | frozenset(_verify_replay_series())
+FAULT_SIGNAL_METRICS = sorted(_ADMITTED - NOT_A_FAULT_SIGNAL)
 
 
 def test_the_exclusion_list_has_not_gone_stale():
     """Every exclusion must name a series the keep-regex still admits — otherwise a rename leaves a
     dead entry silently excusing nothing, and the metric it was renamed to is unguarded."""
-    stale = NOT_A_FAULT_SIGNAL - set(_admitted_series())
+    stale = NOT_A_FAULT_SIGNAL - _ADMITTED
     assert not stale, f"excluded but no longer admitted (rename? removal?): {sorted(stale)}"
 
 
@@ -297,7 +328,7 @@ def test_every_fault_signal_metric_is_watched_by_a_rule(metric):
         r["uid"] for r in _rules() if any(pattern.search(str(q.get("model", {}).get("expr", ""))) for q in r.get("data", []))
     ]
     assert watching, (
-        f"{metric} is admitted to the capture keep-list but no alert rule queries it — nothing "
+        f"{metric} reaches Grafana (the capture keep-list or the ops sweep's textfile) but no alert rule queries it — nothing "
         f"would surface it, since no dashboard panel carries the app-metric families either. Add a "
         f"rule, or add it to NOT_A_FAULT_SIGNAL with the reason."
     )
@@ -607,6 +638,17 @@ def test_every_runbook_link_in_an_alert_summary_resolves():
     )
 
 
+def test_the_runbook_link_pattern_truncates_a_dot_bearing_anchor_so_it_cannot_resolve():
+    """`_RUNBOOK_LINK`'s anchor class excludes `.`, so an anchor carrying one is captured TRUNCATED
+    and the resolve test fails on it rather than skipping it."""
+    assert _RUNBOOK_LINK.findall("infra/runbooks/capture.md#some.anchor") == [("capture.md", "some")]
+    assert "some" not in _runbook_anchors(), "the truncated anchor resolved -- the fail-closed claim is false"
+    # The true positive: a dot-free anchor is captured whole.
+    assert _RUNBOOK_LINK.findall("infra/runbooks/capture.md#zcrypto-capture-stream-silent") == [
+        ("capture.md", "zcrypto-capture-stream-silent")
+    ]
+
+
 def test_every_runbook_link_in_a_dashboard_description_resolves():
     """The panel descriptions cite sections the same way the summaries do, and they are read at the
     same moment -- a responder who followed the notification's panel link is already on the board.
@@ -709,8 +751,8 @@ def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(u
     alert state history, the instances these two raised were overwhelmingly Grafana Cloud failing to
     reach its own Prometheus, and `for: 0s` is what made a one-minute platform hiccup page instantly.
 
-    The residual -- a rule-scoped execution error on these two now pages nothing -- is accepted and
-    named in the runbook."""
+    The residual -- a rule-scoped execution error on these two pages nothing -- is read by the daily
+    pass's rule-health report (`infra/scripts/ops_daily.py`) and named in the runbook."""
     rule = _rule(uid)
     assert rule["execErrState"] == "OK", "a Grafana query failure would page a total-capture-blackout that nothing observed"
     assert rule["noDataState"] == "OK", "the sibling blindness state moved without its reason"
@@ -962,7 +1004,82 @@ def test_the_restart_rule_is_the_only_restart_signal_and_absorbs_a_datasource_hi
     assert rule["noDataState"] == "OK" and rule["execErrState"] == "Alerting"
 
 
+# --- the ops ERROR rule's selector covers every container the ops log plane can label -------------
+OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
+OPS_COMPOSE = REPO / "infra/ansible/roles/ops/templates/compose.yaml.j2"
+
+
+def _ops_log_containers() -> set[str]:
+    """Every `container` label the ops host's log plane can emit: the journal units the keep-regex
+    admits (their unit stem), Alloy's own stream, and the poller's direct-ship service name."""
+    keep = next(ln for ln in OPS_ALLOY.read_text().splitlines() if re.search(r'regex\s*=\s*"zcrypto-\(', ln))
+    units = re.search(r"zcrypto-\(([^)]+)\)", keep)
+    assert units and re.search(r"grafana-alloy", keep), f"the ops journal keep-regex changed shape: {keep!r}"
+    poller = re.search(r"ZCRYPTO_LOG_SERVICE:\s*(\S+)", OPS_COMPOSE.read_text())
+    assert poller, "the poller's direct-ship service label moved out of the ops compose"
+    return {f"zcrypto-{u}" for u in units.group(1).split("|")} | {"alloy", poller.group(1)}
+
+
+def test_the_ops_error_rule_selects_every_container_the_ops_log_plane_can_emit():
+    """A container the journal keep-regex or the poller's direct-ship can label, but the ERROR
+    rule's selector omits, ships errors nothing watches."""
+    rule = _rule("zcrypto-ops-error-logs")
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    selector = re.search(r'container=~"([^"]+)"', expr)
+    assert selector, f"the ops ERROR rule no longer selects on container: {expr!r}"
+    admitted = _ops_log_containers()
+    assert len(admitted) >= 5, f"the log plane derivation found only {sorted(admitted)} -- vacuous"
+    unmatched = sorted(c for c in admitted if not re.fullmatch(selector.group(1), c))  # Loki's =~ is anchored
+    assert not unmatched, f"the ops log plane can label {unmatched}; the ERROR rule's selector {selector.group(1)!r} misses them"
+
+
+# --- every memory-LIMITED job has a headroom leg, or is named absent with its reason ----------------
+# compose source carrying a `memory:` limit -> the (host, job) pairs it renders to. The local
+# infra/docker compose is nobody's host.
+_LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
+    "infra/ansible/roles/capture/templates/compose.yaml.j2": (("zcrypto", "capture_app"), ("zcrypto-red", "capture_app")),
+    "infra/ansible/roles/engine/templates/compose.yaml.j2": (("zcrypto", "engine_app"),),
+    "infra/ansible/roles/capture/templates/alloy-compose.yaml.j2": (
+        ("zcrypto", "integrations/self"),
+        ("zcrypto-red", "integrations/self"),
+    ),
+    "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2": (("ops", "integrations/self"),),
+    "infra/nas/compose.yaml": (("nas", "integrations/self"),),
+    "infra/docker/compose.yaml": (),
+}
+# (host, job) with a limit and no headroom leg, each with the reason it is left out.
+_HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {}
+
 _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
+
+
+def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
+    """A compose service with a `memory:` limit is a container the OOM-killer can take; every
+    (host, job) it renders to divides by a limit in one of the two headroom rules, or is named in
+    `_HEADROOM_DELIBERATELY_ABSENT` with its reason."""
+    # config-selector-ok: presence of any `memory:` line is the question, not a value to parse
+    limited = sorted(str(p.relative_to(REPO)) for p in REPO.glob("infra/**/*compose*.y*ml*") if "memory:" in p.read_text())
+    assert limited == sorted(_LIMITED_JOBS), f"the memory-limited compose sources changed: {limited} -- update the map"
+    exprs = " ".join(
+        str(n.get("model", {}).get("expr", "")) for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM) for n in _rule(uid)["data"]
+    )
+    legs = re.findall(r"process_resident_memory_bytes\{([^}]*)\}\s*/\s*\d+", exprs)
+    assert len(legs) >= 4, f"the two headroom rules carry only {len(legs)} legs -- the parse is broken"
+
+    def covered(host: str, job: str) -> bool:
+        for leg in legs:
+            h, j = re.search(r'host(=~?)"([^"]+)"', leg), re.search(r'job="([^"]+)"', leg)
+            if not (h and j) or j.group(1) != job:
+                continue
+            if host in (h.group(2).split("|") if h.group(1) == "=~" else [h.group(2)]):
+                return True
+        return False
+
+    pairs = [pair for pairs in _LIMITED_JOBS.values() for pair in pairs]
+    missing = [pair for pair in pairs if not covered(*pair) and pair not in _HEADROOM_DELIBERATELY_ABSENT]
+    assert not missing, f"memory-limited but no headroom leg and no recorded absence: {missing}"
+    stale = [pair for pair in _HEADROOM_DELIBERATELY_ABSENT if covered(*pair)]
+    assert not stale, f"named absent but a leg exists -- the excuse outlived the gap: {stale}"
 
 
 def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():

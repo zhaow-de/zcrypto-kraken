@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # The alert-rule guard's blind spots
@@ -19,9 +19,15 @@ The guard is what lets an alert-rule edit ship on a test's word. A dead-man that
 - The ops ERROR rule's container selector is a list; a container the ops compose or journal keep-regex admits but the list omits ships errors nothing watches.
 - The memory-limit pin ties each limit literal to its ansible variable; nothing asserts that every limited job has a headroom leg (the liquidations poller and the NAS archive-pull are deliberately absent, with reasons in the file).
 
+## Resolution
+
+Every item was decided by the owner on 2026-09-05, per item, in an attended session; commits are cited by subject (branch `fix/t0165-t0167-asserted-in-prose`).
+
+- `_fires_on_absence`'s math-node limit: **recorded drop** — the paragraph stays in `tests/test_infra_alert_rules.py` as the standing instruction (widen the classifier, never the receiver); a math-node dead-man is caught at review. Both math-node rules today pin `metrics`.
+- `_RUNBOOK_LINK` on a dot-bearing anchor: **test** — `test(obs): three of the alert-rule guard's stated limits become assertions`, `test_the_runbook_link_pattern_truncates_a_dot_bearing_anchor_so_it_cannot_resolve`; KILLED when `.` is admitted into the anchor class.
+- The ops ERROR rule's selector against the ops log plane: **test** — same commit, `test_the_ops_error_rule_selects_every_container_the_ops_log_plane_can_emit`, deriving the labels from the ops journal keep-regex, Alloy's stream and the poller's `ZCRYPTO_LOG_SERVICE`; KILLED when `liquidations` is dropped from the selector.
+- Every memory-limited job has a headroom leg: **test** — same commit, `test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence`, the limited compose sources pinned by glob and each rendered (host, job) covered or named absent with its reason; KILLED when the engine leg is renamed.
+
 ## Suggested next steps
 
-- Widen `_fires_on_absence` to read math-node expressions as well as threshold evaluators, with a fixture for each form (threshold `lt`; math `$B < 1` under `gt 0`) proven to trip on `logs` and pass on `metrics`; then delete the restored limit paragraph.
-- A case that feeds `_RUNBOOK_LINK` a `file.md#some.anchor` string and asserts the captured anchor is truncated, hence unresolvable.
-- A test asserting every container the ops journal keep-regex admits is matched by the ops ERROR rule's selector.
-- Extend the memory-limit pin: every limited job has a headroom leg, or is named in the file's deliberate-absence list with its reason.
+_(none remain — see Resolution)_

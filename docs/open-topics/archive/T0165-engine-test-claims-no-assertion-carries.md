@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # Engine test claims no assertion carries
@@ -19,9 +19,15 @@ All four sit on the live trade path or its operator prompt. A docstring that cla
 - The executor test fixture's comment claimed that tests about the running-nautilus input override the `_nautilus_verified` fixture at the end of the file; no such test exists.
 - `test_the_prompt_is_written_to_the_terminal_and_not_to_this_process_s_stdout` passes under `pytest -s` even if the prompt went to stdout, because the child's fd 1 is then the pty slave.
 
+## Resolution
+
+Every item was decided by the owner on 2026-09-05, per item, in an attended session; commits are cited by subject (branch `fix/t0165-t0167-asserted-in-prose`).
+
+- `_enter` as the only writer of the `resting` phase: **recorded drop** — the behavioural test `test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase` pins what matters; a structural pin on the write site is not worth a test.
+- The time-box IOC fallback refused by the gate: **test** — `test(engine): the fallback IOC is refused when the kill file lands during the time-box cancel`, `tests/test_engine_executor.py::test_a_kill_file_landing_during_the_time_box_cancel_refuses_the_fallback_ioc`; proven by mutation — KILLED when `_submit`'s level check is disabled.
+- A test for the running-nautilus gate input: **recorded drop** — the false fixture comment is gone (T0164), and `tests/test_engine_execgate.py` covers the verified-record check.
+- The `-s` blind spot: **test** — `test(engine): the prompt-to-terminal test holds under pytest -s`; fd 1 is pointed at `/dev/null` in the forked child. Proven by mutation under `-s` with the prompt written to stdout: this test KILLED, the base test SURVIVED.
+
 ## Suggested next steps
 
-- Beside `test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase`: an AST walk over `cli/engine/executor.py` asserting `phase = "resting"` is assigned at exactly one site and that `placed_at` is set in the same body.
-- In the ladder section of `tests/test_engine_executor.py`: touch the kill file after the time-box cancel goes out, answer the cancel, assert the IOC is refused by the gate.
-- At the end of `tests/test_engine_executor.py` (or in `tests/test_engine_execgate.py`): a test that lets `execgate._installed_nautilus_version` run unstubbed and asserts the gate's verdict names the running-nautilus input.
-- In `tests/test_engine_flatten.py`, in the forked child: `os.dup2` of `/dev/null` onto fd 1 before `read_confirm`, as it already does for fd 0, so only a write through `/dev/tty` reaches the drained master and the `b"TYPE-THE-WORD?"` assertion holds under `-s` too.
+_(none remain — see Resolution)_

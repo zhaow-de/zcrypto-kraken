@@ -1809,10 +1809,6 @@ rules:
     # A known bad hour is a CONSTANT in ops_verify_replay_failed_hours, so it contributes zero to the
     # delta; only a new failure moves the count. Same delta-over-a-window shape as `Gate · streak
     # reset` above.
-    #
-    # Known blind spot, deliberate: NO rule watches ops_verify_replay_reused (nor duration /
-    # audit_mismatches) -- a busted checkpoint silently reverts every sweep to a full rescan while
-    # all three rules read healthy. Reading `reused` stays a deliberately-human check on the ops host.
     condition: C
     data:
       - refId: A
@@ -1903,6 +1899,49 @@ rules:
       __panelId__: "301"
     labels:
       severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-verify-replay-stale
+    title: "Ops · verify-replay stale"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # The case the three rules above cannot see: the sweep has stopped RUNNING -- their gauges hold
+    # their last value between runs. 48h = two missed 03:41 UTC runs (verify-replay.timer.j2). Reads
+    # last_RUN, not last_success: a standing bad hour freezes last_success_timestamp (rc gates it, D5
+    # in verify-replay.sh.j2), so a rule on it would be the retired exit-code page in a third channel.
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - ops_verify_replay_last_run_timestamp
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [172800]}  # 48h -- 2 missed daily runs
+    noDataState: Alerting  # no series at all = the host, Alloy, or the textfile is gone. That IS the alarm.
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The nightly canonical archive replay sweep has not run in over 48h -- two daily runs missed, so changed archive hours are going unverified. Runbook: infra/runbooks/ops.md#zcrypto-ops-verify-replay-stale"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "302"
+      unit: "seconds since the canonical replay sweep last ran"
+    labels:
+      severity: warning
     notification_settings:
       receiver: metrics
 
@@ -2772,13 +2811,6 @@ rules:
     orgId: 1
     condition: C
     data:
-      # NOT covered: the .prom being DELETED. The mtime series then vanishes rather than
-      # staling -- noDataState OK swallows a whole-query empty, and one host disappearing is not
-      # noData at all, since `max by (host)` simply drops that dimension. The skew rule reads empty
-      # as healthy too, so neither fires. Left as-is because the 5-min timer recreates the file:
-      # persistent silence needs the textfile DIRECTORY gone, which also fails the script's mktemp.
-      # Closing it properly is per-host absent() legs, not noDataState: Alerting, which would page
-      # on any datasource blip. Both precedent staleness rules share this gap.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -3074,10 +3106,10 @@ rules:
     # Both halves matter, so the stronger instrument wins on these two specifically. A correlated
     # datasource outage is still reported by the sibling rules in this group that keep `Alerting`.
     #
-    # THE RESIDUAL, stated rather than implied: a RULE-SCOPED evaluation error -- an expression
-    # broken by a later edit, a permission or cardinality failure on this query alone -- pages
-    # nothing, because the siblings above are only correlated cover. Nothing in the repo watches for
-    # that, deliberately; the runbook section names the shape so it is recognizable.
+    # THE RESIDUAL: a RULE-SCOPED evaluation error -- an expression broken by a later edit, a
+    # permission or cardinality failure on this query alone -- pages nothing, because the siblings
+    # above are only correlated cover. It is read, not paged: the daily pass lists a rule whose health
+    # is not ok or whose instance state keeps the `(Error)` reason (infra/scripts/ops_daily.py).
     execErrState: OK
     # 0s, and it is arithmetic rather than impatience: a pending period is added directly to the
     # guaranteed detection floor, which a phase sweep over scrape x eval alignments showed already
@@ -3989,8 +4021,6 @@ rules:
   # differentiated severity would imply a differentiated response that does not exist. What differs is
   # only what accumulates unseen meanwhile, which the per-host summary states. These own "not
   # shipping" only.
-  # The other case -- Alloy alive but its discovery wedged, the T0048 shape -- is detected by
-  # nothing here since `zcrypto-alloy-docker-sd-wedged` was retired (spec 00068 D6/D8).
 
   # --- memory, watched as a ROUTINE and never as a rollout read --------------------------------------
   # The four rules below replace the capture-image bake's hand-read RSS rows, which every converge

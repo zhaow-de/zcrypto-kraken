@@ -84,10 +84,23 @@ class Alert:
     hosts: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class RuleHealth:
+    """A rule Grafana could not evaluate -- its `health`, or the `(Error)` reason on an instance state,
+    which, by ngalert's source, is all `execErrState: OK` leaves of a failed evaluation (T0167's read-back
+    saw the suffix shape live, not that mapping)."""
+
+    uid: str
+    title: str
+    health: str
+    last_error: str
+
+
 @dataclass
 class AlertsRead:
     firing_now: list[Alert] = field(default_factory=list)
     fired_in_window: list[Alert] = field(default_factory=list)
+    unhealthy: list[RuleHealth] = field(default_factory=list)
     unreadable: str | None = None
 
 
@@ -126,6 +139,12 @@ def _hosts_of(uid: str, instances: list[dict]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(host for host in found if host))
 
 
+def _reason_of(state: str) -> str:
+    """The reason Grafana appends to an instance state -- `Normal (Error)` -> `Error`; none -> empty."""
+    m = re.search(r"\(([^)]*)\)\s*$", state)
+    return m.group(1) if m else ""
+
+
 def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.request.urlopen) -> AlertsRead:
     read = AlertsRead()
     rule_links: dict[str, str | None] = {}
@@ -137,6 +156,15 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 if not uid:
                     return AlertsRead(unreadable=f"a rule arrived with no uid ({rule.get('name', '?')!r}) -- the API shape changed")
                 instances = rule.get("alerts") or []
+                # One condition, two surfaces, chosen by `execErrState`: `Alerting` puts `health: error`
+                # and a `lastError` on the rule; `OK`, by ngalert's source, maps the failed evaluation to
+                # a Normal instance whose state keeps the `(Error)` reason -- T0167's read-back saw the
+                # suffix shape live, not that mapping. `Error` by substring, as the history filter reads it.
+                health = rule.get("health")
+                errored = [str(i.get("state") or "") for i in instances if "Error" in _reason_of(str(i.get("state") or ""))]
+                if (health is not None and health != "ok") or errored:
+                    shown = str(health) if health not in (None, "ok") else errored[0]
+                    read.unhealthy.append(RuleHealth(uid, rule.get("name", ""), shown, str(rule.get("lastError") or "")))
                 # Instances arrive in EVERY state, reason suffix included, so a rule grouped
                 # `by (host, system)` that is Alerting on the primary and Normal on the secondary
                 # would otherwise name both hosts -- sending the operator to create, and later
@@ -626,6 +654,7 @@ class Report:
         # containing a critical firing `all-clear`, which is the one verdict it must never get wrong.
         if (
             self.alerts.firing_now
+            or self.alerts.unhealthy
             or self.cleared_in_window
             or [c for c in self.verdict if not c.ok]
             or (self.deadmen.via_prometheus or 0) > 0
@@ -647,6 +676,9 @@ class Report:
         out += [f"- `{a.uid}` on {', '.join(a.hosts) or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.alerts.firing_now] or [
             "- none"
         ]
+        if self.alerts.unhealthy:
+            out += ["", "## Rules not evaluating"]
+            out += [f"- `{r.uid}` — {r.health}: {r.last_error or 'no error text from Grafana'}" for r in self.alerts.unhealthy]
         if self.cleared_in_window:
             out += ["", "## Alerts that fired and cleared in the window"]
             out += [f"- `{a.uid}` on {', '.join(a.hosts) or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.cleared_in_window]
@@ -696,8 +728,10 @@ class Report:
         reminders = ", ".join(f"{'OWED ' if r.owed else ''}{r.name}: {r.status}" for r in self.reminders.reminders) or "none read"
         deploys = ", ".join(str(d.get("limit")) for d in self.deploys) or "none"
         hours = int(self.window.total_seconds() // 3600)
+        sick = len(self.alerts.unhealthy)
         return (
             f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired}"
+            f"{f' · {sick} rule{"s" if sick != 1 else ""} not evaluating' if sick else ''}"
             f"{f' · fired and cleared {cleared}' if cleared else ''} · checks {failed} · "
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
