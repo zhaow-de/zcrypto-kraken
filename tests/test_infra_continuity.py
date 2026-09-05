@@ -1,7 +1,6 @@
 """T0097 / spec 00076: the continuity instrument's measurement semantics.
 
-Every test here constructs the defect it names and asserts the instrument reacts -- reading the
-assertion is not verification (`.claude/rules/agent-ops.md`).
+Every test here constructs the defect it names and asserts the instrument reacts.
 """
 
 import datetime as dt
@@ -22,12 +21,9 @@ UTC = dt.UTC
 
 def _load():
     # Imported by path, not as a package module: the script is standalone by design (stdlib +
-    # polars only, so it runs on a host without the repo installed). Cache-busting matters --
-    # a same-second, same-length edit can leave a stale .pyc valid (`agent-ops.md`).
-    # Registered in sys.modules before exec: continuity.py's `from __future__ import annotations`
-    # makes dataclass field annotations strings, and `dataclasses` resolves those against
-    # `sys.modules[cls.__module__]` -- unregistered, that lookup is None and StreamTimeline's
-    # decoration crashes.
+    # polars only, so it runs on a host without the repo installed). Registered in sys.modules
+    # before exec because `dataclasses` resolves continuity.py's stringized annotations against
+    # `sys.modules[cls.__module__]` -- unregistered, StreamTimeline's decoration crashes.
     spec = importlib.util.spec_from_file_location("continuity_under_test", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
@@ -54,12 +50,8 @@ def evenly(h: dt.datetime, n: int, step: float, start: float = 0.0) -> list[dt.d
 
 @pytest.mark.parametrize(("n", "degenerate"), [(5001, True), (5002, False)])
 def test_quantile_degeneracy_bound_is_measured_not_assumed(n, degenerate):
-    """D6's constant, pinned to polars' observed behavior.
-
-    With nearest interpolation `quantile(0.9999)` returns the element at round(0.9999*(n-1)),
-    which IS the maximum until n exceeds 5001 -- so below the bound the derived threshold is
-    10x the worst outage and the instrument is structurally blind.
-    """
+    """With polars' nearest interpolation `quantile(0.9999)` is the maximum until n exceeds 5001 --
+    the degeneracy MIN_POOL is sized against (00076/D6)."""
     s = pl.Series([1.0] * (n - 1) + [9999.0])
     assert (s.quantile(0.9999) == s.max()) is degenerate
 
@@ -78,11 +70,9 @@ def _segs(root: Path, pair: str, kind: str = "book"):
 
 
 def test_contiguous_crossing_is_pooled_and_classified(tmp_path):
-    # H0 ends 2 s before its boundary, so the crossing is 2 s -- distinct from the uniform 1 s
-    # intra-hour spacing. `len(pool) == len(intra) + 1` is invariant under double-booking (a
-    # crossing wrongly pooled into `intra` too moves both sides of the relation together), so the
-    # property is pinned directly instead: intra's exact length, and the crossing's value absent
-    # from it.
+    # H0 ends 2 s before its boundary, so the crossing is 2 s -- distinct from the uniform 1 s intra
+    # spacing. `len(pool) == len(intra) + 1` would still hold if the crossing were double-booked into
+    # `intra`, so intra's exact length and the crossing's absence from it are pinned instead.
     write_stream(tmp_path, "AAA/EUR", {H0: evenly(H0, 3599, 1.0), H1: evenly(H1, 3600, 1.0)})
     tl = continuity.stream_timeline(_segs(tmp_path, "AAA/EUR"), genesis_hour=H0)
     assert tl.missing_hours == 0
@@ -134,20 +124,13 @@ def _run(root: Path, capsys, *, since=dt.datetime.min.replace(tzinfo=UTC), kind=
 
 def _column(out: str, prefix: str, field: str) -> str:
     """The value under `field` on the row starting with `prefix`, located by CHARACTER RANGE from the
-    header -- the same helper `tests/test_continuity_overlay.py` uses, and for the same reason:
-    `str.split()` collapses blank cells (an UNMEASURED row's blank thresh_s/gap_s/gap% slots, the
-    TOTAL row's blank n/thresh_s slots), silently shifting every field after the first blank one onto
-    the wrong index instead of reading it as blank. Every column is right-justified to a fixed width
-    behind a single-space separator, so a field's cell always ENDS at the same character offset as its
-    header token, whether the cell holds a value or is blank; the cell STARTS just after the preceding
-    header token ends. Doubly load-bearing here, where rows also carry a trailing ` genesis` marker
-    that would shift every negative index too.
-
-    The header row is located by its `pair` prefix, NOT by "the first line containing `field`": the
-    column names are ordinary words that also occur in the post-table reason notes ("... whose
-    spacing **tail** steepens ..."), and a `field in line` lookup silently falls through to a note
-    once the column it names is gone -- measured, `_column(out, "TOTAL", "tail")` then returns `''`
-    and a blank-cell assertion PASSES against a table with no `tail` column at all."""
+    header -- the twin of `tests/test_continuity_overlay.py`'s `_column`. Every column is
+    right-justified to a fixed width behind a single-space separator, so a cell always ends at its
+    header token's offset; `str.split()` instead collapses blank cells (an UNMEASURED row's
+    thresh_s/gap_s/gap%, the TOTAL row's n/thresh_s) and a trailing ` genesis` marker shifts every
+    negative index. The header is found by its `pair` prefix, never by the first line containing
+    `field`: the column names recur in the post-table reason notes, so that lookup falls through to a
+    note and silently returns `''` once the column it names is gone."""
     lines = out.splitlines()
     header = next(line for line in lines if line.startswith("pair"))
     row = next(line for line in lines if line.startswith(prefix))
@@ -159,12 +142,8 @@ def _column(out: str, prefix: str, field: str) -> str:
 
 
 def test_column_reads_blank_cells_on_unmeasured_and_total_rows(tmp_path, capsys):
-    """`_column` is now load-bearing for both continuity test files (T0097 Finding 3): a
-    `str.split()`-based version misreads an UNMEASURED row's blank `gap_s` cell as its NEXT
-    non-blank cell's value, and raises `IndexError` on the TOTAL row (which has two blank cells of
-    its own). AAA/EUR is measured (3 full hours, pool well past MIN_POOL); THIN/EUR is a single
-    sparse hour (120 rows), reported UNMEASURED and excluded from the TOTAL row's totals.
-    """
+    """`_column` reads an UNMEASURED row's blank cells and the TOTAL row, which excludes the
+    unmeasured stream from its totals (T0097 Finding 3)."""
     hours = {H0 + dt.timedelta(hours=i): evenly(H0 + dt.timedelta(hours=i), 6000, 0.6) for i in range(3)}
     write_stream(tmp_path, "AAA/EUR", hours)
     write_stream(tmp_path, "THIN/EUR", {H0: evenly(H0, 120, 30.0)})
@@ -195,26 +174,16 @@ def test_genesis_annotation_and_zero_gap_in_the_report(tmp_path, capsys):
 
 
 def test_identical_outage_counts_the_same_on_dense_and_slow_streams(tmp_path, capsys):
-    """For MEASURED streams (n >= MIN_POOL), the booked outage is density-independent: the same 200 s
-    hole is counted the same whether the surrounding stream samples at 0.1 s or 0.6 s spacing. This is
-    a characterization test, not a regression carrier for the thin-stream false-GREEN the topic
-    originally measured (a self-calibrating threshold that swallows the outage on a sparse stream) --
-    that defect class is closed by refusal, not by this test's booking: any stream sparse enough to
-    exhibit it is exactly a stream D6 declares UNMEASURED (see the UNMEASURED -> FAIL rule). Confirmed
-    against the earlier `report()` too: this same fixture already passes there (DENSE 200.1 /
-    SLOW 201.0, identical to the new code), so both assertions hold under either measurement basis.
+    """For MEASURED streams the booked outage is density-independent: the same 200 s hole counts the
+    same at 0.1 s and at 0.6 s spacing.
 
-    ONE outage among four clean hours, so the fixture sits inside D6a's safe regime -- with two
-    outages in a ~11k pool the p99.99 lands ON the second one and the slow stream self-inflates by
-    design, which is D6a's registered residual, not a defect this test may hide behind.
+    ONE outage among four clean hours keeps the fixture inside 00076/D6a's safe regime -- two
+    outages in a ~11k pool put p99.99 ON the second one and the slow stream self-inflates by design,
+    which is that decision's registered residual and not something this test may hide behind.
 
-    Fixture arithmetic: `n = int(3600 / step)` packs each hour to (just under) full -- so the
-    inter-hour crossings stay at ~1 step, not a real gap. Hour 1's outage is carved OUT of that full
-    hour (drop the offsets in [3000, 3200)) rather than appended after a truncated prefix: appending
-    after only `3000 / step` rows left a second, unbooked ~600 s hole at every hour's tail (it swamped
-    the intended single 200 s signal -- measured, that shape produced gap_s 2397.6 (DENSE) vs 0.0
-    (SLOW), the opposite of what this test exists to prove). Carving the window out of a full hour
-    leaves exactly one ~(200 + step) s hole and nothing else anomalous.
+    The outage is CARVED out of an otherwise full hour (`n = int(3600 / step)`), never appended after
+    a truncated prefix: appending leaves a second, unbooked hole at every hour's tail that swamps the
+    single 200 s signal this test exists to measure.
     """
     for pair, step in (("DENSE/EUR", 0.1), ("SLOW/EUR", 0.6)):
         hours = {}
@@ -236,13 +205,9 @@ def test_identical_outage_counts_the_same_on_dense_and_slow_streams(tmp_path, ca
 
 
 def test_trunc_counts_only_boundary_truncations_not_intra_silence(tmp_path, capsys):
-    """`trunc` is the T0036 restart-clobber counter that drives the operator-facing
-    `truncated hours: N -- MUST be 0` line -- it must count only BOUNDARY truncations
-    (edge_head/edge_tail/crossing/excess), never intra-hour silence, or ordinary silence would be
-    reported as restart damage. H1 carries a genuine 50 s intra-hour outage above threshold (booked
-    into `gap_s`); H0/H2 are full hours and every boundary (2 crossings + 1 edge_tail) stays at the
-    ~0.6 s step, far under the derived 6.0 s threshold -- so `trunc` must stay at its boundary-only
-    value (0) while `gap_s` still reflects the outage.
+    """`trunc` counts only boundary truncations -- the T0036 restart-clobber signature behind the
+    `truncated hours: N` line -- never intra-hour silence, which would read as restart damage: H1's
+    50 s outage lands in `gap_s` and leaves `trunc` at 0.
     """
 
     def full_hour(h: dt.datetime, step: float) -> list[dt.datetime]:
@@ -298,15 +263,10 @@ def test_missing_hour_is_not_double_counted(tmp_path, capsys):
 
 
 def test_since_window_keeps_genesis_from_moving_and_books_a_late_leading_edge(tmp_path, capsys):
-    """D5 + D10 through `main()`, the only path where the unfiltered-genesis defense actually runs.
-
-    The genesis sits on the PREVIOUS day, because `--since` takes a date and cannot split a day:
-    the window opens at 00:00, whose head is 400 s late -- a real restart, which must be booked and
-    counted rather than inheriting genesis's free pass.
-
-    Arithmetic, so the assertions are exact: 0.6 s spacing puts p99.99 at 0.6 and the threshold at
-    max(6.0, 5.0) = 6.0; the head is 400 s (booked, 1 truncation), the crossing 2.6 s and the
-    trailing tail 1.2 s (both under it, booked as nothing).
+    """A `--since` window does not move genesis (D5 + D10 through `main()`, the only path where that
+    defense runs): the genesis hour sits on the previous day because `--since` takes a date, so the
+    window's first hour -- 400 s late -- is booked and counted as a truncation instead of inheriting
+    genesis's free pass, while the 2.6 s crossing and 1.2 s tail stay under the 6.0 s threshold.
     """
     gen = dt.datetime(2026, 6, 30, 23, tzinfo=UTC)
     d1h0 = dt.datetime(2026, 7, 1, 0, tzinfo=UTC)
@@ -342,10 +302,8 @@ def test_small_sample_is_unmeasured_and_fails_the_bar(tmp_path, capsys):
     rc, out = _run(tmp_path, capsys)
     assert "UNMEASURED" in out
     assert "*** FAIL *** (unmeasured streams: 1)" in out
-    # D4's attribution, pinned in BOTH directions: the under-bound reason is NAMED, and it is not
-    # misattributed as a steepened tail. A mutant that drops the `n >= MIN_POOL` guard on the
-    # steepened list books every under-bound refusal as a tail refusal, and nothing else in this
-    # file notices -- the steepened-tail tests only assert the under-bound line is ABSENT.
+    # 00079/D4's attribution, pinned in BOTH directions: the under-bound reason is NAMED, and it is
+    # not misattributed as a steepened tail.
     assert f"under the {continuity.MIN_POOL}-interval bound" in out
     assert "steepens more than" not in out
     # Every stream unmeasured is still "we read something and judged it" -- rc 0 with a FAIL
@@ -358,8 +316,7 @@ def test_unmeasured_stream_is_excluded_from_the_total_row(tmp_path, capsys):
     write_stream(tmp_path, "THIN/EUR", {H0: evenly(H0, 200, 18.0)})
     write_stream(tmp_path, "DENSE/EUR", {H0: evenly(H0, 5999, 0.6), H1: evenly(H1, 5999, 0.6)})
     _, out = _run(tmp_path, capsys)
-    # covered_s on TOTAL counts only the measured stream -- read via the header, never a fixed
-    # index: the DENSE row carries a trailing ` genesis` marker that shifts every negative index.
+    # covered_s on TOTAL counts only the measured stream.
     assert float(_column(out, "TOTAL", "covered_s")) == pytest.approx(float(_column(out, "DENSE/EUR", "covered_s")))
     assert "*** FAIL *** (unmeasured streams: 1)" in out
 
@@ -372,28 +329,10 @@ def test_all_streams_measured_keeps_the_plain_verdict(tmp_path, capsys):
 
 
 def test_the_thin_stream_false_green_is_now_a_refusal_not_a_zero(tmp_path, capsys):
-    """T0097's headline measured finding: an identical outage counted 200.1 s on a dense stream and
-    0.0 s on a thin one, because the self-calibrating threshold inflated to ~10x the outage itself
-    and swallowed it whole. Reconstructed end-to-end against the OLD (pre-T0097, commit 6f614957)
-    `report()` -- the version that already prints `thresh_s` and survives an empty window, but has
-    neither `StreamTimeline` nor `MIN_POOL` -- via `git show 6f614957:infra/scripts/continuity.py`:
-
-    A THIN/EUR stream, 3 s spacing, 2 hours, with a genuine 204 s outage carved out of hour 0 (the
-    same carve technique `test_trunc_counts_only_boundary_truncations_not_intra_silence` uses:
-    drop the offsets in [1800.0, 2000.0) from an otherwise full hour). Measured directly against the
-    OLD module: 1,133 rows survive in hour 0 (1,132 intra diffs, one of them the 204 s outage),
-    2,332 pooled diffs total across both hours. With nearest interpolation, `quantile(0.9999)` on
-    that small a pool lands ON the outage itself, so `thresh_s` derives to 2040.0 (10x 204) --
-    comfortably above the 204 s hole, which vanishes from the count entirely. All that's left is
-    each hour's ~2 s tail remainder (1,200 samples/hour at 3 s spacing don't reach exactly to the
-    hour boundary): `gap_s = 4.0`, `pct = 0.0556%`, `EXIT BAR: PASS`. The OLD instrument reports a
-    stream with a genuine 204 s outage as clean.
-
-    Under the NEW instrument, the SAME fixture pools to 2,332 intervals -- under MIN_POOL (5,002) --
-    so it is never scored against that self-calibrated number at all: UNMEASURED, and the exit bar
-    FAILS rather than banking the 0.0556% the old code would have reported. This is the assertion
-    that closes T0097's original defect: a stream sparse enough to self-calibrate into blindness is
-    exactly a stream this instrument now refuses to score.
+    """T0097's founding defect, closed by refusal: a stream sparse enough to self-calibrate into
+    blindness -- 3 s spacing over two hours, with a 200 s window carved out of hour 0 -- pools under
+    MIN_POOL, so the instrument refuses to score it instead of deriving a threshold from the outage
+    itself and booking 0.0 s over it.
     """
 
     def full_hour(h: dt.datetime, step: float) -> list[dt.datetime]:
@@ -419,17 +358,11 @@ def test_the_thin_stream_false_green_is_now_a_refusal_not_a_zero(tmp_path, capsy
 
 # --- T0112 / spec 00079: the tail-steepness gate -------------------------------------------------
 #
-# MIN_POOL closes the k=1 case only. At k >= 2 same-scale outages the pool clears the bound, p99.99
-# lands ON an outage, and the derived threshold inflates to 10x it -- the instrument then books
-# 0.0 s over genuinely missing data, which is the false GREEN the whole script exists to prevent.
+# Why MIN_POOL alone is not enough: `TAIL_RATIO_CUT` in `infra/scripts/continuity.py`.
 
 
 def _bursty(n: int, rng: random.Random) -> list[float]:
-    """T0097's measured spacing shape: same-millisecond bursts, so the pool's median is 0.
-
-    This is the shape that already refuted any median-based statistic, and it is what makes the
-    RATIO_FLOOR_S denominator floor necessary rather than cosmetic.
-    """
+    """T0097's measured spacing shape: same-millisecond bursts, so the pool's median is 0."""
     out: list[float] = []
     while len(out) < n:
         b = rng.randint(1, 12)
@@ -444,17 +377,12 @@ def _bimodal(n: int, rng: random.Random) -> list[float]:
 
 
 def test_founding_defect_k2_is_refused():
-    """Pool-level half of the founding defect: n=11,389 with two 200 s outages.
+    """Pool-level half of the founding defect: two 200 s outages in an 11,389-interval pool trip the
+    gate, where the old 10x-p99.99 derivation would have taken its threshold from the outages.
 
-    The OLD derivation yields thresh = 10 x p99.99 = 2,000.0 from this exact pool, because p99.99
-    lands ON the second outage. Measured here: r1 = 100.83, r2 = 2.05 -- an order of magnitude past
-    the cut, two orders past the 1.05-1.96 the twelve production streams measure.
-
-    The report-level reproduction uses the CARVED fixture in
-    `test_report_renders_contaminated_stream_unmeasured`, NOT this pool: a `_bursty` pool spans only
-    ~17 min of wall time, so through `report()` the old code books the edge_tail and the
-    0.0-booked defect does not reproduce with it.
-    """
+    The report-level reproduction needs the carved fixture of
+    `test_report_renders_contaminated_stream_unmeasured`: a `_bursty` pool spans too little wall time
+    for the 0.0-booking defect to appear through `report()`."""
     rng = random.Random(11)  # pinned: verified to satisfy the assertion below
     pool = pl.Series(_bursty(11_387, rng) + [200.0, 200.0])
     assert len(pool) == 11_389
@@ -463,12 +391,8 @@ def test_founding_defect_k2_is_refused():
 
 
 def test_second_ratio_is_load_bearing():
-    """k ~= 0.002*n: p99.99 AND p99.9 both land on outages, so the FIRST ratio reads exactly 1.0 and
-    sees nothing. Only p99.9/p99 still spans the cliff. Measured: r1 = 1.0, r2 = 193.66.
-
-    Dropping the second ratio must fail exactly this test; swapping the tuple's order must fail it
-    too, because the swapped r1 = 193.66 breaks the `r1 < cut` half.
-    """
+    """At k ~= 0.002*n both p99.99 and p99.9 land on outages, so the first ratio reads ~1.0 and only
+    p99.9/p99 still spans the cliff -- which is why `tail_steepness` returns both, in that order."""
     rng = random.Random(12)  # pinned: verified to satisfy both assertions below
     n, k = 11_389, 23
     pool = pl.Series(_bursty(n - k, rng) + [200.0] * k)
@@ -479,18 +403,12 @@ def test_second_ratio_is_load_bearing():
 
 
 def test_legitimate_heavy_tails_stay_measured():
-    """No false positives on legitimate spacing shapes.
+    """No false positive on legitimate spacing shapes.
 
-    bursty-typical and bimodal are seed-INDEPENDENT properties -- swept over 200 seeds while writing
-    this test they measured 1.661-2.042 and 1.813-2.267 respectively, every seed under the cut, so
-    they are asserted generally over a sample of seeds rather than pinned.
-
-    pareto alpha=1.1 and lognormal sigma=3 are PINNED to named seeds verified below the cut, because
-    these families straddle it BY CONSTRUCTION: the cut IS the per-decade quantile ratio of a Pareto
-    tail at alpha=1, the infinite-mean boundary, and alpha=1.1's theoretical ratio is 10^(1/1.1) =
-    8.1. Swept over 200 seeds, 26 % (pareto) and 45 % (lognormal) of draws exceed the cut -- an
-    unpinned seed here is a lottery that fails HEALTHY code, not a regression signal. Seeds 78 and
-    117 are the widest-margin draws found in that sweep (4.93 and 6.65).
+    bursty-typical and bimodal are seed-independent below the cut, so they are asserted over a range
+    of seeds; pareto alpha=1.1 and lognormal sigma=3 straddle the cut BY CONSTRUCTION -- the cut IS a
+    Pareto tail's per-decade ratio at alpha=1, and alpha=1.1's is 10^(1/1.1) = 8.1 -- so their seeds
+    are pinned, an unpinned one being a lottery that fails HEALTHY code rather than a signal.
     """
     for seed in range(10):
         for name, sample in (
@@ -506,18 +424,9 @@ def test_legitimate_heavy_tails_stay_measured():
 
 
 def test_floor_keeps_ultra_bursty_measured_and_catches_its_outages():
-    """Both arms exercise RATIO_FLOOR_S as the DENOMINATOR.
-
-    An ultra-bursty pool has p99.9 = 0 exactly (same-millisecond bursts), so an unfloored ratio
-    would divide by zero and refuse a healthy stream. The floor is not a new magic number: it is
-    5.0 / 10, the spacing scale below which the existing threshold floor already declares steepness
-    irrelevant. Its deliberate consequence is the second arm -- a sub-millisecond stream with two
-    200 s pauses IS refused, and should be, since the alternative was scoring it against a 2,000 s
-    threshold.
-
-    (Note the max is 200 s in BOTH arms of the contaminated case by construction: a pool with a
-    single 200 s max cannot be reached by p99.99 above MIN_POOL -- that is MIN_POOL's own design,
-    so the refusable case needs two.)
+    """RATIO_FLOOR_S as the DENOMINATOR in both arms: a p99.9 = 0 ultra-bursty pool stays measured
+    instead of dividing by zero, and the same floor refuses that pool once two 200 s pauses sit in
+    it. Two pauses and not one, because above MIN_POOL p99.99 cannot reach a lone maximum (00076/D6).
     """
     benign = pl.Series([0.0] * 11_378 + [2.0] * 11)  # p99.9 = 0, p99.99 = 2.0
     r1, _ = continuity.tail_steepness(benign)
@@ -533,7 +442,6 @@ def test_floor_keeps_ultra_bursty_measured_and_catches_its_outages():
 def test_boundary_n_5002_clean_stays_measured():
     """A pool of exactly MIN_POOL with a clean tail passes BOTH gates independently -- the two gates
     are conjunctive, so the new one must not silently re-refuse what the bound just admitted.
-    Measured on this seed: r1 = 1.20, r2 = 2.00.
     """
     pool = pl.Series(_bursty(continuity.MIN_POOL, random.Random(0)))  # pinned seed, verified below the cut
     assert len(pool) == continuity.MIN_POOL == 5002
@@ -558,26 +466,13 @@ def _full_hour_carved(h: dt.datetime, step: float, windows: list[tuple[float, fl
 
 
 def test_report_renders_contaminated_stream_unmeasured(tmp_path, capsys):
-    """End-to-end wiring pin for the gate -- every pool-level test above passes with
-    `tail_steepness` implemented but never wired into `measured`, so this test is what stands
-    between that and shipping.
+    """End-to-end wiring pin: every pool-level test above passes with `tail_steepness` implemented
+    but never wired into `measured`, so this test is what stands between that and shipping.
 
-    The CARVED fixture: two hours at 0.6 s spacing, with two 200 s windows carved out of hour 0.
-    One window is offset-aligned and one is not, so the two holes measure 201.0 s and 200.4 s.
-
-    Reproduced against the CURRENT (pre-fix) code before this test was written: n = 11,332 (well
-    past MIN_POOL), the pool's two largest intervals are 201.0 and 200.4, `quantile(0.9999)` lands
-    on the SECOND-largest (index round(0.9999 x 11,331) = 11,330), so thresh_s derives to
-    2,004.0 -- ten times the outage that produced it. Nothing then exceeds it: intra booked 0.0,
-    gap_s 0.0, `gap% 0.0000%`, `EXIT BAR (<0.1% gap time): PASS`. The old instrument certifies a
-    stream missing 401.4 s of data as perfectly clean.
-
-    The control below (`test_single_carve_control_stays_measured_and_books_the_outage`) is the same
-    geometry with ONE window: n = 11,666, p99.99 = 0.6, thresh_s = 6.0, and the 200.4 s hole is
-    booked in full -- so the refusal here is caused by the contamination, not by the fixture shape.
-
-    Five assertions, jointly the wiring proof. (e) matters as much as the rest: without it a fixture
-    that accidentally landed under MIN_POOL would pass by refusing for the WRONG reason.
+    Two 200 s windows carved out of hour 0 at 0.6 s spacing put p99.99 on the second-largest
+    interval, the contamination the gate refuses;
+    `test_single_carve_control_stays_measured_and_books_the_outage` is the same geometry with ONE
+    window, so what is refused here is the contamination and not the fixture's shape.
     """
     write_stream(
         tmp_path,
@@ -602,10 +497,8 @@ def test_report_renders_contaminated_stream_unmeasured(tmp_path, capsys):
 
 
 def test_single_carve_control_stays_measured_and_books_the_outage(tmp_path, capsys):
-    """The k=1 control on the CARVED fixture's exact geometry: one 200 s window, so p99.99 stays in
-    the bulk at 0.6 s, thresh_s derives to 6.0, and the hole is booked in full at 200.4 s. This is
-    what proves the gate refuses CONTAMINATION rather than the fixture's shape -- and it is the
-    regime MIN_POOL was already sized for.
+    """The k=1 control on the carved fixture's geometry: with ONE 200 s window p99.99 stays in the
+    bulk, the threshold derives to 6.0 s, and the hole is booked in full.
     """
     write_stream(
         tmp_path,
@@ -621,12 +514,8 @@ def test_single_carve_control_stays_measured_and_books_the_outage(tmp_path, caps
 
 
 def _mixed_tree(root: Path) -> None:
-    """One contaminated stream beside one measured stream -- the shape production actually produces.
-
-    AAA/EUR is the CARVED fixture from `test_report_renders_contaminated_stream_unmeasured`
-    (n = 11,332, refused by the tail-steepness gate); DENSE/EUR is the same geometry with nothing
-    carved out, so it is measured and `totals` is non-empty.
-    """
+    """The carved, gate-refused stream beside an uncarved measured one -- the mixed shape production
+    produces, where a non-empty `totals` coexists with a refusal."""
     write_stream(
         root,
         "AAA/EUR",
@@ -636,20 +525,10 @@ def _mixed_tree(root: Path) -> None:
 
 
 def test_tail_depth_is_printed_and_correct(tmp_path, capsys):
-    """The `tail` column, over all four of the slots it has to fill at once.
-
-    AAA/EUR: `quantile(0.9999)` lands on the second-largest interval (200.4 s) and exactly TWO
-    intervals reach it -- the visible fragility T0112's second sub-item asked for, printed on the
-    UNMEASURED row, which is exactly where a reader needs it (a refused stream shows no threshold to
-    judge, so the depth is all the transparency there is).
-
-    DENSE/EUR: a synthetic stream whose every interval is the same 0.6 s, so the whole pool ties at
-    p99.99 and the depth is n. That is an artifact of a perfectly uniform fixture, not what real
-    data looks like -- twelve production streams measure depth 25-390 at n = 240k-3.9M -- but it
-    pins that the column prints on MEASURED rows too.
-
-    The TOTAL row's slot stays blank (depth is per pool; summing or averaging it would invent a
-    number, the same reason `thresh_s` is blank there), and both rules widen with the header.
+    """The `tail` column in all four slots at once: 2 on the refused stream, where the depth is the
+    only transparency a reader gets because no threshold is shown; n on a perfectly uniform fixture;
+    blank on TOTAL, since depth is per pool and summing it would invent a number, as for `thresh_s`;
+    and both rules widen with the header.
     """
     _mixed_tree(tmp_path)
     _, out = _run(tmp_path, capsys)
@@ -664,16 +543,8 @@ def test_tail_depth_is_printed_and_correct(tmp_path, capsys):
 
 
 def test_a_one_row_hour_prints_a_blank_tail_instead_of_crashing(tmp_path, capsys):
-    """`n == 0` is reachable, and it is the very signature this instrument exists to measure: an
-    hour clobbered down to a single row (T0036) has no intervals at all, so its pool is empty,
-    `pool.quantile(0.9999)` is None, and an unguarded `tail_depth` raises
-    `TypeError: must be real number, not NoneType` -- taking the whole exit-bar run down with a
-    traceback. Same failure class as
-    `test_a_window_with_no_data_reports_it_instead_of_dividing_by_zero`: a verification tool that
-    dies mid-table reads as broken rather than as an answer about a clobbered hour.
-
-    Deleting the `if n else ""` guard passes every other test in both continuity files; this one is
-    the only thing standing under it.
+    """A one-row hour (the T0036 clobber signature) has an empty pool, so `tail_depth` must print a
+    blank rather than take the whole run down on `pool.quantile(0.9999)` being None.
     """
     write_stream(tmp_path, "STUB/EUR", {H0: evenly(H0, 1, 1.0)})
     rc, out = _run(tmp_path, capsys)
@@ -684,14 +555,9 @@ def test_a_one_row_hour_prints_a_blank_tail_instead_of_crashing(tmp_path, capsys
 
 
 def test_depth_is_provably_not_a_detector():
-    """THE test that documents why depth is not a gate. Anyone promoting depth into a gate must
-    delete this test to do it.
-
-    A clean and a contaminated pool of the SAME size measure the IDENTICAL depth (2): the count of
-    intervals at or above p99.99 is a deterministic function of n (~ the tolerated k, plus one), not
-    a function of contamination. The steepness ratios, measured on the very same two pools, separate
-    them by two orders of magnitude (1.98 vs 111.16) -- which is why the gate is built on those and
-    the depth is transparency only.
+    """Depth is not a contamination detector (00079/D5): a clean and a contaminated pool of the same
+    size measure the identical depth, while the steepness ratios the gate does use separate them by
+    two orders of magnitude.
     """
     rng = random.Random(11)  # pinned: verified to satisfy every assertion below
     clean = pl.Series(_bursty(11_389, rng))
@@ -704,14 +570,10 @@ def test_depth_is_provably_not_a_detector():
 
 
 def test_the_refusal_reason_is_named_beside_measured_streams(tmp_path, capsys):
-    """D4's distinguishability, on a MIXED tree -- which is where it has to work.
-
-    Reproduced against the earlier code, where the note block sat inside `report()`'s `if not totals:`
-    branch: one measured stream beside one contaminated stream printed `n=11332 UNMEASURED` and
-    `*** FAIL *** (unmeasured streams: 1)` and NO reason line anywhere. The reason appeared only on
-    an ALL-unmeasured tree, and in production a contaminated stream almost always sits beside
-    measured ones. The steepened-tail reason is also the less guessable of the two: a huge `n` beside
-    UNMEASURED reads as "not the size bound" only to a reader who knows MIN_POOL.
+    """00079/D4's distinguishability on a MIXED tree, which is where it has to work: a contaminated
+    stream beside a measured one still names its refusal reason, since in production the two sit
+    together and a huge `n` beside UNMEASURED reads as "not the size bound" only to a reader who
+    knows MIN_POOL.
     """
     _mixed_tree(tmp_path)
     _, out = _run(tmp_path, capsys)
