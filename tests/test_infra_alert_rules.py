@@ -1,12 +1,7 @@
-"""Guard: `infra/grafana/alerts.yaml` is pushed to Grafana Cloud's provisioning API by
-`infra/scripts/grafana-push.sh`, and the API rejects a malformed rule with a bare HTTP 400 whose
-body the script discards. That failure mode is expensive out of proportion to its cause: it needs a
-vaulted token and a TTY for the GPG pinentry, so it can only be discovered during an attended push,
-and the operator sees `curl: (22) ... error: 400` with no indication of which rule or which field.
-
-Every constraint pinned here is one the API enforces silently and the repo previously did not. The
-40-char UID limit cost a full attended round-trip on 2026-07-20 (a 41-char uid); note that the
-longest surviving uid is exactly 40, so the ceiling is real and routinely approached."""
+"""Guard: `infra/scripts/grafana-push.sh` pushes `infra/grafana/alerts.yaml` to Grafana Cloud's
+provisioning API, which rejects a malformed rule with a bare HTTP 400 whose body the script
+discards -- a failure only an attended push can reach, and one that names neither rule nor field.
+Every constraint pinned here is one that API enforces silently."""
 
 import re
 from pathlib import Path
@@ -77,20 +72,12 @@ def test_datasource_uids_are_templated_not_hardcoded():
 # --- A dead-man that cannot announce its own recovery -------------------------------------------
 # `grafana-push.sh` mints two Slack contact points against the SAME webhook and channel, differing
 # in one property: `logs` sets `disableResolveMessage: true`, `metrics` does not. Suppressing the
-# resolve is right for a burst rule -- a flurry of ERROR lines ages out of its own window, so a "✅"
-# arrives after the operator has already moved on (T0047) -- and wrong for a dead-man, where the
-# clear IS the news: the thing that was dead is alive again.
+# resolve is right for a burst rule -- a flurry of ERROR lines ages out of its own window (T0047) --
+# and wrong for a dead-man, where the clear IS the news.
 #
 # The two families are told apart structurally, never by a list of uids: a dead-man's threshold
-# evaluator is `lt` (it fires when the line count falls BELOW one), a burst rule's is `gt` (it fires
-# when the count rises above zero). A hand-list would admit the ninth dead-man added tomorrow, which
-# is the mechanism this guard exists to close.
-#
-# The read is the THRESHOLD node's evaluator, so a comparison folded into a `math` node (`$B < 1`
-# thresholded `gt 0`) is invisible to it. That shape is already in this file --
-# engine-dark-with-exposure and ops-verify-replay-backlog-stuck -- both on `metrics`, so nothing is
-# missed today; a dead-man written that way on `logs` would pass. Widen the classifier, never the
-# receiver.
+# evaluator is `lt`, a burst rule's is `gt`; a hand-list would admit the ninth dead-man added
+# tomorrow, which is the mechanism this guard exists to close.
 PUSH = REPO / "infra/scripts/grafana-push.sh"
 
 
@@ -147,23 +134,12 @@ def test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve():
 
 
 # --- A shipped metric that nothing watches ------------------------------------------------------
-# T0008's content, generalized. Spec 00069 shipped `zcrypto_capture_book_desynced` and
-# `zcrypto_capture_resubscribes_total`, both scraped and live on both hosts, and for two months no
-# alert rule mentioned either -- the topic's own trigger was measurable but unwatched. The same gap
-# hid T0100 (a producer shipping into a transport nobody reads) and, found by the review of this
-# very commit, `zcrypto_capture_disk_watermark_breached` -- whose breach makes the daemon DISCARD
-# unbackfillable L2.
+# `test_infra_alloy_series.py` proves a metric REACHES Grafana; this proves something looks at it
+# (T0008, T0100).
 #
-# `test_infra_alloy_series.py` proves a metric REACHES Grafana; this proves something looks at it.
-# Admitting a series and watching nothing is the more expensive half, and nothing else would
-# surface it: the Grafana dashboard carries no `zcrypto_capture_*` or `zcrypto_engine_*` panel at
-# all, so an unwatched app metric is invisible everywhere.
-#
-# The candidate set is DERIVED from the capture keep-regex, not hand-listed. A hand-list cannot
-# catch the next unwatched metric, which is precisely the mechanism that let these sit for months:
-# a new fault gauge added to the keep-regex tomorrow would be invisible to a fixed list. Every
-# admitted series is therefore a candidate until explicitly excluded below, so omitting one is a
-# conscious act with a written reason rather than an oversight.
+# The candidate set is DERIVED from the capture keep-regex, not hand-listed: a fixed list cannot see
+# the next fault gauge added to the regex. Every admitted series is a candidate until excluded below
+# with a written reason.
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 
 
@@ -206,28 +182,21 @@ NOT_A_FAULT_SIGNAL = {
     # alongside a process_start_time_seconds jump (a crash-restart), which needs the correlation,
     # not a raw count -- it stays that topic's work.
     "zcrypto_capture_reconnects_total",
-    # Cumulative gap seconds. No rule reads THIS counter and none is owed: the paging half shipped
-    # 2026-08-05 on `zcrypto_capture_seconds_since_last_book_message` instead, which never touches
+    # Cumulative gap seconds. No rule reads THIS counter and none is owed: the paging half is on
+    # `zcrypto_capture_seconds_since_last_book_message`, which never touches
     # `gap_monitor.is_healthy()` -- so a bad bar there costs a false page rather than darkening the
-    # dead-man fleet-wide, the hazard that kept an unfitted threshold off this counter. The blackout
-    # that falsified this exclusion's two original grounds (T0101) is told at the total-blackout
-    # rule's own test below, where it is what the aggregation assertion rests on.
+    # dead-man fleet-wide.
     "zcrypto_capture_gap_seconds_total",
     # Engine intent and execution LEVELS, plus the cycle's own duration. Every value any of them can
-    # take is legitimate -- a weight that moved, an order that was placed, a cycle that ran long -- so
-    # no threshold on them means anything; they are the detail read on the engine board once something
-    # else has paged. The engine's two genuine fault signals, cycle liveness and the last cycle's
-    # outcome, are NOT excluded: zcrypto-engine-cycle-stale and zcrypto-engine-cycle-failed watch them,
-    # and this test is what keeps that true.
+    # take is legitimate -- a weight that moved, an order that was placed, a cycle that ran long --
+    # so no threshold on them means anything; they are the detail read once something else has paged.
     "zcrypto_engine_cycle_duration_seconds",
     "zcrypto_engine_target_weight",
     "zcrypto_engine_orders_total",
     "zcrypto_engine_order_notional_eur",
-    # Per-sleeve gross: a LEVEL, and one whose every value is legitimate -- a long-only sleeve
-    # sitting flat through a downtrend is correct behaviour, not a fault, so no threshold on it
-    # means anything. The event worth paging on is the active-sleeve COUNT stepping, which
-    # zcrypto-engine-sleeve-count-changed owns; this series is the detail that page's responder
-    # reads to see which sleeve moved.
+    # Per-sleeve gross: a LEVEL whose every value is legitimate -- a long-only sleeve flat through a
+    # downtrend is correct behaviour -- so no threshold on it means anything. The event worth paging
+    # on is the active-sleeve COUNT stepping, which zcrypto-engine-sleeve-count-changed owns.
     "zcrypto_engine_sleeve_gross",
     # Process self-metrics: diagnostic context, no fault semantics of their own.
     "process_cpu_seconds_total",
@@ -239,39 +208,27 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_engine_journal_prune_kept_days",
     "zcrypto_engine_journal_prune_oldest_day_age_seconds",
     "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
-    # The execution safety envelope's three unwatched families -- the other three
-    # (armed/kill_tripped/last_evaluation_timestamp_seconds) DO have rules, and this list is what
-    # keeps that true.
-    #   gate_level is the SUMMARY the other four inputs already reduce to (armed, kill switch,
-    #   restart hold, venue) -- every value 0/1/2 is legitimate depending on which of those inputs
-    #   is active, so no threshold on the level itself means anything on its own; the two inputs
-    #   that matter enough to page on (an unexpected arm, a tripped kill switch) have their own
-    #   rules instead.
+    # The execution safety envelope's unwatched families; armed, kill_tripped and
+    # last_evaluation_timestamp_seconds are watched, and this list is what keeps that true.
+    #   gate_level is the SUMMARY its inputs (armed, kill switch, restart hold, venue) already reduce
+    #   to -- every value is legitimate depending on which input is active -- and the two worth
+    #   paging on have their own rules.
     "zcrypto_exec_gate_level",
     # A LEVEL, not an event: HELD is the expected reading immediately after every restart and
     # self-clears only by a human decision, so no duration or presence threshold on it means
     # anything the two arming/kill rules do not already cover more precisely.
     "zcrypto_exec_restart_hold",
-    # A gating INPUT, not the venue alert itself -- the underlying condition (Kraken reporting a
-    # non-online system state) already pages from the capture side via
-    # zcrypto-capture-venue-not-online, which reads the daemon's own zcrypto_capture_venue_status_total.
-    # A second rule on this engine-side cached copy would only double-page the same event.
-    # NOT covered by that reasoning: cli/engine/execgate.py's venue reader fails CLOSED to
-    # status="unreachable"/"unreadable" on a raise or a garbage return, so an engine-side REST-read
-    # failure parks this gauge at 0 while the venue is genuinely online -- a divergence the
-    # capture-side rule cannot see, since it reads a different series entirely. Registered as a
-    # deferred alert in docs/open-topics/T0018-phase6-build-sequence.md rather than covered here,
-    # because before the first order-submission call site exists "the engine cannot trade" has no
-    # operational meaning yet.
+    # A gating INPUT, not the venue alert itself: the underlying condition already pages from the
+    # capture side via zcrypto-capture-venue-not-online, which reads the daemon's own
+    # zcrypto_capture_venue_status_total, so a second rule on this engine-side cached copy would
+    # double-page the same event. The divergence that rule cannot see -- an engine-side REST read
+    # failing CLOSED parks this gauge at 0 while the venue is online -- is a deferred alert in
+    # docs/open-topics/T0018-phase6-build-sequence.md.
     "zcrypto_exec_venue_ok",
-    # The execution instruments (spec 00090 D12). Attended-window instruments: arming is episodic
-    # through the tracking-error report's own spec, so between windows every one of these is
-    # legitimately flat and nothing here can fire unattended without being pure alarm fatigue. The
-    # two states that OUTLIVE a window already page -- zcrypto-engine-exec-kill-tripped and
-    # zcrypto-engine-exec-armed-too-long -- and during a window an operator is watching the board,
-    # which is what these are for. `orders_total` by outcome, the fills, the fees paid, the per-leg
-    # position and the realized PnL are all legitimate at any value: a rejection is normal venue
-    # behaviour, a fee is the cost of trading, and PnL falls.
+    # The execution instruments (spec 00090 D12). Attended-window instruments: arming is episodic, so
+    # between windows these are legitimately flat and any rule on them is alarm fatigue, while inside
+    # a window an operator is on the board; the two states that OUTLIVE a window already page
+    # (zcrypto-engine-exec-kill-tripped, zcrypto-engine-exec-armed-too-long).
     "zcrypto_exec_orders_total",
     "zcrypto_exec_fills_total",
     "zcrypto_exec_fees_eur_total",
@@ -282,62 +239,26 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_position",
     "zcrypto_exec_realized_pnl_eur",
     # The resting order's age. NO rule, deliberately and not by omission (spec 00108 D7, which
-    # records the rule it declines and why), for two structural reasons. The ceiling and the legal
-    # maximum are the same number: the executor leaves `resting` on the first tick past
-    # `timebox_at`, itself capped at 60 minutes, so a threshold above the cap can never be crossed
-    # and one below it fires on every lawful hold. And the condition a rule would be FOR -- an
-    # order left resting at the venue with nothing tracking it -- is the one where this gauge reads
-    # zero: every ambiguity route halts the plan and nulls the active order, after which the gauge
-    # publishes 0.0 for every mode while the order rests at Kraken. It is the engine's belief, and
-    # an engine that has given up on an order believes nothing about it.
+    # records the rule it declines and why): a threshold above the `timebox_at` cap can never be
+    # crossed and one below it fires on every lawful hold, and the condition a rule would be FOR --
+    # an order resting at the venue with nothing tracking it -- is exactly where this gauge reads 0.
     "zcrypto_exec_resting_order_age_seconds",
     # The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
-    # order filling, which is the feature working, and `unmatched` says an order event belonging to
-    # no order this engine's ledger vouches for arrived and was acted on nowhere. It does NOT
-    # inherit the attended-window reasoning unexamined -- the siblings above move only when THIS
-    # engine acts, i.e. inside a window by construction, while `unmatched` can move on a third
-    # party's action at any hour (the sanctioned hand settle, but equally activity nobody
-    # sanctioned).
-    #
-    # NO rule, deliberately and not by omission (decided 2026-08-27, once the preconditions this
-    # entry used to wait on were met: the family has live samples and the healthy-boot baseline is
-    # 0). The candidate this entry previously named -- `unmatched` rising while `zcrypto_exec_armed`
-    # is 0 -- is UNSOUND, and the reason is the sensor rather than the framing. Disarmed is the
-    # right framing: the threat is a third party holding the key, whose access does not depend on
-    # arming, and the armed path already has the ledger, overfill and divergence trips. But
-    # `zcrypto_exec_armed` is published only when the gate is EVALUATED, which while disarmed is at
-    # engine start and each 4-hourly cycle -- `engine.md` states the lag ("at most one cycle,
-    # roughly four hours") and `zcrypto-engine-exec-not-evaluated` pages at 4.75h on exactly that
-    # cadence. So the gauge is a 4-hourly snapshot, not an attendance signal, and it is stale in
-    # BOTH directions: for up to ~4h after arming it still reads 0, so the rule pages on the
-    # owner's own attended activity; for up to ~4h after disarming it still reads 1, so the rule is
-    # mute through the highest-risk hour, when positions are fresh and nobody is watching. It is
-    # loudest when a human is present and silent when one is not, which inverts its own purpose.
-    # Measured consequences: the only non-zero this family has ever recorded -- the 2026-08-27
-    # delivery-leg proof, one owner-placed post-only limit -- would have paged; and from rung 1
-    # onward every disarmed converge is a candidate page, since it restarts the engine on a
-    # non-flat account and startup reconciliation books `unmatched` while the gauge reads 0 by
-    # construction. Widening the rule to compensate (a longer armed lookback, a post-boot mute)
-    # buys quiet by opening exactly the two seams an intruder would fall into -- just after a
-    # window closes, just after a converge -- so it would read as more rigorous while covering
-    # less.
-    #
-    # Visibility is unaffected: panel 61 of the engine dashboard plots both dispositions. The
-    # standard is rule => panel, never the converse. What is declined here is paging, not watching.
-    # What would make a rule viable is one change, recorded so nobody re-derives this from scratch:
-    # publish `zcrypto_exec_armed` at a cadence that makes it an attendance signal -- the executor
-    # already has a 5s tick -- after which the candidate above works as written. That is engine
-    # code on the live trade path plus a converge, so it is a decision of its own and is owed by
-    # nothing here. The silent failure a rule could never catch either way -- an adopted order
-    # whose events fail to key into `_attached`, where the working and broken worlds both read
-    # `matched` 0 -- is registered as a by-value reading in T0018.
+    # order filling, and `unmatched` says an order event no entry in this engine's ledger vouches for
+    # arrived and was acted on nowhere. NO rule, deliberately and not by omission: the candidate --
+    # `unmatched` rising while `zcrypto_exec_armed` is 0 -- is unsound, because `zcrypto_exec_armed`
+    # is published only when the gate is EVALUATED (engine start, then each 4-hourly cycle), so it is
+    # a snapshot rather than an attendance signal and is stale in BOTH directions: loud during the
+    # owner's own attended activity, mute through the hours after a window closes. What would make
+    # the candidate work is one change: publish `zcrypto_exec_armed` on the executor's 5s tick --
+    # engine code on the live trade path, so a decision of its own. The silent failure no rule could
+    # catch either way -- an adopted order whose events fail to key into `_attached` -- is a
+    # by-value reading in T0018.
     "zcrypto_exec_external_events_total",
     # The weekly tracking-error verdict. NO rule, deliberately and not by omission: the only value
-    # that is a fault -- the band breached -- latches the kill file, and `zcrypto-engine-exec-kill-
-    # tripped` already pages on exactly that. A second rule here would double-page the one event and
-    # would page on nothing else, since `not scored` is a refusal to decide (a week short of its
-    # boundaries, a week held below the full level, the week the series started in) and `disarmed`
-    # is the resting state of an engine that has never been given a band.
+    # that is a fault -- the band breached -- latches the kill file, which
+    # zcrypto-engine-exec-kill-tripped already pages on; `not scored` is a refusal to decide and
+    # `disarmed` is the resting state of an engine never given a band.
     "zcrypto_exec_tracking_state",
     # A level-shift detail read on the board: the §10 whole-book limits binding is the limits doing
     # their job, not a fault. What would be a fault -- the book they shape going somewhere it should
@@ -395,13 +316,9 @@ def _threshold(rule):
 
 
 def test_the_healable_gap_rate_is_denominated_in_the_unit_its_summary_claims():
-    """`zcrypto_reconcile_healable_gap_seconds_total` is summed ACROSS streams, so a bare threshold
-    is in pair-seconds while the summary promises minutes -- at 12 pairs, `600` meant ~50 wall-clock
-    seconds, and it tightened silently every time a pair was added. Dividing by the live pair count
-    makes the threshold wall-clock seconds, which is what the summary already said.
-
-    Pinned because the two halves live in different fields and nothing else compares them: the
-    divisor could be dropped in a cleanup and the summary would keep asserting minutes."""
+    """The threshold is per-stream and the summary's minutes are that threshold's own: summed ACROSS
+    streams a bare bar is denominated in pair-seconds while the summary promises minutes, and the two
+    halves live in different fields with nothing else comparing them."""
     rule = _rule("zcrypto-reconcile-healable-gap-rate")
     expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
     summary = rule["annotations"]["summary"]
@@ -413,8 +330,8 @@ def test_the_healable_gap_rate_is_denominated_in_the_unit_its_summary_claims():
 
 def test_the_permanent_loss_page_outlives_a_single_evaluation_hour():
     """It fires on `increase(...)` over a relative range, so the window IS how long the page stays
-    up. At 1h the highest-severity signal for a permanent, unbackfillable condition self-resolved to
-    MissingSeries an hour after firing -- which is how a real 2,437 s loss went quiet unnoticed."""
+    up: at 1h a permanent, unbackfillable condition self-resolves to MissingSeries an hour after
+    firing, so the range and the increase() window must span at least a day."""
     rule = _rule("zcrypto-reconcile-residual-gap")
     ranges = [n["relativeTimeRange"]["from"] for n in rule["data"] if n.get("relativeTimeRange", {}).get("from")]
     expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
@@ -424,9 +341,9 @@ def test_the_permanent_loss_page_outlives_a_single_evaluation_hour():
 
 
 def test_the_new_breakage_window_matches_its_relative_time_range():
-    """Same coupling as the residual-gap test above, for the rule that is the only one guarding NEW
-    breakage in unbackfillable canonical data: `relativeTimeRange.from` and the `delta()` window must
-    agree, or a future edit shortening one silently truncates what the other reads."""
+    """Same coupling as the residual-gap test above, for the rule guarding NEW breakage in
+    unbackfillable canonical data: `relativeTimeRange.from` and the `delta()` window must agree, or a
+    future edit shortening one silently truncates what the other reads."""
     rule = _rule("zcrypto-ops-verify-replay-new-breakage")
     ranges = [n["relativeTimeRange"]["from"] for n in rule["data"] if n.get("relativeTimeRange", {}).get("from")]
     expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
@@ -438,16 +355,14 @@ def test_the_new_breakage_window_matches_its_relative_time_range():
 # --- the re-verification backlog rule: its two-night shape IS the rule ---------------------------
 # The incremental sweep announces `pending` -- hours whose bytes changed that the nightly drain
 # budget did not reach. A backlog is normal and self-clearing; one that stops shrinking means the
-# instrument is degraded. Every number below is load-bearing and none of them is checkable by
-# reading the rule, so each gets its own assertion with the failure it prevents written down.
+# instrument is degraded.
 
 _BACKLOG_STUCK = "zcrypto-ops-verify-replay-backlog-stuck"
 
 
 def test_the_backlog_stuck_rule_exists_and_fits_the_uid_column():
     """Presence, pinned separately so the shape tests below fail on their own subject rather than on
-    a `StopIteration` from the lookup helper. This uid sits one character under the 40-char
-    ceiling."""
+    a `StopIteration` from the lookup helper."""
     assert _BACKLOG_STUCK in [r["uid"] for r in _rules()], "the re-verification backlog has no alert rule"
     assert len(_BACKLOG_STUCK) <= _UID_MAX, f"{len(_BACKLOG_STUCK)} chars -- the create call will 400"
 
@@ -464,11 +379,9 @@ def _backlog_window_seconds(rule) -> int:
 
 
 def test_the_backlog_stuck_window_sees_exactly_two_nightly_runs():
-    """26h, and 26h in BOTH fields. The window's job is to span exactly the last two runs: wide
-    enough that night two's sample is always inside it (24h + slack for a run that starts late),
-    narrow enough that a THIRD run's history never is. Widening to 49h is the tempting edit and it is
-    wrong -- it drags a third and fourth night into the same difference, so the sign of `delta` stops
-    meaning "did the last run make progress"."""
+    """26h in BOTH fields: wide enough that night two's sample is always inside the window (24h plus
+    slack for a run that starts late), narrow enough that a THIRD run's history never is -- widen it
+    and the sign of `delta` stops meaning "did the last run make progress"."""
     rule = _rule(_BACKLOG_STUCK)
     expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
     windows = re.findall(r"\[(\d+)h\]", expr)
@@ -479,18 +392,13 @@ def test_the_backlog_stuck_window_sees_exactly_two_nightly_runs():
 
 
 def test_the_backlog_stuck_for_strictly_exceeds_a_healthy_drains_true_duration():
-    """The invariant that decides this rule, stated as arithmetic rather than as a story.
+    """`for` must STRICTLY exceed the `max(24h, window)` a HEALTHY drain holds this condition true,
+    or healthy and stuck fire identically.
 
-    `ops_verify_replay_pending_hours` is a PERSISTENT textfile gauge: the runner prints it every run,
-    so it is scraped continuously and holds its value between the daily runs. The condition goes true
-    at the bump night's publish `T1` and CANNOT go false until the window's left edge passes `T1` --
-    before then the window still contains a pre-bump sample, so `delta` stays positive even after
-    night two's decrease has landed. A healthy drain therefore holds the condition true for exactly
-    `max(24h, window)`, and `for` must STRICTLY exceed that or healthy and stuck fire identically.
-
-    This is not hypothetical: `for: 25h` shipped in this rule's first draft against a 26h window --
-    `25h < max(24h, 26h)` -- and paged on every healthy multi-night drain, the exact failure the rule
-    exists to avoid. Equality is not enough either (`for: 26h` trips on a 26h true run)."""
+    `ops_verify_replay_pending_hours` is a PERSISTENT textfile gauge that holds its value between the
+    daily runs, so the condition goes true at the bump night's publish `T1` and cannot go false until
+    the window's left edge passes `T1`: until then the window still contains a pre-bump sample and
+    `delta` stays positive even after night two's decrease has landed."""
     rule = _rule(_BACKLOG_STUCK)
     hold = max(24 * 3600, _backlog_window_seconds(rule))
 
@@ -501,13 +409,11 @@ def test_the_backlog_stuck_for_strictly_exceeds_a_healthy_drains_true_duration()
 
 
 def test_a_healthy_drain_stays_quiet_and_a_stuck_one_pages():
-    """The timeline nobody simulated the first time, which is why the wrong `for` shipped green.
-
-    Replays four nightly-gauge histories through the rule's OWN window and `for:` (read from
-    `alerts.yaml`, never restated here, so this fails when the rule changes) and asserts the rule
-    discriminates. The gauge model is the real one: a step function that holds its last published
-    value, with `delta(pending[W])` read as `v(t) - v(t-W)` -- Prometheus extrapolates the edges, but
-    the SIGN of the difference, which is all this rule reads, is unaffected."""
+    """Replays nightly-gauge histories through the rule's OWN window and `for:` (read from
+    `alerts.yaml`, never restated here) and asserts it discriminates a healthy drain from a stuck one.
+    The gauge is modelled as a step function holding its last published value, with
+    `delta(pending[W])` read as `v(t) - v(t-W)` -- Prometheus extrapolates the edges, but the SIGN of
+    the difference, which is all this rule reads, is unaffected."""
     rule = _rule(_BACKLOG_STUCK)
     window, hold_for = _backlog_window_seconds(rule), _duration_seconds(rule["for"])
 
@@ -565,11 +471,9 @@ def test_the_backlog_stuck_rule_needs_both_a_live_backlog_and_a_non_shrinking_on
 
 
 def test_the_backlog_stuck_rule_fires_in_the_direction_it_claims_to():
-    """The whole conjunction is decorative unless the CONDITION reads the node that computes it and
-    compares it the right way round. Two edits leave every other assertion in this file green while
-    making the rule permanently wrong: `condition: A` drops the `delta` half entirely and pages on any
-    nonzero backlog, and a `lt` evaluator can NEVER fire, because the math node emits only 0 or 1 and
-    neither is below 0. A rule that cannot fire is indistinguishable from a healthy fleet."""
+    """The conjunction is decorative unless the CONDITION reads the node that computes it and
+    compares it the right way round: `condition: A` drops the `delta` half and pages on any nonzero
+    backlog, and a `lt` evaluator can NEVER fire, since the math node emits only 0 or 1."""
     rule = _rule(_BACKLOG_STUCK)
     by_ref = {n["refId"]: n.get("model", {}) for n in rule["data"]}
 
@@ -595,13 +499,10 @@ _SLEEVE_CHANGED = "zcrypto-engine-sleeve-count-changed"
 
 
 def test_the_sleeve_composition_rule_counts_steps_rather_than_netting_them():
-    """`delta()` is the tempting edit here — every sibling rule in this file uses it — and it is
-    wrong for this signal, silently. `zcrypto_engine_active_sleeves` is a non-monotone gauge, so
-    `delta` reads the NET change across the window: a sleeve arming while another goes flat nets to
-    zero, and so does a sleeve arming and going flat again inside one window. Both are exactly the
-    events this rule exists to announce, and both would leave it quiet — indistinguishable from a
-    composition that never moved. `changes()` counts the steps instead, which is why the evaluator
-    can be a plain `gt 0` in either direction."""
+    """`changes()`, never `delta()`: `zcrypto_engine_active_sleeves` is a non-monotone gauge, so
+    `delta` reads the NET change across the window and a sleeve arming while another goes flat —
+    exactly the event this rule announces — nets to zero. Counting steps is why the evaluator can be
+    a plain `gt 0` in either direction."""
     rule = _rule(_SLEEVE_CHANGED)
     expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
 
@@ -633,22 +534,19 @@ def test_the_sleeve_composition_rule_stays_quiet_while_the_series_does_not_exist
 
 
 # --- the runbook link an alert sends an operator to must actually exist ---------------------------
-# Nothing mechanically checks these: `grafana-push.sh` ships the summary verbatim, and a renamed or
-# never-written anchor renders as a plain `#fragment` that scrolls nowhere. This repo has already
-# shipped a runbook section that existed but was unreachable from the page it served, which is worth
-# exactly as much as no runbook at all -- the responder is on a phone at 03:00 with nothing open.
+# `grafana-push.sh` ships the summary verbatim, so a renamed or never-written anchor renders as a
+# plain `#fragment` that scrolls nowhere -- worth exactly as much as no runbook at all to a
+# responder on a phone with nothing open.
 
 RUNBOOKS = REPO / "infra/runbooks"
 # The anchors are explicit `<a name=...>` tags rather than heading slugs precisely so the
 # `-- ALERT` / `-- KNOWN LIMITATION` marker cannot become part of them; match that literal form.
 _ANCHOR_TAG = re.compile(r'<a name="([A-Za-z0-9._-]+)"></a>')
-# Path-agnostic across the runbook directory: the procedures live in per-subsystem files and the
-# README is only the index, so a citation names whichever file holds the section. BOTH halves are
-# captured, because a link resolves against the file it names -- an anchor that lives in a SIBLING
-# file scrolls nowhere, which is exactly what a section moved without its citations looks like.
-# The anchor half excludes `.` (the file half needs it): no anchor carries one, and the dashboard
-# descriptions end the sentence right after the citation, which a dot-accepting class would swallow.
-# Fail-closed if that ever changes -- a truncated anchor resolves to nothing and the test says so.
+# Path-agnostic across the runbook directory -- the procedures live in per-subsystem files and the
+# README is only the index -- and BOTH halves are captured, because a link resolves against the file
+# it names: an anchor living in a SIBLING file scrolls nowhere. The anchor half excludes `.` (the
+# file half needs it), since a dashboard description ends its sentence right after the citation and
+# a dot-accepting class would swallow it.
 _RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 # The index's own rows link SIDEWAYS -- `](capture.md#anchor)`, relative, no `infra/runbooks/`
 # prefix -- so `_RUNBOOK_LINK` structurally cannot see them. Matched separately for that reason.
@@ -722,12 +620,10 @@ def test_every_runbook_link_in_a_dashboard_description_resolves():
 
 
 def test_the_index_routes_to_every_section_and_only_to_real_ones():
-    """The README is a pure index, so its rows ARE the entry point: a summary's path resolves to
-    that page, and the row is the responder's next tap. Its links are relative, which puts them
-    outside every other guard here -- a move that updates the summaries and the panels and forgets
-    the index misroutes exactly the page the responder lands on. Both directions are pinned: a row
-    pointing at a file that does not define the anchor, and a section no row routes to at all,
-    which is reachable only by someone who already knows which file to open."""
+    """Every index row resolves and every section is routed to. The README is a pure index, so its
+    rows ARE the entry point a summary's path lands on, and their links are relative, which puts them
+    outside every other guard here -- a move that updates the summaries and forgets the index
+    misroutes exactly the page the responder lands on."""
     anchors = _runbook_anchors()
     linked = _INDEX_LINK.findall((RUNBOOKS / "README.md").read_text())
 
@@ -754,11 +650,9 @@ def test_the_backlog_stuck_summary_sits_where_the_vocabulary_guard_reads_it():
 # --- a summary may never interpolate the internal hostname ----------------------------------------
 
 # Every form Grafana's Go templater accepts for the same field. A summary is baked at EVALUATION
-# time, before any notification template runs, so the `zcrypto.host` -> friendly-name mapping in the
-# notification templates cannot reach it: an interpolated `host` ships the raw internal hostname
-# straight to a phone. The runtime VALUE is unprotectable from here, but the interpolation TOKEN is
-# literal text in the file and is therefore walkable -- which is the whole point, because this exact
-# edit has been made, reverted, and then re-instructed by a stale spec row.
+# time, before any notification template runs, so the notification templates' `zcrypto.host` ->
+# friendly-name mapping cannot reach it: an interpolated `host` ships the raw internal hostname
+# straight to a phone. The TOKEN is literal text in the file and therefore walkable.
 _HOST_INTERPOLATIONS = ("$labels.host", ".Labels.host", 'index $labels "host"')
 
 
@@ -782,17 +676,13 @@ _ALL_STREAMS_SILENT = "zcrypto-capture-all-streams-silent"
 
 
 def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation():
-    """On 2026-07-27 all 12 pairs went silent for ~209 s on BOTH capture hosts while the socket
-    reported connected, the keepalive completed >=11 round trips and the cumulative gap counter read
-    0.0 -- the dead-man, the desync rule and the gap counter all sat green through a total blackout
-    of unbackfillable L2. This rule is the only thing that sees that shape, and the `min by (host)`
-    IS the rule: the minimum across pairs is what distinguishes one quiet leg (normal at any hour)
-    from the whole feed stopping, and it is what lets the bar be tight enough to matter.
+    """The cross-pair `min by (host)` IS this rule: the minimum across pairs is what distinguishes
+    one quiet leg (normal at any hour) from the whole feed stopping -- the shape the dead-man, the
+    desync rule and the gap counter all sit green through, over unbackfillable L2.
 
     Pinned by uid rather than left to `test_every_fault_signal_metric_is_watched_by_a_rule`, which
     cannot cover it: that guard is FAMILY-level, and `zcrypto-capture-stream-silent` queries the same
-    `zcrypto_capture_seconds_since_last_book_message`, so each rule excuses the other and deleting
-    this one alone leaves that test green."""
+    `zcrypto_capture_seconds_since_last_book_message`, so each rule excuses the other."""
     rule = _rule(_ALL_STREAMS_SILENT)
     expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
 
@@ -809,24 +699,14 @@ _STREAM_SILENT = "zcrypto-capture-stream-silent"
 @pytest.mark.parametrize("uid", [_ALL_STREAMS_SILENT, _STREAM_SILENT])
 def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(uid):
     """`execErrState: OK` on these two ALONE, and it is the same blindness class as their
-    `noDataState: OK` rather than a relaxation of it.
+    `noDataState: OK` rather than a relaxation of it: when Grafana cannot execute the query, the
+    query did not run, so `Alerting` cannot report a blackout -- it ASSERTS one, in a summary that
+    names a host and says every stream on it has been silent for minutes. Measured from Grafana's
+    alert state history, the instances these two raised were overwhelmingly Grafana Cloud failing to
+    reach its own Prometheus, and `for: 0s` is what made a one-minute platform hiccup page instantly.
 
-    When Grafana cannot execute the query, the query did not run -- so `Alerting` cannot report a
-    blackout, it ASSERTS one, in a summary that names a host and says every stream on it has been
-    silent for minutes. Measured 2026-08-05..08-28 from Grafana's alert state history (NOT from
-    metrics -- a different store, which is how the window outruns the 14 d metric retention; the
-    runbook section names the endpoint and the truncation trap), these two rules raised 264
-    execution-error instances against 52 genuine ones, every one of them Grafana Cloud failing to
-    reach its own Prometheus. `for: 0s` is load-bearing for their detection arithmetic and is what
-    made a one-minute platform hiccup page instantly.
-
-    Two qualifications the choice rests on, both measured. It is NOT the guarded-summary form used
-    on `zcrypto-capture-venue-state-recurrence` (2a899adb), which removes the same falseness but not
-    the volume -- and here the per-pair rule mints 24 instances per error where that one mints one
-    or two. And "nothing goes unwatched" holds for a CORRELATED outage only: six of the 22 rules in
-    `zcrypto-capture` carry `for: 0s` and can fire on a hiccup that short, four of which keep
-    `Alerting`. A RULE-SCOPED error on these two alone now pages nothing -- an accepted residual,
-    named in the runbook rather than left to be discovered."""
+    The residual -- a rule-scoped execution error on these two now pages nothing -- is accepted and
+    named in the runbook."""
     rule = _rule(uid)
     assert rule["execErrState"] == "OK", "a Grafana query failure would page a total-capture-blackout that nothing observed"
     assert rule["noDataState"] == "OK", "the sibling blindness state moved without its reason"
@@ -837,9 +717,8 @@ def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(u
 
 
 def test_no_other_rule_quietly_joins_the_execerrstate_exemption():
-    """The exemption is justified by measurement on exactly two rules. A third arriving without its
-    own evidence is how a deliberate, narrow choice becomes a silent default -- which is how all 75
-    rules came to carry `Alerting` unexamined in the first place."""
+    """The exemption is justified by measurement on exactly two rules; a third arriving without its
+    own evidence is how a deliberate, narrow choice becomes a silent default."""
     exempt = {r["uid"] for r in _rules() if r["execErrState"] == "OK"}
     assert exempt == {_ALL_STREAMS_SILENT, _STREAM_SILENT}, (
         f"execErrState: OK is measured-and-argued for the two capture silence rules only; found {sorted(exempt)}"
@@ -847,30 +726,19 @@ def test_no_other_rule_quietly_joins_the_execerrstate_exemption():
 
 
 # --- a self-declared provisional threshold must be registered here, not only in a comment ---------
-# `grafana-push.sh` upserts unconditionally, so a bar whose own comment says "it must not reach a
-# push in this state" is held back by plan prose alone unless something in the repo names it. Each
-# entry states what derives the value, so the deferral is readable without opening the plan; when the
-# real value lands, the comment and the entry are deleted together and the staleness test below is
-# what forces the second half.
+# `grafana-push.sh` upserts unconditionally, so a bar whose own comment calls itself provisional
+# ships anyway unless something in the repo names it. Each entry states what derives the real value;
+# when that value lands, the comment and the entry are deleted together.
 
-# An entry here declares a threshold this file ships knowing it is provisional; the paired staleness
-# test refuses an entry whose rule no longer carries the marker, so a bar that has been derived
-# cannot leave its excuse behind. A previous occupant, `zcrypto-capture-stream-silent`, was derived
-# 2026-08-05 on a base one week deep rather than the month its `[30d]` selector implied; T0129
-# re-derived it 2026-08-28 on the full 14 d retained and left the bar unchanged, so it is not
-# provisional and does not belong here.
 PROVISIONAL_THRESHOLDS: set[str] = {
-    # Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` -- ~3 microseconds and
-    # ~1.2 KiB of resident memory per record, measured at 1,000,000 synthetic records -- not from a
-    # ledger ever observed at that size. The live one holds ~100. The critical bar also encodes the
-    # ops host's MemAvailable, so its percentage is true only of the day it was read. What derives
-    # the real values: re-run that benchmark against the ledger's own record shape once it is large
-    # enough for the fit to be checked rather than extrapolated, and read the operand live as
-    # node_memory_MemAvailable_bytes{host="ops"} -- never MemFree, which is ~10x smaller.
+    # Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` over synthetic records,
+    # not from a ledger ever observed at that size; the critical bar also encodes the ops host's
+    # MemAvailable. What derives the real values: re-run that benchmark against the ledger's own
+    # record shape, and read the operand live as node_memory_MemAvailable_bytes{host="ops"} -- never
+    # MemFree, which reads far smaller.
     "zcrypto-reconcile-ledger-scan-slow",
     "zcrypto-reconcile-ledger-scan-critical",
-    # 64 MiB of hourly-floor growth over 24 h. No leak has ever been measured on this fleet, so the
-    # bar is sized for notice -- a week ahead of the headroom page from a ~150 MiB start -- not fitted
+    # Hourly-floor growth over 24 h, sized for notice ahead of the headroom page rather than fitted
     # to a distribution. What derives the real value: the first leak it fires on, or thirty days of
     # floor deltas read from the fleet board's growth-per-day panel.
     "zcrypto-fleet-memory-leak",
@@ -913,13 +781,11 @@ def test_the_provisional_register_has_not_gone_stale():
 
 
 # --- Grafana's template parser is stricter than Go's ------------------------------------------
-# A leading trim marker on a define declaration -- `{{- define "x" ... }}` -- parses fine in Go's
-# own text/template and renders identically, but Grafana's provisioning API REJECTS it with
-# `invalid template: unexpected <define> in command` and the whole push aborts under
-# `set -euo pipefail`. Measured against the live API 2026-08-05, by probe: `{{ define` -> 202,
-# `{{- define` -> 400, with trim markers everywhere else (`-}}`, `{{- end`, `{{- template`)
-# accepted. So the trailing `-}}` that trims the define's BODY stays; only the leading one goes.
-# A Go-based test cannot catch this -- Go accepts what Grafana refuses -- which is why it is here.
+# A leading trim marker on a define declaration -- `{{- define "x" ... }}` -- parses in Go's own
+# text/template but Grafana's provisioning API REJECTS it with `invalid template: unexpected
+# <define> in command`, and the whole push aborts under `set -euo pipefail`. Trim markers everywhere
+# else (`-}}`, `{{- end`, `{{- template`) are accepted, so only the leading one goes -- and a
+# Go-based test cannot catch this, which is why it is here.
 NOTIFICATION_TEMPLATES = sorted((REPO / "infra/grafana/notification-templates").glob("*.tmpl"))
 
 
@@ -939,12 +805,8 @@ def test_no_define_carries_a_leading_trim_marker(path):
 # --- the venue pair: a latch that cannot self-resolve, plus the recurrence signal that can --------
 # `zcrypto-capture-venue-not-online` fires on PRESENCE of a non-online series and never falls until
 # the capture daemon restarts. That latch is deliberate, but it means a repeat of an already-seen
-# state only steps a counter whose alert instance is already Alerting, so nothing notifies. The
-# recurrence rule below closes that, and the two cover the space only while each keeps its own
-# form: presence catches EVERY first sighting unconditionally, increase() catches a first sighting
-# only where a scrape lands mid-burst, plus every step thereafter -- so the split is not clean and
-# both are needed. Swap either
-# to the other's form and a real venue degradation goes unreported.
+# state only steps a counter whose alert instance is already Alerting, so nothing notifies; the
+# recurrence rule below closes that, and both are needed while each keeps its own form.
 
 _VENUE_LATCH = "zcrypto-capture-venue-not-online"
 _VENUE_RECURRENCE = "zcrypto-capture-venue-state-recurrence"
@@ -969,11 +831,9 @@ def test_the_venue_recurrence_window_matches_its_relative_time_range():
 
 
 def test_the_two_venue_rules_keep_opposite_forms():
-    """The whole point of the pair. increase() cannot lead -- a non-online series is born at whatever its first scrape catches and
-    Prometheus inserts no implicit zero, so it reports nothing on the first transition; presence
-    cannot follow -- it is already firing, so a repeat produces no new notification. If a future edit
-    makes both rules the same form, one of the two venue failures stops being reported and nothing
-    else in this file would notice."""
+    """The latch stays a PRESENCE form and the recurrence rule an `increase()`: increase() cannot
+    lead -- Prometheus inserts no implicit zero, so a series born non-online reports nothing on its
+    first transition -- and presence cannot follow, being already Alerting on the repeat."""
     latch = " ".join(n.get("model", {}).get("expr", "") for n in _rule(_VENUE_LATCH)["data"])
     recurrence = " ".join(n.get("model", {}).get("expr", "") for n in _rule(_VENUE_RECURRENCE)["data"])
 
@@ -995,10 +855,8 @@ def test_both_venue_rules_group_by_the_label_the_responder_acts_on():
 
 
 # --- memory is watched as a routine, never as a rollout read ---------------------------------------
-# The bake used to carry an RSS row read by hand at T+24 h, T+50 h ... against the host's own
-# predecessor at equal process age. Every such read was a human scheduling a query, and the next
-# converge voided it -- so the reads became a lock on the fleet. These three rules are that routine
-# as telemetry: they run regardless of converges, and a bake owes no memory read at all.
+# These rules run regardless of converges, so a bake owes no memory read at all: a hand-read RSS row
+# is a human scheduling a query, the next converge voids it, and the reads become a lock on the fleet.
 
 _MEM_HEADROOM = "zcrypto-fleet-memory-headroom"
 _MEM_LEAK = "zcrypto-fleet-memory-leak"
@@ -1007,11 +865,9 @@ ANSIBLE = REPO / "infra/ansible"
 
 
 def _compose_alloy_limit_bytes(path: Path) -> int:
-    """The `memory:` limit under the grafana-alloy service in a compose file -- a literal in the three
-    shared-cap legs this helper is actually called for (zcrypto and zcrypto-red, both the capture
-    role's template, and nas, its own compose file). ops is deliberately excluded: its cap is the
-    `ops_alloy_memory_limit` var, not a literal, so passing its template through here would trip the
-    `assert m` below."""
+    """The `memory:` limit under the grafana-alloy service in a compose file, where it is a literal.
+    ops is deliberately excluded: its cap is the `ops_alloy_memory_limit` var, not a literal, so
+    passing its template through here would trip the `assert m` below."""
     text = path.read_text()
     start = text.index("container_name: grafana-alloy")
     m = re.search(r"memory:\s*\"?(\d+)([gGmM])\"?", text[start:])
@@ -1073,13 +929,12 @@ def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
 
 
 def test_the_leak_rule_reads_hourly_floors_a_day_apart():
-    """The bake's own lessons, as PromQL: read the FLOOR not a sample (the rotation sawtooth spans MiB),
-    compare across a 24 h band (steps arrive as ~4 h ramps and repeat at the same clock offset), and
-    gate the whole thing OFF for a process younger than 30 h. That gate is load-bearing, not
-    decoration: `offset 24h` addresses the series by labels, which a restart does not change, so an
-    ungated subtraction reads the predecessor process's floor and compares a young process against it
-    -- the cold-baseline read that once nearly rolled back a healthy image. 30 h = the 24 h band plus
-    the 6 h pending period, so no evaluation inside the pending window can straddle the restart."""
+    """Read the FLOOR not a sample (the rotation sawtooth spans MiB), compare across a 24 h band
+    (steps arrive as ramps and repeat at the same clock offset), and gate the comparison OFF for a
+    process younger than 30 h. That gate is load-bearing: `offset 24h` addresses the series by
+    labels, which a restart does not change, so an ungated subtraction compares a young process
+    against its predecessor's floor. 30 h = the 24 h band plus the 6 h pending period, so no
+    evaluation inside the pending window can straddle the restart."""
     rule = _rule(_MEM_LEAK)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
     assert expr.count("min_over_time(process_resident_memory_bytes") == 2, expr
@@ -1107,17 +962,14 @@ _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
 
 
 def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
-    """Measured 2026-08-28 over 24 h as a fraction of the 512 MiB each Alloy compose sets: ops
-    0.7525-0.7795, zcrypto 0.5237-0.5708, zcrypto-red 0.2636, nas 0.1441. The app daemons sit at
-    0.08-0.37. A shared 0.7 bar therefore pages ops on a healthy fleet every evaluation -- which is
-    exactly what it did, on the rollout that first pushed it. The bar here clears steady state; the
-    OOM it warns about is owned separately by `Fleet · Alloy dark`."""
+    """Alloy runs near its ceiling -- ops nearest -- so the 0.7 bar the app daemons carry would page
+    a healthy fleet every evaluation. This bar clears steady state; the OOM it warns about is owned
+    separately by `Fleet · Alloy dark`."""
     rule = _rule(_ALLOY_HEADROOM)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
-    # ops divides by its OWN cap. 399.1 MiB peak against a 117 MiB swing left only 113 MiB under the
-    # 512m every other Alloy carries, and ops is the one host where margin is free (62.5 GiB, 47
-    # available) -- the capture hosts hold 3.83 and 1.93 GiB and already commit 3.5 g / 1.5 g of caps.
-    # Read the number back from the ansible var so raising the cap without the rule fails here.
+    # ops divides by its OWN cap: it runs too close to the 512m every other Alloy carries, and ops is
+    # the one host where margin is free. Read the number back from the ansible var so raising the cap
+    # without the rule fails here.
     ops_cap = _ansible_memory_limit_bytes(ANSIBLE / "roles/ops/defaults/main.yml", "ops_alloy_memory_limit")
     assert re.search(rf'host="ops", job="integrations/self"\}}\s*/\s*{ops_cap}\b', expr), (
         f"the ops leg must divide by ops_alloy_memory_limit ({ops_cap}); a cap raised without this ratio lies: {expr!r}"
@@ -1141,15 +993,11 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
 
 
 def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
-    """`test_alloy_has_its_own_headroom_bar...` reads `ops_alloy_memory_limit` from
-    `roles/ops/defaults/main.yml` only -- a `host_vars/zcrypto-ops/vars.yml` or `group_vars/*` entry
-    would pass that test while the deployed cap diverged from the ratio's denominator, unseen. The
-    sibling `capture_memory_limit` uses exactly that override shape for real, in
-    `host_vars/zcrypto-red/vars.yml` -- so it is asserted absent here rather than assumed. This walks
-    every `*.yml` under `host_vars/` and `group_vars/`, vault files included: this repo vaults
-    per-VALUE, so a key's NAME stays plaintext even in a `vault.yml` (each such file's own header
-    says so), and the substring search below reads it. Only a key hidden inside an already-encrypted
-    value would be missed, which is not how ansible variables work."""
+    """`ops_alloy_memory_limit` is not overridden outside `roles/ops/defaults/main.yml`, the only
+    file `test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling` reads -- the sibling
+    `capture_memory_limit` uses exactly that override shape for real, in
+    `host_vars/zcrypto-red/vars.yml`. Vault files are walked too: this repo vaults per-VALUE, so a
+    key's NAME stays plaintext even in a `vault.yml` and the substring search below reads it."""
     hits = [
         path
         for base in (ANSIBLE / "host_vars", ANSIBLE / "group_vars")
@@ -1186,12 +1034,11 @@ def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
 @pytest.mark.parametrize("uid", [_MEM_HEADROOM, _MEM_LEAK, _DAEMON_RESTARTED])
 def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
     """All three rules cover both capture daemons and the engine (primary only -- nothing listens on
-    9102 on the secondary, so `up{job="engine_app",host="zcrypto-red"}` has read 0 for every sample of
-    its life). The leak and restart rules additionally cover the ops liquidations poller and Alloy
-    itself on all four hosts under the `integrations/self` job its exporter.self metrics carry
-    (measured 2026-08-28) -- the headroom rule excludes both, Alloy to its own bar below, the poller
-    for want of a limit to measure against. A selector that names a series that never exists is not
-    coverage."""
+    the engine port on the secondary, so a `zcrypto-red` engine selector would name a series that
+    never exists). The leak and restart rules additionally cover the ops liquidations poller and
+    Alloy itself, under the `integrations/self` job its exporter.self metrics carry; the headroom
+    rule excludes both -- Alloy to its own bar below, the poller for want of a limit to measure
+    against."""
     rule = _rule(uid)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
     if uid == _MEM_HEADROOM:  # the app daemons only: Alloy has its own bar, the poller has no limit
@@ -1212,15 +1059,10 @@ _CROSS_REF = re.compile(r"\b([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 def test_every_runbook_cross_reference_resolves():
     """A runbook citing a section in another runbook must cite one that exists.
 
-    `test_the_index_routes_to_every_section_and_only_to_real_ones` already covers README.md's index
-    rows, and covers them in a direction this test does not: that every anchor is routed TO. Do not
-    drop it on the strength of this one. What was unguarded is every other reference -- body prose
-    in the subsystem files -- and one of them was wrong: the dead-man map sent the liquidations
-    poller to `ops-node.md` for a section living in `observability.md`. An operator at 03:00 follows
-    that and finds nothing, which costs more than no link would.
-
-    The charset matches its siblings deliberately: broad enough that a stray capital produces a
-    MATCH that fails the assert, rather than no match and silent non-coverage.
+    `test_the_index_routes_to_every_section_and_only_to_real_ones` covers README.md's index rows in a
+    direction this test does not -- that every anchor is routed TO -- so do not drop it on the
+    strength of this one. The charset matches its siblings deliberately: broad enough that a stray
+    capital produces a MATCH that fails the assert, rather than no match and silent non-coverage.
     """
     anchors = {f"{name}#{anchor}" for anchor, names in _runbook_anchors().items() for name in names}
     refs = [
@@ -1234,13 +1076,11 @@ def test_every_runbook_cross_reference_resolves():
 
 
 # --- the engine dark WITH exposure open: the two-node conjunction IS the rule --------------------
-# `zcrypto-engine-cycle-stale` already pages on any engine darkness. What this rule adds is *and
+# `zcrypto-engine-cycle-stale` already pages on any engine darkness; what this rule adds is *and
 # there is money exposed*, and both halves are written in forms whose obvious spelling cannot fire:
 # the position gauge is served by the engine that has gone dark, so it must be read BACKWARDS over a
 # lookback rather than instantaneously, and `engine_app` is a STATIC scrape target, so its `up`
 # series stays present reading 0 when the container dies and a presence count reads 1 forever.
-# Neither defect is visible in the rule's text, and a first-sample read taken while the engine
-# scrapes normally is green over both.
 
 _DARK_WITH_EXPOSURE = "zcrypto-engine-dark-with-exposure"
 # Pinned string, not a keyword: the phone shows the title before the summary, and the two properties
@@ -1278,10 +1118,9 @@ def _dark_with_exposure_lookback(rule) -> int:
 
 def test_the_dark_with_exposure_range_declares_the_window_its_expression_reads():
     """`relativeTimeRange.from` does not feed a range selector on an instant node, so a mismatch here
-    breaks nothing at evaluation time and no other test would ever see it. What it breaks is the
-    record: this file declares a node's range as the widest window its expression reads, so
-    `relativeTimeRange` is what a maintainer reads for the node's real horizon -- and this rule's
-    horizon is a day, not the ten minutes an unthinking copy of the sibling rules would advertise."""
+    breaks nothing at evaluation time. What it breaks is the record: this file declares a node's
+    range as the widest window its expression reads, so `relativeTimeRange` is what a maintainer
+    reads for the node's real horizon."""
     node_a = next(n for n in _rule(_DARK_WITH_EXPOSURE)["data"] if n["refId"] == "A")
     selector = re.search(r"last_over_time\([^)]*\[(\d+[smh])\]\)", node_a["model"]["expr"])
     assert selector, f"node A no longer reads the position over a `last_over_time` range: {node_a['model']['expr']!r}"
@@ -1294,16 +1133,11 @@ def test_the_dark_with_exposure_range_declares_the_window_its_expression_reads()
 def _replay_dark_with_exposure(published, up_at, *, lookback, hold_for, span, a_form="lookbacked", b_form="value"):
     """Evaluation timestamps at which the rule is FIRING, over one `(position, scrape)` history.
 
-    `published` is the position gauge's samples as `(t, value)` -- the engine that publishes them is
-    the one that goes dark, so after darkness there are none. `up_at(t)` returns 1, 0, or `None` for
-    a series that is not there at all: the engine dying leaves `up` PRESENT at 0 (a static scrape
-    target is never removed), while the primary's Alloy going dark takes the series away.
-
+    `published` is the position gauge's samples as `(t, value)`; `up_at(t)` returns 1, 0, or `None`
+    for a series that is not there at all -- the engine dying leaves `up` PRESENT at 0 (a static
+    scrape target is never removed), while the primary's Alloy going dark takes the series away.
     Node A is modelled as what it says: `last_over_time` returns the LAST sample in the window, never
-    the largest, so a position closed before the engine went dark reads 0 here. Modelling it as a max
-    over the window makes `max_over_time` -- the wrong reach `alerts.yaml` names beside this rule --
-    indistinguishable from the real one, and the closed-then-dark history below is the fixture where
-    the two forms differ."""
+    the largest, so a position closed before the engine went dark reads 0 here."""
 
     def a(t: int) -> float:
         window = lookback if a_form == "lookbacked" else _STALENESS
@@ -1331,12 +1165,11 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     """Replays `(position, scrape)` histories through the rule's OWN lookback and `for:` -- both read
     out of `alerts.yaml`, never restated here, so this fails when the rule changes.
 
-    The true positive is the event the rule exists for, and the page must outlast a full daily ops
-    pass: it is still firing one evaluation before the lookback sheds the last position reading. The
-    three false positives are the discriminator -- a dark engine with nothing exposed is
-    `zcrypto-engine-cycle-stale`'s page, not this one; a scraping engine with a position open is a
-    normal armed window; and a position CLOSED before the engine went dark is the one `last_over_time`
-    reads as 0 while `max_over_time` would keep paging on it for the rest of the day."""
+    It pages on a position open at last report with the engine gone, and holds until the lookback
+    sheds that reading, so the page cannot self-resolve under a sleeping operator. It stays quiet on
+    a dark engine with nothing exposed (`zcrypto-engine-cycle-stale`'s page), on a scraping engine
+    holding a position, and on a position CLOSED before the engine went dark -- the one
+    `last_over_time` reads as 0 where `max_over_time` would page for the rest of the day."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
@@ -1388,12 +1221,11 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     alloy_route = _replay_dark_with_exposure(open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, span=span)
     assert alloy_route, "a position open with the primary's whole plane dark does not page -- the accepted double-page is gone"
 
-    # The two controls the verdict rests on. Each replays the TRUE POSITIVE through a defective form
-    # of one node and asserts it does not fire, so the replay is shown to move on each defect rather
-    # than passing everything put through it.
+    # The two controls: each replays the TRUE POSITIVE through a defective form of one node and
+    # asserts it does not fire, so the replay is shown to move on each defect.
     #
-    # (1) Node A read instant, its lookback stripped: the gauge holds its last value for Prometheus's
-    # staleness horizon and then goes away, so the condition never survives to `for`.
+    # (1) Node A read instant, its lookback stripped: the gauge holds its last value only to
+    # Prometheus's staleness horizon, so the condition never survives to `for`.
     unlookbacked = _replay_dark_with_exposure(
         open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span, a_form="instant"
     )
@@ -1401,11 +1233,10 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
         f"an instant read of the position gauge fires too, so this replay is not proving the lookback: {sorted(unlookbacked)[:3]}"
     )
 
-    # (2) Node B counting the series' PRESENCE (`count(up{...}) or on() vector(0)`, what the
-    # `zcrypto-alloy-dark-*` rules carry) instead of reading its VALUE. This control and the true
-    # positive above are jointly satisfiable only under the real behaviour of a static scrape target:
-    # model the dark scrape as an ABSENT series and `count()` falls through its own fallback to 0 and
-    # fires here too, turning this control red and naming the modelling error.
+    # (2) Node B counting the series' PRESENCE (`count(up{...}) or on() vector(0)`) instead of
+    # reading its VALUE. This control and the true positive above are jointly satisfiable only under
+    # the real behaviour of a static scrape target: model the dark scrape as an ABSENT series and
+    # `count()` falls through its own fallback to 0 and fires here too.
     presence_counting = _replay_dark_with_exposure(
         open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span, b_form="presence"
     )
@@ -1426,13 +1257,10 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 
 
 def test_the_dark_with_exposure_page_keeps_the_wording_two_reviews_argued_into_it():
-    """Nothing else in the suite reads what a title SAYS -- `test_every_rule_has_the_fields_the_api_
-    requires` tests membership and the vocabulary guard scans for banned tokens -- so a rewording that
-    reintroduces either refused claim would land green. Both claims are about the SECOND route this
-    rule fires on: the primary's Alloy going dark trips `$B < 1` with the engine running fine, so a
-    title asserting the engine is dark is false there, and a bare *exposure open* asserts a position
-    the rule cannot see is still there. The summary names the discriminator for the same reason
-    `zcrypto-engine-cycle-stale`'s does: the page is read before any runbook is opened."""
+    """The title must hold on BOTH routes this rule fires on: the primary's Alloy going dark trips
+    `$B < 1` with the engine running fine, so a title asserting the engine is dark is false there,
+    and a bare *exposure open* asserts a position the rule cannot see is still there. The summary
+    names the discriminator because the page is read before any runbook is opened."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     assert rule["title"] == _DARK_WITH_EXPOSURE_TITLE, f"the title no longer holds on both routes: {rule['title']!r}"
     summary = (rule.get("annotations") or {}).get("summary", "")
@@ -1442,9 +1270,7 @@ def test_the_dark_with_exposure_page_keeps_the_wording_two_reviews_argued_into_i
     )
 
 
-# --- Drift ratchets (2026-09-01) -------------------------------------------------------------
-# Both guards exist because a class of prose defect recurred across two audits and neither
-# existing test could see it. They assert facts that are DERIVABLE, so nobody has to re-count.
+# --- Drift ratchets --------------------------------------------------------------------------
 
 # One section may legitimately serve several uids, and one rule may point at a procedure named for
 # the host rather than the rule. Each entry is a decision, not a backlog: adding one is how you
@@ -1457,12 +1283,9 @@ _ANCHOR_EXCEPTIONS = {
 
 
 def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
-    """A `Runbook:` link that RESOLVES can still send the operator to the wrong rule's section.
-
-    `test_every_runbook_link_in_an_alert_summary_resolves` checks the anchor exists; it cannot
-    check the anchor is the right one. `zcrypto-capture-venue-state-recurrence` cited
-    `capture.md#zcrypto-capture-venue-not-online` -- a sibling rule's section -- and passed that
-    test for as long as both anchors existed.
+    """Every rule's `Runbook:` link points at that rule's OWN section: a link that RESOLVES can still
+    send the operator to a sibling rule's, which
+    `test_every_runbook_link_in_an_alert_summary_resolves` cannot see.
     """
     wrong = []
     for rule in _rules():
@@ -1478,16 +1301,11 @@ def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
     )
 
 
-# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not
-# error -- it returns a SHORTER series -- so the window is truncated in silence and any figure
-# derived from it is recorded at the width it asked for. `T0129` (resolved) re-derived two
-# thresholds after finding `[30d]` returns the same ~14 days.
+# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not error --
+# it returns a SHORTER series -- so the window is truncated in silence and any figure derived from it
+# is recorded at the width it asked for (`T0129`, resolved, re-derived two thresholds on that).
 #
-# There is DELIBERATELY no guard for it. Four designs were built and three independent review
-# rounds each found a window that reached past retention and passed: composite durations, a
-# bare `offset`, a `]@` adjacency, subquery composition, and a string-blanking order that
-# swallowed the range between two backtick literals. Computing a query's true reach means
-# parsing PromQL and LogQL, and every partial parser shipped a hole while reading as complete
-# -- which is worse than nothing, because it licenses the belief that the class is covered.
-# The widest rule here reaches 1.08d against the 14d ceiling, so the exposure is small and
-# known. Re-measure it in an audit; do not add a regex that claims to settle it.
+# There is DELIBERATELY no guard for it: computing a query's true reach means parsing PromQL and
+# LogQL, and every partial parser built for it shipped a hole while reading as complete, which is
+# worse than nothing because it licenses the belief that the class is covered. Re-measure the widest
+# window in an audit; do not add a regex that claims to settle it.
