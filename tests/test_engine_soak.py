@@ -156,7 +156,8 @@ def test_realized_series_forward_join_and_chain_ok(tmp_path):
 
 
 def test_offbyone_shifted_store_breaks_chain(tmp_path):
-    """A store whose closes are SHIFTED by one bar makes end(T) != start(T+4h): chain_ok must be False."""
+    """Non-monotone, distinct closes joined correctly still satisfy the chain identity: chain_ok is
+    True. `test_chain_consistent_detects_gap` pins the identity's False path."""
     d = datetime(2026, 7, 16, tzinfo=UTC)
     # Non-monotone, distinct closes so a one-bar shift is detectable rather than coincidentally equal.
     closes = {
@@ -167,10 +168,8 @@ def test_offbyone_shifted_store_breaks_chain(tmp_path):
     }
     records, store_dir, now = _mk_records_and_store(tmp_path, closes)
     rs = realized_series(records, store_dir, fee=0.006, now=now)
-    # With the CORRECT join these distinct closes still satisfy the chain identity (same store entry),
-    # so chain_ok is True here. To exercise the guard, corrupt the join: reach into realized_series via a
-    # deliberately wrong store is out of scope -- instead, assert the guard's POSITIVE contract holds on
-    # good data, AND add a unit check that a hand-built inconsistent close-map (end != start) yields False.
+    # With the CORRECT join these distinct closes still satisfy the chain identity (same store
+    # entry), so this test pins the guard's POSITIVE contract on good data.
     assert rs.chain_ok is True
 
 
@@ -283,10 +282,8 @@ def test_realized_series_clock_bound_is_not_reported_as_store_bound(tmp_path):
 
 def test_chain_consistent_detects_gap():
     """If SCORED cycles aren't 4h-contiguous (e.g. a middle cycle was skipped by the realizability
-    gate), consecutive scored T_i, T_next no longer satisfy T_next - T_i == 4h, so T_i and
-    T_next - 4h resolve to DIFFERENT store keys -- the identity fails and chain_ok must be False.
-    This is the off-by-one guard's unit-level exercise: it fails if the identity check is ever
-    weakened (e.g. to always return True) or removed."""
+    gate), T_i and T_next - 4h resolve to DIFFERENT store keys, so the chain identity fails and
+    `_chain_consistent` returns False."""
     d = datetime(2026, 7, 16, tzinfo=UTC)
     scored_ts = [d, d + timedelta(hours=8)]  # a gap: the 04:00 cycle was skipped
     closes_by_asset = {"BTC": {d: 100.0, d + timedelta(hours=4): 105.0, d + timedelta(hours=8): 110.0}}
@@ -295,12 +292,10 @@ def test_chain_consistent_detects_gap():
 
 def _fake_result(*, n_periods, sleeve_B, sleeve_A1, sleeve_A2, multipliers, governed_net):
     """All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
-    final_targets/cap_breach_bars mirror the real builder's chain: capped = apply_position_caps(
-    combined), limited = apply_whole_book_limits(capped), final_targets = mult * limited -- both
-    shaping stages run BEFORE the governor multiply, so a sleeve combo that breaches 0.20/0.10
-    still yields an in-cap final_targets. `cap_breach_bars` stays the PRE-limits count, as the
-    builder's own does. On one asset capped at 20%/10% no whole-book limit can bind, so `limited`
-    is bit-identical to `capped` for every caller here."""
+    final_targets/cap_breach_bars mirror the real builder's chain -- capped = apply_position_caps(
+    combined), limited = apply_whole_book_limits(capped), final_targets = mult * limited -- so both
+    shaping stages run BEFORE the governor multiply and `cap_breach_bars` stays the PRE-limits count.
+    On one asset no whole-book limit can bind, so `limited` equals `capped` for every caller here."""
     assets = ("BTC",)
     combined = [(sleeve_B[k] + sleeve_A1[k] + sleeve_A2[k]) / 3.0 for k in range(n_periods + 1)]
     capped = apply_position_caps({"BTC": combined})["BTC"]
@@ -366,11 +361,10 @@ def test_net_live_reconcile_false_on_inconsistent_result():
 
 
 def test_net_live_reconciles_when_a_whole_book_limit_binds():
-    """The live-cost reconstruction must rerun the builder's WHOLE shaping chain. Ten assets each
-    at the 20% long cap gives gross 2.0 (breaching the 1.5x soft cap) and then net 1.5 (breaching
-    the +1.0 band), so `limited` is half of `capped`. A reconstruction stopping at the caps reports
-    reconcile_ok False -- the soak calling the engine's book broken on the very cycles where the
-    §10 limits did their job -- and mis-costs the turnover leg on top."""
+    """The live-cost reconstruction must rerun the builder's WHOLE shaping chain: ten assets at the
+    20% long cap give gross 2.0 (past the 1.5x soft cap) and net 1.5 (past the +1.0 band), so
+    `limited` is half of `capped` -- a reconstruction stopping at the caps reports reconcile_ok
+    False, the soak calling the engine's book broken on the cycles where the §10 limits did their job."""
     n, n_assets = 2, 10
     assets = tuple(f"A{i}" for i in range(n_assets))
     third = 1 / 3
@@ -569,10 +563,8 @@ def test_reconcile_verdicts_one_na_primary_discriminates():
     dv = reconcile_verdicts("n/a", "consistent")
     assert dv.verdict == "consistent"  # the discriminating (secondary) null's label
     assert dv.disclosure != ""
-    # Positional, not membership: the disclosure must name EACH label against its own
-    # construction -- swapping `primary=`/`secondary=` in the f-string (leaving the reconciled
-    # verdict and the raw fields untouched) is invisible to `disclosure != ""` and left the
-    # suite 131/131 green.
+    # Positional, not membership: the disclosure must name EACH label against its own construction,
+    # since a swapped `primary=`/`secondary=` f-string is invisible to `disclosure != ""`.
     assert "primary='n/a', secondary='consistent'" in dv.disclosure, dv.disclosure
 
 
@@ -643,11 +635,9 @@ def test_reconcile_verdicts_symmetric():
 
 
 def test_reconcile_verdicts_unknown_label_raises_soak_error():
-    # A label outside metric_verdict's closed 4-label vocabulary is always an internal
-    # contract violation (a typo, or a new label added without updating _SEVERITY) -- never
-    # real-world variety -- so it must not masquerade as the SAME "indeterminate
-    # (instrument-fragile)" string a legitimate opposite-extremes disagreement produces. It raises
-    # SoakError naming the offending label(s), never a bare KeyError.
+    # A label outside metric_verdict's closed 4-label vocabulary is an internal contract violation
+    # (a typo, or a new label added without updating _SEVERITY), so it raises SoakError naming the
+    # label rather than rendering it as a verdict.
     with pytest.raises(SoakError, match="bogus"):
         reconcile_verdicts("bogus", "consistent")
 
@@ -663,17 +653,8 @@ def test_reconcile_verdicts_unknown_label_raises_soak_error():
     ],
 )
 def test_reconcile_verdicts_rejects_off_vocabulary_labels_on_every_branch(primary, secondary):
-    # Vocabulary validation is a PRECONDITION, not a late check, and this parametrization is the
-    # reason. The first version of the guard sat below the equality and "n/a" short-circuits, so
-    # only the first two rows raised: ("bogus", "n/a") returned "bogus" as the discriminating
-    # label and ("bogus", "bogus") returned it by agreement -- both RENDERED an off-vocabulary
-    # string as a verdict, which is exactly the code-defect-as-data-finding conflation the raise
-    # exists to prevent. The guard was present and the defect walked around it.
-    #
-    # An earlier revision deliberately exempted the equal case ("agreement never needs the severity
-    # order"). That reasoning conflated two questions: whether a label is VALID, and where it sits
-    # on the severity ORDER. Agreement removes the need for the second, never the first -- two nulls
-    # agreeing on a typo is still a typo.
+    # Vocabulary validation is a PRECONDITION, so every branch raises -- the equality and "n/a"
+    # short-circuits included: two nulls agreeing on a typo is still a typo.
     with pytest.raises(SoakError, match="bogus"):
         reconcile_verdicts(primary, secondary)
 
@@ -723,9 +704,8 @@ def test_plausibility_flags_non_finite_net_live():
 @pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
 def test_instrument_self_check_reproduces_the_deployable_record():
     ok, msg = instrument_self_check(Path("data/ohlc-full"), Path("docs/reference/trial-registry.jsonl"))
-    # The frozen build must reproduce the deployable's exact integer diagnostics. Record 47 succeeded
-    # 44 at the twelve-leg re-ratification and registered the SAME integers -- the /BTC legs carry
-    # structural zero, so widening the basket moved no number the builder produces.
+    # The frozen build must reproduce record 47's exact integer diagnostics: the /BTC legs carry
+    # structural zero, so widening the basket to twelve legs moves no number the builder produces.
     assert ok is True, msg
 
 
@@ -925,12 +905,10 @@ def _mk_internals(cycle_ts, mult_by_cycle=None, breach_by_cycle=None):
 
 
 def _daily_pattern(n_days, *, positions=(0, 3, 7), period=11):
-    """A deterministic ~27% (3/11) daily engagement pattern where no two engaged days are adjacent
-    (min gap 3): windowed daily rates vary (non-degenerate) but a window can never contain more than
-    3 engaged days out of any 9 (verified: consecutive engaged-day gaps are 3, 4, 4, so a 9-day
-    window spans at most one full gap-cycle), giving a hard, reasoned upper bound well below a live
-    rate of 1.0 -- used as `null.multipliers`/`day_index` input (1 bar/day) in the governor-engagement
-    tests below."""
+    """A deterministic 3-in-11 daily engagement pattern with no two engaged days adjacent (gaps 3,
+    4, 4): windowed daily rates vary (non-degenerate) but no 9-day window holds more than 3 engaged
+    days, a hard upper bound well below a live rate of 1.0. Used as the `null.multipliers`/
+    `day_index` input (1 bar/day) of the governor-engagement tests below."""
     return [1.0 if (d % period) in positions else 0.0 for d in range(n_days)]
 
 
@@ -957,10 +935,8 @@ def test_governor_engagement_gates_and_day_aggregates():
 
 
 def test_governor_engagement_constant_series_still_gates():
-    # mult == 0.5 on EVERY scored cycle -> live rate 1.0. Against a null whose windowed daily rates
-    # cluster near 0.27 (max ~3/9 per 9-day window -- see _daily_pattern) -> verdict MUST be
-    # "inconsistent" (NOT "n/a"). This pins the decision that a constant realized series is a
-    # legitimate verdict, never suppressed to "n/a": constancy of the underlying per-bar series is
+    # mult == 0.5 on EVERY scored cycle -> live rate 1.0, judged against `_daily_pattern`'s null:
+    # the verdict MUST be "inconsistent", never "n/a" -- constancy of the per-bar series is
     # irrelevant to whether the window statistic falls inside the null band.
     base = datetime(2026, 7, 16, tzinfo=UTC)
     cycle_ts = [base + timedelta(days=d) for d in range(9)]  # 9 distinct UTC days, 1 scored cycle/day
@@ -979,12 +955,10 @@ def test_governor_engagement_constant_series_still_gates():
 
 
 def test_governor_engagement_na_on_full_range_null_band():
-    # The full-range-domain n/a guard's motivating live finding, reproduced synthetically here
-    # against governor_engagement itself: a SINGLE realized day (total_days == 1) judged against a
-    # null whose one-day windows (window=1) are literally the raw daily engagement flags -- some
-    # fully engaged (1.0), some not (0.0) -- so the band spans the metric's entire [0,1] domain. That
-    # must read "n/a" (no discriminating power), not a spurious real verdict, and must carry the
-    # disclosure naming which metric went vacuous.
+    # A SINGLE realized day (total_days == 1) is judged against one-day null windows, which are the
+    # raw daily engagement flags -- some 1.0, some 0.0 -- so the band spans the metric's entire
+    # [0,1] domain. That must read "n/a" (no discriminating power), never a spurious real verdict,
+    # and must carry the disclosure naming which metric went vacuous.
     day = datetime(2026, 7, 16, tzinfo=UTC)
     cycle_ts = [day + timedelta(hours=4 * k) for k in range(3)]  # single realized day
     weights = [{"BTC": 0.15, "ETH": 0.15}] * 3
@@ -1010,12 +984,10 @@ def test_cap_breach_gates_against_null_series():
     weights = [{"BTC": 0.15, "ETH": 0.15}] * 6
     realized = _mk_realized_ts(cycle_ts, weights, [0.001] * 6)
 
-    # A realistic 0/1 PER-BAR cap-breach series (how null.cap_breach actually looks), not a
-    # knife-edge float sequence hand-tuned to a specific window mean. Breach every 5th bar (gap=5,
-    # rate=0.2): cap_breach is judged at BAR granularity (window=L=6), and since the breach gap (5)
-    # is < the window length (6), every length-6 window contains 1 or 2 breaches -- never 0, never
-    # 6 -- giving a non-degenerate band [1/6, 1/3] that neither edge touches the metric's [0,1]
-    # domain, so it stays discriminating under the full-range-domain n/a check too.
+    # A realistic 0/1 PER-BAR cap-breach series (how null.cap_breach actually looks), breaching
+    # every 5th bar: cap_breach is judged at BAR granularity (window=L=6) and the breach gap (5) is
+    # shorter than the window, so every length-6 window holds 1 or 2 breaches -- a non-degenerate
+    # band [1/6, 1/3] whose edges stay off the [0,1] domain, and so discriminating.
     null_cap = [1.0 if k % 5 == 0 else 0.0 for k in range(200)]
     null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 200, [0.001] * 200, cap_breach=null_cap)
 
@@ -1075,10 +1047,8 @@ def test_analyze_soak_null_mode_windows_matches_both_modes_gating_verdicts():
 
 def test_analyze_soak_null_mode_block_bootstrap_uses_only_bootstrap(monkeypatch):
     # D4: a single null selected means no reconciliation -- dual_verdicts stays empty even though
-    # null_mode is not "windows". Proves it structurally (windowed_null must not even be
-    # CALLED under "block-bootstrap") rather than the vacuous "verdict is one of the four labels"
-    # check every MetricVerdict already satisfies by construction, and pins the actual (deterministic,
-    # seed=0) verdict instead of merely asserting its type.
+    # null_mode is not "windows". Structural: windowed_null must not even be CALLED under
+    # "block-bootstrap", and the pinned verdict is the deterministic (seed=0) one.
     def _boom(*a, **kw):
         raise AssertionError("windowed_null must not be called under null_mode='block-bootstrap'")
 
@@ -1132,11 +1102,9 @@ def test_analyze_soak_both_nulls_agree_on_planted_inconsistent_no_spurious_fragi
 
 def test_analyze_soak_fragility_flag_fires_and_requires_reconciliation(monkeypatch):
     # Force EVERY windowed_null call to return a null centered low (p95=95) and EVERY
-    # block_bootstrap_null call to return a null centered on live=200 (inner band ~[160,240]): the
-    # SAME live value reads "inconsistent" against the windowed null and "consistent" against the
-    # bootstrap null -- an opposite-extremes split that MUST reconcile to
-    # "indeterminate (instrument-fragile)" (D1). This fails the moment analyze_soak stops calling
-    # reconcile_verdicts: the windowed verdict alone is "inconsistent", never this label.
+    # block_bootstrap_null call to return one centered on live=200 (inner band ~[160,240]): the SAME
+    # live value reads "inconsistent" against the windowed null and "consistent" against the
+    # bootstrap one -- an opposite-extremes split that MUST reconcile to indeterminate (D1).
     monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: list(range(101)))
     monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: list(range(150, 251)))
 
@@ -1165,13 +1133,10 @@ def test_analyze_soak_null_mode_both_deterministic_across_runs():
 
 
 def test_analyze_soak_short_null_never_raises_under_any_null_mode():
-    # A 1-period NullSystem makes `null.net_live[1:]` (the pnl call site's null
-    # series) empty. `windowed_null` already guards an empty/too-short series (window > len(series)
-    # -> []), so "windows" mode degrades cleanly to a "n/a" pnl verdict -- but `block_bootstrap_null`
-    # has no such guard and calls `rng.integers(0, len(series))`, which raises ValueError on an empty
-    # series. Confirmed pre-fix: "windows" -> ok (pnl verdict "n/a"); "block-bootstrap"/"both" ->
-    # raises. That breaks soak_report's documented contract ("never raises on a short/void run --
-    # those are refusals, not failures"). Every null_mode must degrade to "n/a" here, never raise.
+    # A 1-period NullSystem makes the pnl call site's null series (`null.net_live[1:]`) empty:
+    # `windowed_null` guards that (window > len -> []), while `block_bootstrap_null` calls
+    # `rng.integers(0, len(series))`. soak_report's contract is that a short/void run is a refusal,
+    # not a failure, so EVERY null_mode must degrade to a "n/a" pnl verdict here, never raise.
     rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
     realized = _mk_realized(rw, [0.001] * 6)
     one_period_null = _mk_null([{"BTC": 0.15, "ETH": 0.15}], [0.001])
@@ -1231,15 +1196,10 @@ def test_summarize_panel_no_indeterminate_line_when_none_fires():
 
 
 def test_summarize_panel_counts_reconciled_label_not_raw_windowed():
-    # The table renders the RECONCILED label for each row (`render_report`'s
-    # `effective_verdict = dual.verdict if dual is not None else v.verdict`), so the multiplicity
-    # summary must count that SAME label -- never the raw windowed `v.verdict` -- or the two can
-    # contradict each other. Here the windowed null's own verdict is "n/a" (a zero-width band), but
-    # the bootstrap null discriminated, so reconcile_verdicts's exactly-one-"n/a" branch (D1) takes
-    # the bootstrap's "inconsistent" label -- that's the label the table actually shows for "gross".
-    # Pre-fix, summarize_panel filtered on the raw "n/a" and dropped this row from BOTH n_metrics and
-    # n_outside entirely, so the panel line could read "0 of 1 outside band" while the table's own
-    # "gross" row said "inconsistent" -- the report contradicting itself.
+    # The table renders the RECONCILED label for each row, so the multiplicity summary must count
+    # that SAME label, never the raw windowed `v.verdict`, or the two contradict each other. Here
+    # the windowed verdict is "n/a" (zero-width band) and the bootstrap discriminated, so D1's
+    # exactly-one-"n/a" branch promotes "inconsistent" -- the label the table shows for "gross".
     na_v = metric_verdict(1.0, [3.0] * 50)  # zero-width band -> raw windowed verdict is "n/a"
     consistent_v = metric_verdict(50, list(range(101)))
     verdicts = {"gross": na_v, "net": consistent_v}
@@ -1373,12 +1333,9 @@ def test_disclosure_notes_day_granularity_is_exact():
 
 
 def test_full_range_disclosure_consistent_with_reconciled_label(monkeypatch):
-    # `_full_range_disclosure` read the RAW windowed verdict, so on D1's one-"n/a" branch
-    # (windowed full-range -> "n/a", bootstrap discriminates) it could print "the test has no
-    # discriminating power here" for active_frac on the same run whose table renders active_frac as
-    # "inconsistent" -- the reconciled label the bootstrap actually promoted to (D1: exactly one
-    # "n/a" -> take the discriminating null's label). The disclosure must track the RECONCILED
-    # label, not the raw windowed one, or it contradicts the very row it's annotating.
+    # The full-range disclosure must track the RECONCILED label, not the raw windowed one: on D1's
+    # one-"n/a" branch (windowed full-range, bootstrap discriminating) printing "no discriminating
+    # power" for active_frac would contradict the "inconsistent" row rendered beside it.
     monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: [0.0] * 10 + [0.3] * 80 + [1.0] * 10)
     monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: [0.28, 0.29, 0.30, 0.31, 0.32] * 20)
     rw = [{"BTC": 0.5, "ETH": 0.5}] * 6  # every asset active on every bar -> live active_frac == 1.0
@@ -1570,11 +1527,8 @@ def test_render_report_degraded_internals_shows_na_and_reason():
 
 
 def test_render_report_internals_degraded_row_shows_dash_not_fabricated_na():
-    # render_report's docstring promises "-" for an internals-degraded governor_engagement/
-    # cap_breach row's primary/secondary cells; the code hardcoded "n/a" instead, asserting a
-    # secondary-null result that -- since internals never ran -- was never computed under ANY
-    # null_mode. "-" means "not computed"; "n/a" means "computed but undiscriminating" -- only a
-    # real metric_verdict call can produce the latter. This holds regardless of null_mode: it is
+    # An internals-degraded governor_engagement/cap_breach row renders "-" ("not computed") in the
+    # primary/secondary cells, never a fabricated "n/a" ("computed but undiscriminating"): it is
     # internals availability, not null_mode, that gates whether these two metrics are judged at all.
     nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.0 if k % 7 == 0 else 0.15} for k in range(200)]
     rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
@@ -1725,11 +1679,9 @@ def test_render_report_states_null_mode_and_path_and_secondary_column():
     assert "null mode: both" in low
     assert "builder path: fast" in low
     assert "secondary" in low  # the new column header
-    # Positional, not membership: the header must sit above the SAME columns the pinned row
-    # bodies occupy (`fields[-2:] == [primary, secondary]`, see the D1-branch test below) --
-    # bare membership over the whole lowercased report can't tell "primary"/"secondary" apart
-    # from their own swapped positions, so swapping just the two HEADINGS (leaving every row's
-    # computed body untouched) left the whole suite green.
+    # Positional, not membership: the header must sit above the SAME columns the pinned row bodies
+    # occupy (`fields[-2:] == [primary, secondary]`), since bare membership over the lowercased
+    # report cannot tell "primary"/"secondary" apart from their own swapped positions.
     header = next(line for line in text.splitlines() if line.strip().startswith("metric"))
     assert header.split()[-3:] == ["verdict", "primary", "secondary"], header
 
@@ -1768,16 +1720,9 @@ def test_render_report_shows_indeterminate_row_and_summary_line(monkeypatch):
 
 
 def test_render_report_indeterminate_label_does_not_merge_with_a_neighbouring_column(monkeypatch):
-    # A label that overflows its fixed-width column glues directly onto whichever neighbour
-    # has no padding of its own to spare -- pre-fix this row rendered "...90.0000indeterminate
-    # (instrument-fragile)      consistent": the PRECEDING (width) column's number runs straight
-    # into "indeterminate" with zero separating whitespace, even though the trailing secondary
-    # column happened to still show a gap in this fixture (its own label was short enough to fit its
-    # old field width). A bare substring check ("indeterminate (instrument-fragile)" in text, as in
-    # the test above) still PASSES against that merged string, since the label is a literal prefix of
-    # it -- it is blind to the human-facing artifact being garbled. This test instead demands
-    # whitespace on BOTH sides of the label, so it fails on the current formatting regardless of
-    # which neighbour it merges with.
+    # A label that overflows its fixed-width column glues onto whichever neighbour has no padding
+    # to spare, and a bare substring check still passes on the merged string -- so this demands
+    # whitespace on BOTH sides of the label, failing whichever neighbour it merges with.
     monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: list(range(101)))
     monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: list(range(150, 251)))
     rw = [{"BTC": 200.0}] * 6
@@ -1803,15 +1748,10 @@ def _row_fields(text, metric):
 
 
 def test_render_report_table_shows_all_three_columns_for_every_d1_branch():
-    # An earlier version of the table rendered only `verdict` (reconciled) and `secondary`
-    # (bootstrap raw) -- on 3 of D1's 5 reconciliation branches those two are the SAME string, so a
-    # disagreeing row looked identical to an agreeing one and the PRIMARY (windowed) null's raw
-    # label appeared nowhere. Worst case: primary='inconsistent', secondary='weakly-
-    # consistent' rendered "weakly-consistent | weakly-consistent" -- 'inconsistent' invisible. The
-    # table renders three explicit columns (verdict, primary, secondary); this test covers each of
-    # D1's five branches, one per gating metric row, and demands every one of the three labels is
-    # recoverable as a WHOLE field (never merely a substring of a longer field -- "consistent" is a
-    # literal substring of "inconsistent").
+    # The table renders three explicit columns (verdict, primary, secondary); this covers each of
+    # D1's five reconciliation branches, one per gating metric row, and demands every one of the
+    # three labels is recoverable as a WHOLE field -- never merely a substring of a longer field,
+    # since "consistent" is a literal substring of "inconsistent".
     branches = {
         "gross": ("n/a", "n/a"),  # both n/a -> n/a
         "net": ("n/a", "inconsistent"),  # exactly one n/a -> the discriminating label
@@ -1881,10 +1821,7 @@ def test_render_report_table_shows_all_three_columns_for_every_d1_branch():
 
 
 def test_render_report_single_null_mode_column_placement_for_normal_row():
-    # Re-review wave 3, finding 2: the same attribution gap as finding 1, one level down -- swapping
-    # _dual_columns' `windows`/`block-bootstrap` branches leaves 128/128 green because no test covers
-    # a NORMAL (non-degraded) metric row's "-" placement per mode; only the internals-degraded
-    # governor_engagement/cap_breach row (always "-"/"-" regardless of mode) was covered. Swapped,
+    # A NORMAL (non-degraded) metric row's "-" placement per single-null mode: swapped,
     # `--null windows` would print the windowed label in the SECONDARY column and "-" in primary --
     # attributing the verdict to the bootstrap, which never ran, while claiming the windowed null,
     # which DID run, was never computed.
@@ -1929,14 +1866,10 @@ def test_render_report_single_null_mode_column_placement_for_normal_row():
 
 
 def test_render_report_pnl_line_names_both_raw_nulls():
-    # The P&L (non-gating) line carried the SAME concealment shape the fingerprint-table columns
-    # test above guards against: it printed the reconciled verdict plus "(secondary null: X)" and
-    # never the primary. On the adjacent-disagreement branch the reconciled label EQUALS the milder
-    # side, so with primary='inconsistent', secondary='weakly-consistent' the line read
-    #     "weakly-consistent (secondary null: weakly-consistent)"
-    # -- indistinguishable from genuine agreement, with the 'inconsistent' primary suppressed. This
-    # is the same class of defect and is fixed the same way: name both raw nulls explicitly. Found
-    # by the fix subagent while out of its own scope, and pinned here rather than left as prose.
+    # The P&L (non-gating) line must name BOTH raw nulls: on the adjacent-disagreement branch the
+    # reconciled label EQUALS the milder side, so a line printing only "(secondary null: X)" reads
+    # "weakly-consistent (secondary null: weakly-consistent)" with primary='inconsistent' --
+    # indistinguishable from genuine agreement, with the primary suppressed.
     dual = reconcile_verdicts("inconsistent", "weakly-consistent")
     assert dual.verdict == "weakly-consistent"  # the concealing branch: reconciled == secondary
 
@@ -1976,13 +1909,9 @@ def test_render_report_pnl_line_names_both_raw_nulls():
 
 
 def test_render_report_pnl_line_headline_is_the_reconciled_label():
-    # Re-review wave 3, finding 3: the P&L headline's use of the RECONCILED label was unpinned --
-    # `pnl_dual.verdict` -> `pnl_dual.primary` left 128/128 green, printing a bare reassuring label
-    # where D1 requires "indeterminate (instrument-fragile)". The sibling test above pins only the
-    # parenthetical (both its assertions are on the "primary null: ..."/"secondary null: ..." slots)
-    # and uses the adjacent branch, where the mutation is least visible (reconciled == secondary).
-    # This uses the opposite-extremes branch instead, where the reconciled label differs from BOTH
-    # raw labels, so a mutation to either .verdict or .primary/.secondary is caught.
+    # The P&L headline is the RECONCILED label, which D1 requires to read "indeterminate
+    # (instrument-fragile)" here. The opposite-extremes branch is used because the reconciled label
+    # differs from BOTH raw labels there, so a swap to .primary or .secondary is caught.
     dual = reconcile_verdicts("consistent", "inconsistent")
     assert dual.verdict == "indeterminate (instrument-fragile)"  # sanity: reconciled != either raw label
 
@@ -2024,13 +1953,9 @@ def test_render_report_pnl_line_headline_is_the_reconciled_label():
 
 
 def test_fingerprint_table_columns_align_for_every_metric_row():
-    # `_METRIC_COL_W` must be DERIVED from the longest `_METRIC_ROWS` entry
-    # ("governor_engagement", 19 chars), never a hardcoded width -- a hardcoded 12 lets that one
-    # row's name overflow its field with no padding, shifting every later column in THAT row out of
-    # alignment with the header while every other row (and the pre-existing merge test, which only
-    # inspects the "gross" row) stays blind to it. This generalizes to all seven rows: the character
-    # immediately after every row's metric-name field must be the SAME joining space as the
-    # header's, i.e. the field width actually reserved was wide enough to hold the name.
+    # `_METRIC_COL_W` is DERIVED from the longest `_METRIC_ROWS` entry, never hardcoded: too narrow
+    # a width lets that row's name overflow with no padding and shifts every later column in THAT
+    # row. For all seven rows the character after the metric-name field must be the joining space.
     rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
     nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
     realized = _mk_realized(rw, [0.001] * 6)
@@ -2165,11 +2090,9 @@ def test_json_payload_carries_null_mode_path_and_dual_verdicts():
 
 
 def test_json_payload_verdict_field_carries_reconciled_label_not_windowed(monkeypatch):
-    # The JSON's top-level "verdict" field must agree with the report text -- both show the
-    # RECONCILED label, never the raw windowed one -- or a naive JSON consumer reading "verdict"
-    # without also checking "dual" over-reads. Forces an opposite-extremes split so the windowed raw
-    # verdict ("inconsistent") and the reconciled one ("indeterminate (instrument-fragile)") visibly
-    # differ; the windowed label stays discoverable at dual["primary"].
+    # The JSON's top-level "verdict" must agree with the report text -- both the RECONCILED label --
+    # or a consumer reading "verdict" without "dual" over-reads. An opposite-extremes split makes the
+    # raw windowed verdict and the reconciled one visibly differ; the raw one stays at dual["primary"].
     monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: list(range(101)))
     monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: list(range(150, 251)))
     rw = [{"BTC": 200.0}] * 6
@@ -2248,12 +2171,11 @@ def test_verdict_payload_carries_dual_when_given():
 
 
 def _mk_h4_snapshot_record(cycle_ts, h4_ts, closes):
-    """A CycleRecord with a real 240 SnapshotEntry hash-verifying against (h4_ts, closes) -- the
-    data `realized_internals` rebuilds on -- plus a minimal, independently-consistent 1440
-    SnapshotEntry so `validate_record` (called for real on `latest_record`) passes its
-    per-pair grid-completeness and snapshot-boundary checks; the 1440 entry's last_ts is derived
-    with `validate_record`'s own formula, which is generally NOT h4_ts[-1]. Returns (record,
-    reader): reader routes by entry.grid so both entries resolve against their own data."""
+    """A CycleRecord whose 240 SnapshotEntry hash-verifies against (h4_ts, closes) -- the data
+    `realized_internals` rebuilds on -- plus a minimal 1440 entry so `validate_record` (run for real
+    on `latest_record`) passes its grid-completeness and snapshot-boundary checks; that entry's
+    last_ts comes from `validate_record`'s own formula and is generally NOT h4_ts[-1]. Returns
+    (record, reader), the reader routing by entry.grid so each entry resolves against its own data."""
     midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
     daily_last = midnight - timedelta(days=1)
     daily_ts = [daily_last - timedelta(days=1), daily_last]
@@ -2487,12 +2409,9 @@ def test_realized_internals_on_real_journal():
 def _mk_straddling_records_and_store(tmp_path, *, flip_at: int = 2, n_cycles: int = 5):
     """A clean segment whose records flip from schema 1 (base-keyed "BTC") to schema 2 (symbol-keyed
     "BTC/EUR" plus the widened "ETH/BTC" leg) at cycle index `flip_at`, over ONE store carrying both
-    legs at their real `<base>/<quote>` paths.
-
-    BTC/EUR steps +10% a bar and carries all the weight; ETH/BTC steps +40% and carries exactly none
-    -- the widened leg's structural zero (D1). That +40% is the fixture's discriminator: the v1
-    records predate ETH/BTC entirely, so every scored bar's weight for it is FILLED, and a fill of
-    anything but 0.0 would move gross by an amount no assertion below could miss."""
+    legs at their real `<base>/<quote>` paths. BTC/EUR steps +10% a bar and carries all the weight;
+    ETH/BTC steps +40% and carries none -- the widened leg's structural zero (D1), and the +40% is
+    the discriminator: the v1 records predate ETH/BTC, so any fill but 0.0 would move gross."""
     base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
     labels = [base + timedelta(hours=4 * k) for k in range(-1, n_cycles - 1)]
     prices = {"BTC/EUR": [100.0 * 1.1**i for i in range(len(labels))], "ETH/BTC": [1.0 * 1.4**i for i in range(len(labels))]}
@@ -2581,12 +2500,11 @@ def test_realized_series_widened_leg_is_in_the_realizability_gate(tmp_path):
 
 
 def test_build_null_casts_its_book_onto_the_live_symbol_space(monkeypatch):
-    """The null and the realized series are judged metric against metric, and `structural_metrics`
-    computes active_frac as n_active/len(weights) -- so the two must count the SAME universe. The
-    null's base-keyed model outputs are expanded onto the twelve-symbol basket by the cycle's own
-    `_expand_to_basket`: gross/net/turnover/hhi are untouched by legs that are exactly zero,
-    active_frac is not, and a ten-wide null against a twelve-wide realized series would have biased
-    every active_frac verdict by 12/10 in one direction with nothing on the page to say so."""
+    """The null and the realized series are judged metric against metric and `structural_metrics`
+    computes active_frac as n_active/len(weights), so both must count the SAME universe: the null's
+    base-keyed outputs are expanded onto the twelve-symbol basket by `_expand_to_basket`. Exact-zero
+    legs leave gross/net/turnover/hhi untouched; active_frac they do not, so a ten-wide null against
+    a twelve-wide realized series would bias every active_frac verdict with nothing on the page to say so."""
     n = 3
     B = A1 = A2 = [0.09, 0.12, 0.06, 0.0]
     fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
@@ -2606,9 +2524,8 @@ def test_build_null_casts_its_book_onto_the_live_symbol_space(monkeypatch):
 
 # --- the internals rebuild across the schema boundary (spec 00094 D3) ------------------------------
 #
-# Every other realized_internals test here stubs the builder, and a stub keyed by whatever it is
-# handed ACCEPTS the twelve-symbol panel the real builder refuses -- so none of them can see whether
-# `_assemble_latest_grids` contracts a schema-2 record at all. These two run the real builder.
+# These two run the REAL builder: a stub accepts the twelve-symbol panel the real builder refuses,
+# so a stubbed test cannot see whether `_assemble_latest_grids` contracts a schema-2 record at all.
 
 
 def _v2_internals_fixture():
