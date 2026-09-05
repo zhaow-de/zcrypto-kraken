@@ -69,3 +69,12 @@ def test_every_topic_link_in_the_index_resolves():
     index = TOPICS / "README.md"
     dead = [target for target in _INDEX_LINK.findall(index.read_text()) if not (index.parent / target).is_file()]
     assert not dead, f"index links to files that do not exist: {dead}"
+
+
+def test_the_index_has_one_title_and_no_blockquote_line():
+    """A conflict marker mdformat has rewritten is an extra H1 (`<<<<<<< HEAD` over `=======`) or a blockquote (`>>>>>>>`)."""
+    lines = (TOPICS / "README.md").read_text().split("\n")
+    titles = [n for n, line in enumerate(lines, 1) if line.startswith("# ")]
+    quoted = [n for n, line in enumerate(lines, 1) if line.startswith(">")]
+    assert titles == [1], f"the topic index has H1 lines other than its title: {titles}"
+    assert not quoted, f"blockquote lines in the topic index: {quoted}"
