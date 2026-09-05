@@ -88,7 +88,7 @@ ______________________________________________________________________
 
 ## 2026-07-15 — iter-098: the L2 primitive panel (spec 00052, OPS-4)
 
-- **The L2 primitive panel is a live-accruing dataset** — a one-second grid of spread, mid, microprice, imbalance, effective spread at size and depth, materialised hourly from the reconciled capture and replicated to the NAS, so [[T0014]]'s calibration starts from a query rather than a rebuild.
+- **The L2 primitive panel is a live-accruing dataset** — a one-second grid of spread, mid, microprice, imbalance, effective spread at size and depth, materialised hourly from the reconciled capture and replicated to the NAS, so [[T0014]]'s calibration started from a query rather than a rebuild.
 - **Panel hours are chained, not self-contained**: Kraken sends a book snapshot only on subscribe, so book state threads across contiguous hours, a sidecar carries the resume watermark, an unanchored hour is recorded as an honest gap, and the final fractional second of an hour must drain into the carried book or every successor starts stale.
 - **The ops node runs the hourly pull-then-materialise timer pair with its own dead-man checks**, so a stalled panel pages instead of ageing quietly.
 - **`docs/reference/data-catalog-full.md` gains a live-accruing operational datasets section** — codified as a closeout rule, so the research loop's pick-time surfaces and the dataset inventory cannot drift.
@@ -152,7 +152,7 @@ ______________________________________________________________________
 - `infra/README.md`, `infra/nas/README.md`, `infra/external-systems.md` and `.claude/rules/fleet-deploys.md` name the accounts an operator uses. Spec `00057`; archived [[T0068]] resolved.
 ## 2026-07-19 — iter-106: panel settle-watermark — an un-healed hour can't be permanently captured ([[T0066]])
 
-- **The panel materialiser defers an hour until it is settle-aged (7 h by default, `--settle-hours`) and holds its monotone watermark off it** — the reconciler mints healed book hours well after the hour closes, so without the gate an hourly pass could consume the un-healed primary and capture it PERMANENTLY, silently degrading the dataset [[T0014]]/[[T0024]] are about to read.
+- **The panel materialiser defers an hour until it is settle-aged (7 h by default, `--settle-hours`) and holds its monotone watermark off it** — the reconciler mints healed book hours well after the hour closes, so without the gate an hourly pass could consume the un-healed primary and capture it PERMANENTLY, silently degrading the dataset [[T0014]]/[[T0024]] were about to read.
 - **Spec `00052` D6 is corrected in place**: *settled* (final and hash-verified) is not *heal-complete*, and the explicit watermark was chosen over ledger-driven invalidation because the freshness cost has no current consumer.
 - **The trade-bar materialiser's settle binding is a different problem** — trades are heal-complete only after the daily REST backfill, a chasm rather than a race — and rides live [[T0065]]. Archived [[T0066]] resolved.
 ## 2026-07-22 — iter-115: the universe's spread cap, retired from placeholder ([[T0024]], spec `00067`)

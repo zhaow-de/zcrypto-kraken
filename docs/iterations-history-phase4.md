@@ -101,7 +101,7 @@ ______________________________________________________________________
 ## 2026-07-10 — iter-074: A2 at its native 4h band — three adopts, the first family-level beat (T0011)
 
 - **A cross-band verdict rebuilds the frozen benchmark at the challenger's band first** — the 4h rebuild uses a time-preserving parameter mapping and was QA'd before any arm was read.
-- **Three A2 native-4h arms adopted, one rejected** — the A family's first multiplicity-corrected beat of the frozen benchmark; the records are in `docs/reference/trial-registry.jsonl` and the arms in T0011.
+- **Three A2 native-4h arms adopted, one rejected** — the A family's first multiplicity-corrected beat of the frozen benchmark; the records are in `docs/reference/trial-registry.jsonl` and the arms in archived T0011.
 - **`var_trials` must carry the same periodicity as the Sharpes it deflates** — the third occurrence of the caller-convention trap; mixing bands mechanically rejects everything, and `cli/alpha/killbar.py`'s units contract now spans periodicity too.
 - **Adopt requires significance at both the convention and the time-matched block length, plus seed stability** — one block length is not a robust SPA read.
 - **The survivors are candidate sleeves whose blocker was the cross-frequency construction design** — registered on T0011 and delivered at iter-080.

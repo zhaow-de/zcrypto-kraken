@@ -25,7 +25,7 @@ Per-iteration changelog for Phase 2. Appended at each iteration's close-out; see
 
 - **`cli/validation/bootstrap.py` puts a confidence interval on any statistic** — seeded and reproducible from the seed alone, with the RNG function-local so global state cannot move a result.
 - **A degenerate series, block length, alpha, seed or statistic raises** rather than crashing or returning NaN.
-- **`T0006` parks the non-numeric-type-guard gap** as one coherent harness-hardening pass rather than a piecemeal fix — none of those paths can return NaN, so it is consistency, not a validity hole.
+- **`T0006` parked the non-numeric-type-guard gap** as one coherent harness-hardening pass rather than a piecemeal fix — none of those paths can return NaN, so it is consistency, not a validity hole.
 - **Design and plan**: `docs/specs/00009-stationary-bootstrap-design.md`, `docs/plans/00009-stationary-bootstrap.md`.
 
 ## 2026-07-08 — iter-017: Kraken cost model — fees + margin (Phase 2)
@@ -80,6 +80,6 @@ ______
 
 - **`cli/costs/spread.py` gives a trade its captured-spread leg and the combined round-trip helper the Phase-2 closeout deferred with it** — calibrated from our own `l2-panel` capture rather than a vendor quote; above the largest pinned notional it refuses instead of extrapolating a convex curve, and between pinned sizes it interpolates in log notional.
 - **Quote a spread number from `docs/reference/captured-spread-calibration.md`**, which carries the two standing readings — never a *median* top-of-book spread for BTC/EUR (tick quantisation makes it swing; cite the mean or the effective spread at size), and no per-session dimension, rejected on **materiality** rather than absence.
-- **Phase 2's "≥2 weeks" exit-bar row was NOT discharged here** — the panel window fell short of the literal clause — and [[T0091]] carries the restamp; the constants are a benign-regime estimate with day-level uncertainty, not a converged parameter.
+- **Phase 2's "≥2 weeks" exit-bar row was NOT discharged here** — the panel window fell short of the literal clause — and archived [[T0091]] carries the restamp; the constants are a benign-regime estimate with day-level uncertainty, not a converged parameter.
 - **The record's modeled `0.006/side` is a maker fee plus a headroom guess this calibration shows is far too large, and whether the model over- or under-charges turns on the unmade maker-vs-taker execution decision** — [[T0090]]; trial 44's registered verdict was never re-read at the realistic stack, and no new trial was registered here.
 - **[[T0014]] resolved; `tests/test_costs_spread.py` pins table and provenance together**, so a recalibration without a new stamp fails rather than silently repricing history. Decisions route by subject matter — `03.phase2-decisions.md` here, the trial-44 re-read in `13.phase5-decisions.md`, the fee-tier finding in `14.phase6-decisions.md`.
