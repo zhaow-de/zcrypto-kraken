@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Normalizes the zcrypto data archive on the NAS to plain POSIX perms — dirs 0775, files 0664, group
-# `zcrypto`, no Synology ACL — because DSM DISPLAYS an ACL'd file as 666/777+ (the mask) where `chmod`
-# yields the literal mode, and owner + group + other-read already covers every actor. Idempotent:
+# Normalizes the zcrypto data archive on the NAS to plain POSIX perms (dirs 0775, files 0664, group
+# `zcrypto`, no ACL): DSM DISPLAYS an ACL'd file as the mask where `chmod` yields the literal mode.
+# Idempotent:
 #   ssh nas 'sudo bash -s' < infra/nas/normalize-archive-perms.sh   [/volume1/ZhaoCrypto]
 set -euo pipefail
 
@@ -26,9 +26,8 @@ if [ "$(printf '%s' "$RESOLVED" | tr -cd / | wc -c)" -lt 2 ]; then
 	exit 1
 fi
 
-# In every pass: `-xdev` stays on this filesystem, the `@eaDir` prune skips Synology metadata, `xargs
-# -0` handles odd names, `--` stops a path beginning with `-` being read as an option. Stripping the
-# inheritable ACL is also what lands new files at 0664/0775, given the 0002 umask on both writers.
+# Stripping the inheritable ACL is also what lands new files at 0664/0775, given the 0002 umask on
+# both writers. The `@eaDir` prune skips Synology metadata.
 # group -> zcrypto  (`-h`: a symlink's group is set on the link itself, never its target)
 find "$TARGET" -xdev -name '@eaDir' -prune -o -print0 | xargs -0r chgrp -h "$GROUP" --
 # directories -> 0775  (chmod also strips any Synology ACL on the entry)

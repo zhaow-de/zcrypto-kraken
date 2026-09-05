@@ -1,7 +1,6 @@
-# The REDUNDANT (secondary) capture host (spec 00050). Capture only — deliberately NOT in
-# `engine_host`, so the live Kraken trade key is never rendered onto it. Everything else — the pair
-# universe, depth, image, data dir, deploy and sync keys — comes from group_vars/capture_host, so a
-# universe change converges both hosts identically.
+# The REDUNDANT (secondary) capture host (spec 00050). Capture only, deliberately NOT in
+# `engine_host`, so the live Kraken trade key is never rendered onto it. Everything else comes from
+# group_vars/capture_host, so a universe change converges both hosts identically.
 
 # The base role defaults to "zcrypto"; without this the secondary would converge to the primary's
 # hostname (and to a /etc/hosts entry claiming to be it).

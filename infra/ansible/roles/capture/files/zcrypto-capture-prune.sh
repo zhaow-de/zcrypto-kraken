@@ -19,15 +19,14 @@ esac
 [ -d "$dir" ] || { echo "capture data dir not found: $dir" >&2; exit 2; }
 
 # Segment retention (spec 00050 D8, T0032): the NAS mirror is the durable archive and a capture
-# host's disk only a spool, so a committed hour older than <retention-days> has long since been
-# pulled and hash-verified. An absolute cutoff instant, not `-mtime +N`: `-mtime` truncates to whole
-# days, so its boundary is a day fuzzier than the retention the operator asked for.
+# host's disk only a spool, so an hour older than <retention-days> is already pulled and hash-
+# verified. An absolute instant, not `-mtime +N`, which truncates to whole days.
 cutoff=$(date -u -d "$days days ago" '+%Y-%m-%d %H:%M:%S')
 
-# ONLY committed finals and their sidecars: the name globs are the entire safety argument, because
-# L2 book capture is unbackfillable. Parts, held-spills and `<HH>.parquet.merging` all END in
-# `.parquet`, so a `-name '*.parquet'` sweep would eat the live hour; the anchored
-# `[0-9][0-9].parquet` basename keeps them apart, and `*.corrupt*` is evidence, never deleted.
+# The name globs are the entire safety argument, because L2 book capture is unbackfillable: part and
+# held spills END in `.parquet`, so a `-name '*.parquet'` sweep would eat the live hour, and only
+# the anchored `[0-9][0-9].parquet` basename excludes them. Neither `*.corrupt*`, forensic evidence,
+# nor `<HH>.parquet.merging` matches either glob.
 deleted=$(
   find "$dir" -type f \
     \( -name '[0-9][0-9].parquet' -o -name '[0-9][0-9].parquet.sha256' \) \

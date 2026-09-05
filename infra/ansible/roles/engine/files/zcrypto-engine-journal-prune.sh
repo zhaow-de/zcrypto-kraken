@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Installed by the `engine` Ansible role at /usr/local/sbin/zcrypto-engine-journal-prune — do not
-# hand-edit on the host, it is overwritten on the next converge. Edit this file (and re-run
-# tests/test_engine_journal_prune.py, which drives THIS script) instead. The NAS holds the durable
-# archive and the gate scores THAT copy, so this VPS tail is a local one (spec 00070, T0021).
+# Installed by the `engine` role at /usr/local/sbin/zcrypto-engine-journal-prune, so a hand-edit
+# there is lost on the next converge; tests/test_engine_journal_prune.py drives this file. The NAS
+# holds the durable archive and the gate scores THAT copy, so this VPS tail is a local one (spec
+# 00070, T0021).
 set -euo pipefail
 
 usage="usage: zcrypto-engine-journal-prune <journal-dir> <retention-days> [--dry-run] [--textfile PATH]"
@@ -30,21 +30,21 @@ case "$dir" in
 esac
 [ -d "$dir" ] || { echo "engine journal dir not found: $dir" >&2; exit 2; }
 
-# An absolute UTC DATE compared against the directory's own name, never `-mtime +N`: mtimes are
-# rewritten by any restore or rsync, while the name is the day's identity. The current UTC day can
-# never be strictly older than the cutoff, so it is excluded by construction, not by a special case.
+# An absolute UTC DATE against the directory's own name, never `-mtime +N`: a restore or rsync
+# rewrites mtimes, while the name is the day's identity. Today can never be strictly older than the
+# cutoff, so it is excluded by construction.
 cutoff=$(date -u -d "$days days ago" '+%Y-%m-%d')
 
-# ISO names sort lexically == chronologically, so the newest <days> entries are simply the tail.
-# Only names matching an ISO day are considered; anything else in the journal root is left untouched
-# unconditionally, because an unexpected name means something else is writing here.
+# ISO names sort lexically == chronologically, so the newest <days> entries are the tail. Only
+# ISO-day names are considered: an unexpected name means something else is writing here, and it is
+# left untouched.
 mapfile -t all < <(find "$dir" -mindepth 1 -maxdepth 1 -type d \
   -regextype posix-extended -regex '.*/20[0-9]{2}-[0-9]{2}-[0-9]{2}$' -printf '%f\n' | sort)
 
-# A day-dir goes only if BOTH hold: (1) its name is strictly older than the cutoff and (2) it is not
-# among the newest <retention-days> present. (2) is the load-bearing one: `cli/engine/cycle.py`
-# derives each cycle's orders as a DELTA against the most recent journaled cycle, so an emptied
-# journal rebuilds the whole book. In healthy operation the two coincide, a day arriving daily.
+# A day-dir goes only if BOTH hold: its name is strictly older than the cutoff, and it is not among
+# the newest <retention-days> present. The second binds when the engine has been stopped longer than
+# the window, where the first alone would empty the journal: `cli/engine/cycle.py` derives orders as
+# a DELTA against the most recent journaled cycle, and an emptied journal rebuilds the whole book.
 total=${#all[@]}
 protected=$(( total > 10#$days ? 10#$days : total ))
 candidates=$(( total - protected ))

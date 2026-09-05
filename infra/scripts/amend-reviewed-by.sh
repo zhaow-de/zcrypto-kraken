@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # amend-reviewed-by.sh <commit-ish> "<reviewer model name>"
-# Lands ONE `Reviewed-by:` trailer on ONE commit of the current branch -- HEAD or any ancestor -- so a
-# review's trailer lands the turn the review returns (.claude/rules/commit-messages.md). Each refusal
-# below rewrites nothing and prints its own reason and exit code.
+# Lands ONE `Reviewed-by:` trailer on ONE commit, HEAD or any ancestor, so a review's trailer lands
+# the turn it returns (.claude/rules/commit-messages.md). Each refusal below rewrites nothing and
+# prints its own reason and exit code.
 set -euo pipefail
 target_ish="${1:?usage: $0 <commit-ish> \"<model name>\"}"
 model="${2:?usage: $0 <commit-ish> \"<model name>\"}"
@@ -39,9 +39,9 @@ for rec in docs/reference/deploy-log.jsonl docs/reference/fleet-pins.md; do
 done
 
 awk 'BEGIN{RS="\0"} {sub(/\n+$/,""); printf "%s", $0}' "$msg" > "$new"
-# Keys on the LAST line matching a known trailer name, so a body ending in a `Note:`-shaped line
-# still gets its separating blank line and a trailer name quoted mid-body does not suppress it.
-# Claude-Session is listed because the harness default must still parse, never because it is allowed.
+# Keys on the LAST line matching a known trailer name, so a `Note:`-shaped final line still gets
+# its blank separator and a trailer name quoted mid-body does not suppress it. Claude-Session is
+# listed so the harness default still parses, never because it is allowed.
 last=$(tail -n 1 "$new")
 [[ "$last" =~ ^([Cc]o-[Aa]uthored-[Bb]y|Reviewed-by|Refine-Round-Closed|Signed-off-by|BREAKING-CHANGE|Claude-Session):\  ]] || printf '\n' >> "$new"
 printf '\n%s\n' "$trailer" >> "$new"

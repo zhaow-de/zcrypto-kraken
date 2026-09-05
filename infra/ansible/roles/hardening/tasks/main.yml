@@ -1,7 +1,6 @@
-# bootstrap.yml leaves a temporary sshd drop-in behind (/etc/ssh/sshd_config.d/10-zcrypto.conf,
-# "Port 22" + "Port 10022") so 10022 can be verified before 22 is retired. devsec.hardening's
-# ssh_hardening below replaces /etc/ssh/sshd_config wholesale with no "Include" directive, orphaning
-# it — removed explicitly so no stale file still claims port 22 is open.
+# bootstrap.yml leaves /etc/ssh/sshd_config.d/10-zcrypto.conf behind so 10022 can be verified
+# before 22 is retired. ssh_hardening below rewrites /etc/ssh/sshd_config with no `Include`,
+# orphaning that drop-in, so it is removed explicitly rather than left claiming port 22 is open.
 - name: remove stale sshd drop-ins (orphaned once ssh_hardening owns the whole file)
   ansible.builtin.file:
     path: "/etc/ssh/sshd_config.d/{{ item }}"

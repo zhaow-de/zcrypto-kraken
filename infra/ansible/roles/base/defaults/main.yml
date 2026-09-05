@@ -6,21 +6,18 @@ base_packages:
   - net-tools
   - aptitude
 
-# Whether unattended-upgrades REBOOTS on its own once an update sets /var/run/reboot-required;
-# security patches install regardless. Default "true" keeps the ops node automatic, and
-# group_vars/capture_host flips the two capture VPSes to attended (T0027, spec 00071 D4). MUST be a
-# QUOTED string: a bare YAML false renders as Python's "False", which apt reads as not-true by accident.
+# This governs only the reboot; security patches install regardless. "true" keeps the ops node
+# automatic and group_vars/capture_host flips the two capture VPSes to attended (T0027, spec 00071
+# D4). MUST be a QUOTED string: a bare YAML false renders as Python's "False", which apt reads as
+# not-true.
 base_unattended_upgrades_automatic_reboot: "true"
 
-# The slot is the measured book-row trough (spec 00050): >=1h from any 4h bar boundary
-# (00/04/08/12/16/20), off the hour, lowest book traffic -- books are the unbackfillable loss
-# currency where trades are REST-backfillable. The secondary `zcrypto-red` overrides to "22:25" in
-# its host_vars, so the two capture hosts never reboot at once.
+# The slot is spec 00050's measured book-row trough: at least an hour from any 4h bar boundary, off
+# the hour, lowest book traffic. `zcrypto-red` declares 22:25, so no two hosts share one; on the
+# capture pair, where Automatic-Reboot is "false", it is the attended window rather than a reboot.
 base_unattended_upgrades_reboot_time: "21:25"
-# `root` NOTIFIES NOTHING and is kept deliberately: no fleet host installs an MTA, so
-# unattended-upgrades' MailOnlyOnError shells out to a mailer that does not exist; alerting is
-# Grafana/Slack plus the healthchecks dead-men. THE RESIDUAL, stated because nothing else states it:
-# a FAILED upgrade pages nobody -- `node_reboot_required` covers only a successful one awaiting reboot.
+# `root` NOTIFIES NOTHING, deliberately: no fleet host installs an MTA, so unattended-upgrades'
+# MailOnlyOnError would shell out to a mailer that does not exist.
 base_unattended_upgrades_mail_to: root
 
 base_capture_user: zcrypto-data

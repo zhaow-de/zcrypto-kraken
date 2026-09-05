@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Installed by the `capture` role at /usr/local/sbin/zcrypto-reboot-check; a hand-edit there is lost
-# on the next converge, and tests/test_reboot_check.py drives THIS file. Attended-reboot detector
-# (spec 00071, T0027): patches install unattended and the reboot is a human act, so this publishes
-# the pending-reboot flag as a metric.
+# Installed by the `capture` role at /usr/local/sbin/zcrypto-reboot-check, so a hand-edit there is
+# lost on the next converge; tests/test_reboot_check.py drives this file. The reboot is a human act
+# (spec 00071, T0027), so this publishes the pending-reboot flag as a metric.
 set -euo pipefail
 
 usage="usage: zcrypto-reboot-check <flag-path> <output.prom>"
@@ -16,10 +15,9 @@ out=${2:-}
 pending=0
 [ -e "$flag" ] && pending=1
 
-# Atomic publish: the collector globs this directory continuously and must never read a half-written
-# file; mktemp as a SIBLING makes the mv a same-filesystem rename. 0 is emitted EXPLICITLY, because
-# an absent series is indistinguishable from a dead exporter -- staleness is the collector's own
-# node_textfile_mtime_seconds (spec 00071 D3), never this script's job.
+# The collector globs this directory continuously, so mktemp as a SIBLING makes the mv a same-
+# filesystem rename. 0 is emitted EXPLICITLY: an absent series is indistinguishable from a dead
+# exporter, and staleness is node_textfile_mtime_seconds (spec 00071 D3).
 tmp=$(mktemp "${out}.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
 {
