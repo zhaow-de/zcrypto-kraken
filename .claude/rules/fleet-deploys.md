@@ -16,7 +16,7 @@ L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-re
 - **The NAS runs only `-compat` builds** — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by running polars in the pulled image, never by reading a label.
 - **Panel regeneration is the point of no return** — no old tree survives and rollback is another full rebuild; only through `zcrypto-panel-regenerate`, on the user's word.
 - **One PR per rollout, merged before any other branch touches the pins, deploy-log or fleet files — same day is the default, not a gate; never branch other work from it.**
-- **`kraken-cli` is workstation-only — never install or invoke it on a fleet host**: not the engine node, not the capture pair, not ops. No role, compose file, image or unit installs it. Its account reads run from the workstation against the API, which needs no host presence.
+- **`kraken-cli` is workstation-only — never install or invoke it on a REMOTE host**: not the engine node, not the capture pair, not ops, not the NAS, not the bridgehead. No role, compose file, image or unit installs it. Its account reads run from the workstation against the API, which needs no host presence.
 
 ## Alert-rule lifecycle
 
