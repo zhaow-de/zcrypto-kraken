@@ -1,9 +1,7 @@
-"""The probe-plan model (spec 00090, rung 1): a pure parse + refusal-check layer for the small
-JSON control files the account owner drops for the engine to submit as a real order. Deliberately
-imports only stdlib, `cli.engine.errors`, and `cli.engine.store.BASKET` -- no nautilus -- so the
-offline `probe-plan --check` validator and this module's tests stay fast, and so the model itself
-never depends on anything that talks to the venue.
-"""
+"""The probe-plan model (spec 00090, rung 1): a pure parse + refusal-check layer for the JSON control files the account owner
+drops for the engine to submit as a real order. Imports only stdlib, `cli.engine.errors` and `cli.engine.store.BASKET` --
+never nautilus -- so the offline `probe-plan --check` validator stays fast and the model never depends on anything that
+talks to the venue."""
 
 from __future__ import annotations
 
@@ -23,11 +21,9 @@ _ACTIONS = frozenset({"open", "close"})
 MODES = frozenset({"execute", "rest-cancel", "rest-hold"})
 _MIN_LEVERAGE = 2
 _MAX_LEVERAGE = 10
-# Exact legal key sets, checked before any field-specific validation (cli/config.py's own
-# unknown-key convention) -- every field below is typo-safe via its own missing/mistyped check
-# EXCEPT an optional key like `leverage`: a typo'd `"levarage": 3` has no required counterpart to
-# catch it, so it would otherwise parse cleanly as a spot intent with the operator's intended
-# leverage silently dropped. Owner ruling: refuse the whole plan on any unrecognized key instead.
+# Exact legal key sets, checked before any field-specific validation (cli/config.py's unknown-key convention): an optional
+# key has no required counterpart to catch a typo, so a `"levarage": 3` would otherwise parse cleanly as a spot intent with
+# the operator's intended leverage silently dropped. Owner ruling: refuse the whole plan on any unrecognized key.
 _PLAN_KEYS = frozenset({"plan_id", "created_at", "intents"})
 _INTENT_KEYS = frozenset({"symbol", "side", "action", "mode", "notional_eur", "qty", "leverage", "offset_pct", "hold_minutes"})
 _MAX_HOLD_MINUTES = 60
@@ -62,9 +58,8 @@ class ProbePlan:
 
 
 def _parse_positive_number(value: object, name: str) -> float:
-    # bool is a subclass of int -- reject it explicitly, mirroring cli/config.py's numeric
-    # fields: a JSON `true` is not a EUR amount or a base quantity, and 1.0 is a plausible-looking
-    # value that would otherwise silently pass the finite/positive check below.
+    # bool is a subclass of int -- reject it explicitly, as cli/config.py's numeric fields do: a JSON `true` is not a EUR amount,
+    # a base quantity or a percent, and it floats to a plausible-looking 1.0 that would pass the finite/positive check below.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ProbePlanError(f"probe plan intent {name} must be a number, got {value!r}")
     number = float(value)
@@ -127,12 +122,10 @@ def _parse_intent(raw: object) -> ProbeIntent:
             )
         if action != "open":
             raise ProbePlanError(f"probe plan intent mode 'rest-hold' requires action == 'open', got {action!r}")
-        # PERCENT, not a fraction: 5.0 is five percent. `_REST_CANCEL_OFFSET` is the fraction 0.05,
-        # and an intent copying that shape would rest five hundredths of a percent off the touch --
-        # which fills, on the one mode built never to.
+        # PERCENT, not a fraction: 5.0 is five percent. An intent copying `_REST_CANCEL_OFFSET`'s fractional 0.05 would rest
+        # five hundredths of a percent off the touch, and fill -- on a mode built never to.
         offset_pct = _parse_positive_number(offset_raw, "offset_pct")
-        # bool first, for the reason `_parse_positive_number` above spells out: `True` is an int and
-        # passes the range check, so without this arm `hold_minutes: true` parses as a 1-minute hold.
+        # `True` is an int inside the range, so without this arm `hold_minutes: true` would parse as a 1-minute hold.
         if isinstance(hold_raw, bool) or not isinstance(hold_raw, int) or not (1 <= hold_raw <= _MAX_HOLD_MINUTES):
             raise ProbePlanError(f"probe plan intent hold_minutes must be an int in [1, {_MAX_HOLD_MINUTES}], got {hold_raw!r}")
         hold_minutes = hold_raw
@@ -161,8 +154,7 @@ def _parse_intent(raw: object) -> ProbeIntent:
 
 
 def parse_plan(text: str) -> ProbePlan:
-    """Parse `text` into a ProbePlan, raising ProbePlanError on ANY shape violation -- refusal by
-    default; there is no such thing as a partially-valid plan."""
+    """Parse `text` into a ProbePlan, raising ProbePlanError on ANY shape violation -- there is no partially-valid plan."""
     try:
         doc = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -203,29 +195,10 @@ def plan_refusals(
     max_plan_notional_eur: float,
     free_zeur: float,
 ) -> tuple[str, ...]:
-    """Every applicable refusal reason for `plan`, in declaration order (the gate's
-    plural-reasons discipline -- an operator sees every condition standing between them and
-    submission, not just the first one found).
-
-    The notional cap sums `notional_eur or 0.0` per intent: a `qty` intent contributes 0.0 here
-    because no price exists yet to convert its base quantity into EUR at validation time -- it is
-    NOT exempt from the cap, only deferred. Its real notional (`qty x the chosen limit price`) is
-    known only at sizing time, where the executor enforces the cumulative plan cap on first
-    submission.
-
-    The margin floor (Sec 10's 250% floor at rung scale) sums `notional_eur / leverage` over
-    margin intents (those with `leverage is not None`) and requires that sum, x2.5, to fit under
-    `free_zeur`. A `qty` disposal intent is excluded from this sum -- `parse_plan` already refuses
-    qty combined with leverage, so a qty intent can only be a spot close, and a spot sell extends
-    no margin.
-
-    `max_plan_notional_eur` and `free_zeur` are each validated for finiteness HERE, at the point of
-    use, not just wherever they were sourced: `x > nan` is always False, so a NaN cap or a NaN
-    free-balance would otherwise fail the corresponding comparison OPEN, and an infinite cap
-    disables the blast-radius bound entirely (nothing ever compares as "exceeding" it). `free_zeur`
-    in particular comes from a live venue balance read by the executor, not from config, so it
-    cannot rely on `cli/config.py`'s own finiteness check.
-    """
+    """Every applicable refusal reason for `plan`, in declaration order -- plural by design: the operator sees every condition
+    between them and submission, not just the first. A `qty` intent contributes 0.0 to the notional sum, no price yet to convert it
+    -- deferred, never exempt: the executor's `_over_cap_reason` cumulates its real notional at sizing time. The qty intent is
+    absent from the margin sum by design: `parse_plan` refuses qty with leverage, so it is a spot close, which extends no margin."""
     reasons: list[str] = []
 
     ttl_minutes = int(PLAN_TTL.total_seconds() // 60)
@@ -236,6 +209,8 @@ def plan_refusals(
     if plan.plan_id in ledgered:
         reasons.append("plan_id already ledgered")
 
+    # Both bounds are checked finite at the point of use -- a NaN or +inf bound compares False against any total and fails its
+    # check open, and `free_zeur` is a live venue balance, outside `cli/config.py`'s own finiteness check.
     total_notional = sum(i.notional_eur or 0.0 for i in plan.intents)
     if not math.isfinite(max_plan_notional_eur):
         reasons.append(f"max_plan_notional_eur is not finite: {max_plan_notional_eur!r}")

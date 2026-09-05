@@ -1,11 +1,5 @@
-"""The live price store (spec 00041 SS the live price store): a per-pair x grid Parquet mirror of
-the frozen canonical dataset, kept warm by REST gap-fills. `seed_store` bootstraps/repairs the
-store from the canonical dataset plus a REST fetch; `refresh_store` appends newly completed bars
-each cycle. Both apply the same "drop the in-progress candle" rule to REST rows (Kraken's OHLC
-response always includes the currently-forming candle as its last row) before reconciling against
-the store's own tail -- the two distinct seam guards (window shortfall, overlap equality) are
-never skipped, and a seed re-run is the documented repair for a poisoned store tail.
-"""
+"""The live price store (spec 00041): a per-pair x grid Parquet mirror of the frozen canonical
+dataset, kept warm by REST gap-fills."""
 
 from __future__ import annotations
 
@@ -24,10 +18,9 @@ from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
 
 logger = get_logger("engine.store")
 
-# The single committed source of truth for the engine's basket (spec 00094): twelve symbols,
-# sorted, both /BTC legs alongside the ten /EUR pairs. DOT/EUR is deliberately kept despite the
-# universe regeneration deselecting it -- an owner ruling (T0137), not an oversight; see
-# tests/test_basket_concordance.py.
+# The single committed source of truth for the engine's basket (spec 00094). DOT/EUR is kept
+# despite the universe regeneration deselecting it -- an owner ruling (T0137, resolved), never an
+# oversight; tests/test_basket_concordance.py pins it.
 BASKET: tuple[str, ...] = (
     "ADA/EUR",
     "AVAX/EUR",
@@ -104,17 +97,7 @@ def _reconcile(
     shortfall_hint: str,
     mismatch_hint: str,
 ) -> tuple[int, int, pl.DataFrame]:
-    """Join `store_frame` and `rest_frame` on `ts`, enforce the seam guards, and return
-    `(overlap_bars, replaced_tail_rows, merged_frame)`.
-
-    Guard (i): `overlap_bars >= min_overlap`, else `EngineError` naming the shortfall + `shortfall_hint`.
-    Guard (ii): closes must match exactly on every shared stamp. When `allow_replace` is False, any
-    mismatch raises `EngineError` naming the mismatched stamp + `mismatch_hint`. When True, mismatched
-    shared rows are replaced with the REST version (the poisoned-tail repair) and counted in the
-    returned replaced count.
-
-    `merged_frame` keeps every store row whose `ts` isn't a replaced mismatch, swaps in the REST
-    row for each replaced mismatch, and appends REST rows whose `ts` isn't in the store at all.
+    """Join `store_frame` and `rest_frame` on `ts`, enforce the seam guards, and return `(overlap_bars, replaced_tail_rows, merged_frame)`.
 
     Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy -- a safety fix here likely applies there too.
     """
@@ -148,16 +131,9 @@ def seed_store(
     fetch_fn=fetch_ohlc,
     clock=_utc_now,
 ) -> SeedReport:
-    """Bootstrap/repair `store_dir` from `canonical_dir` plus a REST gap-fill, per pair x grid.
-
-    The canonical file is copied into the store only if the store file is absent (idempotent). The
-    REST fetch is then reconciled against the store's tail with two guards: an overlap of fewer
-    than 6 shared stamps is a window shortfall (`EngineError`); a close mismatch on a shared stamp
-    aborts (`EngineError`) UNLESS the store file already existed before this call, in which case the
-    mismatched rows are treated as a poisoned tail and replaced with the REST version (recorded in
-    `SeedEntry.replaced_tail_rows` and logged). Only new completed bars beyond the store's tail are
-    appended.
-    """
+    """Bootstrap or repair `store_dir` from `canonical_dir` plus a REST gap-fill, per pair x grid: the
+    canonical file is copied only when the store file is absent, so a re-run is idempotent and treats a
+    close mismatch as a poisoned tail to repair rather than the abort a first seed takes."""
     now = clock()
     entries = []
     for pair, pair_key in PAIR_KEYS.items():
@@ -205,14 +181,8 @@ def refresh_store(
     fetch_fn=fetch_ohlc,
     clock=_utc_now,
 ) -> RefreshReport:
-    """Append newly completed bars to an already-seeded `store_dir`, per pair x grid.
-
-    The REST fetch's in-progress candle is dropped first, then reconciled against the store's tail
-    requiring >= 1 shared stamp (a zero-overlap refresh means the store is catastrophically stale --
-    a distinct `EngineError`) and exact close equality on every shared stamp (a mismatch is a
-    poisoned tail -- a distinct `EngineError` naming `zcrypto engine seed` as the recovery). Only new
-    completed bars beyond the store's tail are appended.
-    """
+    """Append newly completed bars to an already-seeded `store_dir`, per pair x grid, refusing rather
+    than repairing a seam that does not hold -- the recovery is a re-seed."""
     now = clock()
     entries = []
     for pair, pair_key in pairs.items():
