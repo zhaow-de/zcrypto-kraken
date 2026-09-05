@@ -12,8 +12,7 @@ from cli.logging import get_logger
 
 logger = get_logger("liquidations.ws_client")
 
-# Keyless combined stream: all-symbol force-orders. No auth and no subscribe frame — the
-# subscription lives in the URL (spec 00051 OPS-2).
+# Keyless all-symbol combined stream: no auth and no subscribe frame — the subscription lives in the URL (spec 00051 OPS-2).
 # https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams
 DEFAULT_URI = "wss://fstream.binance.com/stream?streams=!forceOrder@arr"
 
@@ -30,14 +29,9 @@ def compute_backoff(attempt: int, *, base: float = _BACKOFF_BASE_SECONDS, max_de
 
 
 class BinanceLiquidationClient:
-    """Thin async client for Binance USD-M futures' keyless `!forceOrder@arr` combined stream:
-    connect, receive, parse, auto-reconnect with exponential backoff on any drop.
-
-    Mirrors `cli.capture.ws_client.CaptureClient`'s reconnect shape (injected `connect_fn`/`sleep_fn`
-    for testability, `connected` property, `CancelledError` propagates as the stop signal) but with
-    no subscribe frame, no CRC, and no order book — the subscription is in the URL and the payload is
-    a flat liquidation event.
-    """
+    """Thin async client for Binance USD-M futures' keyless `!forceOrder@arr` combined stream: connect, receive, parse,
+    auto-reconnect with exponential backoff on any drop, mirroring `cli.capture.ws_client.CaptureClient`'s reconnect loop.
+    `connect_fn`/`sleep_fn` are injected so that loop is unit-testable without a real socket or real delays."""
 
     def __init__(
         self,
@@ -53,14 +47,12 @@ class BinanceLiquidationClient:
 
     @property
     def connected(self) -> bool:
-        """True while a live WS connection is established; False during reconnect/backoff. Lets the
-        dead-man gate stop pinging on a connectivity loss."""
+        """True while a live WS connection is established; False during reconnect/backoff, so the dead-man gate stops pinging."""
         return self._ws is not None
 
     async def stream(self) -> AsyncIterator[dict]:
-        """Yield parsed forceOrder row dicts forever, reconnecting (with backoff) on any drop. Frames
-        that are not force-orders (heartbeats, other events, malformed lines) parse to `None` and are
-        skipped. Cancel the consuming task to stop — there is no internal stop condition."""
+        """Yield parsed forceOrder row dicts forever, reconnecting (with backoff) on any drop. Cancel the consuming task
+        to stop — there is no internal stop condition."""
         attempt = 0
         while True:
             try:
@@ -74,10 +66,9 @@ class BinanceLiquidationClient:
             except ConnectionClosed as exc:
                 logger.warning("WS connection closed, reconnecting: %s", exc)
             except (WebSocketException, OSError, TimeoutError) as exc:
-                # A failed connection *attempt* — an HTTP-error handshake (InvalidStatus), a
-                # refused/unroutable connect (OSError), or a handshake timeout — backs off and
-                # retries exactly like a drop of an established connection. asyncio.CancelledError
-                # deliberately propagates: it is the designed stop signal.
+                # A failed connection *attempt* — an HTTP-error handshake (InvalidStatus), a refused/unroutable connect
+                # (OSError), or a handshake timeout — backs off and retries exactly like a drop of an established
+                # connection; `asyncio.CancelledError` deliberately propagates as the designed stop signal.
                 logger.warning("WS connect attempt failed, reconnecting: %s", exc)
             finally:
                 self._ws = None
