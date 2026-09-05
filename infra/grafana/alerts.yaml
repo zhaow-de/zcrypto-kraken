@@ -3108,8 +3108,8 @@ rules:
     #
     # THE RESIDUAL: a RULE-SCOPED evaluation error -- an expression broken by a later edit, a
     # permission or cardinality failure on this query alone -- pages nothing, because the siblings
-    # above are only correlated cover. It is read, not paged: the daily pass reports every rule whose
-    # `health` is not ok (infra/scripts/ops_daily.py), and the runbook section names the shape.
+    # above are only correlated cover. It is read, not paged: the daily pass lists a rule whose health
+    # is not ok or whose instance state keeps the `(Error)` reason (infra/scripts/ops_daily.py).
     execErrState: OK
     # 0s, and it is arithmetic rather than impatience: a pending period is added directly to the
     # guaranteed detection floor, which a phase sweep over scrape x eval alignments showed already

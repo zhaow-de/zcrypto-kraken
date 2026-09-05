@@ -86,8 +86,8 @@ class Alert:
 
 @dataclass(frozen=True)
 class RuleHealth:
-    """A rule Grafana could not evaluate: `execErrState: OK` on the capture-silence rules makes that
-    page nothing by design, so the daily pass is where it surfaces."""
+    """A rule Grafana could not evaluate -- its `health`, or the `(Error)` reason on an instance state,
+    which is all `execErrState: OK` leaves of a failed evaluation that pages nothing by design."""
 
     uid: str
     title: str
@@ -138,6 +138,12 @@ def _hosts_of(uid: str, instances: list[dict]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(host for host in found if host))
 
 
+def _reason_of(state: str) -> str:
+    """The reason Grafana appends to an instance state -- `Normal (Error)` -> `Error`; none -> empty."""
+    m = re.search(r"\(([^)]*)\)\s*$", state)
+    return m.group(1) if m else ""
+
+
 def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.request.urlopen) -> AlertsRead:
     read = AlertsRead()
     rule_links: dict[str, str | None] = {}
@@ -148,12 +154,16 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 uid = rule.get("uid")
                 if not uid:
                     return AlertsRead(unreadable=f"a rule arrived with no uid ({rule.get('name', '?')!r}) -- the API shape changed")
-                # `health` is `ok`, `error` or `nodata` per rule; absent means the API did not say, which
-                # is not evidence of a broken rule.
-                health = rule.get("health")
-                if health is not None and health != "ok":
-                    read.unhealthy.append(RuleHealth(uid, rule.get("name", ""), str(health), str(rule.get("lastError") or "")))
                 instances = rule.get("alerts") or []
+                # One condition, two surfaces, chosen by `execErrState`: `Alerting` puts `health: error`
+                # and a `lastError` on the rule; `OK` maps the failed evaluation to a Normal instance
+                # whose state keeps the `(Error)` reason while the rule's health reads ok. `Error` by
+                # substring, as the history filter below reads it -- a compound reason is still one.
+                health = rule.get("health")
+                errored = [str(i.get("state") or "") for i in instances if "Error" in _reason_of(str(i.get("state") or ""))]
+                if (health is not None and health != "ok") or errored:
+                    shown = str(health) if health not in (None, "ok") else errored[0]
+                    read.unhealthy.append(RuleHealth(uid, rule.get("name", ""), shown, str(rule.get("lastError") or "")))
                 # Instances arrive in EVERY state, reason suffix included, so a rule grouped
                 # `by (host, system)` that is Alerting on the primary and Normal on the secondary
                 # would otherwise name both hosts -- sending the operator to create, and later

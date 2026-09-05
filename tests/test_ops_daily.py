@@ -167,6 +167,43 @@ def test_a_rule_set_that_is_all_ok_lists_nothing_unhealthy():
     assert read.unhealthy == []
 
 
+def test_the_rules_read_lists_a_rule_whose_instances_carry_the_error_reason_while_its_health_reads_ok():
+    """The mode the read exists for: `execErrState: OK` maps a failed evaluation to instance state
+    `Normal (Error)` with rule-level `health: ok` and no `lastError`, so the `(Error)` reason on an
+    instance is the only trace that mode leaves. A NoData or MissingSeries reason is not an error."""
+    payload = _rules(
+        {
+            "name": "Capture · all streams silent",
+            "uid": "zcrypto-capture-all-streams-silent",
+            "state": "inactive",
+            "health": "ok",
+            "annotations": {},
+            "alerts": [{"state": "Normal (Error)", "labels": {"host": "zcrypto"}}],
+        },
+        {
+            "name": "Ops · compound reason",
+            "uid": "zcrypto-ops-compound",
+            "state": "firing",
+            "health": "ok",
+            "annotations": {},
+            "alerts": [{"state": "Alerting (Error, KeepLast)"}],
+        },
+        {
+            "name": "Engine · cycle stale",
+            "uid": "zcrypto-engine-cycle-stale",
+            "state": "firing",
+            "health": "ok",
+            "annotations": {},
+            "alerts": [{"state": "Normal (NoData)"}, {"state": "Alerting (NoData)"}, {"state": "Normal (MissingSeries)"}],
+        },
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert [(r.uid, r.health, r.last_error) for r in read.unhealthy] == [
+        ("zcrypto-capture-all-streams-silent", "Normal (Error)", ""),
+        ("zcrypto-ops-compound", "Alerting (Error, KeepLast)", ""),
+    ]
+
+
 def test_an_unhealthy_rule_is_attention_and_named_in_the_report():
     """A rule that has stopped evaluating is not an all-clear, whatever else the pass saw."""
     sick = ops_daily.RuleHealth("zcrypto-capture-all-streams-silent", "Capture · all streams silent", "error", "parse error")
