@@ -5,11 +5,12 @@
 # load-bearing, not tidy -- without it the cwd leads `sys.path`, `PYTHONPATH` redirects an import, and
 # `PYTHONINSPECT=1` drops to an interactive prompt after the program exits with the credential still
 # in `os.environ`. The decrypted values reach the child through `execve`'s environment only: never
-# echoed, never written, never on a command line, and one process throughout.
+# echoed, never written, never on a command line, and one process throughout. It refuses outside the
+# repo root, so neither the harness nor the vault path can be shadowed.
 # `group_vars/engine_host/vault.yml` carries inline `!vault` scalars, so the loader below resolves
 # the two values in-process rather than decrypting a file to stdout. The credential is IP-bound:
-# adding the workstation's public IP to the key and removing it again are both numbered steps of
-# infra/runbooks/order-semantics-verification.md section 1.3.
+# infra/runbooks/order-semantics-verification.md adds the workstation's public IP at section 1.3 and
+# closes the exception at section 7.3.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # amend-reviewed-by.sh <commit-ish> "<reviewer model name>"
 # Lands ONE `Reviewed-by:` trailer on ONE commit, HEAD or any ancestor, so a review's trailer lands
-# the turn it returns (.claude/rules/commit-messages.md). Each refusal below rewrites nothing and
-# prints its own reason and exit code.
+# the turn it returns (.claude/rules/commit-messages.md). Each refusal below rewrites nothing, prints
+# its reason, and exits with its own code.
 set -euo pipefail
 target_ish="${1:?usage: $0 <commit-ish> \"<model name>\"}"
 model="${2:?usage: $0 <commit-ish> \"<model name>\"}"

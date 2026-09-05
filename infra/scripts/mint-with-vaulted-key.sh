@@ -8,12 +8,12 @@
 # to either script, and never any line above `set -euo pipefail` either -- a shell function named
 # `exec` there shadows the builtin. `-I` on both interpreters is load-bearing, not tidy: without it
 # the cwd leads `sys.path`, `PYTHONPATH` redirects an import, and `PYTHONINSPECT=1` drops to an
-# interactive prompt with the credential still in `os.environ`. This script is deliberately absent
+# interactive prompt after the program exits, with the credential still in `os.environ`. This script is deliberately absent
 # from that grant file, and the absence is the design: it SENDS ORDERS and has no cancel path, so
 # every run should cost a fresh permission decision. It runs CONTROLLER-SIDE rather than through the
 # engine image, whose pinned `cli` package is not guaranteed to carry the modules the minter imports.
-# The credential is IP-bound: infra/runbooks/order-semantics-verification.md section 1.3 owns the
-# allowlist steps for this key, whichever script is run with it.
+# The credential is IP-bound: infra/runbooks/order-semantics-verification.md owns the allowlist steps
+# for this key, whichever script is run with it -- opened at section 1.3 and closed at section 7.3.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
