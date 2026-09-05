@@ -8,10 +8,9 @@
 
 - name: restart zaccess-nas-proxy.socket
   # `state: started` on the enable task is a no-op on a running unit, so a changed ListenStream
-  # reaches nothing without this. The running proxyd holds a duplicate of the listening fd, so a bare
-  # socket restart would risk EADDRINUSE; it does not, because the service's `Requires=` propagates
-  # the restart and its `After=` stops the service first, releasing the fd. Ansible runs handlers in
-  # DEFINITION order, so this one precedes the service handler regardless of notify order.
+  # reaches nothing without this. A bare socket restart would risk EADDRINUSE — the running proxyd
+  # holds a duplicate of the listening fd — but the service's `Requires=` propagates the restart and
+  # its `After=` releases the fd first. Ansible runs handlers in DEFINITION order.
   ansible.builtin.systemd_service: {name: zaccess-nas-proxy.socket, state: restarted}
 
 - name: restart zaccess-nas-proxy

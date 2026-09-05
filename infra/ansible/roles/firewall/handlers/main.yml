@@ -1,8 +1,7 @@
-# Deliberately "reloaded", not "restarted": Debian's nftables.service unit sets
-# ExecStop = "nft flush ruleset", so a restart would stop (flush to nothing, i.e.
-# briefly wide open) before starting again. "reloaded" instead triggers
-# ExecReload = "nft -f /etc/nftables.conf" directly, which re-applies the whole file as
-# one atomic transaction with no intervening flush-to-empty step.
+# Deliberately "reloaded", not "restarted": Debian's nftables.service sets
+# ExecStop = "nft flush ruleset", so a restart would flush to nothing -- briefly wide open -- before
+# starting again. "reloaded" triggers ExecReload = "nft -f /etc/nftables.conf", which re-applies the
+# whole file as one atomic transaction with no intervening flush-to-empty step.
 - name: reload nftables
   ansible.builtin.systemd:
     name: nftables
