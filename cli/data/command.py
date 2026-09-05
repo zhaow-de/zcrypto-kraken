@@ -1,6 +1,4 @@
-"""The `zcrypto data` Typer sub-app (spec 00056): the hot-cluster dataset exchange -- fetch the
-replicated working set from the NAS hot/ hub, push what this node authored back to it. Wiring and
-exit codes only -- the rsync mechanics live in `cli.data.sync`."""
+"""The `zcrypto data` Typer sub-app (spec 00056): wiring and exit codes only -- the rsync mechanics live in `cli.data.sync`."""
 
 from __future__ import annotations
 
@@ -82,7 +80,7 @@ def rebuild(
     except ConfigError as exc:
         raise _abort(str(exc)) from exc
 
-    # ohlcvt now derives from nfs_mount_dir (always a path); a missing mount fails loudly at read time.
+    # The ohlcvt source derives from nfs_mount_dir, so it is always a path; a missing mount fails loudly at read time.
     ctx = RebuildContext(
         data_root=data_root,
         ohlcvt_source_dir=resolve_ohlcvt_source_dir(None, cfg),
@@ -120,8 +118,7 @@ def migrate_manifests(
 ) -> None:
     """Rewrite legacy dataset manifests into the current contract, from the parquets on disk.
 
-    No parquet is touched -- this recomputes what a manifest says, never what the data is. A set is
-    refused whole if any series no longer hashes to what its legacy manifest attested.
+    No parquet is touched; a set is refused whole if any series no longer hashes to what its legacy manifest attested.
     """
     from cli.data.manifest import ManifestError, convert_dataset
 
