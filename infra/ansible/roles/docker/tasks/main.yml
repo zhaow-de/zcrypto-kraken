@@ -1,10 +1,7 @@
-# Docker's own install docs make this step a prerequisite, and it is not optional on a stock Linode
-# Debian 13 image: that image ships Debian's OWN docker packages, and `docker-buildx` (0.13.1+ds1-3)
-# owns /usr/libexec/docker/cli-plugins/docker-buildx -- the exact path Docker's `docker-buildx-plugin`
-# installs to. Installing Docker CE over it aborts mid-transaction with `trying to overwrite ...,
-# which is also in package docker-buildx`, leaving the CE packages unpacked-but-unconfigured (dpkg
-# `iU`) and the host with NO working docker at all. Purge first, then install. Idempotent: on a host
-# that never had them (the primary), this is a no-op.
+# Purge Debian's own docker packages before installing Docker CE, which Docker's install docs make a
+# prerequisite: on a stock Debian image their buildx plugin claims the path CE's plugin installs to,
+# and the collision aborts CE mid-transaction, leaving the host with no working docker at all. A
+# no-op where they were never present.
 - name: remove Debian's own docker packages (they conflict with Docker CE)
   ansible.builtin.apt:
     name:
@@ -53,14 +50,10 @@
     groups: docker
     append: true
 
-# --- daemon.json change-ack (spec 00082 D3 guard 8). This role is shared by every play, but the
-# hazard is capture-specific: the template task below notifies `restart docker`, and bouncing dockerd
-# under live capture is an unbackfillable data gap. So render to a probe path, diff it against what is
-# deployed, SHOW the operator the difference, and refuse until they ack it.
-#
-# The probe render is a deliberate, stated EXCEPTION to the read-only probe idiom: `check_mode: false`
-# means it writes /run/zcrypto-daemon-json.probe even under `--check`. That is safe -- /run is tmpfs,
-# the file carries no secrets, and no service reads or is touched by it.
+# daemon.json change-ack (spec 00082 D3 guard 8): the template below notifies `restart docker`, and
+# bouncing dockerd under live capture is an unbackfillable gap, so this renders to a probe path and
+# refuses until the operator acks the diff. `check_mode: false` writes under `--check` -- a stated
+# exception to the read-only probe idiom, safe because /run is tmpfs and no service reads it.
 - name: probe — render daemon.json to a scratch path (writes under --check; tmpfs, no secrets, no service touched)
   ansible.builtin.template:
     src: daemon.json.j2

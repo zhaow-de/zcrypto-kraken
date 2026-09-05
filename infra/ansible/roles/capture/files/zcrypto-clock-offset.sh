@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
-# Installed by the `capture` Ansible role at /usr/local/sbin/zcrypto-clock-offset -- do not hand-edit
-# on the host, it is overwritten on the next converge. Edit this file (and re-run
-# tests/test_clock_offset.py, which drives THIS script) instead.
-#
-# Host clock-skew exporter (spec 00103 D4, T0037). A clock LEADING the true hour lets one bogus
-# exchange timestamp close an archive hour early, and no clock-referenced counter can see it -- the
-# wrong clock subtracts its own lead back out. This reading is that residual's ONLY detector.
-#
-# It runs on the HOST, not inside the Alloy container: the in-container route reads the clock through
-# adjtimex, behind CAP_SYS_TIME -- the capability that lets a process SET the clock, on hosts whose
-# correctness argument is that the clock is not trusted.
-#
-# Both series are emitted on EVERY run, healthy included: an absent series is indistinguishable from
-# a dead exporter.
-#
-# When chronyc is missing, fails, or answers in a shape this parser does not recognise, the offset
-# publishes as NaN and the flag as 0: a fabricated 0 offset would read as a perfectly disciplined
-# clock, and PromQL comparisons against NaN are false, so the threshold cannot fire on it while the
-# 0 flag still pages through the alert's synchronisation leg. The exit status stays 0 -- the
-# published values ARE the report.
+# Installed by the `capture` role at /usr/local/sbin/zcrypto-clock-offset, so a hand-edit there is
+# lost on the next converge; tests/test_clock_offset.py drives this file. Host clock-skew exporter
+# (spec 00103 D4, T0037): a clock LEADING the true hour closes an archive hour early, and no clock-
+# referenced counter can see it, because the wrong clock subtracts its own lead back out. It runs on
+# the HOST rather than in the Alloy container, whose adjtimex route needs CAP_SYS_TIME -- the
+# capability to SET the clock, on a host whose correctness argument is that the clock is not
+# trusted.
 set -euo pipefail
 
 usage="usage: zcrypto-clock-offset <chronyc-path> <output.prom>"
@@ -26,15 +13,17 @@ chronyc=${1:-}
 out=${2:-}
 [ -n "$chronyc" ] && [ -n "$out" ] || { echo "$usage" >&2; exit 2; }
 
+# Both series are emitted on EVERY run: an absent series is indistinguishable from a dead exporter.
+# When chronyc fails or answers in a shape this parser does not recognise, these stay as they are: a
+# fabricated 0 offset reads as a disciplined clock, and NaN comparisons are false, so the threshold
+# cannot fire while the 0 flag still pages through the alert's synchronisation leg.
 offset=NaN
 synced=0
 
 if tracking=$("$chronyc" tracking 2>/dev/null); then
-  # The human-readable form, not `chronyc -c tracking`: the CSV column carries the offset as a bare
-  # signed number, and reading its direction backwards reports a leading clock as a lagging one.
-  #
-  # "System time     : 0.000000123 seconds fast of NTP time" -- the clock's CURRENT error, where
-  # "Last offset" is only its error at the most recent measurement.
+  # The human-readable form, not `chronyc -c tracking`, whose CSV column carries the offset as a
+  # bare signed number that reads a leading clock as a lagging one. "System time" is the clock's
+  # CURRENT error, where "Last offset" is its error at the most recent measurement.
   magnitude=$(awk '$1 == "System" && $2 == "time" {print $4}' <<<"$tracking")
   direction=$(awk '$1 == "System" && $2 == "time" {print $6}' <<<"$tracking")
   leap=$(sed -n 's/^Leap status *: *//p' <<<"$tracking")
