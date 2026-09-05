@@ -3,24 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 DEFAULT_MIN_LEVERAGE = 2
-# EUR/day; a full max-size position (~€1,400 at ~$10k, ≤1.5x gross, ~12 names) ≈ 1% of median daily
-# EUR volume — our microstructure-impact floor. Tunable.
+# EUR/day; the floor at which a max-size position (`SPREAD_REFERENCE_NOTIONAL_EUR`) is ≈1% of a
+# name's median daily EUR volume — our microstructure-impact bar. Tunable.
 DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 150_000.0
-# bps per side, effective spread at the SAME max-size position the volume floor above is calibrated
-# against (~EUR 1,400), so the two criteria are commensurable -- both answer "can we trade this at
-# our size?". Anchored to the fee stack rather than tuned to the data: a round trip crossing twice
-# at this cap costs 25% of the tier-1 round-trip maker fee (2 x 0.40% = 80bps), at which point
-# spread has stopped being a rounding error on the fee stack. The 25% itself is a chosen
-# convention, not a derivation -- at the cap spread is 20% of the 100bps round trip, so "dominant"
-# would need ~40bps/side. Held as an ABSOLUTE constant rather than evaluated against the live tier:
-# at the top tiers maker -> 0%, and a "25% of the maker fee" formula would degenerate to a cap of
-# zero and reject everything.
-# Calibrated over 2026-07-08..07-21 (T0014, spec 00066): every current member passes, DOT worst at
-# 6.55 bps/side (16.4% of the RT fee) -- i.e. this criterion excludes nothing today and is a guard
-# for future refreshes, not a filter that changes the current names. That 6.55 is a log-notional
-# interpolation between the table's EUR 1k and 10k anchors, not a measurement at EUR 1,400.
+# effective-spread bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`, so this and the volume floor
+# both answer "can we trade this at our size?". Anchored to the fee stack, not fitted to the data: a
+# round trip crossing twice at the cap costs a quarter of the tier-1 maker round trip (2 x 0.40%,
+# `docs/reference/kraken-fee-schedule.md`) -- a chosen convention, not a derivation: the point where
+# spread stops being a rounding error on the fee stack. Absolute, never re-derived from the live
+# tier: maker -> 0% at the top tiers would cap at zero and reject everything. T0014 (spec 00066,
+# resolved) holds the calibration, T0024 (spec 00067, resolved) the cap's convention.
 DEFAULT_MAX_SPREAD_BPS = 10.0
-# The reference position the cap is priced at, matching the volume floor's own sizing note.
+# The max-size position the volume floor and the spread cap are both priced at: ~$10k account, ≤1.5x
+# gross, ~12 names.
 SPREAD_REFERENCE_NOTIONAL_EUR = 1_400.0
 MANDATORY = ("BTC", "ETH")
 MIN_NAMES = 8
@@ -42,8 +37,8 @@ class UniverseSelection:
 
 
 def _is_mandatory(pair, mandatory: tuple[str, ...]) -> bool:
-    # "BTC/ETH mandatory" (master plan §3) means the flagship EUR-quoted legs. A BTC-quoted
-    # relative-value leg sharing the same base (e.g. ETH/BTC) stays subject to the normal rule.
+    # "BTC/ETH mandatory" (master plan §3) means the flagship EUR-quoted legs; a BTC-quoted
+    # relative-value leg on the same base (e.g. ETH/BTC) stays subject to the normal rule.
     return pair.base in mandatory and pair.quote == "EUR"
 
 
@@ -57,25 +52,11 @@ def finalize_universe(
     spreads: dict[str, float] | None = None,
     max_spread_bps: float = DEFAULT_MAX_SPREAD_BPS,
 ) -> UniverseSelection:
-    """Apply the §3 mechanical selection rule to each candidate `cli.snapshot` `PairSnapshot`.
-
-    A candidate is selected iff margin-enabled, its best leverage tier clears `min_leverage`, and
-    its median quote volume (`volumes.get(symbol, 0)`) clears `min_median_quote_volume`. A
-    `mandatory` EUR-quoted leg (BTC/ETH by default) is always selected regardless, flagged in
-    `reasons` only when it would otherwise have failed.
-
-    `spreads` maps symbol -> effective spread in bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`
-    (T0024, spec 00067). It is OPT-IN: omit it and no spread criterion applies -- the selection
-    OUTCOME (`selected`, `escalate`, every `reasons` list) is unchanged, though the output is NOT
-    byte-identical: every entry gains a `spread_bps` key, null on that path. A symbol ABSENT from
-    the map is recorded `spread_bps: None` and is **not** rejected -- absence of evidence is not
-    evidence of a wide spread. As of spec 00085 all twelve universe legs ARE
-    calibrated -- both BTC-quoted legs captured since 2026-07-23, the ladder per-quote since
-    00085 -- so this path is now reached only by a symbol genuinely outside the
-    calibration, never by a whole quote. The null is deliberate: it makes the
-    unscreened symbols visible in the artifact instead of letting a reader assume
-    all twelve were screened.
-    """
+    """Apply the master plan §3 mechanical selection rule to each `cli.snapshot` `PairSnapshot`.
+    A symbol absent from the opt-in `spreads` map (effective-spread bps per side at
+    `SPREAD_REFERENCE_NOTIONAL_EUR`) is recorded `spread_bps: None`, never rejected: absence of
+    evidence is not evidence of a wide spread, and the null keeps an unscreened symbol visible in
+    the artifact (T0024, spec 00067, resolved)."""
     entries = []
     for pair in pairs:
         max_leverage = max(pair.leverage_buy) if pair.leverage_buy else 0

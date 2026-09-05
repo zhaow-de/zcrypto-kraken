@@ -6,11 +6,7 @@ from cli.universe.errors import UniverseError
 
 
 def median_quote_volume(daily: pl.DataFrame, *, window: int = 30) -> float:
-    """Median per-day quote volume (`volume * vwap`) over the last `window` rows of `daily`.
-
-    `daily` is a canonical OHLC daily-bar frame (`cli.ohlc.to_frame` schema), assumed sorted
-    ascending by `ts`. Raises `UniverseError` if `daily` has fewer than `window` rows.
-    """
+    """Median daily quote volume (`volume * vwap`) over the last `window` rows of a `ts`-ascending `cli.ohlc.to_frame` frame."""
     if daily.height < window:
         raise UniverseError(f"need at least {window} daily rows for a median quote volume, got {daily.height}")
     tail = daily.tail(window)
@@ -19,13 +15,9 @@ def median_quote_volume(daily: pl.DataFrame, *, window: int = 30) -> float:
 
 
 def quote_volume_in_eur(daily: pl.DataFrame, *, fx_daily: pl.DataFrame | None = None, window: int = 30) -> float:
-    """Median 30d quote-volume normalized to EUR.
+    """Median daily quote volume over the last `window` rows, normalized to EUR.
 
-    For a EUR-quoted pair (fx_daily=None) this equals median_quote_volume(daily, window). For a
-    non-EUR quote, fx_daily is the {quote}/EUR canonical daily frame (cli.ohlc.to_frame schema),
-    per-day EUR turnover is volume * vwap * fx_close (fx_close = fx_daily's close, joined on ts),
-    and the result is the median over the last `window` aligned rows. Raises UniverseError if fewer
-    than `window` rows are available (in daily, or after the ts-join with fx_daily).
+    `fx_daily` is the `{quote}/EUR` daily frame whose `close` converts each day's turnover, `None` for a EUR-quoted pair.
     """
     if fx_daily is None:
         return median_quote_volume(daily, window=window)
