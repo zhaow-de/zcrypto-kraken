@@ -1242,3 +1242,11 @@ ______________________________________________________________________
 ## 2026-09-05 — T0162: the Loki dead-men announce their clears
 
 - The eight Loki-sourced dead-men page on the `metrics` receiver, so an operator sees the resolved notice in `#zcrypto` instead of reading rule state after a page; the four ERROR-log rules stay on `logs`, where a burst ages out unannounced. Drill N's re-induction is the proof, in the drill log.
+
+## 2026-09-05 — T0165–T0167: the claims the prose cleanup found asserted in prose become tests, a rule and a daily read
+
+- `infra/grafana/alerts.yaml` gains `Ops · verify-replay stale`, for the case its three sibling rules cannot see — the nightly canonical-archive sweep not running for 48 hours, while their gauges hold their last value; its section in `infra/runbooks/ops.md` reads the timer and the unit, and the sweep's freshness panel carries its bar. It takes effect at the owner's attended push after merge, T0167's remaining step.
+- The daily pass reports every alert rule Grafana could not evaluate under "Rules not evaluating" and exits non-zero on one, so a rule broken by a later edit is read the next morning instead of paging never.
+- The unwatched-metric guard's candidates include the sweep's whole textfile: a series added to the runner is watched by a rule or excluded with a reason in `tests/test_infra_alert_rules.py`, or the guard fails.
+- The alert comments no longer enumerate blind spots: each of T0167's four is a rule, a test, the daily read, or a drop recorded in the topic.
+- The engine executor and flatten tests assert what their docstrings claimed (T0165), and three of the alert-rule guard's stated limits are assertions (T0166); each item's disposition, including the owner's recorded drops, is in the archived topics.
