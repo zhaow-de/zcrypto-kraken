@@ -1,21 +1,7 @@
-"""Open-interest substrate backfill (T0023 / B2): Binance Vision daily `metrics` dumps.
-
-The sibling of `cli/derivatives/funding.py`. Open interest is the second free-backfillable B2 input;
-its only deep free source is Binance Vision's daily `metrics` dumps
-(`data.binance.vision/data/futures/um/daily/metrics/<SYM>/…`) — the SAME public CDN the funding
-backfill uses, and (measured, T0023) NOT the geo-fenced surface. Coinalyze substituted only the LIVE
-liquidations WS feed; it cannot serve deep OI history (its intraday retention is a ~2-3 month rolling
-window), so OI history comes from Vision, exactly like funding.
-
-Two differences from funding drive the shape here: the dumps are DAILY (`…-metrics-YYYY-MM-DD.zip`,
-not monthly), and each row carries 5-minute open interest plus the free long/short and taker ratios.
-The raw 5-minute series is stored as-is — resampling to the 1h/4h/8h decision grid is the B2
-harness's job, so the finest native information is preserved on disk.
-
-The fetch/checksum/unzip flow is intentionally a near-copy of funding's; that duplication is
-registered as a follow-up (dedup into a shared `cli/derivatives/vision.py`) rather than refactored
-here, to keep the delivered, in-use funding module untouched.
-"""
+"""Open-interest substrate backfill from Binance Vision daily `metrics` dumps — the dump CDN, not the geo-fenced surface — and the
+only deep free OI history (T0023). The raw 5-minute series is stored as-is, leaving the resample onto the decision grid to the B2
+harness; the fetch, checksum and unzip flow duplicates `cli/derivatives/funding.py`'s to leave that in-use module untouched — T0023
+registers the dedup into a shared `cli/derivatives/vision.py` for whenever either is next touched."""
 
 from __future__ import annotations
 
@@ -41,10 +27,8 @@ _logger = get_logger("derivatives.oi")
 
 _BASE_URL = "https://data.binance.vision/data/futures/um/daily/metrics"
 _TIMEOUT_SECONDS = 30
-# A full OI backfill fetches ~40k files sequentially, so it must ride out a transient CDN blip
-# (data.binance.vision intermittently 503s under that load). More retries than funding's 3 -- 10x
-# the request count means 10x the chance of hitting one, and a single unlucky file must not abort a
-# multi-hour run.
+# A full backfill fetches tens of thousands of files sequentially, so it retries more than funding does: the CDN 503s
+# intermittently under that load, and one unlucky file must not abort a multi-hour run.
 _MAX_RETRIES = 5
 _RETRY_BACKOFF_SECONDS = 2.0
 
@@ -71,11 +55,9 @@ _FLOAT_COLUMNS = (
 # Column -> file position, precomputed once (not per row -- the full backfill parses millions).
 _COL_INDEX = {c: _CSV_COLUMNS.index(c) for c in _FLOAT_COLUMNS}
 
-# Trailing 404s beyond this many days are NOT the publication frontier -- they are a real outage or
-# a delisted symbol, and must fail loud rather than be tolerated as "not yet published". The measured
-# lag is ~1 day; the slack covers an occasional multi-day publication pileup while still catching a
-# symbol that has genuinely stopped publishing metrics (review 2026-07-24: the unbounded tolerance
-# would otherwise silently accept an arbitrarily long tail gap).
+# Trailing 404s beyond this many days are NOT the publication frontier -- they are an outage or a delisted symbol and
+# must fail loud; the slack over Binance's metrics publication lag absorbs an occasional pileup while still catching
+# a symbol that has genuinely stopped publishing.
 _MAX_TRAILING_LAG_DAYS = 4
 
 
@@ -84,14 +66,10 @@ def _utc_now() -> datetime:
 
 
 def _parse_float(value: str) -> float | None:
-    """Parse a metrics float, mapping any ABSENT form to null rather than raising.
+    """Parse a metrics float, mapping any absent form -- bare empty or quoted-empty `""` -- to null.
 
-    Early Binance Vision metrics leave ancillary ratio columns absent on some rows, in two observed
-    forms: a bare empty field (BTCUSDT 2020-09-27) and a quoted-empty `""` (BTCUSDT 2021-12-30) --
-    always the ratio columns, never the OI columns. A missing auxiliary value must not discard the
-    row's OI reading, so any absent form parses to null. A present-but-non-numeric value still raises
-    (via `float`) -- absence is null, genuine garbage fails loud.
-    """
+    Early Vision metrics leave the ancillary ratio columns — never the OI columns — absent, and a missing one must not discard the
+    row's OI reading; a present-but-non-numeric value still raises through `float`."""
     value = value.strip().strip('"').strip()
     return float(value) if value else None
 
@@ -101,13 +79,10 @@ def _day_url(perp: str, day: datetime) -> str:
 
 
 def _get_bytes(url: str, *, opener) -> bytes:
-    """GET `url`, retrying transient failures (connection errors AND 5xx server errors) with backoff.
+    """GET `url`, retrying 5xx and connection-level blips with backoff and raising `DerivativesError` when they run out.
 
-    A 4xx `HTTPError` -- including 404 -- is a definitive answer the caller must act on (404 = not
-    published / not listed), so it is re-raised immediately, never retried. A 5xx is a transient
-    server error (the CDN 503s intermittently under a long sequential backfill) and IS retried, as
-    are connection-level `URLError`/`OSError` blips. Exhausted retries raise `DerivativesError`.
-    """
+    A non-5xx status -- 404 included -- is a definitive answer the caller acts on (404 = not published / not listed),
+    so it is re-raised immediately and never retried."""
     last_exc: Exception | None = None
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
@@ -131,14 +106,10 @@ def _get_bytes(url: str, *, opener) -> bytes:
 
 
 def fetch_oi_day(perp: str, day: datetime, *, opener=urllib.request.urlopen) -> list[list] | None:
-    """Fetch + checksum-verify one daily Binance Vision metrics dump for `perp` on `day`.
+    """Fetch and checksum-verify one daily Binance Vision metrics dump for `perp` on `day`.
 
-    Returns `None` when the day 404s (before the perp's metrics listing, or not yet published). A
-    checksum mismatch or any parse failure raises `DerivativesError` — never a silent accept. Each
-    data row becomes `[create_time_ms, sum_open_interest, sum_open_interest_value,
-    count_toptrader_long_short_ratio, sum_toptrader_long_short_ratio, count_long_short_ratio,
-    sum_taker_long_short_vol_ratio]`.
-    """
+    Returns `None` when the day 404s (before the perp's metrics listing, or not yet published), otherwise one
+    `[create_time_ms, *_FLOAT_COLUMNS]` row per data line; a checksum mismatch or any parse failure raises `DerivativesError`."""
     zip_url = _day_url(perp, day)
     try:
         zip_bytes = _get_bytes(zip_url, opener=opener)
@@ -169,8 +140,7 @@ def fetch_oi_day(perp: str, day: datetime, *, opener=urllib.request.urlopen) -> 
     lines = csv_text.splitlines()
     header = lines[0].split(",") if lines else []
     if header != list(_CSV_COLUMNS):
-        # A silent column reorder would misalign every value; fail loud instead (early metrics have
-        # already proven the wire is messier than the docs -- see the empty-field handling below).
+        # A silent column reorder would misalign every value, so an unexpected header fails loud.
         raise DerivativesError(f"unexpected metrics header for {perp} {day:%Y-%m-%d}: {header}")
 
     rows: list[list] = []
@@ -183,9 +153,6 @@ def fetch_oi_day(perp: str, day: datetime, *, opener=urllib.request.urlopen) -> 
                 raise DerivativesError(f"expected {len(_CSV_COLUMNS)} metrics fields, got {len(fields)}: {line!r}")
             create_time = datetime.strptime(fields[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
             create_time_ms = int(create_time.timestamp() * 1000)
-            # Empty ancillary fields are a REAL early-history pattern (e.g. BTCUSDT 2020-09-27 carries
-            # a blank sum_taker_long_short_vol_ratio while its OI columns are populated). A missing
-            # auxiliary ratio must not discard a valid OI reading -- parse it to null, keep the row.
             floats = [_parse_float(fields[_COL_INDEX[c]]) for c in _FLOAT_COLUMNS]
             rows.append([create_time_ms, *floats])
     except (ValueError, IndexError) as exc:
@@ -209,24 +176,10 @@ def backfill_oi(
     clock=_utc_now,
     opener=urllib.request.urlopen,
 ) -> pl.DataFrame:
-    """Backfill `perp`'s full OI-metrics history from `start` up to (excluding) `now`'s day.
+    """Backfill `perp`'s OI-metrics history from `start` up to (excluding) `now`'s day, whose file is still incomplete.
 
-    `now` (default `clock()`) fixes the end boundary; a caller building many symbols passes one shared
-    value so a run that crosses midnight does not give different symbols different last days. Today's
-    file is incomplete, so the day of `now` is dropped.
-
-    Three 404 regimes are distinguished, because Binance's daily `metrics` dumps both start unevenly
-    per symbol AND publish with a ~1-2 day lag:
-      - LEADING 404s (before this perp's metrics listing) are skipped.
-      - an INTERIOR 404 (a gap with published data on BOTH sides) raises `DerivativesError` — a real
-        hole in a listed series must not pass silently.
-      - TRAILING 404s (the not-yet-published frontier, after the last published day) are tolerated:
-        take what is published and stop there. Treating the unpublished frontier as a hole is the
-        2026-07-24 bug this replaced — a midnight-crossing run hit the not-yet-published 07-23 file.
-
-    Returns the typed frame — `ts` (aware-UTC, 5-minute), the six metrics floats — sorted ascending
-    and de-duplicated on `ts` (last wins).
-    """
+    `now` (default `clock()`) fixes the end boundary, so one shared value gives every symbol of a midnight-crossing run
+    the same last day; leading 404s are skipped, trailing ones tolerated to `_MAX_TRAILING_LAG_DAYS`, an interior one raises."""
     now = now or clock()
     end_exclusive = datetime(now.year, now.month, now.day, tzinfo=UTC)
 
@@ -250,7 +203,6 @@ def backfill_oi(
 
     if pending_gap:
         if len(pending_gap) > _MAX_TRAILING_LAG_DAYS:
-            # Too long to be the ~1-day publication frontier -- a real outage or a delisted symbol.
             raise DerivativesError(
                 f"trailing gap of {len(pending_gap)} days for {perp} ({pending_gap[0]:%Y-%m-%d}.."
                 f"{pending_gap[-1]:%Y-%m-%d}) exceeds the {_MAX_TRAILING_LAG_DAYS}-day publication-lag "
@@ -276,9 +228,9 @@ def backfill_oi(
             *[pl.col(c).cast(pl.Float64) for c in _FLOAT_COLUMNS],
         )
         .select("ts", *_FLOAT_COLUMNS)
-        # maintain_order so the tie-break is deterministic: a midnight boundary bar appears as both
-        # day N's last row and day N+1's first row, sometimes with differing values; keep="last"
-        # over the day-ordered rows then makes day N+1's version (the day that owns that bar) win.
+        # maintain_order makes the tie-break deterministic: a midnight boundary bar appears as day N's last row and
+        # day N+1's first, sometimes with differing values, and keep="last" over the day-ordered rows then lets the
+        # owning day N+1 win.
         .sort("ts", maintain_order=True)
         .unique(subset="ts", keep="last", maintain_order=True)
     )
@@ -295,17 +247,10 @@ def build_oi_substrate(
     opener=urllib.request.urlopen,
     resume: bool = False,
 ) -> dict:
-    """Backfill each perp's OI series, write `out_root/<PERP>/oi.parquet`, and a manifest.
+    """Backfill each perp's OI series into `out_root/<PERP>/oi.parquet` and write a manifest over the full set.
 
-    Mirrors the funding manifest shape: one `series` entry per perp (`rows`, `first_ts`, `last_ts`,
-    `sha256` via `dataset_hash`), a `basket_sha256` over the sorted per-series hashes, plus `source`
-    (the CDN base URL) and `fetched_at`. The end boundary `now` is read ONCE and shared by every
-    symbol, so a long run crossing midnight still gives all symbols the same last day.
-
-    `resume=True` reuses any per-perp `oi.parquet` already present in `out_root` instead of re-fetching
-    it -- so an interrupted multi-thousand-file backfill can be finished without re-downloading the
-    symbols that already completed. The manifest is always regenerated over the full set.
-    """
+    One `clock()` read fixes the end boundary for every symbol, so a midnight-crossing run gives them all the same last
+    day; `resume=True` reuses an `oi.parquet` already present in `out_root`, letting an interrupted backfill finish."""
     now = clock()
     end_boundary = datetime(now.year, now.month, now.day, tzinfo=UTC)
     series: dict[str, dict] = {}
@@ -313,8 +258,7 @@ def build_oi_substrate(
         target = out_root / perp / "oi.parquet"
         if resume and target.exists():
             frame = read_parquet(target)
-            # Log the reused file's tail against this run's boundary so a stale reuse is visible
-            # (resume trusts the file as complete; a gap already baked into it is not re-checked).
+            # Resume trusts the file as complete, so log its tail against this run's boundary and let a stale reuse show.
             reused_last = frame["ts"].max() if frame.height else None
             _logger.info(
                 "build OI: reusing existing %s (%d rows, last_ts %s; boundary %s) [resume]",
