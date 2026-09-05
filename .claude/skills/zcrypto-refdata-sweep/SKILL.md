@@ -10,7 +10,7 @@ disable-model-invocation: false
 
 The master plan marks fees, fee tiers, borrow-rollover rates, pair lists, MiCA status, tax rules and data pricing as **externally owned** — third-party facts that move without notice, where a stale one is **silent**. This sweep re-confirms the machine-readable subset and stamps the result, so "re-confirmed, identical" is always distinguishable from "never re-run".
 
-Two halves, one routine: an **automated** re-fetch of the public endpoints, and an **attended** re-read of the account's own fee tier — the authoritative surface is behind a login, so no amount of API work replaces it. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it.
+Two halves, one routine: an **automated** re-fetch — the public endpoints, plus the account's own live fee tier and 30-day volume via authenticated `kraken volume` — and an **attended** re-read of what no endpoint serves, the full tier ladder's shape and AoP qualification, which live behind a login. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it.
 
 ## The one rule that makes the verdict meaningful
 
@@ -72,7 +72,9 @@ print("REFUSALS:", refusals or "none"); print("ANNOUNCED DELISTINGS:", announced
 
 6. **State the consequence of any delta, do not just report it.** A delta touching **fees** or **`margin_rate`** (the borrow/rollover rate) invalidates downstream numbers — name them: `T0090`'s cost basis, the deployable's quoted band. Silence here is how a stale fee reaches a go/no-go.
 
-7. **The attended half — re-read the account's own fee tier.** The public endpoint cannot see it, and `docs/reference/kraken-fee-schedule.md` is authoritative precisely because it was read from the logged-in account. Ask the owner to open **Kraken Pro → Fee tab** and report two values: the **current tier** and the **30-day USD spot volume**. Then:
+7. **Read the account's own fee tier — automated first, then attended for what it cannot say.** Run `kraken volume --pair BTCUSD -o json` from the **workstation** (never a fleet host — `fleet-deploys.md`); it is authenticated and read-only. The response keys its per-pair blocks by the venue's own altname, so `BTCUSD` comes back under `XXBTZUSD` — read the key the payload returns, never the one you asked for. There, `fees.<key>.fee` is the live **taker** rate, `fees_maker.<key>.fee` the **maker** rate, `inputs.domain_spot_volume_30d` the 30-day spot volume, and `nextfee`/`nextvolume` the next tier and its threshold. Prefer these over the register's public `AssetPairs` fee columns, which served the pre-2026-07-09 ladder for weeks after it was superseded. Record the four values in the register's log row.
+
+   Then ask the owner for only what the endpoint does not serve: the **full tier ladder's shape** if a row looks wrong, and **AoP qualification**. If the API read is unavailable, fall back to **Kraken Pro → Fee tab** for the **current tier** and the **30-day USD spot volume**. Either way:
    - **Unchanged** → note it in the register's log row (`account tier` column) and bump nothing else. The confirmation is the point; an unbumped stamp is indistinguishable from a skipped read.
    - **Changed** → correct `kraken-fee-schedule.md` *and* say what it invalidates: `cli/costs/fees.py` encodes that ladder verbatim, so a tier move re-prices every quoted figure that reads it — name `T0090`'s cost basis and the deployable's quoted band explicitly.
    - **Owner unavailable** → record the row as `not re-read`, never as unchanged. A blank is honest; a false confirmation is the failure this whole routine exists to prevent.
@@ -86,7 +88,7 @@ print("REFUSALS:", refusals or "none"); print("ANNOUNCED DELISTINGS:", announced
 
 - **Covers** (public, no account): pair existence and `status`, margin flag, leverage bands, `ordermin`/`costmin`, per-asset **`margin_rate`** (the per-4h rollover rate) and `collateral_value`, `margin_call`/`margin_stop`, position limits.
 - **Reports but does NOT own — the fee ladder.** `docs/reference/kraken-fee-schedule.md` is the fee source of truth, account-confirmed. The public endpoint can lag the account-confirmed schedule by weeks, so the register's fee columns are a **drift detector on the endpoint**, never a costing anchor. If they move, reconcile against the fee-schedule file and say which is now right — do not adopt the endpoint's numbers because they are newer-looking.
-- **No endpoint covers, so the attended half asks a human**: the account's own realised fee **tier** and 30-day volume — that is exactly what the attended half re-reads, not something this routine skips. AoP qualification and the observed margin/rollover bands stay unautomated too; `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
+- **No PUBLIC endpoint covers, so step 7 reads them from the account**: the realised fee **tier** and 30-day volume come from authenticated `kraken volume`, not from a human and not from the register's public columns. What stays attended is the full ladder's shape, AoP qualification and the observed margin/rollover bands; `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
 - **Does not cover** (no endpoint): MiCA status, tax rules, market-data pricing — human re-reads, and they belong to the go/no-go run.
 
 ## Failure modes worth naming
