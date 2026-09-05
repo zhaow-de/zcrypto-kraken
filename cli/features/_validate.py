@@ -19,8 +19,8 @@ def _validate_window(name: str, value: int) -> None:
 
 
 def _validate_rates(name: str, values: list[float | None]) -> None:
-    """Signed-value validator: funding rates go negative, so `_validate_prices` (which rejects
-    <= 0) must not be used for them. `None` is allowed and propagates (spec 00110 D5)."""
+    """Signed-and-nullable gate: funding rates go negative, so `_validate_prices`'s `<= 0` refusal
+    cannot serve, and a `None` passes through to propagate (spec 00110 D5)."""
     if not isinstance(values, list) or len(values) < 2:
         raise FeatureError(f"{name} must be a list of >= 2 values, got {values!r}")
     for v in values:
@@ -31,11 +31,9 @@ def _validate_rates(name: str, values: list[float | None]) -> None:
 
 
 def _validate_levels(name: str, values: list[float | None]) -> None:
-    """Positive-and-nullable: an OI LEVEL is strictly positive, but `_validate_prices` raises on
-    `None` and these features must propagate it (spec 00110 D5). The substrate's `0.0` open-interest
-    rows are venue holes, not levels; `oi_levels_from_raw` maps them to `None` before this runs, so
-    a `0.0` here is a caller that skipped that step. Ratios are NOT levels -- a ratio may
-    legitimately be zero, so they are gated by `_validate_rates`."""
+    """Positive-and-nullable gate: `_validate_prices` cannot serve because these features must
+    propagate `None` (spec 00110 D5), and a `0.0` refused here is a caller that skipped
+    `oi_levels_from_raw`'s venue-hole mapping."""
     if not isinstance(values, list) or len(values) < 2:
         raise FeatureError(f"{name} must be a list of >= 2 values, got {values!r}")
     for v in values:
