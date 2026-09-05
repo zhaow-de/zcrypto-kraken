@@ -32,10 +32,9 @@ def materialize_cmd(
         help="Trailing settled days re-attempted, so a late-healed day is still picked up.",
     ),
 ) -> None:
-    """Publish every settled, not-yet-published day of 15m tape-bars.
+    """Publish the settled, heal-complete days of 15m tape-bars that have no final yet.
 
-    A day is published only once heal-complete, so a normal run on a fresh archive reports
-    `days_unsettled` for the newest day or two -- that is the gate working, not a failure.
+    `days_unsettled` and `days_unhealed` are deferrals, not failures; `days_gap` is unpublished days the sweep did not reach.
     """
     result = materialize(
         primary_root,
