@@ -2445,6 +2445,7 @@ def test_a_kill_file_landing_during_the_time_box_cancel_refuses_the_fallback_ioc
     assert "kill_switch" in intent["reasons"]
     ex.on_timer(clock.now + timedelta(seconds=10))
     assert _intent_outcome(tmp_path, 1) == "refused"  # intent 1 starts on this tick and meets the same gate
+    assert "kill_switch" in _intent_entry(tmp_path, 1)["reasons"]  # the gate, not a halt or a venue-truth refusal
     assert client.subscribed == ["BTC/EUR.KRAKEN"]  # so it never subscribed
 
 
