@@ -168,9 +168,10 @@ def test_a_rule_set_that_is_all_ok_lists_nothing_unhealthy():
 
 
 def test_the_rules_read_lists_a_rule_whose_instances_carry_the_error_reason_while_its_health_reads_ok():
-    """The mode the read exists for: `execErrState: OK` maps a failed evaluation to instance state
-    `Normal (Error)` with rule-level `health: ok` and no `lastError`, so the `(Error)` reason on an
-    instance is the only trace that mode leaves. A NoData or MissingSeries reason is not an error."""
+    """The mode the read exists for: by ngalert's source (T0167 measures it), `execErrState: OK` maps a
+    failed evaluation to instance state `Normal (Error)` with rule-level `health: ok` and no `lastError`,
+    so the `(Error)` reason on an instance is the only trace that mode leaves. A NoData or MissingSeries
+    reason is not an error."""
     payload = _rules(
         {
             "name": "Capture · all streams silent",

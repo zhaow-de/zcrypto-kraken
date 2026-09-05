@@ -87,7 +87,7 @@ class Alert:
 @dataclass(frozen=True)
 class RuleHealth:
     """A rule Grafana could not evaluate -- its `health`, or the `(Error)` reason on an instance state,
-    which is all `execErrState: OK` leaves of a failed evaluation that pages nothing by design."""
+    which, by ngalert's source (T0167 measures it), is all `execErrState: OK` leaves of a failed evaluation."""
 
     uid: str
     title: str
@@ -156,9 +156,9 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                     return AlertsRead(unreadable=f"a rule arrived with no uid ({rule.get('name', '?')!r}) -- the API shape changed")
                 instances = rule.get("alerts") or []
                 # One condition, two surfaces, chosen by `execErrState`: `Alerting` puts `health: error`
-                # and a `lastError` on the rule; `OK` maps the failed evaluation to a Normal instance
-                # whose state keeps the `(Error)` reason while the rule's health reads ok. `Error` by
-                # substring, as the history filter below reads it -- a compound reason is still one.
+                # and a `lastError` on the rule; `OK`, by ngalert's source (T0167 measures it), maps the
+                # failed evaluation to a Normal instance whose state keeps the `(Error)` reason. `Error`
+                # by substring, as the history filter below reads it -- a compound reason is still one.
                 health = rule.get("health")
                 errored = [str(i.get("state") or "") for i in instances if "Error" in _reason_of(str(i.get("state") or ""))]
                 if (health is not None and health != "ok") or errored:
@@ -677,9 +677,7 @@ class Report:
         ]
         if self.alerts.unhealthy:
             out += ["", "## Rules not evaluating"]
-            out += [
-                f"- `{r.uid}` — health {r.health}: {r.last_error or 'no error text from Grafana'}" for r in self.alerts.unhealthy
-            ]
+            out += [f"- `{r.uid}` — {r.health}: {r.last_error or 'no error text from Grafana'}" for r in self.alerts.unhealthy]
         if self.cleared_in_window:
             out += ["", "## Alerts that fired and cleared in the window"]
             out += [f"- `{a.uid}` on {', '.join(a.hosts) or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.cleared_in_window]
