@@ -2428,8 +2428,8 @@ def test_an_ioc_the_venue_never_answers_ends_ambiguous_rather_than_parking_the_p
 
 def test_a_kill_file_landing_during_the_time_box_cancel_refuses_the_fallback_ioc(tmp_path):
     """The fallback IOC goes through `_submit`, which evaluates the gate first: the kill file lands
-    after the time-box cancel is out and before the venue answers it, and the IOC is refused with
-    nothing submitted and the plan halted."""
+    after the time-box cancel is out and before the venue answers it, the IOC is refused with nothing
+    submitted, and the next intent is refused at its start by the same gate."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
     ex.on_order_event(_accepted(client.last_order_id))
     _advance_with_quotes(ex, client, clock, minutes=16)
@@ -2444,7 +2444,8 @@ def test_a_kill_file_landing_during_the_time_box_cancel_refuses_the_fallback_ioc
     assert intent["outcome"] == "refused"
     assert "kill_switch" in intent["reasons"]
     ex.on_timer(clock.now + timedelta(seconds=10))
-    assert client.subscribed == ["BTC/EUR.KRAKEN"]  # the plan halted: intent 1 never subscribed
+    assert _intent_outcome(tmp_path, 1) == "refused"  # intent 1 starts on this tick and meets the same gate
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]  # so it never subscribed
 
 
 def _time_boxed_cancel_answered_by(tmp_path, event) -> dict:
