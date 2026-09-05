@@ -122,6 +122,62 @@ def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
     assert read.firing_now[0].active_at == "2026-08-29T10:00:00Z"
 
 
+def test_the_rules_read_lists_every_rule_whose_health_is_not_ok():
+    """A rule Grafana could not evaluate pages nothing -- `execErrState: OK` on the capture-silence
+    rules makes that deliberate -- so the daily pass is where it surfaces: every rule whose `health`
+    is anything but `ok` is listed with the error Grafana attached."""
+    payload = _rules(
+        {
+            "name": "Capture · all streams silent",
+            "uid": "zcrypto-capture-all-streams-silent",
+            "state": "inactive",
+            "health": "error",
+            "lastError": "parse error at char 12: unexpected identifier",
+            "annotations": {},
+            "alerts": [],
+        },
+        {
+            "name": "Capture · stream silent",
+            "uid": "zcrypto-capture-stream-silent",
+            "state": "inactive",
+            "health": "ok",
+            "annotations": {},
+            "alerts": [],
+        },
+        {"name": "Ops · no health field", "uid": "zcrypto-ops-shape", "state": "inactive", "annotations": {}, "alerts": []},
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert read.unhealthy == [
+        ops_daily.RuleHealth(
+            "zcrypto-capture-all-streams-silent",
+            "Capture · all streams silent",
+            "error",
+            "parse error at char 12: unexpected identifier",
+        )
+    ]
+    assert read.unreadable is None
+
+
+def test_a_rule_set_that_is_all_ok_lists_nothing_unhealthy():
+    payload = _rules(
+        {"name": "a", "uid": "zcrypto-a", "state": "inactive", "health": "ok", "annotations": {}, "alerts": []},
+        {"name": "b", "uid": "zcrypto-b", "state": "firing", "health": "ok", "annotations": {}, "alerts": [{"state": "Alerting"}]},
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
+    assert read.unhealthy == []
+
+
+def test_an_unhealthy_rule_is_attention_and_named_in_the_report():
+    """A rule that has stopped evaluating is not an all-clear, whatever else the pass saw."""
+    sick = ops_daily.RuleHealth("zcrypto-capture-all-streams-silent", "Capture · all streams silent", "error", "parse error")
+    report = _report(alerts=ops_daily.AlertsRead(unhealthy=[sick]))
+    assert report.exit_code == 1
+    md = report.markdown()
+    assert "## Rules not evaluating" in md
+    assert "`zcrypto-capture-all-streams-silent`" in md and "parse error" in md
+    assert "1 rule not evaluating" in report.journal_paragraph()
+
+
 def test_a_rule_without_a_uid_is_a_finding_never_a_silently_dropped_rule():
     """The uid is how a fired alert reaches its runbook; a shape change that drops it must not read
     as a quiet fleet."""

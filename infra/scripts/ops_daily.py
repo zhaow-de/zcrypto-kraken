@@ -84,10 +84,22 @@ class Alert:
     hosts: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class RuleHealth:
+    """A rule Grafana could not evaluate: `execErrState: OK` on the capture-silence rules makes that
+    page nothing by design, so the daily pass is where it surfaces."""
+
+    uid: str
+    title: str
+    health: str
+    last_error: str
+
+
 @dataclass
 class AlertsRead:
     firing_now: list[Alert] = field(default_factory=list)
     fired_in_window: list[Alert] = field(default_factory=list)
+    unhealthy: list[RuleHealth] = field(default_factory=list)
     unreadable: str | None = None
 
 
@@ -136,6 +148,11 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 uid = rule.get("uid")
                 if not uid:
                     return AlertsRead(unreadable=f"a rule arrived with no uid ({rule.get('name', '?')!r}) -- the API shape changed")
+                # `health` is `ok`, `error` or `nodata` per rule; absent means the API did not say, which
+                # is not evidence of a broken rule.
+                health = rule.get("health")
+                if health is not None and health != "ok":
+                    read.unhealthy.append(RuleHealth(uid, rule.get("name", ""), str(health), str(rule.get("lastError") or "")))
                 instances = rule.get("alerts") or []
                 # Instances arrive in EVERY state, reason suffix included, so a rule grouped
                 # `by (host, system)` that is Alerting on the primary and Normal on the secondary
@@ -626,6 +643,7 @@ class Report:
         # containing a critical firing `all-clear`, which is the one verdict it must never get wrong.
         if (
             self.alerts.firing_now
+            or self.alerts.unhealthy
             or self.cleared_in_window
             or [c for c in self.verdict if not c.ok]
             or (self.deadmen.via_prometheus or 0) > 0
@@ -647,6 +665,11 @@ class Report:
         out += [f"- `{a.uid}` on {', '.join(a.hosts) or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.alerts.firing_now] or [
             "- none"
         ]
+        if self.alerts.unhealthy:
+            out += ["", "## Rules not evaluating"]
+            out += [
+                f"- `{r.uid}` — health {r.health}: {r.last_error or 'no error text from Grafana'}" for r in self.alerts.unhealthy
+            ]
         if self.cleared_in_window:
             out += ["", "## Alerts that fired and cleared in the window"]
             out += [f"- `{a.uid}` on {', '.join(a.hosts) or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.cleared_in_window]
@@ -696,8 +719,10 @@ class Report:
         reminders = ", ".join(f"{'OWED ' if r.owed else ''}{r.name}: {r.status}" for r in self.reminders.reminders) or "none read"
         deploys = ", ".join(str(d.get("limit")) for d in self.deploys) or "none"
         hours = int(self.window.total_seconds() // 3600)
+        sick = len(self.alerts.unhealthy)
         return (
             f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired}"
+            f"{f' · {sick} rule{"s" if sick != 1 else ""} not evaluating' if sick else ''}"
             f"{f' · fired and cleared {cleared}' if cleared else ''} · checks {failed} · "
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
