@@ -31,13 +31,10 @@ def _check_window(name: str, value: int) -> None:
 
 @dataclass(frozen=True, kw_only=True)
 class A1Config:
-    """A1 book configuration (docs/specs/00031): the four toggles (base, regime, short, target_vol)
-    plus the fixed knobs shared by every trial. Validated at construction; every field is immutable
-    thereafter.
+    """The A1 book's four toggles (base, regime, short, target_vol) plus the knobs every trial shares (docs/specs/00031).
 
-    `target_vol` is ANNUALIZED (e.g. 0.10 = 10 %/yr); the book divides by sqrt(periods_per_year)
-    internally — never pre-divide in the caller (the iter-065/066 drivers did, running the book at
-    ~1/19 scale; caught in review, decisions log [iter-066])."""
+    `target_vol` is ANNUALIZED (0.10 = 10 %/yr) and `a1_book_returns` divides by sqrt(periods_per_year) itself, so a caller
+    that pre-divides runs the book mis-scaled (`docs/research/13.phase5-decisions.md` [iter-066] records such a run)."""
 
     base: str
     regime: str
@@ -84,15 +81,10 @@ class A1Config:
 
 
 def _map_to_union_index(own_ts: list, own_values: list[float], union_ts: list) -> list[float | None]:
-    """Map a feature/gate computed on an asset's own CONTIGUOUS (gap-compressed) calendar (`own_ts`,
-    length N; `own_values[j]` = the causal value for the move own_ts[j] -> own_ts[j+1], length N-1)
-    onto the union return index (`union_ts`, length M; union period k = the move union_ts[k] ->
-    union_ts[k+1]). Union period k gets own_values[own_pos[union_ts[k]]] iff BOTH union_ts[k] and
-    union_ts[k+1] are present in own_ts AND are adjacent there (own_pos[union_ts[k+1]] ==
-    own_pos[union_ts[k]] + 1) -- the asset was present for both endpoints of that exact move with
-    nothing dropped in between; else None. Introduces no look-ahead: own_values[j] itself only used
-    data at <= own_ts[j] (inherited from the source feature/gate); this only remaps by timestamp.
-    """
+    """Remap a per-move series from an asset's own gap-compressed calendar onto the union return index, adding no look-ahead.
+
+    `own_values[j]` is the causal value for the move `own_ts[j] -> own_ts[j+1]`; union period k takes it iff `union_ts[k]` and
+    `union_ts[k+1]` are adjacent in `own_ts` — the asset was present for both endpoints of that exact move — else None."""
     own_pos = {ts: j for j, ts in enumerate(own_ts)}
     mapped: list[float | None] = []
     for k in range(len(union_ts) - 1):
@@ -106,15 +98,9 @@ def _map_to_union_index(own_ts: list, own_values: list[float], union_ts: list) -
 
 
 def _btc_market_bear(btc_prices: list[float], *, window: int, band: float) -> list[float]:
-    """Causal confirmed-bear "band" signal (docs/specs/00031, finding-2): the strict-below-SMA-by-band
-    mirror of sma_gate's above-SMA long signal, same alignment/warm-up convention (cli/benchmark/
-    strategies.py:sma_gate). Element k = 1.0 if btc_prices[k] < mean(btc_prices[k-window+1:k+1]) *
-    (1.0 - band) else 0.0, using only btc_prices[<= k] (no look-ahead). Warm-up (k < window-1) is 0.0.
-    Returns length len(btc_prices)-1, aligned with sma_gate/returns_from_prices. band == 0.0 reduces to
-    the plain below-SMA test; band > 0.0 opens a flat neutral zone between SMA*(1-band) and SMA where
-    neither this signal nor sma_gate's long signal fires. Private helper: trusts a validated btc_prices
-    (mirrors a1_book_returns's own _validate_btc_prices boundary).
-    """
+    """Causal confirmed-bear mirror of `sma_gate` (docs/specs/00031, finding 2): 1.0 where the price is below its SMA by `band`,
+    on `sma_gate`'s alignment and warm-up; a positive `band` opens a neutral zone between SMA*(1-band) and the SMA where neither
+    this signal nor `sma_gate`'s long signal fires. Trusts an already-validated `btc_prices` (`_validate_btc_prices`)."""
     signal: list[float] = []
     for k in range(len(btc_prices) - 1):
         if k < window - 1:
@@ -133,11 +119,9 @@ def _asset_directions(
     *,
     config: A1Config,
 ) -> dict[str, list[float | None]]:
-    """Per-asset direction d_i[k] on the union return index (docs/specs/00031). Every value uses only
-    prices/features at <= union index k -> no look-ahead. None where the asset itself has no valid
-    return that period (either endpoint's price is None). Assumes btc_prices/asset_ts["BTC"] have
-    full coverage of union_ts (no internal gaps) -- true for the real BTC series; a1_book_returns
-    enforces this at its validation boundary."""
+    """Per-asset direction `d[asset][k]` on the union return index, causal, and None where the asset has no return that period.
+
+    Assumes BTC covers `union_ts` with no gaps — `_validate_prices_by_asset` enforces that at `a1_book_returns`'s boundary."""
     g_btc_own = sma_gate(btc_prices, window=config.gate_window)
     g_btc = _map_to_union_index(asset_ts["BTC"], g_btc_own, union_ts)
     bear_own = _btc_market_bear(btc_prices, window=config.gate_window, band=config.short_band)
@@ -156,8 +140,7 @@ def _asset_directions(
                 continue
             gate = g_btc[k] if g_btc[k] is not None else 0.0
             bear = market_bear[k] if market_bear[k] is not None else 0.0
-            # ta[k] is guaranteed non-None here: prices[k] and prices[k+1] both present means
-            # union_ts[k]/union_ts[k+1] are adjacent in this asset's own compressed calendar too.
+            # ta[k] is non-None here: both prices present means union_ts[k] and union_ts[k+1] are adjacent in asset_ts[asset].
             ta_k = ta[k]
             if config.regime == "single_gate":
                 long_ok = gate == 1.0
@@ -182,14 +165,10 @@ def _asset_returns(prices: list[float | None]) -> list[float | None]:
 
 
 def _inverse_vol_weights(prices_by_asset: dict[str, list[float | None]], *, lookback: int) -> list[dict[str, float]]:
-    """Per-period renormalized inverse-vol qualifying weights over a union calendar (SAME qualifying
-    rule as dynamic_inverse_vol_basket, kept in sync by test_inverse_vol_weights_reduces_to_basket):
-    asset i qualifies at period t iff ret_i[t] is present, its trailing window ret_i[t-lookback:t]
-    (strictly before t) is fully non-None, and that window has positive stdev; weight 1/stdev,
-    renormalized over qualifiers. No qualifier -> {}. Returns weights (not a pre-combined return
-    series) so a1_book_returns can apply per-asset directions before combining. Private
-    helper: trusts a validated, equal-length, non-empty prices_by_asset (mirrors
-    dynamic_inverse_vol_basket's own private _inverse_vol_weight)."""
+    """Per-period renormalized inverse-vol weights over a union calendar, qualifying exactly as `dynamic_inverse_vol_basket`
+    does (`test_inverse_vol_weights_reduces_to_basket` holds the two in sync); weights rather than a combined return series, so
+    `a1_book_returns` can apply per-asset directions before combining. Trusts an already-validated, equal-length, non-empty
+    `prices_by_asset`."""
     length = len(next(iter(prices_by_asset.values())))
     returns_by_asset = {asset: _asset_returns(prices) for asset, prices in prices_by_asset.items()}
 
@@ -234,14 +213,10 @@ def _validate_prices_by_asset(prices_by_asset: dict[str, list[float | None]]) ->
 
 
 def _validate_btc_prices(btc_prices: list[float], prices_by_asset: dict[str, list[float | None]]) -> None:
-    """Validate the standalone btc_prices argument used to compute the regime gate (_asset_directions
-    reads btc_prices, not prices_by_asset["BTC"]). Under the current no-gap contract the two must be
-    the same series, so this checks btc_prices == prices_by_asset["BTC"] element-for-element -- a
-    same-length-but-different btc_prices would otherwise silently compute the gate off different data
-    than the BTC leg's own return/weight contribution. NOTE (iter-046): once BTC's real 1-day
-    union-calendar gap is handled, this will relax to "agrees where BTC is present" instead of a strict
-    full-length equality.
-    """
+    """Refuse a `btc_prices` that is not `prices_by_asset["BTC"]` element-for-element: `_asset_directions` reads `btc_prices`
+    while the BTC leg's returns and weights come from that column, so a same-length-but-different series would silently compute
+    the regime gate off other data than the book trades; the strictness is deliberate — `docs/research/10.phase4-decisions.md`
+    [iter-046] chose forward-filling BTC's one missing union day over relaxing this check to "agrees where BTC is present"."""
     btc_column = prices_by_asset["BTC"]
     if not isinstance(btc_prices, list) or len(btc_prices) != len(btc_column):
         got = len(btc_prices) if isinstance(btc_prices, list) else btc_prices
