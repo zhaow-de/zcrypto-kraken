@@ -28,13 +28,10 @@ PAIR_KEYS: dict[str, str] = {
 
 
 def fetch_ohlc(pair_key: str, interval: int, *, opener=urllib.request.urlopen) -> list[list]:
-    """GET Kraken's public OHLC endpoint for `pair_key`/`interval` and return the candle rows.
+    """GET Kraken's public OHLC endpoint for `pair_key`/`interval` and return the candle rows; every refusal raises `OHLCError`.
 
-    Raises `OHLCError` on a transport/JSON failure, when Kraken's `error` array is non-empty
-    (Kraken returns HTTP 200 with errors carried in the response body), or when the response body
-    doesn't carry the expected `result` shape. The `result` dict carries the candle-row list under
-    a pair-specific key alongside `last`; this returns that series.
-    """
+    Kraken answers HTTP 200 with failures carried in the body's `error` array, and puts the rows under a
+    pair-specific key beside `last`."""
     url = f"{_BASE_URL}?pair={pair_key}&interval={interval}"
     try:
         with opener(url, timeout=_TIMEOUT_SECONDS) as response:
