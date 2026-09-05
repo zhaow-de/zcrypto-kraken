@@ -107,10 +107,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0163 — client order id length is unmeasured](T0163-client-order-id-length-unmeasured.md) — the probe's 18-character truncation comment cannot be squared with its own 27-character ids passing; ripe when a versioned adapter-verification row quotes a minted id as the venue returned it.
 
-- [T0165 — engine test claims no assertion carries](T0165-engine-test-claims-no-assertion-carries.md) — four live-path invariants stated only in test prose (the single writer of the resting phase, the IOC fallback through the gate, the running-nautilus input, the flatten prompt under `-s`); each becomes a test.
-
-- [T0166 — the alert-rule guard's blind spots](T0166-alert-rule-guard-blind-spots.md) — the dead-man classifier reads threshold nodes only, a dot-bearing runbook anchor is untested, the ops ERROR selector is a list nothing reconciles, the memory-limit pin has no headroom-leg assertion.
-
 - [T0167 — observability blind spots the alert comments carry](T0167-observability-blind-spots-the-alert-comments-carry.md) — four failure modes nothing watches, kept as comments in `alerts.yaml` until each has a rule, a test or a recorded drop.
 
 ### Partially done<a name="partially-done-1"></a>
@@ -364,3 +360,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0157 — day-2 operations: every alert has a runbook, and a daily pass reads the fleet](archive/T0157-day2-operations-runbooks-and-daily-pass.md) — **resolved 2026-08-30**: 83 alert rules and 10 dead-man checks carry `Runbook:` links on the live stack, and the proactive pass ran all-clear, wrote its journal entry, posted its summary and re-armed tomorrow's trigger. Both delays before it earned themselves — the first live run found a log plane that had never worked, the first pass found the journal paragraph dropping the day's only finding.
 
 - [T0162 — a Loki-sourced dead-man can never notify its clear](archive/T0162-loki-dead-men-cannot-notify-a-clear.md) — **resolved 2026-09-05**: the eight Loki dead-men pin the `metrics` receiver (pushed 2026-09-04) and drill N's re-induction saw the resolved notice reach `#zcrypto` 91 s after the clear; the ERROR-log rules stay on `logs`.
+
+- [T0165 — engine test claims no assertion carries](archive/T0165-engine-test-claims-no-assertion-carries.md) — **resolved 2026-09-05** — four live-path invariants stated only in test prose (the single writer of the resting phase, the IOC fallback through the gate, the running-nautilus input, the flatten prompt under `-s`); each becomes a test.
+
+- [T0166 — the alert-rule guard's blind spots](archive/T0166-alert-rule-guard-blind-spots.md) — **resolved 2026-09-05** — the dead-man classifier reads threshold nodes only, a dot-bearing runbook anchor is untested, the ops ERROR selector is a list nothing reconciles, the memory-limit pin has no headroom-leg assertion.
