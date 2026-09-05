@@ -87,7 +87,8 @@ class Alert:
 @dataclass(frozen=True)
 class RuleHealth:
     """A rule Grafana could not evaluate -- its `health`, or the `(Error)` reason on an instance state,
-    which, by ngalert's source (T0167 measures it), is all `execErrState: OK` leaves of a failed evaluation."""
+    which, by ngalert's source, is all `execErrState: OK` leaves of a failed evaluation (T0167's read-back
+    saw the suffix shape live, not that mapping)."""
 
     uid: str
     title: str
@@ -156,9 +157,9 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                     return AlertsRead(unreadable=f"a rule arrived with no uid ({rule.get('name', '?')!r}) -- the API shape changed")
                 instances = rule.get("alerts") or []
                 # One condition, two surfaces, chosen by `execErrState`: `Alerting` puts `health: error`
-                # and a `lastError` on the rule; `OK`, by ngalert's source (T0167 measures it), maps the
-                # failed evaluation to a Normal instance whose state keeps the `(Error)` reason. `Error`
-                # by substring, as the history filter below reads it -- a compound reason is still one.
+                # and a `lastError` on the rule; `OK`, by ngalert's source, maps the failed evaluation to
+                # a Normal instance whose state keeps the `(Error)` reason -- T0167's read-back saw the
+                # suffix shape live, not that mapping. `Error` by substring, as the history filter reads it.
                 health = rule.get("health")
                 errored = [str(i.get("state") or "") for i in instances if "Error" in _reason_of(str(i.get("state") or ""))]
                 if (health is not None and health != "ok") or errored:

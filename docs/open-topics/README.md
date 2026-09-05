@@ -133,8 +133,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0164 — the global prose cleanup under `prose.md`](T0164-global-prose-cleanup-under-prose-md.md) — **partial 2026-09-05**: the first `tests/` + `infra/` batch is merged (four files, T0165–T0167 registered from it); `cli/`, the rest of `tests/` + `infra/` and the three docs remain; ripe when refine-rules round 8 is on develop (`git log origin/develop --grep="^Refine-Round-Closed: 2026-09-04T23:52:07Z"` non-empty).
 
-- [T0167 — observability blind spots the alert comments carry](T0167-observability-blind-spots-the-alert-comments-carry.md) — **partial 2026-09-05**: the replay counters are reasoned exclusions, a rule Grafana cannot evaluate reaches the daily pass, the wedged-discovery and deleted-textfile cases are recorded drops, and `zcrypto-ops-verify-replay-stale` is in `alerts.yaml`; the attended push remains — ripe when the rule commit is on develop (`git log origin/develop --oneline --grep="^feat(obs): a verify-replay timer that stops firing pages"` is non-empty).
-
 ### Resolved<a name="resolved-1"></a>
 
 - [T0040 — alert on docker-socket-proxy denials and non-routine calls](archive/T0040-docker-socket-proxy-denial-alert.md) — closed unbuilt: the proxy it would have watched was removed the same day, so the denial stream it depended on no longer exists; the security residual that replaces it is [T0042](archive/T0042-alloy-holds-root-equivalent-docker-access.md).
@@ -364,3 +362,5 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0165 — engine test claims no assertion carries](archive/T0165-engine-test-claims-no-assertion-carries.md) — **resolved 2026-09-05** — four live-path invariants stated only in test prose (the single writer of the resting phase, the IOC fallback through the gate, the running-nautilus input, the flatten prompt under `-s`); each becomes a test.
 
 - [T0166 — the alert-rule guard's blind spots](archive/T0166-alert-rule-guard-blind-spots.md) — **resolved 2026-09-05** — the dead-man classifier reads threshold nodes only, a dot-bearing runbook anchor is untested, the ops ERROR selector is a list nothing reconciles, the memory-limit pin has no headroom-leg assertion.
+
+- [T0167 — observability blind spots the alert comments carry](archive/T0167-observability-blind-spots-the-alert-comments-carry.md) — **resolved 2026-09-05** — the replay counters are reasoned exclusions, a stopped sweep timer pages (`zcrypto-ops-verify-replay-stale`, pushed and read back by value), a rule Grafana cannot evaluate reaches the daily pass, the wedged-discovery and deleted-textfile cases are recorded drops.
