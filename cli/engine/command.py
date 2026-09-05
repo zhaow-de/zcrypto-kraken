@@ -1,11 +1,6 @@
-"""The `zcrypto engine` Typer sub-app (spec 00041 SS the CLI): seed the live price store, run the
-shadow node, run one cycle manually, replay journaled cycles through the builder, evaluate the
-ratified gate, and export the gate as machine-readable metrics + a dead-man's-switch ping. Config
-errors and EngineErrors surface as clean one-line exits, never tracebacks.
-
-`cli.engine.node` (and with it nautilus-trader, ~1 s of import time) is imported lazily inside the
-command bodies that need it -- `zcrypto --help` must never pay the nautilus import.
-"""
+"""The `zcrypto engine` Typer sub-app (spec 00041). Config errors and EngineErrors surface as clean one-line exits, never
+tracebacks; nautilus-trader (~1 s of import time) is imported lazily inside the bodies that need it (`venueledger` carries it too),
+so `zcrypto --help` never pays it."""
 
 from __future__ import annotations
 
@@ -64,11 +59,9 @@ logger = get_logger("engine.command")
 
 CANONICAL_DIR = Path("data/ohlc-full")
 DEFAULT_NAVS = (500.0, 1000.0, 2500.0, 5000.0, 10000.0)
-# The two variables carrying the trade credentials, rendered onto the engine host by the deploy.
-# Named here so a refusal can say WHICH is missing without ever touching a value.
-# `cli/engine/node.py` defines the same two names for the same reason. The copy is deliberate and
-# not shared: importing them would pull nautilus into this module's scope and defeat the lazy
-# import that keeps `zcrypto --help` off the ~1 s adapter load. `engine.env.j2` renders both.
+# The two variables carrying the trade credentials (`engine.env.j2` renders both), named here so a refusal can say WHICH is
+# missing without ever touching a value. Duplicated from `cli/engine/node.py` rather than imported: importing them would
+# pull nautilus in and defeat this module's lazy import.
 _API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 _API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 _REFDATA_GLOB = "kraken-refdata-*.json"
@@ -85,14 +78,10 @@ def _utc_now() -> datetime:
 
 
 def _abort(message: str) -> typer.Exit:
-    """A clean one-line error (logged, no traceback) + exit code 1. Usage: `raise _abort(...)`.
+    """A clean one-line error (logged, no traceback) + exit code 1; usage: `raise _abort(...)`.
 
-    LOGS rather than `typer.echo`s. The line has to carry a level, or Alloy cannot label it at
-    ingest (infra/nas/config.alloy) and the level-based alerting never sees it -- `engine
-    gate-export` reports every failure through one of this helper's call sites. The older text-grep
-    alert matched the literal `ERROR:` prefix this used to print; the label-based rule that replaced
-    it did not, which is exactly the blindness T0041 records.
-    """
+    LOGS rather than `typer.echo`s: the line has to carry a level, or Alloy cannot label it at ingest
+    (infra/nas/config.alloy) and the level-based alerting never sees it (T0041)."""
     logger.error(message)
     return typer.Exit(code=1)
 
@@ -179,16 +168,10 @@ class JournalCounts:
 
 @dataclass(frozen=True)
 class CacheStats:
-    """_evaluate_journal's per-run scoring-cache tally (spec 00060 D8): how many success records
-    this run actually replayed vs served from cache, and whether the cache was discarded wholesale
-    (a schema/replay-fingerprint mismatch or an unreadable file) -- all zero/False when `cache_path`
-    is None, so a degrading cache is visible in the metrics rather than looking like a working one.
-    A forced rotation re-verification (spec 00062 D4/D1) counts in `replayed`, never `from_cache` --
-    a forced-replay failure is a real gate failure, not a cache event.
-
-    `oldest_verification_age` (spec 00062 D5) is `now - min(verified_at)` across the cache's final
-    (post-run) entries, in seconds; None when the cache is inactive or empty. Makes a rotation that
-    silently stops visible rather than indistinguishable from a healthy cache."""
+    """_evaluate_journal's per-run scoring-cache tally (spec 00060 D8): with `cache_path` None, `replayed` counts the full replay
+    and the rest read 0/False/None, so a degrading cache reads as degrading rather than as a working one. A forced re-verification
+    (spec 00062 D4) counts in `replayed`, never `from_cache` -- its failure is a real gate failure, not a cache event -- and
+    `oldest_verification_age` is seconds since the least-recently verified entry in the post-run cache, else None."""
 
     replayed: int
     from_cache: int
@@ -201,8 +184,8 @@ _EVALUATE_JOURNAL_REPLAY_PATH = "fast"  # threaded into replay_fingerprint() bel
 
 def _replay_one(record: CycleRecord, reader) -> CycleOutcome:
     """Replay one journaled success record and classify the outcome -- factored out so a cache hit
-    and a fresh replay build the exact same CycleOutcome shape; _evaluate_journal derives its
-    counters from that outcome afterward, in one place, so neither path can silently undercount."""
+    and a fresh replay produce the same CycleOutcome shape, from which `_evaluate_journal` derives
+    its counters in one place, so neither path can silently undercount."""
     try:
         replayed = replay_cycle(record, reader, path=_EVALUATE_JOURNAL_REPLAY_PATH)
     except HashMismatchError:
@@ -216,34 +199,10 @@ def _replay_one(record: CycleRecord, reader) -> CycleOutcome:
 def _evaluate_journal(
     journal_root: Path, *, cache_path: Path | None = None, now: datetime
 ) -> tuple[list[CycleOutcome], JournalCounts, datetime | None, CacheStats]:
-    """Replay every journaled cycle-*.json (fast path) and classify every failed-cycle-*.json
-    sidecar into CycleOutcome entries -- report's and gate-export's shared evidence-gathering pass.
-    Absent boundaries are NOT fabricated -- evaluate_gate scores them missing. The third element is
-    the newest cycle_ts seen across every outcome (None when the journal is empty).
-
-    `cache_path` (spec 00060, opt-in -- None is today's full replay, byte-for-byte) reuses a prior
-    run's CycleOutcome for a success record whose evidence_fingerprint is unchanged, skipping
-    replay_cycle entirely for that cycle; sidecars and unparseable records are never cached (D7).
-    JournalCounts is always derived from the resulting outcome (cached or freshly replayed) in one
-    place below, never from which branch produced it -- a cache hit must count exactly like a
-    replay would have. The fourth element, CacheStats, is spec 00060 D8's observability tally.
-
-    `cache_path is None` takes exactly the pre-`--cache` code path: neither `replay_fingerprint` nor
-    `evidence_fingerprint` is ever called, so a bug in either (e.g. replay_fingerprint's unguarded
-    `read_bytes()` over the ~60-module import closure) can never reach a no-cache caller like `report` -- D1's
-    byte-for-byte promise, structurally. When `cache_path` is set but `replay_fingerprint()` itself
-    raises OSError, that's caught here and degrades THIS RUN to the same no-cache path (logged, never
-    aborted) -- a cache is an optimization, gate evidence is not. Same principle per record for
-    `evidence_fingerprint`: a failure there means "replay this one cycle", never "abort the run".
-
-    `now` (spec 00062, threaded from the caller rather than read via `_utc_now()` here so tests can
-    drive the clock) also decides, per otherwise cache-eligible cycle, whether this run FORCES a
-    replay regardless of a cache hit: `due_for_reverification(record.cycle_ts, now)` is true for
-    exactly 1/24 of cycles per run (D2/D3), so the whole journal is re-verified about daily even
-    with the cache warm -- the parquet bytes are re-hashed by `replay_cycle`'s own check, which a
-    cache hit would otherwise skip forever. A forced replay that fails is a real gate failure (D4):
-    it produces the same CycleOutcome any replay would and is counted in `replayed`, never
-    `from_cache`."""
+    """Replay every journaled cycle and classify every sidecar; absent boundaries are never fabricated (`evaluate_gate` scores them
+    missing). `cache_path` (spec 00060) is opt-in: with None neither `replay_fingerprint` nor `evidence_fingerprint` runs, so no bug
+    in either reaches a no-cache caller; a caught raise degrades that run or record to a plain replay, anything else propagates.
+    `due_for_reverification` (spec 00062 D2-D4) re-replays the run's slice on a hit: only a replay re-hashes parquet bytes."""
     reader = _snapshot_reader(journal_root)
 
     cache_active = cache_path is not None
@@ -293,7 +252,7 @@ def _evaluate_journal(
             updated_entries[record.cycle_ts] = (fp, outcome, verified_at)
         record_outcomes.append(outcome)
 
-    # Counters derived from the resulting outcome, in one place -- see the docstring's THE TRAP note.
+    # Derived from the outcome, never from the branch that produced it: a cache hit must count as its replay would.
     replayed_ok = sum(1 for o in record_outcomes if not o.validation_failed and not o.mismatch and o.compare_passed)
     mismatches = sum(1 for o in record_outcomes if not o.validation_failed and (o.mismatch or not o.compare_passed))
     validation_failures = sum(1 for o in record_outcomes if o.validation_failed)
@@ -318,9 +277,9 @@ def _evaluate_journal(
 
 
 def _gate_ping(url: str, success: bool) -> None:
-    """The gate-export dead-man's-switch ping (spec 00042, mirroring cli/engine/cycle.py's
-    _ping_healthcheck): GET `url` on a clean gate, GET `url + "/fail"` otherwise -- one attempt,
-    10 s timeout, ANY exception swallowed via logger.warning; the ping can never fail the export."""
+    """The gate-export dead-man's-switch ping (spec 00042): GET `url` on a clean gate, GET
+    `url + "/fail"` otherwise -- one attempt, any exception swallowed, because the ping can never be
+    allowed to fail the export."""
     ping_url = url if success else url + "/fail"
     try:
         with _urlopen(ping_url, timeout=10):
@@ -339,16 +298,10 @@ def _write_prom_textfile(
     now: datetime,
     duration_seconds: float,
 ) -> None:
-    """Atomically write the gate-export Prometheus textfile-collector metrics: write to a `.tmp`
-    sibling then `os.replace` onto `path`, so a node-exporter scrape never observes a partial file
-    and a write failure (e.g. an unwritable parent) leaves no partial artifact behind. The cache
-    metrics (spec 00060 D8) are always emitted, zeroed/False when `--cache` was omitted, so a
-    silently-degrading cache is visible rather than looking indistinguishable from a working one.
-    `zcrypto_gate_cache_replayed`/`_hits` (spec 00062 D7) carry no `_total` suffix -- they are
-    per-run gauges, not monotonic counters; enabling `--cache` drops `replayed` from N to ~1, which
-    `rate()`/`increase()` would otherwise read as a counter reset. `_oldest_verification_age_seconds`
-    (D5) is omitted, like `_journal_pull_lag_seconds`, when there is nothing to report (cache
-    inactive or empty)."""
+    """Atomically write the gate-export Prometheus textfile metrics: a `.tmp` sibling then `os.replace`, so a scrape never observes
+    a partial file. The cache metrics are always emitted -- hits 0 and invalidated 0 when `--cache` was omitted -- so a degrading
+    cache is visible, except `_oldest_verification_age_seconds`, omitted like `_journal_pull_lag_seconds` when there is nothing to
+    report; `_replayed`/`_hits` carry no `_total`: they are per-run gauges, and enabling the cache would read as a counter reset."""
     lines = [
         "# HELP zcrypto_gate_status 1 if the >=14-clean-day gate is MET else 0",
         f"zcrypto_gate_status {1 if status.gate_met else 0}",
@@ -410,12 +363,10 @@ def seed() -> None:
 
 
 class _CycleGauges:
-    """The engine's cumulative gauge/counter state (spec 00069 D5, engine's pinned instrument
-    set): `run()` builds one of these on the SAME registry the exporter serves, then installs
-    `.update` as `cycle.py`'s metrics sink -- called after every cycle, success or failure.
-    `cycle_success` is registered LAZILY (`seed_cycle_success`), not here -- see that method
-    (cold-review I4); `active_sleeves` and `cycle_duration` are lazy for the same reason, see
-    their own comments below."""
+    """The engine's cumulative gauge/counter state (spec 00069 D5): `run()` builds one on the SAME
+    registry the exporter serves, then installs `.update` as `cycle.py`'s metrics sink, called after
+    every cycle whether it succeeded or failed. `cycle_success`, `cycle_duration` and `active_sleeves`
+    are registered lazily -- an absent series is honest where a published 0 would be a claim."""
 
     def __init__(self, registry) -> None:
         self._registry = registry
@@ -431,14 +382,10 @@ class _CycleGauges:
         self.limit_bound = Counter(
             "zcrypto_engine_limit_bound_total", "Cycles where a book-level limit changed the intended book.", registry=registry
         )
-        # A Gauge, not a Counter: the pinned name (spec 00069 D5, "names verbatim") carries no
-        # `_total` suffix, and `Counter` would silently ADD one to the exposed series name --
-        # `Gauge` exposes exactly the name given while `.inc()` still makes it cumulative. Caveat:
-        # unlike its sibling `orders_total` (a real Counter), this Gauge only carries counter
-        # SEMANTICS via `.inc()` -- `rate()`/`increase()` are undefined over it, and a process
-        # restart drops it back to 0 with no built-in reset marker: `disable_created_metrics()`
-        # (cli/obs/metrics.py) suppresses even a real Counter's own `_created` sample fleet-wide,
-        # so that escape hatch isn't available here either.
+        # A Gauge, not a Counter: the pinned name (spec 00069 D5) carries no `_total` suffix and
+        # `Counter` would silently add one, while `Gauge` exposes exactly the name given and `.inc()`
+        # still makes it cumulative. It carries only counter SEMANTICS, though -- `rate()`/`increase()`
+        # are undefined over it, and a restart drops it to 0 with no reset marker.
         self.order_notional_eur = Gauge(
             "zcrypto_engine_order_notional_eur", "Intended order notional (EUR), summed across every cycle.", registry=registry
         )
@@ -446,13 +393,9 @@ class _CycleGauges:
         self.cycle_completed_at = Gauge(
             "zcrypto_engine_cycle_completed_at_seconds", "Unix timestamp the most recent cycle completed at.", registry=registry
         )
-        # Lazy for exactly `seed_cycle_success`'s reason: a freshly-registered Gauge defaults to
-        # 0.0, and "the last cycle took 0 seconds" before any cycle has run (or completed since a
-        # restart) is a claim the engine has not measured -- false. Deliberately not seeded from
-        # the journal either, unlike `cycle_completed_at`/`cycle_success`: the artifact does carry
-        # the endpoints (started_at/attempted_at + completed_at), but a previous process's
-        # duration is not this process's, so `update()` is the only place it is honestly known.
-        # An absent series is honest; a published 0 is a claim.
+        # Lazy, and deliberately not seeded from the journal either, unlike `cycle_completed_at`: the
+        # artifact does carry the endpoints, but a previous process's duration is not this process's,
+        # so `update()` is the only place it is honestly known.
         self.cycle_duration: Gauge | None = None
         self.sleeve_gross = Gauge(
             "zcrypto_engine_sleeve_gross",
@@ -460,23 +403,17 @@ class _CycleGauges:
             ["sleeve"],
             registry=registry,
         )
-        # Lazy for exactly `seed_cycle_success`'s reason, and it is the crux here: `sleeve_gross`
-        # above is LABELLED, so it is honest for free -- a labelled Gauge publishes nothing until
-        # `.labels()` is first called. This one is UNLABELLED, so registering it eagerly would
-        # publish 0.0 from process start, and "no sleeve is carrying exposure" before any cycle has
-        # run is a claim the engine has not measured -- false, and it would also become the
-        # baseline the composition-changed alert reads the first real cycle against. An absent
-        # series is honest; a published 0 is a claim.
+        # Lazy, unlike the LABELLED `sleeve_gross` above, which publishes nothing until `.labels()`
+        # is first called: this one is unlabelled, so registering it eagerly would publish 0.0 from
+        # process start -- "no sleeve is carrying exposure" is a claim, and it would be the baseline
+        # the composition-changed alert reads the first real cycle against.
         self.active_sleeves: Gauge | None = None
 
     def seed_cycle_success(self, success: bool) -> None:
-        """Register (if not already) and set `zcrypto_engine_cycle_success` (spec 00069 D5,
-        cold-review I4): called both at startup -- when the newest journal artifact tells us the
-        last known outcome -- and from `update()` after every real cycle. Left UNREGISTERED, no
-        series at all, until a value is actually known: a freshly built `Gauge` defaults to 0.0,
-        and publishing that before any cycle has run (or completed since a restart) would read as
-        "the last cycle failed" for up to the 4h until the next one -- false. An absent series is
-        honest; a published 0 is a claim."""
+        """Register (if not already) and set `zcrypto_engine_cycle_success` (spec 00069 D5) -- called
+        at startup from the newest journal artifact's outcome, and from `update()` after every cycle.
+        Left UNREGISTERED until a value is actually known: a fresh `Gauge` reads 0.0, which would
+        claim "the last cycle failed" for the up-to-4h until the next one."""
         if self.cycle_success is None:
             self.cycle_success = Gauge(
                 "zcrypto_engine_cycle_success", "1 if the most recent cycle succeeded, else 0.", registry=self._registry
@@ -496,9 +433,9 @@ class _CycleGauges:
         if result.targets is not None:
             for asset, weight in result.targets.items():
                 self.target_weight.labels(asset=asset).set(weight)
-            # Retire assets that left the target set: a weight left behind keeps publishing its last
-            # value for the life of the process. remove(), not set(0) -- a zero weight and a
-            # not-in-the-book asset are different states and the executor must tell them apart.
+            # Retire assets that left the target set -- a label left behind publishes its last value for the life of the process.
+            # `remove()`, not `set(0)`: a zero weight and a not-in-the-book asset are different states and the executor must tell
+            # them apart.
             for asset in self._last_weight_assets - set(result.targets):
                 self.target_weight.remove(asset)
             self._last_weight_assets = set(result.targets)
@@ -522,19 +459,10 @@ class _CycleGauges:
 
 
 class _ExecGauges:
-    """The execution envelope's published state. Built on the SAME registry the exporter serves,
-    exactly as `_CycleGauges` is, and updated from the gate's verdict after every cycle.
-
-    `zcrypto_exec_gate_level` is registered EAGERLY and seeded at 0: before anything is evaluated,
-    "nothing may be submitted" is the true state, not an unmeasured claim -- the engine really is
-    refusing. The other presence gauges are eager for the same reason, and `run()` evaluates once
-    at startup so none of them sits at its seeded default: a `kill_tripped` reading 0 while the
-    kill file exists is not a stale gauge, it is a false statement about the safety envelope.
-    `last_evaluation` is LAZY for `_CycleGauges.cycle_duration`'s reason: a published 0 before any
-    evaluation would claim the gate was last read at the Unix epoch, and an absent series is
-    honest where a zero is a lie -- which matters doubly here, since the staleness alert reads
-    this series and a seeded 0 would page instantly on every fresh process.
-    """
+    """The execution envelope's published state, updated from the gate's verdict every cycle. `gate_level` and the presence gauges
+    are eager and seeded at 0 -- "nothing may be submitted" is true before anything is evaluated -- and `run()` evaluates once at
+    startup so none sits at that default: a `kill_tripped` reading 0 beside an existing kill file is a false statement.
+    `last_evaluation` is lazy: the staleness alert reads it, and a seeded 0 would claim the epoch and page every fresh process."""
 
     def __init__(self, registry) -> None:
         self._registry = registry
@@ -557,11 +485,9 @@ class _ExecGauges:
         self.venue_ok = Gauge(
             "zcrypto_exec_venue_ok", "Whether the last venue reading said the exchange is online.", registry=registry
         )
-        # The envelope's heartbeat, and the ONLY series that can answer "is the gate still being
-        # evaluated at all". A snapshot-AGE gauge was rejected: evaluations are hours apart and the
-        # snapshot bound is 30 s, so every evaluation re-reads and the age would publish ~0 forever
-        # -- a constant wearing a measurement's clothes. Lazy for `_CycleGauges.cycle_duration`'s
-        # reason: before the first evaluation there is no timestamp to state.
+        # The envelope's heartbeat, and the ONLY series that can answer "is the gate still being evaluated at all". An age gauge was
+        # rejected: evaluations are hours apart and the snapshot bound is 30 s, so every one re-reads and the age would publish ~0
+        # forever -- a constant in measurement's clothes.
         self.last_evaluation: Gauge | None = None
 
     def update(self, verdict: GateVerdict, *, evaluated_at: datetime) -> None:
@@ -581,42 +507,27 @@ class _ExecGauges:
 
 
 # Every outcome `cli/engine/executor.py`'s `_inc_order` can emit, pinned against that module's own
-# call sites by tests/test_engine_metrics.py. `ambiguous` is load-bearing and must never be folded
-# into `refused`: "refused" asserts that no order exists, and after a submission whose venue outcome
-# was never established that claim is unavailable -- the same lie a prior ruling removed from the
-# forensic ledger.
+# call sites by tests/test_engine_metrics.py. `ambiguous` must never be folded into `refused`:
+# "refused" asserts that no order exists, and after a submission whose venue outcome was never
+# established that claim is unavailable.
 _EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "canceled", "filled", "refused", "ambiguous")
-# Every name the venue's own `LiquiditySide` can produce, lower-cased -- pinned against the real
-# enum by tests/test_engine_metrics.py rather than derived here, because importing nautilus-trader
-# at this module's top level would put ~1 s on `zcrypto --help`. `no_liquidity_side` is deliberate
-# and pre-registered like the other two: a fill the venue did not attribute is still a fill, and
-# neither silently counting it as taker nor letting a third label appear at runtime is acceptable
-# when the maker-vs-taker split is the number this ladder exists to measure.
+# Every name the venue's own `LiquiditySide` can produce, lower-cased -- pinned against the real enum
+# by tests/test_engine_metrics.py rather than derived here, since importing nautilus-trader at module
+# level would put ~1 s on `zcrypto --help`. `no_liquidity_side` is deliberate and pre-registered: a
+# fill the venue did not attribute is still a fill, and counting it as taker would fake the split.
 _EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
-# Every disposition `cli/engine/executor.py`'s `_inc_external` can emit, pinned against that
-# module's own call sites by tests/test_engine_metrics.py. `unmatched` is the load-bearing one: an
-# order event arriving on the external strategy topic that belongs to no order this engine's ledger
-# vouches for is counted and ignored, and this counter is the only trace it leaves.
+# Every disposition `cli/engine/executor.py`'s `_inc_external` can emit, pinned against that module's
+# own call sites by tests/test_engine_metrics.py. `unmatched` is the load-bearing one: an order event
+# belonging to no order this engine's ledger vouches for is counted and ignored, and this counter is
+# the only trace it leaves.
 _EXEC_EXTERNAL_DISPOSITIONS = ("matched", "unmatched")
 
 
 class _ExecutionMetrics:
-    """What the executor did, as opposed to `_ExecGauges`' what it was ALLOWED to do. Built on the
-    SAME registry as `_CycleGauges`/`_ExecGauges` and installed on the executor's telemetry hooks,
-    which are wrapped at every call site there -- nothing here can alter or stop a submission.
-
-    Every counter's label children are registered up front, unlike the gauges above whose absent
-    series are the honest state: a Counter's zero is a MEASURED fact ("nothing has been refused
-    yet"), where a Gauge's would be an unmeasured claim, and a `rejected` series that springs into
-    existence at the first rejection gives `rate()` no baseline and reads exactly like a scrape gap
-    until then. `position` is the exception -- symbol-labelled, so it publishes only the symbols
-    `run()`'s seed or a fill has actually named.
-
-    `realized_pnl` is a Gauge because realized PnL falls; it is registered eagerly at 0, which is
-    true of a fresh process before its first trade. It is NOT seeded from disk, so a process
-    restarted mid-probe reads 0 until its next fill -- accepted here because the probe windows are
-    attended and the engine is converged only in the inter-cycle gap.
-    """
+    """What the executor did, not `_ExecGauges`' what it was ALLOWED to do; on telemetry hooks that cannot alter or stop a
+    submission. Counter label children are eager: a Counter's zero is a MEASURED fact where a Gauge's would be an unmeasured claim,
+    and a series born at the first rejection gives `rate()` no baseline. `realized_pnl` is a Gauge because realized PnL falls, eager
+    at 0, never seeded from disk: a restart mid-probe reads 0 until the next fill, accepted because probe windows are attended."""
 
     def __init__(self, registry) -> None:
         self._registry = registry
@@ -646,11 +557,9 @@ class _ExecutionMetrics:
             ["disposition"],
             registry=registry,
         )
-        # The weekly tracking-error verdict, registered on FIRST USE for
-        # `_ExecGauges.last_evaluation`'s reason and one of its own: every value it can take means
-        # something, and a series that existed before the first boundary was scored could only
-        # publish a code outside that alphabet -- a 0 that renders as a legitimate reading rather
-        # than as the "nothing has been scored yet" it would actually be.
+        # Registered on first use: every value this gauge can take means something, so a series that
+        # existed before the first boundary was scored could only publish 0 -- a code outside that
+        # alphabet, read as a legitimate verdict rather than as "nothing has been scored yet".
         self.tracking_state: Gauge | None = None
         for outcome in _EXEC_ORDER_OUTCOMES:
             self.orders.labels(outcome=outcome)
@@ -683,9 +592,8 @@ class _ExecutionMetrics:
         self.realized_pnl.set(value)
 
     def set_tracking_state(self, state: int) -> None:
-        """What the last 4-hourly boundary decided about the most recently closed week. The help
-        text carries the whole alphabet because this gauge is read on a board, where a bare number
-        means nothing -- and every code it lists is one the executor can really publish."""
+        """What the last 4-hourly boundary decided about the most recently closed week. The help text
+        carries the whole alphabet because this gauge is read on a board, where a bare number means nothing."""
         if self.tracking_state is None:
             self.tracking_state = Gauge(
                 "zcrypto_exec_tracking_state",
@@ -698,23 +606,10 @@ class _ExecutionMetrics:
 
 
 class _VenueGauges:
-    """The venue-truth family (spec 00089 D6). Built on the SAME registry as `_CycleGauges` and
-    `_ExecGauges`, updated from the metrics sink when `CycleResult.venue` is present -- and seeded
-    at startup from the newest on-disk `venue-<HH>.json` (`_seed_venue_state`, mirroring
-    `_seed_cycle_state`'s reasoning for `zcrypto_engine_cycle_completed_at_seconds`). Without that
-    seed, a routine engine restart -- which always lands inside the inter-cycle gap
-    (`fleet-deploys.md`) -- would leave every gauge at its eager default until the NEXT boundary
-    cycle, and `zcrypto-venue-snapshot-stale` would false-page "the writer has stopped" against an
-    engine that merely restarted (cold-review MAJOR 1).
-
-    All four are registered EAGERLY, unlike `_ExecGauges.last_evaluation`:
-    `zcrypto_venue_snapshot_timestamp_seconds` is a TIMESTAMP, never an age -- an age gauge freezes
-    at a healthy-looking value when its writer dies, which is the exact failure this must surface,
-    and an UNSEEDED 0.0 (a brand-new deployment with no journal yet, or the startup seed read itself
-    failing) reads as honestly ancient (1970), never a false "just happened". `instruments_expected`
-    is seeded from `len(INSTRUMENT_IDS)` -- DERIVED, never a literal 12, so a future basket
-    re-ratification moves one committed place.
-    """
+    """The venue-truth family (spec 00089 D6), updated when `CycleResult.venue` is present, seeded at startup by
+    `_seed_venue_state`: unseeded, a restart strands every gauge at its eager default until the NEXT boundary cycle, false-paging
+    `zcrypto-venue-snapshot-stale`. The snapshot gauge is a TIMESTAMP: an age would freeze healthy-looking when its writer dies,
+    while 0.0 reads as ancient, never a false "just now". `instruments_expected` derives from `INSTRUMENT_IDS`, never a literal."""
 
     def __init__(self, registry) -> None:
         self.snapshot_timestamp = Gauge(
@@ -751,17 +646,10 @@ class _VenueGauges:
 
 
 def _seed_cycle_state(journal_dir: Path) -> tuple[datetime, bool | None]:
-    """The startup seed for BOTH `zcrypto_engine_cycle_completed_at_seconds` and
-    `zcrypto_engine_cycle_success` (spec 00069 D5; the latter cold-review I4): the newest journal
-    artifact's own `completed_at` wall-clock time and outcome -- a success record scores
-    `(completed_at, True)`, a failed-cycle sidecar scores `(completed_at, False)`, whichever
-    artifact is actually newer wins -- so a routine restart never leaves either series
-    false-firing (missing and stale, or a false "last cycle failed"). The completed_at half falls
-    back to process start (`_utc_now()`) when the journal holds nothing yet (a brand-new
-    deployment); the success half then has no honest answer at all, so it comes back `None` -- the
-    caller must leave `zcrypto_engine_cycle_success` UNREGISTERED rather than publish a false 0.
-    Reuses this module's own `_journal_artifacts` glob (the same day-dir layout `node.py`'s
-    `startup_action` walks, though that one does not glob)."""
+    """The startup seed for `zcrypto_engine_cycle_completed_at_seconds` and `zcrypto_engine_cycle_success` (spec 00069 D5):
+    the newest journal artifact's own `completed_at` and outcome, a failed-cycle sidecar scoring False, so a routine restart
+    leaves neither series false-firing. Falls back to process start on a journal holding nothing yet, where the success half
+    has no honest answer at all and comes back None -- the caller must then leave that gauge UNREGISTERED."""
     newest: tuple[datetime, bool] | None = None
     for _, path in _journal_artifacts(journal_dir, "*", "cycle-*.json"):
         try:
@@ -783,26 +671,10 @@ def _seed_completed_at(journal_dir: Path) -> datetime:
 
 
 def _seed_venue_state(journal_dir: Path) -> dict | None:
-    """The startup seed for `_VenueGauges` (spec 00089 D6, cold-review MAJOR 1): the newest
-    `venue-<HH>.json` whose `status` is `"ok"`, reduced to the same `{"loaded", "expected",
-    "failures", "snapshot_at"}` shape `cli.engine.cycle._record_venue_state` puts on
-    `CycleResult.venue` -- so `run()` can feed it straight into `_VenueGauges.update`. An `"error"`
-    record (no `VenueState` that cycle) is skipped rather than treated as newer: the last REAL
-    snapshot must keep aging honestly, the same "absence never overwrites a real value" invariant
-    `_VenueGauges.update` itself enforces for `venue=None`. Returns `None` when the journal holds no
-    readable `ok` record yet (a brand-new deployment) -- the caller then leaves every gauge at its
-    eager default, exactly `_seed_cycle_state`'s `success=None` case.
-
-    Deliberately NO try/except of its own, mirroring `_seed_cycle_state`: an unreadable file
-    (PermissionError) or a malformed record propagates to the caller's own guard, which must never
-    let telemetry setup kill the engine daemon. Every record is `validate_venue_record`-checked
-    before its `status` is even consulted (T0140 D9) -- a record that fails to validate is a
-    malformed record, and the caller's guard is exactly where that must surface, never a silent skip.
-
-    Local import: `cli.engine.venueledger` pulls in `cli.engine.venuestate`, which imports
-    nautilus_trader (~1s) at module level -- deferred to here for the same reason `cycle.py`'s
-    `_record_venue_state` defers it, so `cli.engine.command`'s own module-level import stays
-    nautilus-free (`zcrypto --help`)."""
+    """The startup seed for `_VenueGauges` (spec 00089 D6): the newest `venue-<HH>.json` whose `status` is `"ok"`, in the shape
+    `CycleResult.venue` carries, or None when the journal holds no readable `ok` record yet; an `"error"` record is skipped, never
+    treated as newer, so the last REAL snapshot keeps aging honestly. No try/except of its own, and `validate_venue_record` runs
+    BEFORE `status` is read (T0140 D9): a record that fails it propagates to the caller's guard, which owns telemetry isolation."""
     from cli.engine.venueledger import read_venue_record, validate_venue_record
 
     newest: tuple[datetime, dict] | None = None
@@ -826,13 +698,10 @@ def _seed_venue_state(journal_dir: Path) -> dict | None:
 
 
 def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
-    """The startup seed for the (symbol-labelled) positions gauge: the newest `venue-<HH>.json`
-    whose `status` is `"ok"` AND `schema_version == 2`, reduced to `dict(doc["state"]["positions"])`
-    -- a base-keyed schema_version 1 record is skipped even when `"ok"`, never coerced, because the
-    gauge it seeds is symbol-labelled and a v1 record cannot honestly produce that label. Mirrors
-    `_seed_venue_state` above: same glob/newest logic, same no-try/except contract (the caller's own
-    telemetry guard owns isolation), same `validate_venue_record`-before-`status` ordering (T0140
-    D9) -- a malformed record propagates rather than being silently skipped."""
+    """The startup seed for the symbol-labelled positions gauge: the newest `venue-<HH>.json` that is
+    both `"ok"` and `schema_version == 2`. A base-keyed v1 record is skipped even when `"ok"`, never
+    coerced, because it cannot honestly produce a symbol label. Same no-try/except and
+    validate-before-`status` contract as `_seed_venue_state`."""
     from cli.engine.venueledger import read_venue_record, validate_venue_record
 
     newest: tuple[datetime, dict] | None = None
@@ -850,10 +719,8 @@ def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
 
 
 def _make_exec_sink(gate, journal_dir: Path, cycle_gauges, exec_gauges, venue_gauges):
-    """`run()`'s per-cycle metrics sink, at module level rather than inline so the ORDER inside it
-    can be driven by a test: the ledger write comes first, and a test that cannot reach this closure
-    cannot prove that a failing writer starves the heartbeat rather than being papered over by a
-    gauge that keeps ticking."""
+    """`run()`'s per-cycle metrics sink, at module level rather than inline so a test can reach the closure and prove the ORDER
+    inside it: a failing ledger write starves the heartbeat rather than being masked by a gauge that keeps ticking."""
 
     def _sink(result, completed_at, duration_seconds):
         # The ledger is a forensic artifact, not a metric: compute the verdict and write it before
@@ -885,8 +752,7 @@ def run() -> None:
     # up must not be able to widen its own permission.
     write_restart_hold(config.journal_dir.parent, _utc_now())
     # Membership, not a glob: `refresh_store` reads every BASKET leg on both grids at each boundary,
-    # so a glob over one quote directory passes on a store missing exactly the legs a basket widening
-    # added (spec 00094's two /BTC legs) and the first cycle dies on the absent file instead.
+    # so a glob over one quote directory passes on a store missing exactly the legs a widening added.
     missing = [
         f"{symbol}@{interval}"
         for symbol in BASKET
@@ -911,12 +777,9 @@ def run() -> None:
     venue_gauges = None
     if port is not None:
         registry = build_registry()
-        # Startup seeding reads arbitrary on-disk journal artifacts (_seed_cycle_state ->
-        # from_json/_sidecar_fields): an unreadable cycle-*.json (bad mode/ownership on the bind
-        # mount) or a record with a tz-naive completed_at can raise OUTSIDE EngineJournalError
-        # (PermissionError, TypeError from an aware/naive comparison) -- telemetry may never kill
-        # the engine daemon (spec 00069 D5's isolation invariant; mirrors capture's
-        # CaptureCollector registration guard below). Serve process metrics regardless.
+        # Startup seeding reads arbitrary on-disk journal artifacts and can raise OUTSIDE
+        # EngineJournalError (a PermissionError, a naive/aware comparison): telemetry may never kill
+        # the engine daemon (spec 00069 D5), so serve process metrics regardless.
         try:
             cycle_gauges = _CycleGauges(registry)
             completed_at, success = _seed_cycle_state(config.journal_dir)
@@ -925,12 +788,8 @@ def run() -> None:
                 cycle_gauges.seed_cycle_success(success)
         except Exception:
             logger.exception("engine metrics setup failed -- continuing with process metrics only")
-        # Its own guard, isolated from the cycle seed above (00089 D6, cold-review MAJOR 1): without
-        # this, a routine restart (always inside the inter-cycle gap, fleet-deploys.md) would leave
-        # `zcrypto_venue_snapshot_timestamp_seconds` at its eager 0.0 default until the NEXT boundary
-        # cycle, and `zcrypto-venue-snapshot-stale` would false-page "the writer has stopped" for up
-        # to ~4h against an engine that merely restarted. An unreadable/absent venue-<HH>.json must
-        # never prevent the engine from starting, same isolation invariant as the cycle seed.
+        # Its own guard, isolated from the cycle seed above (spec 00089 D6): an unreadable or absent
+        # venue-<HH>.json must never prevent the engine from starting.
         try:
             venue_gauges = _VenueGauges(registry)
             seed = _seed_venue_state(config.journal_dir)
@@ -940,18 +799,15 @@ def run() -> None:
             logger.exception("venue metrics setup failed -- continuing with process metrics only")
         start_metrics_server(port, registry)
 
-    # Built regardless of telemetry: the ledger is a forensic artifact, not a metric. venue_reader
-    # is passed explicitly (rather than relying on the class's default) so a test can substitute it
-    # via `monkeypatch.setattr(command, "read_system_status", ...)` -- see exec_status below.
+    # Built regardless of telemetry: the ledger is a forensic artifact, not a metric. `venue_reader`
+    # is passed explicitly so a test can substitute this module's `read_system_status`.
     gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent, venue_reader=read_system_status)
     exec_gauges = _ExecGauges(registry) if registry is not None else None
 
     exec_metrics = None
     if registry is not None:
-        # Its own isolation guard, the `_VenueGauges` pattern: `_seed_exec_positions` reads arbitrary
-        # on-disk journal artifacts and raises by contract on a malformed one, and telemetry may
-        # never kill the engine daemon. The families are registered BEFORE the seed, so a failed
-        # seed costs the starting values, never the series.
+        # Its own isolation guard, the `_VenueGauges` pattern. The families are registered BEFORE the
+        # seed, so a failed seed costs the starting values, never the series.
         try:
             exec_metrics = _ExecutionMetrics(registry)
             positions = _seed_exec_positions(config.journal_dir)
@@ -973,8 +829,7 @@ def run() -> None:
         metrics=exec_metrics,
     )
 
-    # One evaluation at startup so no latch gauge sits at its seeded default. Inside the same
-    # isolation the sink enjoys: telemetry must never be able to stop the engine from starting.
+    # One evaluation at startup so no latch gauge sits at its seeded default, inside the sink's isolation.
     if exec_gauges is not None:
         try:
             now = _utc_now()
@@ -986,31 +841,17 @@ def run() -> None:
     from cli.engine.node import build_shadow_node
 
     node = build_shadow_node(config)
-    # This is the ONLY thing that arms faulthandler in the engine: nothing in the image or the
-    # compose entrypoint sets PYTHONFAULTHANDLER, so without it a native abort -- a Rust panic in
-    # the adapter, or the pyo3 assertion that fires when an unsendable object is touched off its own
-    # thread -- kills the engine with exit 134 and NOTHING on stderr. Armed, it arrives with a stack.
-    # tests/test_engine_node.py measures both, and it is why this runs before node.run().
-    # `disable()` first: `enable()` installs the fatal-signal handlers only while faulthandler
-    # considers itself disabled, so this pair is what makes THIS call install its own regardless of
-    # what state the process was already in.
-    # `file=2` rather than the default `sys.stderr` for two reasons. A fatal-signal dump is written
-    # from a signal handler and must reach the process's real stderr -- fd 2, which here is docker's
-    # log stream -- not whatever object happens to occupy `sys.stderr`. And the default form RAISES
-    # when that object has no `fileno()`: since `disable()` has already run by then, the engine would
-    # start with faulthandler switched OFF, strictly worse than never having armed it at all. An fd
-    # needs no `fileno()`, so this form cannot fail that way and needs no exception handling.
-    # Only the fatal five (SIGSEGV/SIGFPE/SIGABRT/SIGBUS/SIGILL) are handled; SIGTERM and SIGINT are
-    # untouched, so `docker stop` and Ctrl-C still shut down cleanly.
+    # The only thing arming faulthandler (nothing else sets PYTHONFAULTHANDLER): without it a native abort (a Rust panic, the pyo3
+    # unsendable assertion) kills the engine with exit 134 and NOTHING on stderr. `disable()` first: `enable()` installs the
+    # fatal-signal handlers only while faulthandler considers itself disabled. `file=2` so the dump reaches fd 2; the default
+    # `sys.stderr` form raises with no `fileno()`, which after `disable()` leaves the engine unarmed; an fd cannot fail that way.
     faulthandler.disable()
     faulthandler.enable(file=2)
     logger.info("shadow node starting (exec_enabled=%s, journal_dir=%s)", config.exec_enabled, config.journal_dir)
-    # `node.run()` returns on a clean shutdown and RAISES on a start it cannot complete -- a client
-    # that never connects, a startup reconciliation that never finishes. That raise is the loud
-    # failure: the node has already disconnected its clients and stopped by the time it escapes,
-    # `cli/__main__.py` logs it at ERROR before the process dies, and compose's `restart:
-    # unless-stopped` is the recovery. Nothing here may catch it -- a swallowed start failure is a
-    # live-looking node that will never trade, burning ratified gate days in silence.
+    # `node.run()` returns on a clean shutdown and RAISES on a start it cannot complete -- a client that never connects, a
+    # startup reconciliation that never finishes. Nothing here may catch that raise: the node has already stopped by the
+    # time it escapes, `cli/__main__.py` logs it at ERROR and compose's restart policy is the recovery, and a swallowed
+    # start failure is a live-looking node that will never trade.
     try:
         node.run()
     finally:
@@ -1263,9 +1104,8 @@ def soak_check(
 
     self_test = payload.get("self_test")
     if self_test is not None and self_test.get("void"):
-        # A ran-and-failed instrument/identity/reconcile check means the tool itself can't be
-        # trusted -- distinct from a short-window/canonical-absent "no verdict" refusal, which
-        # exits 0 like any other successful emit.
+        # A ran-and-failed instrument/identity/reconcile check means the tool itself cannot be
+        # trusted -- distinct from a "no verdict" refusal, which exits 0 like any successful emit.
         raise typer.Exit(code=1)
 
 
@@ -1295,10 +1135,9 @@ def gate_export(
     ),
 ) -> None:
     """Emit the >= 14-clean-day gate as machine-readable Prometheus metrics (atomic textfile write)
-    and ping an independent dead-man's-switch healthcheck. Exits 0 on a successful emit even when
-    the gate has a mismatch or the journal is stale (those are findings, surfaced via the metrics
-    and a /fail ping); non-zero only on an operational failure (unreadable journal, unwritable
-    textfile)."""
+    and ping an independent dead-man's-switch healthcheck. Exits 0 on a successful emit even when the
+    gate has a mismatch or the journal is stale -- those are findings, reported through the metrics
+    and a /fail ping -- and non-zero only on an operational failure."""
     export_started = time.monotonic()
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
@@ -1311,10 +1150,9 @@ def gate_export(
         raise _abort(str(exc)) from exc
 
     lag = (now - newest_ts).total_seconds() if newest_ts is not None else None
-    # Every not-clean outcome that breaks a gate day: replay mismatches, corrupt records, AND
-    # failed-cycle sidecars (the normal stale_pair/refresh_deadline failure path -- these break
-    # the streak but are tallied in sidecar_count, so omitting them would let the metric read 0
-    # and the dead-man ping "clean" through a real gate failure).
+    # Every not-clean outcome that breaks a gate day, failed-cycle sidecars included: they break the
+    # streak but are tallied separately, so omitting them would let this metric read 0 and the
+    # dead-man ping "clean" through a real gate failure.
     mismatch_total = counts.mismatches + counts.validation_failures + counts.sidecar_count
 
     duration_seconds = time.monotonic() - export_started
@@ -1332,13 +1170,10 @@ def gate_export(
         raise _abort(f"could not write gate textfile {textfile}: {exc}") from exc
 
     if healthcheck_url:
-        # The dead-man reflects the gate's CURRENT health across ALL break reasons (missing / late /
-        # mismatch / validation / sidecar -- evaluate_gate resets streak on any of them in the most recent
-        # COMPLETE day), not just the counted mismatch_total. streak>0 => the last complete day is clean
-        # (progressing, at any streak length); streak==0 with no last_failure => no complete day is
-        # evaluable yet (early phase -> liveness only, not a break); streak==0 WITH a last_failure => the
-        # most recent complete day broke -> not clean. A recovered gate (broke earlier, clean since) has
-        # streak>0 => clean, matching Grafana's windowed increase() and fixing the /fail-forever divergence.
+        # The dead-man reflects the gate's CURRENT health across every break reason, not just the counted mismatch_total:
+        # streak>0 means the last complete day is clean, streak==0 with no last_failure means no complete day is evaluable
+        # yet (liveness only, not a break), and streak==0 WITH one means the most recent complete day broke. A recovered
+        # gate reads clean, matching Grafana's windowed increase().
         gate_healthy = status.streak > 0 or status.last_failure is None
         clean = gate_healthy and lag is not None and lag <= lag_fail_seconds
         _gate_ping(healthcheck_url, clean)
@@ -1357,14 +1192,10 @@ def _parse_day(raw: str | None, flag: str) -> date | None:
 
 
 def _window_records(journal_root: Path, since: str | None, until: str | None) -> list[CycleRecord]:
-    """Every journaled success record whose boundary falls in the inclusive [--since, --until] UTC
-    day window.
-
-    An unreadable record ABORTS rather than being skipped. Both measurements aggregate across the
-    whole window, so a quietly dropped cycle biases every number below it with nothing on the page
-    to say so -- and unlike a record that parses but fails to replay (which the reports name and
-    count), one that will not parse cannot even be named per cycle downstream. --since/--until are
-    the escape hatch for a journal carrying a known-bad day."""
+    """Every journaled success record whose boundary falls in the inclusive [--since, --until] UTC day
+    window. An unreadable record ABORTS rather than being skipped: both measurements aggregate across
+    the whole window, so a quietly dropped cycle biases every number below it with nothing on the page
+    to say so, and --since/--until are the escape hatch for a journal carrying a known-bad day."""
     since_day = _parse_day(since, "--since")
     until_day = _parse_day(until, "--until")
     records: list[CycleRecord] = []
@@ -1384,9 +1215,8 @@ def _window_records(journal_root: Path, since: str | None, until: str | None) ->
 
 
 def _resolve_minimums(flag_value: Path | None) -> Path:
-    """`--minimums`, else the newest venue reference-data snapshot under the configured data dir.
-
-    Newest BY FILENAME: the stamp is fixed-width UTC, so lexicographic order is chronological."""
+    """`--minimums`, else the newest venue reference-data snapshot under the configured data dir --
+    newest BY FILENAME, whose fixed-width UTC stamp orders lexicographically as it orders in time."""
     if flag_value is not None:
         return flag_value
     snapshots_dir = (_load_app_config().data_dir or Path("data")) / "snapshots"
@@ -1400,18 +1230,10 @@ def _resolve_minimums(flag_value: Path | None) -> Path:
 
 
 def _payload_json(payload: dict) -> str:
-    """The report payload as STRICTLY valid JSON: every non-finite float becomes `null`, and every
-    mapping key becomes a string.
-
-    Both are deliberate. A NaN is a legitimate value in these payloads -- a flat cycle's 0/0
-    cancellation ratio, which must not masquerade as 1.0 -- and `json.dumps` writes it as the bare
-    token `NaN`, which the JSON grammar has no room for and most non-Python parsers reject outright;
-    emitting invalid JSON from a `--json` flag is worse than losing the NaN/None distinction, and
-    the only other None either payload carries is an absent whole block (`reconciliation`, when no
-    ledger export was given), so `null` on a number reads unambiguously as "not a number".
-    The drift payload is also keyed by NAV, a float: the key spelling is written here and pinned by
-    a test rather than left to `json.dumps`' internal coercion, and the numeric NAVs stay
-    recoverable from the payload's own `navs` list and each row's `nav` field."""
+    """The report payload as STRICTLY valid JSON: every non-finite float becomes `null`, every mapping key a string. `json.dumps`
+    writes a NaN as the bare token `NaN`, which the JSON grammar has no room for, and emitting invalid JSON from a `--json` flag is
+    worse than losing the NaN/None distinction, which only the rendered text keeps (`no data` vs `n/a`). The drift payload's float
+    NAV keys are spelled here, not left to `json.dumps`' coercion; the numeric NAVs stay in `navs` and each row's `nav`."""
 
     def convert(value):
         if isinstance(value, dict):
@@ -1428,14 +1250,10 @@ def _payload_json(payload: dict) -> str:
 
 
 def _emit_report(text: str, payload: dict, *, as_json: bool) -> None:
-    """Print the report, then exit non-zero if anything in it failed -- `n_failed` is the count.
-
-    A failed replay means one of the two identity guards fired -- the recomputed stages no longer
-    match the builder, or the rebuild no longer matches what the engine actually traded -- so the
-    aggregates above it describe a smaller window than was asked for. A caller may count other
-    failures of the same weight (the tracking report adds a ledger reconciliation that did not
-    reconcile). Every one is named in the rendered text and in the payload; the exit code is what a
-    script notices."""
+    """Print the report, then exit non-zero if anything in it failed -- `n_failed` is the count. A
+    failed replay means an identity guard fired, so the aggregates above it describe a smaller window
+    than was asked for; a caller may count other failures of the same weight. Every one is named in
+    the rendered text and in the payload, and the exit code is what a script notices."""
     typer.echo(_payload_json(payload) if as_json else text)
     if payload["n_failed"]:
         raise typer.Exit(code=1)
@@ -1501,8 +1319,7 @@ def accum_replay(
     try:
         floors, fetched_at = load_minimums(minimums_path)
     # TypeError belongs in here beside the others: a snapshot carrying `"ordermin": null` reaches
-    # float(None), and a non-dict `universe` entry reaches .get() on a str -- both are malformed
-    # evidence, and this module answers those with a clean one-line exit, never a traceback.
+    # `float(None)` -- malformed evidence, answered with a clean one-line exit, never a traceback.
     except (OSError, KeyError, TypeError, ValueError, EngineError) as exc:
         raise _abort(f"could not read the venue order minimums from {minimums_path}: {exc}") from exc
     try:
@@ -1523,10 +1340,8 @@ def accum_replay(
 
 def _window_exec_records(journal_root: Path, since: str | None, until: str | None) -> list[dict]:
     """Every journaled execution record in the same inclusive UTC day window `_window_records` uses.
-
-    An unreadable or schema-invalid record ABORTS rather than being skipped, for a sharper reason
-    than the cycle records': the fills it carries move `held` for every LATER cycle, so dropping one
-    quietly overstates the drift of the whole remaining window."""
+    An unreadable or schema-invalid record ABORTS rather than being skipped: the fills it carries move
+    `held` for every LATER cycle, so dropping one quietly overstates the drift of the whole window."""
     since_day = _parse_day(since, "--since")
     until_day = _parse_day(until, "--until")
     out: list[dict] = []
@@ -1547,12 +1362,9 @@ def _window_exec_records(journal_root: Path, since: str | None, until: str | Non
 
 
 def _parse_gate_from(raw: str | None) -> str | None:
-    """Validate `--gate-from` as a fixed-width ISO week label, or abort naming the form.
-
-    Fixed width is load-bearing, not cosmetic: `rung_by_week` is built by comparing week labels as
-    STRINGS, and `YYYY-Www` orders lexicographically exactly as it orders chronologically. A
-    one-digit week would silently sort `2026-W9` after `2026-W10` and hand the wrong weeks a rung.
-    """
+    """Validate `--gate-from` as a fixed-width ISO week label, or abort naming the form. Fixed width
+    is load-bearing: `rung_by_week` compares week labels as STRINGS, and a one-digit week would sort
+    `2026-W9` after `2026-W10` and hand the wrong weeks a rung."""
     if raw is None:
         return None
     year, sep, week = raw.partition("-W")
@@ -1562,12 +1374,9 @@ def _parse_gate_from(raw: str | None) -> str | None:
 
 
 def _rung_by_week(stages: list[CycleStages], gate_from: str | None) -> dict[str, int]:
-    """Every window week labelled rung 3 from `gate_from` onward, rung 2 before it.
-
-    Absent the flag this is EMPTY, and `weekly_tracking` decides nothing -- the safe direction. The
-    operator names the boundary; nothing here guesses it from the data, because the first week that
-    counts is a decision about the deployment, not a property of the journal.
-    """
+    """Every window week labelled rung 3 from `gate_from` onward, rung 2 before it. Absent the flag
+    this is EMPTY and `weekly_tracking` decides nothing: the operator names the boundary, because the
+    first week that counts is a decision about the deployment, not a property of the journal."""
     if gate_from is None:
         return {}
     labels = {f"{s.cycle_ts.isocalendar().year}-W{s.cycle_ts.isocalendar().week:02d}" for s in stages}
@@ -1575,16 +1384,10 @@ def _rung_by_week(stages: list[CycleStages], gate_from: str | None) -> dict[str,
 
 
 def _simulated_fills(stages: list[CycleStages], floor_cycles: list[dict], minimums: dict[str, tuple[float, float]]) -> list[Fill]:
-    """The drift floor's own placements, dressed as fills at the journaled close.
-
-    The true-positive for the whole realized half. With zero journaled fills, every refusal in the
-    tracking module is indistinguishable from a guard that always refuses, and a report that runs
-    end to end proves only that it ran.
-
-    Fees are MODELLED at the builder's own maker rate, so the fee-per-side this produces is the
-    current one by construction -- real-shaped, never a recalibration input, which is why the report
-    labels the run and says so beside the number.
-    """
+    """The drift floor's own placements, dressed as fills at the journaled close -- the true-positive for the whole realized half,
+    since with zero journaled fills every refusal in the tracking module is indistinguishable from a guard that always refuses. Fees
+    are MODELLED at the builder's own maker rate, so the fee this yields is the current one by construction -- real-shaped, never a
+    recalibration input."""
     cfg = CrossfreqSystemConfig()
     held: dict[str, float] = {}
     out: list[Fill] = []
@@ -1617,17 +1420,10 @@ def _simulated_fills(stages: list[CycleStages], floor_cycles: list[dict], minimu
 
 
 def _cost_over(fills: list[Fill], reconciliation: dict | None) -> dict:
-    """The realized blend, with the PROPOSAL withdrawn when the ledger did not reconcile.
-
-    The measurement stays -- the maker/taker split and the realized rate are what the operator
-    investigates with, and withholding them helps nobody. `proposed_fee_per_side` is different: it is
-    the one number this whole comparison exists to feed into a config, and a `--json` consumer reads
-    it straight out without ever looking at `n_failed`. A rate computed over a book the
-    reconciliation has just declared incomplete must not be there to read.
-
-    `basis` carries the reason, in the PAYLOAD rather than only in the rendered text -- the same
-    reason `cost_blend` spells its three no-rate branches out at source instead of at whatever
-    renders them."""
+    """The realized blend, with the PROPOSAL withdrawn when the ledger did not reconcile. The measurement stays -- it is
+    what an operator investigates with -- but `proposed_fee_per_side` is the one number a `--json` consumer reads straight
+    out without ever looking at `n_failed`, and a rate computed over a book the reconciliation has just declared incomplete
+    must not be there to read. `basis` carries the reason in the PAYLOAD, not only in the rendered text."""
     cost = cost_blend(fills)
     if reconciliation is None or reconciliation["status"] != "FAILED":
         return cost
@@ -1647,13 +1443,10 @@ def _tracking_cell(value: float | None) -> str:
 
 
 def _tracking_note(week: dict) -> str:
-    """Why a week carries no verdict, spelled out.
-
-    `weekly_tracking` marks a week that straddles the first fill only by ELIMINATION -- complete,
-    on the deciding rung, and still not gate-eligible -- and an operator should not have to infer
-    that from three flags. The branches are exhaustive because `gate_eligible` is exactly
-    `complete and rung == 3 and not straddles`; each one below eliminates a conjunct, so what
-    reaches the straddle branch can only be straddling."""
+    """Why a week carries no verdict, spelled out. The branches are exhaustive because `gate_eligible`
+    is exactly `complete and rung == 3 and not straddles` and each one below eliminates a conjunct, so
+    what reaches the straddle branch can only be straddling -- and an operator should not have to
+    infer that from three flags."""
     if not week["complete"]:
         return "partial week"
     if week["rung"] is None:
@@ -1857,10 +1650,9 @@ def tracking_report(
             failures.append({"cycle_ts": record.cycle_ts.isoformat(), "error": str(exc)})
 
     notes: list[str] = []
-    # Both halves are inside one catch. `accumulation_report` DROPS a record whose replay raises and
-    # counts it -- but a fill journaled under that dropped boundary then orphans, and
-    # `realized_drift` refuses rather than silently overstating every later cycle. That refusal must
-    # surface as this module's clean one-line exit, not as a traceback.
+    # Both halves inside one catch: `accumulation_report` drops a record whose replay raises, a fill
+    # journaled under that dropped boundary then orphans, and `realized_drift` refuses rather than
+    # overstating every later cycle -- that refusal must surface as a clean one-line exit.
     try:
         floor = accumulation_payload(stages, floors, [nav_value])["by_nav"][nav_value]
         if simulated_fills:
@@ -1871,9 +1663,8 @@ def tracking_report(
     except EngineError as exc:
         raise _abort(str(exc)) from exc
 
-    # Absent an export there is nothing to reconcile against, and most runs will not have one. An
-    # export whose HEADER cannot be mapped aborts, unlike an unmatched row: nothing was read, so
-    # there is no reconciliation to report either way.
+    # An export whose HEADER cannot be mapped aborts, unlike an unmatched row: nothing was read, so
+    # there is no reconciliation to report either way. Most runs have no export at all.
     reconciliation = None
     if ledger_export is not None:
         try:
@@ -1893,9 +1684,8 @@ def tracking_report(
         "simulated": simulated_fills,
         "minimums_fetched_at": fetched_at,
         "notes": notes,
-        # A failed reconciliation joins the exit-code count: the report is printed in full either
-        # way, and the exit code is the only thing a script reading this notices. It stays OUT of
-        # `failures`, which is the per-cycle replay list.
+        # A failed reconciliation joins the exit-code count -- the only thing a script reading this
+        # notices -- but stays OUT of `failures`, which is the per-cycle replay list.
         "n_failed": len(failures) + (1 if reconciliation is not None and reconciliation["status"] == "FAILED" else 0),
         "failures": failures,
     }
@@ -1912,7 +1702,7 @@ def exec_status(
 ) -> None:
     """Report whether the engine may submit orders right now, and every input that decided it.
 
-    Remote telemetry can only say THAT the engine is disarmed, never WHICH key is missing -- `zcrypto_exec_gate_level` carries a number, and `zcrypto_exec_armed` conflates its two arming keys into one gauge. This command reads the same gate and prints every reason and every input, for the deployment checklist to read on the host."""
+    Remote telemetry can only say THAT the engine is disarmed, never WHICH key is missing -- `zcrypto_exec_armed` conflates its two arming keys into one gauge. This command reads the same gate on the host and prints every reason and every input."""
     config = _load_engine_config()
     root = state_dir if state_dir is not None else config.journal_dir.parent
     gate = ExecutionGate(
@@ -1946,11 +1736,8 @@ def flatten(
 ) -> None:
     """Close every open position and sell every non-EUR balance at market, account-wide.
 
-    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, 1 refused with nothing sent, 2 something is still open, 3 the venue could not be read before anything was sent.
-
-    The cancel is account-wide and complete; the flat verdict is not. Neither the plan nor the final read can see a resting order on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC, so exit 0 is not proof those pairs are clear -- confirm open orders on Kraken's own page, and re-run if one is there."""
-    # Imported HERE, not at module scope: `cli.engine.flatten` pulls nautilus (~1 s) and
-    # `zcrypto --help` must never pay it -- the same reason `cli.engine.node` is lazy above.
+    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, 1 refused with nothing sent, 2 something is still open, 3 the venue could not be read before anything was sent. The cancel is account-wide and complete; the flat verdict is not -- neither the plan nor the final read can see a resting order on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC, so exit 0 is not proof those pairs are clear: confirm open orders on Kraken's own page, and re-run if one is there."""
+    # Lazy: `cli.engine.flatten` pulls nautilus (~1 s) and `zcrypto --help` must never pay it.
     from cli.engine.flatten import run_flatten
 
     key = os.environ.get(_API_KEY_VAR)
@@ -1963,22 +1750,18 @@ def flatten(
     from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
 
     client = KrakenSpotHttpClient(key, secret)
-    # `raise typer.Exit(code=...)`, never `return`: a returned int is discarded and the process
-    # exits 0, which turns every refusal and every not-flat account into a clean-looking run.
-    # `echo` is handed the plain callable -- `run_flatten` wraps it in its own dead-stdout guard.
-    # `asyncio.run` is where the loop the client needs comes from, and this is the only place it is
-    # opened: every one of its seven methods raises `RuntimeError: no running event loop` outside
-    # one, so called synchronously this command exits 3 on its very first read -- `--execute`
-    # included. Same boundary placement as `cli/liquidations/command.py` and `cli/capture`.
+    # `raise typer.Exit(code=...)`, never `return`: a returned int is discarded and the process exits 0, which would turn every
+    # refusal and every not-flat account into a clean-looking run. `asyncio.run` is the only place a loop is opened: the client's
+    # methods raise `RuntimeError: no running event loop` outside one, so called synchronously this command would exit 3 on its very
+    # first read, `--execute` included. `echo` is passed bare -- `run_flatten` owns the dead-stdout guard.
     raise typer.Exit(code=asyncio.run(run_flatten(client, state_dir=state_dir, execute=execute, echo=typer.echo)))
 
 
 def _newest_venue_record(journal_dir: Path) -> dict | None:
     """The newest `ok`, schema-2 `venue-<HH>.json` document in full, or None when the journal holds
-    none. `_seed_exec_positions`' scan, kept whole rather than reduced: this caller needs both the
-    instrument constraints and the balances. Same no-try/except contract -- a record that fails
-    `validate_venue_record` raises rather than being skipped, because reading past a broken record
-    would make every floor below fail open."""
+    none -- `_seed_exec_positions`' scan kept whole, because this caller needs the instrument
+    constraints and the balances both. Same no-try/except contract: reading past a record that fails
+    `validate_venue_record` would make every floor below fail open."""
     from cli.engine.venueledger import read_venue_record, validate_venue_record
 
     newest: tuple[datetime, dict] | None = None
@@ -1994,21 +1777,15 @@ def _newest_venue_record(journal_dir: Path) -> dict | None:
 
 
 def _intent_floor_check(index: int, intent, entry: dict) -> tuple[str, list[str]]:
-    """One intent's checkable floors against one venue-snapshot instrument entry: the printable
-    line, and every refusal it earned.
-
-    A notional intent meets `costmin`, and ONLY when both are EUR: comparing a EUR notional against
-    a `/BTC` leg's BTC-denominated floor passes everything silently (2e-05 is under any EUR figure),
-    which is exactly the fail-open direction `size_probe_order`'s guard refuses at sizing time. A
-    qty intent meets `ordermin` and the lot step instead -- it carries no price here, so no notional
-    exists to check.
-    """
+    """One intent's checkable floors against one venue-snapshot instrument entry: the printable line, and every refusal it
+    earned. A notional intent is compared against `costmin` ONLY when both are EUR -- a EUR notional against a `/BTC` leg's
+    own floor passes everything silently, the fail-open direction `size_probe_order`'s guard refuses at sizing time. A qty
+    intent carries no price here, so it meets `ordermin` and the lot step instead."""
     refusals: list[str] = []
     head = f"  [{index}] {intent.symbol} {intent.side} {intent.action} {intent.mode}"
     if intent.mode == "rest-hold":
-        # The two fields that decide whether this order can FILL, in words, on the only surface an
-        # operator reads before placing it. `offset_pct` is a percent: `0.05` here is fifteen euro
-        # off a thirty-thousand euro bid, and the whole point of printing it is that it looks wrong.
+        # The two fields that decide whether this order can FILL, on the only surface an operator
+        # reads before placing it. `offset_pct` is a PERCENT: 0.05 is fifteen euro off a 30k euro bid.
         head += f" ({intent.offset_pct:g}% passive of the touch, holding {intent.hold_minutes} min)"
     if intent.notional_eur is not None:
         quote = entry["costmin_quote"]
@@ -2080,10 +1857,9 @@ def probe_plan(
     _echo_gate_verdict(gate.evaluate(now))
     typer.echo(f"venue snapshot: {record['state']['snapshot_at']}")
 
-    # The live balances spell the free-cash currency `EUR` (measured: `{'EUR': 99.84}`), so this
-    # resolves on its SECOND arm against a real record. The `ZEUR` arm stays because the adapter's
-    # other surface spells the euro `ZEUR` (the instrument quote currency); both absent reads 0.0,
-    # which refuses any margin intent -- the executor's own reading.
+    # The live balances spell the free-cash currency `EUR` (read from a live balance record), so this
+    # resolves on its SECOND arm; the `ZEUR` arm stays because the adapter's other surface spells the
+    # euro `ZEUR`. Both absent reads 0.0, which refuses any margin intent.
     free_zeur = balances.get("ZEUR", 0.0) or balances.get("EUR", 0.0)
     refusals = list(
         plan_refusals(
