@@ -14,25 +14,21 @@ from cli.tick.reconcile import reconcile
 
 _SECS_15M = INTERVAL_SECONDS["15"]
 _SECS_1H = INTERVAL_SECONDS["60"]
-# The T0004-ratified acceptance band for tick reconciliation: match rate "within 1 %".
+# The tick-reconciliation acceptance band ratified in T0004 (resolved): a bar matches when every O/H/L/C relative
+# difference is within 1 %, so `reconcile`'s `pct_within_tol` at this band is the acceptance rate.
 _ACCEPTANCE_TOL = 1e-2
-# Seam price tolerance. O/H/L/C survive re-bucketing without arithmetic (copies, max, min),
-# so this is slack for bit-identical values.
+# Seam price tolerance: re-bucketing moves O/H/L/C by copy/max/min, never arithmetic, so this is slack around values
+# that should be bit-identical.
 _SEAM_PRICE_TOL = 1e-9
-# Seam volume tolerance — "exact up to float summation order" (ratified at review):
-# re-bucketing reorders the minute-volume sum, shifting a fraction of hours by exactly 1 ULP
-# (~2.2e-16 rel), so volume matches at rel <= 5e-16 (<= 2 ULP); the Int64 `count` sum is
-# order-immune and is compared exactly, proving per-hour minute-set identity.
+# Seam volume tolerance — exact up to float summation order: re-bucketing reorders the minute-volume sum, so volume is
+# matched within 2 ULP, while the order-immune Int64 `count` sum is compared exactly and is what proves per-hour
+# minute-set identity.
 _SEAM_VOLUME_TOL = 5e-16
 _PRICE_COLUMNS = ["open", "high", "low", "close"]
 
 
 def build_15m_substrate(source_dir: Path, symbols: list[str], out_root: Path, *, fetched_at: str) -> dict:
-    """Build the full-history 15m substrate: `backfill_basket` at the `"15"` interval, verbatim.
-
-    Writes `out_root/{BASE}/{QUOTE}/15.parquet` per symbol plus `out_root/manifest.json`
-    (per-series `rows`/`first_ts`/`last_ts`/`sha256` + `basket_sha256`) and returns the manifest.
-    """
+    """Build the full-history 15m substrate — `backfill_basket` at the `"15"` interval, verbatim."""
     return backfill_basket(source_dir, symbols, ["15"], out_root, fetched_at)
 
 
@@ -42,14 +38,8 @@ def _pair_parquet(root: Path, symbol: str, label: str) -> pl.DataFrame:
 
 
 def qa_15m(out_root: Path, symbols: list[str]) -> dict:
-    """Gap/density QA over each pair's written `15.parquet` (a pure read; nothing is modified).
-
-    Per symbol: `rows`, `first_ts`/`last_ts`, `gap_count` + `largest_gap_missing` (`detect_gaps`
-    at 900 s), and `density_by_year` — actual bars per calendar year as a percentage of the ideal
-    96-bars/day 900-s grid, with the first/last year's denominator clipped to the series span
-    (so a mid-year start doesn't dilute its year). A calendar year inside the span with zero bars
-    still appears, at density 0.0.
-    """
+    """Gap/density QA over each pair's written `15.parquet`, a pure read that modifies nothing; `density_by_year` clips the
+    first and last year's ideal-grid denominator to the series span, so a mid-year start does not dilute its year."""
     report: dict = {}
     for symbol in symbols:
         frame = _pair_parquet(out_root, symbol, "15")
@@ -79,17 +69,10 @@ def qa_15m(out_root: Path, symbols: list[str]) -> dict:
 
 
 def reconcile_15m_vs_ticks(out_root: Path, tick_zip: Path, symbol_csvs: dict[str, str], window: tuple[datetime, datetime]) -> dict:
-    """Independent tick-derived check of the 15m substrate over `window` (`[start, end)`, tz-aware
-    UTC, 900-s-aligned so tick buckets and bar stamps share the grid).
-
-    Per symbol in `symbol_csvs` (canonical `"BASE/QUOTE"` -> CSV member name inside `tick_zip`):
-    `read_trades_csv` on the zip member -> window filter -> `ticks_to_bars(interval_minutes=15)`
-    -> `cli.tick.reconcile.reconcile` against the pair's written `15.parquet` rows in-window, at
-    `tol=1e-2` — so `pct_within_tol` IS the T0004 "within 1 %" acceptance rate. Returns the
-    reconcile dict per symbol, extended with `canonical_bars_in_window` and `coverage_pct`
-    (compared bars over canonical bars in-window; the honest denominator, since `reconcile`
-    inner-joins and would otherwise silently drop uncovered bars).
-    """
+    """Independent tick-derived check of the 15m substrate over `window` — half-open, tz-aware UTC and 900-s-aligned so tick
+    buckets and bar stamps share the grid — for each canonical `"BASE/QUOTE"` in `symbol_csvs`, mapped to its CSV member
+    inside `tick_zip`. Each symbol's `reconcile` dict gains `coverage_pct`, its joined `n_intervals` over the canonical bars
+    in-window, because `reconcile` inner-joins and would otherwise silently drop the bars no tick bucket covered."""
     start, end = window
     report: dict = {}
     for symbol, member in symbol_csvs.items():
@@ -105,22 +88,10 @@ def reconcile_15m_vs_ticks(out_root: Path, tick_zip: Path, symbol_csvs: dict[str
 
 
 def seam_15m_to_1h(out_root: Path, canonical_root: Path, symbols: list[str], window: tuple[datetime, datetime]) -> dict:
-    """Seam check: re-aggregating the 15m frame to 1h must reproduce the canonical 1h bars.
-
-    `window` is `[start, end)`, tz-aware UTC, hour-aligned (a partial edge hour would produce a
-    spurious bucket). The 15m rows in-window are bucketed by `floor(ts / 3600)` with an explicit
-    polars group-by (open=first, high=max, low=min, close=last, volume=sum, count=sum — NOT
-    `aggregate_minutes`, which assumes 1-minute inputs) and inner-joined on `ts` against the
-    canonical `60.parquet` in-window. A joined hour matches (the ratified predicate) when every
-    O/H/L/C relative difference is within 1e-9, volume is exact up to float summation order
-    (rel <= 5e-16, i.e. <= 2 ULP — re-bucketing reorders the minute-volume sum, which shifts some
-    hours by exactly 1 ULP), AND the summed trade `count` is exactly equal (Int64, order-immune —
-    per-hour minute-set identity). Per symbol: bucket counts (`n_hours_15m`/`n_hours_canonical`/
-    `n_joined`), `n_matched`, `n_price_mismatch` / `n_volume_mismatch` / `n_count_mismatch`,
-    `n_volume_bitexact` (joined hours whose volume is bit-identical — transparency on how much
-    the 2-ULP band absorbs), `max_price_rel_diff` / `max_volume_rel_diff` (0.0 when clean), and
-    `all_match` (identical bucket sets and every joined hour matching).
-    """
+    """Seam check: re-aggregating the 15m frame to 1h must reproduce the canonical 1h bars over `window`, half-open, tz-aware
+    UTC and hour-aligned, since a partial edge hour would produce a spurious bucket. The hourly roll-up is an explicit polars
+    group-by rather than `aggregate_minutes`, which assumes 1-minute inputs. `n_volume_bitexact` reports how many joined
+    hours needed no volume band at all."""
     start, end = window
     report: dict = {}
     for symbol in symbols:
