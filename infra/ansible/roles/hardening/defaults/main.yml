@@ -2,10 +2,10 @@ hardening_stale_sshd_dropins:
   - "10-zcrypto.conf"
 
 hardening_ssh_port: "10022"
-# AllowUsers (spec 00057 D1, T0068). sshd gates AllowUsers at session setup BEFORE the forced
-# command, so zcrypto-data must be listed even though it only ever runs an rrsync forced command.
-# zcrypto-deploy is the admin and Ansible user, and root is the key-only break-glass -- never drop
-# it. A virgin host bootstraps straight to zcrypto-deploy, so this value is correct there too.
+# AllowUsers (spec 00057 D1, T0068). sshd gates it at session setup BEFORE the forced command, so
+# zcrypto-data must be listed even though it only ever runs rrsync. root is the key-only break-
+# glass, never dropped. `deploy` must never be re-added: the engine role's §8 gate is a SUPERSET
+# check that tolerates it, so a stale entry silently re-admits the dead admin account.
 hardening_ssh_allow_users: zcrypto-data zcrypto-deploy root
 
 # devsec.hardening.ssh_hardening hard-codes ssh_listen_to: [0.0.0.0] by default even though

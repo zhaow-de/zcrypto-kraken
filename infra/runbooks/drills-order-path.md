@@ -141,7 +141,7 @@ Entry `A2`: the venue's figure, the ledgered figure, the delta, that the fill co
 
 ### Preconditions
 
-- **B waits on the converge, not on the build.** `zcrypto engine flatten` shipped with spec `00106`; the host-facing wrapper is rendered by `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2` to `/usr/local/sbin/zcrypto-flatten`, and the procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Until an **engine converge carrying 00106** reaches the host, the wrapper is absent and a run booked against B is **`blocked`** with *that* reason — "wrapper not yet deployed", never "not built", and never `fail`, which would assert a red button that did not work.
+- **B's instrument is the host wrapper, not the command.** `zcrypto engine flatten` is in the tree (spec `00106`), and `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2` renders it to `/usr/local/sbin/zcrypto-flatten` on an engine converge; the procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Whether the host has it is the engine row of `docs/reference/fleet-pins.md`, read at drill time. Absent, a run booked against B is **`blocked`** with that reason — "wrapper not deployed", never "not built", and never `fail`, which would assert a red button that did not work.
 - The subject is a real position and a real balance: A2's end state, or D's, plus a small spot balance. Flattening an already-flat account measures nothing.
 - The window open and attended, with the owner present. This is the one drill whose whole point is a human deciding.
 
