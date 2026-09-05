@@ -139,18 +139,29 @@ def test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve():
 
 # --- A shipped metric that nothing watches ------------------------------------------------------
 # `test_infra_alloy_series.py` proves a metric REACHES Grafana; this proves something looks at it
-# (T0008, T0100).
-#
-# The candidate set is DERIVED from the capture keep-regex, not hand-listed: a fixed list cannot see
-# the next fault gauge added to the regex. Every admitted series is a candidate until excluded below
-# with a written reason.
+# (T0008, T0100). The candidate set is DERIVED, never hand-listed, from the two sources that name
+# series one by one -- the capture hosts' keep-regex and the nightly sweep runner's `# TYPE` lines;
+# the ops keep-regex admits that family by wildcard, which names nothing. Every candidate is a fault
+# signal until excluded below with a written reason.
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
+VERIFY_REPLAY_RUNNER = REPO / "infra/ansible/roles/ops/templates/verify-replay.sh.j2"
 
 
 def _admitted_series() -> list[str]:
     """Every metric name the capture hosts' keep-regex admits to remote_write."""
     line = next(ln for ln in CAPTURE_ALLOY.read_text().splitlines() if ln.strip().startswith("regex") and "node_load1" in ln)
     return line.split('"')[1].split("|")
+
+
+def _verify_replay_series() -> list[str]:
+    """Every metric name the nightly sweep's runner publishes to its textfile: the `# TYPE` lines,
+    checked against the `# HELP` lines so a printf that lost one fails here instead of silently
+    dropping a candidate."""
+    text = VERIFY_REPLAY_RUNNER.read_text()
+    typed = re.findall(r"^\s*printf '# TYPE (ops_verify_replay_\w+) ", text, re.M)
+    helped = re.findall(r"^\s*printf '# HELP (ops_verify_replay_\w+) ", text, re.M)
+    assert typed and sorted(typed) == sorted(helped), f"TYPE/HELP lines disagree: {sorted(set(typed) ^ set(helped))}"
+    return typed
 
 
 # Not fault signals: context you read once something ELSE has paged, or state whose meaning is a
@@ -274,15 +285,35 @@ NOT_A_FAULT_SIGNAL = {
     # either directly would double-page the same event.
     "zcrypto_venue_instruments_loaded",
     "zcrypto_venue_instruments_expected",
+    # The nightly canonical sweep's textfile (spec 00077, spec 00078): every way the sweep fails has
+    # a rule -- failed_hours (new-breakage), run_ok (run-broken), pending_hours (backlog-stuck),
+    # last_run_timestamp (stale) -- and the rest is what a responder reads once one has paged.
+    #   exit_code: 1 on every run once any bad hour stands, so its rule paged daily (spec 00077 D1/D4).
+    "ops_verify_replay_exit_code",
+    #   last_success_timestamp: frozen while any bad hour stands (rc gates it, D5) -- a staleness rule
+    #   on it would be the exit-code page in a third channel; the stale rule reads last_run_timestamp.
+    "ops_verify_replay_last_success_timestamp",
+    #   hours_total, replayed_hours: the census denominators, legitimate at every value.
+    "ops_verify_replay_hours_total",
+    "ops_verify_replay_replayed_hours",
+    #   reused_hours, duration_seconds: a lost checkpoint reverts the sweep to a full rescan (reused
+    #   near zero, duration long) while every rule reads healthy -- a human read on the ops host, not
+    #   a rule (the owner's decision, T0167): a trend across nights, a step the backlog-stuck runbook names.
+    "ops_verify_replay_reused_hours",
+    "ops_verify_replay_duration_seconds",
+    #   audit_mismatches: a discriminator, not a signal -- nonzero withholds the summary, so run-broken
+    #   pages and its runbook reads this first to tell a cache disagreement from a crash.
+    "ops_verify_replay_audit_mismatches",
 }
 
-FAULT_SIGNAL_METRICS = sorted(set(_admitted_series()) - NOT_A_FAULT_SIGNAL)
+_ADMITTED = frozenset(_admitted_series()) | frozenset(_verify_replay_series())
+FAULT_SIGNAL_METRICS = sorted(_ADMITTED - NOT_A_FAULT_SIGNAL)
 
 
 def test_the_exclusion_list_has_not_gone_stale():
     """Every exclusion must name a series the keep-regex still admits — otherwise a rename leaves a
     dead entry silently excusing nothing, and the metric it was renamed to is unguarded."""
-    stale = NOT_A_FAULT_SIGNAL - set(_admitted_series())
+    stale = NOT_A_FAULT_SIGNAL - _ADMITTED
     assert not stale, f"excluded but no longer admitted (rename? removal?): {sorted(stale)}"
 
 
@@ -297,7 +328,7 @@ def test_every_fault_signal_metric_is_watched_by_a_rule(metric):
         r["uid"] for r in _rules() if any(pattern.search(str(q.get("model", {}).get("expr", ""))) for q in r.get("data", []))
     ]
     assert watching, (
-        f"{metric} is admitted to the capture keep-list but no alert rule queries it — nothing "
+        f"{metric} reaches Grafana (the capture keep-list or the ops sweep's textfile) but no alert rule queries it — nothing "
         f"would surface it, since no dashboard panel carries the app-metric families either. Add a "
         f"rule, or add it to NOT_A_FAULT_SIGNAL with the reason."
     )
@@ -720,8 +751,8 @@ def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(u
     alert state history, the instances these two raised were overwhelmingly Grafana Cloud failing to
     reach its own Prometheus, and `for: 0s` is what made a one-minute platform hiccup page instantly.
 
-    The residual -- a rule-scoped execution error on these two now pages nothing -- is accepted and
-    named in the runbook."""
+    The residual -- a rule-scoped execution error on these two pages nothing -- is read by the daily
+    pass's rule-health report (`infra/scripts/ops_daily.py`) and named in the runbook."""
     rule = _rule(uid)
     assert rule["execErrState"] == "OK", "a Grafana query failure would page a total-capture-blackout that nothing observed"
     assert rule["noDataState"] == "OK", "the sibling blindness state moved without its reason"

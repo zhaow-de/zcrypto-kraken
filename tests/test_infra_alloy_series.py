@@ -215,6 +215,9 @@ OPS_REQUIRED = [
     "ops_verify_replay_failed_hours",
     "ops_verify_replay_hours_total",
     "ops_verify_replay_run_ok",
+    # The stale rule's stamp (`Ops · verify-replay stale`): alert-bearing, admitted today only by the
+    # same wildcard, pinned by name for the same reason.
+    "ops_verify_replay_last_run_timestamp",
     # spec 00078: the incremental sweep's census. `pending_hours` is alert-bearing (the backlog-stuck
     # rule) and `duration_seconds` is the runway trend the whole spec exists to make observable --
     # both admitted today only by the same `ops_verify_replay_.*` wildcard, so narrowing it must fail

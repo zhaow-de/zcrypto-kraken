@@ -68,6 +68,38 @@ Warning, not critical: nothing here says the archive is wrong. It says the instr
 
 ______________________________________________________________________
 
+<a name="zcrypto-ops-verify-replay-stale"></a>
+
+## zcrypto-ops-verify-replay-stale — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Ops · verify-replay stale`): the nightly canonical-archive sweep has not run for over 48 hours — two consecutive nightly runs missed.
+
+### What it means
+
+`zcrypto-verify-replay.timer` fires daily at `03:41` UTC with `Persistent=true`, so a host that was down at 03:41 runs the sweep at its next boot instead of skipping the day. Every run, clean or not, stamps `ops_verify_replay_last_run_timestamp` when it publishes its textfile; this rule reads the age of that stamp. The three sibling rules cannot see a timer that has stopped firing — their gauges hold their last value between runs, so a stopped sweep leaves all three reading healthy indefinitely. The healthchecks.io dead-man for this timer is a separate channel: it is pinged only when a run produces a summary, so it may be silent or paging independently of this rule.
+
+It reads the last-*run* stamp and not the last-*clean* one on purpose: a known bad hour in the archive makes every run exit non-zero and freezes the last-clean stamp for as long as the hour stands, which is why the exit-code alert was retired. A sweep that ran and did not complete is the run-broken rule's finding; a sweep that ran and found a new bad hour is the new-breakage rule's; this one only says the sweep did not run.
+
+Warning, not critical: nothing here says the archive is wrong. It says the instrument that certifies it has not run, and every night it does not run is another night of changed hours nobody re-verified.
+
+The rule also fires when the series is absent altogether (`noDataState: Alerting`) — the ops host, its Alloy, or the textfile is gone — and on a stamp of zero, which renders as time since the epoch: the sweep has never published on this host.
+
+### What to do
+
+1. **`ssh hp`, then read the timer and the unit**: `systemctl list-timers zcrypto-verify-replay.timer --all --no-pager` for the last and next trigger, `systemctl status zcrypto-verify-replay.service`, then `sudo journalctl -u zcrypto-verify-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it.
+2. **Timer inactive, or no next trigger listed** — the timer was stopped or disabled: `sudo systemctl enable --now zcrypto-verify-replay.timer`, then re-read the list. A host that was down past 03:41 runs its catch-up on its own once up; do not start the service by hand beside it — the container name is fixed, and a second run collides with the first.
+3. **Timer live, but the last run is days old in the journal** — the sweep is running and failing to publish: the runner writes `ops-verify-replay.prom` into the node-exporter textfile directory and does not stop when that write fails, so the journal shows the write error while the stamp stays frozen. Restore the directory and let the next trigger run.
+4. **The series is absent rather than old** — read the host's other series first: `up{host="ops"}` and `node_textfile_mtime_seconds{host="ops"}`. All gone is [`zcrypto-alloy-dark-ops`](observability.md#zcrypto-alloy-dark-ops) or the host itself; only this family gone is the textfile, step 3.
+5. **Once a run publishes**, the age drops and the alert resolves on the next evaluation. If that run reads `ops_verify_replay_run_ok` 0, follow the run-broken section above — a sweep that ran and did not complete is that rule's finding, not this one's.
+
+### Retire when
+
+`zcrypto-ops-verify-replay-stale` is absent from `infra/grafana/alerts.yaml`, or `ops_verify_replay_last_run_timestamp` is no longer written by `infra/ansible/roles/ops/templates/verify-replay.sh.j2`.
+
+______________________________________________________________________
+
 <a name="zcrypto-ops-tapebars-permanent-gap"></a>
 
 ## zcrypto-ops-tapebars-permanent-gap — ALERT

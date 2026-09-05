@@ -51,6 +51,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 - [`zcrypto-ops-verify-replay-new-breakage`](ops.md#zcrypto-ops-verify-replay-new-breakage) and [`zcrypto-ops-verify-replay-run-broken`](ops.md#zcrypto-ops-verify-replay-run-broken) — ALERT, one section serving both uids: an archive hour newly failed replay, or the sweep did not run to completion.
 - [`zcrypto-ops-verify-replay-backlog-stuck`](ops.md#zcrypto-ops-verify-replay-backlog-stuck) — ALERT: the re-verification queue has not shrunk across two consecutive nightly runs.
+- [`zcrypto-ops-verify-replay-stale`](ops.md#zcrypto-ops-verify-replay-stale) — ALERT: the nightly canonical-archive sweep has not run for over 48 hours.
 - [`zcrypto-ops-tapebars-permanent-gap`](ops.md#zcrypto-ops-tapebars-permanent-gap) — ALERT: a settled day was never published and has now fallen outside the re-scan window.
 - [`zcrypto-ops-tapebars-not-advancing`](ops.md#zcrypto-ops-tapebars-not-advancing) — ALERT: no new day has been published for more than 48 hours.
 - [`zcrypto-reconcile-residual-gap`](ops.md#zcrypto-reconcile-residual-gap) — ALERT: permanent, unrecoverable L2 loss booked to the reconcile ledger — the highest-severity rule in the system.

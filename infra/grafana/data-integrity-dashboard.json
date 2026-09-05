@@ -2096,7 +2096,7 @@
       "id": 302,
       "type": "timeseries",
       "title": "Verify-replay — freshness (last run vs last clean run)",
-      "description": "Is the nightly sweep still firing at all, separately from whether its runs come back clean? **No alert watches either age**, so this panel is the only coverage that exists for a sweep that has simply stopped running — nothing will page. A healthy pattern is a daily sawtooth on both. A last-clean stamp of zero means the sweep has never completed cleanly, in which case the age renders as time since the epoch rather than a small number and will flatten every other series on the axis. Published only by the ops machine.",
+      "description": "Is the nightly sweep still firing at all, separately from whether its runs come back clean? The last-run age carries the `Ops · verify-replay stale` bar — 48 hours, two missed nightly runs. The last-clean age is plotted unlined: a standing bad hour freezes it by design, so its age is not a fault on its own. A healthy pattern is a daily sawtooth on both. A last-clean stamp of zero means the sweep has never completed cleanly, in which case the age renders as time since the epoch rather than a small number and will flatten every other series on the axis. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2145,7 +2145,38 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 172800
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
