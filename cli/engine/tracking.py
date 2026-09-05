@@ -254,7 +254,7 @@ def weekly_tracking(
         # supplies nothing decides nothing, while every week still carries its floor p95 and mean.
         gate_eligible = complete and rung == 3 and not straddles
         realized_mean = real_weeks[key]["mean_drift_bps"] if started else None
-        # p95, not a median: the edge was pinned by T0116's amendment (spec 00091, resolved), not chosen here.
+        # p95, not a median: the edge was pinned by the T0116 (resolved) amendment (spec 00091), not chosen here.
         floor_p95 = _p95(floor_cycles[key])
         weeks.append(
             {

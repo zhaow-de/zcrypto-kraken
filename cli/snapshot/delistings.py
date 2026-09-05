@@ -24,7 +24,7 @@ def scan_delistings(feed: dict, selected_assets: tuple[str, ...] | list[str]) ->
         name = entry.get("name") or ""
         if not any(word in name.lower() for word in _DELISTING_WORDS):
             continue
-        # Bodies carry assets no `components[]` names; `incident_updates[].affected_components[]` stays unread, measured.
+        # Bodies carry assets no `components[]` names; `incident_updates[].affected_components[]` stays unread.
         tickerish = name + " " + " ".join(c.get("name", "") for c in entry.get("components", []))
         prose = " ".join(u.get("body", "") for u in entry.get("incident_updates", []))
         for asset in selected_assets:
