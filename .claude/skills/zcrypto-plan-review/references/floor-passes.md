@@ -6,7 +6,7 @@ Each section below is one prompt. `{SPEC_PINNED}` is the same clause `fixer.md` 
 
 You are folding the remaining Minor findings into a spec+plan pair in {WORKTREE} (branch {BRANCH}). You have no prior context.
 
-Read `{UNION}` — only its Minor blocks concern you — then {SPEC} (the binding authority), {PLAN}, `{REPORT_DIR}/pin-facts.md`, the fix reports {PRIOR_FIX} (so an origin label is a fact you can check rather than a guess), and every file a finding cites.{TOPIC_LINE} Do not read `docs/memo.local.md`.
+Read `{UNION}` — only its Minor blocks concern you — then {SPEC} (the binding authority), {PLAN}, `{REPORT_DIR}/pin-facts.md`, the fix reports {PRIOR_FIX} (so an origin label is a fact you can check rather than a guess), and every file a finding cites.{TOPIC_LINE} Do not read `.local/memo.md`.
 
 **Fold every Minor whose fix is one local hunk that adds no mechanism and moves no cross-reference.** Leave every other Minor, and every one you verify wrong, with a one-clause reason **in the commit message body** — that message is the durable record of what was consciously left; nothing else records it. With nothing to fold, commit `--allow-empty` carrying the reasons. Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`. No edit outside a Minor's own hunk: a sweep that starts extending is a fix round, and this is not one.
 
@@ -20,7 +20,7 @@ Report `{OUT}`: `## Folded`, `## Left` (key + reason) and `## Spec amendments` (
 
 You are the executability pass for a spec+plan pair. Work in the detached worktree {EXEC_WT} — a throwaway copy at the branch's HEAD; write and commit there freely, it is removed afterwards. You have no prior context.
 
-Read {SPEC}, {PLAN}, `{REPORT_DIR}/pin-facts.md` and the fix reports {PRIOR_FIX} — they live under the branch's own worktree, which you read and never write. The fix reports are what make an origin label checkable; without them every finding looks like the author's.{TOPIC_LINE} Do not read `docs/memo.local.md`. Every write, command and commit is in {EXEC_WT}: your cwd resets between commands, so prefix each with `cd {EXEC_WT} &&`; `{OUT}` is an absolute path outside it. Before the first verdict run `cd {EXEC_WT} && uv run python -c 'import cli; print(cli.__file__)'` and record the output as the first row of `## Executed` — it must start with {EXEC_WT}, or every verdict measures the wrong tree.
+Read {SPEC}, {PLAN}, `{REPORT_DIR}/pin-facts.md` and the fix reports {PRIOR_FIX} — they live under the branch's own worktree, which you read and never write. The fix reports are what make an origin label checkable; without them every finding looks like the author's.{TOPIC_LINE} Do not read `.local/memo.md`. Every write, command and commit is in {EXEC_WT}: your cwd resets between commands, so prefix each with `cd {EXEC_WT} &&`; `{OUT}` is an absolute path outside it. Before the first verdict run `cd {EXEC_WT} && uv run python -c 'import cli; print(cli.__file__)'` and record the output as the first row of `## Executed` — it must start with {EXEC_WT}, or every verdict measures the wrong tree.
 
 The semantic reviews are done and their findings fixed. **Do not review what the documents say. Your subject is whether the plan CAN BE EXECUTED against this tree, task by task, by an implementer who sees only the task's text and the Global Constraints.** A plan built of complete code fences is a program; run it.
 
@@ -44,7 +44,7 @@ Run everything as plain blocking commands; background nothing; no subagents. Do 
 
 ## blind
 
-You are adjudicating a spec+plan pair at {WORKTREE} HEAD (branch {BRANCH}). You have no prior context, and you must acquire none: **do not read anything under `{REPORT_DIR}` other than the prompt you were handed and the file you write, do not read this branch's commit messages (`git log` bodies), do not read `docs/memo.local.md`.** Assume nothing has been caught.
+You are adjudicating a spec+plan pair at {WORKTREE} HEAD (branch {BRANCH}). You have no prior context, and you must acquire none: **do not read anything under `{REPORT_DIR}` other than the prompt you were handed and the file you write, do not read this branch's commit messages (`git log` bodies), do not read `.local/memo.md`.** Assume nothing has been caught.
 
 Read {SPEC} — the binding authority — then {PLAN}, then every file either cites.{TOPIC_LINE} Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`.
 

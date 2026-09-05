@@ -1,4 +1,4 @@
-"""Guard for `.claude/rules/code-prose.md`'s resolvable-citation rule.
+"""Guard for `.claude/rules/prose.md`'s resolvable-citation rule.
 
 A plan-local task number means nothing to a cold reader: the plan it indexes is a point-in-time
 document, so the number outlives its referent by construction. Nineteen such citations had

@@ -90,7 +90,7 @@ If the balance is short, fund it *before* the run, not between probes.
 ### 1.5 Open-topics / memo sweep
 
 Before an irreversible production action, sweep `docs/open-topics/README.md` and
-`docs/memo.local.md` for anything that blocks touching the live account, and present the result with
+`.local/memo.md` for anything that blocks touching the live account, and present the result with
 the go/no-go.
 
 ### 1.6 Freeze the pin — decide this first; it can predate everything above

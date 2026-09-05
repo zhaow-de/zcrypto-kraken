@@ -6,15 +6,15 @@ disable-model-invocation: false
 
 # iteration-closeout
 
-The closeout file mechanics. The ambient rules keep the WHEN (`.claude/rules/iterations-history.md` — the entry is every plan's final task; `.claude/rules/decisions-log.md` — the logging gate) and the closeout-doc discipline; this skill is the HOW.
+The closeout file mechanics. The ambient rules keep the WHEN (`.claude/rules/prose.md` — the entry is every plan's final task, and its bar; `.claude/rules/decisions-log.md` — the logging gate) and the closeout-doc discipline; this skill is the HOW.
 
 ## The iterations-history entry
 
 **Which file:** append to the changelog of the iteration's **subject-matter phase** — the same routing as the decisions logs (`decisions-log.md`), so an iteration doing Phase-4 backlog while Phase 6 is active lands in `iterations-history-phase4.md`, and a Phase-5 decision made during that work lands in `phase5`. The changelog and the per-phase decision logs (`decisions-log.md`) now follow the **same** model: one file per phase, appended **live per iteration**, never drained into a separate serial file — so no continuation *file* is minted: a **closed** phase that receives later backlog entries just keeps appending them under a one-line `**Continuation — …**` divider (between two `______` rules) marking where the post-close backlog begins.
 
-Each entry is a new section appended at the bottom of its phase file (`## <YYYY-MM-DD> — <heading>`) followed by a bullet list: one bullet per feature/change/fix, covering what landed, the artifacts/settings/log events it introduced, and any non-obvious behavior.
+Each entry is a new section appended at the bottom of its phase file (`## <YYYY-MM-DD> — <heading>`) followed by one-line bullets, one per surface that changed, each saying what an operator or agent now does differently — no code detail, counts, measurements or review narrative (`prose.md`'s bar; the commit messages hold the detail).
 
-Entries and branch-end status claims name the CLASS they cover ("every spec/plan commit on this branch"), never an enumeration or a count — an enumeration is falsified by the next commit that lands beside it; where a number is load-bearing, recompute it in the final pre-PR pass.
+Entries and branch-end status claims name the CLASS they cover ("every spec/plan commit on this branch"), never an enumeration or a count — an enumeration is falsified by the next commit that lands beside it.
 
 ## Dataset-catalog sync (every dataset-introducing closeout)
 

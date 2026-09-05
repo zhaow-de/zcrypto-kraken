@@ -71,7 +71,7 @@ The report's `## Dead-men` section prints one `- description:` line per **defect
 
 Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in. Commit.
 
-At a month change: open the finished month's PR, merge it on CI green, delete the branch, and re-cut `ops-journal` from `develop`. No review, no word — the second standing exception in `branch-workflow.md`.
+At a month change: open the finished month's PR, merge it on CI green, delete the branch, and re-cut `ops-journal` from `develop`. No review, no word — a standing exception in `branch-workflow.md`.
 
 ## 8. Post the summary
 

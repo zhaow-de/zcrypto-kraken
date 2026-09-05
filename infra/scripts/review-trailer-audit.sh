@@ -14,8 +14,9 @@
 #
 # WHY CODE AND DOC KINDS ARE SPLIT, AND WHY ONLY CODE FAILS THE EXIT
 #
-# The rule grants exactly three exemptions, and one of them cannot be computed here: "spec/plan/
-# closeout-docs commits whose content the user explicitly approved in the producing flow." Whether
+# The rule grants exactly four exemptions, and one of them cannot be computed here: "spec/plan/
+# closeout-docs commits whose content the session's authority explicitly approved in the producing
+# flow." Whether
 # that approval happened lives in a conversation, not in the repo — no trailer records it and no
 # query can recover it. A script that failed on every `docs`/`claude` commit would therefore be
 # wrong a large fraction of the time and would be routed around within a week; one that passed them
@@ -24,9 +25,10 @@
 #
 # Code kinds carry no such exemption, so they are the exit's business.
 #
-# The other two exemptions are handled where they can be: merge commits (`gh` writes them with no
-# trailers) are excluded by `--no-merges`; the one-liner-folded-into-an-open-PR exemption is a
-# judgement about a single commit and shows up here as a reported failure to waive deliberately.
+# The other three exemptions are handled where they can be: merge commits (`gh` writes them with no
+# trailers) are excluded by `--no-merges`; the `ops-journal` branch's entry commits are doc-kind and
+# so reported, never failed; the one-liner-folded-into-an-open-PR exemption is a judgement about a
+# single commit and shows up here as a reported failure to waive deliberately.
 #
 # Anything whose Conventional-Commits type does not parse, or parses to a type in neither list, is
 # UNCLASSIFIED and counts toward the failing exit. An unreadable type is not evidence of compliance,

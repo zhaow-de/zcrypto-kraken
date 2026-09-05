@@ -28,7 +28,7 @@ The A1 kill-bar verdict merged without its first-order cost check; net-of-cost r
 
 ## The A2 family-key call (iters 052–053 — the budget invariant)
 
-A2 is an A/B inside the A family (master plan §5). A new registry key would have restarted `n_trials_in_family` and silently un-capped the shared A=40 budget, so the trials were recorded under `family="A1"` with `variant=A2-donchian` in `notes` — ugly name, correct invariant. → *Variants share the family key; the first-class schema field is T0013.*
+A2 is an A/B inside the A family (master plan §5). A new registry key would have restarted `n_trials_in_family` and silently un-capped the shared A=40 budget, so the trials were recorded under `family="A1"` with `variant=A2-donchian` in `notes` — ugly name, correct invariant. → *Variants share the family key; the first-class `variant` field landed in iter-056 (`T0013`, resolved).*
 
 ## The broken-instrument budget hold (iters 053–054)
 

@@ -22,7 +22,7 @@ The verdict is one of `all-clear`, `attention`, `incident`. `tests/test_ops_jour
 
 ## The branch
 
-A standing branch, `ops-journal`, cut from `develop`. The pass commits to it after every run; at a month change it opens the finished month's PR, merges it on CI green, and re-cuts the branch from `develop`. That is the second standing exception to the attended PR-open gate, registered in `.claude/rules/branch-workflow.md`.
+A standing branch, `ops-journal`, cut from `develop`. The pass commits to it after every run; at a month change it opens the finished month's PR, merges it on CI green, and re-cuts the branch from `develop`. That is a standing exception to the attended PR-open gate, registered in `.claude/rules/branch-workflow.md`.
 
 ## What this is not
 

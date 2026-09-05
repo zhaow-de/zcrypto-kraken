@@ -7,8 +7,9 @@
 #          -y skips the interactive confirmation (required when there is no terminal)
 #
 # What moves: the repo's git state including UNPUSHED branches and tags (via git bundle -- this repo
-# keeps branches local until PR-open, so origin cannot align them), docs/memo.local.md (gitignored,
-# hand-edited, unrecoverable if lost), ~/.claude/ session state (transcripts, memory, plugins set
+# keeps branches local until PR-open, so origin cannot align them), .local/ (gitignored and kept:
+# the memo -- hand-edited, unrecoverable if lost -- the coordination table, the lesson inboxes,
+# retro artefacts), ~/.claude/ session state (transcripts, memory, plugins set
 # AND versions), ~/.claude.json (MCP servers, project trust), the /tmp scratchpad, and the repo's
 # .superpowers/ SDD ledgers. What deliberately does NOT move: auth material
 # (~/.claude/.credentials.json, ssh/sops/gh/vault -- already aligned on both machines, owner's
@@ -19,9 +20,9 @@
 #   - git refs: a destination-only branch is deleted only when its commits are contained in one of
 #     the SOURCE's OWN LOCAL branches (never a remote-tracking ref -- that is a local cache, not
 #     evidence the remote still has it). Anything else aborts the run before a byte moves.
-#   - non-git state (the memo, ~/.claude/): there is no equivalent proof available, so the plan
+#   - non-git state (.local/, ~/.claude/): there is no equivalent proof available, so the plan
 #     shows what would be destroyed (a memo digest comparison, an rsync --delete dry run) and the
-#     memo's destination copy is backed up outside the repo before it is overwritten.
+#     destination's .local/ is backed up outside the repo before it is overwritten.
 #
 # QUIET-POINT DISCIPLINE (run this only at a quiet point, immediately before switching):
 #   - no Claude session, background agent, or workflow mid-flight on EITHER machine -- running
@@ -187,10 +188,11 @@ CLAUDE_EXCLUDES=(
   --exclude='/gh-pr-status-cache.json' --exclude='/mcp-needs-auth-cache.json' --exclude='/stats-cache.json'
   --exclude='/.last-cleanup' --exclude='/.last-update-result.json'
 )
-src_memo_sum="$(md5sum "$REPO_DIR/docs/memo.local.md" 2>/dev/null | cut -d' ' -f1 || true)"
-dst_memo_sum="$(remote "md5sum ${(q)REPO_DIR}/docs/memo.local.md 2>/dev/null | cut -d' ' -f1" || true)"
-claude_deletes="$("${RSYNC[@]}" -n --delete "${CLAUDE_EXCLUDES[@]}" \
+src_memo_sum="$(md5sum "$REPO_DIR/.local/memo.md" 2>/dev/null | cut -d' ' -f1 || true)"
+dst_memo_sum="$(remote "md5sum ${(q)REPO_DIR}/.local/memo.md 2>/dev/null | cut -d' ' -f1" || true)"
+claude_deletes="$("${RSYNC[@]}" -n --delete --info=del "${CLAUDE_EXCLUDES[@]}" \
   "$HOME/.claude/" "$DEST:.claude/" 2>/dev/null | grep -c '^deleting ' || true)"
+local_deletes="$("${RSYNC[@]}" -n --delete --info=del "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/" 2>/dev/null | grep -c '^deleting ' || true)"
 dest_sentinel="$(remote "cat ${(q)SENTINEL} 2>/dev/null" || true)"
 
 # --- the plan, then the gate -------------------------------------------------------------------
@@ -209,14 +211,16 @@ else
   print -r -- "  will delete   : no branches (destination has none the source lacks)"
 fi
 if [[ -n "$dst_memo_sum" && "$src_memo_sum" != "$dst_memo_sum" ]]; then
-  print -r -- "  memo.local.md : destination copy DIFFERS and will be discarded (backed up on $DEST
-                  to ~/.memo.local.md.pre-transport) -- it is gitignored, so no clean-repo
-                  check can protect it. Make sure the newer copy is the one here."
+  print -r -- "  .local/memo.md: destination copy DIFFERS and will be discarded (the destination's
+                  .local/ is backed up on $DEST to ~/.zcrypto-local.pre-transport/) -- it is
+                  gitignored, so no clean-repo check can protect it. Make sure the newer copy is
+                  the one here."
 else
-  print -r -- "  memo.local.md : identical on both machines"
+  print -r -- "  .local/memo.md: identical on both machines"
 fi
 print -r -- "  ~/.claude/    : rsync --delete would remove $claude_deletes destination path(s)
                   (transcripts + memory live here and exist on no remote)"
+print -r -- "  .local/       : rsync --delete would remove $local_deletes destination-only path(s) (inboxes, coordination, retro)"
 [[ -z "$dest_sentinel" ]] \
   && print -r -- "  last transport: destination has no record of a previous transport" \
   || print -r -- "  last transport: $dest_sentinel"
@@ -265,11 +269,11 @@ remote "git -C ${(q)REPO_DIR} fetch -q --atomic --force ${(q)BUNDLE} \
 remote "rm -f ${(q)BUNDLE}" || true
 rm -f "$BUNDLE"
 
-# --- the memo (gitignored; nothing deleted from it is recoverable) -----------------------------
+# --- .local/ (gitignored; nothing deleted from the memo is recoverable) ------------------------
 # The backup lands in $HOME, never inside $REPO_DIR: an untracked file there would fail the
-# both-repos-clean gate on the next run.
-remote "cp -p ${(q)REPO_DIR}/docs/memo.local.md ~/.memo.local.md.pre-transport 2>/dev/null || true"
-scp "${SSH_OPTS[@]}" -pq "$REPO_DIR/docs/memo.local.md" "$DEST:$REPO_DIR/docs/memo.local.md"
+# both-repos-clean gate on the next run. The destination's .local/ is made to mirror the source's.
+remote "rm -rf ~/.zcrypto-local.pre-transport && cp -pr ${(q)REPO_DIR}/.local ~/.zcrypto-local.pre-transport 2>/dev/null || true"
+"${RSYNC[@]}" --delete "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/"
 
 # --- session state -----------------------------------------------------------------------------
 # ~/.claude/: everything except machine-local runtime/caches and auth material.

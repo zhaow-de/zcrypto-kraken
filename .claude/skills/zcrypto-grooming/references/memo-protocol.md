@@ -1,4 +1,4 @@
-# The memo protocol — `docs/memo.local.md`
+# The memo protocol — `.local/memo.md`
 
 **Concurrent writers:** the memo is written under the token `docs/reference/multi-agent-protocol.md` defines — request it from `zcrypto-main`, read before, Edit/Write tools only, read back after, hand back the `sha256 · lines · bytes` chain.
 
@@ -6,7 +6,7 @@ The single source of truth for the memo's data model, tooling discipline, and me
 
 ## The file
 
-`docs/memo.local.md` is the user's personal working memo — **gitignored, hand-edited between sessions, and not version-controlled**: nothing deleted from it is recoverable. Canonical sections:
+`.local/memo.md` is the user's personal working memo — **gitignored, hand-edited between sessions, and not version-controlled**: nothing deleted from it is recoverable. Canonical sections:
 
 | Section | Role |
 |---|---|
@@ -44,7 +44,7 @@ The single source of truth for the memo's data model, tooling discipline, and me
 |---|---|
 | `T0028` | `docs/open-topics/T0028-*.md` — or `docs/open-topics/archive/T0028-*.md` once resolved; the `docs/open-topics/README.md` index links whichever is current |
 | `spec 00060` / bare `00060` | `docs/specs/00060-*-design.md` (its plan: `docs/plans/00060-*.md`) |
-| `iter-082` | the `## <date> — iter-082: <title>` section of `docs/iterations-history-phase<N>.md` — **N is the iteration's subject-matter phase, not the milestone's**: an item worked for the Phase-6a milestone may be logged in `iterations-history-phase1.md` (entries route by subject per `.claude/rules/iterations-history.md`), so locate with `grep -l "iter-082" docs/iterations-history-phase*.md`, never by assuming the milestone's phase |
+| `iter-082` | the `## <date> — iter-082: <title>` section of `docs/iterations-history-phase<N>.md` — **N is the iteration's subject-matter phase, not the milestone's**: an item worked for the Phase-6a milestone may be logged in `iterations-history-phase1.md` (entries route by subject per the `iteration-closeout` skill), so locate with `grep -l "iter-082" docs/iterations-history-phase*.md`, never by assuming the milestone's phase |
 | `PR #143` | `gh pr view 143` |
 
 ## Ad-hoc procedures — mechanical, single-item, nothing else

@@ -10,7 +10,7 @@ disable-model-invocation: false
 
 The master plan marks fees, fee tiers, borrow-rollover rates, pair lists, MiCA status, tax rules and data pricing as **externally owned** — third-party facts that move without notice, where a stale one is **silent**. This sweep re-confirms the machine-readable subset and stamps the result, so "re-confirmed, identical" is always distinguishable from "never re-run".
 
-Two halves, one routine: an **automated** re-fetch of the public endpoints, and an **attended** re-read of the account's own fee tier (step 6) — the authoritative surface is behind a login, so no amount of API work replaces it. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it.
+Two halves, one routine: an **automated** re-fetch of the public endpoints, and an **attended** re-read of the account's own fee tier — the authoritative surface is behind a login, so no amount of API work replaces it. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it.
 
 ## The one rule that makes the verdict meaningful
 
@@ -37,7 +37,7 @@ print(render_markdown(snap))
 
 The raw snapshot is gitignored on purpose — it is the evidence, not the artifact. **Keep it**: two archived snapshots are what let a later review compute an actual set difference instead of netting two totals.
 
-2. **Run the costmin drift guard** — `uv run pytest tests/test_costmin_drift.py`. This is `COSTMIN`'s only guard, and it skips wherever `data/snapshots/` is absent — which includes CI, since the data root is gitignored — so this sweep, right after Step 1 mints a fresh snapshot, is the only place the guard can actually fire. Red means Kraken moved a ratified leg's `costmin`; update the constant in `cli/engine/instruments.py` to match and record the change here alongside the rest of the sweep's findings. `COSTMIN` is symbol-keyed over all twelve legs and each entry is a `(value, quote_currency)` pair in the snapshot's own vocabulary (`"EUR"`/`"BTC"`, never the adapter aliases `ZEUR`/`XXBT`) — the two `/BTC` legs' floors are BTC-denominated, so never copy a EUR value across.
+2. **Run the costmin drift guard** — `uv run pytest tests/test_costmin_drift.py`. This is `COSTMIN`'s only guard against venue-side drift, and it skips wherever `data/snapshots/` is absent — which includes CI, since the data root is gitignored — so this sweep, right after Step 1 mints a fresh snapshot, is the only place the guard can actually fire. Red means Kraken moved a ratified leg's `costmin`; update the constant in `cli/engine/instruments.py` to match and record the change here alongside the rest of the sweep's findings. `COSTMIN` is symbol-keyed over all twelve legs and each entry is a `(value, quote_currency)` pair in the snapshot's own vocabulary (`"EUR"`/`"BTC"`, never the adapter aliases `ZEUR`/`XXBT`) — the two `/BTC` legs' floors are BTC-denominated, so never copy a EUR value across.
 
 3. **Run the identity checks — they REFUSE, they are not a table to read.** A selected pair changing identity underneath us is what makes this sweep load-bearing, and both halves are mechanical:
 
@@ -80,12 +80,13 @@ print("REFUSALS:", refusals or "none"); print("ANNOUNCED DELISTINGS:", announced
    At \$0 30-day volume the tier *cannot* move, so run it cheaply now; it is load-bearing once real fills flow.
 
 8. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
+9. **The closeout the routine owes**: the register is an operator-and-agent surface, so the sweep's iterations-history entry is part of the sweep, never a later fold; and every count or "all N" in the register's prose and in `infra/runbooks/reference-data.md`'s endpoint claims is generated from the same rendered data as the table it describes, never typed beside it — sweep #1 shipped a hand-typed count that stood for 31 days.
 
 ## What this sweep does and does not cover
 
 - **Covers** (public, no account): pair existence and `status`, margin flag, leverage bands, `ordermin`/`costmin`, per-asset **`margin_rate`** (the per-4h rollover rate) and `collateral_value`, `margin_call`/`margin_stop`, position limits.
 - **Reports but does NOT own — the fee ladder.** `docs/reference/kraken-fee-schedule.md` is the fee source of truth, account-confirmed. The public endpoint can lag the account-confirmed schedule by weeks, so the register's fee columns are a **drift detector on the endpoint**, never a costing anchor. If they move, reconcile against the fee-schedule file and say which is now right — do not adopt the endpoint's numbers because they are newer-looking.
-- **No endpoint covers, so step 6 asks a human**: the account's own realised fee **tier** and 30-day volume — that is exactly what the attended half re-reads, not something this routine skips. AoP qualification and the observed margin/rollover bands stay unautomated too; `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
+- **No endpoint covers, so the attended half asks a human**: the account's own realised fee **tier** and 30-day volume — that is exactly what the attended half re-reads, not something this routine skips. AoP qualification and the observed margin/rollover bands stay unautomated too; `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
 - **Does not cover** (no endpoint): MiCA status, tax rules, market-data pricing — human re-reads, and they belong to the go/no-go run.
 
 ## Failure modes worth naming

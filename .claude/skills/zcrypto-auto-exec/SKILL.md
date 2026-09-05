@@ -12,7 +12,7 @@ Run open work **unattended** — the same brainstorm → spec → plan → plan 
 
 Two goals, by work type:
 
-- **Queue work**: drain `docs/memo.local.md`'s `WORK-ITEMS QUEUE` and the open T-topics toward a human-only residue — by hand-back, everything still open either requires the human or is deliberately deferred with a trigger.
+- **Queue work**: drain `.local/memo.md`'s `WORK-ITEMS QUEUE` and the open T-topics toward a human-only residue — by hand-back, everything still open either requires the human or is deliberately deferred with a trigger.
 - **Research work**: advance `docs/research/00.master-plan.md` toward the current phase's exit bar per its §12 governance. The bar is benchmark-relative; an honest kill is success; **no verdict outranks the instrument that measured it**.
 
 ## The autonomy boundary — reversibility and judgment, not topic or heaviness
@@ -20,7 +20,7 @@ Two goals, by work type:
 - **AUTONOMOUS: anything reversible/discardable, however heavy** — backtests, sweeps, building tooling/harnesses on a branch, code + tests + docs for any open topic, public web research, read-only host inspection.
 - **INTERACTIVE (park the step, keep moving):**
   1. **Hard-to-reverse / production-facing** — anything touching live/paper trading, the running capture pipeline (L2 gaps are unbackfillable), host converges and image re-pins, alert-rule pushes and other vaulted-credential attended steps, publishing externally, spending money, overwriting canonical datasets (immutable — derive to new paths).
-  2. **High-stakes judgment + the pre-registered escalation triggers** (master-plan §12): strategic pivots, architecture lock-ins, "good enough to deploy?", expanding a trial budget, **any touch of the holdout** (look budget = 1, spent with the human), the other §12 touchpoints by name.
+  2. **High-stakes judgment + the pre-registered escalation triggers** (master-plan §12): strategic pivots, architecture lock-ins, "good enough to deploy?", expanding a trial budget, **any touch of the holdout** (the look budget was 1 and is spent — 0 now, master plan §12), the other §12 touchpoints by name.
 
 **The queue item's `Who:` field is a hint; the boundary governs per sub-item.** An item marked `me` can still contain an attended sub-step — decompose, do the reversible parts, park exactly the attended step. Run an autonomous sub-item now iff it **feeds** the parked human decision or is **independent** of it — never if it **waits on** the decision.
 
@@ -32,7 +32,7 @@ Two goals, by work type:
 
 ## The work loop (one item)
 
-1. **Re-read `docs/memo.local.md`.** The memo contract — data model, the read-guard tooling discipline (Edit/Write tools only, read-before and read-back-after every write), item formats, and the ad-hoc procedures — is **`.claude/skills/zcrypto-grooming/references/memo-protocol.md`**. Read it once per run before the first memo write; its definitions govern.
+1. **Re-read `.local/memo.md`.** The memo contract — data model, the read-guard tooling discipline (Edit/Write tools only, read-before and read-back-after every write), item formats, and the ad-hoc procedures — is **`.claude/skills/zcrypto-grooming/references/memo-protocol.md`**. Read it once per run before the first memo write; its definitions govern.
 2. **Pick the topmost `WORK-ITEMS QUEUE` item** whose `DependsOn:` — its own **and its milestone's** — is satisfied (trigger fired, prerequisites done) and whose work is inside the boundary. Skip a blocked or attended item with a one-line note and take the next. Queue empty or fully blocked → sweep the open topics' `ripe_when:` triggers; still nothing → manufacture non-budget work (harden harnesses, data QA, robustness re-analysis) per the research constraints below.
 3. **Execute the item by draining its T-topic's sub-items** (decomposition rule above). Ceremony scales per `.claude/rules/spec-plan-locations.md`: design-open → full spec/plan/SDD flow; **design-settled** (the deciding ruling or topic PREDATES this run — a loop may not author the decision and claim it in the same run) → branch + TDD + mandatory review, no committed spec. Research-type items follow the full §12 iteration flow. All repo conventions hold — every commit reviewed, PRs into `develop`, merged via `merge-pr` when green.
 4. **Bookkeep through the protocol's ad-hoc procedures** (the launch is the human trigger that sanctions them; the human-gated operations — `NEW IDEAS` dispositions, the `DONE ITEMS` purge, milestone re-grooming — attach to the operations themselves and stay with the user). The dispatch map, definitions in the protocol:

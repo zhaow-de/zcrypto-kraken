@@ -1,6 +1,6 @@
 You are running the contract pin for a spec+plan pair in {WORKTREE} (branch {BRANCH}). You have no prior context.
 
-Read {SPEC} — the binding authority — then {PLAN}.{TOPIC_LINE} Do not read `docs/memo.local.md`. Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`.
+Read {SPEC} — the binding authority — then {PLAN}.{TOPIC_LINE} Do not read `.local/memo.md`. Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`.
 
 ## The task
 

@@ -83,7 +83,7 @@ PY
 
 #### 1. Pre-probe — before anything touches the host
 
-1. **Sweep for blockers, and present the result together with the arming request.** Read `### Open` and `### Partially done` in `docs/open-topics/README.md`, and grep `docs/memo.local.md` for anything in flight against the engine. "Ready" without the sweep is not ready.
+1. **Sweep for blockers, and present the result together with the arming request.** Read `### Open` and `### Partially done` in `docs/open-topics/README.md`, and grep `.local/memo.md` for anything in flight against the engine. "Ready" without the sweep is not ready.
 
 2. **Confirm the deployed code is the code you tested.** The engine row in `docs/reference/fleet-pins.md` records the digest running on `zcrypto` and the revision it was built from. Confirm the running digest matches — `sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine` — and that your working tree is at that revision. Then run the two guards that catch a drift between the committed cost floors / ratified basket and what the venue reports: `uv run pytest tests/test_costmin_drift.py tests/test_basket_concordance.py` → expect `2 passed`. A failure means the floors or the basket have moved since that image was built; stop, do not arm. **`1 passed, 1 skipped` is NOT a pass** — the drift test skips itself when no refdata snapshot is present under the gitignored data root, so run this in a tree that has one; a skipped drift guard reads green and has checked nothing. Add `-rs` if you want the skip reason spelled out.
 

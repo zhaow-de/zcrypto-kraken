@@ -1,6 +1,6 @@
 # Iterations history — Phase 5 (Portfolio Assembly & Risk Layer)
 
-Per-iteration changelog for Phase 5. Appended at each iteration's close-out; see `.claude/rules/iterations-history.md`.
+Per-iteration changelog for Phase 5. Appended at each iteration's close-out; see `.claude/rules/prose.md`.
 
 ## 2026-07-09 — iter-058: §10 drawdown governor as tested code + threshold backtest (Phase 5)
 
@@ -129,7 +129,7 @@ Per-iteration changelog for Phase 5. Appended at each iteration's close-out; see
 
 ______________________________________________________________________
 
-**Continuation — Phase-5 backlog resumed during a later phase's era** (iters 76+, routed here by subject matter per `.claude/rules/iterations-history.md`).
+**Continuation — Phase-5 backlog resumed during a later phase's era** (iters 76+, routed here by subject matter per the `iteration-closeout` skill).
 
 ______________________________________________________________________
 

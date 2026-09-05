@@ -2,7 +2,7 @@
 name: release
 description: Cut a release — bump the version on develop, open a PR into main, merge it, push the v<version> tag, create the GitHub Release, and back-merge main into develop
 disable-model-invocation: false
-allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(gh pr:*), Bash(gh release:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Read, Edit, Write
+allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(git branch:*), Bash(git show:*), Bash(gh pr:*), Bash(gh release:*), Bash(gh auth:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(timeout:*), Bash(which:*), Bash(awk:*), Bash(sed:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, AskUserQuestion
 ---
 
 Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and creates the GitHub Release directly from this skill. After the release is published, the skill back-merges `main` into `develop` to keep them in lock-step.
@@ -119,29 +119,24 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
     git checkout develop
     ```
 
-14. **Auto-merge the release PR** with a merge commit (preserving the tagged bump commit on `main`). Releases run end-to-end without pausing to ask. Stop only if something is genuinely worth attention: the PR has conflicts, or it was closed without merging. Otherwise poll every 30 seconds and merge as soon as GitHub reports the PR mergeable and not blocked by branch protection:
+14. **Auto-merge the release PR** with a merge commit (preserving the tagged bump commit on `main`). Releases run end-to-end without pausing to ask. Stop only if something is genuinely worth attention: the PR has conflicts, or it was closed without merging. Otherwise read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s (`agent-ops.md`: never one long foreground loop), and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
     ```bash
     PR_NUMBER=<the PR number from step 12>
 
-    while true; do
-        pr_state=$(gh pr view "$PR_NUMBER" --json state -q .state)
-        pr_mergeable=$(gh pr view "$PR_NUMBER" --json mergeable -q .mergeable)
-        pr_state_status=$(gh pr view "$PR_NUMBER" --json mergeStateStatus -q .mergeStateStatus)
-        if [ "$pr_state" = "MERGED" ]; then
-            echo "PR merged!"
-            break
-        elif [ "$pr_state" = "CLOSED" ]; then
-            echo "PR was closed without merging — stop"
-            exit 1
-        elif [ "$pr_mergeable" = "CONFLICTING" ]; then
-            echo "PR has conflicts — stop, do not merge"
-            exit 1
-        elif [ "$pr_mergeable" = "MERGEABLE" ] && [ "$pr_state_status" != "BLOCKED" ]; then
-            gh pr merge "$PR_NUMBER" --merge --delete-branch && break
-        fi
-        echo "Waiting for PR to be ready... (state: $pr_state, mergeable: $pr_mergeable, status: $pr_state_status)"
-        sleep 30
-    done
+    pr_state=$(timeout 30 gh pr view "$PR_NUMBER" --json state -q .state)
+    pr_mergeable=$(timeout 30 gh pr view "$PR_NUMBER" --json mergeable -q .mergeable)
+    pr_state_status=$(timeout 30 gh pr view "$PR_NUMBER" --json mergeStateStatus -q .mergeStateStatus)
+    if [ "$pr_state" = "MERGED" ]; then
+        echo "PR merged!"
+    elif [ "$pr_state" = "CLOSED" ]; then
+        echo "PR was closed without merging — stop"
+    elif [ "$pr_mergeable" = "CONFLICTING" ]; then
+        echo "PR has conflicts — stop, do not merge"
+    elif [ "$pr_mergeable" = "MERGEABLE" ] && [ "$pr_state_status" != "BLOCKED" ]; then
+        timeout 60 gh pr merge "$PR_NUMBER" --merge --delete-branch
+    else
+        echo "PR not ready (state: $pr_state, mergeable: $pr_mergeable, status: $pr_state_status) — re-run this block in ~30 s"
+    fi
     ```
 
 15. **Push the release tag** so it points at the bump commit now on `main`. The tag was created in step 9 and persists across the branch switch.
@@ -160,7 +155,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
     ```
     The `awk` prints from the top of the tagged `CHANGELOG.md` until the next `## v…` header — i.e. just the new version's section. `--verify-tag` aborts if the tag was not pushed in step 15. The command prints the Release URL — keep it for the final report.
 
-17. **Back-merge `main` → `develop` via a PR.** This repo's `develop` is protected against direct pushes, so the back-merge cannot be a plain `git push`. Cut a dedicated `chore/back-merge-v<VERSION>` branch off `origin/main` (a topic branch keeps the PR's head distinct from the long-lived ref, and step 18 deletes it). Push it, open the PR, then auto-merge with the same poll-then-merge loop as step 14:
+17. **Back-merge `main` → `develop` via a PR.** This repo's `develop` is protected against direct pushes, so the back-merge cannot be a plain `git push`. Cut a dedicated `chore/back-merge-v<VERSION>` branch off `origin/main` (a topic branch keeps the PR's head distinct from the long-lived ref, and step 18 deletes it). Push it, open the PR, then auto-merge with the same read-then-merge block as step 14, re-issued the same way:
     ```bash
     git fetch origin main
     BACKMERGE_BRANCH="chore/back-merge-v<VERSION>"
@@ -171,25 +166,20 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
         --body "Back-merge of the \`v<VERSION>\` release commit from \`main\` into \`develop\` so the two branches stay in lock-step per \`.claude/rules/branch-workflow.md\`. Auto-opened by the \`/release\` skill.")
     BACKMERGE_NUMBER=$(echo "$BACKMERGE_URL" | sed -E 's|.*/pull/([0-9]+)|\1|')
 
-    while true; do
-        pr_state=$(gh pr view "$BACKMERGE_NUMBER" --json state -q .state)
-        pr_mergeable=$(gh pr view "$BACKMERGE_NUMBER" --json mergeable -q .mergeable)
-        pr_state_status=$(gh pr view "$BACKMERGE_NUMBER" --json mergeStateStatus -q .mergeStateStatus)
-        if [ "$pr_state" = "MERGED" ]; then
-            echo "Back-merge PR merged!"
-            break
-        elif [ "$pr_state" = "CLOSED" ]; then
-            echo "Back-merge PR was closed without merging — stop"
-            exit 1
-        elif [ "$pr_mergeable" = "CONFLICTING" ]; then
-            echo "Back-merge PR has conflicts — stop, do not merge"
-            exit 1
-        elif [ "$pr_mergeable" = "MERGEABLE" ] && [ "$pr_state_status" != "BLOCKED" ]; then
-            gh pr merge "$BACKMERGE_NUMBER" --merge --delete-branch && break
-        fi
-        echo "Waiting for back-merge PR... (state: $pr_state, mergeable: $pr_mergeable, status: $pr_state_status)"
-        sleep 30
-    done
+    pr_state=$(timeout 30 gh pr view "$BACKMERGE_NUMBER" --json state -q .state)
+    pr_mergeable=$(timeout 30 gh pr view "$BACKMERGE_NUMBER" --json mergeable -q .mergeable)
+    pr_state_status=$(timeout 30 gh pr view "$BACKMERGE_NUMBER" --json mergeStateStatus -q .mergeStateStatus)
+    if [ "$pr_state" = "MERGED" ]; then
+        echo "Back-merge PR merged!"
+    elif [ "$pr_state" = "CLOSED" ]; then
+        echo "Back-merge PR was closed without merging — stop"
+    elif [ "$pr_mergeable" = "CONFLICTING" ]; then
+        echo "Back-merge PR has conflicts — stop, do not merge"
+    elif [ "$pr_mergeable" = "MERGEABLE" ] && [ "$pr_state_status" != "BLOCKED" ]; then
+        timeout 60 gh pr merge "$BACKMERGE_NUMBER" --merge --delete-branch
+    else
+        echo "Back-merge PR not ready (state: $pr_state, mergeable: $pr_mergeable, status: $pr_state_status) — re-run this block in ~30 s"
+    fi
     ```
 
 18. **Local cleanup** — fast-forward both branches against their remotes, drop the throwaway release **and** back-merge branches, and prune stale tracking refs:

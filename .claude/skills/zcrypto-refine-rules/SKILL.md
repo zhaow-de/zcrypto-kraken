@@ -22,10 +22,10 @@ A joint session that keeps the guidance corpus truthful, minimal, and placed whe
 
 ## Step 1 — Harvest
 
-Populate the memory inbox with candidate items in the standard memory-file shape (frontmatter `name`/`description`/`metadata.type`, body with **Why** and **How to apply**). **A memory that CONFERS a capability names the session it belongs to** — read by a session it does not describe, it hands over an authority nobody granted; a prohibition is safe subjectless. (`agent-lessons.jsonl` mechanizes this with its required `session` field.)
+Populate the memory inbox with candidate items in the standard memory-file shape (frontmatter `name`/`description`/`metadata.type`, body with **Why** and **How to apply**). **A memory that CONFERS a capability names the session it belongs to** — read by a session it does not describe, it hands over an authority nobody granted; a prohibition is safe subjectless. (An inbox record mechanizes this with its required `session` field.)
 
 - **Watermark**: `git log -1 --grep='^Refine-Round-Closed:' --format=%cI` — the previous round's closing commit carries the `Refine-Round-Closed: <ISO-8601 UTC>` trailer. **No match ⇒ first round**: harvest the full current memory inbox plus the trailing two weeks.
-- **Sources since the watermark**: `git log -p -- docs/reference/agent-lessons.jsonl` (every session's self-corrections, rule deviations, and rule/skill feedback, appended where they happened); `git log` over `.claude/`; new iterations-history entries; merged PR bodies; lessons either party names in the session.
+- **Sources since the watermark**: every inbox `.local/agent-lessons/*.jsonl` in the main checkout — `infra/scripts/check-agent-lessons.py` on each first, a malformed line being a finding, not a skip; `git log` over `.claude/`; new iterations-history entries; merged PR bodies; lessons either party names in the session. **A harvested inbox rotates** to `.local/agent-lessons/harvested/<round-date>/` in the same step, so the next round starts from empty inboxes and no record is harvested twice.
 - A candidate that duplicates an existing memory item updates that item instead (the memory system's own dedup rule).
 
 ## Step 2 — Graduate (joint)
@@ -35,7 +35,7 @@ Walk every memory item — candidates and standing ones alike. Per item, exactly
 | Disposition | Action |
 |---|---|
 | → CLAUDE.md | The shortest imperative form lands there; note the net-growth invariant |
-| → a rule | Lands in the owning `.claude/rules/` file, docs-style |
+| → a rule | Lands in the owning `.claude/rules/` file, per `prose.md` |
 | → an existing skill | Lands at the step where it applies (P4) |
 | → a new skill | Only with the description-is-ambient cost acknowledged |
 | → a hook proposal | Shown to the user; on approval, lands with the settings change |
