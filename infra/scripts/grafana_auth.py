@@ -1,18 +1,10 @@
-"""Resolve vaulted credentials for the Grafana scripts, once, in one place.
-
-Two decrypt footguns, both of which cost a live rollout an error-and-retry, are handled here so
-nobody meets them again:
-
-  * `vault_password_file` in `ansible.cfg` names an EXECUTABLE (`scripts/vault-pass.sh`, a GPG
-    helper), not a file containing a password. Reading its bytes yields shell source, and the
-    failure surfaces as "no vault secrets were found that could decrypt" — which reads as a wrong
-    key rather than a wrong method.
-  * A vault file uses per-variable `!vault |` scalars, so `ansible-vault view` cannot yield one key,
-    and decrypting a scalar additionally requires an initialized `VaultSecretsContext` — without it,
-    str() on the value raises ReferenceError, not a vault error.
-
-Credentials are returned as locals for the caller to place in a request header: never printed, never
-written, never placed in argv where `ps` would show it.
+"""Resolve vaulted credentials for the Grafana scripts.
+Two decrypt footguns whose failures MISLEAD: reading `vault_password_file` instead of executing it
+surfaces as "no vault secrets were found that could decrypt", which reads as a wrong key rather
+than a wrong method; and reading a `!vault` scalar without an initialized `VaultSecretsContext`
+raises ReferenceError rather than a vault error. Credentials are returned as locals for the caller
+to place in a request header: never printed, never written, never in argv where `ps` would show
+it.
 """
 
 from __future__ import annotations
@@ -46,10 +38,9 @@ _CONTEXT_READY = False
 
 def _load_ansible_vault():
     """A loader that can read `!vault` scalars, and the secrets it was given.
-
-    Safe to call more than once: `VaultSecretsContext.initialize` raises RuntimeError on a second
-    call ("already initialized"), which would turn reading a second credential -- the Slack webhook,
-    the healthchecks read-only key -- into a crash mid-run. The flag makes that a no-op instead.
+    Safe to call more than once: a second `VaultSecretsContext.initialize` raises RuntimeError
+    ("already initialized"), which would crash mid-run on the second credential read rather than
+    reporting a vault problem.
     """
     global _CONTEXT_READY
     from ansible.parsing.dataloader import DataLoader
@@ -67,11 +58,8 @@ def _load_ansible_vault():
 
 
 def vault_var(name: str, vault_file: str = VAULT_FILE) -> str:
-    """One variable's plaintext out of a per-variable-encrypted vault file.
-
-    `vault_file` is a parameter because the credentials live in different group vaults: the Grafana
-    token in `all/`, the engine's healthcheck URL in `engine_host/`, the healthchecks admin key in
-    `capture_host/`.
+    """One variable's plaintext out of a per-variable-encrypted vault file; `vault_file` is a
+    parameter because the credentials live in different group vaults.
     """
     loader, _ = _load_ansible_vault()
     return str(loader.load_from_file(str(ANSIBLE_DIR / vault_file))[name])

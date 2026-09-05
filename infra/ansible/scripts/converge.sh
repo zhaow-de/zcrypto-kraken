@@ -50,14 +50,10 @@ if [ "$reply" != "$LIMIT" ]; then
   echo "converge.sh: aborted — confirmation did not match the --limit value; nothing executed" >&2
   exit 3
 fi
-# The real pass, RECORDED. Every converge appends one JSON line -- the target, the tags, every -e
-# operand (digests, flags, override reasons; never a secret, none travels on the command line), the
-# tree it ran from, and how it ended. The digest and the timestamp a rollback needs are then written
-# by the pass that set them, never re-typed from memory into fleet-pins.md afterwards. Preview-only
-# runs and aborted confirms never reach this point, so they leave no line.
-# The line is written by THIS process after the pass returns: a wrapper killed mid-pass (terminal
-# death, a timeout) leaves an orphaned ansible child that converges with NO record -- the host's
-# container .State.StartedAt is the evidence then; append the line by hand from it.
+# The real pass, RECORDED: fleet-pins.md is re-trued from the line this appends, never re-typed from
+# memory. The line is written by THIS process after the pass returns, so a wrapper killed mid-pass
+# leaves an orphaned ansible child converging with NO record -- the container's `.State.StartedAt`
+# is the evidence then, and the line is appended by hand from it.
 set +e
 "$SD/run.sh" "$PLAYBOOK" "$@"
 rc=$?
@@ -76,10 +72,7 @@ done
 ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 REV="$(git -C "$SD" rev-parse HEAD 2>/dev/null || echo unknown)"
 # `dirty` answers "does REV fully describe what was deployed?" -- ansible renders from the working
-# tree, so a modified role means it does not. The deploy log is excluded because THIS SCRIPT writes
-# it: measured on the first live rollout, a converge recorded dirty=false, appended its line, and
-# the next converge two minutes later read dirty=true at the same revision, dirtied by nothing but
-# the recorder. A flag that cannot separate that from a modified role reports neither.
+# tree. The deploy log is excluded because THIS SCRIPT writes it and would otherwise dirty itself.
 TOP="$(git -C "$SD" rev-parse --show-toplevel 2>/dev/null || true)"
 DIRTY=false
 if [ -n "$TOP" ]; then
@@ -107,13 +100,10 @@ for line in ev.splitlines():
     if "=" in line:
         k, v = line.split("=", 1)
         extra[k.strip()] = v.strip()
-# The pins this converge deployed that NO -e carries: the NAS's image lives in a committed
-# host_vars file, so its line named an apply flag and no digest at all -- on the one tier whose
-# rollback operand is in git. Read from the PLAINTEXT vars.yml with a regex, never through
-# `ansible-inventory --host`, which decrypts the vault and prints every secret (CLAUDE.md).
-# Only `@sha256:`-pinned image refs: a path or a port is not a rollback operand.
-# The value must be bare -- unquoted, no trailing YAML comment -- or this regex silently drops it
-# and the pin goes unrecorded.
+# The pins this converge deployed that no `-e` carries. Read from the PLAINTEXT vars.yml with a
+# regex, never `ansible-inventory --host`, which decrypts the vault and prints every secret
+# (CLAUDE.md). The value must be bare -- unquoted, no trailing YAML comment -- or the regex silently
+# drops it and the pin goes unrecorded.
 import re as _re
 committed = {}
 _vars = pathlib.Path(adir) / "host_vars" / limit / "vars.yml"

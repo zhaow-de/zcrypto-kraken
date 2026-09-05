@@ -2,30 +2,10 @@
   hosts: capture_host
   become: true
   pre_tasks:
-    # The primary runs LIVE, UNBACKFILLABLE L2 capture: a converge that restarts it loses data that
-    # can never be re-fetched. Before the secondary existed, `capture_host` held only `zcrypto`, so
-    # every run of this play self-evidently MEANT "converge the primary". Now that `zcrypto-red` has
-    # joined the group, a bare `site.yml` would sweep the primary up alongside it and silently apply
-    # whatever role changes were written for the secondary. This guard makes that impossible to do by
-    # accident: touching the primary requires saying so.
-    #
-    #   secondary only : ./scripts/converge.sh site.yml --limit zcrypto-red -e capture_image_digest=...
-    #   primary        : ./scripts/converge.sh site.yml --limit zcrypto --tags capture -e converge_primary=true -e ...
-    #   engine only    : ./scripts/converge.sh site.yml --limit zcrypto --tags engine -e converge_primary=true -e engine_image_digest=...
-    #
-    # It is a per-host assert, so a bare run fails ONLY the primary and still converges the rest --
-    # loud and safe rather than aborting the fleet. Keep it after the embargo lifts: the flag costs
-    # one argument and buys an explicit "yes, touch the live host".
-    #
-    # The flag gates the ENGINE play too, not just capture. This assert carries `tags: [always]`, so it
-    # fires even on a tag-scoped run; a failed host is dropped from every SUBSEQUENT play, so a bare
-    # `site.yml --tags engine` would skip the engine play entirely rather than deploy it. That fails
-    # closed (nothing converges), but it is the reason the message below talks about the host, not just
-    # the capture daemon.
-    #
-    # Keyed on engine_host membership, not a hardcoded name: the engine host IS the live primary by
-    # construction (it is where the live Kraken trade key renders), so this cannot drift if a third
-    # capture host joins or the primary is rebuilt under another inventory name.
+    # The primary runs LIVE, UNBACKFILLABLE L2 capture: a converge that restarts it loses data
+    # nothing can re-fetch, so touching it takes an explicit flag. Keyed on engine_host membership
+    # rather than a hardcoded name, so it cannot drift when a host joins or is renamed. Keep it
+    # after the embargo lifts: one argument buys an explicit yes.
     - name: refuse to converge the live primary unless explicitly asked
       ansible.builtin.assert:
         that: converge_primary | default(false) | bool
@@ -104,11 +84,9 @@
       when: not ansible_check_mode
       tags: [engine]  # I2: NOT always — a --tags capture primary run must not be window-blocked; guard 4 covers untagged runs
 
-    # spec 00083 D6: when the boundary's cycle already completed, the fixed B+30 floor is
-    # conservative for no reason — the running cycle it protects is over. The probe computes the
-    # boundary and reads its journal artifact ON the engine host; any failure (missing file, parse
-    # error) lands rc!=0 and the guard keeps the conservative floor. Journal day-dirs are %Y-%m-%d,
-    # files cycle-%H.json, field completed_at (cli/engine/cycle.py's own naming).
+    # spec 00083 D6: when the boundary's cycle already completed, the fixed B+30 floor protects a
+    # cycle that is over. The probe reads the journal artifact ON the engine host, and any failure
+    # -- missing file, parse error -- lands rc!=0 so the guard keeps the conservative floor.
     - name: probe — the boundary cycle's completion time (window floor)
       ansible.builtin.command:
         argv:
@@ -150,15 +128,11 @@
       when: not ansible_check_mode and engine_epoch_probe.stdout is defined
       tags: [engine]
 
-    # spec 00082 D1 (second half), same shape as the capture role's two override echoes: an ACCEPTED
-    # override lands its reason in the play log. Gated on acceptance — the assert's own scoping AND
-    # the window condition NEGATED (its first disjunct, character-for-character — a folded scalar
-    # keeps both the break and the EXTRA indent of every more-indented line, so the mirror below
-    # shifts each line 2 columns left, preserving its indent RELATIVE to its own block key, which is
-    # what keeps the two folded texts byte-identical) AND the override fragment — never on the
-    # override merely being PRESENT, which would print a "why" on runs that overrode nothing. The
-    # scoping half is load-bearing, not decoration: under --check the probe is skipped, so `.stdout`
-    # is undefined and an unscoped `when:` would error instead of skipping.
+    # The window condition is mirrored here character-for-character. A folded scalar keeps both the
+    # break and the EXTRA indent of every more-indented line, so the mirror shifts each line 2
+    # columns left to preserve its indent relative to its own block key -- that is what keeps the
+    # two texts byte-identical. Under --check the probe is skipped, so `.stdout` is undefined and an
+    # unscoped `when:` would error rather than skip.
     - name: engine window override accepted — the reason, on the record
       ansible.builtin.debug:
         msg: "engine_window_override accepted: {{ engine_window_override }}"

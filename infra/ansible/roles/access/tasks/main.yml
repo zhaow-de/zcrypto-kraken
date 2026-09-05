@@ -182,46 +182,27 @@
 - name: caddy enabled + started
   ansible.builtin.systemd: {name: caddy, enabled: true, state: started}
 
-# --- LAST IN THE ROLE ON PURPOSE, and SKIPPED under --check. An assert that fails takes the rest of
-# the play with it, and below it would be the pinned-leaves + Caddyfile tasks that ARE the
-# client-cert revocation path -- the blast radius the alloy version pin caused live on 2026-08-20,
-# recorded at the top of this file.
+# LAST IN THE ROLE, and skipped under `--check`, because an assert that fails takes the rest of the
+# play with it and below it are the pinned-leaves and Caddyfile tasks that ARE the client-cert
+# revocation path. `flush_handlers` runs before it for the same reason: force_handlers defaults to
+# False, so a failure here would strand `reload caddy`, the handler that makes a deleted pinned leaf
+# take effect.
 #
-# Two things make that protection real rather than nominal, and both were missing from the first cut:
+# The relay is Accept=no with no --exit-idle-time, so one long-lived systemd-socket-proxyd holds the
+# listener. Rewriting the unit does not replace its target -- no ExecReload, the target is a
+# command-line argument rather than config, `daemon-reload` refreshes only systemd's view of the
+# FILE, and `state: started` is a no-op on a running unit -- so a converge that rewrites this unit
+# reports `changed` and reaches nothing. What DOES restart it is `restart wg-quick@zaccess0`, which
+# both relay halves inherit through `Requires=`, so a tunnel-conf change bounces the relay and the
+# gate then passes.
 #
-#   * `when: not ansible_check_mode`. converge.sh runs `--check --diff` FIRST and exits without
-#     converging if the preview fails. An assert that trips in check mode therefore blocks the WHOLE
-#     run -- revocation included -- more completely than a mid-play failure would. It would also be
-#     judging the OLD file, since the template does not write under --check.
-#   * `flush_handlers` before the gate. force_handlers defaults to False, so a failure here strands
-#     every pending handler; `reload caddy` is the one that makes a deleted pinned leaf take effect.
-#     Applying them first stops a drifted relay from silently withholding a cert revocation.
-#
-# The relay is Accept=no with no --exit-idle-time, so ONE long-lived systemd-socket-proxyd holds the
-# listener for as long as it runs. Rewriting the unit does not replace its target: `reload` is not
-# applicable (no ExecReload, and the target is a command-line argument rather than config),
-# `daemon-reload` only refreshes systemd's view of the FILE, and `state: started` is a no-op on a
-# running unit. So a converge that rewrites this unit reports `changed` and reaches nothing.
-#
-# ONE thing above does restart it, and the flush below is what makes that so: `restart
-# wg-quick@zaccess0` is notified by the wireguard conf template, and BOTH relay halves declare
-# `Requires=wg-quick@zaccess0.service`, which systemd propagates as a restart. So a converge that
-# changes the tunnel conf DOES bounce the relay -- dropping the sessions this gate exists to avoid
-# dropping -- and the relay then re-execs from the new file, so the gate below passes. That is a
-# reason to keep the gate honest about what it observes, not a reason to move the flush: without it
-# a tripped gate strands `reload caddy`.
-#
-# It REPORTS drift; it does not prevent it. `converge.sh` previews with --check --diff and aborts on a
-# failed preview, so skipping check mode is what stops a drifted relay from blocking the whole run --
-# and the cost is that by the time this can fail, every task above it has applied. Read a failure as
-# "the converge landed and the relay still needs a hand", never as "the converge was refused".
-#
-# Asserted rather than restarted: a restart drops every SSH session traversing the relay INTO the ops
-# node -- including the shell a remote operator may be driving this play from. (It cannot cut the
-# play's own transport: this converge reaches zaccess's own sshd directly on :10022, per fleet.md.)
-# The sibling zaccess-nas-proxy relay in roles/access_ops gets restart handlers instead -- it carries
-# DSM traffic, not an operator's session. NOTE the socket half is covered by neither here: a changed
-# ListenStream is still written and never applied. It has never changed; widen this gate if it does.
+# It REPORTS drift and does not prevent it: by the time this can fail, every task above has applied.
+# Read a failure as "the converge landed and the relay still needs a hand", never as "the converge
+# was refused". Asserted rather than restarted because a restart drops every SSH session traversing
+# the relay into the ops node, including the shell a remote operator may be driving this play from;
+# this converge reaches zaccess's own sshd directly on :10022, so it cannot cut its own transport.
+# The sibling relay in roles/access_ops takes restart handlers instead: it carries DSM traffic, not
+# an operator's session.
 - name: apply pending handlers before the relay drift gate
   ansible.builtin.meta: flush_handlers
 

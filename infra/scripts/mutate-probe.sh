@@ -1,20 +1,13 @@
 #!/usr/bin/env bash
-# The mutate -> measure -> restore cycle with its recorded traps closed (spec 00082 D4):
-#   * refuses a dirty worktree (restore uses `git checkout --`, which destroys uncommitted work)
-#   * --sandbox seeds from `git archive HEAD` (never cp -a) and REFUSES pytest there (the editable
-#     install's .pth resolves cli/tests to the repo, so every verdict would measure unmutated code)
-#   * PYTHONDONTWRITEBYTECODE=1 + __pycache__ purge (a same-second same-length mutation re-runs a
-#     stale .pyc otherwise)
-#   * the probe must PASS on the UNMUTATED target before anything is mutated (exit 7) -- an
-#     always-failing probe command (wrong path, broken invocation) makes the control "fail" for a
-#     reason unrelated to the mutation, and then scores every real mutation KILLED with "control
-#     proven" attached to the lie
-#   * the CONTROL mutation must FAIL the probe before any real probe counts -- an unproven harness
-#     proves nothing (the guard-proving rule as code)
+# The mutate -> measure -> restore cycle with its traps closed (spec 00082 D4). It refuses a dirty
+# worktree, because restore is `git checkout --` and would destroy uncommitted work; refuses pytest
+# under `--sandbox`, because the editable install's .pth resolves cli and tests back to the repo so
+# every verdict would measure unmutated code; requires the probe to PASS unmutated first, since an
+# always-failing probe scores every mutation KILLED with "control proven" attached to the lie; and
+# requires the CONTROL mutation to FAIL, which is the guard-proving rule as code.
 # Usage: mutate-probe.sh [--sandbox] --file <path> --control <sed-expr> --mutation <sed-expr> -- <probe-cmd...>
-# Exit: rc 2 usage | rc 3 refused (dirty worktree, or pytest under --sandbox) | rc 4 restore failed
-#     | rc 5 control did not fail | rc 6 no-op sed | rc 7 baseline failed | rc 8 seeding failed
-#     | rc 9 cleanup restore failed (pristine kept)
+# Exit: rc 2 usage | rc 3 refused | rc 4 restore failed | rc 5 control did not fail | rc 6 no-op sed
+#     | rc 7 baseline failed | rc 8 seeding failed | rc 9 cleanup restore failed (pristine kept)
 set -euo pipefail
 
 sandbox=0; file=""; control=""; mutation=""
@@ -30,14 +23,10 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$file" && -n "$control" && -n "$mutation" && $# -gt 0 ]] || { echo "usage: mutate-probe.sh [--sandbox] --file F --control SED --mutation SED -- CMD..." >&2; exit 2; }
 
-# ONE handler for both temporaries — the sandbox dir (sandbox mode only) and the pristine copy (both
-# modes). A second `trap ... EXIT` would REPLACE this one rather than add to it, leaking whichever
-# it displaced on every run.
-#
-# It RESTORES BEFORE IT CLEANS, and it runs on INT/TERM as well as EXIT. A signal delivered while the
-# probe runs (a hung probe killed, an interactive Ctrl-C) lands with the mutation applied to the
-# target: cleaning first would delete the pristine copy that is the only way back, leaving the file
-# mutated on disk — the worst possible failure for a script whose whole job is safe restoration.
+# ONE handler for both temporaries: a second `trap ... EXIT` would REPLACE this one rather than add
+# to it, leaking whichever it displaced. It restores BEFORE it cleans and runs on INT/TERM as well
+# as EXIT, because a signal delivered while the probe runs lands with the mutation applied, and
+# cleaning first would delete the only way back.
 work=""; pristine=""; mutated=0; cleaned=0
 cleanup() {
   if [[ $cleaned -eq 1 ]]; then return 0; fi   # INT/TERM handlers are followed by EXIT — run once
