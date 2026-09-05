@@ -1,39 +1,7 @@
-"""Re-derivation of registry record 44's benchmark-relative validation legs from committed code.
-
-Record 44 (the deployable system) registered its verdict as ADOPT *vs incumbent trial 43*, whose
-construction was never committed — its `run_ref` names scratchpad scripts that no longer exist, so
-that comparison cannot be rebuilt (T0125). What CAN be rebuilt is record 44's BENCHMARK-relative
-basis: every leg below is recomputed here from `build_crossfreq_system_fast` (record 44 itself)
-against the frozen 4h benchmark, through the same committed SPA / DSR / worst-slice primitives the
-kill bar uses. This module is the durable replacement for those vanished drivers — re-running it is
-the whole point, so it takes no tuning knobs and reads only frozen inputs.
-
-Scope boundary: this covers the benchmark-relative legs. The kill bar's own-series cost-stress leg
-(`cost_stress_*`) and the drawdown figures are NOT re-derived here and remain registry-asserted.
-
-Run: `uv run python -m cli.portfolio.record44_legs` (~85 s measured; the benchmark's inverse-vol
-weights and the seven SPA bootstraps dominate). The book comes from the fast path, which the
-committed full-history equivalence gate holds elementwise-equal to the verified path.
-
-Two conventions spec 00038 left unwritten are pinned here by reproduction rather than by choice —
-see `SPA_GRID` and `calendar_year_slices` for which registered figure each is answerable to:
-
-  * The SPA grid's HEADLINE cell is (mean_block 30, seed 42). Its full-window reading is the
-    registry's `spa_p_full` and its decisive reading `spa_p_decisive` — which is why no
-    `spa_grid_b30_s42` key exists, a gap that otherwise reads as a missing cell. The five
-    `spa_grid_*` keys are the DECISIVE readings of the other cells; four of those five match the
-    decisive and not the full window, which is what identifies it. (102, 42) reads the same on
-    both at 1/2001 granularity and so does not discriminate.
-  * The benchmark-relative WORST-SLICE test runs on the governed net over FULL history, with each
-    bar's year taken from its CLOSE stamp. On the decisive window the book's worst slice moves
-    2022 -> 2014, contradicting record 44's registered note — which is what makes this a recovered
-    convention rather than a fitted one.
-
-These live here and NOT in spec 00038 on purpose. Registry records 43 and 44 store
-`spec_hash a25d7102…`, which is the sha256 of that spec file — appending to it silently breaks the
-pin that verifies the ratified record. A spec named by a registry `spec_hash` is immutable; the
-durable home for a recovered convention is committed, runnable code like this module.
-"""
+"""Re-derivation of registry record 44's benchmark-relative validation legs from committed code — no tuning knobs and only
+frozen inputs, because re-running it is the whole point. This basis, not record 44's registered ADOPT vs incumbent
+trial 43, is what the go/no-go gate rests on (T0125, resolved, records the ruling). The conventions spec 00038 left
+unwritten are pinned below and never appended to it — its sha256 is the `spec_hash` that verifies records 43 and 44."""
 
 from __future__ import annotations
 
@@ -42,9 +10,8 @@ import statistics
 from datetime import datetime
 from pathlib import Path
 
-# Deliberate cross-package import of a1's private weight helper, for the same reason
-# crossfreq_system.py imports it: the frozen benchmark must run the SAME code path the registered
-# trial ran, and a reimplementation could silently diverge.
+# Deliberate cross-package import of a1's private weight helper: the frozen benchmark must run the SAME code path the
+# registered trial ran, and a reimplementation could silently diverge.
 from cli.alpha.a1 import _inverse_vol_weights
 from cli.alpha.killbar import benchmark_relative_worst_slice
 from cli.benchmark.strategies import dynamic_inverse_vol_basket, sma_gate, vol_target
@@ -69,26 +36,19 @@ BENCH_GATE_WINDOW = 1200  # 200d
 BENCH_TARGET_VOL_ANNUAL = 0.10
 BENCH_MAX_LEVERAGE = 1.0
 
-# Spec 00038 pre-registers "SPA at blocks 30 AND 102; seeds 42/7/1234" but never says which cell is
-# the headline nor which window the grid uses. Recovered by exclusion, not assumed: the registry
-# stores five `spa_grid_*` keys and no `spa_grid_b30_s42`, and (30, 42) is the only pair whose two
-# windows reproduce `spa_p_full` and `spa_p_decisive` — so it is the headline pair, and the missing
-# grid key is missing because that cell IS `spa_p_decisive`. Of the five grid cells, four match the
-# decisive window and NOT the full window (measured: b30/s7, b30/s1234, b102/s7, b102/s1234 read
-# 0.0025/0.0025/0.0025/0.0040 full vs their registered decisive values); b102/s42 reads identically
-# on both windows at the 1/2001 granularity, so it is consistent but non-discriminating.
+# Spec 00038 pre-registers "SPA at blocks 30 AND 102; seeds 42/7/1234" but names neither the headline cell nor the grid's
+# window. Recovered by exclusion, not assumed: the registry stores five `spa_grid_*` keys and no `spa_grid_b30_s42`, and
+# (30, 42) is the only pair whose two windows reproduce `spa_p_full` and `spa_p_decisive` — so (30, 42) is the headline
+# pair; the grid keys below are the DECISIVE-window readings, which `tests/test_record44_legs.py` pins.
 SPA_HEADLINE_BLOCK = 30
 SPA_HEADLINE_SEED = 42
 SPA_GRID = ((30, 7), (30, 1234), (102, 42), (102, 7), (102, 1234))
 
 
 def load_union(interval: int, *, root: Path = DATA_ROOT, read=read_parquet) -> tuple[list[datetime], dict[str, list[float | None]]]:
-    """Union-calendar bar-START stamps and per-asset closes (None where an asset has no bar).
-
-    `read` is the loader applied to each series path; the default reads the file directly. Passing a
-    capturing loader (`ObservedReader.read_series`) is how a run's dataset identity is observed from
-    the bytes this function actually opens, rather than claimed alongside it.
-    """
+    """Union-calendar bar-START stamps and per-asset closes (None where an asset has no bar); a capturing `read` (an
+    adapter over `ObservedReader.read_series`) is how a run's dataset identity is observed from the bytes this function
+    actually opens, rather than claimed alongside it."""
     assets = CrossfreqSystemConfig().assets
     frames = {a: read(root / a / "EUR" / f"{interval}.parquet") for a in assets}
     union_ts = sorted(set().union(*[set(f["ts"].to_list()) for f in frames.values()]))
@@ -101,12 +61,7 @@ def load_union(interval: int, *, root: Path = DATA_ROOT, read=read_parquet) -> t
 
 
 def benchmark_4h_net_of_cost(h4_prices: dict[str, list[float | None]], *, cost_per_side: float) -> list[float]:
-    """The frozen 4h benchmark's per-bar net-of-cost return series (registered Sharpe 1.2128 full).
-
-    Time-preserving mapping: dynamic inverse-vol basket at lookback 180 -> SMA gate 1200 on the
-    basket's own equity -> vol target 0.10/sqrt(2190) at lookback 180 -> inverse-vol weights at 180,
-    charged per-asset turnover.
-    """
+    """The frozen 4h benchmark's per-bar net-of-cost return series."""
     assets = CrossfreqSystemConfig().assets
     n = len(next(iter(h4_prices.values()))) - 1
     basket = dynamic_inverse_vol_basket(h4_prices, lookback=BENCH_LOOKBACK)
@@ -137,14 +92,10 @@ def benchmark_4h_net_of_cost(h4_prices: dict[str, list[float | None]], *, cost_p
 
 
 def a1_family_var_trials_4h(*, registry_path: Path = REGISTRY_PATH) -> float:
-    """`var_trials` in 4h per-period Sharpe^2 units, the iter-074 convention record 44 registered:
-    the sample variance of the recorded A1-family DAILY per-period Sharpes, divided by 6 (per-period
-    Sharpe scales 1/sqrt(6) from daily to 4h). Read-only use of the append-only registry.
-
-    Bounded to record 44's own predecessors: the registry grows, and a later A1 append carrying
-    `per_period_sharpe` would silently change this derivation — surfacing as "the re-derivation
-    broke" rather than "the input set moved". The 33 contributing records are frozen by that bound.
-    """
+    """`var_trials` in 4h per-period Sharpe^2 units — the sample variance of the recorded A1-family DAILY per-period
+    Sharpes divided by 6, the iter-074 convention record 44 registered (per-period Sharpe scales 1/sqrt(6) from daily to
+    4h). Bounded to record 44's own predecessors because the registry is append-only: a later A1 append carrying
+    `per_period_sharpe` would silently move this derivation."""
     daily_sharpes = [
         r.metrics["per_period_sharpe"]
         for r in TrialRegistry(registry_path).records
@@ -154,14 +105,10 @@ def a1_family_var_trials_4h(*, registry_path: Path = REGISTRY_PATH) -> float:
 
 
 def calendar_year_slices(returns: list[float], h4_ts: list[datetime]) -> dict[str, list[float]]:
-    """Per-period returns grouped by calendar year, stub years dropped. Return bar k is attributed
-    to the year of its CLOSE, `h4_ts[k + 1]` — the end-of-move stamping the daily trials used.
-
-    Spec 00038 says only "benchmark-relative worst-slice, stubs excluded"; it never pins the series
-    or the window. Recovered by reproduction: the GOVERNED net over the FULL history, sliced this
-    way, is what reproduces record 44's registered notes (book worst 2022 -0.0290, benchmark worst
-    2014 -0.0797, book smaller drawdown in 6 of 12 compared years).
-    """
+    """Per-period returns grouped by calendar year, stub years dropped, each bar attributed to the year of its CLOSE,
+    `h4_ts[k + 1]` — the end-of-move stamping the daily trials used. Spec 00038 pins neither series nor window for the
+    worst-slice leg; the GOVERNED net over the FULL history, sliced this way, is what reproduces record 44's registered
+    worst-slice notes."""
     out: dict[str, list[float]] = {}
     for k, r in enumerate(returns):
         year = h4_ts[k + 1].year
@@ -179,12 +126,9 @@ def rederive_record44_legs(
     *,
     var_trials: float,
 ) -> dict:
-    """Every re-derivable leg of record 44's benchmark-relative basis, keyed by its registry name.
-
-    `worst_slice_relative` carries the full diagnostic (worst slices, DD counts) because the
-    registered `worst_slice_relative_pass: 1` is a bare flag — the numbers that make it checkable
-    live only in record 44's free-text notes.
-    """
+    """Every re-derivable leg of record 44's benchmark-relative basis, keyed by its registry name — the own-series
+    `cost_stress_*` and `maxdd*` legs are not among them; `worst_slice_relative` carries the full diagnostic because the
+    registered `worst_slice_relative_pass: 1` is a bare flag whose numbers live only in record 44's free-text notes."""
     config = CrossfreqSystemConfig()
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
     book = result.governed_net

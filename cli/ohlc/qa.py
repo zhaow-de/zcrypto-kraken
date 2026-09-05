@@ -11,11 +11,9 @@ INTERVAL_SECONDS = {"1440": 86400, "240": 14400, "60": 3600, "15": 900}
 
 
 def detect_gaps(frame: pl.DataFrame, interval_secs: int) -> list[dict]:
-    """Find gaps in `frame`'s sorted `ts` column that exceed `interval_secs`.
+    """Find gaps in `frame`'s `ts` column exceeding `interval_secs`; `frame` is assumed sorted (`to_frame` guarantees it).
 
-    Returns one dict per gap: `{after_ts, before_ts, missing}`, where `missing` is the count of
-    candles absent from the regular grid between the two timestamps. `frame` is assumed sorted
-    (as `to_frame` guarantees), so this is a clean consecutive-row diff.
+    Each gap is `{after_ts, before_ts, missing}`, `missing` counting the grid candles absent between the two timestamps.
     """
     diffs = frame.select(
         pl.col("ts").shift(1).alias("after_ts"),
@@ -47,11 +45,9 @@ def wick_outliers(frame: pl.DataFrame, *, rel_range: float = 0.20) -> list[dict]
 
 
 def price_discontinuities(frame: pl.DataFrame, *, max_ratio: float = 3.0) -> list[dict]:
-    """Return bar-over-bar close moves beyond `max_ratio`x (or below `1 / max_ratio`) — candidate corporate
-    actions (splits, redenominations) or data errors. A heuristic flag: genuine crypto moves (early-market
-    chaos, mania pumps) also trip it, so classify each against known events. Returns
-    `[{ts, prev_close, close, ratio}]`; fewer than 2 rows → `[]`. (A `prev_close` of 0 gives ±inf/NaN — inf is
-    still flagged, a 0→0 NaN is not; the universe has no non-positive closes, so this does not arise in practice.)
+    """Return bar-over-bar close moves beyond `max_ratio`x or below `1 / max_ratio` — candidate corporate actions or data errors.
+
+    Genuine crypto moves trip it too, so classify each `{ts, prev_close, close, ratio}` hit against known events.
     """
     if frame.height < 2:
         return []
@@ -66,10 +62,9 @@ def price_discontinuities(frame: pl.DataFrame, *, max_ratio: float = 3.0) -> lis
 
 
 def qa_series(frame: pl.DataFrame, interval_secs: int) -> dict:
-    """Compute the per-series QA summary for `frame` at `interval_secs` cadence.
+    """Compute the per-series QA summary for `frame` on the `interval_secs` grid.
 
-    `coverage_pct` is actual rows over the expected candle count on the regular grid spanning
-    `first_ts..last_ts` (`rows + missing_candles`), as a percentage.
+    `coverage_pct` is rows as a percentage of the candles that grid holds between `first_ts` and `last_ts`.
     """
     rows = frame.height
     gaps = detect_gaps(frame, interval_secs)
@@ -92,9 +87,7 @@ def qa_series(frame: pl.DataFrame, interval_secs: int) -> dict:
 def qa_dataset(root: Path, intervals: dict[str, int], *, as_of: str | None = None) -> dict:
     """Run `qa_series` over every `root/{symbol}/{label}.parquet` for `label` in `intervals`.
 
-    `symbol` is discovered from the directory tree (the path relative to `root`, e.g. `"BTC/EUR"`),
-    not passed in. Returns `{as_of?, series: {"{symbol}/{label}": qa_series-dict}, summary}`, where
-    `summary` is `{series_count, total_gaps, min_coverage_pct}`. `as_of` is included only when given.
+    `symbol` is the parquet's directory relative to `root`; each series is keyed `"{symbol}/{label}"`, e.g. `"BTC/EUR/1440"`.
     """
     entries = sorted(
         (

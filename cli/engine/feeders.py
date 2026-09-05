@@ -1,12 +1,7 @@
-"""Read-only measurements over the journaled shadow cycles, feeding the go-live sizing questions.
-
-Two reports share one replay: `decompose_report` attributes a cycle's gross across the pipeline's
-stages (per-sleeve -> combined -> capped -> governed), and `accumulation_report` simulates an
-accumulate-until-placeable order policy against Kraken's venue minimums to measure the drift floor
-those minimums impose. Neither writes anything, and neither touches the builder: every stage is
-recomputed from public parts and then PROVEN against the builder's own output (see
-`replay_stages`), so a builder change surfaces as a raised error rather than a silently wrong table.
-"""
+"""Read-only measurements over the journaled shadow cycles: `decompose_report` attributes a cycle's
+gross across the pipeline's stages, `accumulation_report` measures the drift floor Kraken's venue
+minimums impose. Both go through `replay_stages`, which proves each recomputed stage against the
+builder's own output, so a builder change raises instead of rendering a silently wrong table."""
 
 from __future__ import annotations
 
@@ -36,16 +31,15 @@ class CycleStages:
     sleeve_positions: dict[str, dict[str, float]]  # per sleeve, per asset
     combined: dict[str, float]
     capped: dict[str, float]
-    # After the §10 whole-book limits, before the governor multiply. `final` is
-    # `multiplier * limited` by construction (`_check_stage_identity` enforces it), so without
-    # this stage the table has to attribute the limits' share to the governor's column.
+    # After the §10 whole-book limits, before the governor multiply -- `_check_stage_identity` enforces
+    # `final == multiplier * limited`; without this stage the table charges the limits' share to the governor.
     limited: dict[str, float]
     final: dict[str, float]
     multiplier: float
     closes: dict[str, float]  # the 4h close used for the forming row, per asset
     cap_bound: bool
-    # The NAV this cycle priced against, when the record journaled one (T0150). None on every
-    # record written before the key existed; `realized_drift` falls back to the caller's scalar.
+    # The NAV this cycle priced against, when the record journaled one (T0150); None otherwise, where
+    # `realized_drift` falls back to the caller's scalar.
     nav: float | None = None
 
 
@@ -55,14 +49,10 @@ def stage_grosses(sleeve_positions: dict[str, dict[str, float]]) -> dict[str, fl
 
 
 def cancellation_ratio(sleeve_positions: dict[str, dict[str, float]]) -> tuple[float, float, float]:
-    """Return `(ratio, combined_gross, mean_sleeve_gross)`.
-
-    The 1/3 combination nets opposing sleeve positions away asset by asset, so the combined book's
-    gross is NOT the mean of the sleeve grosses. The ratio names how much of the sleeves' exposure
-    survives the combination: 1.0 = they agree and nothing cancels; well below 1.0 = disagreement
-    is where gross is going. NaN on a flat book (0/0) -- reporting 1.0 there would claim agreement
-    that was never demonstrated.
-    """
+    """Return `(ratio, combined_gross, mean_sleeve_gross)`, the ratio being how much of the sleeves'
+    exposure survives the 1/3 combination -- which nets opposing positions asset by asset, so the
+    combined gross is NOT the mean of the sleeve grosses. NaN on a flat book (0/0), since reporting
+    1.0 there would claim an agreement the cycle never demonstrated."""
     assets = {a for book in sleeve_positions.values() for a in book}
     third = 1 / 3
     combined_gross = sum(abs(sum(third * book.get(a, 0.0) for book in sleeve_positions.values())) for a in assets)
@@ -73,18 +63,10 @@ def cancellation_ratio(sleeve_positions: dict[str, dict[str, float]]) -> tuple[f
 
 
 def _check_stage_identity(multiplier: float, limited: dict[str, float], final: dict[str, float], *, cycle_ts) -> None:
-    """Raise unless `multiplier * limited[a] == final[a]` exactly, for every asset.
-
-    `limited` is the book AFTER the per-asset caps and the §10 whole-book limits -- the same stack
-    the builder multiplies the governor into. Stopping at the caps would break this identity the
-    first time a whole-book limit binds, i.e. report the engine broken exactly when the risk layer
-    is doing its job.
-
-    Exact equality is correct here, not float-fragile: the harness reruns the builder's own
-    arithmetic on the builder's own floats in the same order (`sleeve_positions` stores the
-    already-4h-expanded series, apply_position_caps is a pure per-element clip, and each whole-book
-    limit is a per-bar scale), so any difference means the recomputation genuinely diverged.
-    """
+    """Raise unless `multiplier * limited[a] == final[a]` exactly, for every asset -- `limited`, never
+    `capped`, or the identity breaks the first time a whole-book limit binds. Exact equality is right,
+    not float-fragile: the replay reruns the builder's own arithmetic on the builder's own floats in
+    the same order, so any difference means the recomputation genuinely diverged."""
     for a, target in final.items():
         if multiplier * limited[a] != target:
             raise EngineError(
@@ -95,28 +77,10 @@ def _check_stage_identity(multiplier: float, limited: dict[str, float], final: d
 
 
 def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSystemConfig | None = None) -> CycleStages:
-    """Rebuild one journaled cycle and return its forming-row book at every pipeline stage.
-
-    Two identities, both per cycle, because they catch different failures. INTERNAL:
-    `multiplier * limited[a]` must equal the builder's own `final_targets[a]` exactly -- evidence
-    the recomputed intermediate IS the builder's, so a changed combination, cap or whole-book limit
-    raises instead of reporting a wrong attribution. JOURNAL: the rebuilt targets must equal the RECORD's own
-    `final_targets` -- which the internal one structurally cannot catch, since a self-consistent
-    rebuild that diverges from what the engine actually traded would agree with itself all the way
-    and both reports would describe a book that never existed.
-
-    Both journal schemas rebuild here (spec 00094 D2/D3). A schema-1 record's journaled pairs already
-    ARE the ten-asset model's base keys; a schema-2 record's are the twelve full symbols, which the
-    builder REFUSES -- and refuses with `PortfolioError`, which is not an `EngineError`, so it would
-    escape `decompose_report`'s per-record catch and kill the whole command rather than counting one
-    named cycle. `select_model_inputs` contracts them (imported from the cycle, never copied).
-
-    Only the JOURNAL identity crosses into symbol space, via `_expand_to_basket`, because that is the
-    key space the record was written in. The returned `CycleStages` stays BASE-keyed whatever the
-    schema: both consumers want base keys -- `accumulation_payload` looks its floors up in
-    `load_minimums`' output, which the refdata snapshot keys by base -- and no sleeve, cap or
-    whole-book limit has ever seen a `/BTC` leg to report on.
-    """
+    """Rebuild one journaled cycle and return its forming-row book at every pipeline stage, BASE-keyed whatever the
+    record's schema, since `accumulation_payload` looks its floors up by base. Both schemas rebuild here (spec 00094
+    D2/D3): a schema-2 record's full symbols reach the builder only through `select_model_inputs` -- imported from the
+    cycle, never copied, so a replay cannot diverge -- since raw they raise a `PortfolioError` no per-record catch holds."""
     c = config or CrossfreqSystemConfig()
     validate_record(record)  # no-peek + snapshot-boundary discipline, before any snapshot is read
     by_grid: dict[str, dict[str, tuple[list[datetime], list[float | None]]]] = {"1440": {}, "240": {}}
@@ -167,12 +131,10 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
 
     sleeves = {name: {a: result.sleeve_positions[name][a][n] for a in c.assets} for name in SLEEVES}
     third = 1 / 3
-    # The builder's own chained-add expression, NOT sum(): since 3.12 sum() uses Neumaier
-    # compensated summation, which differs by an ulp on ~18% of triples -- and the identity
-    # below compares exactly, so a sum() here would fire on cycles that are in fact correct.
+    # The builder's own chained-add expression, NOT sum(): since 3.12 sum() compensates (Neumaier) and
+    # differs by an ulp, and the identity below compares exactly -- a sum() here fires on correct cycles.
     combined = {a: third * sleeves["B"][a] + third * sleeves["A1"][a] + third * sleeves["A2"][a] for a in c.assets}
-    # Both stacks take the builder's {asset: series} shape, so the forming row replays as a
-    # one-element series; every whole-book limit is per-bar, so a single bar answers identically.
+    # The forming row replays as a one-element series: both stacks take {asset: series}, and every limit is per-bar.
     capped_series = apply_position_caps({a: [combined[a]] for a in c.assets}, long_cap=c.long_cap, short_cap=c.short_cap)
     limited_series = apply_whole_book_limits(capped_series)
     capped = {a: capped_series[a][0] for a in c.assets}
@@ -182,9 +144,9 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
 
     _check_stage_identity(multiplier, limited, final, cycle_ts=record.cycle_ts)
 
-    # The journal identity: what we rebuilt must be what the engine actually traded -- compared in
-    # the key space the RECORD was written in, so a schema-2 record's twelve symbols are met by the
-    # cycle's own expansion of the ten the model produced.
+    # The journal identity, which the internal one structurally cannot catch: a self-consistent rebuild
+    # that diverged from what the engine traded would agree with itself. Compared in the key space the
+    # RECORD was written in, so a schema-2 record's twelve symbols meet the cycle's own expansion.
     journaled_space = final if record.schema_version == 1 else _expand_to_basket(final)
     if set(journaled_space) != set(record.final_targets):
         raise EngineError(
@@ -217,19 +179,14 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
         multiplier=multiplier,
         closes=closes,
         cap_bound=any(abs(capped[a] - combined[a]) > 1e-15 for a in c.assets),
-        # Carried for the same reason `executor._stage` carries it: the number a human bands and
-        # the number the engine trips on must come from the same NAV. Omitting it here would band
-        # the report at the LIVE value while the trip scored the journaled one.
+        # The number a human bands and the number the engine trips on must come from the same NAV
+        # (`executor._stage` carries it for that reason); omitting it bands the report at the LIVE value.
         nav=record.nav,
     )
 
 
 def _median(values: list[float]) -> float:
-    """Median of the non-NaN values, NaN when none remain.
-
-    Dropping NaN is deliberate: a flat cycle's ratio is 0/0, and counting it as 1.0 would claim
-    agreement the cycle never demonstrated.
-    """
+    """Median of the non-NaN values, NaN when none remain."""
     clean = sorted(v for v in values if not math.isnan(v))
     if not clean:
         return math.nan
@@ -254,22 +211,16 @@ _MEDIAN_KEYS = (
 def decompose_payload(stages: list[CycleStages]) -> dict:
     """Per-cycle attribution rows plus their aggregates. Pure -- no I/O, no replay.
 
-    Each of the three consecutive-stage ratios is carried PER CYCLE (`cancellation_ratio`,
-    `capped_ratio`, `governed_ratio`) and aggregated as the median of those per-cycle values --
-    never as a ratio of the stage medians. The two differ materially once the governor multiplier
-    varies across the window, and only the per-cycle basis answers "what fraction survives a
-    typical cycle"; a ratio of medians divides two numbers that need not come from the same cycle.
-    """
+    Each consecutive-stage ratio is carried PER CYCLE and aggregated as the median of those per-cycle
+    values, never as a ratio of the stage medians, which divides two numbers from different cycles."""
     rows = []
     for s in stages:
         ratio, combined_gross, mean_sleeve_gross = cancellation_ratio(s.sleeve_positions)
         capped_gross = sum(abs(v) for v in s.capped.values())
         limited_gross = sum(abs(v) for v in s.limited.values())
-        # This ratio's denominator is the BUILDER's combined book, not cancellation_ratio's
-        # sleeve-side recomputation: numerator and denominator must be summed off the same floats.
-        # Mixed, an unbound cycle reports 1.0000000000000002 -- gross growing THROUGH the caps,
-        # which cannot happen -- and a book flat in reals but not in floats divides one ulp-scale
-        # gross by another, giving O(1) garbage that the NaN filter cannot catch.
+        # Denominator is the BUILDER's combined book, not `cancellation_ratio`'s sleeve-side
+        # recomputation: both grosses must be summed off the same floats, or an unbound cycle reports
+        # gross growing THROUGH the caps and a float-flat book divides one ulp-scale gross by another.
         combined_gross_builder = sum(abs(v) for v in s.combined.values())
         rows.append(
             {
@@ -281,12 +232,10 @@ def decompose_payload(stages: list[CycleStages]) -> dict:
                 "capped_gross": capped_gross,
                 "capped_ratio": capped_gross / combined_gross_builder if combined_gross_builder else math.nan,
                 "limited_gross": limited_gross,
-                # Same-floats rule as capped_ratio above: both grosses are summed off the builder's
-                # own books, never a recomputation.
+                # Same-floats rule as capped_ratio: both grosses come off the builder's own books.
                 "limited_ratio": limited_gross / capped_gross if capped_gross else math.nan,
                 "multiplier": s.multiplier,
-                # `final` is multiplier * the LIMITED book, so this is the governor's own share and
-                # nothing else. It equalled capped -> final only while no limit bound.
+                # `final` is multiplier * the LIMITED book, so this is the governor's own share and nothing else.
                 "governed_ratio": s.multiplier,
                 "final_gross": sum(abs(v) for v in s.final.values()),
                 "n_active": sum(1 for v in s.final.values() if v != 0.0),
@@ -362,9 +311,8 @@ def decompose_report(
 ) -> tuple[str, dict]:
     """Replay every record and render the gross attribution across the pipeline's stages.
 
-    A record whose replay fails is named and counted, never silently dropped -- a missing cycle
-    would bias every aggregate below it with nothing on the page to say so.
-    """
+    A record whose replay fails is named and counted, never silently dropped: a missing cycle would
+    bias every aggregate below it with nothing on the page to say so."""
     stages: list[CycleStages] = []
     failures: list[dict] = []
     for record in sorted(records, key=lambda r: r.cycle_ts):
@@ -386,10 +334,8 @@ _CYCLES_PER_FULL_WEEK = 6 * 7
 
 
 def _p95(values: list[float]) -> float:
-    """95th percentile by nearest rank -- always an OBSERVED value, never an interpolated one.
-
-    NaN is dropped and an empty input gives NaN, matching `_median`.
-    """
+    """95th percentile by nearest rank -- always an OBSERVED value, never interpolated; NaN is dropped
+    and an empty input gives NaN, as in `_median`."""
     clean = sorted(v for v in values if not math.isnan(v))
     if not clean:
         return math.nan
@@ -397,15 +343,10 @@ def _p95(values: list[float]) -> float:
 
 
 def load_minimums(path: Path) -> tuple[dict[str, tuple[float, float]], str]:
-    """Per-asset `(ordermin_base, costmin)` for the EUR book, plus the snapshot's fetched_at stamp.
-
-    Sourced from the snapshot's `universe` block, which is already normalised to base/quote --
-    NOT from `raw.assetpairs`, where Kraken lists DOGE as `XDG/EUR` (there is no `DOGE/EUR`
-    wsname at all) and BTC as `XBT/EUR`, so a `<ASSET>/EUR` match silently loses assets.
-    The `quote == "EUR"` filter is load-bearing: `universe` also carries ETH/BTC and SOL/BTC
-    whose costmin is 0.00002 BTC, and keying by base without it would overwrite ETH's and
-    SOL's EUR floors with a BTC-denominated number read as euros.
-    """
+    """Per-asset `(ordermin_base, costmin)` for the EUR book, plus the snapshot's fetched_at stamp. From
+    the snapshot's normalised `universe`, never `raw.assetpairs` where Kraken spells DOGE `XDG/EUR` and
+    BTC `XBT/EUR`; the `quote == "EUR"` filter is load-bearing, since `universe` also carries ETH/BTC and
+    SOL/BTC, which key the same bases with a costmin denominated in BTC."""
     payload = json.loads(path.read_text())
     out: dict[str, tuple[float, float]] = {}
     for entry in payload["universe"]:
@@ -419,12 +360,9 @@ def load_minimums(path: Path) -> tuple[dict[str, tuple[float, float]], str]:
 
 
 def _weekly_drift(stages: list[CycleStages], rows: list[dict]) -> list[dict]:
-    """Mean drift per ISO week, with each week's cycle count and an incompleteness flag.
-
-    Mean and count only -- deliberately no weekly p95 (spec D6): the window is four ISO weeks, and
-    a p95 over four points is the maximum wearing a percentile's name. This number becomes a
-    live-trading gate band, so the weeks are printed and read individually instead.
-    """
+    """Mean drift per ISO week, with each week's cycle count and an incompleteness flag. No weekly p95,
+    deliberately (spec 00081 D6): over a window this thin a p95 is the maximum wearing a percentile's
+    name, and this number becomes a live-trading gate band, so the weeks are read one by one instead."""
     buckets: dict[tuple[int, int], list[float]] = {}
     for stage, row in zip(stages, rows, strict=True):
         iso = stage.cycle_ts.isocalendar()
@@ -442,28 +380,17 @@ def _weekly_drift(stages: list[CycleStages], rows: list[dict]) -> list[dict]:
 
 
 def accumulation_payload(stages: list[CycleStages], minimums: dict[str, tuple[float, float]], navs: list[float]) -> dict:
-    """Replay the accumulate-until-placeable policy at each NAV. Pure -- no I/O, no replay.
-
-    Held state is carried in BASE UNITS, never EUR (spec D4). `ordermin` is natively a quantity, so
-    the floor comparison is direct rather than converted, and mark-to-market falls out for free: a
-    held quantity is simply worth `held_qty * close` at any later cycle. A EUR-denominated held
-    state would instead compare a price-stale "held" against a freshly priced "target", and would
-    report zero drift across a pure price move that placed no order.
-
-    The two floors are INDEPENDENT gates, never a max over mixed units: `ordermin_base` is a
-    quantity (20 ADA, 50 DOGE, 0.00005 BTC) and `costmin` is euros (0.45 across the EUR book).
-
-    NAV is held constant across the window on purpose: this measures the PLACEMENT floor, not P&L,
-    and a drifting NAV would fold return into a number that must be pure venue-minimum.
-    """
+    """Replay the accumulate-until-placeable policy at each NAV -- pure, no I/O and no replay. Held state
+    is in BASE UNITS (spec 00081 D4), since in EUR a pure price move would report zero drift; the two
+    floors are INDEPENDENT gates, a quantity and euros, never a max over mixed units; and each NAV prices
+    the whole window, so a drifting one cannot fold return into a venue-minimum measurement."""
     bad_navs = [n for n in navs if not math.isfinite(n) or n <= 0]
     if bad_navs:
         raise EngineError(
             f"NAV must be finite and positive, got {bad_navs} -- zero divides, and a negative one "
             "silently signs every drift_bps that the reported median and p95 are read from"
         )
-    # The policy is state-carrying across cycles, so chronological order is load-bearing, not
-    # cosmetic: an out-of-order stage would accumulate against the wrong held quantity.
+    # The policy carries state across cycles: an out-of-order stage accumulates against the wrong held quantity.
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
     for s in ordered:
         missing = sorted(set(s.final) - set(minimums))
@@ -486,16 +413,9 @@ def accumulation_payload(stages: list[CycleStages], minimums: dict[str, tuple[fl
                 target = (weight * nav) / close
                 delta = target - held_qty[a]
                 ordermin_base, costmin = minimums[a]
-                # Two caveats for anyone reusing this as EXECUTION logic rather than as a
-                # measurement (the executor's delta formula is the intended reader):
-                #   - these `>=` comparisons are float-exact, so a delta landing precisely on a
-                #     floor is representation-dependent. Harmless when measuring over journaled
-                #     data, where deltas never sit exactly on a floor; not harmless when a venue
-                #     is about to reject or accept the order on that same boundary.
-                #   - an asset key-absent from a later cycle's `final` would freeze its held_qty
-                #     and stop contributing drift. Unreachable here (every journaled cycle carries
-                #     the full universe, and weight-0.0 liquidation is handled correctly), but a
-                #     live book whose universe shrinks mid-run would hit it.
+                # A measurement, not execution logic: these `>=` comparisons are float-exact, so a
+                # delta landing on a floor is representation-dependent -- harmless over journaled
+                # data, not at a venue about to accept or reject on that same boundary.
                 if abs(delta) >= ordermin_base and abs(delta) * close >= costmin:
                     held_qty[a] = target  # full fill at the journaled close
                     placed = True
@@ -583,9 +503,8 @@ def accumulation_report(
 ) -> tuple[str, dict]:
     """Replay every record and render the drift the venue minimums impose, as a function of NAV.
 
-    A record whose replay fails is named and counted, never silently dropped -- a missing cycle
-    would break the accumulation chain below it with nothing on the page to say so.
-    """
+    A record whose replay fails is named and counted, never silently dropped: a missing cycle would
+    break the accumulation chain below it with nothing on the page to say so."""
     stages: list[CycleStages] = []
     failures: list[dict] = []
     for record in sorted(records, key=lambda r: r.cycle_ts):

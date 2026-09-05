@@ -1,13 +1,7 @@
-"""The journal contract (spec 00040 SS the concordance core): a documented, versioned per-cycle
-record — the input-snapshot manifest (per pair x grid: bar count, first/last ts, content hash,
-file path), the computed newest-row final_targets, and cycle timing/provenance. schema_version is
-covered by SCHEMA_VERSION below; a record failing validate_record's schema or snapshot-boundary
-(no-peek) checks is a journal-validation error, classified as a failed cycle by the gate (never
-silently replayed) -- see cli.engine.concordance.evaluate_gate.
-
-snapshot_content_hash is THE one hashing helper both the iter-083 writer and this iteration's
-reader (cli.engine.concordance.replay_cycle) call -- never reimplemented from prose.
-"""
+"""The journal contract (spec 00040): a versioned per-cycle record — the input-snapshot manifest (per pair x grid:
+bar count, first/last ts, content hash, file path), the computed newest-row final_targets, and cycle timing/provenance.
+A record failing validate_record is a journal-validation error, which the gate classifies as a failed cycle rather than
+replaying it silently (cli.engine.concordance.evaluate_gate)."""
 
 from __future__ import annotations
 
@@ -21,11 +15,9 @@ from datetime import datetime, timedelta, timezone
 from cli.engine.errors import EngineJournalError
 
 SCHEMA_VERSION = 2
-# The registry's own pattern (cli/registry/record.py): both schema_version 1 (base-keyed
-# final_targets/snapshot pairs, e.g. "BTC") and 2 (full-symbol keys, e.g. "BTC/EUR", spec 00094)
-# load. A v1 record's keys are never rewritten on load -- each schema replays and compares in its
-# own native key space (cli.engine.concordance); normalizing v1 to symbol keys here would turn
-# every v1 record into a structural mismatch at the gate.
+# Both schema versions load: 1 keys final_targets and snapshot pairs by base ("BTC"), 2 by full symbol ("BTC/EUR",
+# spec 00094). A v1 record's keys are never rewritten on load -- each schema replays and compares in its own native key
+# space (cli.engine.concordance), and normalizing v1 here would make every v1 record a structural mismatch at the gate.
 _LOADABLE_SCHEMA_VERSIONS = frozenset({1, 2})
 _VALID_GRIDS = frozenset({"1440", "240"})
 _VALID_BUILDER_PATHS = frozenset({"fast", "verified"})
@@ -46,14 +38,10 @@ class SnapshotEntry:
 
 @dataclass(frozen=True)
 class CycleRecord:
-    """One engine cycle's journal entry. snapshots carries one SnapshotEntry per pair x grid;
-    final_targets is the newest-row per-asset targets the cycle computed and traded.
-
-    closes is the forming row's 4h close the cycle priced each MODEL base at -- the input a drift
-    measurement needs, journaled so a boundary never has to replay a cycle to learn what it priced.
-    The INPUT is journaled, not a derived drift number: a derivative would rot against the code that
-    computed it. It is BASE-keyed ("BTC") in BOTH schemas -- final_targets widened to full symbols
-    at schema 2, the model did not -- and `None` on every record written before the key existed."""
+    """One engine cycle's journal entry: one SnapshotEntry per pair x grid, plus the newest-row final_targets it computed and
+    traded. closes -- the forming row's 4h close it priced each MODEL base at -- is journaled so a boundary need never replay a
+    cycle to learn what it priced, and is the drift INPUT rather than a derived number that would rot against the code computing it.
+    BASE-keyed in BOTH schemas (the model's key space never widened) and `None` on records predating the key."""
 
     schema_version: int
     cycle_ts: datetime
@@ -69,9 +57,8 @@ class CycleRecord:
 
 
 def _as_positive_float(value: object) -> float:
-    """Coerce a journaled `nav` at READ time, not only at validate time: several callers read a
-    record without ever calling `validate_record`, and a bool passes every isinstance check an int
-    does -- `"nav": true` would otherwise score a whole cycle at NAV=1."""
+    """Coerce a journaled `nav` at READ time, since several callers read a record without ever calling `validate_record`,
+    and refuse a bool -- it passes every isinstance check an int does, so `"nav": true` would score a whole cycle at NAV=1."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise EngineJournalError(f"nav must be a number, got {value!r}")
     out = float(value)
@@ -81,24 +68,16 @@ def _as_positive_float(value: object) -> float:
 
 
 def _epoch_seconds(ts: datetime) -> int:
-    """Whole-second UTC epoch time for a bar-start stamp. A naive datetime is treated as already-UTC
-    (this repo's bar-timestamp convention); an aware one is converted to UTC first."""
+    """Whole-second UTC epoch time for a bar-start stamp; a naive datetime is treated as already-UTC (this repo's
+    bar-timestamp convention)."""
     aware = ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
     return int(aware.astimezone(timezone.utc).timestamp())
 
 
 def snapshot_content_hash(ts: list[datetime], closes: list[float | None]) -> str:
-    """The ONE hashing helper both the iter-083 writer and this reader call for a pair x grid
-    snapshot -- never reimplemented from prose.
-
-    Byte layout (exact, pinned by schema_version -- changing it is a schema break): sha256 over two
-    blocks concatenated in this order, with no separators, length prefixes, or interleaving:
-
-      1. every ts[i], as int64 epoch-seconds (UTC; see `_epoch_seconds`), little-endian, in row
-         order -- 8 * len(ts) bytes;
-      2. every closes[i], as IEEE-754 float64, little-endian, in row order, with a None close
-         encoded as NaN -- 8 * len(closes) bytes.
-    """
+    """The ONE hashing helper every writer and reader of a snapshot content_hash calls, never reimplemented from prose:
+    the byte layout is part of schema_version and pinned by test_snapshot_content_hash_pinned_layout, so changing it is a
+    schema break."""
     if len(ts) != len(closes):
         raise EngineJournalError(f"snapshot_content_hash: ts (len {len(ts)}) and closes (len {len(closes)}) length mismatch")
     ts_block = b"".join(struct.pack("<q", _epoch_seconds(t)) for t in ts)
@@ -107,21 +86,15 @@ def snapshot_content_hash(ts: list[datetime], closes: list[float | None]) -> str
 
 
 def _is_symbol_key(key: str) -> bool:
-    """True for a full-symbol key ("BTC/EUR"), false for a bare base key ("BTC") -- the '/'
-    separator cli.engine.store.PAIR_KEYS and every full-symbol consumer already use."""
+    """True for a full-symbol key ("BTC/EUR"), false for a bare base key ("BTC")."""
     return "/" in key
 
 
 def validate_record(record: CycleRecord) -> None:
-    """Raise EngineJournalError on any schema violation or on the snapshot-boundary (no-peek)
-    invariant: per pair, the last "240" (4h) stamp must equal cycle_ts - 4h (the bar closing
-    exactly at cycle_ts), and the last "1440" (daily) stamp must equal (the last midnight <=
-    cycle_ts) - 1 day -- the node must drop Kraken REST's trailing in-progress candle.
-
-    Schema-aware over final_targets AND the snapshot pair fields: a schema_version 1 record must
-    key both by base ("BTC"); a schema_version 2 record must key both by full symbol ("BTC/EUR").
-    Wrong keying is refused, never silently normalized -- a v2 record was written by code that
-    could only have produced symbol keys, and vice versa for v1."""
+    """Raise EngineJournalError on any schema violation or on a snapshot that peeks: per pair, the last "240" stamp must equal
+    cycle_ts - 4h and the last "1440" stamp (the last midnight <= cycle_ts) - 1 day, so the node must have dropped Kraken REST's
+    trailing in-progress candle. Keying is schema-aware over final_targets AND the snapshot pair fields -- base keys at schema 1,
+    full symbols at schema 2 -- and wrong keying is refused, never silently normalized."""
     if record.schema_version not in _LOADABLE_SCHEMA_VERSIONS:
         raise EngineJournalError(
             f"unsupported schema_version {record.schema_version!r} (loadable: {sorted(_LOADABLE_SCHEMA_VERSIONS)})"
@@ -175,12 +148,10 @@ def validate_record(record: CycleRecord) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise EngineJournalError(f"final_targets[{asset!r}] must be a finite number, got {value!r}")
 
-    # closes is optional: absent (None) on every record written before the key existed, and those
-    # must keep validating. Present-but-empty is a writer bug, not absence -- absence is None. The
-    # base-key check is NOT schema-conditional: closes lives in the model's key space, which never
-    # widened. Zero and negative are refused because a close is a price and divides downstream.
-    # nav and held are the other two terms a drift measurement needs (T0150). Both are optional for
-    # the same reason closes is: absent on every record written before the keys existed.
+    # closes, nav and held are the terms a drift measurement needs beyond final_targets (T0150), and all three are
+    # optional: absent (None) on every record written before the keys existed, and those records must keep validating.
+    # A present-but-empty closes is a writer bug, not absence. closes and held are base-keyed whatever the schema -- the
+    # model's key space never widened -- and a close is refused at zero or negative because it is a price that divides downstream.
     if record.nav is not None:
         if isinstance(record.nav, bool) or not isinstance(record.nav, (int, float)):
             raise EngineJournalError(f"nav must be a number when present, got {record.nav!r}")
@@ -258,9 +229,8 @@ def to_json(record: CycleRecord) -> str:
         "code_version": record.code_version,
         "builder_path": record.builder_path,
     }
-    # OMITTED when absent, never emitted as null: a record predating the key must re-serialize
-    # byte-identically (the v1 golden pin), and an absent-vs-null distinction would be a second
-    # dialect every reader has to carry.
+    # OMITTED when absent, never emitted as null: a record predating the key must re-serialize byte-identically
+    # (test_v1_golden_round_trips_byte_identically), and absent-vs-null would be a second dialect every reader carries.
     if record.closes is not None:
         payload["closes"] = dict(record.closes)
     if record.nav is not None:
@@ -271,9 +241,8 @@ def to_json(record: CycleRecord) -> str:
 
 
 def from_json(s: str) -> CycleRecord:
-    """Deserialize a CycleRecord from to_json's output (round-trips exactly). Raises
-    EngineJournalError on malformed JSON or a missing/mistyped required key; does NOT itself call
-    validate_record -- schema and the boundary invariant are the caller's separate concern."""
+    """Deserialize a CycleRecord from to_json's output (round-trips exactly), raising EngineJournalError on malformed
+    JSON or a missing/mistyped required key; schema and the boundary invariant stay the caller's separate concern."""
     try:
         payload = json.loads(s)
     except json.JSONDecodeError as exc:
@@ -299,11 +268,9 @@ def from_json(s: str) -> CycleRecord:
             completed_at=datetime.fromisoformat(payload["completed_at"]),
             code_version=payload["code_version"],
             builder_path=payload["builder_path"],
-            # .get, not [...]: every record already on disk predates this key, and a reader that
-            # raised on their absence would take the journal's consumers down over its own upgrade.
-            # Coerced through dict() exactly as final_targets is, so a truncated artifact whose
-            # closes is a list or a scalar raises here rather than loading clean -- several callers
-            # read a record without ever calling validate_record.
+            # .get, not [...]: a record written before these keys existed lacks them, and raising on the absence would
+            # take the journal's consumers down over its own upgrade. dict() coerces as final_targets does, so a truncated
+            # artifact whose closes is a list or a scalar raises here -- several callers never call validate_record.
             closes=dict(raw) if (raw := payload.get("closes")) is not None else None,
             nav=None if (rawn := payload.get("nav")) is None else _as_positive_float(rawn),
             held=dict(rawh) if (rawh := payload.get("held")) is not None else None,

@@ -35,9 +35,8 @@ class ShipConfig:
 
 
 def build_payload(entries: list[tuple[str, str, str]], cfg: ShipConfig) -> bytes:
-    """Serialize `(level, ts_ns, line)` entries as a Loki push-API request body: one stream
-    per distinct level, labels exactly `{host, container, level}` (spec 00068), values in the
-    order given (callers hand us entries already time-ordered)."""
+    """Serialize `(level, ts_ns, line)` entries as a Loki push body: one stream per level, the
+    label set fixed by spec 00068 D4, values in the caller's order (entries arrive time-ordered)."""
     streams: dict[str, list[list[str]]] = {}
     for level, ts_ns, line in entries:
         streams.setdefault(level, []).append([ts_ns, line])
@@ -64,9 +63,8 @@ def _build_opener() -> urllib.request.OpenerDirector:
 
 
 class LokiShipHandler(logging.Handler):
-    """Ships log records to Loki from a background thread; `emit()` only ever appends to a
-    bounded in-memory ring under a short lock -- no network I/O runs on the caller's thread, so
-    a dead or slow Loki can never block or crash the application (spec 00068 D3)."""
+    """Ships log records to Loki from a background thread; `emit()` only appends to a bounded
+    in-memory ring under a short lock, so a dead or slow Loki can never block or crash the application (spec 00068 D3)."""
 
     def __init__(
         self,
@@ -92,11 +90,10 @@ class LokiShipHandler(logging.Handler):
         self.last_ship_success_at: float | None = (
             None  # unix ts of the last "ok" from the main loop; the exit flush (see _run) does not update it
         )
-        # "the worker completed a cycle" -- a different question from
-        # last_ship_success_at's "Loki accepted something", and the one an abort/liveness row
-        # wants (T0106). A healthy capture daemon is quiet, so an idle cycle stamps this too;
-        # a retrying one does not. Seeded here so the series exists from startup rather than
-        # being absent until the first ship -- "no data" and "stale" read differently.
+        # Liveness -- "the worker completed a cycle": an idle, shipped or discarded batch stamps it,
+        # a retrying one does not, unlike last_ship_success_at's "Loki accepted something" (T0106,
+        # resolved). Seeded at construction so the series exists from startup -- "no data" and
+        # "stale" read differently.
         self.last_cycle_at: float = time.time()
         self._dropped_unannounced = 0
         self._held: list[tuple[str, str, str]] = []  # the one in-flight batch (part of the memory bound)
@@ -125,12 +122,9 @@ class LokiShipHandler(logging.Handler):
             return [self._ring.popleft() for _ in range(min(len(self._ring), self._batch_max))]
 
     def _post(self, entries: list[tuple[str, str, str]]) -> str:
-        """'ok' | 'retry' | 'drop' -- a non-429 4xx is permanently rejected (e.g. entries older
-        than Loki's out-of-order window after a long outage); retrying it forever would wedge
-        shipping silently (spec 00068 D3). Any other unexpected exception (e.g. a malformed
-        `url` from a config typo) is also 'retry', never left to escape -- an unguarded raise
-        here kills the worker thread permanently and silently, defeating D3's no-silent-
-        dark-window guarantee."""
+        """'ok' | 'retry' | 'drop': a non-429 4xx is dropped rather than retried forever (entries
+        past Loki's out-of-order window would wedge shipping), and the catch-all `except Exception`
+        keeps a raise from killing the worker thread silently (spec 00068 D3)."""
         try:
             req = urllib.request.Request(
                 self._cfg.url,

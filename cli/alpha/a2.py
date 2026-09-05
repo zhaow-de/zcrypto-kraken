@@ -22,13 +22,9 @@ _SHORTS = frozenset({"off", "on"})
 
 @dataclass(frozen=True, kw_only=True)
 class A2Config:
-    """A2 book configuration (docs/specs/00033): the per-asset Donchian breakout ensemble's toggles
-    (lookbacks, short, target_vol) plus the fixed knobs shared by every trial. Validated at
-    construction; every field is immutable thereafter.
-
-    `target_vol` is ANNUALIZED (e.g. 0.10 = 10 %/yr); the book divides by sqrt(periods_per_year)
-    internally — never pre-divide in the caller (the iter-065/066 drivers did, running the book at
-    ~1/19 scale; caught in review, decisions log [iter-066])."""
+    """A2 book configuration (docs/specs/00033) for the per-asset Donchian breakout ensemble.
+    `target_vol` is ANNUALIZED — the book divides by sqrt(periods_per_year) internally, so never
+    pre-divide in the caller."""
 
     lookbacks: tuple[int, ...]
     short: str
@@ -70,11 +66,9 @@ class A2Config:
 
 
 def _donchian_signal(prices: list[float], *, window: int, band: float) -> list[float]:
-    """Per-lookback Donchian breakout state machine (docs/specs/00033): +1 when the Donchian channel
-    position hits a new window-high (channel_position >= band), -1 on a new window-low
-    (channel_position <= -band), else HOLDS the prior signal (0.0 before the first break). Strictly
-    causal: channel_position itself only reads prices[<= k]; this only carries state forward.
-    Length len(prices)-1."""
+    """Per-lookback Donchian breakout signal: +1 on a new window-high (channel_position >= band), -1
+    on a new window-low (<= -band), else the prior signal held (0.0 before the first break); it adds
+    no look-ahead, only carrying channel_position's causal state forward. Length len(prices)-1."""
     cp = channel_position(prices, window=window)
     out: list[float] = []
     held = 0.0
@@ -94,12 +88,10 @@ def _asset_directions_a2(
     *,
     config: A2Config,
 ) -> dict[str, list[float | None]]:
-    """Per-asset direction d_i[k] on the union return index (docs/specs/00033): for each asset, run
-    _donchian_signal on its own CONTIGUOUS (None-filtered) price series at every lookback in
-    config.lookbacks, map each to the union calendar (_map_to_union_index), and ensemble by mean.
-    None where any lookback's mapping is None at k (the asset's return isn't valid there). Short
-    toggle: short="off" clips the ensemble to [0, inf); short="on" scales only the negative part by
-    short_exposure (never a naked full short)."""
+    """Per-asset direction on the union return index: the mean of _donchian_signal over
+    config.lookbacks, each run on the asset's own CONTIGUOUS (None-filtered) series and mapped back
+    by _map_to_union_index; None wherever any lookback's mapping is None. short="off" clips the
+    ensemble at 0; short="on" scales its negative part by short_exposure instead of a full short."""
     directions: dict[str, list[float | None]] = {}
     for asset, prices in prices_by_asset.items():
         own_prices = [p for p in prices if p is not None]
@@ -124,9 +116,8 @@ def _asset_directions_a2(
 
 def a2_book_returns(prices_by_asset: dict[str, list[float | None]], *, config: A2Config) -> dict:
     """Assemble the A2 book (docs/specs/00033): per-asset Donchian directions x inverse-vol weights x
-    union-calendar returns -> book_base_returns, then vol_target -> run_backtest. No market gate (no
-    btc_prices argument, unlike a1_book_returns). Returns {book_base_returns, vol_target_positions,
-    asset_positions, net_returns, metrics} -- the same shape as a1_book_returns."""
+    union-calendar returns -> book_base_returns, then vol_target -> run_backtest. No market gate,
+    unlike a1_book_returns, whose return shape it matches."""
     if not isinstance(config, A2Config):
         raise AlphaError(f"config must be an A2Config, got {type(config)!r}")
     _validate_prices_by_asset(prices_by_asset)

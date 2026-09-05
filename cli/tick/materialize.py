@@ -1,9 +1,7 @@
-"""Materialize 15m bars from the captured trade tape (spec 00087).
+"""Materialize 15m bars from the captured trade tape into the daily finals `tape-bars` publishes (spec 00087).
 
-The tape is the only fine-cadence source whose reach does not expire: REST's window recedes and the
-OHLCVT dumps are quarterly, while captured trades accrue. This module turns one healed UTC day of
-that tape into the 15m bars that `tape-bars` publishes as a daily final.
-"""
+The tape is the only fine-cadence source whose reach does not expire: REST's window recedes and the OHLCVT dumps are
+quarterly, while captured trades accrue."""
 
 from __future__ import annotations
 
@@ -27,12 +25,8 @@ SegmentIndex = dict[str, dict[datetime, Path]]
 
 
 def segment_index(primary_root: Path, reconciled_root: Path) -> SegmentIndex:
-    """`{pair: {hour: path}}` for the whole healed trade archive, walked ONCE.
-
-    `canonical_segments` globs the entire archive, so calling it per pair or per day is
-    O(pairs x days x archive) on a tree that grows forever under an hourly sweep. Every consumer
-    below takes this index instead of the roots.
-    """
+    """`{pair: {hour: path}}` for the whole healed trade archive, walked ONCE: `canonical_segments` globs the entire archive,
+    so calling it per pair or per day is O(pairs x days x archive) on a tree that grows forever."""
     index: SegmentIndex = {}
     for pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="trades"):
         index.setdefault(pair, {})[hour] = path
@@ -40,12 +34,8 @@ def segment_index(primary_root: Path, reconciled_root: Path) -> SegmentIndex:
 
 
 def build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame:
-    """The healed tape for `pair` on UTC `day`, aggregated to 15m bars.
-
-    Reads the pre-built index (reconciled-first by construction). Aggregates whatever hours the day
-    HAS: hour-file presence is not a completeness signal, because a quiet hour writes no final.
-    Completeness is `is_heal_complete`'s measured trade_id contiguity (D3/D4).
-    """
+    """The healed tape for `pair` on UTC `day`, aggregated to 15m bars -- whatever hours the day HAS, since completeness is
+    `is_heal_complete`'s measured trade_id contiguity (D3/D4) and never hour-file presence."""
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + timedelta(days=1)
     hours = index.get(pair, {})
@@ -53,25 +43,17 @@ def build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame:
     if not present:
         raise TickError(f"tape-bars: {pair} {day.isoformat()} has no trade segments at all")
 
-    # Deliberately NO 24-hour completeness check. The capture writer commits no final for an hour
-    # with no events, and zero-print trades hours are production-measured (settle.py records
-    # LINK/EUR: 8 prints in hour 01, 9 in hour 04, zero between), so an absent hour means "quiet",
-    # not "missing". Requiring 24 would make every day with a quiet hour permanently unpublishable.
-    # Completeness is trade_id contiguity -- is_heal_complete -- which tells the two apart.
+    # No 24-hour completeness check: the capture writer commits no final for an hour with no events, so an absent hour may
+    # be merely quiet, and requiring 24 would make every day with a quiet hour permanently unpublishable.
     frames = [pl.read_parquet(present[hour]) for hour in sorted(present)]
     ticks = pl.concat(frames).rename({"qty": "volume"}).select("ts", "price", "volume")
     return ticks_to_bars(ticks, interval_minutes=BASE_INTERVAL_MINUTES)
 
 
 def derive_bars(bars: pl.DataFrame, *, interval_minutes: int) -> pl.DataFrame:
-    """Aggregate 15m base bars up to `interval_minutes` -- exactly, not approximately.
-
-    `ticks_to_bars` computes a TRUE tick-weighted vwap, so `Σ(vwap_i · volume_i)` over sub-bars
-    telescopes to `Σ(price · volume)` over the whole window and the coarse vwap re-derives as
-    `Σ(vwap_i·vol_i) / Σ(vol_i)`. A plain mean of sub-bar vwaps is the tempting form and is WRONG on
-    any window whose volume is not uniform. Empty windows stay absent: a coarse bar exists iff at
-    least one sub-bar does.
-    """
+    """Aggregate 15m base bars up to `interval_minutes` -- exactly, not approximately: `ticks_to_bars`' vwap is TRUE
+    tick-weighted, so `Σ(vwap_i·vol_i)` telescopes to `Σ(price·volume)` over the coarse window and the coarse vwap re-derives
+    as `Σ(vwap_i·vol_i)/Σ(vol_i)` -- a plain mean of sub-bar vwaps is wrong on any window whose volume is not uniform."""
     if bars.height == 0:
         return bars
     return (
@@ -91,49 +73,33 @@ def derive_bars(bars: pl.DataFrame, *, interval_minutes: int) -> pl.DataFrame:
     )
 
 
-# D3, derived rather than estimated. An hour heals only when `zcrypto archive backfill-trades`
-# repairs it, and that job DEFERS any hour younger than its own module-local `_SETTLE` (2h) in
-# `cli/trades/backfill.py` -- NOT `cli.archive.settle.SETTLE_HOURS`, which it never imports while
-# running only once per UTC day (~00:12, the `.trade-backfill-last-utc-day` stamp on the *:12,42 pull
-# timer). So at the D+1 run day D's hours 00-22 heal but hour 23 is still inside the 2h gate and is
-# deferred -- it heals at the D+2 run. Day D is therefore heal-complete at D+2 00:12 UTC, ~24.2h
-# after it closes; 26h adds buffer for the NAS pull cycle and clock skew. IF THE BACKFILL'S CADENCE
-# OR backfill.py's _SETTLE CHANGES, THIS PRE-FILTER DRIFTS -- harmless now that the real gate is
-# the measured trade_id contiguity check, which is why this constant is no longer load-bearing.
+# A cheap pre-filter, never the gate: it clears the daily `zcrypto archive backfill-trades` run that heals a day's last hour
+# -- which defers on its own `_SETTLE` in `cli/trades/backfill.py`, never `cli.archive.settle.SETTLE_HOURS` -- and
+# heal-completeness is `is_heal_complete`'s measured trade_id contiguity (D3), so drift here costs latency, not correctness.
 TAPE_SETTLE = timedelta(hours=26)
 RESCAN_DAYS = 3
 
 
 @dataclass(frozen=True)
 class MaterializeResult:
-    """One sweep's verdict: published, already-covered, deferred as not-yet-heal-complete (D3), and
-    failed outright (isolated, never raised -- one bad day must not cost the others)."""
+    """One sweep's verdict; a day that raises is isolated into `errors` -- one bad day must not cost the others."""
 
     days_written: int
     days_skipped: int
     days_unsettled: int
     days_unhealed: int
-    #: settled, unpublished days that have fallen OUTSIDE the candidate window -- permanent gaps.
-    #: Counted from the calendar and the published set alone (zero file reads), so the signal never
-    #: expires: without it, a day that leaves the window also leaves every counter, and the dataset's
-    #: one permanent failure mode becomes invisible at exactly the moment it becomes final.
+    #: Settled, unpublished days that have fallen OUTSIDE the candidate window -- permanent gaps, counted from the calendar
+    #: and the published set alone, so the one signal for the dataset's permanent failure mode never expires.
     days_gap: int
     rows: int
     errors: list[tuple[str, date, str]]
 
 
 def is_heal_complete(index: SegmentIndex, pair: str, day: date) -> bool:
-    """Has the healer finished with this day? MEASURED, never inferred from the clock (D3).
-
-    Kraken's `trade_id` is dense and per-pair monotone, so a hole in the sequence IS missing data --
-    `cli.trades.gaps.detect` proves it with no REST call. The day is read WITH the NEAREST PRESENT
-    segment on each side, not merely the adjacent hour: `detect` treats the first and last observed
-    id as endpoints rather than gaps, and the adjacent hour is often legitimately absent (a quiet
-    hour writes no final), so an adjacent-hour-only extension degrades silently back to endpoint
-    blindness and publishes a truncated day. No later segment at all means the live edge, which is
-    refused; no earlier segment at all means the archive's genesis day, where the endpoint rule is
-    correct and the day is accepted.
-    """
+    """Has the healer finished with this day? MEASURED, never inferred from the clock (D3): `cli.trades.gaps.detect` treats
+    the first and last observed ids as endpoints rather than gaps, so the day is read with the NEAREST PRESENT segment each
+    side -- never merely the adjacent hour, which a quiet hour leaves absent, silently publishing a truncated day; no later
+    segment is the live edge and is refused, no earlier is the archive's genesis day and is accepted."""
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + timedelta(days=1)
     hours = index.get(pair, {})
@@ -144,9 +110,6 @@ def is_heal_complete(index: SegmentIndex, pair: str, day: date) -> bool:
     after = [h for h in hours if h >= end]
     if not after:
         return False  # live edge: nothing after the day, so its tail id is an endpoint, not proof
-    # `[max(before)] * bool(before)` LOOKS lazy but is not: Python evaluates max() before the
-    # multiply, so an empty `before` -- the genesis day, the case this rule ACCEPTS -- crashed with
-    # ValueError, and the sweep's broad except turned every pair's first day into a permanent error.
     span = own + ([max(before)] if before else []) + [min(after)]
     detection = detect(pl.concat(pl.read_parquet(hours[h]) for h in sorted(span)))
     return not detection.gaps and not detection.duplicate_ids
@@ -158,9 +121,8 @@ def _final_path(out_root: Path, pair: str, day: date) -> Path:
 
 
 def publish_day(out_root: Path, pair: str, day: date, bars: pl.DataFrame) -> Path:
-    """Atomic publish: tmp in the destination dir -> sidecar minted from the tmp bytes -> os.replace
-    -> fsync the dir. The sidecar is written BEFORE the publishing rename so a reader never sees a
-    final without its digest (the `cli/archive/mint.py` pattern)."""
+    """Atomic publish, `cli/archive/mint.py`'s `mint_hour` order: the sidecar is renamed into place BEFORE the final,
+    so a reader never sees a final without its digest."""
     final = _final_path(out_root, pair, day)
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_suffix(f".parquet.{os.getpid()}.tmp")
@@ -169,16 +131,12 @@ def publish_day(out_root: Path, pair: str, day: date, bars: pl.DataFrame) -> Pat
     digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
     sidecar_tmp = final.with_suffix(f".parquet.sha256.{os.getpid()}.tmp")
     sidecar_tmp.write_text(f"{digest}  {final.name}\n")
-    # A torn sidecar is PERMANENT: the .exists() skip means the day is never re-published, so an
-    # un-fsynced sidecar that loses its bytes at power loss reads as corruption on an irreplaceable
-    # final, forever. The sidecar gets the same durability as the final it vouches for.
+    # The `.exists()` skip means a day is never re-published, so a sidecar that loses its bytes at power loss reads as
+    # corruption on an irreplaceable final, forever: it gets the same durability as the final it vouches for.
     _fsync(sidecar_tmp)
     os.replace(sidecar_tmp, final.with_suffix(".parquet.sha256"))
-    # Fsync the DIRECTORY between the two renames, not only after both. mint.py's
-    # `_replace_durably` does this per replace, and it is what pins the ORDER: without it a crash
-    # can leave the final visible while the sidecar rename is still unpersisted, and the `.exists()`
-    # skip means that sidecar is never minted again -- a permanent missing digest on an
-    # irreplaceable final. The final is published LAST so a visible final always implies its digest.
+    # The directory fsync goes BETWEEN the two renames, not only after both: without it a crash can leave the final visible
+    # while the sidecar rename is unpersisted, and the `.exists()` skip means that sidecar is never minted again.
     _fsync(final.parent)
     os.replace(tmp, final)
     _fsync(final.parent)
@@ -217,12 +175,9 @@ def materialize(
     settle: timedelta = TAPE_SETTLE,
     rescan_days: int = RESCAN_DAYS,
 ) -> MaterializeResult:
-    """Sweep every archived pair, publishing each settled day that has no final yet.
-
-    `now` is injected so the settle boundary is testable. A day is settled once
-    `now - (day_end) >= settle`; an unsettled day is counted and left alone, so a later sweep takes
-    it once heal-complete (D3 / T0066 option (a)). A day that raises is isolated into `errors`.
-    """
+    """Sweep every archived pair, publishing each settled day that has no final yet. A day is settled once
+    `now - day_end >= settle` -- `now` is injected so the boundary is testable -- and an unsettled day is counted and left
+    alone so a later sweep takes it once heal-complete (D3; T0066, resolved, chose the same shape for the panel)."""
     written = skipped = unsettled = unhealed = gap = rows = 0
     errors: list[tuple[str, date, str]] = []
     index = segment_index(primary_root, reconciled_root)
@@ -231,15 +186,12 @@ def materialize(
         unsettled += len(days) - len(settled)
         if not settled:
             continue
-        # Bounded candidate range (D4): everything past the watermark, plus a trailing re-scan window
-        # so a day that failed while its tape was incomplete is retried while a late overlay mint can
-        # still rescue it -- and then becomes a permanent, VISIBLE gap rather than an unbounded retry.
+        # Bounded candidate range (D4): everything past the watermark plus a trailing re-scan window, so a day that failed on
+        # an incomplete tape is retried while a late overlay mint can still rescue it, then becomes a VISIBLE gap.
         watermark = _watermark(out_root, pair)
         if watermark is None:
-            # FIRST RUN: sweep the whole archive. Bounding it here would silently strand the entire
-            # backlog -- the watermark would jump to the newest day and everything below the floor
-            # would never be attempted again, with no error and no counter. A permanently short
-            # dataset that looks complete is the worst outcome this design can produce.
+            # FIRST RUN sweeps the whole archive: bounding it here would silently strand the backlog -- the
+            # watermark would jump to the newest day and nothing below the floor would ever be attempted again.
             candidates = settled
         else:
             floor = min(settled[-1] - timedelta(days=rescan_days), watermark + timedelta(days=1))
@@ -256,12 +208,8 @@ def materialize(
                 bars = build_day(index, pair, day)
                 publish_day(out_root, pair, day, bars)
             except Exception as exc:  # noqa: BLE001 -- one bad day must not abort the sweep
-                # Broad on purpose, matching cli/panel/materialize.py: a corrupt parquet, an
-                # unexpected error inside detect, or an environmental publish failure (ENOSPC,
-                # EACCES, a rename error) must cost one day, never every pair's whole sweep.
-                # publish_day is INSIDE the try deliberately: with it outside, a full disk on one
-                # day aborted every remaining pair for that tick, which is the opposite of what the
-                # isolation contract promises.
+                # `publish_day` is INSIDE the try deliberately: an environmental publish failure (ENOSPC, EACCES,
+                # a rename error) must cost one day, never every remaining pair of the sweep.
                 errors.append((pair, day, f"{type(exc).__name__}: {exc}"))
                 continue
             written += 1

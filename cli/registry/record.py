@@ -42,19 +42,10 @@ _TOKEN_PUNCTUATION = "(),;:+'\"`[]<>"
 
 
 def run_ref_path_candidates(run_ref: str) -> list[str]:
-    """The path-like tokens in a free-text `run_ref`, in order.
-
-    `run_ref` is prose mixed with several paths, so this is deliberately NOT a parser: split on
-    whitespace, strip surrounding punctuation, and keep tokens carrying a `/` or a `.`. Absolute paths
-    and any token with a `..` segment are dropped — provenance means a path *inside* the repo, so a real
-    file outside it must not satisfy the guard. Extraction is shared with the repo-level committed-
-    provenance test, which applies `git ls-files` to these same tokens; the two must not drift apart.
-
-    `.` segments are stripped so both layers see ONE spelling. Without it the layers diverge on
-    non-canonical forms: the filesystem resolves `./cli/x.py`, `git ls-files` does not — so a record
-    naming a genuinely committed file that way would append cleanly and then red the provenance test
-    forever, with no remedy, because the registry is append-only and the record cannot be edited.
-    """
+    """The path-like tokens in a free-text `run_ref`, in order; absolute and `..` tokens are dropped because provenance means a
+    path inside the repo, and `.` segments are stripped so this and `tests/test_trial_registry_provenance.py`, which feeds the
+    same tokens to `git ls-files`, accept the same spellings — the registry being append-only, a record that passed the append
+    guard and failed that test could never be repaired."""
     out: list[str] = []
     for raw in run_ref.split():
         token = raw.strip(_TOKEN_PUNCTUATION)
@@ -80,11 +71,9 @@ def _resolves_in_repo(token: str) -> bool:
 
 
 def _validate_run_ref(run_ref) -> None:
-    """Append-time provenance guard: a trial that cannot be pointed back at code is not recordable.
-
-    Deliberately no subprocess and no git — this runs on every append. It checks that a path *exists*;
-    that it is *committed* is asserted by the repo-level test over the real registry.
-    """
+    """Append-time provenance guard: a trial that cannot be pointed back at code is not recordable; no subprocess and no git,
+    since this runs on every append, so committedness is left to `tests/test_trial_registry_provenance.py` over the real
+    registry."""
     if type(run_ref) is not str or not run_ref:
         raise RegistryError(
             f"run_ref must be a non-empty str naming a repo-relative path to the code that produced this run "
@@ -132,12 +121,8 @@ def _assert_finite(value, path: str) -> None:
 
 
 def validate_caller_fields(f: dict, *, check_run_ref_provenance: bool = True) -> None:
-    """Validate the caller-supplied half of a record.
-
-    `check_run_ref_provenance` is on by default so every append gets the guard; only the stored-record
-    re-validation turns it off, because the registry is append-only and records written before the guard
-    existed must keep loading.
-    """
+    """Validate the caller-supplied half of a record; `check_run_ref_provenance` is off only for stored-record re-validation,
+    because the registry is append-only and records written before the guard existed must keep loading."""
     supplied_owned = [k for k in _STORE_OWNED if k in f]
     if supplied_owned:
         raise RegistryError(f"caller must not supply store-owned field(s): {supplied_owned}")
@@ -167,8 +152,8 @@ def validate_caller_fields(f: dict, *, check_run_ref_provenance: bool = True) ->
 
 
 def _is_relative_posix_path(value) -> bool:
-    # Form only, no disk access: a key that escapes its dataset directory would point the conformance
-    # pass at a real repo file outside data/ and re-hash it green.
+    # Form only, no disk access: a key escaping its dataset directory would point
+    # tests/test_registry_conformance.py at a real repo file outside data/ and re-hash it green.
     return type(value) is str and bool(value) and not value.startswith("/") and "\\" not in value and ".." not in value.split("/")
 
 
@@ -222,7 +207,7 @@ def validate_stored_record(rec: dict, where: str) -> None:
         raise RegistryCorruptionError(f"{where}: prev_hash must be a 64-char hex str")
     if type(rec.get("trial_id")) is not int:
         raise RegistryCorruptionError(f"{where}: trial_id must be int")
-    # Re-homed from validate_caller_fields when dataset_hash became store-owned: nothing else covers v2/v3.
+    # dataset_hash is store-owned, so the caller-field re-validation below never sees it.
     if type(rec.get("dataset_hash")) is not str or not rec["dataset_hash"]:
         raise RegistryCorruptionError(f"{where}: dataset_hash must be a non-empty str")
     if version >= 4:
@@ -232,21 +217,14 @@ def validate_stored_record(rec: dict, where: str) -> None:
         if rec["dataset_hash"] != compute_hash(rec["datasets"]):
             raise RegistryCorruptionError(f"{where}: dataset_hash is not the digest of this record's datasets block")
     caller = {k: v for k, v in rec.items() if k not in _STORE_OWNED}
-    # Provenance is a forward-only rule: history predates it and is immutable, so re-validating a stored
-    # record must never reject it. The repo-level provenance test asserts that rule over the real file.
     validate_caller_fields(caller, check_run_ref_provenance=False)
 
 
 @dataclass(frozen=True, kw_only=True)
 class TrialRecord:
-    """A single trial record. `variant` is schema_version 3+ only: str | None, omitted from the serialized
-    line entirely when None (schema_version 2 records may never carry the key at all).
-
-    Historical note: trial_id 25-32 (family="A1", schema_version 2) predate this field. They encode their
-    variant in free-text `notes` instead (e.g. "variant=A2-donchian; lookbacks=..."), all mapping to
-    variant="A2-donchian". This is deliberately not backfilled — the registry is append-only — so readers
-    of those eight records must consult `notes`, not `variant`.
-    """
+    """A single trial record; `variant` is schema_version 3+ only, omitted from the serialized line when None. Trials 25-32
+    (family A1, schema_version 2) predate the field and carry theirs in free-text `notes` (`variant=A2-donchian`), never
+    backfilled because the registry is append-only, so a reader selecting on `variant` misses them."""
 
     trial_id: int
     schema_version: int

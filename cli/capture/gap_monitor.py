@@ -24,45 +24,32 @@ class _OpenGap:
 
 
 class GapMonitor:
-    """Tracks per-pair gap time (WS reconnect windows, checksum resyncs) and derives gap ratios
-    for the exit-bar's <0.1% gap-time bar."""
+    """Tracks per-pair gap time and derives gap ratios for the exit-bar's <0.1% gap-time bar."""
 
     def __init__(self) -> None:
         self._open: dict[str, _OpenGap] = {}
         self._closed_seconds: dict[str, float] = {}
-        # The disk-watermark breach window (T0032). A breach stops EVERY write, so it is ONE global
-        # window, not a per-pair gap — and it is tracked INDEPENDENTLY of `_open`. It is deliberately
-        # not routed through `start_gap`: that is idempotent per pair, so a concurrent checksum_resync
-        # gap already open on a pair would swallow the breach, and its `end_gap` would then resume the
-        # dead-man ping while the disk is STILL breached — reintroducing the very silent-loss bug.
+        # The disk-watermark breach window (T0032, resolved): a breach stops EVERY write, so it is one
+        # global window, independent of `_open` — were it routed through the idempotent per-pair
+        # `start_gap`, a concurrent gap would swallow it.
         self._watermark_open: datetime | None = None
         self._watermark_seconds: float = 0.0
-        # Upstream silence -- a subscribed, CONNECTED stream receiving nothing (T0101, spec 00073).
-        # Its own per-pair window for the same reason the watermark has one: `start_gap` is
-        # idempotent per pair, so routing silence through it would let a concurrent checksum_resync
-        # gap swallow it, and whichever window closed first would book the other's duration as its
-        # own. These two faults genuinely co-occur -- a venue that stops publishing is exactly when a
-        # book also stops passing its checksum -- so the windows must be independent.
+        # Upstream silence -- a subscribed, CONNECTED stream receiving nothing (T0101, resolved;
+        # spec 00073). Its own per-pair window for the same reason the watermark has one, and because the
+        # two faults co-occur: a venue that stops publishing is exactly when a book stops passing its checksum.
         self._silent_open: dict[str, datetime] = {}
         self._silent_seconds: dict[str, float] = {}
 
     def start_gap(self, pair: str, reason: str, *, at: datetime) -> None:
-        """Open a gap window for `pair`. Idempotent: a second `start_gap` before the matching
-        `end_gap` is a no-op — the earliest start time wins, since that's when the gap truly began."""
+        """Open a gap window for `pair`; idempotent, and the earliest start wins because that is when the gap began."""
         if pair in self._open:
             return
         self._open[pair] = _OpenGap(reason=reason, start=at)
         logger.warning("gap start pair=%s reason=%s at=%s", pair, reason, at.isoformat())
 
     def end_gap(self, pair: str, *, at: datetime) -> float:
-        """Close `pair`'s open gap window, returning its duration in seconds (0.0 if none was open).
-
-        A negative duration — the wall clock stepped BACKWARD across the open window (chrony
-        makestep, a VM snapshot-restore) — is clamped to zero, never raised, mirroring
-        `end_watermark_gap`: `at` comes straight from the wall clock, and an escaping
-        CaptureError here kills the consumer task and with it the whole daemon. The stepped
-        clock cannot measure the window; the next gap books normally.
-        """
+        """Close `pair`'s open gap window, returning its seconds (0.0 if none was open); a clock that stepped BACKWARD
+        is clamped to zero rather than raised, since an escaping error here kills the consumer task and the daemon."""
         open_gap = self._open.pop(pair, None)
         if open_gap is None:
             return 0.0
@@ -72,24 +59,15 @@ class GapMonitor:
         return duration
 
     def start_watermark_gap(self, *, at: datetime) -> None:
-        """Open the global disk-watermark breach window (T0032). Idempotent on its OWN state — the
-        earliest breach time wins — so the 30 s watermark poll can call it every breached tick. See
-        `__init__` for why this is a dedicated window rather than a `start_gap` call."""
+        """Open the global disk-watermark breach window, idempotently on its OWN state — the earliest breach wins."""
         if self._watermark_open is not None:
             return
         self._watermark_open = at
         logger.warning("gap start reason=disk_watermark at=%s", at.isoformat())
 
     def end_watermark_gap(self, *, at: datetime) -> float:
-        """Close the breach window, accumulating its duration into the global watermark total. Returns
-        the closed window's seconds (0.0 if none was open).
-
-        A negative duration — the wall clock stepped BACKWARD across the open window (chrony
-        makestep, a VM snapshot-restore) — is clamped to zero, never raised: this runs inside
-        `_disk_watermark_loop`, a task nothing awaits until shutdown, and an escaping exception
-        silently ends watermark polling for the life of the process. A frozen `breached` means a
-        later REAL breach never withholds the dead-man ping — the exact T0032 silent death.
-        """
+        """Close the breach window into the global watermark total, returning its seconds (0.0 if none was open); a
+        clock that stepped BACKWARD is clamped to zero rather than raised, as `end_gap` is."""
         if self._watermark_open is None:
             return 0.0
         duration = max((at - self._watermark_open).total_seconds(), 0.0)
@@ -99,28 +77,17 @@ class GapMonitor:
         return duration
 
     def start_silence(self, pair: str, *, at: datetime) -> None:
-        """Open `pair`'s upstream-silence window, stamped at its LAST SEEN message (T0101).
-
-        `at` is the last-message time, never the detection time. The watchdog cannot notice until the
-        staleness threshold has already elapsed, so stamping at detection would discard exactly the
-        threshold from every outage -- under-reporting by 30 s each time, which is the same direction
-        as the defect this exists to fix.
-
-        Idempotent per pair, earliest stamp wins: the watchdog re-evaluates every tick while a pair
-        stays silent, and a later open must not restart the window.
-        """
+        """Open `pair`'s upstream-silence window, stamped at its LAST SEEN message and never at detection: the watchdog
+        cannot notice until the staleness threshold has elapsed, so a detection stamp would discard that threshold from
+        every outage. Idempotent per pair, and the earliest stamp wins."""
         if pair in self._silent_open:
             return
         self._silent_open[pair] = at
         logger.warning("gap start pair=%s reason=upstream_silent at=%s", pair, at.isoformat())
 
     def end_silence(self, pair: str, *, at: datetime) -> float:
-        """Close `pair`'s silence window, returning its duration (0.0 if none was open).
-
-        Negative durations are clamped rather than raised, mirroring `end_gap`: this is driven from a
-        bare task nothing awaits until shutdown, so an escaping exception would end silence tracking
-        for the life of the process -- reintroducing the blind spot silently.
-        """
+        """Close `pair`'s silence window, returning its duration (0.0 if none was open); a clock that stepped BACKWARD
+        is clamped to zero rather than raised, as `end_gap` is."""
         started = self._silent_open.pop(pair, None)
         if started is None:
             return 0.0
@@ -136,21 +103,10 @@ class GapMonitor:
         return pair in self._open
 
     def gap_seconds(self, pair: str, *, at: datetime | None = None) -> float:
-        """Total closed gap seconds for `pair` — its own gaps plus the global disk-watermark breach
-        (T0032), which lost data for every pair — plus upstream silence (T0101) — plus any
-        still-open windows' duration as of `at`.
-
-        THE THREE KINDS ARE SUMMED INDEPENDENTLY AND CAN DOUBLE-COUNT THE SAME SECOND. That is
-        deliberate: each answers a different question (did this pair desync / did the disk stop us
-        writing / did the venue stop sending), and collapsing them would make a pair that suffers
-        two faults at once look like it suffered one. The cost is that the total is an upper bound
-        on lost time, not a measurement of it, and it can exceed the elapsed wall clock — a pair
-        desynced *through* an upstream blackout books that window twice. A rule on
-        `increase(zcrypto_capture_gap_seconds_total[...])` therefore reads "how bad, roughly",
-        never "what fraction of the window was lost" -- any rule reading it must not treat it as a
-        coverage ratio (T0105, resolved, records why).
-        Each open window's contribution is clamped to >= 0: an `at` before a window's start (a
-        backward-stepped wall clock) must not produce a negative gap or eat booked gap time."""
+        """Total gap seconds for `pair` — its own gaps, the global disk-watermark breach and upstream silence, plus each
+        still-open window's contribution as of `at`, clamped to >= 0 against a backward-stepped clock. The three kinds
+        are summed INDEPENDENTLY, each answering a different question, so the total is an upper bound that can exceed
+        the elapsed wall clock and is never a coverage ratio (T0105, resolved, records why)."""
         total = self._closed_seconds.get(pair, 0.0) + self._watermark_seconds + self._silent_seconds.get(pair, 0.0)
         open_gap = self._open.get(pair)
         if open_gap is not None and at is not None:
@@ -163,11 +119,8 @@ class GapMonitor:
         return total
 
     def gap_ratio(self, pair: str, *, window_seconds: float, at: datetime | None = None) -> float:
-        """Gap seconds over `window_seconds`. **CAN EXCEED 1.0** — see `gap_seconds`: the three
-        window kinds are summed independently, so a pair that is desynced *through* an upstream
-        blackout books the same wall-clock seconds twice. Any consumer treating this as a fraction
-        of elapsed time must say what it does above 1.0 (T0101; the paging rules T0105 built are
-        deployed)."""
+        """Gap seconds over `window_seconds`. CAN EXCEED 1.0 (see `gap_seconds`), so a consumer treating it as a fraction
+        of elapsed time must say what it does above 1.0 (T0105, resolved, records why)."""
         if window_seconds <= 0:
             raise CaptureError(f"window_seconds must be > 0, got {window_seconds}")
         return self.gap_seconds(pair, at=at) / window_seconds
@@ -184,22 +137,16 @@ class GapMonitor:
         }
 
     def is_healthy(self, pairs: list[str]) -> bool:
-        """True iff none of `pairs` currently has an open gap (reconnecting or desynced).
-
-        DELIBERATELY does NOT consult `is_silent` (spec 00073 D3). This gates the healthchecks.io
-        ping for EVERY pair at once, so an upstream-silence threshold fitted to ~4 days of thin-leg
-        data would let one twitchy pair darken the fleet's last-resort liveness signal on both
-        capture hosts -- strictly worse than the metric gap it would close. Silence is BOOKED first;
-        gating waits until the exported gauge shows a production distribution worth thresholding.
-        """
+        """True iff none of `pairs` currently has an open gap; DELIBERATELY not `is_silent` (spec 00073 D3), because
+        this gates the healthchecks.io ping for EVERY pair at once and an unfitted silence bar would darken the fleet's
+        last-resort liveness signal — silence pages through its own Grafana rules instead (T0105, resolved)."""
         return not any(self.is_open(pair) for pair in pairs)
 
 
 def ping_healthcheck(url: str | None, *, timeout: int = DEFAULT_HEALTHCHECK_TIMEOUT_SECS) -> None:
-    """Best-effort liveness ping to a healthchecks.io URL. No-op if `url` is falsy (the feature is
-    optional, per `HEALTHCHECK_URL`). Never raises: a transport failure is logged and swallowed —
-    the whole point of a dead-man's-switch is that a *missed* ping is what alerts, not an
-    exception here taking down the capture loop."""
+    """Best-effort liveness ping to a healthchecks.io URL, a no-op on a falsy `url` since the feature is optional.
+    Never raises on a transport failure: a dead-man's-switch alerts on a MISSED ping, so the failure is
+    logged and swallowed."""
     if not url:
         return
     try:
@@ -210,9 +157,8 @@ def ping_healthcheck(url: str | None, *, timeout: int = DEFAULT_HEALTHCHECK_TIME
 
 @dataclass
 class DiskWatermark:
-    """Disk-space guard: `breached` once free space on `path`'s filesystem drops below
-    `min_free_bytes`. The caller (the capture loop) checks this before writing new segments and
-    stops accepting them while breached; `usage_fn` is injectable for testing."""
+    """Disk-space guard: `breached` once free space on `path`'s filesystem drops below `min_free_bytes`. The capture
+    loop stops accepting new segments while breached; `usage_fn` is injectable for testing."""
 
     path: Path
     min_free_bytes: int = DEFAULT_MIN_FREE_BYTES
@@ -221,14 +167,9 @@ class DiskWatermark:
     _measurable: bool = field(default=True, init=False, repr=False)
 
     def check(self) -> bool:
-        """Recompute breach state from current free space. Returns True iff healthy (not
-        breached). Logs only on the state transition, not on every call.
-
-        A probe that RAISES (a flaky mount) sets `measurable` False and re-raises. Freezing `breached`
-        at its last value while the probe is down -- and pinging the dead-man green through it -- is the
-        exact T0032 silent death: a disk that fills during the outage goes undetected. "Cannot measure"
-        is not "healthy", so `measurable` gates the ping too; the healthcheck's grace absorbs a
-        transient blip, and only a sustained probe failure withholds enough pings to page."""
+        """Recompute breach state from current free space, returning True iff healthy; logs only on the transition. A
+        probe that RAISES sets `measurable` False and re-raises, because "cannot measure" is not "healthy": freezing
+        `breached` while the dead-man pings green is the T0032 (resolved) silent death."""
         try:
             free = self.usage_fn(self.path).free
         except Exception:
@@ -253,6 +194,5 @@ class DiskWatermark:
 
     @property
     def measurable(self) -> bool:
-        """False once a probe has raised without a later success -- so the ping loop can treat a
-        sustained-unmeasurable disk as not-healthy rather than pinging green on a frozen `breached`."""
+        """False once a probe has raised without a later success — the ping loop must not ping green on a frozen `breached`."""
         return self._measurable

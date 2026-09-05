@@ -1,2 +1,2 @@
 class AlphaError(Exception):
-    """Raised on invalid A1 alpha-book inputs."""
+    """Raised on invalid alpha-book inputs."""

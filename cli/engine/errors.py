@@ -1,6 +1,6 @@
 class EngineError(Exception):
-    """Raised on invalid concordance-core (journal/replay/compare/gate) inputs or state."""
+    """Raised on invalid `cli.engine` inputs or state."""
 
 
 class EngineJournalError(EngineError):
-    """A CycleRecord violates its schema or the snapshot-boundary (no-peek) invariant."""
+    """A journaled record violates its schema or a journal invariant."""

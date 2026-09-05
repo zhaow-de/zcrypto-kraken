@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Kraken's wsname/legacy asset codes spell these two differently from the common ticker (§3).
+# Kraken's wsname and legacy asset codes spell these two differently from the common ticker.
 _COMMON_TO_KRAKEN = {"BTC": "XBT", "DOGE": "XDG"}
 
 CANDIDATE_SYMBOLS: tuple[str, ...] = (
@@ -37,10 +37,7 @@ class PairSnapshot:
     ordermin: str | None
     costmin: str | None
     status: str | None
-    # The ⏱ facts the master plan calls externally owned, which the first cut of this register did
-    # not capture: the public volume-tiered fee ladders, the per-asset borrow rate, and the margin
-    # /position bands. Kept as full ladders (not just the base tier) so a drift diff can name WHICH
-    # tier moved; the rendered doc shows the base tier and the ladder depth.
+    # Full ladders, not just the base tier, so a drift diff can name WHICH tier moved.
     fees_taker: tuple[tuple[float, float], ...]
     fees_maker: tuple[tuple[float, float], ...]
     fee_taker_base: float | None
@@ -48,8 +45,7 @@ class PairSnapshot:
     base_margin_rate: float | None
     base_collateral_value: float | None
     # The QUOTE side's borrow rate prices margin LONGS: a long buys with borrowed quote currency,
-    # so the base rate never touches it. Rendering only the base side left the book's long leg
-    # unpriced while the table looked complete.
+    # so the base rate never touches it.
     quote_margin_rate: float | None
     margin_call: int | None
     margin_stop: int | None
@@ -110,9 +106,7 @@ def _not_found(symbol: str, base: str, quote: str) -> PairSnapshot:
 def derive_universe(assetpairs_result: dict, assets_result: dict, symbols: list[str]) -> list[PairSnapshot]:
     """Resolve each `BASE/QUOTE` candidate symbol to its Kraken pair via `wsname`.
 
-    Tolerates Kraken's alias spellings (XBT for BTC, XDG for DOGE) when building the wsname lookup
-    key, and resolves the base/quote asset aliases from `assets_result` (ground truth, not transcribed).
-    Symbols that are absent or non-margin are flagged (`found`/`margin_enabled`), never dropped.
+    Absent or non-margin symbols are flagged (`found`/`margin_enabled`), never dropped.
     """
     index = _wsname_index(assetpairs_result)
     rows = []

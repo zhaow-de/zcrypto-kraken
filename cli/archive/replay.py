@@ -1,32 +1,7 @@
-"""Canonical book continuity-replay (spec 00051 OPS-3).
-
-Proves that the canonical archive — reconciled-first, primary otherwise (`canonical_segments`) —
-**replays as a coherent book**, per hour: it is chain-anchored, rows are non-decreasing in `ts`,
-every message carries its capture-time `checksum` attestation, and the rows regroup into WS-shaped
-messages that feed `OrderBook` without a structural throw. Its one genuinely new payoff over
-manifests + continuity.py: it confirms the reconciler's spliced output stays anchored and coherent
-across splice boundaries.
-
-Anchoring (corrected 2026-07-15, spec 00052 D3 — the same real-data finding: Kraken snapshots arrive
-on *subscribe*, not once per capture hour, so ~96% of real hours open with plain updates): an hour is
-**chain-anchored** iff it opens with a snapshot, OR its exact predecessor hour (same pair) was
-present in the enumeration AND was itself chain-anchored and error-free. `replay_segment` alone has
-no chain context, so it reports only the RAW per-hour fact (`ReplayResult.anchored` = "opens with a
-snapshot"); `verify_replay` walks its sorted `(pair, hour)` results afterwards and derives the
-chain-corrected `anchored` verdict, since only it has the cross-hour context to do so.
-
-Scope guard (finalized 2026-07-15, T0045): the archive stores `price`/`qty` as Float64, so Kraken's
-CRC32 is NOT byte-exact re-derivable — a re-derived `OrderBook.checksum()` mismatches the stored
-`checksum` column on every zero-trailing level, a guaranteed false alarm. The stored column is
-therefore trusted as capture-time ground truth and never re-derived; the CRC-based return value of
-`ingest_snapshot`/`ingest_update` is deliberately ignored. A "structural desync" heuristic is
-likewise NOT implemented: for a depth-bounded book, a legitimate update to an out-of-window level is
-indistinguishable from corruption without the CRC. Byte-exact CRC re-attestation was considered and consciously
-DROPPED (T0045, 2026-08-23): it would cost a schema change on the unbackfillable live capture stream
-and could only ever attest data captured after it. That is an accepted limit of the archive, not
-work awaiting a turn -- a discrepancy the structural check cannot localise opens a NEW topic rather
-than reviving that one.
-"""
+"""Continuity-replay of the canonical book archive (spec 00051 OPS-3) — its payoff over the manifests
+and `infra/scripts/continuity.py` is confirming that the reconciler's spliced output stays anchored and
+coherent across splice boundaries. The stored `checksum` is capture-time ground truth and never re-derived:
+`price`/`qty` are Float64, so Kraken's CRC32 would mismatch on every zero-trailing level (T0045, resolved)."""
 
 from __future__ import annotations
 
@@ -50,11 +25,9 @@ logger = get_logger("archive.replay")
 
 @dataclass(frozen=True)
 class ReplayResult:
-    """One canonical hour's replay verdict. `error` is set (never raised) for an unreadable segment
-    or a structural ingest throw — one bad hour must not abort the sweep.
-
-    `anchored`: from `replay_segment` alone this is the RAW fact ("opens with a snapshot"); from
-    `verify_replay` it is the chain-corrected verdict (module docstring)."""
+    """One canonical hour's replay verdict; `error` is set, never raised, so one bad hour cannot abort
+    the sweep. `anchored` is `replay_segment`'s raw "opens with a snapshot" until `verify_replay`
+    replaces it with `_chain_anchor`'s chain-corrected verdict."""
 
     pair: str
     hour: datetime | None
@@ -72,10 +45,9 @@ class ReplayResult:
 
 
 def regroup_messages(frame: pl.DataFrame) -> list[dict]:
-    """Rebuild the WS-shaped messages from the exploded per-level rows — the exact inverse of the
-    capture writer's fan-out (cli/capture/command.py:146-158): consecutive rows sharing
-    `(ts, symbol, type, checksum)` are one wire message, its levels rebuilt onto `bids`/`asks` by
-    `side` in row order."""
+    """Rebuild the WS-shaped messages from the exploded per-level rows — the inverse of the capture
+    writer's fan-out (`cli/capture/command.py::_handle_book_message`): consecutive rows sharing
+    `(ts, symbol, type, checksum)` are one message, its levels rebuilt onto `bids`/`asks` by `side` in row order."""
     messages: list[dict] = []
     key: tuple | None = None
     for row in frame.iter_rows(named=True):
@@ -107,13 +79,8 @@ def _hour_from_path(path: Path) -> datetime | None:
 
 
 def replay_segment(path: Path, symbol: str, depth: int) -> ReplayResult:
-    """Replay one canonical hour through a fresh `OrderBook(symbol, depth)`. Never raises: an
-    unreadable segment or a structural ingest throw is isolated into the result (the same
-    isolation contract as infra/scripts/gap_distribution.py::observe_gaps).
-
-    Has no chain context (no visibility into neighboring hours), so `ReplayResult.anchored` here is
-    the RAW fact -- "this hour's first message is a snapshot" -- not the chain-corrected verdict;
-    `verify_replay` derives that once it has the full per-pair sequence (module docstring)."""
+    """Replay one canonical hour through a fresh `OrderBook(symbol, depth)`, isolating an unreadable
+    segment or a structural ingest throw into `ReplayResult.error` instead of raising."""
     hour = _hour_from_path(path)
     try:
         frame = pl.read_parquet(path)
@@ -129,8 +96,7 @@ def replay_segment(path: Path, symbol: str, depth: int) -> ReplayResult:
     replay_ok, error = True, None
     try:
         for message in messages:
-            # The CRC-based return value is deliberately ignored (T0045, module docstring): only a
-            # structural throw fails the replay.
+            # The CRC-based return value is deliberately ignored (T0045, resolved): only a structural throw fails the replay.
             if message["type"] == "snapshot":
                 book.ingest_snapshot(message)
             else:
@@ -144,12 +110,10 @@ def replay_segment(path: Path, symbol: str, depth: int) -> ReplayResult:
 
 
 def _chain_anchor(results: list[ReplayResult]) -> list[ReplayResult]:
-    """Derive the chain-anchored verdict (spec 00052 D3 correction) over `results` in `(pair, hour)`
-    order: an hour is anchored iff `replay_segment`'s raw fact says so, OR its exact predecessor hour
-    for the same pair was present in `results` (i.e. in this enumeration) AND was itself anchored and
-    error-free. `results` is walked in order, tracking each pair's previous hour + verdict -- exactly
-    `canonical_segments`' sort contract, so no re-sort is needed (or safe: L2 hours are not
-    reorderable)."""
+    """Derive the chain-anchored verdict (spec 00052 D3) over `results` in `(pair, hour)` order: an hour is anchored
+    iff its raw fact says so, or its exact predecessor hour for the same pair was present in `results` and was itself
+    anchored and error-free — Kraken sends a snapshot on subscribe, not once per capture hour. `results` arrives in
+    `canonical_segments`' order, so no re-sort is needed — nor safe, L2 hours not being reorderable."""
     chained: list[ReplayResult] = []
     prev_hour: dict[str, datetime | None] = {}
     prev_ok: dict[str, bool] = {}
@@ -171,11 +135,9 @@ def verify_replay(
     since: datetime | None = None,
     depth: int,
 ) -> list[ReplayResult]:
-    """Continuity-replay every canonical book hour (reconciled-first, primary otherwise), one
-    `ReplayResult` per hour in `(pair, hour)` order. Per-hour failures are isolated into
-    `ReplayResult.error`; the sweep never aborts on one bad hour. `anchored` is chain-derived
-    (`_chain_anchor`, spec 00052 D3 correction) over this same enumeration -- a hole opened by
-    `--pair`/`--since` counts as "predecessor not present", same as a real archive gap."""
+    """Continuity-replay every canonical book hour (reconciled-first, primary otherwise), one `ReplayResult`
+    per hour in `(pair, hour)` order; `anchored` is chain-derived over this enumeration alone, so a hole
+    opened by `--pair`/`--since` counts as "predecessor not present", exactly as a real archive gap does."""
     results: list[ReplayResult] = []
     for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="book"):
         if pair is not None and seg_pair != pair:
@@ -191,18 +153,13 @@ def verify_replay(
 
 
 # --- incremental replay (spec 00078) ----------------------------------------------------------------
-#
-# Replays only what changed while still certifying the WHOLE archive: each hour's RAW facts are
-# checkpointed against the sha256 of the bytes replayed, and `_chain_anchor` is refolded over cached
-# and fresh results alike on every run. The chain verdict is NEVER persisted (spec 00078 D1): it is a
-# fold that can only widen, so caching its output would make anchoring irrevocable — an hour chained
-# through a good predecessor would stay green forever after that predecessor is rewritten into a
-# failure, with `failed_hours` reading 0.
+# Each hour's RAW facts are checkpointed against the sha256 of the bytes replayed; the chain verdict is
+# refolded over cached and fresh results on every run and never persisted (D1) — the fold can only
+# widen, so a cached verdict would keep an hour green after the predecessor it chained through failed.
 
 VERIFIER_VERSION = 1
 
-# Flush cadence (spec 00078 D8): ~20 min of work at risk, so a rebuild or long drain killed mid-run
-# (the 02:25 reboot, an OOM) resumes instead of restarting.
+# Flush cadence (spec 00078 D8): bounds the work a rebuild or drain killed mid-run has to redo.
 _FLUSH_EVERY = 250
 
 # Eviction refusal line (D7): the case this catches is the NFS primary resolving empty while the
@@ -230,14 +187,10 @@ class EvictionRefusedError(Exception):
 
 
 def _sidecar_digest(path: Path) -> str | None:
-    """The first whitespace-delimited token of `<path>.sha256`, or `None` when the sidecar is absent,
-    empty, or unreadable.
-
-    Absent/empty is `verify_manifest`'s own reading (a killed pre-T0036 writer left 0-byte sidecars);
-    unreadable joins them because this probe sits OUTSIDE `replay_segment`'s never-raises contract and
-    a transient EIO from the `ro,soft` NFS mount must stay one failing hour, not a whole-run crash.
-    `None` never equals a cached hash, so such an hour is always replayed and always reported failing.
-    """
+    """The first whitespace-delimited token of `<path>.sha256`, or `None` when the sidecar is absent or empty
+    (`verify_manifest`'s own reading of both) or unreadable — the read sits outside `replay_segment`'s never-raises
+    contract, and a transient NFS EIO must cost one failing hour, not the whole run. `None` never equals a cached
+    hash, so such an hour is always replayed and always reported failing."""
     sidecar = path.with_name(path.name + ".sha256")
     try:
         recorded = sidecar.read_text().split()
@@ -247,47 +200,32 @@ def _sidecar_digest(path: Path) -> str | None:
 
 
 def _cached_failure(row: CheckpointRow) -> bool:
-    """Whether `row`'s cached verdict is a FAILURE, which is never trusted from cache (spec 00078 D3):
-    `replay_segment` isolates any exception — including a transient NFS EIO — into `error`, and
-    cache-trusting that would turn a one-off hiccup into a permanently-failing hour that never heals.
-
-    `opens_with_snapshot` is deliberately excluded: it is a raw fact, not a failure (~96% of real
-    hours open with a plain update and are anchored through their predecessor), and including it here
-    would re-replay nearly the whole archive nightly.
-    """
+    """Whether `row`'s cached verdict is a FAILURE, never trusted from cache (spec 00078 D3): a transient
+    error isolated into `error` would otherwise become a permanently-failing hour that never heals.
+    `opens_with_snapshot` is deliberately excluded — it is a raw fact, not a failure, and most real hours
+    open with a plain update, so including it would re-replay nearly the whole archive every run."""
     return row.error is not None or not (row.ts_ordered and row.checksum_present and row.replay_ok)
 
 
 def _is_stale(row: CheckpointRow, path: Path, *, reverify_all: bool) -> bool:
-    """Whether a checkpointed hour must be replayed again (spec 00078 D3). The sidecar read is the
-    cheap staleness probe; the byte hash itself is recomputed only on the hours actually replayed.
-
-    `polars_version`/`depth` are recorded on the row but deliberately NOT consulted (D5): dependabot
-    bumps polars ~monthly and a full drain takes ~74 nights at year-one size, so invalidating on them
-    would leave the instrument permanently mid-drain with `pending` never reaching zero.
-    """
+    """Whether a checkpointed hour must be replayed again (spec 00078 D3) — the sidecar read is the cheap staleness
+    probe; the byte hash itself is recomputed only on the hours actually replayed. `polars_version`/`depth` are
+    recorded on the row but deliberately NOT consulted (D5): a full drain outlasts the interval between dependency
+    bumps, so invalidating on them would leave the instrument permanently mid-drain."""
     if reverify_all or row.verifier_version != VERIFIER_VERSION or _cached_failure(row):
         return True
     return _sidecar_digest(path) != row.byte_hash
 
 
 def _replay_and_checkpoint(pair: str, hour: datetime, path: Path, depth: int) -> tuple[ReplayResult, CheckpointRow]:
-    """Replay one hour and build its checkpoint row.
-
-    Identity is the sha256 of the bytes actually replayed, hashed BEFORE the replay and compared
-    against the sidecar afterwards (spec 00078 D2) — not the sidecar's claim, since both writers
-    publish sidecar-then-final and a crash mid-mint leaves a new sidecar over old bytes. A mismatch,
-    or a missing sidecar, rewrites the verdict into a failure: it violates the archive's manifested
-    invariant, and failures are never cache-trusted, so it re-checks nightly until resolved.
-
-    The row's `opens_with_snapshot` is `replay_segment`'s RAW fact, captured here before any chain
-    derivation — the checkpoint must never see `_chain_anchor`'s output (D1).
-    """
+    """Replay one hour and build its checkpoint row, identified by the sha256 of the bytes actually replayed — hashed
+    BEFORE the replay and compared against the sidecar afterwards (spec 00078 D2), not the sidecar's claim, since both
+    writers publish sidecar-then-final and a crash mid-mint leaves a new sidecar over old bytes. A mismatch, or a
+    missing sidecar, rewrites the verdict into a failure — the archive's manifested invariant is broken."""
     try:
         byte_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError as exc:
-        # Outside `replay_segment`'s never-raises contract: isolate it into this hour, as a failure
-        # with no usable identity, and let the run continue.
+        # Outside `replay_segment`'s never-raises contract: isolate it into this hour as a failure with no identity.
         result = ReplayResult(pair, hour, 0, 0, False, False, False, False, f"{type(exc).__name__}: {exc}")
         byte_hash = ""
     else:
@@ -323,9 +261,9 @@ def _replay_and_checkpoint(pair: str, hour: datetime, path: Path, depth: int) ->
 
 
 def _audit_facts(row: CheckpointRow) -> tuple:
-    """The full RAW tuple the audit compares — every fact the cache serves on a reused hour. A
-    difference in ANY of them is a mismatch. `verified_at`/`polars_version`/`depth` are forensics and
-    `verifier_version` is the run's own, so none of them belong here."""
+    """The full RAW tuple the audit compares — every fact the cache serves on a reused hour, a difference
+    in ANY of them a mismatch. `verified_at`/`polars_version`/`depth` are forensics and `verifier_version`
+    is the run's own, so none of them belong here."""
     return (
         row.byte_hash,
         row.opens_with_snapshot,
@@ -354,25 +292,10 @@ def verify_replay_incremental(
     reverify_all: bool = False,
     rng: random.Random | None = None,
 ) -> tuple[list[ReplayResult], Census]:
-    """Continuity-replay the canonical archive incrementally, returning the same `(pair, hour)`-ordered
-    verdict list `verify_replay` produces plus a `Census` of what was actually done.
-
-    Hours never seen before are replayed unconditionally — otherwise the sweep falls behind ingest and
-    `hours_total` stops matching the archive. Older stale hours (version bumps, rewrites, cached
-    failures, `reverify_all`) drain oldest-first until `drain_budget_s` is spent; the remainder is
-    `pending` and announced. Everything else is served from the checkpoint, and `_chain_anchor` is
-    refolded over the whole sequence.
-
-    Raises `EvictionRefusedError` when the enumeration lost more than 10% of the checkpoint's hours,
-    and `CheckpointWriteError` when the state dir cannot be written — both before/instead of a
-    summary, so the run reads broken rather than green.
-
-    After the drain, `audit_k` cache-trusted REUSED hours are re-replayed and compared against their
-    checkpoint rows (spec 00078 D6) — the only guard that can detect the cache being wrong, since
-    `replayed=288 reused=5712` is otherwise both the healthy signature and the wrong-reuse one. A
-    mismatch is named in `Census.audit_mismatches` and self-heals (the fresh row replaces the cached
-    one, here and in the checkpoint); deciding whether that fails the run loudly is the CLI's.
-    """
+    """Continuity-replay the canonical archive incrementally — `verify_replay`'s `(pair, hour)`-ordered verdicts plus a
+    `Census`. Unseen hours replay unconditionally, or the sweep falls behind ingest; stale ones drain oldest-first until
+    `drain_budget_s` and the rest is `pending`; `audit_k` cache-served hours are re-audited. Raises `EvictionRefusedError`
+    or, when the state dir cannot be written, `CheckpointWriteError` instead of a summary — the run reads broken, not green."""
     started = _monotonic()
     segments = list(canonical_segments(primary_root, reconciled_root, kind="book"))
     if not segments:
@@ -422,8 +345,8 @@ def verify_replay_incremental(
         replay_one(pair, hour, path)
 
     results: list[ReplayResult] = []
-    # The reused keys — rows the stale predicate passed THIS run — materialized here because they are
-    # the audit's population: a lie can only live in a row trusted as current (D6).
+    # The reused keys — rows the stale predicate passed THIS run — are the audit's population: a lie can
+    # only live in a row trusted as current (D6).
     reused_keys: list[tuple[str, datetime]] = []
     reused_paths: dict[tuple[str, datetime], Path] = {}
     reused_index: dict[tuple[str, datetime], int] = {}
@@ -451,9 +374,9 @@ def verify_replay_incremental(
             reused_paths[key] = path
             reused_index[key] = len(results) - 1
 
-    # The sampled audit (D6). Pending rows are NEVER sampled: one is known-stale by construction (its
-    # hash or version already failed the predicate), so auditing it mismatches with certainty and would
-    # fail the run every night of a legitimate large drain — ~74 consecutive nights at year-one size.
+    # The sampled audit (D6): a wrongly-reusing run otherwise prints the same census as a healthy one. A
+    # mismatch is reported here and fails the run at the CLI. Pending rows are NEVER sampled — one is known-stale
+    # by construction, so auditing it would mismatch with certainty and fail the run every night of a large drain.
     mismatches: list[str] = []
     audited = min(audit_k, len(reused_keys)) if audit_k > 0 else 0
     if audited:
@@ -463,8 +386,8 @@ def verify_replay_incremental(
             result, row = _replay_and_checkpoint(pair, hour, reused_paths[key], depth)
             if _audit_facts(row) != _audit_facts(rows[key]):
                 mismatches.append(_hour_label(pair, hour))
-            # The fresh row replaces the cached one either way — on a mismatch that self-heals the
-            # cache, and on a match it records that this hour was re-verified under today's code.
+            # The fresh row replaces the cached one either way: on a mismatch that self-heals the cache,
+            # on a match it records the hour as re-verified under today's code.
             rows[key] = row
             results[reused_index[key]] = result
 

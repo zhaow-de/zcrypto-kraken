@@ -7,11 +7,10 @@ from cli.validation.errors import ValidationError
 
 
 def reality_check_pvalue(perf_matrix: list[list[float]], *, mean_block: float, n_resamples: int = 1000, seed: int) -> dict:
-    """White's Reality Check: p-value that the best strategy's mean outperformance vs the benchmark is real.
+    """White's Reality Check p-value that the best strategy's mean outperformance is real (see docs/specs/00015).
 
-    `perf_matrix` is T x K (rows = time, cols = strategies), each cell = strategy's outperformance vs the
-    benchmark at that period. Reuses the stationary bootstrap. p_value in (0, 1], never NaN. See docs/specs/00015.
-    """
+    `perf_matrix` is T x K, rows = time and cols = strategies, each cell that strategy's outperformance vs the
+    benchmark at that period; p_value in (0, 1], never NaN."""
     if not perf_matrix:
         raise ValidationError("perf_matrix must be non-empty")
     n_periods = len(perf_matrix)

@@ -11,11 +11,8 @@ _TARGET_LOGGERS = ("zcrypto",)
 
 
 def configure(path: Path | None, level: str, ship: ShipConfig | None = None) -> None:
-    """Configure the project ``zcrypto`` logger. Idempotent across repeated calls.
-
-    When `ship` is given, a `LokiShipHandler` is attached IN ADDITION to the console/file
-    handler -- never replacing it (log shipping is additive to stdout/file, spec 00068 T3).
-    """
+    """Configure the ``zcrypto`` logger; idempotent, and a `ship` handler joins the console/file
+    handler rather than replacing it (spec 00068)."""
     numeric = logging.getLevelNamesMapping().get(level)
     if numeric is None:
         raise ValueError(f"invalid log level: {level!r}")
@@ -47,9 +44,8 @@ def configure(path: Path | None, level: str, ship: ShipConfig | None = None) -> 
                 try:
                     h.close()
                 except Exception:
-                    # A prior handler's close() may join a worker thread and write to stdout
-                    # (LokiShipHandler), not just close a file -- widen beyond OSError so a
-                    # failure there can't abort reconfigure() with zero handlers attached.
+                    # Wider than OSError: LokiShipHandler.close() joins a worker thread and may
+                    # print, and a failure here must not leave configure() with zero handlers.
                     pass
         for h in handlers:
             lg.addHandler(h)

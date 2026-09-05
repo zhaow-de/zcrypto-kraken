@@ -7,11 +7,7 @@ from cli.validation.errors import ValidationError
 
 
 def make_groups(n_samples: int, n_groups: int) -> list[tuple[int, int]]:
-    """Partition [0, n_samples) into n_groups contiguous [start, stop) blocks of near-equal size.
-
-    The first `n_samples % n_groups` blocks are one larger, so sizes differ by at most 1 and the
-    blocks exactly tile [0, n_samples).
-    """
+    """Partition [0, n_samples) into n_groups contiguous [start, stop) blocks whose sizes differ by at most 1."""
     if n_groups < 2:
         raise ValidationError(f"n_groups must be >= 2, got {n_groups}")
     if n_samples < n_groups:

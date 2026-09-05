@@ -1,2 +1,2 @@
 class PortfolioError(Exception):
-    """Raised on invalid portfolio-builder inputs."""
+    """Raised by `cli.portfolio` on invalid inputs or a failed internal QA check."""

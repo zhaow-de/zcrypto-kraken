@@ -21,8 +21,7 @@ from cli.registry.record import (
 
 logger = get_logger("registry.store")
 
-# The highest trial_id committed when the datasets block landed. Records 1-46 predate it and the file is
-# append-only, so they can never carry one -- the exemption is by ID precisely because that cannot grow.
+# The highest trial_id predating the datasets block; the file is append-only, so an exemption by ID can never grow.
 _LEGACY_UNPROVENANCED_MAX_TRIAL_ID = 46
 
 
@@ -108,16 +107,8 @@ def _now_utc_iso() -> str:
 
 
 class TrialRegistry:
-    """Append-only, integrity-checked JSONL store of validation trials. See docs/specs/00000-trial-registry-design.md
-    and docs/specs/00012-registry-hash-chain-design.md (the prev_hash chain; loads schema v2-v4, writes v4).
-    A v4 record carries a `datasets` block of the file digests/rows/span a run actually read, and its
-    `dataset_hash` is derived from that block rather than claimed by the caller.
-
-    The record_hash self-check catches accidental/careless in-place edits; contiguity + monotone family counts
-    catch deletion/reorder/truncation. The prev_hash chain (each record commits to its predecessor's record_hash,
-    genesis for the first) adds tamper-evidence against a re-hashing writer: re-hashing any single record breaks
-    the *next* record's link. Residual gap (non-goal, needs an external anchor): a writer that re-hashes the entire
-    trailing suffix can still forge a consistent chain.
+    """Append-only, integrity-checked JSONL store of validation trials; design and non-goals in
+    docs/specs/00000-trial-registry-design.md and docs/specs/00012-registry-hash-chain-design.md (the prev_hash chain).
     """
 
     def __init__(self, path: Path) -> None:

@@ -4,12 +4,7 @@ from __future__ import annotations
 def aggregate_minutes(minute_rows: list[list], interval_secs: int) -> list[list]:
     """Aggregate 1-minute OHLCVT rows into `interval_secs`-cadence bars with a reconstructed vwap.
 
-    Buckets by `floor(ts / interval_secs) * interval_secs`. Per bucket, in ts order: `open`=first,
-    `high`=max, `low`=min, `close`=last, `volume`=sum, `count`=sum(trades); `vwap`=
-    `Σ(close_i·vol_i)/Σvol_i`, or `close` when `Σvol_i == 0` — a reconstruction proxy, since the
-    dumps carry no vwap column. Returns 8-field rows `[bucket_ts, open, high, low, close, vwap,
-    volume, count]` sorted ascending by `bucket_ts`. No-trade buckets produce no bar (gaps are
-    reported by `cli.ohlc.qa`, not filled). Empty input returns `[]`.
+    `vwap` is a close-price proxy (the dumps carry no vwap); a bucket with no rows produces no bar — `cli.ohlc.qa` reports gaps.
     """
     if not minute_rows:
         return []

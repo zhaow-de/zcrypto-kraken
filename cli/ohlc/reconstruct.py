@@ -4,13 +4,9 @@ import polars as pl
 
 
 def fill_gaps(frame: pl.DataFrame, interval_secs: int) -> pl.DataFrame:
-    """Reconstruct empty intervals in `frame` by inserting a synthetic bar for every missing grid point.
+    """Insert a synthetic bar — the prior close in every price column, zero volume and count — at each missing grid point.
 
-    `frame` is the canonical schema from `cli.ohlc.dataset.to_frame` (sorted ascending, every `ts` on the
-    `interval_secs` grid). Each synthetic bar carries the prior (forward-filled) close: `open == high ==
-    low == close == vwap == <last real close before this ts>`, `volume = 0.0`, `count = 0`. Consecutive
-    gaps all carry the same forward-filled close. A frame with fewer than 2 rows, or already contiguous,
-    is returned unchanged. Output has the same schema, column order, and dtypes as `frame`.
+    `frame` is `cli.ohlc.dataset.to_frame`'s canonical schema, ascending with every `ts` on the `interval_secs` grid.
     """
     if frame.height < 2:
         return frame

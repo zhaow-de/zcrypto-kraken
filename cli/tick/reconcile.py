@@ -4,8 +4,7 @@ import polars as pl
 
 from cli.tick.errors import TickError
 
-# Kraken legacy trades-CSV pair-name altnames -> canonical tickers (mirrors
-# cli.backfill.read's OHLCVT dump aliases, applied here to the base leg only).
+# Kraken legacy trades-CSV altnames -> canonical tickers, base leg only; cli.backfill.read's _ALIAS maps the other way.
 KRAKEN_TICKER_MAP = {"XBT": "BTC", "XDG": "DOGE"}
 
 _QUOTE_SUFFIXES = ("EUR", "USD")
@@ -15,13 +14,7 @@ _WORST_N = 5
 
 
 def csv_pair_to_canonical(name: str) -> tuple[str, str]:
-    """Map a Kraken trades-CSV pair name (e.g. `"XBTEUR"`) to a canonical `(base, quote)` pair
-    (e.g. `("BTC", "EUR")`): strip the `EUR`/`USD` quote suffix, then map the remaining base ticker
-    through `KRAKEN_TICKER_MAP` (Kraken's legacy `XBT`/`XDG` altnames -> `BTC`/`DOGE`; any other base
-    ticker passes through unchanged, e.g. `"ETHEUR"` -> `("ETH", "EUR")`).
-
-    Raises `TickError` if `name` doesn't end in a recognized quote suffix.
-    """
+    """Map a Kraken trades-CSV pair name (`XBTEUR`) to canonical `(base, quote)`; `TickError` on an unrecognized quote suffix."""
     for quote in _QUOTE_SUFFIXES:
         if name.endswith(quote) and len(name) > len(quote):
             base_raw = name[: -len(quote)]
@@ -30,8 +23,8 @@ def csv_pair_to_canonical(name: str) -> tuple[str, str]:
 
 
 def _rel_diff(col: str) -> pl.Expr:
-    """Relative difference of a tick-bar field against its OHLCVT counterpart, denominator floored
-    at 1e-12 so a zero-valued OHLCVT field doesn't divide by zero."""
+    """Relative difference of a tick-bar field against its OHLCVT counterpart, its denominator floored so a
+    zero-valued OHLCVT field cannot divide by zero."""
     return (pl.col(col) - pl.col(f"{col}_ohlcvt")).abs() / pl.col(f"{col}_ohlcvt").abs().clip(lower_bound=1e-12)
 
 
@@ -43,21 +36,10 @@ def _match_stats(joined: pl.DataFrame, tol: float) -> tuple[int, float]:
 
 
 def reconcile(tick_bars: pl.DataFrame, ohlcvt_bars: pl.DataFrame, *, tol: float = 1e-6) -> dict:
-    """Compare tick-derived bars (`cli.tick.aggregate.ticks_to_bars` output) against canonical
-    OHLCVT bars (`cli.ohlc.dataset.read_parquet` output) over their `ts` overlap.
-
-    Inner-joins on `ts`; an interval "matches" when every OHLC field's relative difference
-    (`|tick - ohlcvt| / |ohlcvt|`, see `_rel_diff`) is within `tol`. Reports the match rate at `tol`
-    (the exit-bar check — default 1e-6, near-exact since both series derive from the same trades) and,
-    for context, the same at a looser `1e-3` band. `worst_mismatches` lists the top few
-    `{ts, field, tick, ohlcvt, rel_diff}` entries among fields that miss the strict `tol`, sorted by
-    `rel_diff` descending (a single interval can contribute more than one entry if several of its
-    O/H/L/C fields mismatch).
-
-    Returns `{n_intervals, tol, n_matched, pct_within_tol, loose_tol, n_matched_loose,
-    pct_within_tol_loose, worst_mismatches}`. Zero overlap reports `pct_within_tol(_loose) == 100.0`
-    vacuously (mirroring `cli.backfill.reconcile.reconcile_series`) and an empty `worst_mismatches`.
-    """
+    """Compare tick-derived bars against canonical OHLCVT bars (`cli.ohlc.dataset.read_parquet`) over their `ts` overlap: an
+    interval matches when every OHLC field's relative difference is within `tol`, near-exact by default since both series derive
+    from the same trades, and again at the looser `_LOOSE_TOL`. Zero overlap reports `pct_within_tol(_loose)` 100.0 vacuously,
+    mirroring `cli.backfill.reconcile.reconcile_series`."""
     joined = tick_bars.join(ohlcvt_bars, on="ts", how="inner", suffix="_ohlcvt")
     n_intervals = joined.height
 

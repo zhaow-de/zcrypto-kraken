@@ -1,10 +1,7 @@
 """The realized half of the weekly tracking comparison: what the ledger says actually happened.
 
-Pure. Reads a journal already on disk -- and the venue ledger the owner exports by hand -- and
-returns numbers; writes nothing, reaches no venue and needs no API key. The
-refusals are the point -- a tracking number nobody can stand behind is worse than none, because it
-will be read as a gate input.
-"""
+Pure -- it writes nothing and reaches no venue -- and it refuses rather than return a number nobody
+can stand behind, because that number will be read as a gate input."""
 
 from __future__ import annotations
 
@@ -23,15 +20,14 @@ from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 logger = get_logger("engine.tracking")
 
-# The venue's own names, as `executor._liquidity` writes them. NOT lowercased: matching a casing
-# the ledger never writes would abort every real fill while every fixture passed.
+# The venue's own names, as `executor._liquidity` writes them -- NOT lowercased: a casing the
+# venue never writes would abort every real fill.
 _PRICEABLE_LIQUIDITY = frozenset({"MAKER", "TAKER"})
 _VENUE_LIQUIDITY = _PRICEABLE_LIQUIDITY | {"NO_LIQUIDITY_SIDE"}
 _SIDES = frozenset({"buy", "sell"})
-# The MODEL's universe is the ten EUR legs (cycle._MODEL_SYMBOLS). The two /BTC legs are real
-# basket symbols with no model target, so they map to base None: excluded from drift, counted.
+# The model's targets are the /EUR legs (`cycle._MODEL_SYMBOLS`); a /BTC leg is a real basket
+# symbol with none, so it maps to base None -- counted, but excluded from drift.
 _BASE_BY_SYMBOL = {s: (s.split("/")[0] if s.endswith("/EUR") else None) for s in BASKET}
-# Weeks that must be decided before the comparison carries a verdict at all.
 _GATE_MIN_WEEKS = 3
 
 
@@ -79,22 +75,10 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
             for ev in row.get("events", []):
                 kind = ev.get("event")
                 if kind == "reconciled":
-                    # An adopted order that filled at the venue while this process was down.
-                    # `_reconcile_adopted_rows` credits the delta to the row's `filled_qty`, and it
-                    # is the ONLY non-fill event that moves it (every other journaled event is a
-                    # `{"type": ...}` payload written with `add_filled_qty=0.0`), so skipping it
-                    # would make `held` under-report by exactly the repaired amount after every
-                    # adopted-order repair.
-                    #
-                    # It becomes a Fill rather than a note, because `held` is base units only: the
-                    # quantity is the whole of what the drift half needs, and a note announcing that
-                    # the number is wrong is worse than the right number. No price and no fee exist
-                    # by construction, so `px`/`fee` are None and it stays out of the cost blend --
-                    # which is the same judgment the executor makes when it keeps a repair off the
-                    # fill/fee counters.
-                    #
-                    # The row's own side signs it, exactly like a fill: `filled_qty` is a magnitude,
-                    # so a positive delta means more filled in the ORDER's direction.
+                    # An adopted order that filled at the venue while this process was down: the ONLY non-fill event
+                    # that moves `filled_qty`, so skipping it would make `held` under-report the repair. It is a
+                    # Fill, not a note, because `held` is base units only; no price or fee exists by construction,
+                    # and the row's own side signs it (`filled_qty` is a magnitude in the ORDER's direction).
                     qty = float(ev["qty"])
                     client_order_id = row.get("client_order_id")
                     note(
@@ -111,18 +95,15 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                             None,
                             None,
                             "NO_LIQUIDITY_SIDE",
-                            # A repair carries no venue trade id. This one is unique (a row is
-                            # reconciled at most once per timestamp) and unmistakable for a venue
-                            # id, which matters because the ledger match is keyed on `trade_id`.
+                            # A repair carries no venue trade id; this one is unique per row and
+                            # timestamp, and unmistakable for the venue id the ledger match keys on.
                             f"reconciled:{client_order_id}:{ev['at']}",
                         )
                     )
                     continue
                 if kind != "fill":
-                    # A `withdrawn` event -- the venue reporting a closed order filled for LESS than
-                    # this row recorded -- falls through here on purpose (spec 00100 D16): it is
-                    # journaled as evidence and reverses nothing, here included, and the engine it
-                    # describes is stopped by the kill switch that same event latched.
+                    # A `withdrawn` event -- the venue reporting a closed order filled for LESS than this row recorded --
+                    # reverses nothing on purpose (spec 00100 D16); the kill switch it latched has already stopped the engine.
                     continue
                 liq = ev.get("liquidity")
                 if liq not in _VENUE_LIQUIDITY:
@@ -166,12 +147,8 @@ def _iso_label(key: tuple[int, int]) -> str:
 def drift_bps(final: dict[str, float], closes: dict[str, float], held: dict[str, float], nav: float) -> float:
     """One cycle's drift, in bps of NAV, from plain dicts.
 
-    THE shared core: component A calls it from replayed stages, component C from journaled
-    artifacts. No CycleStages, no venue minimums, no accumulation_payload -- component C runs on
-    the engine host, which carries no refdata snapshot, so anything needing `load_minimums` cannot
-    run there at all. One implementation, two callers: the number a human bands and the number the
-    engine trips on cannot drift apart.
-    """
+    Plain dicts because the engine host carries no refdata snapshot for minimums; one implementation,
+    so the number a human bands (`weekly_tracking`) and the number the engine trips on (`executor`) cannot drift apart."""
     drift_eur = 0.0
     for a, weight in final.items():
         close = closes[a]
@@ -182,11 +159,7 @@ def drift_bps(final: dict[str, float], closes: dict[str, float], held: dict[str,
 def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> dict:
     """Per-cycle drift with `held` taken from REAL fills instead of the modelled policy.
 
-    `held` is SIGNED BASE UNITS: a sell that booked as a buy would double the apparent position
-    and silently halve the measured drift. Fills are applied by the BOUNDARY their row was
-    journaled under, so a fill arriving minutes after boundary N counts at N -- the decision that
-    produced it -- rather than at N+1.
-    """
+    `held` is SIGNED base units, and a fill counts at the BOUNDARY its row was journaled under -- the decision that produced it."""
     if not math.isfinite(nav) or nav <= 0:
         raise EngineError(f"NAV must be finite and positive, got {nav!r} -- a negative one signs every drift_bps")
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
@@ -195,19 +168,10 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> 
         if f.base is None:  # a /BTC leg: no model target, so no drift contribution
             continue
         by_boundary.setdefault(f.boundary, []).append(f)
-    # A fill whose boundary carries no stage never enters `held`, overstating drift for every later
-    # cycle -- silently, and on component C that is a spurious kill-file trip. The two ways it
-    # happens need different answers from the operator, so they are refused separately:
-    #   * INSIDE the cycle span -- a hole. `accumulation_report` drops a record whose
-    #     `replay_stages` raises, names it in `failures` and counts it in `n_failed`; a fill
-    #     journaled under that boundary lands here. Widening the window cannot help.
-    #   * OUTSIDE it -- a truncated window. A fill BEFORE the first cycle holds a position the
-    #     first cycle already carries, so it is refused rather than dropped; one after the last
-    #     cycle is harmless, but telling them apart needs a span the caller chose, not one this
-    #     function guesses. Widening the window is the fix.
-    # Compared as datetime INSTANTS, never as isoformat strings: `+02:00` and `+00:00` spellings of
-    # one instant are equal to `by_boundary`'s lookup and unequal as text, so a string difference
-    # would refuse a fill the loop below goes on to apply.
+    # A fill whose boundary matches no stage never enters `held` and silently overstates drift for every later cycle -- a
+    # spurious kill trip on the engine -- so it is refused, separately for the two cases because only one is repairable by
+    # widening the window. A fill after the last cycle is harmless, but only a span the caller chose tells it from one
+    # before the first. Boundaries compare as datetime INSTANTS, never as isoformat text, which spells one instant two ways.
     orphans = sorted(set(by_boundary) - {s.cycle_ts for s in ordered})
     if orphans:
         span = (ordered[0].cycle_ts, ordered[-1].cycle_ts) if ordered else None
@@ -228,10 +192,8 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> 
     for s in ordered:
         for f in by_boundary.get(s.cycle_ts, []):
             held[f.base] = held.get(f.base, 0.0) + (f.qty if f.side == "buy" else -f.qty)
-        # Each cycle is scored under the NAV that was LIVE for it (T0150): a `shadow_nav_eur`
-        # change must not re-price a week that closed under the old value. The caller's scalar is
-        # the fallback for records written before the key existed, which reproduces the previous
-        # behaviour exactly for them -- so a week straddling the widening scores each half right.
+        # Each cycle is scored under the NAV that was LIVE for it (T0150): a `shadow_nav_eur` change
+        # must not re-price a closed week, and the caller's scalar is the fallback for older records.
         cycle_nav = nav if s.nav is None else s.nav
         if not math.isfinite(cycle_nav) or cycle_nav <= 0:
             raise EngineError(
@@ -241,9 +203,7 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> 
         bps = drift_bps(s.final, s.closes, held, cycle_nav)
         rows.append({"cycle_ts": s.cycle_ts.isoformat(), "drift_bps": bps, "drift_eur": bps / 10_000 * cycle_nav})
     values = [r["drift_bps"] for r in rows]
-    # NaN on an empty window, never None: `_median`/`_p95` already answer that way, and
-    # `feeders._bps` -- the renderer this feeds -- branches on `math.isnan` and raises TypeError on
-    # None. One convention for "nothing to average" across both halves of the report.
+    # NaN on an empty window, never None: `_median`/`_p95` do the same, and the renderer `feeders._bps` raises TypeError on None.
     return {
         "cycles": rows,
         "median_drift_bps": _median(values),
@@ -260,32 +220,13 @@ def weekly_tracking(
     *,
     rung_by_week: dict[str, int] | None = None,
 ) -> dict:
-    """That week's floor p95 against that week's realized MEAN drift.
-
-    The edge is ratified, not chosen here: on the data the band was derived from a median edge
-    fails two of four weeks while a p95 edge passes all four.
-
-    "No data" means the realized series NEVER STARTED -- not that a week was quiet. A week with
-    no fills but a non-zero `held` is fully measured, and is precisely the week a tracking-error
-    trip exists to catch.
-
-    `rung_by_week` FAILS CLOSED: eligibility requires an explicit rung 3, so a caller that supplies
-    nothing decides nothing. The measurement half is untouched either way -- every week still
-    carries its floor p95 and its realized mean -- because withholding the verdict is the safe
-    direction while withholding the numbers is merely unhelpful.
-    """
+    """That week's floor p95 against that week's realized MEAN drift."""
     rung_by_week = rung_by_week or {}
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
-    # The asymmetry below is deliberate, not an oversight: the floor is measured at the CALLER's
-    # scalar NAV while the realized half is scored per journaled cycle. They answer different
-    # questions. Realized drift is past tense -- what a closed week actually cost against the NAV it
-    # traded under -- so re-denominating it is simply wrong. The floor is present tense -- what is
-    # unavoidable at the size run TODAY -- and `accumulation_payload` holds NAV constant across the
-    # window by design, because a floor that moved with NAV would stop being a pure venue-minimum
-    # measurement. Do NOT "fix" this by threading per-cycle NAV into the floor.
-    # The seam it leaves: across a `shadow_nav_eur` change, a week's numerator and its floor are
-    # quoted at different NAVs, so that week's `within_band` verdict is advisory. Same seam in
-    # `--simulated-fills`, whose fills are built at the scalar and then scored per cycle.
+    # Deliberate asymmetry: the floor is present tense, measured at the caller's scalar NAV that `accumulation_payload` holds
+    # constant by design -- one moving with NAV would fold return into a venue-minimum measurement -- while realized drift is
+    # past tense and scored per journaled cycle, so do NOT thread per-cycle NAV into the floor. Across a `shadow_nav_eur` change
+    # the two are quoted at different NAVs, so that week's `within_band` is advisory; `--simulated-fills` shares the seam.
     floor = accumulation_payload(ordered, minimums, [nav])["by_nav"][nav]
     real = realized_drift(ordered, fills, nav)
     floor_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, floor["cycles"])}
@@ -301,19 +242,19 @@ def weekly_tracking(
         complete = not fw["partial"]
         rung = rung_by_week.get(label)
         week_cycles = [s.cycle_ts for s in ordered if _iso_key(s.cycle_ts) == key]
-        # Started, not "had a fill this week".
+        # "Started" is the realized series having begun, not "had a fill this week": a week with no
+        # fills but a non-zero `held` is fully measured, and is what a tracking-error trip catches.
         started = first_fill is not None and any(t >= first_fill for t in week_cycles)
         # A week holding cycles on BOTH sides of the first fill averages a cycle-level series over a
-        # week-level flag: every pre-fill cycle contributes an undeployed book at the full 10000 bps,
-        # so the FIRST week of live trading reads near half that and would be biased toward `fail`.
-        # Ruled the same way a partial week is: the mean is not comparable to a settled week's, so
-        # it is measured and reported, and excluded from the verdict.
+        # week-level flag -- every pre-fill cycle contributes an undeployed book, biasing the first
+        # live week toward `fail` -- so it is measured and reported but excluded, like a partial week.
         straddles = started and any(t < first_fill for t in week_cycles)
-        # `rung == 3`, never `rung != 2`: an absent rung must read INELIGIBLE. The inverted
-        # form reads a window nobody has classified as fully gate-eligible, which is a false
-        # `pass` on a live-trading gate and never a false `fail`.
+        # `rung == 3`, never `rung != 2`: an absent rung must read INELIGIBLE, and the inverted form
+        # is a false `pass` on a live-trading gate. `rung_by_week` fails closed -- a caller that
+        # supplies nothing decides nothing, while every week still carries its floor p95 and mean.
         gate_eligible = complete and rung == 3 and not straddles
         realized_mean = real_weeks[key]["mean_drift_bps"] if started else None
+        # p95, not a median: the edge was pinned by the T0116 (resolved) amendment (spec 00091), not chosen here.
         floor_p95 = _p95(floor_cycles[key])
         weeks.append(
             {
@@ -337,40 +278,24 @@ def weekly_tracking(
 def cost_blend(fills: list[Fill]) -> dict:
     """The realized maker/taker blend and the fee-per-side it implies.
 
-    Weighted by NOTIONAL, never by fill count: one large taker fill beside nine tiny maker ones
-    is a taker-heavy book, and a count-weighted blend would under-price the cost the whole
-    portfolio is evaluated against.
-
-    Unpriced fills are COUNTED but not PRICED -- leaving their notional in the denominator while
-    dropping their fee from the numerator would silently deflate the rate. With nothing priced the
-    answer is None: a proposal of 0.0 reads as "trading is free" to whoever ratifies it.
-
-    Prices the FEE term only. `spread_per_side` is a separate, deliberately-kept term: the builder
-    seam is fed their SUM (`cost_per_side`), so proposing a fee-only rate against that sum would
-    silently delete the spread.
-    """
+    Weighted by NOTIONAL, never by fill count, which under-prices a book of one large taker fill among many small maker ones."""
     cfg = CrossfreqSystemConfig()
-    # A repair has no price by construction, so it is neither priced nor notional -- multiplying
-    # by its None px would raise, and counting it at zero would deflate the blend.
+    # Counted but never priced: a fill with no price or no euro fee would deflate the blend at zero.
     priced = [f for f in fills if f.fee is not None and f.px is not None]
     notional: dict[str, float] = {}
     for f in fills:
         if f.px is None:
             continue
-        # `.get`, not a fixed two-key dict: NO_LIQUIDITY_SIDE is a legal value the venue yields, and
-        # a fixed dict would KeyError on it.
+        # `.get`: NO_LIQUIDITY_SIDE is a legal venue value a fixed two-key dict would KeyError on.
         notional[f.liquidity] = notional.get(f.liquidity, 0.0) + abs(f.qty) * f.px
     maker, taker = notional.get("MAKER", 0.0), notional.get("TAKER", 0.0)
     gross = maker + taker
     priced_notional = sum(abs(f.qty) * f.px for f in priced)  # every `priced` fill has a px
     per_fill = sorted(f.fee / (abs(f.qty) * f.px) for f in priced if f.qty and f.px)
-    # The numerator carries the same `if f.qty and f.px` filter as `per_fill`: a fee with no
-    # notional behind it inflates the headline rate while the dispersion already drops it, so one
-    # payload would contradict itself.
+    # None, never 0.0, when nothing is priced: a 0.0 proposal reads as "trading is free". The
+    # numerator carries `per_fill`'s `if f.qty and f.px` filter, or headline and dispersion disagree.
     realized = (sum(f.fee for f in priced if f.qty and f.px) / priced_notional) if priced_notional > 0 else None
-    # Three branches, not two. "No euro-denominated fills" is false of a window whose priced fills
-    # simply carry no notional, and `basis` is a payload key read straight out of `--json`, so the
-    # sentence has to be true here rather than at whatever renders it.
+    # Three branches: `basis` ships in `--json`, so it must not blame missing euro fills for missing notional.
     if not priced:
         basis = "no euro-denominated fills in the window -- no rate proposed"
     elif realized is None:
@@ -383,13 +308,14 @@ def cost_blend(fills: list[Fill]) -> dict:
         "maker_share": (maker / gross) if gross > 0 else None,
         "taker_share": (taker / gross) if gross > 0 else None,
         "realized_fee_per_side": realized,
-        # min/median/max, never a standard deviation: a handful of probe-scale fills cannot support
-        # a parametric dispersion, and quoting one would dress up a sample of tens.
+        # min/median/max, never a standard deviation: probe-scale samples cannot support one.
         "per_fill_min": per_fill[0] if per_fill else None,
         "per_fill_median": _median(per_fill) if per_fill else None,
         "per_fill_max": per_fill[-1] if per_fill else None,
         "current_fee_per_side": cfg.fee_per_side,
         "current_spread_per_side": cfg.spread_per_side,
+        # The FEE term only, for `fee_per_side` -- never for `cost_per_side`, the sum
+        # the builder seam is fed, where a fee-only rate would delete the spread.
         "proposed_fee_per_side": realized,
         "basis": basis,
     }
@@ -405,39 +331,20 @@ class LedgerRow(NamedTuple):
     fee: float
 
 
-# The columns this reader USES, not the whole documented header (`txid,refid,time,type,subtype,
-# aclass,asset,amount,fee,balance`): a venue that ADDS a column must not break the read, while one
-# that drops a column the arithmetic depends on must.
+# The columns this reader USES, not the whole documented header: a venue that ADDS a column must
+# not break the read, while one that drops a column the arithmetic depends on must.
 _LEDGER_COLUMNS = ("txid", "refid", "time", "type", "asset", "amount", "fee")
-# Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so anything outside it is
-# reported rather than passed over. Failing the reconciliation on a deposit would make every real
-# export FAILED at once and the signal worthless; assuming the same of an unknown type would hide it.
+# Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so an unknown type is reported rather than passed
+# over (`margin` shares its trade's refid: counted, never matched), while failing on a deposit would fail every export.
 _NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer"})
 
 
 def read_ledger_export(path: Path) -> list[LedgerRow]:
-    """The owner's hand-exported Kraken ledger CSV, read by HEADER NAME rather than by position.
-
-    Header-driven and REFUSING, never defaulting: the export's format is an assumption until a real
-    one has been read, and a missing column silently defaulted parses into plausible nonsense --
-    a rollover total that is confidently zero reads exactly like a window with no rollovers.
-
-    The export writes no offset, and the venue stamps it UTC; a naive datetime here would raise the
-    first time anything compared it against the journal's aware boundaries.
-
-    `utf-8-sig`, never plain `utf-8`: an Excel "CSV UTF-8" round-trip prefixes a BOM, and the
-    runbook has the owner opening this very file by hand. Decoded as plain utf-8 the BOM glues
-    itself to the first column name, and the refusal then reads "has no txid column -- its header
-    reads txid", telling the operator the column both is and is not there. Plain utf-8 input decodes
-    identically under `utf-8-sig`, so nothing else changes.
-
-    Every decode and parse sits inside ONE catch, the header read included: the caller catches this
-    module's error and OSError, so anything else -- a `UnicodeDecodeError` out of the very first
-    read, a NUL byte out of the csv module -- reaches the operator as a traceback instead of as the
-    one-line refusal every other bad export gets.
-    """
+    """The owner's hand-exported Kraken ledger CSV, read by HEADER NAME and refusing rather than defaulting."""
     row_no = 0  # 0 while the header is being read; the first data row is 1
     try:
+        # `utf-8-sig`: the runbook has the owner opening this file by hand, and an Excel
+        # round-trip prefixes a BOM that would glue itself to the first column name.
         with path.open(newline="", encoding="utf-8-sig") as handle:
             reader = csv.DictReader(handle)
             header = reader.fieldnames or []
@@ -452,6 +359,7 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
             # A row ordinal, not a physical line number: a quoted field may carry a newline, after
             # which the two drift and a line number sends the operator to the wrong place.
             for row_no, raw in enumerate(reader, start=1):
+                # The export writes no offset and the venue stamps UTC: a naive one raises against aware boundaries.
                 at = datetime.fromisoformat(raw["time"])
                 rows.append(
                     LedgerRow(
@@ -464,6 +372,7 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
                         float(raw["fee"]),
                     )
                 )
+    # One catch spans every decode and parse, the header included: the caller handles only this module's error and OSError.
     except (TypeError, ValueError, csv.Error) as exc:
         where = "its header" if row_no == 0 else f"data row {row_no}, or just after it"
         raise EngineError(f"the ledger export {path} is unreadable at {where}: {exc}") from exc
@@ -471,53 +380,31 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
 
 
 def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
-    """The venue's own ledger against the engine's journal: the rollover cost, and what went unmatched.
-
-    Rollover is why this exists. The venue charges it against the POSITION rather than against a
-    fill, so it appears in no execution record at all and a cost basis built from fills alone omits
-    it entirely.
-
-    Only rows whose `asset` is a euro are summed into a euro total -- `EUR_CODES`, because the venue
-    spells the euro two ways and a hand-written `== "EUR"` drops every ZEUR row silently.
-
-    An unmatched `trade` row FAILS the reconciliation: it is account activity the engine's record
-    does not know about, which is the one thing this comparison exists to detect, so every such id
-    is NAMED rather than counted. Failing the reconciliation is not failing the run -- the caller
-    still prints the drift half, because denying the operator the numbers they need to investigate
-    with is the wrong proportion.
-
-    `matched` counts ROWS, not fills: one venue trade writes one ledger row per asset leg, so a
-    single fill legitimately matches two.
-
-    A row this reader places NOWHERE is counted by type in `ignored` rather than passed over. Only
-    `trade` rows are matched today, and `margin` -- which a margin position writes carrying the SAME
-    refid as its trade -- is exactly the type the first real export will be full of, because the
-    first activity this reader is aimed at is a margin probe. Consuming it would guess semantics
-    nobody has verified; accepting it silently would hide a whole class of row precisely where the
-    reader is first used. So the count is surfaced and the operator decides whether the match widens.
-
-    `n_rows` is every row read. Without it "read 0 rows" and "read 400 rows, none of them trades"
-    are the same clean bill -- the confidently-zero failure this reader's refusals exist to prevent,
-    moved from a missing column to a missing body.
-    """
+    """The venue's own ledger against the engine's journal: the rollover cost, and what went unmatched."""
     journaled = {f.trade_id for f in fills}
     matched = 0
     unmatched: list[str] = []
     ignored: dict[str, int] = {}
     rollover_fees_eur = 0.0
     for row in rows:
+        # Rollover is why the function exists: the venue charges it against the POSITION, so a fill-based cost basis omits it.
         if row.type == "rollover":
+            # `EUR_CODES`: the venue spells the euro two ways, and `== "EUR"` would drop every ZEUR row.
             if row.asset in EUR_CODES:
                 rollover_fees_eur += row.fee
         elif row.type == "trade":
             if row.refid in journaled:
+                # ROWS, not fills: one venue trade writes one ledger row per asset leg.
                 matched += 1
+            # Venue activity the journal does not know about is the one thing
+            # this comparison exists to detect: it FAILS, and each id is named.
             elif row.refid not in unmatched:
                 unmatched.append(row.refid)
         elif row.type not in _NO_FILL_LEDGER_TYPES:
             ignored[row.type] = ignored.get(row.type, 0) + 1
     return {
         "status": "FAILED" if unmatched else "ok",
+        # Every row read: without it, an empty export and one with no trades read as one clean bill.
         "n_rows": len(rows),
         "matched": matched,
         "rollover_fees_eur": rollover_fees_eur,

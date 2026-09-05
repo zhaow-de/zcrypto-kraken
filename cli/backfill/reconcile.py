@@ -10,13 +10,9 @@ _OHLC_COLUMNS = ["open", "high", "low", "close"]
 
 
 def reconcile_series(backfill: pl.DataFrame, rest: pl.DataFrame) -> dict:
-    """Compare a backfill-reconstructed series against its v0 REST counterpart over the ts overlap.
+    """Compare a backfill-reconstructed series against its v0 REST counterpart over the `ts` overlap.
 
-    Inner-joins on `ts` (the overlap window). OHLC/volume are expected to match closely (same
-    Kraken source, so reported and compared for exact equality); `vwap` is a reconstruction proxy
-    and is expected to differ from REST's true vwap, so it's reported (mean abs relative diff) —
-    not asserted or raised on. Returns `{overlap_rows, ohlc_exact_match_rows, ohlc_match_rate,
-    volume_rel_diff_max, vwap_mean_abs_rel_diff}`.
+    OHLC and volume share REST's Kraken source and should match; `vwap` is a reconstruction proxy, so it is only reported.
     """
     joined = backfill.join(rest, on="ts", how="inner", suffix="_rest")
     overlap_rows = joined.height
@@ -46,11 +42,8 @@ def reconcile_series(backfill: pl.DataFrame, rest: pl.DataFrame) -> dict:
 
 
 def reconcile_dataset(backfill_root: Path, rest_root: Path, intervals: dict[str, int]) -> dict:
-    """Reconcile every `backfill_root/{symbol}/{label}.parquet` series against its v0 REST
-    counterpart at `rest_root`, for each interval label in `intervals` (label -> interval_secs,
-    e.g. `cli.ohlc.qa.INTERVAL_SECONDS`). Series without a `rest_root` counterpart are skipped.
-    Returns `{series: {"{symbol}/{label}": reconcile_series-dict}, summary}`, where `summary` is
-    `{series_count, total_overlap_rows, min_ohlc_match_rate}`.
+    """Reconcile every `backfill_root/{symbol}/{label}.parquet` series against its v0 REST counterpart at `rest_root`,
+    skipping a series that has none; `intervals` supplies the labels to look for (e.g. `cli.ohlc.qa.INTERVAL_SECONDS`).
     """
     entries = sorted(
         (str(path.parent.relative_to(backfill_root)), label, path)

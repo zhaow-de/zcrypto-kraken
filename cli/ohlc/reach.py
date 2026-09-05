@@ -1,29 +1,9 @@
 """REST reach-round: carry the canonical OHLC basket forward from Kraken's public OHLC endpoint.
 
-The quarterly OHLCVT dumps stop on a quarter boundary, so the canonical set trails the present by up
-to a quarter. Kraken's REST OHLC endpoint serves the most recent ~720 bars per interval -- a
-**receding** window whose reach depends entirely on the interval: ~720 days at the daily grid, ~120
-days at 4h, but only ~30 days at 1h. So at any moment part of the basket's REST tail still overlaps
-the canonical tail (and can be joined into one continuous series) while the rest does not.
-
-That asymmetry is the whole design, and it is why this is not simply `seed_store` over a new root:
-
-- **Overlapping** -> seam-checked and merged, written as `<interval>.parquet`, drop-in compatible
-  with any `ohlc-full` reader.
-- **Not overlapping** -> written as `<interval>.detached.parquet`, under a filename no `ohlc-full`
-  reader globs, so a detached segment can never be silently spliced across the gap into a continuous
-  series. Promotion is a later, deliberate step once an intervening dump closes the gap.
-
-Why keep a tail that cannot be joined? A REST bar vanishes from the endpoint once the window recedes
-past it, so it is retrievable only while the window still reaches it. Whether losing it would be
-PERMANENT depends on whether a scheduled dump covers the same span -- and that varies, so this module
-does not assume either way. For the segment this first produced (1h, 2026-06-23 onward) the Q2+Q3
-dumps will cover it, making the capture a **bridge** (1h goes continuous months before Q3 lands) and
-an independent REST-vs-dump cross-check, rather than a rescue. For any window no scheduled dump
-covers, the same write is the only chance to hold the data at all.
-
-Refusing to write a detached tail would throw that away; writing it as `<interval>.parquet` would
-manufacture a series with an invisible hole. The split filename loses neither the data nor the truth.
+The endpoint's window holds a fixed bar count per interval and recedes, so a basket's REST tail overlaps the canonical
+tail only in part: overlapping legs are seam-checked into `<interval>.parquet`, the rest into `<interval>.detached.parquet`
+-- a name no `ohlc-full` reader globs, so a gap is never silently spliced -- written rather than refused because a REST
+bar is unfetchable once the window has receded past it, and promoted only once an intervening dump closes the gap.
 """
 
 from __future__ import annotations
@@ -49,10 +29,8 @@ logger = get_logger("ohlc.reach")
 # Intervals of the canonical basket (`cli/data/rebuild.py::_OHLC_INTERVALS`), as ints.
 REACH_INTERVALS: tuple[int, ...] = (1440, 240, 60)
 
-# Seconds between successive public-API calls. A reach round makes one call per symbol x interval --
-# 30 on the current basket -- and Kraken throttles this family: `cli/trades/rest.py` records 1.5 s
-# being DEMONSTRABLY refused (`EGeneral:Too many requests`) on the live bulk run 2026-07-16 (T0053).
-# The same measured floor is used here rather than a fresh guess.
+# Seconds between successive public-API calls -- the floor `cli/trades/rest.py` measured on this same throttled
+# family (1.5 s was refused as `EGeneral:Too many requests`, T0053, resolved); never lower it without a new measurement.
 MIN_REST_INTERVAL_SECONDS = 3.0
 
 
@@ -84,13 +62,8 @@ def _utc_now() -> datetime:
 
 
 def _canonical_symbols(canonical_root: Path, interval: int) -> list[str]:
-    """Full `BASE/QUOTE` symbols carrying a canonical file for `interval`, sorted.
-
-    Derived from the canonical tree rather than a hardcoded basket, so a symbol the canonical set
-    does not carry is out of scope here instead of raising. The quote is discovered, not assumed:
-    an earlier version globbed `*/EUR/` and its docstring claimed the BTC-quoted legs were ones
-    "capture holds but the dumps do not" -- measurably false, `ohlc-full` carries ETH/BTC and
-    SOL/BTC dailies. That claim made a wiring limit read as a data limit.
+    """Full `BASE/QUOTE` symbols carrying a canonical file for `interval`, sorted -- read off the canonical tree,
+    not a hardcoded basket, so a symbol the canonical set does not carry is out of scope here rather than an error.
     """
     return sorted(f"{p.parent.parent.name}/{p.parent.name}" for p in canonical_root.glob(f"*/*/{interval}.parquet"))
 
@@ -102,13 +75,8 @@ def _merge_or_detach(
     symbol: str,
     interval: int,
 ) -> tuple[str, pl.DataFrame, int, int]:
-    """Return `(status, frame_to_write, overlap_bars, gap_bars)`.
-
-    Raises `OHLCError` when the two frames overlap but the seam does not hold -- a thin overlap or a
-    disagreeing close. Both are refusals to publish an unverified join, never a reason to fall back
-    to `detached`: a detached write is for an HONEST gap, and quietly detaching a *failed* seam would
-    turn a data-integrity error into a silently truncated series.
-
+    """Return `(status, frame_to_write, overlap_bars, gap_bars)`; a seam that does not hold raises `OHLCError` rather
+    than detaching: a failed seam is a data-integrity error, not the HONEST gap `detached` records, and detaching hides it.
     Sibling: cli/engine/store.py::_reconcile guards the same seam definition under its own policy -- a safety fix here likely applies there too.
     """
     canonical_tail = canonical["ts"].max()
@@ -151,11 +119,7 @@ def reach_round(
 ) -> ReachReport:
     """Extend every canonical symbol x interval forward with Kraken's REST OHLC window.
 
-    Writes into `out_root` only -- `canonical_root` is read-only, so the canonical set stays
-    immutable (the standing rule; a revision mints a sibling). Each series lands as either
-    `<interval>.parquet` (seam-verified continuous) or `<interval>.detached.parquet` (an honest gap,
-    kept because the bars expire), and `manifest.json` records the status per series alongside the
-    basket hash.
+    Writes into `out_root` only: the canonical set is immutable, and a revision mints a sibling root, never an edit.
     """
     now = clock()
     entries: list[ReachEntry] = []
@@ -204,23 +168,14 @@ def reach_round(
 
 
 def _write_manifest(out_root: Path, report: ReachReport, now: datetime) -> None:
-    """Record per-series provenance plus SEPARATE continuous/detached basket hashes.
+    """Record per-series provenance plus separate continuous/detached basket hashes.
 
-    Two things this deliberately does not do. It does not emit one set-wide continuity claim -- a
-    reach set is mixed by construction, so the per-series rows are how a consumer learns which files
-    it may treat as continuous. And it does not fold detached series into `basket_sha256`: that hash
-    names the joinable basket, and mixing in a segment the module just refused to join would
-    contradict the split the filenames exist to enforce. Detached content gets its own hash instead.
-
-    The hash-of-hashes shape (per-series sha256, concatenated in sorted order) matches
-    `cli/backfill/backfill.py::backfill_basket`, so a reach manifest is comparable with the canonical
-    set's and is independent of any cross-series row ordering.
+    A reach set is mixed by construction, so the per-series rows -- never one set-wide claim -- say which are continuous.
     """
     series: dict[str, dict] = {}
     by_status: dict[str, list[str]] = {"continuous": [], "detached": []}
-    # The seam evidence is per-run and per-series: `rest_first`/`rest_last` name a REST window that
-    # expires, and `overlap_bars`/`gap_bars`/`appended` describe one build. None of it is content,
-    # so it is quarantined per path rather than folded into the leaf a digest covers.
+    # Seam evidence describes one build and one expiring REST window, not content, so it rides in `provenance`,
+    # which no digest covers, rather than in the leaf a digest does.
     seam: dict[str, dict] = {}
     for entry in report.entries:
         name = f"{entry.interval}.parquet" if entry.status == "continuous" else f"{entry.interval}.detached.parquet"
@@ -234,9 +189,8 @@ def _write_manifest(out_root: Path, report: ReachReport, now: datetime) -> None:
     # Declared only when populated: a digest over an empty subset is sha256("") -- a sentinel two
     # unrelated empty sets would share -- so the contract refuses it rather than emitting it.
     subsets = {name: members for name, members in by_status.items() if members}
-    # A reach set's identity is its CONTINUOUS legs: that hash names the joinable basket, and
-    # folding in a segment the module just refused to join would contradict the split the filenames
-    # exist to enforce. Declaring it here is what keeps every consumer from having to know that.
+    # A reach set's identity is its CONTINUOUS legs: folding in a segment the module just refused to join would
+    # contradict the split the filenames enforce, and declaring it here spares every consumer from knowing that.
     identity = "subset:continuous" if by_status["continuous"] else "set"
     manifest = build_manifest(
         series,

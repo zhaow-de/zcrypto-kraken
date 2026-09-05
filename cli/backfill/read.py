@@ -12,14 +12,8 @@ _ALIAS = {"BTC": "XBT", "DOGE": "XDG"}
 def dump_pair_name(symbol: str) -> str:
     """Map a canonical `"BASE/QUOTE"` symbol to its Kraken OHLCVT dump altname.
 
-    Applies the Kraken aliases BTC->XBT, DOGE->XDG to both legs, then concatenates (e.g.
-    `"BTC/EUR"` -> `"XBTEUR"`, `"DOGE/EUR"` -> `"XDGEUR"`, `"ETH/BTC"` -> `"ETHXBT"`).
-
-    **Also the REST `/Trades` altname** — `cli/trades/rest.py` depends on this (verified live: the
-    derived name is accepted for the irregular pairs too, Kraken answering under its own key, e.g.
-    `XBTEUR` -> `XXBTZEUR`). The name says "dump" for historical reasons; do NOT specialise this for
-    a dump-specific quirk without checking that consumer, which has no local signal if you do.
-    """
+    `cli/trades/rest.py` derives the REST `/Trades` altname from this too, so despite the name never specialise it for
+    a dump-only quirk — that consumer has no local signal if you do."""
     try:
         base, quote = symbol.split("/")
     except ValueError as exc:
@@ -41,33 +35,15 @@ def _parse_csv(text: str, *, zip_path: Path, entry: str, symbol: str) -> list[li
 
 
 def _numeric_values(r: list) -> tuple:
-    """Parse a row's fields for value comparison, so formatting (e.g. `1.5` vs `1.50`) doesn't count
-    as a difference — only genuinely different numeric values do."""
+    """Parse a row's fields so comparison sees values, not formatting (`1.5` and `1.50` are equal)."""
     return (r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), int(r[6]))
 
 
 def read_minute_rows(source_dir: Path, symbol: str) -> list[list]:
-    """Read + merge `symbol`'s 1-minute OHLCVT rows from the base dump and quarterly updates.
+    """Read and merge `symbol`'s 1-minute OHLCVT rows from the base dump and the quarterly updates.
 
-    Locates `{altname}_1.csv` in `source_dir/Kraken_OHLCVT.zip` (entry `master_q4/{altname}_1.csv`)
-    and in every `source_dir/Kraken_OHLCVT_Q*_*.zip` (entry `{altname}_1.csv`), skipping `__MACOSX/`
-    cruft entries.
-
-    The base dump is the latest full export and is authoritative for its entire ts range: on the real
-    archive it carries higher, more-complete volume/trade counts than the quarterly updates, which are
-    staler snapshots generated at each quarter and can disagree with the base on volume/trades for a
-    shared ts (OHLC still matches). So a quarterly zip's rows are kept only where ts is strictly
-    greater than the base's last ts — i.e. only the quarterlies' extension past the base dump's end is
-    used, never a competing value inside the base's range. If `symbol` is absent from the base dump,
-    all quarterly rows are kept.
-
-    Concatenates base rows + kept quarterly rows, sorts by ts, and drops duplicate rows sharing a ts
-    whose parsed numeric values match (formatting differences like `1.5` vs `1.50` don't count as a
-    difference) — a defensive guard for any residual same-ts collision (e.g. across two quarterlies,
-    which should not happen since quarters don't overlap). Raises `BackfillError` if `symbol` is absent
-    from every zip, if two rows still share a ts with genuinely differing numeric OHLCVT data, or if a
-    zip is corrupted or a row fails to parse.
-    """
+    The base dump is authoritative over its whole ts range — quarterlies are staler and can disagree on volume/trades
+    at a shared ts — so a quarterly row is kept only past the base's last ts, and the same-ts dedup below is defensive."""
     alt = dump_pair_name(symbol)
     base_zip = source_dir / "Kraken_OHLCVT.zip"
     base_rows: list[list] = []
@@ -76,6 +52,7 @@ def read_minute_rows(source_dir: Path, symbol: str) -> list[list]:
     if base_zip.exists():
         try:
             with zipfile.ZipFile(base_zip) as zf:
+                # Entry lookups are exact: a suffix match would also take the `__MACOSX/._*` cruft such zips can carry.
                 name = f"master_q4/{alt}_1.csv"
                 if name in zf.namelist():
                     base_rows += _parse_csv(zf.read(name).decode(), zip_path=base_zip, entry=name, symbol=symbol)

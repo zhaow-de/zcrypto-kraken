@@ -7,19 +7,12 @@ from pathlib import Path
 from cli.engine.errors import EngineJournalError
 from cli.engine.venuestate import ConcordanceVerdict, VenueState
 
-# Bumped 1 -> 2 (spec 00094): `state.to_payload()`'s shape changed four ways -- instruments/positions
-# keys go base -> symbol, `InstrumentConstraints.symbol` (was `.base`), and the new `costmin_quote`
-# field -- so a pre- and post-deploy record are distinguishable on inspection. Read by
-# `validate_venue_record` below, which checks a loaded record's actual shape against its OWN
-# declared `schema_version`, never against this constant.
+# The version `write_venue_record` stamps (spec 00094's full-symbol shape); a loaded record is
+# validated against its OWN declared `schema_version`, never against this constant.
 VENUE_SCHEMA_VERSION = 2
 
-# The journal's `_LOADABLE_SCHEMA_VERSIONS` pattern (cli/engine/journal.py): both schema_version 1
-# (base-keyed instruments/positions, entries carrying "base", no `costmin_quote`) and 2
-# (full-symbol keys, entries carrying "symbol" + `costmin_quote`) load; validate_venue_record checks
-# each in its own exact shape, never normalizing one into the other. No v1 `venue-<HH>.json` has
-# ever existed on the engine host (00089 deployed 2026-08-16 already at schema 2) -- v1 coverage is
-# for workstation-side journals only.
+# Both versions load; `validate_venue_record` checks each in its own exact shape, never normalizing
+# one into the other -- the journal's `_LOADABLE_SCHEMA_VERSIONS` pattern (cli/engine/journal.py).
 _LOADABLE_VENUE_SCHEMA_VERSIONS = frozenset({1, 2})
 
 _V1_INSTRUMENT_KEYS = frozenset({"base", "instrument_id", "ordermin", "costmin", "lot_step", "tick_size", "costmin_source"})
@@ -32,8 +25,7 @@ _CONCORDANCE_KEYS = frozenset({"ok", "failures"})
 
 def _is_symbol_key(key: str) -> bool:
     """True for a full-symbol key ("BTC/EUR"), false for a bare base key ("BTC") -- restated from
-    `cli.engine.journal._is_symbol_key` (the '/' separator `cli.engine.store.PAIR_KEYS` and every
-    full-symbol consumer already use) so this module stays independent of the journal module."""
+    `cli.engine.journal._is_symbol_key` so this module stays independent of the journal module."""
     return "/" in key
 
 
@@ -43,18 +35,9 @@ def _key_error(what: str, actual: object, expected: frozenset) -> EngineJournalE
 
 
 def validate_venue_record(doc: dict) -> None:
-    """Raise EngineJournalError on any version-shape disagreement, mirroring
-    `cli.engine.execledger.validate_exec_record`'s schema-aware, refuse-don't-normalize message
-    style (the venue record's sibling): unknown schema_version; a missing `cycle_ts`/`code_version`/
-    `status`; a `status == "error"` record missing `error` or carrying `state`/`concordance`; a
-    `status == "ok"` record whose `state` or `concordance` key set isn't exactly `_STATE_KEYS`/
-    `_CONCORDANCE_KEYS`; a `state.instruments`/`state.positions` key keyed in the wrong direction for
-    its schema_version (schema 2 must be full-symbol, schema 1 must be base-only -- reusing
-    `cli.engine.journal.validate_record`'s "wrong keying is refused, never silently normalized"
-    reasoning); or an instrument entry whose key set isn't exactly `_V1_INSTRUMENT_KEYS`/
-    `_V2_INSTRUMENT_KEYS` for its schema_version -- this alone rejects both "v2 with a base key or a
-    missing `costmin_quote`" and "v1 with a symbol key or a `costmin_quote` it could never have
-    produced"."""
+    """Raise EngineJournalError when a record's `schema_version` or `status` is unrecognized, a
+    required key missing or a forbidden one present, or a key set or its symbol-vs-base keying
+    disagrees with the version the record itself declares -- refused, never silently normalized."""
     schema_version = doc.get("schema_version") if isinstance(doc, dict) else None
     if schema_version not in _LOADABLE_VENUE_SCHEMA_VERSIONS:
         raise EngineJournalError(
@@ -63,9 +46,8 @@ def validate_venue_record(doc: dict) -> None:
     for key in ("cycle_ts", "code_version", "status"):
         if key not in doc:
             raise EngineJournalError(f"venue record missing required key {key!r}")
-    # Deliberately no exact-top-level-key-set check (unlike the sibling validate_exec_record): the
-    # brief enumerates presence/absence per field rather than one blanket top-level set, so a stray
-    # extra top-level key is tolerated here rather than refused.
+    # Deliberately no exact top-level key-set check, unlike the sibling `validate_exec_record`: a
+    # stray extra top-level key is tolerated here, not refused.
     status = doc["status"]
     if status == "error":
         if "error" not in doc:
@@ -101,10 +83,8 @@ def validate_venue_record(doc: dict) -> None:
             raise _key_error(f"instrument entry {symbol!r}", entry, instrument_keys)
 
 
-# Same rationale as `execledger.py`'s `_PREFIX`: deliberately not `cycle-<HH>.json` and not a
-# `failed-cycle-*` sidecar, so the Stage-6a streak's globs never see this file -- structural, not
-# a matter of care (proved in tests/test_engine_execledger.py's two exec pins, parametrized over
-# this prefix too).
+# Deliberately not `cycle-<HH>.json` and not a `failed-cycle-*` sidecar, so the Stage-6a streak's
+# globs never see this file -- same rationale as `execledger.py`'s `_PREFIX`.
 _PREFIX = "venue"
 
 
@@ -121,10 +101,9 @@ def write_venue_record(
     code_version: str,
     error: str | None = None,
 ) -> Path:
-    """`state=None` + `error=...` writes `status: "error"` with the reason and NO `state` key --
-    `venue_state_from_cache` raised (venuestate.py docstring) and there is nothing to record but
-    why. `state=None` with no `error` is a caller bug, not a degraded record: raises `ValueError`.
-    """
+    """Write the cycle's venue record; `state=None` requires `error` and writes `status: "error"`
+    with no `state` key -- there is nothing to record but why -- while `state=None` without
+    `error` is a caller bug and raises `ValueError`."""
     if state is None and error is None:
         raise ValueError("write_venue_record: state=None requires error to be set")
     path = venue_record_path(journal_dir, cycle_ts)

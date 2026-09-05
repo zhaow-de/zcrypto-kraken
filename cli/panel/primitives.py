@@ -1,8 +1,6 @@
-"""Pure 1s L2 panel primitive math (spec 00052 D2) -- no I/O, no host state. Consumes `OrderBook`
-state (`cli/capture/book.py`: `dict[Decimal, Decimal]` price->qty per side) and produces one wide
-row of Float64 primitives per second. The Decimal->float conversion here is deliberate: the panel is
-Float64 (the raw-side CRC-precision concern, T0045, does not apply to derived research columns).
-"""
+"""Pure 1s L2 panel primitive math over `OrderBook` state (`cli/capture/book.py`), no I/O (spec 00052 D2). The
+Decimal->float narrowing is deliberate: the raw-side CRC-precision concern (T0045, resolved) binds the raw wire
+strings, not derived Float64 research columns."""
 
 from __future__ import annotations
 
@@ -12,28 +10,14 @@ import polars as pl
 
 from cli.panel.errors import PanelError  # errors.py imports nothing, so this is safe
 
-# The depth-at-notional ladder (spec 00052 D2, made quote-aware by spec 00085 D1): walk a side
-# accumulating price*qty in the pair's QUOTE currency until the notional is filled, then compare the
-# resulting VWAP to mid in bps. The rungs therefore have to be denominated per quote, or a BTC-quoted
-# pair asks for 100 BTC where it means EUR 100 -- which is why every `fill_bps_*` on those pairs was
-# null before this. NOTIONALS_EUR is the EUR rungs; `NOTIONALS_BY_QUOTE` below extends them to every
-# other quote, and `notionals_for` refuses a quote with no entry rather than silently defaulting to EUR.
+# Rungs are denominated per quote (spec 00085 D1): otherwise a BTC-quoted pair asks for 100 BTC where
+# EUR 100 is meant.
 NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
 
-# The BTC/EUR rate the BTC rungs are pinned to. EUR-EQUIVALENCE is the point (spec 00085 D1): the
-# BTC rungs buy the same EUR value as the EUR rungs, so `SPREAD_CALIBRATION`'s inner keys stay EUR
-# notionals and one shared interpolation grid serves all twelve legs. Never a live rate, or the
-# column meaning would drift hour to hour.
-#
-# THIS VALUE AND ITS WINDOW ARE FIXED FOREVER. `BTC_EUR_REFERENCE_WINDOW` is the reference's OWN
-# window and is NOT `cli/costs/spread.py`'s `CALIBRATION_WINDOW` -- the two are independent by
-# design. A recalibration moves the calibration window; it must NOT move this. This number defines
-# what every BTC `fill_bps_*` column already written to the tree MEANS, so changing it silently
-# redefines data that already exists. If a later measurement disagrees with it, the answer is
-# regenerate the tree or explain the divergence -- NEVER update this constant to match.
-#
-# Measured (main loop, 2026-08-06): mean `mid` over BTC/EUR panel-1s across the window below,
-# 1,180,800 rows = exactly 328 contiguous hours, no gaps.
+# The frozen BTC/EUR rate for the BTC rungs -- mean `mid` over `BTC_EUR_REFERENCE_WINDOW`, never a live rate, so they buy
+# the same EUR value as the EUR rungs and `SPREAD_CALIBRATION`'s inner keys stay EUR notionals. It defines what every BTC
+# `fill_bps_*` in the tree MEANS: a recalibration moves `cli/costs/spread.py`'s `CALIBRATION_WINDOW`, never this one, and
+# a later measurement that disagrees means regenerate the tree or explain the divergence, never update this constant.
 BTC_EUR_REFERENCE: float = 55876.28413495087  # the Step 0 measurement, verbatim
 BTC_EUR_REFERENCE_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-06T06:00:00Z")
 
@@ -46,30 +30,27 @@ NOTIONALS_BY_QUOTE: dict[str, tuple[float, float, float]] = {
     ),
 }
 
-# Keyed by rung INDEX, not by value: the values now differ per quote, so a value-keyed map would
-# need a lookup per quote and would silently miss on a float that did not round-trip.
+# Keyed by rung index, not by value: rung values differ per quote, and a float key can fail to round-trip.
 _FILL_SUFFIXES: tuple[str, str, str] = ("100", "1k", "10k")
 
 
 def notionals_for(quote: str) -> tuple[float, float, float]:
-    """The ladder for `quote`, refusing rather than defaulting -- a silent EUR fallback on an
-    unknown quote is exactly the wrong-number failure this ladder exists to prevent."""
+    """The ladder for `quote`, refusing rather than defaulting -- a silent EUR fallback is the wrong-number failure this
+    ladder exists to prevent."""
     try:
         return NOTIONALS_BY_QUOTE[quote]
     except KeyError:
         raise PanelError(f"no notional ladder for quote {quote!r}: add one to NOTIONALS_BY_QUOTE") from None
 
 
-# Cumulative-depth price levels (spec 00052 D2).
 _DEPTH_LEVELS: tuple[int, int, int] = (1, 5, 10)
 
 PANEL_SCHEMA: dict[str, pl.DataType] = {
     "ts": pl.Datetime("us", "UTC"),
     "updates": pl.Int64,
-    # T0104: seconds from the last message APPLIED to the book to this boundary. `updates == 0` is
-    # ambiguous -- a quiet second and a hole in the archive look identical -- so the panel says which.
-    # Null means "unknown" (a carried state that predates this column); never 0.0, which would
-    # assert a freshness we cannot know.
+    # Seconds from the last message APPLIED to the book to this boundary (T0104, resolved), since
+    # `updates == 0` cannot tell a quiet second from a hole in the archive. Null is "unknown", never
+    # 0.0, which would assert a freshness the panel cannot know.
     "stale_seconds": pl.Float64,
     "spread": pl.Float64,
     "spread_bps": pl.Float64,
@@ -92,10 +73,9 @@ PANEL_SCHEMA: dict[str, pl.DataType] = {
 
 
 def _fill_bps(levels: list[tuple[Decimal, Decimal]], notional: float, mid: float, *, buy: bool) -> float | None:
-    """Walk `levels` (pre-sorted ascending for a buy / descending for a sell), accumulating
-    price*qty EUR until `notional` is filled (the last level may be partial). Returns the VWAP
-    ("effective" price) vs `mid` in bps -- positive is cost on both sides -- or None if the whole
-    visible side sums to less than `notional` (never extrapolated)."""
+    """The VWAP of filling `notional` (quote currency) against `levels`, vs `mid` in bps and signed so cost is positive
+    on both sides; `levels` must arrive best-price-first, and a visible side that sums to less than `notional` returns
+    None rather than an extrapolation."""
     remaining = notional
     base_qty = 0.0
     for price, qty in levels:
@@ -114,8 +94,7 @@ def _fill_bps(levels: list[tuple[Decimal, Decimal]], notional: float, mid: float
 
 
 def _depth_qty(levels: list[tuple[Decimal, Decimal]], k: int) -> float:
-    """Cumulative base qty over the best `k` price levels; fewer than `k` levels -> sum over what
-    exists."""
+    """Cumulative base qty over the best `k` price levels, or over what exists when there are fewer."""
     return float(sum(qty for _, qty in levels[:k]))
 
 
@@ -127,10 +106,8 @@ def sample_row(
     updates: int,
     stale_seconds: float | None = None,
 ) -> dict | None:
-    """One second's wide primitive row (spec 00052 D2) from `OrderBook` state, or None iff either
-    side is empty (no quotable market that second). A crossed/locked book (spread <= 0) is still
-    computed honestly -- it happens transiently and is not filtered here. Returns every `PANEL_SCHEMA`
-    column except `ts` (the caller stamps the second boundary)."""
+    """One second's primitive row -- every `PANEL_SCHEMA` column but `ts`, which the caller stamps -- or None iff a side
+    is empty; a crossed or locked book (spread <= 0) is transient and computed as it stands, not filtered here."""
     if not bids or not asks:
         return None
 
@@ -156,8 +133,7 @@ def sample_row(
         "microprice": microprice,
         "imbalance_l1": imbalance_l1,
     }
-    # strict=True: a future quote whose ladder has a different length must refuse loudly here, not
-    # raise a bare IndexError two lines down or, worse, silently truncate.
+    # strict=True: a ladder of a different length must refuse here, never truncate silently.
     for suffix, notional in zip(_FILL_SUFFIXES, notionals_for(quote), strict=True):
         row[f"fill_bps_bid_{suffix}"] = _fill_bps(bid_levels, notional, mid, buy=False)
         row[f"fill_bps_ask_{suffix}"] = _fill_bps(ask_levels, notional, mid, buy=True)

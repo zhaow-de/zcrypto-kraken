@@ -6,4 +6,4 @@ class RegistryError(Exception):
 
 
 class RegistryCorruptionError(RegistryError):
-    """A persisted registry line is malformed or carries a non-finite JSON token."""
+    """A registry record in its stored form failed to parse or broke a stored-record or chain rule."""

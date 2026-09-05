@@ -1,29 +1,6 @@
-"""Captured-spread cost term (T0014, spec 00066).
-
-The missing leg of the cost model: Phase-4/5 verdicts charged fees + margin carry and assumed ZERO
-spread, on a basket whose thin alts are exactly where spread bites.
-
-Calibrated from our own L2 capture (`l2-panel`, spec 00052), NOT from a vendor quote. Two
-measured choices drive the shape of this module and are worth knowing before editing it:
-
-  * The numbers are the **mean effective spread at a traded notional** (`fill_bps`), not the
-    top-of-book spread. BTC/EUR is tick-quantised at EUR 0.10 and sits at exactly one tick 42-58%
-    of the seconds on complete UTC days (41.4% including the two partial edge days, 49.5% pooled);
-    because that fraction straddles 50%, its MEDIAN top-of-book spread swings ~15x on
-    a small change in the one-tick share (mean/median = 11.2x, against 0.9-1.3x for every other
-    pair). The effective spread at size has no such instability -- walking the book averages over
-    the quantisation -- and it is also what we actually pay. Never quote a median top-of-book
-    spread for BTC/EUR; cite the mean, or these figures.
-  * There is **no session term**. Mean effective spread at EUR 1k across Asia/EU/US sessions
-    varies by 1.01x-1.10x across the ten pairs (widest LTC 1.098x). The reason to omit the
-    dimension is MATERIALITY, not absence: a <=10% modulation of a 2-4 bps term against a 40-80 bps
-    fee does not earn one. A paired day-level test does detect a consistently-signed Asia-wider
-    effect (t = -1.9 to -2.3 on BTC/ETH/LTC; 7/10 pairs Asia-wider), so "inside the noise" would be
-    the wrong reason to give.
-
-Recalibration is a deliberate edit: change the table AND the provenance constants together, and
-restamp `docs/reference/captured-spread-calibration.md`. tests/test_costs_spread.py pins both, so a
-silent drift fails rather than quietly repricing every historical verdict.
+"""Captured-spread cost term (T0014, resolved; spec 00066), calibrated from our own L2 capture (`l2-panel`, spec 00052)
+rather than from a vendor quote. Recalibration moves the table AND the provenance constants together, restamping
+`docs/reference/captured-spread-calibration.md`; `tests/test_costs_spread.py` pins both.
 """
 
 from __future__ import annotations
@@ -34,19 +11,14 @@ from cli.costs.errors import CostModelError
 from cli.costs.fees import round_trip_fee
 from cli.costs.margin import margin_carry
 
-# Provenance of the table below -- asserted by the tests so a new window cannot arrive unstamped.
 CALIBRATION_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-07T19:00:00Z")
 CALIBRATION_HOURS: int = 365
 CALIBRATION_MIN_ROWS: int = 1_314_000
 
-# Mean effective spread, **bps per side**, mid-relative, by EUR notional (the rung is the BTC
-# quantity worth that many EUR on a BTC-quoted pair -- see BTC_EUR_REFERENCE). Nulls over the
-# committed window: **zero**, across 12 pairs x 3 sizes x 2 sides, so the visible book covered the
-# EUR 10k rung on every second of every pair. (The superseded window had exactly 2, both XRP
-# fill_bps_ask_10k at 2026-07-13 07:04:31-32Z -- a date that predates the current window entirely.)
-# NOTE (standing caveat, capture-era data-hygiene map): at EUR 10k the fill walk passes rank 10 on
-# the thin pairs, and ranks beyond 10 are venue-unverified in every era -- those figures rest on
-# protocol congruence rather than on Kraken's own checksums.
+# Mean effective spread, bps per side, mid-relative, at the EUR notional rungs; on a BTC-quoted pair the rung is the
+# BTC quantity worth that many EUR at `BTC_EUR_REFERENCE` (`cli/panel/primitives.py`). Effective spread at size, never
+# top-of-book -- BTC/EUR's top-of-book median is unstable under its EUR 0.10 tick quantisation -- and no session
+# dimension, omitted on materiality rather than on absence.
 SPREAD_CALIBRATION: dict[str, dict[int, float]] = {
     "ADA/EUR": {100: 2.383, 1_000: 2.686, 10_000: 5.389},
     "AVAX/EUR": {100: 2.417, 1_000: 2.838, 10_000: 6.031},
@@ -66,13 +38,8 @@ _PINNED_SIZES: tuple[int, ...] = (100, 1_000, 10_000)
 
 
 def effective_spread_bps(pair: str, notional_eur: float) -> float:
-    """Mean effective spread in bps per side for `pair` at `notional_eur`.
-
-    Interpolates linearly in LOG notional between the pinned sizes (cost is strongly convex in
-    size on the thin pairs -- DOT runs 3.68 -> 5.55 -> 12.41 bps -- so a linear-in-notional reading
-    would flatten exactly the curvature that matters). Clamps below EUR 100 to the EUR 100 value,
-    and REFUSES above EUR 10k rather than extrapolating: on a convex curve an extrapolation
-    understates cost precisely where the error is most expensive.
+    """Mean effective spread in bps per side for `pair` at `notional_eur`: interpolated linearly in LOG notional
+    between the pinned sizes because cost is convex in size, clamped below the first rung, refused above the last.
     """
     table = SPREAD_CALIBRATION.get(pair.upper() if isinstance(pair, str) else pair)
     if table is None:
@@ -114,9 +81,7 @@ def round_trip_cost(
 ) -> dict:
     """Open+close cost on `notional`: exchange fee + spread (both sides) + optional margin carry.
 
-    The spread term is ADDITIVE to the fee term, never a substitute for it. At tier 1 fees are
-    40-80 bps per side against 0.6-12.4 bps of spread at EUR 10k, so an edit that swapped them
-    would be off by an order of magnitude -- there is a test guarding exactly that.
+    The spread term is ADDITIVE to the fee term, never a substitute for it.
     """
     if not math.isfinite(notional) or notional <= 0:
         raise CostModelError(f"notional must be finite and > 0, got {notional}")
@@ -130,10 +95,8 @@ def round_trip_cost(
     )
     # Charged once per side: entering and exiting both cross the book.
     spread = 2.0 * notional * effective_spread_bps(pair, notional) / 10_000.0
-    # `and hold_hours` would be wrong: margin_carry's contract is
-    # notional * rate * (1 opening + floor(hold_hours/4) rollovers) -- the OPENING charge is
-    # unconditional, so gating on hold_hours silently dropped it for a position opened and closed
-    # inside one 4h window. Cost-UNDERSTATING, i.e. the exact direction this module exists to fix.
+    # Never gate the carry leg on `hold_hours`: `margin_carry`'s opening charge is unconditional, so a position
+    # opened and closed inside one 4h window would silently lose it -- cost-understating.
     carry = 0.0
     if margin_rate_ is not None:
         carry = margin_carry(notional, hold_hours, margin_rate_)

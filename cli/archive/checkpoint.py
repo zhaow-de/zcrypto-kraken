@@ -1,11 +1,5 @@
-"""Checkpoint store for incremental verify-replay (spec 00078).
-
-One row per `(pair, hour)` last verified, persisted to `<state_dir>/checkpoint.parquet` so a later
-sweep can skip an unchanged hour instead of replaying it. Written atomically — temp file in the same
-directory, then `os.replace` (`mint.py`'s idiom) — so a failed write can never corrupt a previously
-published checkpoint. `load_checkpoint` never raises: absent, corrupt, and wrong-`schema_version` all
-return `None`, and the caller announces the rebuild rather than crashing the nightly sweep.
-"""
+"""Checkpoint store for incremental verify-replay (spec 00078): one row per `(pair, hour)` last
+verified, in `<state_dir>/checkpoint.parquet`, so a later sweep can skip an unchanged hour."""
 
 from __future__ import annotations
 
@@ -23,13 +17,10 @@ CHECKPOINT_SCHEMA_VERSION = 1
 
 _FILENAME = "checkpoint.parquet"
 
-# Every `CheckpointRow` field pinned explicitly. Without this, `pl.DataFrame` infers a column's dtype
-# from only its first `infer_schema_length` (default 100) rows — `error` is the one nullable field,
-# and a run of >100 leading `None`s followed by a real error string blows up with a `ComputeError`
-# ("could not append value ... to the builder"). The ~6,000-row snapshot rewritten whole on every
-# flush is always >100 rows, so this pin is not defensive, it is load-bearing on every save. It also
-# removes today's dtype variance, where an all-healthy snapshot wrote `error` as `Null` and an
-# error-bearing one wrote `String`.
+# Every `CheckpointRow` field is pinned because, unpinned, `pl.DataFrame` infers a column's dtype from
+# only the first `infer_schema_length` (default 100) rows: the nullable `error` is `None` through that
+# window in a snapshot rewritten whole on every flush, and the first real error string past it raises
+# `ComputeError` ("could not append value ... to the builder").
 _ROW_SCHEMA = {
     "pair": pl.String,
     "hour": pl.Datetime("us", "UTC"),
@@ -73,10 +64,8 @@ class CheckpointWriteError(Exception):
 
 
 def _check_aware(row: CheckpointRow) -> None:
-    """Refuse a naive `hour`/`verified_at` — mirrors `mint.py`'s `_check_hour` guard in the same
-    package. A naive value round-trips through parquet as UTC-naive, producing a `(pair, hour)` key
-    that can never match an aware lookup: the hour re-replays forever and the checkpoint grows
-    without bound, silently — this is checked eagerly instead."""
+    """Refuse a naive `hour`/`verified_at`: `_ROW_SCHEMA` localizes a naive value to UTC on write, so
+    a value off a non-UTC clock would be checkpointed silently under the wrong hour."""
     if row.hour.tzinfo is None:
         raise ValueError(f"CheckpointRow.hour is naive: {row.pair} {row.hour!r} — must be tz-aware UTC")
     if row.verified_at.tzinfo is None:
@@ -84,12 +73,8 @@ def _check_aware(row: CheckpointRow) -> None:
 
 
 def load_checkpoint(state_dir: Path) -> dict[tuple[str, datetime], CheckpointRow] | None:
-    """Load the checkpoint at `state_dir/checkpoint.parquet`, keyed by `(pair, hour)`.
-
-    Never raises: an absent file, an unreadable one, or one written under a different
-    `CHECKPOINT_SCHEMA_VERSION` all return `None` — the caller treats that as "no checkpoint" and
-    rebuilds from scratch.
-    """
+    """Load the checkpoint at `state_dir/checkpoint.parquet`, keyed by `(pair, hour)`, never raising:
+    an absent, unreadable, or wrong-`CHECKPOINT_SCHEMA_VERSION` file returns `None`."""
     path = state_dir / _FILENAME
     if not path.exists():
         return None
@@ -107,17 +92,10 @@ def load_checkpoint(state_dir: Path) -> dict[tuple[str, datetime], CheckpointRow
 
 
 def save_checkpoint(state_dir: Path, rows: Iterable[CheckpointRow]) -> None:
-    """Publish `rows` to `state_dir/checkpoint.parquet`, atomically.
-
-    An empty `rows` is a no-op — it leaves any existing checkpoint (or the absence of one) untouched,
-    rather than publishing an unreadable zero-row file that shadows a good cache.
-
-    Writes `checkpoint.parquet.tmp` in `state_dir` and `os.replace`s it into place (`mint.py`'s
-    idiom), so a failed write never corrupts a previously published checkpoint. Every OS/IO failure —
-    including creating `state_dir` itself, e.g. a missing `:rw` mount — is wrapped in
-    `CheckpointWriteError`, and any partial `.tmp` a failed write left behind is removed (best-effort;
-    the removal itself must never shadow the real failure) before that is raised.
-    """
+    """Publish `rows` to `state_dir/checkpoint.parquet` atomically: a `.tmp` in the same directory,
+    then `os.replace` (`mint.py`'s idiom), so a failed write never corrupts what was already
+    published. An empty `rows` is a no-op — a zero-row file would shadow a good checkpoint — and every
+    `OSError`, `state_dir`'s own creation included, is raised as `CheckpointWriteError`."""
     rows = list(rows)
     if not rows:
         return

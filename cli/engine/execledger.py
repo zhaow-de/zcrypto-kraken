@@ -9,16 +9,13 @@ from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import GateVerdict
 
 EXEC_SCHEMA_VERSION = 2
-# The journal's `_LOADABLE_SCHEMA_VERSIONS` pattern (cli/engine/journal.py): both schema_version 1
-# (submitted == [], no `plans` key -- written by code that could not submit) and 2 (`plans` key
-# present) load; validate_exec_record checks each in its own exact shape, never normalizing one
-# into the other.
+# Both schema versions load; `validate_exec_record` checks each in its own exact shape, never
+# normalizing one into the other -- `cli/engine/journal.py`'s `_LOADABLE_SCHEMA_VERSIONS` pattern.
 _LOADABLE_EXEC_SCHEMA_VERSIONS = frozenset({1, 2})
 
-# Deliberately NOT `cycle-<HH>.json` and NOT a `failed-cycle-*` sidecar. The Stage-6a streak is
-# scored off those two names, and a refusal to trade is not a broken research day -- the cycle
-# computed its targets correctly and simply was not permitted to act. Keeping execution outcomes
-# in a separate file with a separate prefix makes that structural rather than a matter of care.
+# Deliberately NOT `cycle-<HH>.json` and NOT a `failed-cycle-*` sidecar: the Stage-6a streak is scored off those two
+# names, and a refusal to trade is not a broken research day -- the cycle computed its targets and was simply not
+# permitted to act -- so a separate file with a separate prefix makes that structural rather than a matter of care.
 _PREFIX = "exec"
 
 _V1_KEYS = frozenset({"schema_version", "cycle_ts", "evaluated_at", "level", "reasons", "inputs", "submitted"})
@@ -27,11 +24,9 @@ _ROW_KEYS = frozenset({"plan_id", "intent_index", "client_order_id", "intent", "
 _PLAN_ENTRY_KEYS = frozenset({"plan_id", "received_at", "disposition", "reasons", "plan", "intents"})
 
 _ROW_STATES = frozenset({"submitting", "accepted", "rejected", "venue_canceled", "canceled", "filled", "ambiguous"})
-# The re-attach input for D10's reconciliation-on-restart, and the invariant it must satisfy: this
-# set contains EVERY state a possibly-live order can wear. `submitting`/`accepted` are the order
-# resting or on its way; `ambiguous` is a submission or a cancel whose venue outcome this process
-# could not establish -- the order may be resting right now, which is precisely why the state
-# exists, so omitting it would hide the one row a human most needs to see.
+# The re-attach input for reconciliation-on-restart (spec 00090 D10), and the invariant it must satisfy: EVERY state a
+# possibly-live order can wear belongs here -- `ambiguous` included, since a submission or cancel whose venue outcome
+# this process could not establish may be resting right now.
 _OPEN_ORDER_STATES = frozenset({"submitting", "accepted", "ambiguous"})
 
 
@@ -45,15 +40,9 @@ def _key_error(what: str, actual: object, expected: frozenset) -> EngineJournalE
 
 
 def validate_exec_record(doc: dict) -> None:
-    """Raise EngineJournalError on any version-shape disagreement, mirroring
-    `cli.engine.journal.validate_record`'s schema-aware, refuse-don't-normalize message style:
-    unknown schema_version; a doc whose key set doesn't match its schema's exact set exactly (this
-    alone rejects both "v1 with a `plans` key" and "v2 without `plans`"); a v1 record with a
-    non-empty `submitted`; a submitted row or plan entry whose key set isn't the exact row/plan-entry
-    set; a `submitted`/`plans`/`reasons`/`events` field that isn't a list; or a row whose `state`
-    isn't one of `_ROW_STATES` -- the choke point every mutator's `_store` call routes through, so a
-    typo'd state (e.g. "acepted") can never persist and silently drop out of `open_submitted_rows`'
-    re-attach set with nothing ever raising."""
+    """Raise EngineJournalError on any version-shape disagreement, refusing rather than normalizing one shape into the
+    other -- the choke point every mutator's `_store` call routes through, so a typo'd state can never persist and
+    silently drop out of `open_submitted_rows`' re-attach set."""
     schema_version = doc.get("schema_version") if isinstance(doc, dict) else None
     if schema_version not in _LOADABLE_EXEC_SCHEMA_VERSIONS:
         raise EngineJournalError(
@@ -93,8 +82,7 @@ def read_exec_record(path: Path) -> dict:
 
 
 def _read_existing(path: Path) -> dict:
-    """`read_exec_record`, wrapping a JSON-decode failure into EngineError -- clobbering forensics
-    is never the answer, so a caller that hits this never proceeds to overwrite `path`."""
+    """`read_exec_record`, wrapping a JSON-decode failure into EngineError so no caller overwrites unreadable forensics."""
     try:
         return read_exec_record(path)
     except json.JSONDecodeError as exc:
@@ -109,18 +97,10 @@ def _cycle_ts_from_path(path: Path) -> datetime:
 
 
 def _load_or_new(path: Path, verdict: GateVerdict, evaluated_at: datetime) -> dict:
-    """The read half of every mutator's read-modify-write: an absent file builds a fresh v2 record;
-    an existing one is validated in its own shape and upgraded to v2, carrying `submitted`/`plans`
-    forward untouched (a v1 record has no `plans` -- it upgrades to `plans: []`). Only the verdict
-    fields (`level`, `reasons`, `inputs`, `evaluated_at`) come from this call's arguments -- that is
-    the whole of merge-never-clobber.
-
-    Single-writer assumption: this read-modify-write plus `_store`'s fixed `.tmp` sibling name carry
-    no lock, so two mutators racing on the same `path` can lose one's update. Holds today because
-    every mutator call site runs on the node's one event-loop thread (the cycle runs on it
-    synchronously; the executor is driven by that same loop's timers/callbacks). If a caller is ever
-    added on a different thread or process, this pair needs a real lock, not just this comment.
-    """
+    """The read half of every mutator's read-modify-write: merge, never clobber -- `submitted`/`plans` carry forward
+    untouched and only the verdict fields and `evaluated_at` come from this call's arguments. This and `_store`'s fixed
+    `.tmp` sibling name carry no lock, so two racing mutators lose an update; single-writer holds only while every
+    mutator call site runs on the node's one event-loop thread, and a caller on another thread or process needs a real lock."""
     cycle_ts = _cycle_ts_from_path(path)
     submitted: list = []
     plans: list = []
@@ -239,9 +219,10 @@ def _day_dirs(journal_dir: Path, now: datetime) -> list[Path]:
 
 
 def _exec_records_in_window(journal_dir: Path, now: datetime) -> list[dict]:
-    """Every `exec-*.json` under the current and previous UTC day dirs, each
-    validate_exec_record-checked -- a corrupt or unreadable record's raise propagates, refusing the
-    whole scan rather than silently skipping it."""
+    """Every `exec-*.json` under the current and previous UTC day dirs -- two days being the horizon over which a
+    duplicate submission is possible, so this is both the dedup and the re-attach window -- each
+    validate_exec_record-checked: a corrupt or unreadable record's raise propagates, refusing the whole scan rather than
+    silently skipping it."""
     docs = []
     for day_dir in _day_dirs(journal_dir, now):
         if not day_dir.is_dir():
@@ -254,23 +235,10 @@ def _exec_records_in_window(journal_dir: Path, now: datetime) -> list[dict]:
 
 
 def exec_records_through(journal_dir: Path, until: datetime) -> dict[datetime, dict]:
-    """Every exec record filed at or before `until`, keyed by its boundary.
-
-    A SECOND window over the same files, deliberately not a widening of `_exec_records_in_window`:
-    that one is the dedup/re-attach window and is two UTC days by design -- the horizon over which a
-    duplicate submission is possible. This one answers a different question, "what has this engine
-    executed up to here", for which two days is 2/7 of a week and, worse, `held` is cumulative from
-    the first fill ever: a week-scoped read understates the position by everything bought before it
-    and reports the shortfall as drift the book never had.
-
-    Each record is `validate_exec_record`-checked, so one unreadable file refuses the whole scan --
-    `_exec_records_in_window`'s ruling exactly. A skipped record's fills would be a position nothing
-    accounts for, which is precisely the arithmetic this feeds.
-
-    A day dir or file whose name does not parse as a boundary is skipped, not refused -- the house
-    reading (`cli.engine.command._journal_artifacts`): this engine only ever writes `%Y-%m-%d`
-    directories, so an unparseable name is somebody else's file rather than a corrupt record.
-    """
+    """Every exec record filed at or before `until`, keyed by its boundary -- a second window over the same files, not a
+    widening of `_exec_records_in_window`'s two-day dedup/re-attach horizon: `held` is cumulative from the first fill
+    ever, so a window-scoped read reports everything bought earlier as drift. One unreadable record refuses the whole
+    scan, its fills being a position nothing accounts for; an unparseable name is skipped, this engine writing only `%Y-%m-%d`."""
     out: dict[datetime, dict] = {}
     for path in sorted(Path(journal_dir).glob(f"*/{_PREFIX}-*.json")):
         try:
@@ -309,14 +277,10 @@ def open_submitted_rows(journal_dir: Path, now: datetime) -> list[tuple[datetime
 
 
 def closed_submitted_rows(journal_dir: Path, now: datetime) -> list[tuple[datetime, dict]]:
-    """The rows `open_submitted_rows` leaves behind, over the same window: the ones whose state says
-    this engine is finished with the order.
-
-    Written as the complement of the same predicate rather than as its own state list, so the two
-    are total over `submitted` by construction -- a state that moves from one side to the other, or
-    a new one added to `_ROW_STATES`, lands in exactly one of them and never in neither. Which
-    matters because these two are what decide whether a row is ever compared against venue truth at
-    all: a row in neither set is one nothing checks."""
+    """The rows `open_submitted_rows` leaves behind, over the same window -- written as the complement of the same
+    predicate rather than as its own state list, so the two are total over `submitted` by construction: a state that
+    moves sides, or one added to `_ROW_STATES`, lands in exactly one of them and never in neither, and a row in neither
+    is one nothing ever compares against venue truth."""
     out: list[tuple[datetime, dict]] = []
     for doc in _exec_records_in_window(journal_dir, now):
         boundary = datetime.fromisoformat(doc["cycle_ts"])
