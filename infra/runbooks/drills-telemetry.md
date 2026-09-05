@@ -63,11 +63,11 @@ The stop reaches nothing else. Each Alloy is its own compose project and its own
 
 ### Must fire
 
-**Ops half — six pages, not two.** An entry that names only two books a six-page blackout as a two-page one, and teaches the next responder to discount the rest.
+**Ops half — seven pages, not two.** An entry that names only two books a seven-page blackout as a two-page one, and teaches the next responder to discount the rest.
 
 - `zcrypto-alloy-dark-ops` (critical, `metrics`) — `for: 10m` + 60 s + ~5 min staleness ≈ **16 min**.
 - `zcrypto-hcio-watchdog` (critical, `metrics`) — **ahead of it, at ≈11 min**: the ops Alloy *is* the healthchecks.io scrape, so `hc_checks_down_total` goes stale with it and the rule's `or on() vector(999)` fallback trips at ~5 min staleness + `for: 5m` + 60 s. This is the one route where the watchdog leads rather than trails.
-- Four instant rules page by **NoData** at ≈11 min each (~5 min staleness + `for: 5m` + 60 s), because every series only the ops Alloy carries goes stale with it and each carries `noDataState: Alerting`: [`zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled) (critical), [`zcrypto-reconcile-exporter-stale`](ops.md#zcrypto-reconcile-exporter-stale) (critical), [`zcrypto-trade-backfill-stale`](ops-node.md#zcrypto-trade-backfill-stale) (critical) and [`zcrypto-ops-verified-replay-stale`](ops-node.md#zcrypto-ops-verified-replay-stale) (warning). They are self-attributing: `zcrypto-alloy-dark-ops` fires in the same window and names the cause.
+- Five instant rules page by **NoData** at ≈11 min each (~5 min staleness + `for: 5m` + 60 s), because every series only the ops Alloy carries goes stale with it and each carries `noDataState: Alerting`: [`zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled) (critical), [`zcrypto-reconcile-exporter-stale`](ops.md#zcrypto-reconcile-exporter-stale) (critical), [`zcrypto-trade-backfill-stale`](ops-node.md#zcrypto-trade-backfill-stale) (critical), [`zcrypto-ops-verified-replay-stale`](ops-node.md#zcrypto-ops-verified-replay-stale) (warning) and [`zcrypto-ops-verify-replay-stale`](ops.md#zcrypto-ops-verify-replay-stale) (warning). They are self-attributing: `zcrypto-alloy-dark-ops` fires in the same window and names the cause.
 - **Not** the Grafana watchdog check. It `curl`s Grafana from the host, not through Alloy, and keeps pinging success throughout.
 - The ops Loki rules stay quiet — their `[6h]`/`[26h]` windows still hold hours of prior lines.
 
