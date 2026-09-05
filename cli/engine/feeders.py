@@ -79,8 +79,8 @@ def _check_stage_identity(multiplier: float, limited: dict[str, float], final: d
 def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSystemConfig | None = None) -> CycleStages:
     """Rebuild one journaled cycle and return its forming-row book at every pipeline stage, BASE-keyed whatever the
     record's schema, since `accumulation_payload` looks its floors up by base. Both schemas rebuild here (spec 00094
-    D2/D3): a schema-2 record's full symbols reach the builder only through `select_model_inputs`, imported from the
-    cycle and never copied, so a replay cannot diverge from the build it checks."""
+    D2/D3): a schema-2 record's full symbols reach the builder only through `select_model_inputs` -- imported from the
+    cycle, never copied, so a replay cannot diverge -- since raw they raise a `PortfolioError` no per-record catch holds."""
     c = config or CrossfreqSystemConfig()
     validate_record(record)  # no-peek + snapshot-boundary discipline, before any snapshot is read
     by_grid: dict[str, dict[str, tuple[list[datetime], list[float | None]]]] = {"1440": {}, "240": {}}

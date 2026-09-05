@@ -362,7 +362,7 @@ async def _desync_recovery_loop(
         now = now_fn()
         for pair, book in books.items():
             # PER-PAIR, never around the whole sweep: `books` is insertion-ordered, so a wrapping try/except starves
-            # every pair after the raising one -- deterministically the same pairs, forever, which is T0008's own defect (resolved).
+            # every pair after the raising one -- deterministically the same pairs, forever, which is T0008 (resolved)'s own defect.
             try:
                 if not book.desynced:
                     recovery.note_recovered(pair, at=now)
@@ -575,8 +575,7 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     venue_status: dict[str, int] = {}
 
     # Opt-in exporter (spec 00069 D5): an unset ZCRYPTO_METRICS_PORT means no server, no thread, no collector. A
-    # registration failure must leave capture running and the process metrics served -- `register()` runs a describe-less
-    # collector's `collect()` synchronously, so this is where a live-object read can raise.
+    # registration failure must leave capture running and the process metrics served.
     port = metrics_port_from_env()
     if port is not None:
         registry = build_registry()

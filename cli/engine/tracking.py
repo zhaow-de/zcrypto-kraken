@@ -254,7 +254,7 @@ def weekly_tracking(
         # supplies nothing decides nothing, while every week still carries its floor p95 and mean.
         gate_eligible = complete and rung == 3 and not straddles
         realized_mean = real_weeks[key]["mean_drift_bps"] if started else None
-        # p95, not a median: the edge was pinned by T0116's amendment (resolved) (spec 00091), not chosen here.
+        # p95, not a median: the edge was pinned by T0116's amendment (spec 00091, resolved), not chosen here.
         floor_p95 = _p95(floor_cycles[key])
         weeks.append(
             {
@@ -340,7 +340,7 @@ _NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer"})
 
 
 def read_ledger_export(path: Path) -> list[LedgerRow]:
-    """Read by HEADER NAME and refusing: a defaulted column reads as a confident zero, not a window with no rollovers."""
+    """The owner's hand-exported Kraken ledger CSV, read by HEADER NAME and refusing rather than defaulting."""
     row_no = 0  # 0 while the header is being read; the first data row is 1
     try:
         # `utf-8-sig`: the runbook has the owner opening this file by hand, and an Excel
