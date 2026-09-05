@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: "both capture rows in `docs/reference/fleet-pins.md` pass `fleet-deploys.md`'s grafana-push bar: for each row's build revision, `git show <revision>:cli/capture/segment_writer.py | grep -qF 'and not self._parts_for(self._hour_dir(hour)'`"
+status: resolved
 ---
 
 # A Loki-sourced dead-man can never notify its clear
@@ -29,15 +28,10 @@ The receiver split landed on `fix/loki-dead-men-notify-clear`, in the commit `fi
 
 A guard landed with it, coupling the two files rather than restating either: `tests/test_infra_alert_rules.py::test_a_rule_that_fires_on_absence_can_notify_its_clear` refuses a rule that fires on absence while pinning a receiver `grafana-push.sh` mints with `disableResolveMessage: true`, and reads that receiver set from the script, so it fails if either the pin or the flag moves. The two families are separated structurally — `lt` for a dead-man, `gt` for a burst — so a ninth dead-man added later is caught too; that case was proven by mutation rather than assumed. `test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve` is its true positive and guards against the over-correction of moving the whole Loki family.
 
-**Nothing is live yet.** The change is as-code only — the live stack still suppresses every Loki resolve until `grafana-push.sh` runs — so no doc describing what an operator sees was re-tensed. That flip belongs to the push.
+**The push ran on 2026-09-04** (`grafana-push.sh` from merged `develop` `efa9d098`, on the owner's word, after both capture rows passed `fleet-deploys.md`'s bar on revision `4925e060`) and was verified by value against the live stack: all eight dead-men pin `metrics` live as in `alerts.yaml`, every one inactive at the read, no orphaned rule. The receiver that can announce a clear is now the one the live rules use. The runbook sentence that says a Loki dead-man never sends a resolved notice became false at the push; it is re-tensed in the same change as the induction below, whose reading is the proof.
+
+**The induction ran 2026-09-05** (drill N, `docs/reference/drill-log.md`): the dead-man fired at 23:20:40Z on 2026-09-04, cleared at 00:04:40Z after the restore, and its RESOLVED notice reached `#zcrypto` at 00:06:11Z, 91 s after the clear — the reading the 2026-09-02 run could not produce on `logs`. `infra/runbooks/drills-telemetry.md`'s standing rule and the runbooks' receiver claims for the two dead-men are re-tensed in the same change.
 
 ## Suggested next steps
 
-- **The attended push, then the induction.** When `ripe_when` clears, push from merged `develop`, then verify by induction rather than by reading config: page one of the eight (drill N's procedure in `infra/runbooks/drills-telemetry.md` is repeatable), clear it, and confirm a resolved notice arrives in `#zcrypto`.
-- **Re-tense the docs in that same change.** `infra/runbooks/drills-telemetry.md` records that no resolved notice arrives for a Loki dead-man — true of the live stack until the push, false after it.
-
-Two things a future evaluator of `ripe_when` trips on, both from `fleet-deploys.md`. A PASS counts only against a row whose `since` matches that host's current container start: a Phase-4 rollback is a hand compose re-pin that appends no deploy-log line and re-trues no pins row, so a stale row passes for a host that would fail. And the hatch that rule names — a `git revert` of the commit `fix(obs): a start-correlated counter is the one increase() cannot read`, for a rule that must ship inside the window — re-arms the hazard, making a passing trigger wrong until the revert is itself reverted.
-
-Read 2026-09-03: both capture rows pin revision `8f4ac521`, which fails the check, as does the rollback operand `eb6a503a`; `develop` carries the narrowed predicate but no capture rollout has shipped it to the hosts. The trigger is correctly false today.
-
-**Do not "fix" this by editing rule expressions.** That was tried and disproved; `alerts.yaml`'s comment beside `nas-archive-pull-stalled` records why, and re-deriving it from this file's git history would reach the wrong answer.
+_(none — resolved.)_ **Do not "fix" a silent clear by editing rule expressions.** That was tried and disproved; `alerts.yaml`'s comment beside `nas-archive-pull-stalled` records why.

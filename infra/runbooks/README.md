@@ -74,7 +74,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) — ALERT: a non-zero position at last sight with the engine's scrape gone — exposure with nothing watching it. `zcrypto-engine-cycle-stale` pages on any darkness; this one is the half where money is out.
 - [`zcrypto-engine-cycle-failed`](engine.md#zcrypto-engine-cycle-failed) — ALERT: A **warning** Grafana alert (`Engine · the last cycle failed`): `zcrypto_engine_cycle_success{host="zcrypto"}` reads 0, with `for: 0s` — the outcome is already final the instant the gauge reads 0, so there…
 - [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) — ALERT: A **warning** Grafana alert (`Engine · ERROR logs`) on the `logs` receiver: at least one ERROR or CRITICAL line from the engine on the capture primary in the last 15 minutes.
-- [`zcrypto-engine-log-dead`](engine.md#zcrypto-engine-log-dead) — ALERT: A **critical** Grafana alert (`Engine · log pipeline dead`) on the `logs` receiver: Loki holds **not one line of any level** from `{host="zcrypto", container="engine"}` in the last 6 hours.
+- [`zcrypto-engine-log-dead`](engine.md#zcrypto-engine-log-dead) — ALERT: A **critical** Grafana alert (`Engine · log pipeline dead`) on the `metrics` receiver: Loki holds **not one line of any level** from `{host="zcrypto", container="engine"}` in the last 6 hours.
 
 ### [`engine-procedures.md`](engine-procedures.md) — the engine's attended procedures
 
@@ -132,7 +132,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-nas-disk-low`](nas.md#zcrypto-nas-disk-low) — ALERT: A warning Grafana alert (`NAS · /volume1 free space low`, panel `zcrypto-fleet`/301): `node_filesystem_avail_bytes{mountpoint="/volume1"} / node_filesystem_size_bytes{mountpoint="/volume1"}` has been below…
 - [`zcrypto-nas-load-high`](nas.md#zcrypto-nas-load-high) — ALERT: A warning Grafana alert (`NAS · load high`, panel `zcrypto-fleet`/201): `node_load1{host="nas"}` has been above `4` for 5 minutes — the box is a 4-core Atom, so the threshold is one runnable process per core.
 - [`zcrypto-nas-archive-pull-errors`](nas.md#zcrypto-nas-archive-pull-errors) — ALERT: A warning Grafana alert on the **logs** receiver (`NAS · archive-pull ERROR logs`, panel `zcrypto-logs`/102): at least one line labelled `level="ERROR"` or `"CRITICAL"` from `{container="archive-pull"}` in…
-- [`zcrypto-nas-archive-pull-stalled`](nas.md#zcrypto-nas-archive-pull-stalled) — ALERT: A critical Grafana alert on the **logs** receiver (`NAS · archive-pull stalled (dead-man)`, panel `zcrypto-logs`/103): Loki holds no line matching `pull complete` **and** `failed=0` from…
+- [`zcrypto-nas-archive-pull-stalled`](nas.md#zcrypto-nas-archive-pull-stalled) — ALERT: A critical Grafana alert on the **metrics** receiver (`NAS · archive-pull stalled (dead-man)`, panel `zcrypto-logs`/103): Loki holds no line matching `pull complete` **and** `failed=0` from…
 
 ### [`gate.md`](gate.md) — the shadow-concordance export on the NAS
 

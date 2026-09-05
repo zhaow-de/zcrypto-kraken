@@ -1238,3 +1238,7 @@ ______________________________________________________________________
 - One rule, `prose.md`, replaces the three prose rules with one principle — a durable file holds state and decisions, an event goes to git — and `infra/scripts/prose-tripwire.py` holds every threshold: a flagged block passes the necessity gate at review or is cut, and T0164 runs the global cleanup.
 - Before any review the author self-checks the diff against the three classes that dominated findings; the third round carrying a Critical or Important on one subject ends iteration on it; a scoped re-review of a fix diff runs on Opus or the author's tier; a loop that reaches that round gets a transcript retro from main before the session's next assignment.
 - CLAUDE.md's working discipline is `general.md`, with one cut and seven sharpenings from the point-by-point challenge; the count principle, the tick's pairwise compare, the staleness sweep's fixes and the coordinator skill's rename to `zcrypto-main-session-init` are the rest.
+
+## 2026-09-05 — T0162: the Loki dead-men announce their clears
+
+- The eight Loki-sourced dead-men page on the `metrics` receiver, so an operator sees the resolved notice in `#zcrypto` instead of reading rule state after a page; the four ERROR-log rules stay on `logs`, where a burst ages out unannounced. Drill N's re-induction is the proof, in the drill log.
