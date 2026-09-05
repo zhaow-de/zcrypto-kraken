@@ -12,14 +12,9 @@ _FLOAT_COLUMNS = ["open", "high", "low", "close", "vwap", "volume"]
 
 
 def to_frame(rows: list[list]) -> pl.DataFrame:
-    """Parse Kraken OHLC candle rows into a canonical, typed, sorted, de-duplicated frame.
+    """Parse Kraken OHLC candle rows into a canonical, typed, sorted, exact-duplicate-free frame.
 
-    Schema: `ts` (`Datetime("us", "UTC")`, from the epoch-seconds col 0), `open/high/low/close/vwap/volume`
-    (`Float64`, parsed from Kraken's string decimals), `count` (`Int64`). Exact-duplicate rows (e.g. from
-    an overlapping refetch) are dropped. Raises `OHLCError` on an unparseable value (a non-numeric string
-    in a price/count column), a NaN value, or on a non-monotonic/duplicate `ts` still remaining after
-    de-duplication (two rows sharing a `ts` with differing data — an unresolvable conflict, not a true
-    duplicate).
+    Two rows sharing a `ts` with differing data are an unresolvable conflict, so `OHLCError` refuses the frame.
     """
     raw = pl.DataFrame(rows, schema=_RAW_COLUMNS, orient="row")
     try:
@@ -54,9 +49,5 @@ def read_parquet(path: Path) -> pl.DataFrame:
 
 
 def dataset_hash(frame: pl.DataFrame) -> str:
-    """Deterministic sha256 over `frame`'s canonical CSV serialization.
-
-    Datasets are referenced by this hash (never "latest"), so it must be stable for identical data
-    and change whenever any value does.
-    """
+    """Deterministic sha256 over `frame`'s canonical CSV bytes — datasets are referenced by this hash, never "latest"."""
     return hashlib.sha256(frame.write_csv().encode("utf-8")).hexdigest()
