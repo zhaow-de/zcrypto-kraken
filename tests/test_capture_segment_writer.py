@@ -45,10 +45,8 @@ def _segment_path(base_dir, hour: int, kind: str = "book", pair: str = "BTC/EUR"
 
 
 def _corrupt_body(path: Path) -> None:
-    """Destroy a parquet file's data pages while leaving its footer (and trailing magic) intact.
-
-    The shape bit-rot — and a partially-written page — takes. A footer-only check (`collect_schema()`)
-    passes such a file happily, which is why anything certifying a segment must read the rows.
+    """Destroy a parquet file's data pages while leaving its footer (and trailing magic) intact — the shape
+    bit-rot and a partially-written page take, and one a footer-only check (`collect_schema()`) passes happily.
     """
     raw = bytearray(path.read_bytes())
     body_end = len(raw) - 8 - int.from_bytes(raw[-8:-4], "little")  # trailing: <footer len><PAR1>
@@ -66,18 +64,12 @@ class _Clock:
 
 @pytest.fixture(autouse=True)
 def clock(monkeypatch) -> _Clock:
-    """Pin `_utcnow()`.
+    """Pin `_utcnow()` an hour ahead of the events the tests feed, so an ordinary event is plausible and only
+    a genuinely far-future one is not.
 
-    The writer's hour state is read from disk and from the event stream — never from this clock. The
-    clock is consulted in two places, and in neither can it close an hour: `_implausible()`, where it
-    is one of the two witnesses that must BOTH call a `ts` garbage before a row is dropped, and
-    `_recover()`, where it may only refuse to believe a segment dated in the FUTURE.
-
-    Pinned an hour ahead of the events the tests feed, so an ordinary event is plausible and only a
-    genuinely far-future one is not. A test that feeds events across a LONG stream gap must advance
-    this clock as real time would: `_implausible`'s stream witness measures the stream against the
-    clock's RATE (which is what makes it immune to a constant offset — see its docstring), so a
-    frozen clock plus a stream that jumps an hour is, correctly, a suspicious combination.
+    A test that feeds events across a LONG stream gap must advance this clock as real time would:
+    `_implausible`'s stream witness measures the stream against the clock's RATE, so a frozen clock plus a
+    stream that jumps an hour is, correctly, a suspicious combination.
     """
     clk = _Clock()
     monkeypatch.setattr(segment_writer, "_utcnow", lambda: clk.now)
@@ -176,9 +168,7 @@ def test_verify_manifest_raises_when_manifest_missing(tmp_path):
 
 
 def test_verify_manifest_treats_an_empty_sidecar_as_missing(tmp_path):
-    # A pre-T0036 process killed inside its non-atomic `write_text` left a 0-byte sidecar, and
-    # `read_text().split()[0]` then raised IndexError out of the archive's verify_tree — a crash
-    # instead of a report. An empty (or unparseable) sidecar is a MISSING one, not a mismatch.
+    # An empty (or unparseable) sidecar is a MISSING one, not a mismatch.
     path = tmp_path / "orphan.parquet"
     path.write_bytes(b"not-really-parquet")
     path.with_name(path.name + ".sha256").write_text("")
@@ -484,9 +474,8 @@ def test_parts_segments_and_manifests_are_fsynced_before_the_rename(tmp_path, mo
 
 # --- the invariant: `<HH>.parquet` on disk is ALWAYS a committed, complete final -----------------
 #
-# It is what lets recovery be mechanical instead of a guess, and what lets the writer hold no wall
-# clock at all. Every state below is built by driving the real writer and then restoring the exact
-# bytes a kill would have left.
+# Every state below is built by driving the real writer and then restoring the exact bytes a kill
+# would have left.
 
 
 def _crash_inside_merge(tmp_path, *, stage: str) -> Path:
@@ -532,18 +521,10 @@ def test_an_interrupted_merge_is_committed_from_its_merging_file(tmp_path, stage
 
 @pytest.mark.parametrize("reading", ["partial-final", "already-merged"])
 def test_parts_beside_a_readable_final_are_left_untouched_for_a_human(tmp_path, reading):
-    # A pre-T0036 leftover, and the one state that is genuinely AMBIGUOUS — the old writer produced
-    # BOTH readings of it, and they are byte-indistinguishable:
-    #
-    #   "partial-final"  its close() published the open hour, then it ran on and flushed MORE rows
-    #                    into parts. The parts hold rows the final does not -> merging is right, and
-    #                    dropping the parts (round 3 did) destroys them.
-    #   "already-merged" its finalize sank the final and unlinked the parts only AFTERWARDS. A kill
-    #                    in that window leaves parts the final ALREADY holds -> merging duplicates
-    #                    the whole hour, and the fresh sha256 would certify the duplicate.
-    #
-    # Either guess permanently destroys the hour in the other reading. Every byte is safe on disk and
-    # nothing is on fire, so the writer touches NOTHING and says so.
+    # The one genuinely AMBIGUOUS state, byte-indistinguishable between its two readings: "partial-final",
+    # where the parts hold rows the final does not (merging is right), and "already-merged", where the final
+    # already holds them (merging duplicates the hour and a fresh sha256 certifies the duplicate). Either
+    # guess destroys the hour in the other reading, so the writer touches NOTHING and says so.
     w = _new_writer(tmp_path, flush_rows=5)
     for i in range(20):
         w.append(_hour10_event(i, i))
@@ -708,9 +689,9 @@ def test_a_stray_file_in_the_tree_cannot_crash_loop_the_daemon(tmp_path, stray):
 
 
 def test_a_failed_flush_never_takes_down_the_other_streams(tmp_path, monkeypatch):
-    # The hottest write in the daemon (every `flush_rows` rows) and, unguarded, one OSError away from
-    # taking down the single consumer task — i.e. capture for all 10 pairs and BOTH kinds. The
-    # buffer is lost either way; the other 19 streams need not be.
+    # The hottest write in the daemon (every `flush_rows` rows) and, unguarded, one OSError away from taking
+    # down the single consumer task — i.e. capture for every pair and both kinds. This buffer is lost either
+    # way; the other streams need not be.
     w = _new_writer(tmp_path, flush_rows=5)
 
     def _explode(source, dest):
@@ -777,12 +758,10 @@ def test_a_failed_merge_leaves_no_tmp_behind(tmp_path, monkeypatch):
 
 
 def test_a_leading_clock_at_startup_cannot_drop_the_live_stream(tmp_path, clock):
-    # zcrypto-capture.service has no `After=time-sync.target` and `Restart=always`, so a writer can
-    # be constructed in the instant before chrony's first step, with the host clock reading an hour
-    # or more ahead. Seeding the hour state from that clock ONCE (and never re-deriving it) dropped
-    # EVERY live event until exchange time reached the seeded hour — up to 59:59, on all 10 pairs and
-    # both kinds — while the dead-man's switch stayed green. Stepping the clock correct did not heal
-    # it. The writer must take its hour from the events, which carry the exchange's own clock.
+    # zcrypto-capture.service has no `After=time-sync.target` and `Restart=always`, so a writer can be
+    # constructed in the instant before chrony's first step, with the host clock reading an hour or more
+    # ahead. The writer must take its hour from the events, which carry the exchange's own clock — never
+    # from a clock read once at construction and never re-derived.
     clock.now = _ts(11, 35)  # the RTC leads by 90 minutes at the instant of construction...
     w = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(10, 5)  # ... and chrony steps it correct a moment later
@@ -837,18 +816,11 @@ def test_an_implausible_far_future_ts_cannot_brick_the_writer(tmp_path):
 
 @pytest.mark.parametrize("history", ["cold-start", "after-a-long-outage"])
 def test_a_lagging_clock_can_never_black_out_the_stream(tmp_path, clock, history):
-    # `_implausible` needs TWO witnesses, and the stream's one is `_max_ts` — which a DROPPED event
-    # never advances. So if the clock is ever the sole witness, a clock lagging by more than
-    # MAX_TS_AHEAD rejects the first live event, and then every one after it, forever. (chrony only
-    # *slews* an offset that appears after startup, so the lag can last hours, and `Restart=always`
-    # re-enters the state on every restart.) There are exactly two ways to have no second witness:
-    # a brand-new stream, and — if the witness is seeded off disk — an outage longer than the seed's
-    # own resolution, which is precisely the reboot this whole fix exists for.
-    #
-    # So the clock's solo veto over the very first event — which is what stops one garbage far-future
-    # stamp from opening the hour in 2027 and dropping the whole stream behind it — is CAPPED. It
-    # costs MAX_CONSECUTIVE_DROPS rows here, and then the guard stands down, the stream is accepted,
-    # and the two witnesses re-anchor. Bounded, loud, and never the stream.
+    # The clock is the sole witness for a stream's first event — at a cold start, and after an outage longer
+    # than any disk-seeded stream witness's resolution — so a clock lagging by more than MAX_TS_AHEAD refuses
+    # that event, and a dropped event never advances the stream witness. The cap bounds the cost at
+    # MAX_CONSECUTIVE_DROPS rows: the guard then stands down, the stream is accepted, and the two witnesses
+    # re-anchor.
     if history == "after-a-long-outage":
         w1 = _new_writer(tmp_path, flush_rows=5)
         w1.append(_book_event(2, 0, checksum=1))
@@ -888,14 +860,10 @@ def test_a_quiet_stream_is_never_bricked_by_the_plausibility_guard(tmp_path, clo
 
 @pytest.mark.parametrize("damage", ["bit-rot", "truncated"])
 def test_an_unreadable_merging_file_is_quarantined_and_the_hour_rebuilt_from_its_parts(tmp_path, damage):
-    # `_commit` hashes the merging file, unlinks the parts and renames it onto the final — decoding
-    # NOTHING. So an unreadable `.merging` (bit-rot, a lying fsync, a partial restore) became an
-    # unreadable `<HH>.parquet` whose sha256 was minted FROM the corrupt bytes: verify_manifest()
-    # returned True over it — the one corruption detector this dataset has, certifying the
-    # corruption — while the parts that still held every row were deleted. The merging file is the
-    # ONE input the protocol trusted without reading, and it is the one it uses to justify deleting
-    # the only other copy. Read it first; if it does not decode, quarantine it (never delete) and let
-    # the hour be rebuilt from the parts, which are right there and readable.
+    # `_commit` hashes the merging file, unlinks the parts and renames it onto the final — decoding NOTHING —
+    # so it is the one input the protocol trusts without reading, and the one it uses to justify deleting the
+    # only other copy. Read it first: if it does not decode, quarantine it (never delete) and let the hour be
+    # rebuilt from the parts, which are right there and readable.
     hour_dir = _crash_inside_merge(tmp_path, stage="unlink")  # parts + .merging, the kill window
     merging = hour_dir / "10.parquet.merging"
     if damage == "bit-rot":
@@ -915,11 +883,10 @@ def test_an_unreadable_merging_file_is_quarantined_and_the_hour_rebuilt_from_its
 
 
 def test_an_unremovable_tmp_file_cannot_crash_loop_the_daemon(tmp_path):
-    # `_recover`'s `.tmp` cleanup is the one unguarded operation in `__init__`, and `__init__` runs
-    # for all 20 streams before the daemon connects. A read-only remount — precisely the aftermath of
-    # the ENOSPC condition DiskWatermark exists for — makes that unlink raise PermissionError, so
-    # every restart crash-loops the whole capture. A leftover tmp is re-derivable garbage; failing to
-    # delete it is not worth the daemon.
+    # A read-only remount — the aftermath of the very ENOSPC condition DiskWatermark exists for — makes
+    # `_recover`'s `.tmp` unlink raise, and `__init__` runs for every stream before the daemon connects, so a
+    # raise there crash-loops the whole capture. A leftover tmp is re-derivable garbage; failing to delete it
+    # is not worth the daemon.
     hour_dir = _segment_path(tmp_path, 10).parent
     hour_dir.mkdir(parents=True)
     (hour_dir / "10.part0000.parquet.tmp").write_bytes(b"half a part")
@@ -937,11 +904,9 @@ def test_an_unremovable_tmp_file_cannot_crash_loop_the_daemon(tmp_path):
 
 
 def test_a_bogus_stamp_inside_the_old_window_cannot_truncate_the_live_hour(tmp_path, clock):
-    # Both witnesses used a 1-hour window, so a stamp up to +1h sailed through BOTH: with the clock
-    # correct at 10:05 and the stream at 10:04, one corrupt `11:00` stamp rotated the LIVE hour —
-    # publishing it, manifest-verified, as a "committed and complete" segment holding only its first
-    # five minutes, and then dropping every genuine row of the rest of the hour as late. The window
-    # has to be narrow enough that a stamp which is ahead of both witnesses is refused.
+    # A stamp ahead of BOTH witnesses must be refused: the window has to be narrow enough that one corrupt
+    # `11:00` stamp cannot rotate the LIVE hour and publish it, manifest-verified, as a "committed and
+    # complete" segment holding only its first five minutes.
     clock.now = _ts(10, 5)
     w = _new_writer(tmp_path, flush_rows=5)
     for i in range(5):
@@ -959,11 +924,9 @@ def test_a_bogus_stamp_inside_the_old_window_cannot_truncate_the_live_hour(tmp_p
 
 
 def test_a_garbage_first_stamp_after_a_restart_cannot_black_out_the_stream(tmp_path, clock):
-    # `_max_ts is None` -> `return False`: the first event after ANY restart was never validated at
-    # all. One garbage far-future stamp therefore opened the hour in the future, and the late-event
-    # guard then dropped EVERY genuine row for the life of the process. With no stream witness yet
-    # the clock is all there is, so the clock decides — bounded by the drop cap below, so it can
-    # never be the sole judge for more than a moment.
+    # With no stream witness yet, the clock alone judges the first event after a restart — bounded by the drop
+    # cap, so it can never be the sole judge for more than a moment. Unjudged, one garbage far-future stamp
+    # opens the hour in the future and the late-event guard drops every genuine row behind it.
     clock.now = _ts(10, 5)
     w = _new_writer(tmp_path, flush_rows=5)
     w.append(_book_event(23, 59, checksum=999))  # the very first event: garbage
@@ -979,16 +942,10 @@ def test_a_garbage_first_stamp_after_a_restart_cannot_black_out_the_stream(tmp_p
 
 
 def test_a_coherently_garbage_stream_can_never_be_written_to_the_archive(tmp_path, clock):
-    # The two witnesses share ONE blind spot: a stream that is COHERENTLY wrong. A systematic bad
-    # stamp — a `_parse_ts` unit bug, an exchange-side clock fault — advances at the normal rate, so
-    # the stream witness is satisfied by it BY CONSTRUCTION, and an AND can then never drop it
-    # whatever the clock says. Worse, the drop cap is a way IN: a run of them stands the guard down
-    # and the next one is accepted. Measured against the pre-fix writer, a coherent far-future stream
-    # poisons the archive from its FIRST stamp (hour opens in 2030, the late-event guard drops every
-    # genuine row behind it, and the startup sweep publishes the live hour truncated).
-    #
-    # MAX_TS_ABSURD is checked before the cap and answers to no witness: a ts a DAY ahead of our
-    # clock is not data under any reading, and a clock is wrong by minutes or hours, never by days.
+    # A COHERENTLY wrong stream — a `_parse_ts` unit bug, an exchange-side clock fault — advances at the
+    # normal rate, so the stream witness is satisfied by construction and a run of it stands the drop cap
+    # down. MAX_TS_ABSURD is checked before the cap and answers to no witness: a ts a DAY ahead of our clock
+    # is not data under any reading, and a clock is wrong by minutes or hours, never by days.
     clock.now = _ts(10, 5)
     w = _new_writer(tmp_path, flush_rows=5)
     garbage = datetime(2030, 7, 8, 1, 0, tzinfo=timezone.utc)
@@ -1026,15 +983,10 @@ def test_a_future_dated_final_can_never_brick_the_stream(tmp_path, clock):
 
 
 def test_a_quiet_pair_under_a_lagging_clock_loses_nothing(tmp_path, clock):
-    # The two failure modes MEET here, and a bare `_max_ts` stream witness cannot survive the meeting:
-    # a pair quiet for longer than the window (routine overnight on a thin EUR alt) makes it fire, a
-    # clock lagging by more than the window makes the clock witness fire, so BOTH fire on the same
-    # genuine, live print — and since a dropped event never advances `_max_ts`, every print after it
-    # is dropped too. Measured on a bare-`_max_ts` AND at a 5-minute window: a pair printing every
-    # 10 minutes under a 10-minute lagging clock loses 12 of 12 prints and never recovers.
-    #
-    # A constant offset is what a wrong clock IS, and carrying `_max_ts` forward by the ELAPSED time
-    # (rather than comparing against it raw) cancels a constant offset exactly. So: nothing is lost.
+    # Where the two failure modes MEET: a pair quiet for longer than the window (routine overnight on a thin
+    # EUR alt) fires the stream witness, a clock lagging by more than the window fires the clock witness, and
+    # a dropped event never advances `_max_ts`. Carrying `_max_ts` forward by the ELAPSED time cancels the
+    # constant offset a wrong clock is, so nothing is lost.
     clock.now = _ts(9, 50)  # the host clock lags a steady 10 minutes, all the way through
     w = _new_trade_writer(tmp_path, flush_rows=5)
     for i in range(segment_writer.MAX_CONSECUTIVE_DROPS + 1):
@@ -1050,11 +1002,10 @@ def test_a_quiet_pair_under_a_lagging_clock_loses_nothing(tmp_path, clock):
 
 
 def test_a_clock_step_costs_a_bounded_few_rows_and_never_the_stream(tmp_path, clock):
-    # What the elapsed-time witness cannot absorb is a clock that STEPS (chrony's first correction),
-    # because a step breaks the "our clock's rate matches the exchange's" assumption for exactly one
-    # interval — and a dropped event never advances the reference, so without a cap that one interval
-    # would black the pair out FOREVER. A run of refusals means the guard is what is broken: it
-    # stands down, the first accepted event re-anchors it, and the loss is capped.
+    # A clock that STEPS (chrony's first correction) breaks the rate assumption for exactly one interval, and
+    # a dropped event never advances the reference — so without a cap that one interval would black the pair
+    # out FOREVER. The cap stands the guard down, the first accepted event re-anchors it, and the loss is
+    # bounded.
     clock.now = _ts(10, 0)  # a correct clock: the print below anchors both witnesses
     w = _new_trade_writer(tmp_path, flush_rows=5)
     w.append(_trade_event(10, 0, 1))
@@ -1074,11 +1025,10 @@ def test_a_clock_step_costs_a_bounded_few_rows_and_never_the_stream(tmp_path, cl
 
 
 def test_a_replayed_trade_print_is_deduped_not_duplicated(tmp_path):
-    # On every (re)connect `ws_client` resubscribes with snapshot=True, so Kraken REPLAYS its recent
-    # prints. Their ts is inside the open hour, so the hour-granular late-event guard accepts them —
-    # and they landed in the segment TWICE. (The pre-T0036 writer hid this by clobbering the earlier
-    # parts, i.e. by losing rows instead.) trade_id is globally unique: a print already in the open
-    # hour — including one only a PREVIOUS process wrote — is recognized and dropped.
+    # On every (re)connect `ws_client` resubscribes with snapshot=True, so Kraken REPLAYS its recent prints,
+    # whose ts is inside the open hour where the hour-granular late-event guard accepts them. trade_id is
+    # globally unique: a print already in the open hour — including one only a PREVIOUS process wrote — is
+    # recognized and dropped.
     w1 = _new_trade_writer(tmp_path, flush_rows=5)
     for i in range(20):  # trade_ids 0..19, all flushed to parts
         w1.append(_trade_event(10, i, i))
@@ -1125,12 +1075,9 @@ def test_a_replayed_print_cannot_reopen_a_committed_hour(tmp_path):
 
 # --- T0037: cross-stream quorum — one untrusted `ts` can never rotate the hour ------------------
 #
-# Rotation trusts the event's own `ts`, so one bogus stamp inside the plausibility window used to
-# finalize the live hour early — permanently truncating it (T0036 refuses to reopen a committed
-# final). The `HourOracle` makes a writer act on a boundary only once HOUR_QUORUM witnesses (other
-# streams, or the 5-min-handicapped wall clock) have seen time reach it. A row for an unconfirmed
-# hour is HELD (never dropped), so the live hour stays open and no genuine row behind the stamp is
-# ever refused. Loss is measured as a set-difference off disk (parts + finals), never predicted.
+# A row for an hour the `HourOracle` has not confirmed is HELD, never dropped, so the live hour stays
+# open and no genuine row behind a bogus stamp is ever refused. Loss is measured as a set-difference
+# off disk (parts + finals), never predicted.
 
 
 def _book_event_for(pair: str, hour: int, minute: int = 0, sec: int = 0, *, checksum: int = 42) -> dict:
@@ -1160,11 +1107,9 @@ def _disk_column(tmp_path, column: str, *, pair="BTC/EUR", kind="book") -> list:
 
 
 def test_t0037_lone_in_window_bogus_stamp_never_truncates_the_live_hour(tmp_path, clock):
-    # THE core residual (T0037): a bogus stamp <=5 min ahead, landing in the last 5 min of the hour,
-    # is inside the plausibility window — so `_implausible` passes it — and pre-fix it rotated the
-    # live hour early, publishing it as a committed, verify-clean segment holding only its first rows
-    # and dropping every genuine row after as "late". With the oracle a single stream cannot second
-    # its own stamp: the bogus 11:00 is HELD, hour 10 stays open, and every later genuine row lands.
+    # THE core residual (T0037): a bogus stamp <=5 min ahead, landing in the last 5 min of the hour, is inside
+    # the plausibility window, so `_implausible` passes it. A single stream cannot second its own stamp: the
+    # bogus 11:00 is HELD, hour 10 stays open, and every later genuine row lands.
     oracle = HourOracle()
     w = _oracle_writer(tmp_path, oracle)
     genuine = set()
@@ -1203,11 +1148,10 @@ def test_t0037_lone_in_window_bogus_stamp_never_truncates_the_live_hour(tmp_path
 
 
 def test_t0037_a_bogus_first_stamp_after_restart_cannot_sweep_publish_the_live_hour(tmp_path, clock):
-    # The restart shape: a previous process left hour-10 parts (crash mid-hour); exchange time is
-    # still inside hour 10. Pre-fix, a bogus in-window first stamp drove the startup SWEEP, which
-    # finalized (published, truncated) the live hour — and then dropped every genuine hour-10 row as
-    # "late", surviving further restarts. The first `_enter_hour` is now behind the oracle gate, so a
-    # garbage first stamp is HELD and the sweep never runs on it.
+    # The restart shape: a previous process left hour-10 parts (crash mid-hour) and exchange time is still
+    # inside hour 10, so a bogus in-window first stamp would drive the startup SWEEP into publishing the live
+    # hour truncated. The first `_enter_hour` is behind the oracle gate, so the garbage stamp is HELD and the
+    # sweep never runs on it.
     w1 = _new_writer(tmp_path, flush_rows=5)
     for i in range(20):  # cs 0..19 flushed to 4 parts, hour 10 still live
         clock.now = _ts(10, i)
@@ -1236,11 +1180,9 @@ def test_t0037_a_bogus_first_stamp_after_restart_cannot_sweep_publish_the_live_h
 
 
 def test_t0037_a_genuine_boundary_with_two_streams_publishes_within_one_event(tmp_path, clock):
-    # The property a single bad field can never forge: AGREEMENT. Two streams share one oracle; a
-    # genuine boundary crosses BOTH within seconds. The clock here LAGS by 4 min (inside the window,
-    # so nothing is dropped), so `clock - CLOCK_WITNESS_MARGIN` can never reach 11:00 while the
-    # streams do — proving the corroboration is the OTHER STREAM, not the clock. The moment the second
-    # stream crosses, hour 11 is confirmed and its hour 10 publishes on that very event.
+    # The property a single bad field can never forge: AGREEMENT. The clock here LAGS by 4 min (inside the
+    # window, so nothing is dropped), so `clock - CLOCK_WITNESS_MARGIN` can never reach 11:00 while the two
+    # streams do — the corroboration here is the OTHER STREAM, not the clock.
     oracle = HourOracle()
     a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")
     b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
@@ -1324,11 +1266,9 @@ def test_t0037_a_leading_clock_never_publishes_the_hour_early(tmp_path, clock):
 
 
 def test_t0037_three_escalating_in_window_stamps_on_one_stream_lose_nothing(tmp_path, clock):
-    # The attack that DEFEATS the intra-stream designs (A at 2, B at 3): a burst of escalating bogus
-    # stamps, each a little further ahead but all inside the 5-min window, on ONE stream. A design
-    # that corroborates within the stream re-opens the truncation once enough of them "agree". C's
-    # second witness is another stream or the handicapped clock, so one stream's escalating stamps
-    # confirm NOTHING — all held, every interleaved genuine row admitted, zero loss.
+    # A burst of escalating bogus stamps, each a little further ahead but all inside the 5-min window, on ONE
+    # stream — the shape that defeats any design corroborating WITHIN the stream. The second witness is
+    # another stream or the handicapped clock, so one stream's escalating stamps confirm NOTHING.
     oracle = HourOracle()
     w = _oracle_writer(tmp_path, oracle)
     genuine = set()
@@ -1360,11 +1300,9 @@ def test_t0037_three_escalating_in_window_stamps_on_one_stream_lose_nothing(tmp_
 
 
 def test_t0037_a_stand_down_burst_never_publishes_the_future_hour(tmp_path, clock):
-    # B's other honest failure: a burst of far-future stamps stands the plausibility guard down
-    # (MAX_CONSECUTIVE_DROPS), so the stamps AFTER the cap slip past the guard — and pre-fix a design
-    # that acted on them published (truncated to) the future hour. Here they slip past the guard but
-    # the ORACLE holds them: the future hour is never confirmed, so it is never published, and the
-    # genuine live stream underneath loses nothing.
+    # A burst of far-future stamps stands the plausibility guard down (MAX_CONSECUTIVE_DROPS), so the stamps
+    # after the cap slip past it. The ORACLE holds them: the future hour is never confirmed, so it is never
+    # published, and the genuine live stream underneath loses nothing.
     clock.now = _ts(10, 5)
     w = _oracle_writer(tmp_path, oracle=HourOracle())
     for i in range(5):  # five distinct far-future stamps: 3 caught by the cap, 2 slip the stood-down guard
@@ -1448,11 +1386,10 @@ def test_t0037_close_spills_held_rows_that_a_restart_redeems_merges_and_dedups(t
 
 
 def test_t0037_a_held_hour_above_the_event_hour_is_not_drained_out_of_order(tmp_path, clock):
-    # The load-bearing drain bounds: held hours drain ASCENDING, and only those `h <= event_hour`
-    # (draining a higher held hour on a lower-hour event would misfile the current row) and
-    # `h <= confirmed`. Cold-start holds hour-10 rows; they must drain in ARRIVAL order ahead of the
-    # confirming event. A bogus hour-11 row, held meanwhile, must NOT be drained by a later hour-10
-    # event even after the clock has moved on — it waits for a genuine hour-11 event.
+    # The load-bearing drain bounds: held hours drain ASCENDING, and only those `h <= event_hour` (draining a
+    # higher held hour on a lower-hour event would misfile the current row) and `h <= confirmed`. So a bogus
+    # hour-11 row waits for a genuine hour-11 event, while the cold start's hour-10 rows drain in ARRIVAL
+    # order ahead of the confirming event.
     oracle = HourOracle()
     w = _oracle_writer(tmp_path, oracle)
     for mnt in range(0, 3):  # 10:00..10:02 — held during the cold start (clock < 10:05)
@@ -1482,14 +1419,12 @@ def test_t0037_a_held_hour_above_the_event_hour_is_not_drained_out_of_order(tmp_
 
 
 def test_t0037_a_poisoned_witness_can_never_second_a_lone_bogus_stamp(tmp_path, clock):
-    # The T0037 truncation, re-attacked through the oracle itself: a garbage burst on stream A
-    # stands its plausibility guard down (MAX_CONSECUTIVE_DROPS), and the stamp that then slips
-    # through used to set A's shared witness ~20 h ahead — forever, since witnesses never expire.
-    # A LONE in-window bogus stamp on stream B then had its quorum met by A's poisoned witness,
-    # publishing B's live hour truncated (executed pre-fix: fed=60, LOST=[56..59],
-    # manifest-certified, surviving restarts). An unconfirmed stamp may vouch that time has
-    # reached T only while the wall clock is itself within MAX_TS_AHEAD of T: witnesses are
-    # clamped at now + MAX_TS_AHEAD when observed, so A's burst vouches for nothing beyond 10:25.
+    # The T0037 truncation re-attacked through the oracle itself: a garbage burst on stream A stands its
+    # plausibility guard down (MAX_CONSECUTIVE_DROPS), and the stamp that then slips through would set A's
+    # shared witness ~20 h ahead — witnesses never expire — seconding a LONE in-window bogus stamp on B. An
+    # unconfirmed stamp may vouch that time has reached T only while the wall clock is itself within
+    # MAX_TS_AHEAD of T: witnesses are clamped at `now + MAX_TS_AHEAD` when observed, so A's burst vouches
+    # for nothing beyond 10:25.
     oracle = HourOracle()
     a = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
     b = _oracle_writer(tmp_path, oracle)
@@ -1525,11 +1460,10 @@ def test_t0037_a_poisoned_witness_can_never_second_a_lone_bogus_stamp(tmp_path, 
 
 
 def test_t0037_a_replay_into_an_unconfirmed_hour_is_deduped_not_duplicated(tmp_path, clock):
-    # T0026 x T0037: a reconnect replay landing while its hour is still UNCONFIRMED used to be held
-    # without consulting the de-dup at all, and close() spilled both copies to disk; the next
-    # process merged them into the committed, manifest-certified final (executed pre-fix:
-    # trade_ids [0,1,2,3,4,0,1,2,3,4,10]). Duplicated prints corrupt a reconstructed book exactly
-    # as badly as lost ones. Held rows now pass the same trade_id de-dup as stored ones.
+    # T0026 x T0037: a reconnect replay landing while its hour is still UNCONFIRMED is held; without de-dup at
+    # hold time, a stop before confirmation would spill it beside its original for the next process to merge
+    # into the committed, manifest-certified final. Duplicated prints corrupt a reconstructed book exactly as
+    # badly as lost ones, so held rows pass the same trade_id de-dup as stored ones.
     clock.now = _ts(10, 0, 30)
     w1 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, flush_rows=50, dedup_key="trade_id")
     for i in range(5):
@@ -1553,11 +1487,10 @@ def test_t0037_a_replay_into_an_unconfirmed_hour_is_deduped_not_duplicated(tmp_p
 
 
 def test_t0037_a_replay_of_an_on_disk_print_never_survives_a_held_spill(tmp_path, clock):
-    # The restart shape (executed pre-fix as S2): the ORIGINAL prints are already in an on-disk
-    # part from the previous process; the replay lands while the hour is UNCONFIRMED (a restart
-    # inside the hour's first 5 minutes), is held, and is spilled before confirmation — so the
-    # replay reached disk beside its original and the finalize committed both. The hold path now
-    # seeds its de-dup from the hour's on-disk files, so the replay never reaches disk at all.
+    # The restart shape: the ORIGINAL prints are already in an on-disk part from the previous process, and the
+    # replay lands while the hour is UNCONFIRMED (a restart inside the hour's first 5 minutes), is held, and
+    # would be spilled beside its original. The hold path seeds its de-dup from the hour's on-disk files, so
+    # the replay never reaches disk at all.
     oracle1 = HourOracle()
     a = _oracle_writer(tmp_path, oracle1, kind="trades", schema=TRADE_SCHEMA, flush_rows=50, dedup_key="trade_id")
     b = _oracle_writer(tmp_path, oracle1, pair="ETH/EUR")
@@ -1587,13 +1520,10 @@ def test_t0037_a_replay_of_an_on_disk_print_never_survives_a_held_spill(tmp_path
 
 
 def test_t0037_a_never_confirmed_held_spill_cannot_fabricate_an_hour(tmp_path, clock):
-    # A held bogus stamp spilled at a stop used to become an ordinary part — and if the process
-    # then slept through the stamp's hour, the next start's sweep merged it into a
-    # manifest-certified final for an hour that had NO genuine capture: a fabricated hour,
-    # published as "committed and complete" (executed pre-fix: 11.parquet == [999] with a valid
-    # sidecar). Never-confirmed held rows now spill under a held-spill name (`<HH>.held####`) the
-    # sweep and the merge ignore; they are redeemed as parts only when a live, quorum-confirmed
-    # event stream OPENS their hour. Quarantined, never deleted — never a committed final alone.
+    # A never-confirmed held row spills under a held-spill name (`<HH>.held####`) that the sweep and the merge
+    # ignore, and is redeemed as a part only when a live, quorum-confirmed event stream OPENS its hour —
+    # otherwise a stop, then an outage across the stamp's hour, mints a manifest-certified final for an hour
+    # that had NO genuine capture. Quarantined, never deleted.
     w = _oracle_writer(tmp_path, HourOracle())
     for mnt in range(0, 57):
         clock.now = _ts(10, mnt)
@@ -1640,12 +1570,10 @@ def test_t0037_a_held_spill_never_marks_its_hour_closed(tmp_path, clock):
 
 
 def test_t0037_a_coherently_fast_walk_cannot_poison_the_witness(tmp_path, clock):
-    # The stand-down burst is not the only way in: an IN-BAND walk — stamps each exactly
-    # MAX_TS_AHEAD ahead of the last, so the plausibility guard passes every one — used to carry
-    # stream A's witness ~100 minutes into the future while the wall still read 10:00 (the
-    # coherently-wrong-stream adversary the topic doc declares in scope). Same truncation on B as
-    # the burst shape. The clamp pins A's witness at 10:05: however far the walk's stamps name,
-    # the stream cannot vouch past the wall's own reach.
+    # An IN-BAND walk — stamps each exactly MAX_TS_AHEAD ahead of the last, so the plausibility guard passes
+    # every one — would carry stream A's witness ~100 minutes into the future while the wall still read 10:00,
+    # for the same truncation on B as the burst shape. The clamp pins A's witness at 10:05: however far the
+    # walk's stamps name, the stream cannot vouch past the wall's own reach.
     oracle = HourOracle()
     a = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
     b = _oracle_writer(tmp_path, oracle)
@@ -1761,9 +1689,8 @@ def test_t0037_swept_past_hour_counts_no_earliness(tmp_path, clock):
 
 
 def test_t0037_lagging_clock_counts_early_by_design(tmp_path, clock):
-    """A clock lagging 3 min under GENUINE two-stream traffic fires the counter — intended (spec
-    00103 D3): the earliness is measured with the same lagging clock, so a genuine boundary reads
-    3 min early. Disambiguation is operational, not code — the D4 skew alert says which case fired."""
+    """A clock lagging 3 min under GENUINE two-stream traffic fires the counter — intended (spec 00103 D3):
+    the earliness is measured with the same lagging clock, so a genuine boundary reads 3 min early."""
     oracle = HourOracle()
     a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")
     b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
@@ -1783,15 +1710,11 @@ def test_t0037_lagging_clock_counts_early_by_design(tmp_path, clock):
 
 
 def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
-    # Residual (c) — the past-dated fabrication (spec 00103 D5): a process's FIRST stamp is the only
-    # event that can open an hour behind the wall clock. Hour 08 is committed first so the recovery
-    # floor is real (09:00) — the stamp lands ABOVE it, where the late-event guard cannot refuse it
-    # and only this counter sees it.
-    # Under spec 00109 D1 this stays a TRUE positive for a property the fixture already had:
-    # neither writer had appended an event in hour 10 before the stamp, so it holds no `.part`
-    # files and the narrowed predicate still counts it. That — not the crash — is what makes this
-    # a fabrication rather than a re-open, and it is the property that
-    # `test_t0037_restart_reopening_a_captured_hour_counts_nothing` inverts.
+    # Residual (c) — the past-dated fabrication (spec 00103 D5, narrowed by spec 00109 D1): a process's FIRST
+    # stamp is the only event that can open an hour behind the wall clock. Hour 08 is committed first so the
+    # recovery floor is real (09:00) and the stamp lands ABOVE it, where the late-event guard cannot refuse
+    # it. Neither writer appended in hour 10, so it holds no `.part` files — a fabrication rather than a
+    # re-open, the property `test_t0037_restart_reopening_a_captured_hour_counts_nothing` inverts.
     w1 = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(8, 30)
     w1.append(_book_event(8, 30, checksum=1))
@@ -1807,13 +1730,12 @@ def test_t0037_past_dated_first_stamp_counted(tmp_path, clock):
 
 
 def test_t0037_restart_reopening_a_captured_hour_counts_nothing(tmp_path, clock):
-    # The 2026-09-01 incident (spec 00109 D1): a mid-hour restart whose FIRST event is a replayed
-    # pre-restart print opens the PREVIOUS hour — but that hour HAS parts on disk, so nothing was
-    # fabricated and nothing may be counted. `test_t0037_a_held_only_past_hour_still_counts` is this
-    # fixture with hour 15's `.part` swapped for a `.held`, and it must read 1: the opened hour
-    # holding its OWN parts is the only property that may make this one read 0. Hour 14 is committed
-    # first so the floor is seeded as it always is on a capture host, where every previous hour has a
-    # final — keying the count on `self._floor is not None` reproduces the incident and passes.
+    # Spec 00109 D1: a mid-hour restart whose FIRST event is a replayed pre-restart print opens the PREVIOUS
+    # hour — but that hour HAS parts on disk, so nothing was fabricated and nothing may be counted. Hour 14 is
+    # committed first so the floor is seeded as it always is on a capture host, where every previous hour has
+    # a final: a count keyed on `self._floor is not None` would count this hour, and must not.
+    # `test_t0037_a_held_only_past_hour_still_counts` is this fixture with hour 15's `.part` swapped for a
+    # `.held`, and must read 1.
     w1 = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(14, 30)
     for i in range(5):
@@ -1836,11 +1758,9 @@ def test_t0037_restart_reopening_a_captured_hour_counts_nothing(tmp_path, clock)
 
 
 def test_t0037_a_held_only_past_hour_still_counts(tmp_path, clock):
-    # Spec 00109 D1's DANGEROUS case: an hour holding only a quarantined `.held` spill was never
-    # corroborated by the oracle, so it is NOT captured. Opening it redeems that spill into a
-    # manifest-certified final built from rows nothing confirmed — a fabrication, and it must count.
-    # A predicate widened to accept any parquet as capture evidence reads 0 here while every other
-    # t0037 test stays green.
+    # Spec 00109 D1's DANGEROUS case: an hour holding only a quarantined `.held` spill was never corroborated
+    # by the oracle, so it is NOT captured. Opening it redeems that spill into a manifest-certified final
+    # built from rows nothing confirmed — a fabrication, and it must count.
     w1 = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(14, 30)
     for i in range(5):
@@ -1860,13 +1780,11 @@ def test_t0037_a_held_only_past_hour_still_counts(tmp_path, clock):
 
 
 def test_t0037_a_finalized_past_hour_never_reaches_the_counter(tmp_path, clock, caplog):
-    # Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an
-    # hour's parts once the merged bytes are durable, so a COMMITTED hour also has none. It is the
-    # recovery floor, not the predicate, that rules it out — `_recover` seeds `_floor` at the newest
-    # final plus an hour, and the late-event guard then refuses the stamp before `_enter_hour` runs.
-    # If this ever fails, the floor no longer closes the door the `.part`-only predicate relies on, and
-    # a benign re-open of a committed hour would count as fabrication — fix `_recover` or the
-    # late-event guard, not the predicate, whose text this test never reads.
+    # Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an hour's
+    # parts once the merged bytes are durable, so a COMMITTED hour also has none. It is the recovery floor,
+    # not the predicate, that rules that hour out — `_recover` seeds `_floor` at the newest final plus an
+    # hour, and the late-event guard refuses the stamp before `_enter_hour` runs. If this ever fails, fix
+    # `_recover` or the late-event guard, not the predicate, whose text this test never reads.
     w1 = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(15, 30)
     for i in range(5):
@@ -1886,13 +1804,10 @@ def test_t0037_a_finalized_past_hour_never_reaches_the_counter(tmp_path, clock, 
 
 
 def test_t0037_a_never_captured_hour_beside_unswept_parts_still_counts(tmp_path, clock):
-    # The predicate's GRANULARITY, which no other fixture pins: it must ask about the hour that
-    # OPENED, not about the day or the stream. Here a crash in hour 14 leaves parts nothing has
-    # swept, while hour 15 never received an event — the never-captured fabrication the counter
-    # exists for. A glob that drops the `<HH>` prefix (the day dir), or that walks the stream root
-    # the way `_sweep` and `finalize_completed_hours` legitimately do, sees hour 14's parts and reads
-    # 0 here — blind to its own target case whenever a crash hour shares a day with the fabricated
-    # one, which is nearly always.
+    # The predicate's GRANULARITY: it must ask about the hour that OPENED, not about the day or the stream. A
+    # glob that drops the `<HH>` prefix (the day dir), or that walks the stream root the way `_sweep` and
+    # `finalize_completed_hours` legitimately do, sees the unswept hour-14 parts here and reads 0 — blind to
+    # its own target case whenever a crash hour shares a day with the fabricated one.
     w1 = _new_writer(tmp_path, flush_rows=5)
     clock.now = _ts(14, 30)
     for i in range(5):
@@ -1973,9 +1888,8 @@ def test_t0037_an_oracle_less_writer_reopening_a_prior_hour_counts_nothing(tmp_p
 
 # --- T0046: wall-clock hour finalization for sparse writers --------------------------------------
 #
-# `finalize_completed_hours(cutoff)` is the escape hatch for a symbol so sparse that no "next event"
-# ever arrives to close its hour the ordinary way (see the topic doc). The caller (the Coinalyze
-# poller) owns `cutoff`'s safety margin; this method only ever touches hours strictly before it.
+# `finalize_completed_hours(cutoff)` only ever touches hours strictly before `cutoff`; its caller (the
+# Coinalyze poller) owns that margin's safety.
 
 
 def test_finalize_completed_hours_on_a_fresh_writer_is_a_no_op(tmp_path):
@@ -2048,11 +1962,10 @@ def test_finalize_completed_hours_is_idempotent(tmp_path):
 
 
 def test_finalize_completed_hours_makes_a_later_replay_a_dropped_late_event(tmp_path):
-    # Ordinary rotation never resets `_current_hour` to `None` -- it always advances forward via
-    # `_open_hour`, which re-anchors the late-event floor for free. This method is the first thing
-    # that clears it without opening a new hour, so it must re-anchor `_floor` itself, or a replay
-    # arriving while `_current_hour` is `None` would silently reopen a hour already committed to
-    # disk -- exactly the "parts beside a readable final" ambiguity T0036 exists to prevent.
+    # `finalize_completed_hours` is the only path that clears `_current_hour` without opening a new hour, so
+    # it must re-anchor `_floor` itself -- otherwise a replay arriving while `_current_hour` is `None`
+    # silently reopens an hour already committed to disk, exactly the "parts beside a readable final"
+    # ambiguity T0036 exists to prevent.
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
     assert w.finalize_completed_hours(_ts(11, 0)) == 1
@@ -2077,9 +1990,9 @@ def test_finalize_completed_hours_then_close_is_safe(tmp_path):
 
 
 def test_restart_reseeds_dedup_keys_from_open_hour_parts(tmp_path, caplog):
-    # Spec 00055 D5 (measured 2026-07-17): a dedup-keyed writer restarted over an open hour with
-    # flushed parts reseeds _seen from disk, so a re-submitted event is dropped, never duplicated.
-    # This is the anomaly-detector backstop the liquidations watermark relies on.
+    # Spec 00055 D5: a dedup-keyed writer restarted over an open hour with flushed parts reseeds `_seen` from
+    # disk, so a re-submitted event is dropped, never duplicated. This is the anomaly-detector backstop the
+    # liquidations watermark relies on.
     event = {
         "ts": _ts(10, 0, 0),
         "symbol": "BTCUSDT_PERP.A",

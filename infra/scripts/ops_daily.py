@@ -45,11 +45,10 @@ _RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]
 _TIMEOUT = 30
 # What "the source could not be read" actually looks like against a live endpoint. `URLError` alone
 # is not enough: urllib wraps OSError only around the REQUEST, so a timeout, a reset or a truncated
-# body during `getresponse()` or the read escapes uncaught -- and the pass dies at 03:00 with a
-# traceback and exit 1, which is the ATTENTION code, exactly inverting the module's contract that an
-# unreachable source is a finding about that source. `URLError` and `HTTPError` are `OSError`
-# subclasses, so naming `OSError` covers them too; `HTTPException` carries `IncompleteRead` and
-# `RemoteDisconnected`. No fixture produces any of these -- only a real network does.
+# body during `getresponse()` or the read escapes uncaught, and an escape inverts this module's
+# contract. `URLError` and `HTTPError` are `OSError` subclasses, so naming `OSError` covers them
+# too; `HTTPException` carries `IncompleteRead` and `RemoteDisconnected`.
+# No fixture exercises the READ side -- a 200 whose body read raises -- only a real network does.
 _UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError, IndexError)
 
 # The history API pages. A chunk returning AT the limit may have dropped transitions, and a report
@@ -76,19 +75,16 @@ class Alert:
     state: str
     active_at: str | None
     runbook: str | None
-    # EVERY host with a firing instance, not the first. The venue rules group `by (host, system)`,
-    # so one halt raises several instances per host, and `infra/runbooks/capture.md`'s prescribed
-    # silence is created and deleted PER HOST -- a report naming one host cannot discharge that.
-    # Still one Alert per RULE: `journal_paragraph` prints uids alone, so a per-instance Alert would
-    # print the same uid several times in the durable line.
+    # EVERY host with a firing instance, not the first: the venue rules group `by (host, system)` and
+    # `infra/runbooks/capture.md`'s prescribed silence is created and deleted PER HOST, so a report
+    # naming one host cannot discharge it. Still one Alert per RULE, because `journal_paragraph`
+    # prints uids alone and a per-instance Alert would repeat the same uid in the durable line.
     hosts: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class RuleHealth:
-    """A rule Grafana could not evaluate -- its `health`, or the `(Error)` reason on an instance state,
-    which, by ngalert's source, is all `execErrState: OK` leaves of a failed evaluation (T0167's read-back
-    saw the suffix shape live, not that mapping)."""
+    """A rule Grafana could not evaluate -- its `health`, or the `(Error)` reason on an instance state."""
 
     uid: str
     title: str
@@ -113,9 +109,8 @@ def _get(url: str, token: str, opener) -> dict:
 def _history_transitions(payload: dict):
     """(timestamp_ms, line) per state transition.
 
-    Measured against the live API 2026-08-29: the frame carries three columns named by
-    `schema.fields` -- `time`, `line`, `labels` -- and the RULE IDENTITY is in `line`
-    (`ruleUID`, `ruleTitle`), never in `labels`, which holds only the ingest's own metadata.
+    The RULE IDENTITY is in the frame's `line` column (`ruleUID`, `ruleTitle`), never in `labels`,
+    which holds only the ingest's own metadata; `schema.fields` names the columns.
     """
     columns = (payload.get("data") or {}).get("values") or []
     names = [f.get("name") for f in ((payload.get("schema") or {}).get("fields") or [])]
@@ -124,11 +119,10 @@ def _history_transitions(payload: dict):
     t_idx = names.index("time") if "time" in names else 0
     l_idx = names.index("line") if "line" in names else 1
     for stamp, line in zip(columns[t_idx], columns[l_idx]):
-        # `stamp` is type-checked for the same reason `line` is, and it is the more dangerous of the
-        # two: if the frame ever drops its `time` field, `t_idx` falls back to 0 and lands on the
-        # SAME column as `line`, so the isinstance below passes and `stamp / 1000` divides a dict.
-        # `TypeError` is deliberately outside `_UNREACHABLE`, so that raise would take the whole
-        # pass down -- no report, exit 1 -- for a frame it could not read.
+        # `stamp` is type-checked because if the frame ever drops its `time` field, `t_idx` falls back
+        # to 0 and lands on the SAME column as `line`, so `stamp / 1000` would divide a dict.
+        # `TypeError` is deliberately outside `_UNREACHABLE`: that raise takes the whole pass down, no
+        # report, for a frame it could not read.
         if isinstance(line, dict) and isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
             yield stamp, line
 
@@ -166,18 +160,13 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                     shown = str(health) if health not in (None, "ok") else errored[0]
                     read.unhealthy.append(RuleHealth(uid, rule.get("name", ""), shown, str(rule.get("lastError") or "")))
                 # Instances arrive in EVERY state, reason suffix included, so a rule grouped
-                # `by (host, system)` that is Alerting on the primary and Normal on the secondary
-                # would otherwise name both hosts -- sending the operator to create, and later
-                # remember to delete, a silence on a host that never fired.
+                # `by (host, system)` and Alerting on one host only would otherwise name both,
+                # sending the operator to silence a host that never fired.
                 #
-                # Default-DENY, then restore the sentinel: an instance whose state the code cannot
-                # read is not evidence that it fired. `[{}]` covers a firing rule that arrives with no
-                # readable instance at all -- an API-shape defence, not a rule class; the five whose
-                # expr aggregates the host away do carry one, and reach `_UID_HOST` through it. The
-                # map is consulted per instance, so with nothing left there is nothing to reach it
-                # through, and a rule outside the map degrades to `on ?` rather than to a wrong host.
-                # Admitting the sentinel as a DEFAULT instead would let any unreadable state through
-                # the door it was opened for.
+                # Default-DENY, then restore `[{}]` as a SENTINEL, never as a default: an instance
+                # whose state the code cannot read is not evidence that it fired, while a firing rule
+                # that arrives with no readable instance still needs a row. `_UID_HOST` is consulted
+                # per instance, so a rule outside it degrades to `on ?`, never to a wrong host.
                 alerting = [i for i in instances if str(i.get("state") or "").startswith("Alerting")] or [{}]
                 summary = (rule.get("annotations") or {}).get("summary") or ""
                 link = _RUNBOOK_LINK.search(summary)
@@ -207,19 +196,15 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
             payload = _get(url, token, opener)
             rows = (payload.get("data") or {}).get("values") or []
             for stamp, line in _history_transitions(payload):
-                # The history writes the state with its REASON attached -- `drill-log.md` measured
-                # both `Pending (NoData) -> Alerting (NoData)` and `Alerting -> Normal (MissingSeries)`
-                # off this endpoint -- so an exact match on "Alerting" drops every firing that arrived
-                # through `noDataState: Alerting`, which the rules carry deliberately.
-                #
-                # A PREFIX rather than a list of the reasons seen so far, because the two failure
-                # directions are not symmetric: admitting a reason nobody has measured yet costs one
-                # report line, dropping one costs a silent all-clear over a page. `Error` is the
-                # single exclusion, and by substring so a compound reason cannot smuggle it past:
-                # that is Grafana failing to reach its own Prometheus rather than any fleet event,
-                # measured 83.5% false over 23 days in `infra/runbooks/capture.md`, and nearly every
-                # rule carries `execErrState: Alerting`, so admitting it would move the daily verdict
-                # on a platform hiccup.
+                # The history writes the state with its REASON attached, so an exact match on
+                # "Alerting" drops every firing that arrived through `noDataState: Alerting`, which
+                # the rules carry deliberately. A PREFIX rather than a list of the reasons seen so
+                # far: admitting an unmeasured reason costs one report line, dropping one costs a
+                # silent all-clear over a page. `Error` is the single exclusion, and by substring so a
+                # compound reason cannot smuggle it past -- it is Grafana failing to reach its own
+                # Prometheus rather than a fleet event (`infra/runbooks/capture.md` measures how often),
+                # and nearly every rule carries `execErrState: Alerting`, so admitting it would move
+                # the daily verdict on a platform hiccup.
                 current = str(line.get("current") or "")
                 if not current.startswith("Alerting") or "Error" in current:
                     continue
@@ -232,11 +217,9 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 seen = fired.get(uid)
                 if seen is not None:
                     # A rule fires once per HOST, so a later row adds a host to the same Alert rather
-                    # than making a second one -- keeping the first row alone under-reports a
-                    # fleet-wide event exactly as reading `instances[0]` did. A uid already carrying a
-                    # CURRENTLY-firing Alert is left untouched: that one renders from `firing_now`,
-                    # and `cleared_in_window` subtracts it. The first row seen for a uid sets
-                    # `active_at`; later rows only add hosts.
+                    # than making a second one; keeping the first row alone under-reports a fleet-wide
+                    # event. A uid already carrying a CURRENTLY-firing Alert is left untouched -- that
+                    # one renders from `firing_now`, which `cleared_in_window` subtracts.
                     if seen.state == "fired-in-window" and row_hosts:
                         fired[uid] = replace(seen, hosts=tuple(dict.fromkeys(seen.hosts + row_hosts)))
                     continue
@@ -267,9 +250,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_LOG = REPO_ROOT / "docs/reference/deploy-log.jsonl"
 REGISTER = REPO_ROOT / "docs/reference/kraken-snapshot-register.md"
 # A row of the register's `## Re-confirmation log` table: first cell `#<n> (...)`, second cell the
-# ISO stamp. The heading gate in `last_sweep_date` is defensive, not a report on what the register
-# currently holds: a dated row under any other heading must never become the answer, whether or not
-# one exists there yet.
+# ISO stamp. `last_sweep_date`'s heading gate is defensive rather than a claim about the register:
+# a dated row under any other heading must never become the answer.
 _LOG_ROW = re.compile(r"^\| #\d+[^|]*\|\s*(\d{4}-\d{2}-\d{2})T")
 
 
@@ -316,10 +298,8 @@ def read_reminders(
 ) -> RemindersRead:
     """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
     nothing (spec 00107 D1). Each reminder comes from the source that actually knows: the sweep from
-    the register's last re-confirmation row plus the monthly cadence; the healable re-derivation from
-    whether its counter moved in the window -- the qualifying-day COUNT comes from the ledger, which
-    the runbook cited here names as the arbiter and which Grafana Cloud cannot see, so this pure-HTTP
-    instrument does not reach it.
+    the register's last re-confirmation row plus the monthly cadence, the healable re-derivation from
+    whether its counter moved in the window.
 
     An owed reminder reports and never blocks; a source that could not be read is `unreadable`, like
     every other read here.
@@ -359,9 +339,7 @@ def read_reminders(
         # A counter summed from an append-only ledger CAN DECREASE when a record is corrected or the
         # ledger is rebuilt -- a correction that raises the total resets nothing -- and `increase()`
         # then reports the whole post-reset value as movement (`T0044`, resolved, records the
-        # correction it was opened on). The `zcrypto-reconcile-healable-gap-rate` rule guards the
-        # same window with `resets()`; this mirrors it, and the number is deliberately not quoted --
-        # the ledger's own count is the arbiter.
+        # correction it was opened on). This mirrors `zcrypto-reconcile-healable-gap-rate`'s `resets()`.
         owed = True
         status = f"counter reset in {hours} h (a ledger correction or rebuild), so its movement says nothing -- recount the qualifying days from the ledger"
     else:
@@ -381,31 +359,26 @@ def read_reminders(
 RUNBOOKS = REPO_ROOT / "infra/runbooks"
 # A link the prefix introduces, not any path the description happens to mention: an unprefixed
 # mention that resolves would otherwise pass a description whose actual link is dead. The prefix is
-# the LOOSE half deliberately -- it marks a citation and is not a formatting rule, so any case and
-# any run of whitespace (a newline included) after the colon still names a link an operator can
-# follow, while `_RUNBOOK_LINK` keeps the path exact. Tightening it back reports descriptions whose
-# links work, and this check cannot repair what it reports. The link is wrapped in a group so a
-# finding can quote it verbatim; `_RUNBOOK_LINK`'s own file and anchor groups sit one number further
-# along, and it is composed rather than respelled so the two cannot drift apart.
+# the LOOSE half deliberately -- any case and any run of whitespace after the colon still names a
+# link an operator can follow -- while `_RUNBOOK_LINK` keeps the path exact. The link is wrapped in
+# a group so a finding can quote it verbatim; `_RUNBOOK_LINK`'s own file and anchor groups sit one
+# number further along, and it is composed rather than respelled so the two cannot drift apart.
 _RUNBOOK_CITED = re.compile(r"(?i:Runbook:)\s*(" + _RUNBOOK_LINK.pattern + ")")
 # The vocabulary `.claude/rules/operator-facing-text.md` bans from any surface read without the repo
 # open, spelled wider than that rule spells it wherever hand-written prose varies: either separator
 # after the phase word, an optional backtick around a serial. The bare decision number the rule also
-# bans is deliberately absent -- this check detects and cannot repair, so a false positive is a
-# finding line in every daily report until a human edits a description that was never wrong, and a
-# two-character token is the alternation that would mint them.
+# bans is deliberately absent: this check detects and cannot repair, so a two-character token would
+# mint a finding line in every daily report until a human edits a description that was never wrong.
 _INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+`?\d{5}|\bWP\d")
 
 
 def check_descriptions(checks: list[dict], runbooks: Path = RUNBOOKS) -> list[str]:
     """One line per defect in a dead-man check's description, named per check (spec 00107 D5).
 
-    The descriptions are hand-written in healthchecks.io, outside the reach of every repo test, and
-    are read from a phone with nothing open. Two assertions each: at least one
-    `Runbook: infra/runbooks/<file>#<anchor>` citation -- the prefix is part of the shape the finding
-    quotes back -- EVERY one of them resolving against a real `<a name=…>` tag in the file it names,
-    and no internal token.
-    Detects, never repairs -- the descriptions live in the SaaS, so a finding is a line for a human.
+    The descriptions are hand-written in healthchecks.io and read from a phone with nothing open.
+    Two assertions each: at least one `Runbook: infra/runbooks/<file>#<anchor>` citation, every one
+    resolving against a real `<a name=…>` tag in the file it names, and no internal token. Detects,
+    never repairs -- they live in the SaaS, so a finding is a line for a human.
     """
     out = []
     for check in checks:
@@ -456,10 +429,9 @@ class Check:
     value: str
 
 
-# Loki and Prometheus answer under DIFFERENT paths behind the same datasource proxy, and the
-# difference is not cosmetic: Loki 404s on Prometheus's `/api/v1/query`. The path is a parameter so
-# each caller states which API it is talking to rather than inheriting a default that is right for
-# only one of them.
+# Loki and Prometheus answer under DIFFERENT paths behind the same datasource proxy -- Loki 404s on
+# Prometheus's `/api/v1/query` -- so the path is a parameter and each caller states which API it is
+# talking to rather than inheriting a default that is right for only one of them.
 _PROM_QUERY_PATH = "/api/v1/query"
 _LOKI_QUERY_PATH = "/loki/api/v1/query"
 
@@ -543,16 +515,14 @@ def read_deadmen(token: str, *, opener=urllib.request.urlopen) -> DeadmenRead:
 
 # Presence and freshness, which the alert rules deliberately cannot give -- their absence states are
 # `OK` by design, so a vanished series pages nothing. `(no series)` here is a FAIL, never a zero.
-# (name, expr, bound). A `None` bound is presence-only and belongs to the three checks whose names
-# say `present`; every other check is judged on its VALUE, because a series can be present and
-# carry the very reading the check exists to catch -- `up` reads 0, not absent, when Alloy is
-# running and the app it scrapes is dead (the capture role's own `config.alloy` says so of
-# `engine_app` on the secondary). A value-bearing check without a bound reports PASS through its
-# own failure.
+# (name, expr, bound). A `None` bound is presence-only and belongs to the checks whose names say
+# `present`; every other check is judged on its VALUE, because a series can be present and carry the
+# very reading the check exists to catch -- `up` reads 0, not absent, when Alloy is running and the
+# app it scrapes is dead. A value-bearing check without a bound reports PASS through its own failure.
 #
-# Each bound is the owning alert rule's own evaluator, so the pass and the page agree about what
-# healthy means; they drift apart if one is changed alone. `zcrypto-engine-cycle-stale` gt 16500,
-# `zcrypto-reconcile-source-lag` gt 10800, `zcrypto-logship-lines-dropped` gt 0 over 6 h.
+# Each bound is the owning alert rule's own evaluator -- `zcrypto-engine-cycle-stale`,
+# `zcrypto-reconcile-source-lag`, `zcrypto-logship-lines-dropped` -- so the pass and the page agree
+# about what healthy means; they drift apart if one is changed alone.
 VERDICT_CHECKS: tuple[tuple[str, str, Callable[[float], bool] | None], ...] = (
     ("capture primary up", 'up{job="capture_app",host="zcrypto"}', lambda v: v == 1),
     ("capture secondary up", 'up{job="capture_app",host="zcrypto-red"}', lambda v: v == 1),
@@ -572,11 +542,10 @@ VERDICT_CHECKS: tuple[tuple[str, str, Callable[[float], bool] | None], ...] = (
 def read_verdict(token: str, *, opener=urllib.request.urlopen) -> list[Check]:
     checks = []
     for name, expr, bound in VERDICT_CHECKS:
-        # The PARSE is inside the guard too: a 200 whose shape changed raises `KeyError` out here,
-        # and an uncaught raise leaves the pass at exit 1 -- attention -- for a source it could not
-        # read. A body it cannot understand is the same finding as a body it cannot fetch. The
-        # `float()` below is inside it for the same reason: `ValueError` is already in `_UNREACHABLE`,
-        # so a non-numeric body stays exit 2 rather than becoming a FAIL that blames the fleet.
+        # The PARSE is inside the guard too: a 200 whose shape changed raises `KeyError` here, and a
+        # body it cannot understand is the same finding as a body it cannot fetch. The `float()` below
+        # is inside it for the same reason -- `ValueError` is already in `_UNREACHABLE`, so a
+        # non-numeric body stays unreadable rather than becoming a FAIL that blames the fleet.
         try:
             series = _proxy_query(PROM_DS_UID, expr, token, opener)
             if not series:
@@ -625,10 +594,9 @@ class Report:
     def unreadable(self) -> list[str]:
         """Every source that could not be read -- the verdict checks and the reminders included.
 
-        The verdict read reports through its checks rather than an `unreadable` field, so a timeout
-        on it alone used to leave the pass at exit 1, ATTENTION: a Grafana it could not reach,
-        reported as something wrong with the FLEET. The `unreadable:` prefix is written by
-        `read_verdict` for exactly this case and is the only value that carries it.
+        `read_verdict` reports through its checks rather than an `unreadable` field, so its failures
+        reach this list only by the `unreadable:` prefix it writes, which is the only value carrying
+        one; without the sweep a Grafana the pass could not reach reads as a FLEET finding.
         """
         named = [n for n in (self.alerts.unreadable, self.logs.unreadable, self.deadmen.unreadable, self.reminders.unreadable) if n]
         return named + [
@@ -714,17 +682,15 @@ class Report:
         cleared = ", ".join(f"`{a.uid}`" for a in self.cleared_in_window)
         failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"
         errors = sum(c.count for c in self.logs.counts if c.level in ("ERROR", "CRITICAL"))
-        # WARNING is carried too, and only when there is some. A healthy fleet produces no
+        # WARNING is carried too, and only when there is some: a healthy fleet produces no
         # ERROR/CRITICAL for weeks, so a paragraph counting only those records "0" every day and the
-        # journal says nothing -- which is what happened on the first real pass, whose ONLY finding
-        # was 1802 WARNING lines the paragraph dropped. Omitted when zero so a silent day stays short.
+        # journal says nothing. Omitted when zero so a silent day stays short.
         warnings = sum(c.count for c in self.logs.counts if c.level == "WARNING")
         # A description finding moves no exit code (spec 00107 D5 -- the check detects and cannot
         # repair), so this clause is the only trace it leaves in the artefact that gets pasted.
         findings = len(self.deadmen.description_findings or [])
-        # The OWED marker travels with the clause. The paragraph is the artefact that gets pasted
-        # into the journal, and `refdata sweep: due in 0 days` -- the owed-today spelling -- skims
-        # as "not yet" without it, where the markdown's own line is unambiguous.
+        # The OWED marker travels with the clause: `refdata sweep: due in 0 days` -- the owed-today
+        # spelling -- skims as "not yet" without it in the paragraph that gets pasted into the journal.
         reminders = ", ".join(f"{'OWED ' if r.owed else ''}{r.name}: {r.status}" for r in self.reminders.reminders) or "none read"
         deploys = ", ".join(str(d.get("limit")) for d in self.deploys) or "none"
         hours = int(self.window.total_seconds() // 3600)
@@ -780,9 +746,9 @@ def main(argv: list[str]) -> int:
     try:
         token = grafana_auth.vault_var("grafana_sa_token")
     except Exception as exc:
-        # The catch is deliberately broad -- `vault_var` fails across six unrelated hierarchies and a
-        # narrow tuple would be guaranteed incomplete -- so keep the traceback for the case where
-        # this is a real bug rather than a locked agent. stderr, so stdout stays valid markdown.
+        # The catch is deliberately broad -- `vault_var` fails across unrelated exception hierarchies
+        # and a narrow tuple would be guaranteed incomplete -- so keep the traceback for the case
+        # where this is a real bug rather than a locked agent. stderr, so stdout stays valid markdown.
         traceback.print_exc(file=sys.stderr)
         print(
             f"# Daily pass\n\n**Verdict: attention** (exit 2)\n\n## Sources that could not be read\n- the vault could not be read, so no source was queried: {type(exc).__name__}: {exc}"
@@ -810,18 +776,16 @@ class Tier(Enum):
 
 
 # Default-deny. A command is AUTONOMOUS only when it matches one of the shapes enumerated below,
-# and PREPARED otherwise. Three parser generations tried the opposite -- admit a head, then prove
-# its arguments harmless -- and each shipped a fresh escape: shell composition, then attached and
-# combined flags, then the operator spellings `|&` and `&>` beside `sort -o FILE` and
-# `uniq IN OUT`. Those last two are the proof the approach was wrong: they write through an operand
-# that is a filename BY POSITION, so no flag allowlist can ever catch them. Enumerating the
-# permitted commands is the only side of the list with a finite length. A shape the runbooks need
-# and this table lacks costs one PREPARED step; a shape it admits by accident costs the capture pair.
+# and PREPARED otherwise. The opposite approach -- admit a head, then prove its arguments harmless
+# -- cannot work: `sort -o FILE` and `uniq IN OUT` write through an operand that is a filename BY
+# POSITION, so no flag allowlist ever catches them, and enumerating the permitted commands is the
+# only side of the list with a finite length. A shape the runbooks need and this table lacks costs
+# one PREPARED step; a shape it admits by accident costs the capture pair.
 
 # Value classes. None may contain a shell metacharacter, so no hole can carry a command out of the
 # shape that vouched for it -- the property `_METACHARS` enforces once for the whole string.
-# No `*`: a container name is never a glob, and a glob names what a filter cannot check --
-# the shape of the defect that reached the secret files through `cat <dir>/*`.
+# No `*` in `_NAME`: a container name is never a glob, and a glob names what a filter cannot check
+# -- the shape of the defect that reached the secret files through `cat <dir>/*`.
 _NAME = r"[A-Za-z0-9][A-Za-z0-9._@:-]{0,63}"
 _UNIT = r"[A-Za-z0-9][A-Za-z0-9._@*-]{0,63}"
 # `systemctl list-timers 'zcrypto-*'` needs the glob; `systemctl restart 'zcrypto-*'` would be a
@@ -843,7 +807,7 @@ _DATEFMT = r"\+[%A-Za-z:._-]{1,24}"
 
 # Every character that lets one command become two, or a word become a command. Checked against the
 # whole string before any shape is tried, so a shape's holes are the only variable parts left.
-# `\` joins them: it is how round two's escapes laundered a separator past a tokeniser.
+# `\` joins them: an escape can launder a separator past a tokeniser.
 _METACHARS = "`$;&<>()\\\n"
 _NOISE = ("2>&1", "2>/dev/null", "> /dev/null", ">/dev/null", "1>/dev/null")
 
@@ -852,9 +816,8 @@ _NOISE = ("2>&1", "2>/dev/null", "> /dev/null", ">/dev/null", "1>/dev/null")
 class _Shape:
     """One permitted command: its literal head, the flags it may carry, and how many operands.
 
-    Operand ARITY is the load-bearing field. `uniq IN OUT` and `sort -o FILE` write through an
-    operand rather than a verb, so a shape that fixes how many operands a head may take -- and what
-    class each must be -- refuses them without needing to know they write.
+    Operand ARITY is the load-bearing field: fixing how many operands a head may take, and what class
+    each must be, refuses the writes that ride a positional filename without knowing they write.
     """
 
     head: tuple[str, ...]
@@ -980,7 +943,7 @@ _READ_SHAPES = (
         # `-e` is deliberately NOT value-taking, and must never become so: it would consume the
         # pattern, leaving the first FILE at operand 0 -- which `_reads_only_safe_paths` skips as
         # the pattern. That pair read `/etc/shadow` under an AUTONOMOUS verdict. Left as a valueless
-        # short flag the pattern stays positional and every file is checked; no runbook uses `-e`.
+        # short flag the pattern stays positional and every file is checked.
         {"-A": _INT, "-B": _INT, "-C": _INT, "--include": _QUOTED},
         short=r"-[iEvnocleqrRFwxsah]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 6),
@@ -1098,11 +1061,10 @@ _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
 # the runbooks' own permission check on `logship-secrets.env`, which prints no bytes of it.
 #
-# This is an allowlist of WHERE they may read, not a denylist of secret-looking names. The name
-# version was written first and broke immediately: `cat /opt/zcrypto-capture/*` carries no
-# secret-shaped token and printed the Loki push password, and `grep -r X /etc/zcrypto-ops/` did the
-# same by recursion. A glob or a directory names nothing the filter can match -- which is the exact
-# defect the two inherited post-checks had, reintroduced by hand one commit after being described.
+# An allowlist of WHERE they may read, never a denylist of secret-looking names: `cat
+# /opt/zcrypto-capture/*` printed the Loki push password carrying no secret-shaped token, and
+# `grep -r X /etc/zcrypto-ops/` did the same by recursion -- a glob or a directory names nothing a
+# name filter can match.
 _CONTENT_HEADS = frozenset({"cat", "grep"})
 # Directories, matched by prefix -- every one ends in `/` so a sibling cannot ride in on its
 # letters (`/var/logsecret/` is not `/var/log/`).
@@ -1116,10 +1078,9 @@ _READ_SAFE_DIRS = (
     "/etc/systemd/journald.conf.d/",
 )
 # Single files, matched EXACTLY. As prefixes these admitted anything extending the name --
-# `journald.conf.evil`, `compose.yamlxsecrets.env`, `/etc/machine-id-backup/secrets` all read
-# clean, verified. Nothing on the fleet matches today, which is what made it latent rather than
-# open; `/etc/zcrypto-ops/alloy/` is listed as this one file because alloy-secrets.env sits beside
-# it, and a `compose.yaml.bak` would otherwise have been a door onto the same directory.
+# `journald.conf.evil`, `compose.yamlxsecrets.env`, `/etc/machine-id-backup/secrets` all read clean.
+# `/etc/zcrypto-ops/alloy/` is listed as this one file because alloy-secrets.env sits beside it, and
+# a `compose.yaml.bak` would otherwise have been a door onto the same directory.
 _READ_SAFE_FILES = (
     "/etc/systemd/journald.conf",
     "/etc/zcrypto-ops/alloy/compose.yaml",
@@ -1130,9 +1091,9 @@ _READ_SAFE_FILES = (
 def _reads_only_safe_paths(head: str, operands: list[str]) -> bool:
     """Every path a content head names must sit under a read-safe root, absolute and traversal-free.
 
-    `grep`'s first operand is its pattern -- which holds only because no shape lets a flag consume
-    that pattern. Give `-e` a value spec and this skip silently drops a FILE instead. A `*` cannot cross `/`, so a glob under a
-    safe root stays under it; `..` can leave, so it is refused outright.
+    `grep`'s first operand is skipped as its pattern, which holds only because no shape lets a flag
+    consume that pattern. A `*` cannot cross `/`, so a glob under a safe root stays under it; `..`
+    can leave, so it is refused outright.
     """
     paths = operands[1:] if head == "grep" else operands
     return all(".." not in path and (path.startswith(_READ_SAFE_DIRS) or path in _READ_SAFE_FILES) for path in paths)
@@ -1162,7 +1123,7 @@ def _commands(text: str) -> list[str]:
     """Every backtick span, or -- when there is none -- the whole text as one command.
 
     Never refused for want of markup: the skill passes the one command it is about to run, usually
-    bare, and refusing that would prepare everything at runtime under a green suite.
+    bare, and refusing that would send every runtime step to PREPARED.
     """
     spans = [s.strip() for s in _CMD_SPAN.findall(text) if s.strip()]
     return spans or ([text.strip()] if text.strip() else [])
@@ -1171,10 +1132,9 @@ def _commands(text: str) -> list[str]:
 def _strip_noise(text: str) -> str:
     """Drop the stderr redirections, but only as WHOLE tokens.
 
-    A raw replace made the classifier disagree with bash: `docker logs2>/dev/nullzcrypto-engine`
-    became `docker logs zcrypto-engine` here while bash reads a command `logs2` redirecting into a
-    file. Padding makes the match whitespace-delimited, so anything glued to a word keeps its `>`
-    and meets the metacharacter gate.
+    Padding makes the match whitespace-delimited, so anything glued to a word keeps its `>` and meets
+    the metacharacter gate: a raw replace turned `docker logs2>/dev/nullzcrypto-engine` into
+    `docker logs zcrypto-engine` here, where bash reads a command `logs2` redirecting into a file.
     """
     padded = f" {text} "
     for noise in _NOISE:
@@ -1247,13 +1207,13 @@ def _inspect_format_is_scoped(tokens: list[str]) -> bool:
     """CLAUDE.md's secrets rule, made structural: an inspect prints only the fields named there.
 
     Unscoped, `docker inspect` prints the container's environment, which on the engine host is the
-    live Kraken trade key. Allowlisting the SELECTORS it mentions is not enough, and that premise
-    cost a verified leak: a Go template reaches the whole object through a bare root reference, so
-    `--format '{{.Name}}{{json .}}'` mentions one safe selector and marshals `ContainerJSON` --
-    `.Config.Env` and the key with it. `{{index . "Config" "Env"}}` does the same with no selector
-    at all. So each ACTION is default-denied instead: a safe dotted selector, optionally wrapped in
-    `json`, and nothing else -- no bare `.`, no `index`, `printf`, `range`, `with` or `call`. Text
-    outside the actions is inert label material and needs no check.
+    live Kraken trade key. Allowlisting the SELECTORS it mentions is not enough: a Go template reaches
+    the whole object through a bare root reference, so `--format '{{.Name}}{{json .}}'` mentions one
+    safe selector and marshals `ContainerJSON` -- `.Config.Env` and the key with it -- and
+    `{{index . "Config" "Env"}}` does the same with no selector at all. So each ACTION is
+    default-denied instead: a safe dotted selector, optionally wrapped in `json`, and nothing else --
+    no bare `.`, no `index`, `printf`, `range`, `with` or `call`. Text outside the actions is inert
+    label material and needs no check.
     """
     fmt = _inspect_format(tokens)
     if fmt is None:
@@ -1294,10 +1254,9 @@ def _matches(shapes, tokens: list[str]) -> list[str] | None:
 def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
     """Peel what changes WHO runs a command, never what it does; report the host an ssh retargets to.
 
-    `docker exec <container>` is peeled for the same reason: its payload is the real command, and
-    only the payload separates `docker exec zcrypto-engine zcrypto engine exec-status` from
-    `docker exec zcrypto-archive-pull rm -f /tmp/gate-cache.json`. What comes out is matched against
-    the shapes like any other command, so a peeled payload is never trusted -- only re-examined.
+    `docker exec <container>` is peeled for the same reason: its payload is the real command, and only
+    the payload separates a read on the engine from an `rm -f` in a sibling container. What comes out
+    is matched against the shapes like any other command, so a peeled payload is never trusted.
     """
     target = None
     changed = True
@@ -1330,8 +1289,8 @@ def classify_action(text: str, *, host: str | None = None) -> Tier:
     """Which tier a runbook step falls in. Default-deny: unrecognised is PREPARED, always.
 
     A command is AUTONOMOUS only when EVERY backtick span in the text matches an enumerated shape.
-    There is no rule that reads a command's words and decides it looks harmless -- that rule is what
-    three review rounds broke. Making any branch here permissive is wrong however reasonable it looks.
+    There is no rule that reads a command's words and decides it looks harmless, and making any branch
+    here permissive is wrong however reasonable it looks.
     """
     commands = _commands(text)
     if not commands:
