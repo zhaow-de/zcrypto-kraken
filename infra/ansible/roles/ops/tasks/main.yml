@@ -72,7 +72,7 @@
 # daemon-reload below lets the systemd automount unit own the actual mounting.
 #
 # No converge task retires the old pull channel's credentials: deleting live-looking keys is an
-# irreversible, verify-first action, so it stays an attended step.
+# irreversible, verify-first action, so any such retirement is an attended step.
 - name: fstab entry for the NAS custody export (read-only NFS; the automount owns mounting)
   ansible.posix.mount:
     # IP, not the FQDN the ops channels use: this mount is on the NFS recovery path and has to
@@ -470,7 +470,7 @@
     # ignore_errors under check mode only: a `--check` preview never writes the unit files, so on
     # a host where the timer was never installed this enable cannot resolve the unit and would
     # abort the whole preview. A real converge writes the units first and enables for real.
-    # Same mechanism as the check-mode gate on the timer loop below.
+    # The timer loop below meets the same check-mode failure and skips instead of ignoring the error.
     - name: enable + start the grafana-watchdog timer
       ansible.builtin.systemd_service:
         name: zcrypto-grafana-watchdog.timer

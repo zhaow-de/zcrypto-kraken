@@ -114,7 +114,7 @@ def test_the_rules_read_pairs_every_firing_instance_with_its_runbook_link():
 def test_the_rules_read_lists_every_rule_whose_health_is_not_ok():
     """A rule Grafana could not evaluate pages nothing -- `execErrState: OK` makes that deliberate --
     so the daily pass lists every rule whose `health` is set and not `ok`, with the error Grafana
-    attached; a rule carrying no `health` field at all is not a finding."""
+    attached; a rule carrying no `health` field and no `(Error)` instance is not a finding."""
     payload = _rules(
         {
             "name": "Capture · all streams silent",
@@ -1269,7 +1269,7 @@ def test_a_shape_changed_payload_is_an_unreadable_source_not_a_crash():
 
 def test_a_vault_that_cannot_be_read_exits_2(monkeypatch, capsys):
     """The vault is a source too: a locked GPG agent raises `CalledProcessError`, which `_UNREACHABLE`
-    does not cover, so the pass exits 2 and names it rather than exiting 1 with a traceback."""
+    does not cover, so the pass exits 2 and names it rather than exiting 1, the traceback kept on stderr."""
 
     def boom(*a, **k):
         raise subprocess.CalledProcessError(2, ["vault-pass.sh"])

@@ -428,8 +428,10 @@ def test_old_floor_still_passes_after_1800_without_journal():
 
 def test_journal_probe_path_matches_the_engine_role_default():
     """The journal path site.yml probes must be the engine role's `engine_state_dir` default — the
-    literal in site.yml is a deliberate choice, and a relocation of that default would otherwise
-    leave the floor permanently conservative (probe rc!=0 forever, guard 'working' but never early).
+    literal in site.yml is a deliberate choice (a statically-listed role's defaults are play-wide on
+    this ansible-core, so the literal is not a necessity), and a relocation of that default would
+    otherwise leave the floor permanently conservative (probe rc!=0 forever, guard 'working' but never
+    early).
     """
     site_text = SITE.read_text()
     defaults = (SITE.parent / "roles" / "engine" / "defaults" / "main.yml").read_text()

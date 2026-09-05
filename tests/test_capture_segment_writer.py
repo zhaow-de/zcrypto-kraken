@@ -1460,10 +1460,10 @@ def test_t0037_a_poisoned_witness_can_never_second_a_lone_bogus_stamp(tmp_path, 
 
 
 def test_t0037_a_replay_into_an_unconfirmed_hour_is_deduped_not_duplicated(tmp_path, clock):
-    # T0026 x T0037: a reconnect replay landing while its hour is still UNCONFIRMED is held, and a stop before
-    # confirmation spills it beside its original for the next process to merge into the committed,
-    # manifest-certified final. Duplicated prints corrupt a reconstructed book exactly as badly as lost ones,
-    # so held rows pass the same trade_id de-dup as stored ones.
+    # T0026 x T0037: a reconnect replay landing while its hour is still UNCONFIRMED is held; without de-dup at
+    # hold time, a stop before confirmation would spill it beside its original for the next process to merge
+    # into the committed, manifest-certified final. Duplicated prints corrupt a reconstructed book exactly as
+    # badly as lost ones, so held rows pass the same trade_id de-dup as stored ones.
     clock.now = _ts(10, 0, 30)
     w1 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, flush_rows=50, dedup_key="trade_id")
     for i in range(5):
@@ -1733,7 +1733,7 @@ def test_t0037_restart_reopening_a_captured_hour_counts_nothing(tmp_path, clock)
     # Spec 00109 D1: a mid-hour restart whose FIRST event is a replayed pre-restart print opens the PREVIOUS
     # hour — but that hour HAS parts on disk, so nothing was fabricated and nothing may be counted. Hour 14 is
     # committed first so the floor is seeded as it always is on a capture host, where every previous hour has
-    # a final: a count keyed on `self._floor is not None` passes here, and must not.
+    # a final: a count keyed on `self._floor is not None` would count this hour, and must not.
     # `test_t0037_a_held_only_past_hour_still_counts` is this fixture with hour 15's `.part` swapped for a
     # `.held`, and must read 1.
     w1 = _new_writer(tmp_path, flush_rows=5)
