@@ -106,26 +106,13 @@ def main(
 
 
 def run() -> None:
-    """Console-script entry point (`zcrypto`), and the target of `python -m cli`.
-
-    Exists so an unhandled exception is LOGGED before the process dies. Typer installs its own
-    `sys.excepthook`, which renders a Rich traceback straight to stderr without ever going through
-    `logging` -- so a crash carries no timestamp and no level, Alloy cannot label it at ingest
-    (infra/nas/config.alloy), and the level-based alerting is blind to the single worst failure of
-    the unbackfillable archive path: the pull loop dying. See T0041.
-
-    `SystemExit` and `KeyboardInterrupt` re-raise untouched: click already turns its own errors
-    (usage, abort, `typer.Exit`) into the former, and the latter is an operator action rather than a
-    fault. Everything else is logged, INCLUDING the rest of `BaseException`. That width is
-    load-bearing rather than defensive: a Rust panic surfaces in Python as `pyo3_runtime
-    .PanicException`, which derives from `BaseException` specifically so that `except Exception`
-    does not catch it. The engine holds a nautilus node whose core is compiled Rust, and a panic
-    escaping it is precisely the fault that most needs to page -- caught only by `Exception` it
-    would die through Typer's excepthook with no level for Alloy to label, and the level-based
-    alerting would never see the engine go.
-    """
+    """Console-script entry point (`zcrypto`): an unhandled fault is LOGGED before the process dies -- Typer's own `sys.excepthook`
+    would otherwise render it to stderr, never through `logging`, unlabelled for the level-based alerting (T0041, resolved).
+    `tests/test_error_paths_are_logged.py` pins the `BaseException` width -- a Rust panic from the engine's compiled core escapes
+    `except Exception` -- and that both control-flow exits leave unlogged with their exit codes intact."""
     try:
         app()
+    # click's `SystemExit` carries an exit code that means something; a Ctrl-C is an operator action, not a fault.
     except SystemExit, KeyboardInterrupt:
         raise
     except BaseException:
