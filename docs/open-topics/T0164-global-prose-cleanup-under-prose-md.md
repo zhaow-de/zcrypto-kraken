@@ -27,9 +27,16 @@ The second `tests/` + `infra/` batch (2026-09-05, `zcrypto-bravo`): eight more f
 
 The docs batch (branch `cleanup/prose-docs`, 2026-09-05, `zcrypto-bravo`): `fleet-pins.md`, `fleet.md` and the seven phase changelogs under the bar, every heading, divider, rule, cell, digest and hash proven identical (`parse_pins_table` equal); tripwire on the nine files 335 → 17 at merge-base and tip — the remainder is fleet.md's twelve enumeration rows and two sections, fleet-pins' agentboard row and Standing constraints, whose operator instructions await homes, and the appended 2026-09-05 T0170 entry; a whole-branch Fable review and its fix's re-review.
 
+### The `cli/` batch
+
+Branch `cleanup/prose-cli`, 2026-09-05, `zcrypto-alex`: 83 of `cli/`'s 167 files brought under the bar or found already under it — 77 changed, six needing no edit — across 63 commits, one per package. Every file is proven prose-only against the commit it lands on: the AST with every docstring stripped identical, `ruff check` and `ruff format --check` unchanged, and the inventory of trailing comments on code lines byte-identical by `tokenize`, so no same-line comment moved anywhere on the branch. Eight drafter and verifier waves returned 116 file verdicts, 83 accepted and 33 left REVISE. One whole-branch Opus read, three scoped Opus reads and a per-hunk read of the corrections commit — the whole-branch read's own suggested wordings were applied unverified and two were false of the code they sat on, which is why the last read asks one question per hunk and names the code line each clause cites.
+
+Measured over `cli/` at the merge-base and the tip, both re-run at the rebased tip (`uv run python infra/scripts/prose-tripwire.py cli`, and `.local/retro/2026-09-04/study/prose-ratio.py <rev>` for the ratio): the tripwire 773 → 418 offenders, prose 9,787 → 7,505 lines of 32,720 → 30,438, 29% → 24%, and code lines 19,433 at both ends — the prose-only property visible in the measurement. Of the 43 file-prose offenders left, 32 are exactly the REVISE files; the other 11 are modules of one to nine lines where the ratio bar is unreachable by construction (`cli/alpha/errors.py` is two lines, a class statement and its one-sentence docstring), so they need a floor in the script rather than an edit. Eleven comment-block offenders also survive in landed files — nine in `cli/engine/soak.py` and two in `cli/universe/rules.py` — each a logged keep with its own over-threshold justification recorded per block, and each owed `prose.md`'s necessity gate at review rather than a further cut.
+
+
 ## Suggested next steps
 
-- **The remaining scope, one PR per batch, dispatched by `zcrypto-main`** — `cli/` (in flight), the rest of `tests/` + `infra/` beyond the two batches (the tripwire's report is the worklist; a dozen sub-threshold soak blocks still carry event residue the tripwire cannot see), the three docs. Worklist per assignment: the tripwire's report for that scope, the files that can complete first (fewest offenders, one review round) under a hard clock, otherwise the churn order (`.local/retro/2026-09-04/study/churn.md`, most-changed first) with `.claude/*`, `docs/specs/*` and `docs/plans/*` excluded — the refine-rules round owns the first, and a spec/plan pair is a different kind of document with its own treatment.
+- **The remaining scope, one PR per batch, dispatched by `zcrypto-main`** — the 33 `cli/` files left REVISE (rostered below), the rest of `tests/` + `infra/` beyond the two batches (the tripwire's report is the worklist; a dozen sub-threshold soak blocks still carry event residue the tripwire cannot see), the three docs. Worklist per assignment: the tripwire's report for that scope, the files that can complete first (fewest offenders, one review round) under a hard clock, otherwise the churn order (`.local/retro/2026-09-04/study/churn.md`, most-changed first) with `.claude/*`, `docs/specs/*` and `docs/plans/*` excluded — the refine-rules round owns the first, and a spec/plan pair is a different kind of document with its own treatment.
 - **Per file, `prose.md`'s four dispositions** (cut, condense, keep, relocate), findings agreed before editing, false-or-stale first; a config file's non-comment lines extracted before and after and byte-identical; a test docstring re-read against its assertions.
 - **Two runbook sentences stale since the 2026-09-04 converge, for the infra batch**: `engine-procedures.md`'s NAV-disarm step (hazard closed by T0150's journaled `nav`; delete, or a one-clause residue for older records) and `drills-order-path.md`'s "neither of the two is deployed" (rewrite as state).
 - **Measured before and after**: the tripwire's summary line on the merge-base and on the tip of each PR, quoted in the PR body.
@@ -38,3 +45,49 @@ The docs batch (branch `cleanup/prose-docs`, 2026-09-05, `zcrypto-bravo`): `flee
 
 - **The owner's closeout decisions the batches collected, one clause each**: fleet.md's ten operator instructions — the engine-image ad-hoc read, the single-identity SSH agent a zaccess converge needs, the bridgehead's digest-less Alloy, the client-cert revocation procedure, the agentboard node-upgrade recipe, the NAS transfer instructions, the two drill recipes and the wiring-not-timing caveat — to runbook homes; phase 2 iter-013's CPCV purge/embargo windows proven sufficient but not tight, to a topic or a two-sided-bound assertion in the CPCV property tests; iter-168's unmeasured in-flight REST query on an affected leg, to a T0160 sub-item; `notification_settings.repeat_interval` surviving a `grafana-push.sh` upsert, to a guard in `tests/test_infra_alert_rules.py` or a read-back in the script; phase 3's regime-gate EMA variant (spec 00019's out-of-scope list only) and the §12 hand-back confirming B4 as the fallback deployable (closeout report and master plan only), to a topic or decisions-log line each; phase 0's two known minors — the registry append after a hand-edited unterminated last line, and `fetch_public`'s KeyError on a result-less body (`cli/snapshot/fetch.py` still returns `payload["result"]`) — to a fix or recorded drop each. Batch 2's check-mode coarseness and converge-guard claims are already T0168's ops-role bullet.
 - **Owed by `zcrypto-main`**: the rollout skill's NAS section takes the two clauses cut from the pins row (every rollout pins a `develop` build; `-e nas_capture_image_digest=` is silently accepted as an unused extra var); archived T0162 re-tensed now that the `alerts.yaml` comment is a pointer; one closeout entry in `docs/iterations-history-phase6.md` for the whole cleanup; the tripwire pre-commit hook with the last PR, once `--since` is no longer needed — its residuals to clear first: the 2026-09-05 T0170 entry, fleet.md's twelve rows and two sections, the agentboard pins row and Standing constraints.
+
+### From the `cli/` batch — the 407 candidates
+
+The raw list, with every item's file and its live-or-dormant state, is `.local/dispatch/2026-09-05-t0164-cli-candidates.md`. Nine classes: `draft-disposition` 99, `test-or-guard-owed` 86, `test-already-asserts` 71, `home-verified` 31, `registration-owed` 31, `sibling-file-prose` 24, `tree-defect` 22, `ruling-owed` 22, `pass-level-finding` 21.
+
+- **130 of the 407 need no main-tree action** — the `draft-disposition` and `home-verified` classes, a drafter's own choice and an audit record that a cut lost nothing.
+- Of the 53 `tree-defect` and `registration-owed` items, **17 are live in landed files** and **36 are owed by whoever finishes one of the 33 REVISE files**.
+- The 22 `ruling-owed` items are `zcrypto-main`'s, under their own heading in that file with the ruling each needs on one line.
+- The 21 `pass-level-finding` items amend the pass brief or `prose.md` rather than any file under `cli/`, and went to `.local/agent-lessons/zcrypto-alex.jsonl` as rule feedback for the round-9 harvest.
+
+### From the `cli/` batch — the follow-up pass this pass's rule froze
+
+`zcrypto-main`'s ruling (2026-09-05): the proof for that pass widens to AST-with-docstrings-stripped identical plus `ruff` unchanged, trailing comments free, since the AST proof already guarantees the code and a same-line comment is prose. Its worklist:
+
+- `cli/capture/ws_client.py`'s `(T0035)`, re-tensed now that the topic is archived `resolved`.
+- `cli/derivatives/oi.py`'s `# 4xx (incl 404) is definitive`, which does not match its own branch `exc.code is None or exc.code < 500`.
+- `cli/engine/probeplan.py`'s `# Sec 10's 250% floor`, to the `Master-plan §10` spelling its two siblings in `cli/risk/` use.
+- `cli/engine/soak.py`'s two bare-number citations, `# D9` and `# 34`/`# 17`.
+- `cli/panel/primitives.py`'s `# the Step 0 measurement, verbatim`, a plan-local step with no serial that `tests/test_code_prose_citations.py` cannot see.
+- **The three `cold-review` citations that resolve from nothing in the repo** — `cli/engine/command.py`'s `# lazy -- see seed_cycle_success (cold-review I4)` (also one of the above), `cli/data/manifest.py` and `cli/liquidations/coinalyze.py`. The token names a review round, not a repo artefact, against `prose.md`'s rule that every citation resolves from the repo alone.
+
+### The 33 `cli/` files left REVISE
+
+Untouched in the tree, and each owed by whoever finishes that file. Every one carries at least one Critical or Important against its draft — 5 Critical and 44 Important in all — with the count and the leading finding below.
+
+#### `cli/alpha` through `cli/data`
+
+- **`cli/alpha`** — `b1.py` (1I, the completion-time cut lost its binding to the decision boundary); `killbar.py` (1C/1I, `full window` dropped, an invariant the types do not hold now stated nowhere).
+- **`cli/archive`** — `command.py` (3I, a purpose clause scoped to `pull` rewritten as a claim about all four commands); `pull.py` (1I, `verified`'s membership restated without the and-ok half); `reader.py` (1I, the doubled-stream consequence re-attached to the wrong arm); `reconcile.py` (1I, the dedup described as global where the code drops equal neighbours); `scan_cache.py` (1I, `deeply` dropped, leaving a claim false of the line above it); `settle.py` (1C/2I, the inclusive-bounds why now stated nowhere in the file).
+- **`cli/capture`** — `book.py` (1I, a `_to_decimal` precondition written wider than the code); `desync_recovery.py` (1I, an undisclosed cut took the grace's lower bound); `segment_writer.py` (5I, a stream clause false of the reference the code computes); `ws_client.py` (1I, `uncorrelated` invented for a path that still mints and tracks `sub_id`).
+- **`cli/costs`** — `calibrate.py` (1I, names a refusal `calibrate()` cannot produce).
+- **`cli/data`** — `manifest.py` (1I, the invariant binding `relpath` to the frame it was read from, dropped); `sync.py` (1I, half the why for the file's existence over-cut).
+
+#### `cli/engine` through `cli/portfolio`
+
+- **`cli/engine`** — `cycle.py` (1I, the defect the placement exists to prevent, mis-stated); `execgate.py` (2I, a contract left wider than the code); `executor.py` (4I, `_publish_fill`'s reach stated wider than its three call sites); `flatten.py` (2I, a consequence the code beside it cannot produce); `gate_cache.py` (1I, the draft trips the tripwire on both the block and the file); `instruments.py` (1C, an undeclared cut took the base-10 clause); `node.py` (1I, over-cut on a verification that tested the wrong surface); `venuestate.py` (1I, detectability replaced by a weaker claim).
+- **`cli/features`** — `derivatives.py` (1C, the constancy qualifier, spec 00110 D7's load-bearing word, dropped); `volatility.py` (1I, the output-length invariant cut).
+- **`cli/liquidations`** — `coinalyze.py` (1I, the same-tree condition that makes the reuse claim true, dropped).
+- **`cli/panel`** — `materialize.py` (2I, names a float hazard this module's Float64 inputs cannot carry).
+- **`cli/portfolio`** — `crossfreq.py` (1I, the fence-post end never bound to an index); `crossfreq_system.py` (2I, an identity pin attributed to a test that does not assert it); `record43_book.py` (1I, `recomputed` attached to fields returned straight from the builder).
+
+#### `cli/snapshot` through `cli/xcheck`
+
+- **`cli/snapshot`** — `register.py` (1C, a relocated sentence states a contract wider than T0025's resolution).
+- **`cli/trades`** — `backfill.py` (1I, cites a `--mint` flag this command does not define).
+- **`cli/xcheck`** — `binance.py` (1I, drops the `<=` and asserts the fetch returns `limit` candles).
