@@ -1,29 +1,8 @@
 #!/usr/bin/env bash
 # amend-reviewed-by.sh <commit-ish> "<reviewer model name>"
-#
-# Lands ONE `Reviewed-by: <model> <noreply@anthropic.com>` trailer on ONE commit of the
-# current branch -- HEAD or any ancestor -- so a review's trailer is amended the turn the
-# review returns instead of being batched later (.claude/rules/commit-messages.md). The
-# trailer is appended as the last line of the trailer block with no blank line before it;
-# a message with no trailer block gets the separating blank line first, so git parses it.
-#
-# Refuses, rewriting nothing: a dirty index or worktree (untracked files are fine); a
-# detached HEAD or the main branch; a commit not on the current branch, or already on develop
-# when run from another branch (exit 9 -- rewriting it would fork the branch off its base); a commit already
-# carrying that exact trailer; two commits in the replayed range with byte-identical
-# messages (a non-HEAD target is matched during the rebase by its full message); any
-# commit in the replayed range whose hash is recorded in docs/reference/deploy-log.jsonl or
-# fleet-pins.md (a rewrite would orphan a rollback operand -- exit 7); a merge commit in the
-# replayed range (a rebase would linearize it -- exit 8). A pre-commit hook failing mid-rebase
-# leaves the rebase in progress: fix, `git rebase --continue`, and re-verify the diff is empty.
-# The blank-line rule keys on the LAST line matching a known trailer name (Co-Authored-By,
-# Reviewed-by, Refine-Round-Closed, Signed-off-by, BREAKING-CHANGE, Claude-Session -- the
-# harness default this repo bans but must still parse): a body ending in a
-# `Note:`-shaped line gets its separating blank line, and a trailer name quoted mid-body
-# does not suppress it.
-# Every commit after the target is rewritten -- hashes change, content does not, and the
-# script asserts that with an empty `git diff <old-head> HEAD --stat` before it prints
-# old -> new for the target.
+# Lands ONE `Reviewed-by:` trailer on ONE commit of the current branch -- HEAD or any ancestor -- so a
+# review's trailer lands the turn the review returns (.claude/rules/commit-messages.md). Each refusal
+# below rewrites nothing and prints its own reason and exit code.
 set -euo pipefail
 target_ish="${1:?usage: $0 <commit-ish> \"<model name>\"}"
 model="${2:?usage: $0 <commit-ish> \"<model name>\"}"
@@ -60,6 +39,9 @@ for rec in docs/reference/deploy-log.jsonl docs/reference/fleet-pins.md; do
 done
 
 awk 'BEGIN{RS="\0"} {sub(/\n+$/,""); printf "%s", $0}' "$msg" > "$new"
+# Keys on the LAST line matching a known trailer name, so a body ending in a `Note:`-shaped line
+# still gets its separating blank line and a trailer name quoted mid-body does not suppress it.
+# Claude-Session is listed because the harness default must still parse, never because it is allowed.
 last=$(tail -n 1 "$new")
 [[ "$last" =~ ^([Cc]o-[Aa]uthored-[Bb]y|Reviewed-by|Refine-Round-Closed|Signed-off-by|BREAKING-CHANGE|Claude-Session):\  ]] || printf '\n' >> "$new"
 printf '\n%s\n' "$trailer" >> "$new"
@@ -75,6 +57,8 @@ set -e
 exit 0
 EOS
   chmod +x "$exec_script"
+  # A pre-commit hook failing here leaves the rebase in progress: fix it, `git rebase --continue`,
+  # and re-verify that the diff below is empty.
   git rebase --quiet $base_arg --exec "$exec_script"
 fi
 
