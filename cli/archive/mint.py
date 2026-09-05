@@ -1,20 +1,7 @@
-"""Write path for reconciled hours (spec 00050).
-
-Mirrors `SegmentWriter`'s committed-final invariant exactly, because the overlay is verified by the
-same `verify_tree`:
-
-    `<HH>.parquet` on disk ALWAYS means "committed, complete, and manifested".
-
-So the sidecar is minted from the temp file's bytes — which ARE the final's bytes, because the temp
-file IS the final, renamed — and written BEFORE the atomic rename that publishes it. A kill anywhere
-in here leaves no final at all, and the next run simply re-mints. The rename is last, always.
-
-By default (`replace=False`, the reconciler's own path) an existing final is never overwritten: a
-re-run is a no-op (`FileExistsError`), and a provisionally residual hour is healed by a NEW mint plus
-a superseding ledger record, never by mutating a published file. A caller that passes `replace=True`
-(e.g. `cli/trades/backfill.py`) opts out of that guarantee for its own hour — see `mint_hour`'s
-`replace` parameter. Nothing here decodes or re-blesses a file it did not itself write.
-"""
+"""Write path for reconciled hours (spec 00050): `<HH>.parquet` on disk means committed, complete and
+manifested — `SegmentWriter`'s invariant, verified by the same `verify_tree` — so the rename that publishes it
+comes last, and by default (`replace=False`) an existing final is never overwritten: a provisionally residual
+hour is healed by a NEW mint plus a superseding ledger record, never by mutating a published file."""
 
 from __future__ import annotations
 
@@ -28,10 +15,8 @@ import polars as pl
 from cli.archive.reconcile import Block, Gap
 from cli.capture.errors import CaptureError
 
-# `_replace_durably` is module-private in the capture package. Importing it is a deliberate, narrow
-# coupling: the overlay is verified by the same `verify_tree` as the raw mirrors, so it MUST have
-# byte-identical durability semantics (fsync the data, rename, fsync the directory entry). A second
-# implementation would be a second thing to get wrong.
+# Importing a module-private name is deliberate: the overlay must have the raw mirrors' durability
+# semantics exactly, and a second implementation would be a second thing to get wrong.
 from cli.capture.segment_writer import _replace_durably
 
 
@@ -53,35 +38,19 @@ def ledger_append(root: Path, record: dict) -> None:
 
 
 def _check_hour(hour: datetime) -> datetime:
-    """Return the hour's EXCLUSIVE end boundary, refusing anything that is not an exact UTC hour.
-
-    The path is formatted straight from `hour`, so a stray 09:30 would silently write the 09:00 hour's
-    file — publishing half an hour under a name that promises the whole of it.
-    """
+    """Return the hour's EXCLUSIVE end boundary, refusing anything that is not an exact UTC hour: the
+    path is formatted straight from `hour`, so a stray 09:30 would publish half an hour under the
+    09:00 file's name, which promises the whole of it."""
     if hour.tzinfo is None or hour != hour.replace(minute=0, second=0, microsecond=0):
         raise CaptureError(f"refusing to mint {hour!r}: not an exact UTC hour boundary")
     return hour + timedelta(hours=1)
 
 
 def _check_gaps(gaps: list[Gap], *, hour: datetime, hour_end: datetime, label: str, primary_boundaries: bool) -> None:
-    """Hold every gap to this hour's own bounds, and — for a HEALED gap — to `Gap`'s ownership contract.
-
-    This is the one guard that catches a caller passing `find_book_gaps` an inclusive `hour_end`
-    (09:59:59.999999) where the contract says exclusive (10:00:00). Such an hour yields a tail gap
-    that ends short of the boundary, and `splice_book`'s tail filter (`ts >= gaps[-1].end`) then
-    admits primary rows AFTER the secondary block — rows out of block order in an unbackfillable
-    archive. The bad bound is invisible in the blocks by the time they reach us; it is loud here.
-
-    An unowned boundary (`*_is_primary_message=False`) is, by construction, an hour boundary — the
-    head/tail edge, or both edges of a wholly-absent primary hour. Anything else is a malformed gap.
-
-    `primary_boundaries=False` drops that ownership half, and only a RESIDUAL gap may pass it: a
-    residual window is measured over the MINTED frame, so its interior edges are spliced secondary
-    messages, owned by neither the primary nor the hour. It drives no row filter — it describes what
-    the hour still lacks — so the ownership rule protects nothing there, while the bounds check, which
-    protects the sidecar from claiming a hole outside its own hour, still applies. Explicit at every
-    call site rather than defaulted: silently relaxing it for a healed gap is the corruption above.
-    """
+    """Hold every gap to this hour's bounds — else the provenance record claims a hole in a neighbouring hour — and,
+    for a healed gap, to `Gap`'s ownership contract. Only a residual gap may pass `primary_boundaries=False`: its
+    interior edges are spliced messages, hence boundaries owning no primary message, and it drives no row filter —
+    whereas relaxing it for a healed gap publishes `splice_book`'s primary rows out of block order."""
     for gap in gaps:
         if not (hour <= gap.start <= hour_end and hour <= gap.end <= hour_end):
             raise CaptureError(f"{label} {gap.start.isoformat()}->{gap.end.isoformat()} lies outside the {hour:%H}:00 hour")
@@ -115,16 +84,9 @@ def mint_hour(
     extra_provenance: dict | None = None,
     replace: bool = False,
 ) -> Path:
-    """Publish `blocks` as this hour's reconciled final, atomically, with its sidecar and provenance.
-
-    Returns the final's path. Raises `FileExistsError` if the hour is already minted (unless
-    `replace=True`), and `CaptureError` if the inputs violate the hour's contract (see `_check_hour` /
-    `_check_gaps`).
-
-    `replace=True` disables the foreign-final guard above: the caller then owns the guarantee that
-    `blocks` is a superset of whatever it overwrites (`cli/trades/backfill.py` satisfies this by
-    reading the existing hour first and unioning it with the recovered rows before minting).
-    """
+    """Publish `blocks` as this hour's reconciled final, atomically, with its sidecar and provenance; return its path.
+    `replace=True` overwrites an already-minted hour, and the caller then owns the guarantee that
+    `blocks` is a superset of what it replaces (`cli/trades/backfill.py` unions the existing hour in)."""
     hour_end = _check_hour(hour)
     _check_gaps(gaps_healed, hour=hour, hour_end=hour_end, label="a healed gap", primary_boundaries=True)
     _check_gaps(residual_gaps, hour=hour, hour_end=hour_end, label="a residual gap", primary_boundaries=False)
@@ -135,22 +97,20 @@ def mint_hour(
         raise FileExistsError(f"reconciled final already minted: {final}")
 
     if not blocks:
-        # An empty final would assert "this hour is committed and complete, and holds no rows" — and
-        # the reconciled-first reader would then shadow the raw primary hour with that lie.
+        # An empty final would assert that the hour is committed, complete and rowless, and the
+        # reconciled-first reader would then shadow the raw primary hour with that lie.
         raise CaptureError(f"refusing to mint {final}: no blocks (there is nothing to heal)")
 
     frame = pl.concat([b.frame for b in blocks])  # block order; NEVER sorted (absolute quantities)
     if list(frame.schema.items()) != list(pl.Schema(schema).items()):
-        # Uniformly wrong blocks (e.g. read without the schema) would otherwise concat happily and be
-        # published into the archive with a dtype no consumer expects.
+        # Uniformly wrong blocks would otherwise concat happily and publish a dtype no consumer expects.
         raise CaptureError(f"refusing to mint {final}: block schema {frame.schema} does not match {schema}")
 
     d.mkdir(parents=True, exist_ok=True)
     tmp = d / f"{hour:%H}.parquet.tmp"
     frame.write_parquet(tmp, compression="zstd")  # truncates a torn tmp left by a killed run
 
-    # The sidecar comes from the temp file's bytes, which ARE the final's bytes: the digest is right
-    # before the file it certifies exists, so a final can never be published unmanifested.
+    # The digest comes from the temp file's bytes, which ARE the final's, and lands first: no final is ever published unmanifested.
     digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
     manifest_tmp = d / f"{hour:%H}.parquet.sha256.tmp"
     manifest_tmp.write_text(f"{digest}  {final.name}\n")
@@ -167,8 +127,7 @@ def mint_hour(
         "tool": tool,
         "version": tool_version,
     }
-    # Extras are merged, never allowed to shadow the base record: a caller must not be able to
-    # rewrite `sha256` or `hour` and make the provenance lie about the file it certifies.
+    # Extras never shadow the base record: a caller must not rewrite `sha256` or `hour` and make the provenance lie.
     for k, v in (extra_provenance or {}).items():
         if k in provenance:
             raise CaptureError(f"extra_provenance may not override the base field {k!r}")
@@ -178,10 +137,9 @@ def mint_hour(
     _replace_durably(provenance_tmp, d / f"{hour:%H}.provenance.json")
 
     if final.exists() and not replace:
-        # Re-checked against the entry test: `os.replace` clobbers, and everything above took real
-        # time. The window is not closed (a no-clobber publish would need `os.link`, forking the
-        # durability semantics this module exists to share) — but the reconciler is single-process,
-        # and a racing minter is a bug we want to hear about rather than a file we want to lose.
+        # Re-checked because `os.replace` clobbers and everything above took real time. The window is not closed —
+        # a no-clobber publish would need `os.link`, forking the durability semantics this module exists to share —
+        # but the reconciler is single-process, and a racing minter is a bug to hear about, not a file to lose.
         raise FileExistsError(f"reconciled final appeared while minting: {final}")
     _replace_durably(tmp, final)  # publish LAST
     return final
