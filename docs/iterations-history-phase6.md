@@ -1250,3 +1250,10 @@ ______________________________________________________________________
 - The unwatched-metric guard's candidates include the sweep's whole textfile: a series added to the runner is watched by a rule or excluded with a reason in `tests/test_infra_alert_rules.py`, or the guard fails.
 - The alert comments no longer enumerate blind spots: each of T0167's four is a rule, a test, the daily read, or a drop recorded in the topic.
 - The engine executor and flatten tests assert what their docstrings claimed (T0165), and three of the alert-rule guard's stated limits are assertions (T0166); each item's disposition, including the owner's recorded drops, is in the archived topics.
+
+## 2026-09-05 — T0170: the CLI's paper trading is measured against the no-testnet substitution, and the MCP server fronting it is dropped
+
+- `docs/research/91.kraken-cli-paper-trading-assessment.md` settles whether Kraken's official CLI reopens §12's "no spot testnet — shadow plus tiny-live replaces it": it does not, so shadow mode and the 6b rungs stay the evidence path and no gate reads a paper number. Spot paper refuses every short, prices every order size identically, ignores the venue minimums 6b exists to work around, and defaults below the cheapest round trip the venue allows. Cite the report rather than re-deriving it when the substitution is questioned again.
+- Reach the CLI through the shell with `-o json`, never through an `mcp__kraken__*` tool: the MCP rewrites tool calls to argv and re-enters the CLI's own dispatch, so it adds nothing, and it exposes strictly less — the recording, replay, session-start and streaming commands are absent from its catalog. Its dangerous-tool gate is a flag the calling model sets on itself, where a shell invocation passes the harness permission prompt.
+- Removing the registration is the owner's edit in user-scope config, not a repo change, and nothing in this tree names the MCP or its tools.
+- Kraken's own promotion gate is the corroboration for our original decision: it refuses to promote on replay evidence without a live pass, and cannot pass at all while its scoped-credentials criterion stands unsatisfiable.
