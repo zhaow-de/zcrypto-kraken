@@ -3,9 +3,9 @@
 > **How this file stays current.** The **current tier and the 30-day volume are read automatically**
 > by the monthly `zcrypto-refdata-sweep`, from `kraken volume --pair <PAIR> -o json` — the account's
 > own live maker and taker rate, its 30-day volume and the next tier's threshold, authenticated and
-> read-only. **The full ladder below still comes from the logged-in Kraken Pro → Fee tab**, which no
-> endpoint serves, so the attended half of the sweep (owner ruling, 2026-08-04) narrows to the
-> ladder's shape and to anything the API contradicts; the result — confirmed, corrected, or **not
+> read-only. **The full ladder below still comes from the logged-in Kraken Pro → Fee tab**, which the public
+> endpoint serves only in its superseded form, so the attended half of the sweep (owner ruling,
+> 2026-08-04) narrows to the ladder's shape, to AoP qualification, and to anything the API contradicts; the result — confirmed, corrected, or **not
 > re-read** — lands in the re-confirmation log of `kraken-snapshot-register.md`. Prefer the API read
 > over the public `AssetPairs` fee columns, which served the pre-2026-07-09 ladder long after it was
 > superseded. **If the tier changes, say what it invalidates:** `cli/costs/fees.py` encodes this

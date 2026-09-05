@@ -87,9 +87,9 @@ status, margin, leverage and minimums while capturing none of the ⏱ cost facts
 on the *asset*, not the pair. Rendered as base tier plus ladder depth; the full 12-tier ladders live
 in the snapshot JSON so a future diff can name *which* tier moved.
 
-**Still account-gated:** the account's realised fee **tier** depends on 30-day volume and needs the
-live account. It is re-read as the **attended half of the monthly sweep** and recorded in the log below;
-`kraken-fee-schedule.md` holds the standing value (tier 1, \$0 volume, as of 2026-07-07). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
+**Account-gated, but not human-gated:** the account's realised fee **tier** depends on 30-day volume and needs the
+live account — served by authenticated `kraken volume`, so the sweep reads it **automatically** and records it in the log below;
+`kraken-fee-schedule.md` holds the standing value (tier 1, \$46.71 30-day spot volume, as of 2026-09-04). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
 re-reads at the go/no-go.
 
 ## Symbol-alias ledger
@@ -120,13 +120,13 @@ The master plan marks these facts as externally owned and requires re-confirmati
 third-party fact that can move in any month and a stale one is silent. **Each sweep bumps the header even when nothing
 changed** — otherwise the next reader cannot tell a re-confirmed register from an abandoned one.
 
-| Sweep | Fetched at (UTC) | Full response | Raw sha256 | Candidate-basket verdict | Account fee tier (attended) |
+| Sweep | Fetched at (UTC) | Full response | Raw sha256 | Candidate-basket verdict | Account fee tier |
 | -- | -- | -- | -- | -- | --- |
 | #0 (Phase 0, iter-002) | 2026-07-07T03:29:00+00:00 | 1509 pairs / 809 assets | `e1510e98…3226e3` | 12/12 online + margin-enabled; the reference all later sweeps compare against | **Tier 1, \$0 30-day volume** — read from the logged-in Fee tab the same day (T0000), which is what makes `kraken-fee-schedule.md` authoritative |
 | #1 (monthly, 2026-08-04) | 2026-08-04T10:40:09+00:00 | 1429 pairs / 824 assets | `89e15dba…922f24` | **UNCHANGED** — all 12 still online and margin-enabled, identical leverage bands, `ordermin`, `costmin` and aliases (re-rendered and diffed against the committed table: no cell moved) | **not re-read** — recorded blank rather than inherited; at \$0 volume the tier cannot have moved, but *cannot have* is not *was checked* |
 | #2 (monthly, 2026-09-04) | 2026-09-04T08:11:18+00:00 | 1446 pairs / 840 assets | `bb84ee1a…8c9fbc` | **UNCHANGED (basket)** — all 12 still online and margin-enabled; leverage bands, `ordermin`, `costmin` and the alias ledger identical cell-by-cell. **The endpoint's borrow and limit columns moved**: `margin_rate` for shorts fell to 0.02 on ADA (was 0.04), AVAX (0.03) and DOT (0.024), so all nine alts now sit at the FLOOR of `kraken-fee-schedule.md`'s 0.02–0.04 % band — inside it, so no downstream figure is re-priced and `cli/costs/margin.py`'s bands still bound it; position limits moved on 7 legs (nothing outside this table reads them). Fee columns unchanged, so the drift detector is quiet. Venue churn: 4 pairs / 2 assets gone (CGN, ICX), 21 / 18 added — no candidate among them | **Tier 1, \$46.71 30-day spot volume** (futures \$0.00; AoP \$115.25) — read from the logged-in Fee tab 2026-09-04. Tier unchanged since #0, so nothing re-prices: \$46.71 selects the same tier-1 rates as \$0.00 (`cli/costs/fees.py`, run rather than assumed). The Fee tab quotes a shortfall one dollar above the break it targets — 46.71 + 2,454.29 = 2,501.00 = \$2,500 + \$1 — so it points at `kraken-fee-schedule.md`'s **\$2,500+** Tier 2, and the same convention reproduces #0's read (0.00 + 10,001 = \$10,000 + \$1). That +\$1 is an inferred UI convention, corroborated three times — this read, #0's, and the same screen's futures line (0.00 + 5,000,001 = \$5,000,000 + \$1, recorded here only as corroboration since the repo holds no futures ladder) — not a published boundary. #0's read was taken 2026-07-07, two days BEFORE the new schedule took effect, so its \$10,000 break was the then-current ladder correctly reported, not a stale screen. On the old ladder \$46.71 would have been quoted \$9,954.29 more, so **the account moved to the new ladder between 2026-07-07 and 2026-09-04 while the public endpoint has not** — this fetch still serves the twelve candidates at 0.25/0.40 with breaks at \$10k/\$50k, and no pair in the 1,446-pair response carries a \$2,500 break. The response is NOT uniform — by first-tier MAKER rate: 0.25 on 664 pairs, 0.23 on 682, 0.20 on 97 (which run 0.20/0.20 off a \$50k first break) and 0.00 on three, summing to the 1,446 — so this is scoped to the candidates deliberately: a uniformity claim would be a false baseline for a column this file declares a drift detector. That the account changed ladder is an inference from the boundary match; the Fee tab names no schedule version. AoP \$115.25 sits below the \$20,000 rung, the lowest the AoP ladder has, so it grants no tier; futures volume is \$0.00, below any threshold. Qualification takes the most favourable of the three, and none clears |
 
-The last column exists because the account's own tier is the one fact here that **no endpoint can supply** — it sits behind a login, and `cli/costs/fees.py` encodes the ladder it selects from. A sweep that silently carried the previous row's tier forward would manufacture exactly the false confirmation this log was built to make impossible, so an unperformed read is recorded as *not re-read*, never as unchanged.
+The last column exists because the account's own tier is the one fact here the **public** endpoints cannot supply — authenticated `kraken volume` serves it, and `cli/costs/fees.py` encodes the ladder it selects from. A sweep that silently carried the previous row's tier forward would manufacture exactly the false confirmation this log was built to make impossible, so an unperformed read is recorded as *not re-read*, never as unchanged.
 
 **Sweep #1 note — the basket held while Kraken's universe did not.** The full response lost **80 pairs net** and gained
 **15 assets** between #0 and #1, so the endpoint is demonstrably live and churning; none of that churn touched the
@@ -146,5 +146,7 @@ qualification rule, or the observed margin opening/rollover bands on majors — 
 **They are no longer "pending".** `T0000` collected them on 2026-07-07 and is **resolved and archived**
 (`docs/open-topics/archive/T0000-phase0-account-actions.md`); the values live in
 `docs/reference/kraken-fee-schedule.md`, and `cli/costs/fees.py` encodes that ladder verbatim. What
-remains is keeping them current, which is the **attended half of the monthly sweep** (`/zcrypto-refdata-sweep`
-step 5) — the re-read that lost its trigger when T0000 was archived, and now has one again.
+remains is keeping them current: the tier, the 30-day spot and futures volumes and the AoP held value are
+the **automated** part of the monthly sweep (`/zcrypto-refdata-sweep` step 7, via `kraken volume`), and the
+ladder's shape plus AoP qualification stay attended — the re-read that lost its trigger when T0000 was
+archived, and now has one again.

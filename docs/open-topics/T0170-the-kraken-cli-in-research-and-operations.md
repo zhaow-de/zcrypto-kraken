@@ -1,5 +1,6 @@
 ---
 status: open
+ripe_when: "per sub-item — the MCP removal: NOW, gated on nothing; the reconciliation second reader: the engine is armed (`grep -c '^exec_armed = false' infra/ansible/roles/engine/templates/zcrypto.toml.j2` returns 0); the microstructure cross-checks: the next alpha search opens"
 ---
 
 # The Kraken CLI in research and operations

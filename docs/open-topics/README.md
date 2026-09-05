@@ -111,7 +111,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0169 — cleanup residue outside a prose commit](T0169-cleanup-residue-outside-a-prose-commit.md) — two soak test names that contradict their assertions, the segment writer's disagreeing counts, a template's live-host claim, the archive-pull rename deferral (owner's decision), the tripwire's probe-source blind spot.
 
-- [T0170 — the Kraken CLI in research and operations](T0170-the-kraken-cli-in-research-and-operations.md) — workstation-only, never deployed (the owner's ruling, landed on `fleet-deploys.md`); the MCP server dropped for Bash with `-o json`, the removal itself the owner's edit outside the repo; a reconciliation second reader ripe at go-live; microstructure cross-checks ripe at the next alpha search; cross-check only, never canonical, never on the trade path.
+- [T0170 — the Kraken CLI in research and operations](T0170-the-kraken-cli-in-research-and-operations.md) — workstation-only, never deployed (the owner's ruling, landed on `fleet-deploys.md`); the MCP server dropped for Bash with `-o json`, the removal itself the owner's edit outside the repo; cross-check only, never canonical, never on the trade path. Ripe per sub-item — the MCP removal now, gated on nothing; the reconciliation second reader once the engine is armed (`grep -c '^exec_armed = false' infra/ansible/roles/engine/templates/zcrypto.toml.j2` returns 0); the microstructure cross-checks when the next alpha search opens.
 
 ### Partially done<a name="partially-done-1"></a>
 
