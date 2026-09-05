@@ -1,11 +1,6 @@
 """Combined-system builder — the adopted P1 system (registry record 33) as one composed pipeline.
 
-Composes the QA-verified iter-059 construction verbatim: dynamic inverse-vol basket -> 200d SMA gate
-on the basket's own equity index -> vol target sized on the RAW basket (gate applied after) ->
-per-asset inverse-vol weights -> §10 per-asset cap (clip, no redistribution) -> §10 drawdown
-governor on the capped book's own net-of-cost series (the linear-cost overlay approximation,
-decisions log iter-058). The frozen benchmark's series (uncapped, ungoverned — master-plan §9) is
-returned alongside for head-to-heads, e.g. the pre-registered holdout look.
+Governed cost is pre-governor cost times the multiplier — an approximation (docs/research/13.phase5-decisions.md, iter-058).
 """
 
 from __future__ import annotations
@@ -65,7 +60,10 @@ def _net_of_cost(positions: dict[str, list[float]], gross: list[float], fee: flo
 def build_combined_system(
     prices_by_asset: dict[str, list[float | None]], *, config: CombinedSystemConfig = CombinedSystemConfig()
 ) -> CombinedSystemResult:
-    """Build the adopted combined system + its frozen benchmark from union-calendar prices."""
+    """Build the adopted combined system and its frozen benchmark from union-calendar prices.
+
+    The benchmark is master-plan §9's frozen construction, uncapped and ungoverned, for head-to-heads.
+    """
     if not isinstance(prices_by_asset, dict) or not prices_by_asset:
         raise PortfolioError(f"prices_by_asset must be a non-empty dict, got {prices_by_asset!r}")
     c = config
