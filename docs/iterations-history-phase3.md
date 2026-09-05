@@ -42,7 +42,7 @@ Per-iteration changelog for Phase 3. Appended at each iteration's close-out; see
 
 - **`inverse_vol_basket` in `cli/benchmark/strategies.py`** is the B2 generator: pre-aligned per-asset price series in, the inverse-vol-weighted basket's daily net return series out.
 - **Weights come from a window strictly before the day they apply to**, zero-vol assets are excluded and the rest renormalized, and degenerate input raises `BenchmarkError` — a refusal, never a NaN.
-- **Decision: the generator is the fixed-composition basket and the caller supplies aligned series**, keeping data loading and calendar alignment in the later real-data run; the dynamic 2→10-asset full-history variant is parked as `T0007`.
+- **Decision: the generator is the fixed-composition basket and the caller supplies aligned series**, keeping data loading and calendar alignment in the later real-data run; the dynamic 2→10-asset full-history variant was parked as `T0007` (resolved at iter-044).
 - **Spec and plan:** `docs/specs/00022-inverse-vol-basket-design.md`, `docs/plans/00022-inverse-vol-basket.md`.
 ## 2026-07-08 — iter-031: B2 inverse-vol basket bar-to-beat (Phase 3)
 
@@ -57,7 +57,7 @@ Per-iteration changelog for Phase 3. Appended at each iteration's close-out; see
 - **Verdict: the gate rescues the raw basket from a loss but does not lift it** to the vol-targeted basket's risk-adjusted level.
 - **Verdict: on the basket the gate and vol-targeting are substitutes, not complements** — once vol-targeting controls risk the gate only subtracts participation, the opposite of single-asset BTC where their product is the best line.
 - **Verdict: the short backfires** — the 200-day gate lags, so B4 shorts after the crash and is whipsawed by the bear-market counter-rallies, even before real borrow cost.
-- **No overlay lifts the basket to the single-asset BTC bar; the deployable target remains gated-B1.** **Plan:** `docs/plans/00024-benchmark-basket-gate-short.md`; the basket-turnover cost model this leaves open is carried by `T0010`.
+- **No overlay lifts the basket to the single-asset BTC bar; the deployable target remains gated-B1.** **Plan:** `docs/plans/00024-benchmark-basket-gate-short.md`; the basket-turnover cost model this left open went to `T0010` (resolved at iter-055).
 ## 2026-07-08 — iter-033: benchmark bootstrap CIs (Phase-3 exit bar)
 
 - **Both benchmark reports gain a `## Statistical significance (bootstrap CIs)` section** — stationary block-bootstrap 95% CIs on each strategy's annualized Sharpe via the Phase-2 harness (`cli.validation.bootstrap_ci`); no new code.

@@ -38,7 +38,7 @@ Per-iteration changelog for Phase 2. Appended at each iteration's close-out; see
 
 - **`cli/validation/metrics.py` holds the headline statistics** — Sharpe, volatility, annualized return and max drawdown; the bootstrap CIs and the acceptance suite consume these rather than hand-rolled arithmetic.
 - **Zero-variance returns and any period return at or below −100 % raise** rather than silently producing NaN or a broken equity curve.
-- **Design and plan**: `docs/specs/00011-perf-metrics-design.md`, `docs/plans/00011-perf-metrics.md`, which record sortino/Calmar, returns-from-prices and benchmark-relative deltas as YAGNI non-goals.
+- **Design and plan**: `docs/specs/00011-perf-metrics-design.md`, `docs/plans/00011-perf-metrics.md`, which record sortino/Calmar and benchmark-relative deltas as YAGNI non-goals and returns-from-prices as a later helper (built since as `returns_from_prices`).
 
 ## 2026-07-08 — iter-019: trial-registry hash chain (Phase 2)
 

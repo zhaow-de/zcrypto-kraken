@@ -11,7 +11,7 @@ Per-iteration changelog for Phase 5. Appended at each iteration's close-out; see
 
 - **`cli/risk/limits.py`** — the §10 per-asset cap ships as `apply_position_caps`, a pure pre-trade clip with no redistribution (a limit, not an optimizer), so every later book applies it the same way (spec/plan `00035`).
 - **Registry record 33 — the combined system (frozen bar + cap + governor) is ADOPTED** on its pre-registered criteria and becomes the candidate portfolio spec; the verdict, its both-direction SPA and its cost-stress rungs are the record's own.
-- **The remaining §10 portfolio limits stay unbuilt on evidence** — gross leverage never binds on this long-only book, so they wait for the first short-carrying or levered sleeve (T0016).
+- **The remaining §10 portfolio limits were left unbuilt on evidence at this point** — gross leverage never binds on this long-only book, so they waited for the first short-carrying or levered sleeve; built as tested code at iter-088 below, with the wiring on T0016.
 - **The live-registry acceptance test is no longer pinned to a fixed-size snapshot** — the early records stay asserted verbatim, the count is floored, and later records must be schema v3+, so appending a record no longer edits the test.
 - **A pre-registered leg the driver silently dropped was recomputed and recorded in the decisions log, never in the registry** — the registry is append-only, so a record's remediation is an addendum elsewhere.
 ## 2026-07-09 — iter-060: stress suite on the adopted combined system (Phase 5, no trial spend)

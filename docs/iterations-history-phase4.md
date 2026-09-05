@@ -34,7 +34,7 @@ Per-iteration changelog for Phase 4. Appended at each iteration's close-out; see
 - **`docs/research/06.phase4-a1-results.md` records A1's literal-kill-bar verdict** — read it with `07.phase4-a1-cost-reality.md` beside it, which corrects its deployment reading net-of-cost.
 - **`docs/reference/trial-registry.jsonl` carries the A family's first records** — every family verdict is appended there with its metrics and spec/dataset hashes; the registry, not a report, is the trial budget's ledger.
 - **`a1_book_returns` exposes per-asset net positions and the worst-slice leg skips zero-variance slices** — cost stress is charged on honest per-asset turnover, and a fully-gated-out year is neither qualifying nor disqualifying.
-- **Deployment and the combination of survivors stay human-gated; the holdout was not touched.**
+- **Deployment and the combination of survivors stayed human-gated; the holdout was not touched.**
 ## 2026-07-09 — iter-047: A1 net-of-cost reality — an honest kill that corrects the iter-046 headline (Phase 4)
 
 - **`docs/research/07.phase4-a1-cost-reality.md` carries A1's net-of-cost head-to-head** — A1's zero-fee edge does not survive the turnover the book requires once spot cost and the short's borrow carry (`cli/costs/margin_carry`) are charged.

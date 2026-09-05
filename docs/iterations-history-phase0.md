@@ -8,7 +8,7 @@ Per-iteration changelog for Phase 0. Appended at each iteration's close-out; see
 - **Registry integrity** — a load raises on a gap, duplicate or reordered `trial_id`, on a `record_hash` mismatch, and on a family count below what is already recorded; a torn trailing line self-heals, so a crashed append never bricks the autonomous loop.
 - **`docs/specs/00000-trial-registry-design.md` + `docs/plans/00000-trial-registry.md`** — the design an agent extending the registry reads first; the cross-record hash chain, the corruption CI test and SPA/DSR computation were deferred here and land in Phase 2.
 - **Known minor** — an externally hand-edited last line lacking its trailing newline makes the *next* append concatenate; it fails loudly on the following load, never as a silent fake winner.
-- **`T0000`** — the Phase-0 human-gated items, the D3(i) account actions and the live fee/AoP confirmation, are parked there.
+- **`T0000`** — the Phase-0 human-gated items, the D3(i) account actions and the live fee/AoP confirmation, were parked there.
 ## 2026-07-07 — iter-002: Kraken reference-data snapshot register (Phase 0 · P0-2)
 
 - **`cli/snapshot/`** — Kraken's public reference endpoints are fetched, derived and rendered through it, stdlib-only and with no API key; Kraken's in-body `error` array raises instead of returning a result.
@@ -19,5 +19,5 @@ Per-iteration changelog for Phase 0. Appended at each iteration's close-out; see
 
 - **The NautilusTrader Kraken adapter's public data path is verified** — instruments, quotes, trades and bars stream from Kraken's public Spot WebSocket with no API key, run in a throwaway venv; `nautilus_trader` is deliberately not a project dependency, adding it being a Phase-6 step.
 - **`docs/research/01.2.nautilus-kraken-adapter-memo.md`** — what an agent reads before wiring the adapter: the data-client API surface, the confirmed keyless public-data config, the rough edges to route around, and what the verdict does not cover (a short single-pair Spot-only run).
-- **`T0000`** — the execution side (spot-margin/leverage/short/post-only order semantics and reconciliation) is parked for Phase 6, needing a trade key.
+- **`T0000`** — the execution side (spot-margin/leverage/short/post-only order semantics and reconciliation) was parked for Phase 6, needing a trade key.
 - **Phase 0's autonomous work ends here** — the remaining exit-bar items were human-gated in `T0000`, and the loop advances to Phase 1 (Data Foundation).
