@@ -27,9 +27,8 @@
 #     the `logs` receiver disables resolve messages -- a log alert resolves by ageing, so a
 #     resolve ping is noise) (both receivers' Slack webhook is provisioned separately, not here).
 #
-# noDataState is per-rule, and the split is a RULE, not a count: a rule whose job is to detect
-# silence uses Alerting, because for it a vanished series IS the failure worth paging on; a rule
-# that grades an outcome uses OK, so it cannot page for a job that has simply never run yet.
+# noDataState is per-rule, not boilerplate: Alerting only where nothing else owns the series'
+# absence; OK wherever a dead-man or canary already does, or where absence is legitimate.
 rules:
   - uid: zcrypto-gate-streak-reset
     title: "Gate · streak reset"
@@ -652,7 +651,7 @@ rules:
   # rule above: they watch different things.
   #
   # ACCEPTED COST: a genuinely missed cycle double-pages. `zcrypto-engine-cycle-stale` fires first and
-  # correctly on receiver `metrics`; this rule then follows on receiver `logs` with a title saying the
+  # correctly, both on receiver `metrics`; this rule then follows with a title saying the
   # LOG PIPELINE is dead when it is fine. The summary's last sentence tells the responder how to tell
   # them apart, but the phone shows the title first.
   #
@@ -1123,6 +1122,9 @@ rules:
       #
       # Keep the bare `sum()`: both arms are unlabelled, so an interpolated `$labels.host` renders
       # EMPTY -- which is why the summary names the host and container as literal words.
+      #
+      # Receiver `metrics`, not `logs`: a dead-man's clear IS the news, and `logs` suppresses resolve
+      # notices -- the mechanism and its enforcing test are at `zcrypto-engine-log-dead` above (T0162).
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 10800, to: 0}
