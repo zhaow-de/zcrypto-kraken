@@ -1,9 +1,8 @@
-"""The node wrapper (spec 00041 SS the node wrapper): pure boundary arithmetic, the
-restart-inside-a-passable-window startup rule, the alert chain (schedule-next-first, run_cycle
-exceptions contained), and the production-shape LiveNode assembly. Building a node is offline
-(verified by the build tests, which construct both exec_enabled shapes without network); the two
-tests that RUN a node against Kraken's public endpoint are the instrument-arrival test and the
-idle-socket test, and both skip loudly without ZCRYPTO_LIVE_VENUE_TESTS=1.
+"""The node wrapper (spec 00041): the boundary arithmetic, the restart-inside-a-passable-window
+startup rule, the alert chain (schedule-next-first, run_cycle exceptions contained), the two order
+event streams, and the production-shape LiveNode assembly. The tests that RUN a node against
+Kraken's public endpoint are opt-in on ZCRYPTO_LIVE_VENUE_TESTS=1 and FAIL, never skip, when the
+flag is set and the venue is unreachable.
 """
 
 import ast
@@ -291,16 +290,11 @@ def test_shadow_strategy_bare_construction_defaults(tmp_path):
 
 # --- the venue-visible identity (spec 00100 D8) --------------------------------------------------
 
-# Registration is what fixes the identity the venue sees: `strategy_id` is re-derived there from
-# the strategy's config, and the order factory that stamps the `order_id_tag` segment into every
-# client order id does not exist before it. So this probe performs the real registration
-# `build_shadow_node` performs, `LiveNode.add_strategy`, and reads back the id, the prefix an actual
-# order carries, and the id the strategy already held BEFORE registration. The child process is
-# deliberate -- a node build in-process would take the pytest session's faulthandler with it.
-#
-# `others` places a SECOND, tag-less strategy: `before` or `after` this one, or `alone` for none.
-# A tag-less strategy is assigned its tag positionally at registration, so it is the construction
-# that can contend for this strategy's prefix.
+# The probe performs the registration `build_shadow_node` performs -- `LiveNode.add_strategy` --
+# and reads back the registered `strategy_id`, the prefix an order minted after it carries, and the
+# id held before it. In a child process: an in-process node build takes the pytest session's
+# faulthandler with it. `others` places a SECOND, tag-less strategy -- `before` or `after` this one,
+# or `alone` for none -- which takes its tag positionally and can contend for this prefix.
 _IDENTITY_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
@@ -365,21 +359,11 @@ def _identity_facts(tmp_path: Path, others: str) -> dict:
     ],
 )
 def test_the_registered_strategys_venue_visible_identity_is_pinned(tmp_path, others, registers):
-    """The client-order-id prefix reaches Kraken on every order this engine places, so it is pinned
-    against the value the engine holds today rather than derived from `_ORDER_ID_TAG` -- a test that
-    read the constant would follow it anywhere.
-
-    Pinned against the EFFECTIVE identity, three ways: the registered `strategy_id`, the prefix an
-    order minted through the strategy's own factory actually carries, and the id the strategy holds
-    before it is registered at all. The last is a separate property with a separate mechanism --
-    `strategy_id` is derived at CONSTRUCTION from the config `__new__` receives, and registration
-    re-derives it from the config `__init__` passed. Registration alone would therefore reach `000`
-    even from a construction that reads `ShadowStrategy-None`, so without this third read nothing
-    holds the construction to the identity it will end up with.
-
-    Parametrised over the registration orders because the tag is what a tag-less strategy contends
-    for: whichever order a second strategy arrives in, this one's prefix is `000` or the
-    registration fails loudly. It is never quietly something else."""
+    """The venue-visible identity is pinned at the value the engine holds today -- the id before
+    registration, the registered id, and the tag segment of an order minted through the strategy's
+    own factory -- whichever order a second, tag-less strategy registers in: `000`, or a loud
+    refusal. Pinned rather than derived from `_ORDER_ID_TAG`, which a test reading the constant
+    would follow anywhere."""
     facts = _identity_facts(tmp_path, others)
     assert facts["strategy_id_unregistered"] == "ShadowStrategy-000"
     if not registers:
@@ -625,12 +609,9 @@ def test_the_observer_forwards_every_order_event_to_the_strategys_external_forwa
 
 
 def test_the_observer_drops_its_events_when_the_strategy_wired_no_executor(tmp_path):
-    # The property the observer inherits from the forwarder it is given: the filter that scopes
-    # these events is the executor's, so a strategy that wired none drops them rather than acting on
-    # them unfiltered -- and drops them quietly, since raising here would land in the event loop.
-    #
     # Differential, so the drop is the executor guard and not a dead wire: the SAME observer
-    # delivers once an executor exists.
+    # delivers once an executor exists. Silent by design -- a raise here would land in the event
+    # loop.
     strategy = ShadowStrategy(_config(tmp_path))
     assert strategy._executor is None
     observer = node.ExternalOrderObserver(strategy._on_external_order_event)
@@ -667,15 +648,9 @@ def _order_mutating_surface() -> set[str]:
 
 
 def test_every_order_mutating_method_the_library_offers_is_sealed_on_the_observer():
-    """The barrier D2 buys the observer's existence with. Registered under the venue's external
-    order identity, this strategy's every order-scoping default points AT the account owner's book:
-    `cancel_all_orders(strategy_only=True)` scopes to this strategy, whose orders are the
-    operator's. So the whole surface raises.
-
-    The set is derived from the installed library, not hand-listed: a hand-listed seal silently
-    regains a hole the next time upstream adds a method -- the first draft of this seal listed eight
-    and left `cancel_orders`, `modify_orders` and `post_market_exit` live. Derived, that addition is
-    a red test naming the method."""
+    """Every order-mutating method the installed library offers on `Strategy` raises on the
+    observer, the set derived from the library rather than hand-listed so a method a future release
+    adds is a red test naming it."""
     surface = _order_mutating_surface()
     assert len(surface) >= 12, f"the derivation found only {sorted(surface)} -- the walk is broken"
 
@@ -759,18 +734,9 @@ def test_probe_executor_factory_shape(tmp_path):
 
 
 def test_no_strategy_claims_external_orders(tmp_path):
-    """The precondition the executor's unknown-order kill trip rests on: this strategy is
-    subscribed to `events.order.<its own id>` and claims NOTHING beyond it. An `external_order_claims`
-    entry would make the venue's reconciliation route the account owner's own hand-placed settling
-    fills into on_order_event -- and the trip would latch the kill switch on the probe's sanctioned
-    final act.
-
-    The observer is held to it too: it is registered under the external identity precisely so that
-    nothing has to be claimed to observe those orders, and a claim there would drag the account
-    owner's orders onto the claiming strategy's own topic just the same.
-
-    A strategy's config is the whole claim surface -- there is no second, derived list to read -- so
-    `None` there IS the empty claim, on every construction."""
+    """No strategy this node registers claims external orders, on every construction: `None` there
+    IS the empty claim, and a claim would route the account owner's own hand-placed settling fills
+    onto a strategy's own order topic and into the executor's unknown-order kill trip."""
     strategies = (
         ShadowStrategy(_config(tmp_path)),
         ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None),
@@ -780,27 +746,17 @@ def test_no_strategy_claims_external_orders(tmp_path):
         assert strategy.config.external_order_claims is None
 
 
-# Each banned text mapped to the cli/ paths deliberately allowed to carry it, and HOW MANY times.
-# Every entry is allowed NOWHERE, so the values are empty -- the shape stays a map because an
-# allowance is exactly the thing that has to be spelled with a count rather than a path.
+# Each banned text mapped to the cli/ paths allowed to carry it and how many times; every entry is
+# allowed nowhere, so the values are empty.
 #
-# `external_order_claims`: a claim is what would route the account owner's own hand-placed settling
-# fills onto a strategy's OWN order topic and straight into the unknown-order trip.
-#
-# `msgbus`: nothing under cli/ reaches the raw message bus. The second order stream is a registered
-# strategy whose events the library routes by identity, so there is no topic string to subscribe and
-# no reason for any module here to hold a bus.
-#
-# `MessageBus`: constructing one registers it globally and REPLACES the engine's own (spec 00100
-# D3). Submitted orders then freeze at INITIALIZED, no event ever fires, and nothing raises -- on
-# the live trade path that is an order that never leaves and a kill trip that never runs. It is the
-# CONSTRUCTOR alone that does this, so this ban is what the `msgbus` line above cannot express:
-# `"MessageBus".count("msgbus")` is 0, and a `MessageBus(...)` in cli/ would pass every other check
-# in this repo.
-#
-# What this walk counts is TEXT, not reaches -- an alias fans out from one occurrence -- so the
-# wiring assertions EARLIER in this file, which pin the observer's handler and its identity by exact
-# equality, are the other half of this guard rather than a duplicate of it.
+# `external_order_claims`: a claim routes the account owner's own hand-placed settling fills onto a
+# strategy's OWN order topic and straight into the unknown-order trip.
+# `msgbus`: nothing under cli/ reaches the raw message bus -- the second order stream is a
+# registered strategy whose events the library routes by identity, so there is no topic to
+# subscribe.
+# `MessageBus`: the CONSTRUCTOR registers one globally and REPLACES the engine's own (spec 00100
+# D3) -- submitted orders then freeze at INITIALIZED, no event fires and nothing raises; a separate
+# ban because `"MessageBus".count("msgbus")` is 0.
 _ORDER_STREAM_WIDENERS = {
     "external_order_claims": {},
     "msgbus": {},
@@ -809,20 +765,11 @@ _ORDER_STREAM_WIDENERS = {
 
 
 def test_no_module_widens_the_engines_order_event_stream():
-    """The structural half of the same property, as a text walk (the D4 pin's shape): no file under
-    cli/ may claim external orders or reach past the strategy's own subscription onto the raw
-    message bus, ANYWHERE. Every entry above allows zero occurrences in zero files, and that is the
-    property -- the engine's order-event stream is the strategy's own subscription plus the observer
-    registered under the reserved external identity, and neither needs a bus or a claim to exist.
-
-    A red run here is a widening to remove, never one to record: adding a path to an allowance map
-    puts back on the live trade path exactly what these three literals exist to keep off it. The map
-    shape is what makes an allowance spell itself out as a path AND a count if one is ever argued
-    for, so a reviewer sees the widening rather than a deleted line.
-
-    Text, not imports -- a reference in a comment is one a refactor can activate; and the walk
-    asserts it found the tree at all, since `Path("cli").rglob` off-root yields nothing and would
-    pass everything."""
+    """No file under cli/ carries any of the three widener texts, anywhere: the engine's
+    order-event stream is the strategy's own subscription plus the observer registered under the
+    reserved external identity, and neither needs a bus or a claim to exist. A red run is a widening
+    to remove, never an allowance to add. Text, not imports -- a reference in a comment is one a
+    refactor can activate."""
     offenders = []
     files = sorted(Path("cli").rglob("*.py"))
     assert len(files) > 100, f"the walk found only {len(files)} files -- vacuous"
@@ -836,20 +783,13 @@ def test_no_module_widens_the_engines_order_event_stream():
 
 
 def test_the_observers_identity_is_the_one_the_library_reserves_for_orders_we_did_not_submit():
-    """The library boundary the whole second order stream rests on, read off the library rather
-    than restated. Nautilus stamps every order this process did not submit with one reserved
-    `StrategyId` and routes those orders' events to whatever strategy is registered under it -- so
-    the observer's identity has to BE the reserved one, and the feature is silent if it ever stops
-    being: no exception, no log, an observer that receives nothing.
+    """The observer's OWN id is the tagless string the library reserves: `StrategyId` requires
+    `<name>-<tag>` and refuses every other tagless string, so accepting this one is the library
+    still stating the reservation -- and a rename of it makes the observer's own construction raise
+    here rather than leaving an observer that silently receives nothing.
 
-    `StrategyId` requires `<name>-<tag>` and refuses every tagless string except the reserved one,
-    so the reservation is something the library still states about that exact literal. The value
-    tested is the observer's OWN id, not a copy of it: what the production assembly registers is the
-    thing under test, and a rename of the reserved identity makes the observer's own construction
-    raise here.
-
-    What this cannot reach is the join -- a genuine venue-sourced external order arriving on this
-    observer -- which needs live reconciliation. That join was proven live on 2026-08-27 (T0152, resolved)."""
+    The venue-sourced join -- a genuine external order reaching this observer through live
+    reconciliation -- is beyond this suite; it was proven by hand against the venue in T0152."""
     from nautilus_trader.model import StrategyId
 
     reserved = str(node.ExternalOrderObserver(lambda event: None).strategy_id)
@@ -860,10 +800,8 @@ def test_the_observers_identity_is_the_one_the_library_reserves_for_orders_we_di
         StrategyId(reserved + "X")
 
 
-# The observer handed to a REAL running engine. `BacktestEngine` is the only engine a test can run,
-# and it produces no venue-sourced external order -- nothing here can originate one, since the seal
-# is exactly what stops the observer submitting. So this probe measures the three things a running
-# engine can settle, and the child interpreter keeps its engine-wide registrations out of the suite.
+# The observer handed to a REAL running engine -- `BacktestEngine`, the only one a test can run --
+# in a child interpreter, so its engine-wide registrations stay out of the suite.
 _EXTERNAL_DISPATCH_PROBE = """
 import json
 import os
@@ -980,16 +918,9 @@ os._exit(0)
 
 
 def test_a_really_registered_observer_takes_no_event_the_library_routes_to_another_strategy(tmp_path):
-    """The real-registration half of the boundary above, and the only place in this suite where the
-    sealed observer meets a running nautilus engine instead of a direct call.
-
-    Three things it settles that no stub can. `add_strategy` accepts this class -- every
-    order-mutating method overridden to raise -- and the run completes, so the seal does not cost
-    the registration. The library's own dispatch really calls `on_order_event` on a registered
-    strategy. And the observer, holding the reserved external identity, receives NONE of the events
-    the library routes to the other strategy: that is D2's scope property, measured rather than
-    argued, and read as a differential so the empty list is an absence and not a run that never
-    happened."""
+    """A real engine accepts the sealed observer, dispatches the submitter's own order events to
+    the submitter, and routes NONE of them to the observer holding the reserved external identity --
+    read as a differential, so the empty list is an absence and not a run that never happened."""
     result = subprocess.run(
         [sys.executable, "-c", _EXTERNAL_DISPATCH_PROBE, str(tmp_path)], capture_output=True, text=True, timeout=120
     )
@@ -1007,13 +938,10 @@ def test_a_really_registered_observer_takes_no_event_the_library_routes_to_anoth
 
 
 def test_every_handler_our_strategy_overrides_exists_on_the_library_base_class():
-    """The silent-rename guard. A handler the framework no longer dispatches to is not an error in
-    Python -- it is a method nobody calls, and a stub-driven suite cannot see the difference. This
-    turns the whole class of handler renames into one red test.
-
-    It is deliberately general rather than named after `on_quote_tick`: the next rename will be a
-    different handler.
-    """
+    """Every `on_*` handler ShadowStrategy overrides exists on the library's `Strategy`: a handler
+    the framework no longer dispatches to is a method nobody calls, and no stub-driven test here can
+    see the difference. Deliberately general rather than named after one handler -- the next rename
+    will be a different one."""
     from nautilus_trader.trading import Strategy
 
     overridden = {name for name in vars(ShadowStrategy) if name.startswith("on_") and callable(getattr(ShadowStrategy, name, None))}
@@ -1028,11 +956,10 @@ def test_every_handler_our_strategy_overrides_exists_on_the_library_base_class()
 # --- build_shadow_node (assembled, never run; node.build() is offline) --------------------------
 
 
-# The built node exposes no client registry and no config readback, so the assembly is pinned where
-# it is decided: on the calls `_node_builder` makes and the config objects it hands over. The
-# recorder below stands in for `LiveNodeBuilder`, so `test_every_builder_call_exists_on_the_library`
-# checks each recorded name against the real class -- a stub is a contract restatement, and an
-# unverified restatement drifts silently.
+# The built node exposes no client registry and no config readback, so the assembly is pinned on the
+# calls `_node_builder` makes and the configs it hands over. The recorder standing in for
+# `LiveNodeBuilder` is a contract restatement, which is why
+# `test_every_builder_call_exists_on_the_library` checks every recorded name against the real class.
 class RecordingBuilder:
     def __init__(self):
         self.calls = []
@@ -1092,12 +1019,9 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
 
     assert recorder.named("with_logging")[0]["logging"].stdout_level == LogLevel.INFO
 
-    # The two exec-engine knobs the adopted-order path rests on. `filter_unclaimed_external_orders`
-    # is the quiet one: flipped, reconciliation returns None for VENUE-tagged unclaimed orders, so
-    # the adopted order never enters the cache -- the startup pass neither attaches nor cancels a
-    # previous process's resting order, the kill sweep cannot reach it, and nothing logs above
-    # WARNING. The stub-cache tests cannot see it (they never run reconciliation), so the pin is
-    # the only guard, and it is aimed at a future upstream default flip.
+    # The knobs the adopted-order path rests on, at the values and for the reasons
+    # `_exec_engine_config` states -- pinned here against an upstream default flip, since the
+    # stub-cache tests never run reconciliation and cannot see the filter flipped.
     exec_engine = recorder.named("with_exec_engine_config")[0]["config"]
     assert exec_engine.reconciliation is True
     assert exec_engine.filter_unclaimed_external_orders is False
@@ -1127,12 +1051,9 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert str(exec_config.account_id) == "KRAKEN-001"
     assert exec_config.spot_account_type == AccountType.MARGIN
     assert exec_config.margin_balance_asset == "ZEUR"
-    # Matched literally against the loaded instrument's `quote_currency.code`. Measured against the
-    # live public Kraken spot instrument set (1592 instruments): 546 carry code "ZEUR" and ZERO
-    # carry "EUR" -- BTC/EUR.KRAKEN, ETH/EUR.KRAKEN, ADA/EUR.KRAKEN et al all report "ZEUR", since
-    # only the instrument ID is normalized, not the quote Currency. So "EUR" would match nothing,
-    # as would the adapter's own "USDT" default. Pinned so neither an upstream default change nor
-    # a plausible-looking "EUR" correction can silently empty spot position reporting.
+    # Matched literally against the loaded instrument's `quote_currency.code`, which is "ZEUR" for
+    # every EUR pair -- only the instrument ID is normalized, not the quote Currency, so a
+    # plausible-looking "EUR" correction would silently empty spot position reporting.
     assert exec_config.spot_positions_quote_currency == "ZEUR"
     # D10: submission stays on REST. The library default is True; `_KRAKEN_ERROR_MARKERS` and
     # `_on_rejected`'s three-way verdict in cli/engine/executor.py are derived against REST
@@ -1234,14 +1155,10 @@ def test_the_exec_client_config_does_not_carry_the_credentials_back_out(tmp_path
     assert secret not in caplog.text
 
 
-# The node is assembled in a CHILD interpreter, one node per child. `zcrypto engine run` builds one
-# node per process, so a suite that built several in its own would be testing a shape production
-# never runs -- and a node holds Rust-side state whose teardown order is not ours to reason about.
-# A child gives each build a fresh interpreter and lets process exit release everything at once,
-# which releases strictly more than a dispose() would.
-# A native abort in the child can therefore only fail these two tests, never the suite. It also
-# arrives mute unless faulthandler is re-armed after the build -- see the abort-diagnosability test
-# below, which is what makes such an abort readable rather than a bare exit 134.
+# The node is assembled in a CHILD interpreter, one node per child: `zcrypto engine run` builds one
+# node per process, and a node holds Rust-side state whose teardown order is not ours to reason
+# about -- process exit releases strictly more than a dispose() would, and a native abort in the
+# child can only fail the test that ran it.
 _BUILD_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
@@ -1346,18 +1263,11 @@ def test_build_shadow_node_without_exec_client(tmp_path):
 
 
 def test_the_registered_observers_identity_is_exactly_the_venues_external_order_id(tmp_path):
-    """The single fact the whole second order stream rests on, measured through the real
-    registration rather than at construction (spec 00100 D2).
-
-    Nautilus adopts an order this process did not submit under `StrategyId("EXTERNAL")` and routes
-    its events to the strategy registered under that exact id. An `order_id_tag` on the observer's
-    config would make the registered id `EXTERNAL-<tag>` -- measured -- and the observer would then
-    receive NOTHING, with no exception, no log and no other failing test in this suite. So the id is
-    read back off the object the production assembly actually registered.
-
-    The handler is pinned in the same breath: it is the forwarder of the strategy carrying the
-    executor factory, which is what keeps this stream wired WITH the executor whose disposition
-    filter scopes it."""
+    """Measured through the real assembly (spec 00100 D2): the observer registers under exactly
+    `EXTERNAL` -- at construction and after registration alike -- the main strategy's own identity
+    is untouched by the second registration, and the observer's handler is the forwarder of the
+    strategy carrying the executor factory, which is what keeps this stream wired WITH the filter
+    that scopes it."""
     facts = _node_build_facts(tmp_path, exec_enabled=False)
     assert facts["observers"] == ["ExternalOrderObserver"]
     assert facts["observer_ids_registered"] == ["EXTERNAL"]
@@ -1398,17 +1308,10 @@ def test_a_real_build_never_prints_the_credentials(tmp_path):
 # --- the twelve instruments reach the Cache before the trader starts (spec 00100 D5) ------------
 
 # Nothing in the node configuration selects instruments: the Kraken data client loads the venue's
-# whole spot universe itself, during the connect the kernel awaits before it starts the trader. So
-# by the time a strategy's on_start runs -- which is where a restart inside a passable window runs
-# a boundary's cycle, the earliest venue-state read there is -- the Cache already holds them.
-# Measured, and this is the test that keeps it true: `venue_state_from_cache` raises when any of
-# INSTRUMENT_IDS is absent, and that raise degrades the snapshot to None rather than failing loudly,
-# so a universe that quietly stopped covering a leg would cost venue truth on every cycle with
-# nothing red anywhere.
-#
-# It RUNS a node against Kraken's public endpoint, so it is the one test here that needs the
-# network. It is opt-in: without ZCRYPTO_LIVE_VENUE_TESTS=1 it skips regardless of network, and
-# with the flag set an unreachable endpoint FAILS rather than skips.
+# whole spot universe during the connect the kernel awaits before starting the trader, so the Cache
+# already holds them when a strategy's on_start runs. This is the test that keeps it true --
+# `venue_state_from_cache` raises when any of INSTRUMENT_IDS is absent and that raise degrades the
+# snapshot to None, so a universe that stopped covering a leg costs venue truth with nothing red.
 _INSTRUMENT_ARRIVAL_PROBE = """
 import json, os, sys, threading, time
 from pathlib import Path
@@ -1562,16 +1465,10 @@ def test_the_shipped_idle_value_survives_krakens_own_inactivity_close(tmp_path):
 
 # --- a start the node cannot complete ------------------------------------------------------------
 
-# `engine run` starts the node and supervises nothing: it lets a failed start escape as the raise it
-# is, which the entry point logs at ERROR before the process dies and the supervisor restarts. That
-# rests entirely on the node ABORTING a start it cannot finish rather than sitting live-looking and
-# idle forever, so the property is measured rather than assumed -- a node that quietly stayed up
-# would trade nothing while every supervisor above it reported health.
-#
-# Offline and bounded: the client is pointed at a closed loopback port, so nothing outside this
-# machine is reached, and the connection budget is cut to 5 s. A child interpreter for the same
-# reason as every other node probe in this file -- a node installs process-wide signal handlers and
-# runs its own Rust runtime, neither of which belongs in the pytest process.
+# Offline and bounded: the client points at a closed loopback port, so nothing outside this machine
+# is reached, and the connection budget is cut to 5 s. In a child interpreter for the same reason as
+# every other node probe here -- a node installs process-wide signal handlers and runs its own Rust
+# runtime.
 _FAILED_START_PROBE = """
 import os, sys
 
@@ -1636,12 +1533,10 @@ def test_a_node_that_cannot_finish_starting_raises_out_of_run():
     assert "FINAL NodeState.STOPPED" in result.stdout, detail  # it stopped itself; nothing is left running
 
 
-# What a `LiveNode` costs anything that reaches for it off the thread that built it. pyo3 marks the
-# node unsendable, and the assertion that catches a cross-thread read is a panic that ABORTS the
-# process: SIGABRT, no Python exception, nothing an `except` can intercept, and nothing logged
-# unless faulthandler is armed -- which is why `engine run` arms it (see the abort-diagnosability
-# probe below). `node.handle()`, captured on the building thread, is the one view that answers
-# normally off-thread. Both halves are measured, because guessing either way costs the engine.
+# pyo3 marks a `LiveNode` unsendable: a cross-thread read is a panic that ABORTS the process --
+# SIGABRT, no Python exception, nothing an `except` can intercept, and nothing logged unless
+# faulthandler is armed (which is why `engine run` arms it). `node.handle()`, captured on the
+# building thread, is the one view that answers normally off-thread. Both halves measured.
 _UNSENDABLE_PROBE = """
 import os, sys, threading
 
@@ -1697,12 +1592,10 @@ def test_the_live_node_is_unsendable_and_only_its_handle_may_be_read_off_thread(
 # --- abort diagnosability (T0115) ---------------------------------------------------------------
 
 # A native abort prints a stack only while faulthandler is armed, and nothing sets
-# `PYTHONFAULTHANDLER` anywhere in the deployed engine -- so the arming is `cli/engine/command.py`'s
-# own `faulthandler.disable(); faulthandler.enable(file=2)` after the node is built, and the
-# parameters below are the measurement that justifies it. This is the class of death T0115 spent a
-# month on with no stack to read, and the one an unsendable-node attribute read off the building
-# thread takes. Asserting on `signal.getsignal(SIGABRT)` instead would prove NOTHING -- it reads
-# identical on both sides, because faulthandler installs its handler below CPython's cache of
+# `PYTHONFAULTHANDLER` in the deployed engine -- the arming is `cli/engine/command.py`'s own
+# `faulthandler.disable(); faulthandler.enable(file=2)` after the node is built, and the parameters
+# below are what justify it. Asserting on `signal.getsignal(SIGABRT)` instead would prove NOTHING:
+# it reads identical on both sides, since faulthandler installs its handler below CPython's cache of
 # Python-level handlers.
 _ABORT_PROBE = """
 import faulthandler, os, sys
@@ -1762,13 +1655,9 @@ def test_a_native_abort_after_a_node_build_is_readable_only_where_faulthandler_i
 
 
 def test_the_cycle_alert_hands_the_executor_the_boundary_it_fired_for(tmp_path):
-    """`on_alert_logic`'s FIRST act is schedule_alert, which overwrites `_next_cycle_ts` with the
-    FOLLOWING boundary -- so the value the executor is given has to be read before that call, not
-    after it. Read after, the weekly tracking trip would score its week off a boundary the cycle
-    behind this alert never ran.
-
-    Order matters too: the executor is told AFTER the cycle, so the boundary it reads has already
-    journaled its record."""
+    """The executor is handed the boundary the alert fired for, not the following one the chain has
+    already moved on to -- read before `on_alert_logic`'s first act overwrites `_next_cycle_ts`, and
+    told after the cycle, so the boundary it reads has already journaled its record."""
     executor = RecordingExecutor()
     stub = _exec_stub(_config(tmp_path), FakeClock(), executor=executor)
     stub._next_cycle_ts = B12
@@ -1780,10 +1669,9 @@ def test_the_cycle_alert_hands_the_executor_the_boundary_it_fired_for(tmp_path):
 
 
 def test_the_executor_is_told_the_boundary_even_when_the_alert_logic_raises(tmp_path):
-    """The call sits in a `finally`: a boundary whose alert chain broke is still a boundary the
-    engine lived through, and the trip's whole point is to fire when the ordinary path is not
-    working. The original exception must survive unchanged -- `on_boundary` carries its own total
-    catch, so nothing from a measurement can replace it."""
+    """A boundary whose alert chain raised is still handed to the executor -- the call sits in a
+    `finally`, and the trip's whole point is to fire when the ordinary path is not working -- and
+    the original exception surfaces unchanged."""
     executor = RecordingExecutor()
     stub = _exec_stub(_config(tmp_path), FakeClock(), executor=executor)
     stub._next_cycle_ts = B12
@@ -1799,8 +1687,8 @@ def test_the_executor_is_told_the_boundary_even_when_the_alert_logic_raises(tmp_
 
 
 def test_a_strategy_with_no_executor_still_takes_the_alert(tmp_path):
-    """The default construction wires no executor at all, and every forwarder stays inert -- the
-    alert chain is the engine's research obligation and must not depend on one existing."""
+    """A strategy that wired no executor still takes an alert: the alert chain is the engine's
+    research obligation and must not depend on one existing."""
     events: list = []
     schedule_alert, run_fn = _recorders(events)
     strategy = ShadowStrategy(_config(tmp_path), run_cycle_fn=run_fn, clock=lambda: B08 + timedelta(minutes=5))
@@ -1820,20 +1708,16 @@ def test_a_strategy_with_no_executor_still_takes_the_alert(tmp_path):
 
 # What each recorder carries for the harness's own sake, modelling nothing on the real type: the
 # call log and the readback helpers. Listed one by one on purpose -- a blanket "underscore-prefixed
-# names are plumbing" rule would exempt exactly the shape that has slipped through this suite once.
+# names are plumbing" rule would exempt exactly the shape this check exists to catch.
 _BUILDER_PLUMBING = frozenset({"calls", "_record", "named"})
 _LIVE_NODE_PLUMBING = frozenset({"builder_kwargs", "recorder"})
 _CLOCK_PLUMBING = frozenset({"alerts", "timers"})
 
 
 def test_no_stub_in_this_file_offers_a_name_its_real_library_type_lacks():
-    """`test_every_builder_call_exists_on_the_library` covers the calls production MAKES; this
-    covers the direction nothing else does. A recorder missing a method production calls raises the
-    first time a test runs it. A recorder OFFERING a method the real type lacks fails NOTHING --
-    every assembly test believes it, and the first real `build()` is where it comes back wrong.
-
-    `RecordingLiveNode` is the half the builder-call test never reaches at all: it stands in for
-    `LiveNode` itself, and only `builder` is read off it."""
+    """No stub here offers a name its real library type lacks -- the direction nothing else covers:
+    a recorder missing a method production calls raises the first time a test runs it, while one
+    OFFERING a method the real type lacks fails nothing until the first real `build()`."""
     from nautilus_trader.common import Clock
     from nautilus_trader.live import LiveNode, LiveNodeBuilder
 
@@ -1887,11 +1771,10 @@ def _clock_calls_the_strategy_makes() -> list[tuple[str, int, set[str]]]:
 
 
 def test_every_clock_call_the_strategy_makes_lands_on_the_same_parameters_as_the_real_clock():
-    """`FakeClock` restates two `Clock` methods with its OWN parameter order: its third positional is
-    `callback`, where the real `set_timer`'s is `start_time`. Arity alone cannot see that -- three
-    positional arguments bind cleanly against both -- so production's call is bound against BOTH
-    signatures and the parameters it LANDS ON are compared. A call that lands on `callback` here and
-    `start_time` on a live node schedules no executor tick at all, with every test above green."""
+    """Every `self.clock.<method>(...)` call the node wrapper makes binds to the same parameters on
+    `FakeClock` as on the real `Clock` -- arity alone cannot see a positional that binds cleanly
+    against both and lands on a different parameter, which on a live node would schedule no executor
+    tick at all."""
     import inspect
 
     from nautilus_trader.common import Clock
