@@ -1,14 +1,4 @@
-"""The `zcrypto panel` Typer sub-app (spec 00052 Task 3): materialize canonical book hours into the
-1s L2 primitive panel via `cli.panel.materialize`.
-
-Generation-guards `panel-meta.json` (spec 00052 D5): writes it on a fresh panel root, refuses to run
-against an existing one whose generation (schema_version, grid, notionals, k_levels) differs from
-this code's -- a generation change must be an explicit regeneration, never a silent mix.
-
-Also guards the `--since`/watermark hole (a review finding): if `--since` is newer than an affected
-pair's current panel watermark, the sweep would skip `[watermark+1h, since)` forever once later hours
-are written -- refused by default, proceed only with `--allow-holes`.
-"""
+"""The `zcrypto panel` Typer sub-app: materialize canonical book hours into the 1s L2 primitive panel."""
 
 from __future__ import annotations
 
@@ -67,11 +57,8 @@ def _expected_generation() -> dict[str, object]:
 def _check_generation(panel_root: Path) -> None:
     meta_path = panel_root / "panel-meta.json"
     if not meta_path.exists():
-        # An absent meta means "fresh tree" ONLY if the tree is actually fresh. Deleting the meta
-        # alone -- the obvious reading of the abort below, and the cheapest-looking way past it --
-        # would otherwise mint a new-generation manifest over old-generation hours, and every later
-        # run would read that manifest and pass. Nothing downstream can detect the mix: this check
-        # sees only the manifest, and the watermarked sweep never revisits an hour it has written.
+        # An absent meta means "fresh tree" ONLY if no hours exist: the watermarked sweep never
+        # revisits an hour it has written, so a mixed-generation tree is undetectable afterwards.
         stranded = next(panel_root.glob("*/*/panel-1s/*/*/*/*.parquet"), None)
         if stranded is not None:
             raise _abort(
@@ -84,11 +71,8 @@ def _check_generation(panel_root: Path) -> None:
             )
         write_meta(panel_root)
         return
-    # A matching manifest is not enough: the sweep only covers quotes with an entry in
-    # `NOTIONALS_BY_QUOTE`, so hours for a quote outside that ladder are never revisited and stay at
-    # whatever generation wrote them. The manifest then asserts a generation the tree does not have,
-    # and a whole-tree read raises SchemaError on files nobody remembers exist. No sweep can repair
-    # it -- only deleting them can.
+    # A matching manifest is not enough: a quote outside `NOTIONALS_BY_QUOTE` is never swept, so its
+    # hours keep whatever generation wrote them and a whole-tree read raises SchemaError.
     stray = next(
         (h for h in panel_root.glob("*/*/panel-1s/*/*/*/*.parquet") if h.parts[-6] not in NOTIONALS_BY_QUOTE),
         None,
@@ -132,11 +116,9 @@ def _check_since_holes(
     since: datetime,
     allow_holes: bool,
 ) -> None:
-    # Fresh pairs (review I-1): a pair with NO panel yet has no watermark for `since` to be "newer
-    # than", but a --since above its EARLIEST canonical hour strands the earlier hours just as
-    # permanently (the sweep's since-filter drops them before they are even counted as skipped).
-    # The earliest canonical hour stands in for the missing watermark. One extra archive
-    # enumeration, paid only on --since runs (manual), never by the hourly timer.
+    # A pair with no panel yet has no watermark, but a --since above its EARLIEST canonical hour
+    # strands the earlier hours just as permanently, so that hour stands in for the watermark; the
+    # extra archive enumeration is paid only on --since runs, never by the hourly timer.
     earliest: dict[str, datetime] = {}
     for seg_pair, seg_hour, _ in canonical_segments(primary_root, reconciled_root, kind="book"):
         if seg_pair in affected_pairs and (seg_pair not in earliest or seg_hour < earliest[seg_pair]):
@@ -205,13 +187,12 @@ def materialize(
 ) -> None:
     """Materialize canonical book hours (reconciled-first) into the 1s L2 panel.
 
-    Writes `panel-meta.json` if absent; refuses if an existing one's generation differs from this
-    code's. Exits non-zero iff any hour errored, mirroring `archive verify-replay`'s contract.
+    Exits non-zero iff any hour errored (mirroring `archive verify-replay`) or a guard refused the run outright.
     """
     if pair is not None and pair.count("/") != 1:
         raise typer.BadParameter(f"--pair {pair}: expected BASE/QUOTE (e.g. BTC/EUR)")
     if pair is not None and pair.split("/")[-1] not in NOTIONALS_BY_QUOTE:
-        # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing. (T0092)
+        # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing. (T0092, resolved)
         raise typer.BadParameter(f"--pair {pair}: its quote has no notional ladder ({', '.join(NOTIONALS_BY_QUOTE)})")
 
     since_dt = _parse_since(since) if since is not None else None
