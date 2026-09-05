@@ -1,42 +1,19 @@
 #!/usr/bin/env bash
-# Runs the fixture minter with the vaulted Kraken trade credential in its environment, and nothing
-# else. The sibling of `probe-with-vaulted-key.sh`, for the one other repo script that needs the
-# trade key: everything below `set -euo pipefail` is that script's body, unchanged, so a `diff` of
-# the two shows only the target.
-#
-# It is a SECOND wrapper rather than a `--target` on the first one, and that is the whole point.
-# `.claude/settings.json` carries `Bash(infra/scripts/probe-with-vaulted-key.sh --probes:*)`, whose
-# wildcard covers everything after `--probes`: a selector there would ride an already-granted command
-# line and turn a standing pre-approval into "run any program with the live trade key
-# present". Two scripts, each with a FIXED target, keep the property that makes either
-# one safe to whitelist. Never add a selector to either, and never to any line above
-# `set -euo pipefail` either -- a shell function named `exec` there shadows the builtin.
-#
-# BOTH interpreters run `-I` (isolated), and the flag is load-bearing rather than tidy.
-# Without it the cwd leads `sys.path` and PYTHON's environment is honoured, so a file in the
-# operator's cwd shadows an import, `PYTHONPATH` redirects one, and `PYTHONINSPECT=1`
-# drops to an interactive prompt after the program exits with the credential still in
-# `os.environ` -- the "shell you keep" the refusal text promises this is not. Measured
-# under a pty: without `-I` the prompt appears, with it there is none. What `-I` does NOT
-# close is bash's and the loader's environment -- `BASH_ENV`, `LD_PRELOAD`, `PATH` are
-# the operator's own and no flag in this file reaches them.
-#
-# This one is deliberately NOT in `.claude/settings.json`, and that absence is the design. The probe
-# reads and places test orders under its own harness's controls; this script SENDS ORDERS that stay
-# there -- it has no cancel path, by construction -- so every run should cost a fresh, deliberate
-# permission decision. Adding a grant for it would remove the only gate that stands between a
-# routine-looking command and three live orders.
-#
-# It runs CONTROLLER-SIDE, not through the engine image the way an engine-hosted step would. The
-# image's `cli` package is pinned to whatever revision that image was built from; the minter imports
-# `cli.snapshot.fetch`, `cli.snapshot.assetpairs` and `cli.engine.flatten.BLIND_ORDER_READ_LEGS`,
-# none of which is guaranteed to exist there, and the failure would be an ImportError in the middle
-# of an attended pass. The repo's own venv is the one tree known to carry them.
-#
-# The credential is IP-bound. Running this from a workstation needs that workstation's public IP
-# temporarily allowlisted on the key, and removing it again is a numbered step of the procedure,
-# not an afterthought: infra/runbooks/order-semantics-verification.md section 1.3 owns the mechanics
-# for this key, whichever script is being run with it.
+# Runs the fixture minter with the vaulted Kraken trade credential in its environment and nothing
+# else. The sibling of `probe-with-vaulted-key.sh`: everything below `set -euo pipefail` is that
+# script's body unchanged, so a `diff` of the two shows only the target. It is a SECOND wrapper
+# rather than a `--target` on the first because `.claude/settings.json` carries a standing grant for
+# that script's `--probes` argument, whose wildcard covers everything after it: a selector would ride
+# that grant and turn it into "run any program with the live trade key present". Never add a selector
+# to either script, and never any line above `set -euo pipefail` either -- a shell function named
+# `exec` there shadows the builtin. `-I` on both interpreters is load-bearing, not tidy: without it
+# the cwd leads `sys.path`, `PYTHONPATH` redirects an import, and `PYTHONINSPECT=1` drops to an
+# interactive prompt with the credential still in `os.environ`. This script is deliberately absent
+# from that grant file, and the absence is the design: it SENDS ORDERS and has no cancel path, so
+# every run should cost a fresh permission decision. It runs CONTROLLER-SIDE rather than through the
+# engine image, whose pinned `cli` package is not guaranteed to carry the modules the minter imports.
+# The credential is IP-bound: infra/runbooks/order-semantics-verification.md section 1.3 owns the
+# allowlist steps for this key, whichever script is run with it.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

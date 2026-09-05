@@ -6,22 +6,17 @@
 # defined here too rather than shared, so this role carries no cross-role variable dependency.
 access_ops_wg_listen_port: 51820
 
-# agentboard (spec 00075 D13 -- G2, web terminal onto the operator tmux). Pinned + spike-gated: the
-# owner runs the D13 spike (scratch-prefix install, decoy-session destructive-capability drill)
-# before this role is trusted to install/start the real thing; the role installs the pinned version
-# and renders the unit on every converge, but access_ops_agentboard_live below gates whether it is
-# ever enabled or started (see access_ops/tasks/main.yml).
+# agentboard (spec 00075 D13), the web terminal onto the operator tmux. The role installs this pin
+# and renders its unit on every converge; whether the unit is ever enabled or started is
+# `access_ops_agentboard_live` below.
 access_ops_agentboard_version: "0.4.23"
 # D13 gate -- stays false until the owner's spike proves agentboard cannot hibernate/kill/resize a
 # discovered session; the owner sets it true (host_vars or -e) to bring the unit live, and it then
 # stays enabled+started idempotently. false also means the unit is explicitly disabled+stopped on
 # every converge, so a reboot before the spike passes cannot auto-start it via WantedBy=.
 access_ops_agentboard_live: false
-# nvm's init script. The rendered start script sources it at START time and execs the platform binary
-# resolved from `npm root -g` -- never the `agentboard` PATH shim, which is a node wrapper that would
-# run the real server as a child and leave MainPID pointing at the wrapper (see the unit, where
-# KillMode=process depends on MainPID being the server). Nothing is resolved at converge time, so a
-# node upgrade via nvm -- `nvm install <new>; nvm alias default <new>; npm i -g
-# @gbasin/agentboard@<pin>` -- is still picked up by a plain `systemctl restart zaccess-agentboard`,
-# with no codebase change and no re-converge.
+# nvm's init script. The rendered start script sources it at START time and execs the binary
+# resolved from `npm root -g`, never the `agentboard` PATH shim -- the start-script and unit
+# templates carry why. Nothing resolves at converge time, so a node upgrade lands on a plain
+# `systemctl restart`.
 access_ops_agentboard_nvm_sh: "/home/zhaow/.nvm/nvm.sh"

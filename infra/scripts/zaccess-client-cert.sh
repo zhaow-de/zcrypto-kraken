@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Issue a pinned mTLS client leaf for the zaccess edge (spec 00075 D16).
 #   zaccess-client-cert.sh issue <name> [--days N] [--out-dir DIR] [--p12-dir DIR]
-# The CA private key is STREAMED from the vault (never written to disk): default
-#   ZACCESS_CA_KEY_CMD="uv run ansible-vault view --vault-password-file scripts/vault-pass.sh files/zaccess_ca.key.vault"
-# run from infra/ansible/. Revocation is the PEM's absence: delete it from pinned-leaves/ and
-# converge. Tests override ZACCESS_CA_KEY_CMD/ZACCESS_CA_CRT/ZACCESS_P12_PASS.
+# The CA private key is STREAMED from the vault by ZACCESS_CA_KEY_CMD, never written to disk.
+# Revocation is the PEM's absence: delete it from pinned-leaves/ and converge.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 CMD="${1:?usage: issue <name> [--days N]}"; shift
