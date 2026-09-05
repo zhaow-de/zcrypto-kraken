@@ -12,7 +12,7 @@ Run this at the start of every `zcrypto-main` session and after every resume. Th
 
 1. Read `docs/reference/multi-agent-protocol.md`, then `.local/memo.md` (the backlog authority — `.claude/skills/zcrypto-grooming/references/memo-protocol.md` governs its edits), then `.local/coordination.md` (the session table; create it from the template below if absent).
 2. `ListAgents`. Reconcile the table against what is actually alive: names, busy/idle, and any rename the owner reported.
-3. Install the tick: `CronCreate` with `cron: "7 * * * *"`, `recurring: true`, and the prompt below verbatim. Record the job id in the coordination table. It expires after seven days — the table's `tick installed` line is the reminder.
+3. Install the tick: `CronCreate` with `cron: "7 * * * *"`, `recurring: true`, and the prompt below verbatim. A cron field is in the PROCESS's zone — UTC on the ops host, whatever zone the owner reads — so a one-shot read is written in UTC and never converted; every spoken time keeps its `Z`. Record the job id in the coordination table. It expires after seven days — the table's `tick installed` line is the reminder.
 4. Report the reconciled table to the owner in one message, and wait for an instruction. Main assigns nothing on its own initiative at startup.
 
 ## The tick prompt
