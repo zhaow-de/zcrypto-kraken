@@ -14,12 +14,10 @@ def buy_and_hold(n_periods: int) -> list[float]:
 
 
 def vol_target(returns: list[float], *, target_vol: float, lookback: int, max_leverage: float = 1.0) -> list[float]:
-    """B1 — scale exposure toward `target_vol` (per period) from the realized vol of the prior `lookback` returns.
+    """B1 — position[t] = min(target_vol / stdev(returns[t-lookback:t]), max_leverage), 0.0 for t < lookback or a zero-vol window.
 
-    position[t] = min(target_vol / stdev(returns[t-lookback:t]), max_leverage), or 0.0 for t < lookback or a
-    zero-vol window. The window `returns[t-lookback:t]` excludes t, so position[t] never uses return[t]
-    (no look-ahead); the backtester then applies position[t] to return[t].
-    """
+    `target_vol` is per period, the unit of `returns`. The window excludes t, so position[t] never uses return[t] — no look-ahead
+    when the backtester applies it to return[t]."""
     if not returns:
         raise BenchmarkError("returns must be non-empty")
     for r in returns:
@@ -53,12 +51,10 @@ def returns_from_prices(prices: list[float]) -> list[float]:
 
 
 def sma_gate(prices: list[float], *, window: int) -> list[float]:
-    """Long/flat 200-day-style regime gate: signal[k] = 1.0 if prices[k] > SMA(prices[k-window+1:k+1]) else 0.0.
+    """Long/flat regime gate: signal[k] = 1.0 iff k >= window-1 and prices[k] > SMA(prices[k-window+1:k+1]), else 0.0.
 
-    Returns length len(prices)-1, aligned with returns_from_prices(prices) (element k = the move prices[k] ->
-    prices[k+1]). signal[k] uses only prices[<= k] (through prices[k], the price at the start of return-period
-    k) and never prices[k+1] -> no look-ahead. Warm-up (k < window-1) is 0.0.
-    """
+    Length len(prices)-1, aligned with returns_from_prices (element k = the move prices[k] -> prices[k+1]); signal[k]
+    reads only prices[<= k], never prices[k+1] — no look-ahead."""
     if not isinstance(prices, list) or len(prices) < 2:
         raise BenchmarkError(f"prices must be a list of >= 2 values, got {prices!r}")
     for p in prices:
@@ -83,13 +79,10 @@ def _inverse_vol_weight(window: list[float]) -> float | None:
 
 
 def inverse_vol_basket(prices_by_asset: dict[str, list[float]], *, lookback: int) -> list[float]:
-    """Inverse-vol-weighted basket net return series (B2), look-ahead-free.
+    """B2 — net return series of an inverse-vol-weighted basket over price series pre-aligned to one length.
 
-    Each price series must be pre-aligned to the same length L. For return-period
-    t >= lookback, weight asset i by 1 / stdev(returns_i[t-lookback:t]) (the window
-    strictly before t), normalized over assets with positive trailing vol, and apply
-    to returns_i[t]. Warm-up (t < lookback) and days with no positive-vol asset are 0.0.
-    """
+    For t >= lookback, weight asset i by 1 / stdev(returns_i[t-lookback:t]) — the window strictly before t, so no look-ahead —
+    normalized over the assets with positive trailing vol, applied to returns_i[t]; t < lookback and days with none are 0.0."""
     if not isinstance(lookback, int) or isinstance(lookback, bool) or lookback < 2:
         raise BenchmarkError(f"lookback must be an int >= 2, got {lookback!r}")
     if not isinstance(prices_by_asset, dict) or not prices_by_asset:
@@ -126,17 +119,10 @@ def inverse_vol_basket(prices_by_asset: dict[str, list[float]], *, lookback: int
 
 
 def dynamic_inverse_vol_basket(prices_by_asset: dict[str, list[float | None]], *, lookback: int) -> list[float]:
-    """Dynamic-composition inverse-vol basket over a union calendar, look-ahead-free.
-
-    Generalizes `inverse_vol_basket` to a union calendar where a day is `None` when an asset is absent
-    (pre-listing or a data gap). Each series must be pre-aligned to the same length L; every element is
-    either `None` or a finite positive float. Per asset, ret_i[t] = prices_i[t+1]/prices_i[t] - 1 iff both
-    are present and positive, else `None`. For return-period t, asset i qualifies iff (a) ret_i[t] is
-    present, (b) its trailing window ret_i[t-lookback:t] (strictly before t) is fully populated (no `None`),
-    and (c) that window has positive stdev; qualifying assets are weighted 1/stdev and renormalized over the
-    qualifying set for that period. No qualifier -> 0.0. Strictly causal: period t's weights use only
-    returns strictly before t.
-    """
+    """`inverse_vol_basket` over a union calendar: equal-length series, `None` where an asset is absent (pre-listing or a gap).
+    ret_i[t] = prices_i[t+1]/prices_i[t] - 1, `None` if either price is. For t >= lookback, asset i qualifies iff ret_i[t] and its
+    window ret_i[t-lookback:t] (strictly before t — no look-ahead) are `None`-free and the window's stdev is positive; qualifiers
+    are weighted 1 / stdev, renormalized over the qualifying set; t < lookback and periods with no qualifier are 0.0."""
     if not isinstance(lookback, int) or isinstance(lookback, bool) or lookback < 2:
         raise BenchmarkError(f"lookback must be an int >= 2, got {lookback!r}")
     if not isinstance(prices_by_asset, dict) or not prices_by_asset:
