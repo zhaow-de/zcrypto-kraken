@@ -15,21 +15,10 @@ _BAR_SCHEMA = {
 
 
 def ticks_to_bars(df: pl.DataFrame, *, interval_minutes: int) -> pl.DataFrame:
-    """Aggregate a tick frame (as returned by `cli.tick.read.read_trades_csv`) into OHLCV bars.
-
-    Buckets ticks into `interval_minutes`-wide, left-closed windows aligned to the epoch — matching
-    the canonical OHLCVT bar convention (e.g. 1440-minute buckets fall on UTC midnight, since the
-    epoch origin 1970-01-01T00:00:00Z is itself UTC midnight). A tick exactly on a bucket boundary
-    belongs to the bucket it opens, not the one it closes. Per bucket, in `ts` order: `open`=first
-    trade price, `high`=max, `low`=min, `close`=last trade price, `volume`=sum, `count`=n trades, and
-    `vwap`=`Σ(price·volume)/Σ(volume)` — the true tick-weighted VWAP (not a close-price reconstruction
-    proxy, unlike `cli.backfill.aggregate.aggregate_minutes`, which lacks per-trade data to compute one).
-
-    Returns columns `[ts, open, high, low, close, volume, count, vwap]` sorted by `ts`. An interval
-    with zero ticks simply produces no bar (no gap-filling). Empty input returns an empty frame with
-    the same schema — no error (unlike `read_trades_csv`, empty is a normal outcome here: an interval
-    boundary or a pair/window with no trades).
-    """
+    """Aggregate a tick frame (`cli.tick.read.read_trades_csv`'s) into OHLCV bars sorted by `ts`, in epoch-aligned buckets so that
+    1440-minute bars fall on UTC midnight, matching the canonical OHLCVT convention. An interval with no ticks yields no bar
+    (never gap-filled), and empty input is a normal outcome rather than the `TickError` `read_trades_csv` raises. `vwap` is the
+    true tick-weighted mean, not `cli.backfill.aggregate.aggregate_minutes`' close-price proxy."""
     if df.height == 0:
         return pl.DataFrame(schema=_BAR_SCHEMA)
 
