@@ -111,7 +111,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0169 — cleanup residue outside a prose commit](T0169-cleanup-residue-outside-a-prose-commit.md) — two soak test names that contradict their assertions, the segment writer's disagreeing counts, a template's live-host claim, the archive-pull rename deferral (owner's decision), the tripwire's probe-source blind spot.
 
-- [T0170 — the kraken MCP server exposes the trade and funding services](T0170-the-kraken-mcp-server-exposes-the-trade-and-funding-services.md) — the sessions register the CLI's server with `-s all` against the live workspace, so order placement and withdrawals sit behind one permission prompt; the owner narrows it to the read-only default. Ripe when the engine is armed: `zcrypto_exec_armed{host="zcrypto"}` reads 1 (`engine-procedures.md`'s armed-state read).
+- [T0170 — drop the kraken MCP server and call the CLI through Bash](T0170-drop-the-kraken-mcp-server-and-call-the-cli-through-bash.md) — the sessions register the CLI's MCP server globally with every service enabled; every tool is an argv rewrite into the same CLI and the catalog strictly subtracts, so the owner removes the registration and the sessions call `kraken … -o json` under the harness's own permission gate. The pending action is the owner's edit of `~/.claude.json`.
 
 ### Partially done<a name="partially-done-1"></a>
 
