@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Installed by the `capture` Ansible role at /usr/local/sbin/zcrypto-reboot-check -- do not hand-edit
-# on the host, it is overwritten on the next converge. Edit this file (and re-run
-# tests/test_reboot_check.py, which drives THIS script) instead. Attended-reboot detector (spec
-# 00071, T0027): patches install unattended, the reboot is a human act, so the flag is published.
+# Installed by the `capture` role at /usr/local/sbin/zcrypto-reboot-check; a hand-edit there is lost
+# on the next converge, and tests/test_reboot_check.py drives THIS file. Attended-reboot detector
+# (spec 00071, T0027): patches install unattended and the reboot is a human act, so this publishes
+# the pending-reboot flag as a metric.
 set -euo pipefail
 
 usage="usage: zcrypto-reboot-check <flag-path> <output.prom>"

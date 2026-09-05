@@ -2,7 +2,7 @@
 # Installed by the `engine` Ansible role at /usr/local/sbin/zcrypto-engine-journal-prune — do not
 # hand-edit on the host, it is overwritten on the next converge. Edit this file (and re-run
 # tests/test_engine_journal_prune.py, which drives THIS script) instead. The NAS holds the durable
-# archive and the gate scores THAT copy, so this VPS tail is a local bound (spec 00070, T0021).
+# archive and the gate scores THAT copy, so this VPS tail is a local one (spec 00070, T0021).
 set -euo pipefail
 
 usage="usage: zcrypto-engine-journal-prune <journal-dir> <retention-days> [--dry-run] [--textfile PATH]"
@@ -44,7 +44,7 @@ mapfile -t all < <(find "$dir" -mindepth 1 -maxdepth 1 -type d \
 # A day-dir goes only if BOTH hold: (1) its name is strictly older than the cutoff and (2) it is not
 # among the newest <retention-days> present. (2) is the load-bearing one: `cli/engine/cycle.py`
 # derives each cycle's orders as a DELTA against the most recent journaled cycle, so an emptied
-# journal rebuilds the whole book. They part only when the engine stops longer than the window.
+# journal rebuilds the whole book. In healthy operation the two coincide, a day arriving daily.
 total=${#all[@]}
 protected=$(( total > 10#$days ? 10#$days : total ))
 candidates=$(( total - protected ))

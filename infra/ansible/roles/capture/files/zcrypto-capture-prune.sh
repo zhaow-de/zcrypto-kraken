@@ -24,10 +24,10 @@ esac
 # days, so its boundary is a day fuzzier than the retention the operator asked for.
 cutoff=$(date -u -d "$days days ago" '+%Y-%m-%d %H:%M:%S')
 
-# ONLY committed finals and their sidecars, and the name globs are the entire safety argument,
-# because L2 book capture is unbackfillable. Parts, held-spills (rows the oracle never confirmed) and
-# `<HH>.parquet.merging` all END in `.parquet`, so a `-name '*.parquet'` sweep would eat the live
-# hour — the two-digit prefix is what keeps them apart; `*.corrupt*` is evidence and never deleted.
+# ONLY committed finals and their sidecars: the name globs are the entire safety argument, because
+# L2 book capture is unbackfillable. Parts, held-spills and `<HH>.parquet.merging` all END in
+# `.parquet`, so a `-name '*.parquet'` sweep would eat the live hour; the anchored
+# `[0-9][0-9].parquet` basename keeps them apart, and `*.corrupt*` is evidence, never deleted.
 deleted=$(
   find "$dir" -type f \
     \( -name '[0-9][0-9].parquet' -o -name '[0-9][0-9].parquet.sha256' \) \

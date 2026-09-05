@@ -1,9 +1,9 @@
 ---
 - name: reload alloy
-  # The config is bind-mounted as a DIRECTORY, so the container sees a new file at once but Alloy does
-  # not watch it -- this reload applies the edit, and does NOT re-read alloy-secrets.env, so a rotated
-  # credential still needs a recreate. `-1` is fetch_url's connection failure, tolerating Alloy DOWN;
-  # a 4xx/5xx from a RUNNING Alloy MUST fail here -- `copy` then reports `ok` and nothing re-notifies.
+  # A reload, never `--force-recreate`: the DIRECTORY mount lands the new file in place and this role
+  # never owned the stack's lifecycle. It does not re-read alloy-secrets.env (process-level), so a
+  # rotated credential needs a recreate. `-1` is fetch_url's connection failure, so Alloy DOWN passes;
+  # a 4xx/5xx from a RUNNING one must fail, or `copy` reports `ok` and nothing re-notifies.
   ansible.builtin.uri:
     url: http://127.0.0.1:12345/-/reload
     method: POST

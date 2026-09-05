@@ -14,8 +14,8 @@ base_unattended_upgrades_automatic_reboot: "true"
 
 # The slot is the measured book-row trough (spec 00050): >=1h from any 4h bar boundary
 # (00/04/08/12/16/20), off the hour, lowest book traffic -- books are the unbackfillable loss
-# currency where trades are REST-backfillable. The secondary overrides to "22:25" in its host_vars,
-# so one night's reboots cannot take both streams down.
+# currency where trades are REST-backfillable. The secondary `zcrypto-red` overrides to "22:25" in
+# its host_vars, so the two capture hosts never reboot at once.
 base_unattended_upgrades_reboot_time: "21:25"
 # `root` NOTIFIES NOTHING and is kept deliberately: no fleet host installs an MTA, so
 # unattended-upgrades' MailOnlyOnError shells out to a mailer that does not exist; alerting is
