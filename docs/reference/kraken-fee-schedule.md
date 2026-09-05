@@ -1,14 +1,17 @@
 # Kraken Fee Schedule — Reference (⏱ last account-confirmed 2026-07-07)
 
-> **How this file stays current.** Its numbers come from the **logged-in** Kraken Pro → Fee tab, so
-> nothing automated can refresh them. The re-read is the attended half of the monthly
-> `zcrypto-refdata-sweep` (owner ruling, 2026-08-04): the owner reports tier + 30-day volume, and the
-> result — confirmed, corrected, or **not re-read** — lands in the re-confirmation log of
-> `kraken-snapshot-register.md`. Before this, the only trigger lived in `T0000`, which is archived,
-> so the ⏱ marker below had no mechanism behind it. **If the tier changes, say what it invalidates:**
-> `cli/costs/fees.py` encodes this ladder verbatim, so every quoted figure that reads it re-prices.
+> **How this file stays current.** The **current tier and the 30-day volume are read automatically**
+> by the monthly `zcrypto-refdata-sweep`, from `kraken volume --pair <PAIR> -o json` — the account's
+> own live maker and taker rate, its 30-day volume and the next tier's threshold, authenticated and
+> read-only. **The full ladder below still comes from the logged-in Kraken Pro → Fee tab**, which the public
+> endpoint serves only in its superseded form, so the attended half of the sweep (owner ruling,
+> 2026-08-04) narrows to the ladder's shape, to AoP qualification, and to anything the API contradicts; the result — confirmed, corrected, or **not
+> re-read** — lands in the re-confirmation log of `kraken-snapshot-register.md`. Prefer the API read
+> over the public `AssetPairs` fee columns, which served the pre-2026-07-09 ladder long after it was
+> superseded. **If the tier changes, say what it invalidates:** `cli/costs/fees.py` encodes this
+> ladder verbatim, so every quoted figure that reads it re-prices.
 
-Reference for the cost model. This supersedes the master-plan §14 fee snapshot (0.25%/0.40% base), which was the schedule live **through July 8, 2026 only**. A **new schedule takes effect July 9, 2026** and is recorded below. ⏱ — reconfirm on the logged-in **Kraken Pro → Fee tab** (authoritative; the public fee-schedule page still showed the old schedule when this was captured). Verified 2026-07-07 against Kraken's official "Cross-platform fee tier changes" article + the margin-trading page.
+Reference for the cost model. This supersedes the master-plan §14 fee snapshot (0.25%/0.40% base), which was the schedule live **through July 8, 2026 only**. A **new schedule takes effect July 9, 2026** and is recorded below. ⏱ — reconfirm the ladder's shape on the logged-in **Kraken Pro → Fee tab** (authoritative for the ladder; the public fee-schedule page still showed the old schedule when this was captured, and the current tier comes from `kraken volume`). Verified 2026-07-07 against Kraken's official "Cross-platform fee tier changes" article + the margin-trading page.
 
 ## Spot maker/taker — new schedule (effective 2026-07-09)
 
@@ -91,4 +94,4 @@ serving the **pre-2026-07-09** schedule (0.25 %/0.40 % base, breaks at \$10k/\$5
 **drift detector on the endpoint**, explicitly not as a costing anchor: the day they move is the day
 the API propagated a change, and the reconciliation runs back to this file. The register's borrow
 and margin columns do agree with the table above and need no such caveat. The re-confirmation
-routine for both files is the `zcrypto-refdata-sweep` skill. **Cost-model action:** the Phase-2 explicit-cost model must adopt this July-9 schedule (base taker **0.80%**, maker **0.40%**), not the master-plan §1/§4/§14 snapshot (0.25%/0.40%). The change *reinforces* the plan's thesis — maker-first execution, no fast taker mean-reversion at our size — with worse absolute numbers. All values ⏱: reconfirm on the live Fee tab and the margin order form at Phase 0 and go-live.
+routine for both files is the `zcrypto-refdata-sweep` skill. **Cost-model action:** the Phase-2 explicit-cost model must adopt this July-9 schedule (base taker **0.80%**, maker **0.40%**), not the master-plan §1/§4/§14 snapshot (0.25%/0.40%). The change *reinforces* the plan's thesis — maker-first execution, no fast taker mean-reversion at our size — with worse absolute numbers. All values ⏱: the current tier and volumes come from `kraken volume`; the ladder's shape, the AoP qualification ladder and the margin bands are reconfirmed on the live Fee tab and the margin order form at Phase 0 and go-live.
