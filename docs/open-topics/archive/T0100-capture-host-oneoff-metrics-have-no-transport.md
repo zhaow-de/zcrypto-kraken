@@ -43,4 +43,4 @@ The textfile collector is enabled on both capture hosts, pointed at `/host/root/
 - `node_textfile_mtime_seconds` carries the `file` label the staleness rules key on, for all three published files.
 - `node_textfile_scrape_error` = 0 on all four hosts.
 
-The journal keep-regex now also admits `zcrypto-engine-journal-prune` and `zcrypto-reboot-check`, so their log lines reach Loki too. `zcrypto-capture-prune` still publishes no metric — it predates the transport and is outside the staleness alerts' coverage, recorded in `fleet.md`.
+The journal keep-regex now also admits `zcrypto-engine-journal-prune` and `zcrypto-reboot-check`, so their log lines reach Loki too. `zcrypto-capture-prune` still publishes no metric — it predates the transport and is outside the staleness alerts' coverage, recorded in `infra/runbooks/hosts.md`.
