@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "both capture rows' rollback operands in docs/reference/fleet-pins.md name a build revision whose cli/capture/segment_writer.py carries the narrowed past-dated predicate: for each operand's revision, git show <rev>:cli/capture/segment_writer.py | grep -qF 'and not self._parts_for(self._hour_dir(hour)' passes"
+ripe_when: "both capture rows' rollback operands in docs/reference/fleet-pins.md name a digest whose revision (the file's Full digests list) carries the narrowed past-dated predicate in cli/capture/segment_writer.py: for that revision, git show <rev>:cli/capture/segment_writer.py | grep -qF 'and not self._parts_for(self._hour_dir(hour)' passes"
 ---
 
 # Hour rotation trusts an untrusted timestamp, so one bad stamp closes the hour early
@@ -93,19 +93,19 @@ Three alert rules and five runbook entries ship with them, including the `bogus-
 
 - **Spec `00109` D7's Stage 1 is discharged — both capture hosts re-pinned onto the narrowed predicate on 2026-09-04, the absolute-value rule pushed after both, and all four families read by value on both hosts on 2026-09-05.** `00109` supersedes `00103` D5: the predicate is narrowed to a past hour holding no captured `.part` files, and the rule moves off `increase()`, which cannot see a step present in a series' first sample; `capture.md`'s section "There is no hard-zero baseline, and a step is not by itself a bad stamp" and `alerts.yaml`'s summary carry the narrowed shape. Both capture rows in `docs/reference/fleet-pins.md` run `ac6172b9ffb2` = revision `4925e060` (`zcrypto-red` since 09:27:12Z, `zcrypto` since 17:13:25Z), and `git show 4925e060:cli/capture/segment_writer.py` carries `and not self._parts_for(self._hour_dir(hour)`. The escape hatch was never taken — no revert of `fix(obs): a start-correlated counter is the one increase() cannot read` exists — and the push that carried the absolute-value form was the 2026-09-04T20:44:56Z run from merged `develop` `efa9d098`, after both re-pins. Read 2026-09-05T17:27:56Z with `infra/scripts/grafana-query.py`:
 
-| family | `zcrypto` | `zcrypto-red` |
-| --- | --- | --- |
-| `zcrypto_capture_ts_past_dated_hour_total` | 0 | 0 |
-| `zcrypto_capture_hour_finalized_early_total` | 0 | 0 |
-| `zcrypto_clock_offset_seconds` | 0.000011 s | 0.000032 s (bar is 10 s, inside `zcrypto-capture-clock-skew`'s own expr) |
-| `zcrypto_clock_synchronised` | 1 | 1 |
-| `clock-offset.prom` staleness | 219 s | 234 s (5-min timer) |
+  | family | `zcrypto` | `zcrypto-red` |
+  | --- | --- | --- |
+  | `zcrypto_capture_ts_past_dated_hour_total` | 0 | 0 |
+  | `zcrypto_capture_hour_finalized_early_total` | 0 | 0 |
+  | `zcrypto_clock_offset_seconds` | 0.000011 s | 0.000032 s — each ~1e-5 s against the 10 s bar in `zcrypto-capture-clock-skew`'s own expr; the sign oscillates at this scale |
+  | `zcrypto_clock_synchronised` | 1 | 1 |
+  | `clock-offset.prom` staleness | 219 s | 234 s (5-min timer) |
 
-  The two-host control: the previous image's restart put a `1` on the secondary, and both restarts onto the narrowed predicate read `0` — the benign restart case no longer counts, so from here a non-zero on this family is a detection, not an artefact. Stage 2 waits on the rollback operands: both rows' operand `6ece9ceb1c18` is revision `8f4ac521`, which fails the same check, so a rollback re-arms the hazard until a capture rollout lands on top of `4925e060`.
+  The two-host control: the previous image's restart put a `1` on the secondary — a re-open of an hour that still held its `.part` files — and that shape no longer counts: both restarts onto the narrowed predicate read `0`, so the baseline is clean on both hosts, and a later non-zero is a NEW event worked through `capture.md`'s four shapes and its mandatory peer comparison, never a detection by itself. Stage 2 waits on the rollback operands: both rows' operand `6ece9ceb1c18` is revision `8f4ac521`, which fails the same check, so a rollback re-arms the hazard until a capture rollout lands on top of `4925e060`.
 
 ## Suggested next steps
 
-**The three residuals below are unchanged and remain DETECTION-based — each names the detector signal that reveals it, and those detectors are now live on both hosts (see `## Done so far`). What blocked this topic was never THEIR deployment but TRUST: one of the three fires on a benign restart, so a reading from it does not yet mean what the residual needs it to mean. Restoring that trust needed a SECOND deployment — `00109`'s narrowed predicate on both hosts and its corrected rule pushed — which landed 2026-09-04 and read clean on both hosts 2026-09-05 (`## Done so far`), so a non-zero reading now means what the residual needs it to mean.**
+**The three residuals below are unchanged and remain DETECTION-based — each names the detector signal that reveals it, and those detectors are now live on both hosts (see `## Done so far`). What blocked this topic was never THEIR deployment but TRUST: one of the three fires on a benign restart, so a reading from it does not yet mean what the residual needs it to mean. Restoring that trust needed a SECOND deployment — `00109`'s narrowed predicate on both hosts and its corrected rule pushed — which landed 2026-09-04 and read clean on both hosts 2026-09-05 (`## Done so far`): the restart shape that counted is gone from the baseline, and a non-zero is now a new event for `capture.md`'s shape discrimination, never a verdict by itself.**
 
 
 **Make the residuals observable, so the accepted limits are watched rather than merely written down — spec `00103`.** The three items below stay *accepted design limits*: each knob that would close them starves a legitimate case, and that judgement is unchanged. What was not acceptable was the state before `00103`, where the residual was both un-closed and un-watched, so "never observed in production" was a statement about our instrumentation rather than about the data.
