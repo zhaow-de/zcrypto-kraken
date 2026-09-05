@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Normalizes the zcrypto data archive on the NAS to plain POSIX perms (dirs 0775, files 0664, group
-# `zcrypto`, no ACL): DSM DISPLAYS an ACL'd file as the mask where `chmod` yields the literal mode.
-# Idempotent:
+# `zcrypto`, no ACL): DSM DISPLAYS an ACL'd file as the mask, 666 or 777+, where `chmod` yields the
+# literal mode. Idempotent:
 #   ssh nas 'sudo bash -s' < infra/nas/normalize-archive-perms.sh   [/volume1/ZhaoCrypto]
 set -euo pipefail
 

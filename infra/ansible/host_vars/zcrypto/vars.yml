@@ -1,7 +1,7 @@
-# The reboot slot is declared here rather than in the base role's default: the fleet-collision
-# assert in roles/base/tasks/main.yml reads every host's slot from `hostvars`, which sees inventory
-# vars but not role defaults. Slot derivation: spec 00050, from the measured 20:00-21:00 UTC book-
-# row trough.
+# The PRIMARY capture host, and the engine host. The reboot slot is declared here rather than in the
+# base role's default: the fleet-collision assert in roles/base/tasks/main.yml reads every host's
+# slot from `hostvars`, which sees inventory vars but not role defaults. Slot derivation: spec
+# 00050's measured 20:00-21:00 UTC book-row trough.
 base_unattended_upgrades_reboot_time: "21:25"
 
 # This machine's OWN deploy pubkey: rotation edits files/ once.

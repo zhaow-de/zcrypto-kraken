@@ -15,9 +15,10 @@ out=${2:-}
 pending=0
 [ -e "$flag" ] && pending=1
 
-# The collector globs this directory continuously, so mktemp as a SIBLING makes the mv a same-
-# filesystem rename. 0 is emitted EXPLICITLY: an absent series is indistinguishable from a dead
-# exporter, and staleness is node_textfile_mtime_seconds (spec 00071 D3).
+# Atomic publish: the collector globs this directory continuously and must never read a half-written
+# file, and mktemp as a SIBLING makes the mv a same-filesystem rename. 0 is emitted EXPLICITLY: an
+# absent series is indistinguishable from a dead exporter, and staleness is
+# node_textfile_mtime_seconds (spec 00071 D3).
 tmp=$(mktemp "${out}.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
 {

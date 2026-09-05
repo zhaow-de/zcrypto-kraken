@@ -36,7 +36,8 @@ engine_healthcheck_url: ""
 
 # Days of engine journal kept on the VPS (spec 00070, T0021; owner's ruling 2026-07-26). The NAS
 # holds the durable archive and the gate scores THAT copy, so this is a local tail. The prune also
-# keeps the newest N day-dirs whatever their age, N being this value.
+# keeps the newest N day-dirs whatever their age, because an empty journal makes the next cycle
+# rebuild the whole book instead of deltas.
 engine_journal_retention_days: 60
 
 # [zcrypto.engine] knobs rendered into /opt/zcrypto-engine/zcrypto.toml.
