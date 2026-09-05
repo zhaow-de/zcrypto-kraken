@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "both capture rows' rollback operands in docs/reference/fleet-pins.md name a digest whose revision (the file's Full digests list) carries the narrowed past-dated predicate in cli/capture/segment_writer.py: for that revision, git show <rev>:cli/capture/segment_writer.py | grep -qF 'and not self._parts_for(self._hour_dir(hour)' passes"
+ripe_when: "both capture rows' rollback operands in docs/reference/fleet-pins.md name a digest whose revision (the file's Full digests list) carries the narrowed past-dated predicate in cli/capture/segment_writer.py: for each operand's revision, git show <rev>:cli/capture/segment_writer.py | grep -qF 'and not self._parts_for(self._hour_dir(hour)' passes"
 ---
 
 # Hour rotation trusts an untrusted timestamp, so one bad stamp closes the hour early
@@ -101,11 +101,11 @@ Three alert rules and five runbook entries ship with them, including the `bogus-
   | `zcrypto_clock_synchronised` | 1 | 1 |
   | `clock-offset.prom` staleness | 219 s | 234 s (5-min timer) |
 
-  The two-host control: the previous image's restart put a `1` on the secondary — a re-open of an hour that still held its `.part` files — and that shape no longer counts: both restarts onto the narrowed predicate read `0`, so the baseline is clean on both hosts, and a later non-zero is a NEW event worked through `capture.md`'s four shapes and its mandatory peer comparison, never a detection by itself. Stage 2 waits on the rollback operands: both rows' operand `6ece9ceb1c18` is revision `8f4ac521`, which fails the same check, so a rollback re-arms the hazard until a capture rollout lands on top of `4925e060`.
+  The two-host control: the previous image's restart put a `1` on the secondary — a re-open of an hour that still held its `.part` files — and that shape no longer counts: both restarts onto the narrowed predicate read `0`, so both hosts' standing value is 0, and a later non-zero is a NEW event worked through `capture.md`'s four shapes and its mandatory peer comparison, never a detection by itself. Stage 2 waits on the rollback operands: both rows' operand `6ece9ceb1c18` is revision `8f4ac521`, which fails the same check, so a rollback re-arms the hazard until a capture rollout lands on top of `4925e060`.
 
 ## Suggested next steps
 
-**The three residuals below are unchanged and remain DETECTION-based — each names the detector signal that reveals it, and those detectors are now live on both hosts (see `## Done so far`). What blocked this topic was never THEIR deployment but TRUST: one of the three fires on a benign restart, so a reading from it does not yet mean what the residual needs it to mean. Restoring that trust needed a SECOND deployment — `00109`'s narrowed predicate on both hosts and its corrected rule pushed — which landed 2026-09-04 and read clean on both hosts 2026-09-05 (`## Done so far`): the restart shape that counted is gone from the baseline, and a non-zero is now a new event for `capture.md`'s shape discrimination, never a verdict by itself.**
+**The three residuals below are unchanged and remain DETECTION-based — each names the detector signal that reveals it, and those detectors are now live on both hosts (see `## Done so far`). What blocked this topic was never THEIR deployment but TRUST: the past-dated detector counted the commonest restart shape, so its standing value was an artefact. The SECOND deployment — `00109`'s narrowed predicate on both hosts and its corrected rule pushed — landed 2026-09-04 and read 0 on both hosts 2026-09-05 (`## Done so far`): that shape is gone, two benign restart shapes remain inside what the counter reports, and a non-zero is a new event for `capture.md`'s shape discrimination, never a verdict by itself.**
 
 
 **Make the residuals observable, so the accepted limits are watched rather than merely written down — spec `00103`.** The three items below stay *accepted design limits*: each knob that would close them starves a legitimate case, and that judgement is unchanged. What was not acceptable was the state before `00103`, where the residual was both un-closed and un-watched, so "never observed in production" was a statement about our instrumentation rather than about the data.
