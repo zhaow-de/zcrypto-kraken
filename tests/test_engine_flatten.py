@@ -1070,6 +1070,9 @@ def test_the_prompt_is_written_to_the_terminal_and_not_to_this_process_s_stdout(
     if pid == 0:
         try:
             os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+            # fd 1 too: under `pytest -s` the child's stdout IS the pty slave, so a prompt printed
+            # rather than written to /dev/tty would reach the drain below and pass.
+            os.dup2(os.open(os.devnull, os.O_WRONLY), 1)
             from cli.engine import flatten as child_flatten
 
             out.write_text(child_flatten.read_confirm("TYPE-THE-WORD? "))
