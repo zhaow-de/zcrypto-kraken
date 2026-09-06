@@ -1137,8 +1137,8 @@ def test_a_read_safe_root_holds_only_what_was_checked(cmd):
     ],
 )
 def test_grep_e_does_not_turn_the_first_file_into_the_pattern(cmd):
-    """`grep -e X /etc/shadow` must stay PREPARED: the path check skips operand 0 as grep's pattern,
-    which is sound only while no flag can consume that pattern."""
+    """`grep -e X /etc/shadow` must stay PREPARED: every operand a read grep names is checked as a
+    path except a non-absolute operand 0, which is its pattern."""
     assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
 
 
@@ -1149,6 +1149,28 @@ def test_the_greps_the_runbooks_actually_run():
         "sudo docker logs grafana-alloy --since 1h 2>&1 | grep -iE 'collector|error'",
     ):
         assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
+
+
+def test_no_shape_table_admits_a_content_head_reading_outside_the_safe_roots(monkeypatch):
+    """A table is DISCOVERED off the module, never listed here, and each is given in turn a grep
+    whose `--regexp` consumes the pattern -- the read that reaches `/etc/shadow` stays PREPARED
+    wherever the stage it rides sits."""
+    tables = sorted(name for name in vars(ops_daily) if name.endswith("_SHAPES"))
+    print("shape tables discovered on ops_daily:", tables)
+    assert tables, "no shape table discovered -- the sweep, not the classifier, is what failed"
+    displacing = ops_daily._Shape(
+        ("grep",),
+        {"--regexp": ops_daily._PATTERN},
+        arity=(1, 2),
+        classes=(ops_daily._PATTERN, ops_daily._FILEREF),
+    )
+    # The first stage and a pipeline stage are matched against different tables, so the same read is
+    # put in both positions: whichever table a name turns out to hold, one of the two consults it.
+    for name in tables:
+        monkeypatch.setattr(ops_daily, name, getattr(ops_daily, name) + (displacing,))
+        for cmd in ("grep --regexp=X /etc/shadow", "docker ps | grep --regexp=X /etc/shadow"):
+            assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED, (name, cmd)
+        monkeypatch.undo()
 
 
 @pytest.mark.parametrize(
@@ -1827,22 +1849,22 @@ def test_every_site_that_builds_a_grafana_url_is_pinned():
     )
 
 
-# `_reads_only_safe_paths` checks every operand a read-shape grep names except operand 0, which it
-# skips as the pattern. A flag that DISPLACES the pattern -- `-e`, `-f` -- moves a FILE into that
-# skipped operand, so each flag pinned here takes its own value and the pattern stays positional.
+# `_reads_only_safe_paths` skips operand 0 of a read-shape grep unless it is spelled absolute. A flag
+# that DISPLACES the pattern moves a FILE into that operand, and a RELATIVE one is still skipped there,
+# so each flag pinned here takes its own value and the pattern stays positional.
 _READ_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--include"}
 
 
 def test_the_read_grep_shape_takes_no_flag_that_displaces_its_pattern():
-    """`_reads_only_safe_paths` checks a read-shape grep's file operands, which is all of them only
-    while the operand it skips holds the pattern."""
-    greps = [shape for shape in ops_daily._READ_SHAPES + ops_daily._ZCRYPTO_SHAPES if shape.head == ("grep",)]
-    assert len(greps) == 1, f"expected one grep shape in _READ_SHAPES + _ZCRYPTO_SHAPES, selected {greps}"
+    """A read-shape grep's operand 0 holds its pattern, which is what leaves a relative file name no
+    place to stand where the path check skips it."""
+    greps = [shape for shape in ops_daily._FIRST_STAGE_SHAPES if shape.head == ("grep",)]
+    assert len(greps) == 1, f"expected one grep shape in _FIRST_STAGE_SHAPES, selected {greps}"
     valued = {flag for flag, spec in greps[0].flags.items() if spec is not None}
     assert valued == _READ_GREP_VALUE_FLAGS, (
         f"the read grep shape's value-taking flags are {sorted(valued)}, pinned at {sorted(_READ_GREP_VALUE_FLAGS)} -- "
         "a flag that displaces the pattern, like `-e` or `-f`, leaves a FILE at the operand "
-        "`_reads_only_safe_paths` skips"
+        "`_reads_only_safe_paths` skips whenever it is not spelled absolute"
     )
 
 

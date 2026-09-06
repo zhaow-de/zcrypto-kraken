@@ -582,8 +582,10 @@ UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 # instrument never acts on a host.
 UPGRADE_COMMAND = (
     "ssh",
-    # Stdin is inherited, so a changed host key or a password fallback would hold this read until the
-    # timeout rather than failing it -- a silent daily stall on the check for a host gone quiet.
+    # Stdin is inherited, so a password prompt or a first-contact host-key confirmation -- the two
+    # this flag disables -- would hold this read until the timeout rather than failing it, a silent
+    # daily stall on the check for a host gone quiet. A CHANGED host key needs no flag: the client's
+    # default refuses that connection outright.
     "-o",
     "BatchMode=yes",
     UPGRADE_HOST,
@@ -949,8 +951,9 @@ def _match_shape(shape: _Shape, tokens: list[str]) -> list[str] | None:
     return operands
 
 
-# Reads. Host-independent: none of them writes anywhere, so none needs a host to be safe.
-_READ_SHAPES = (
+# Reads. Host-independent: none of them writes anywhere, so none needs a host to be safe. One table,
+# not a union assembled at the call site, so nothing can consult a first-stage shape this name misses.
+_FIRST_STAGE_SHAPES = (
     _Shape(
         ("docker", "logs"),
         {"--since": _SINCE, "--until": _SINCE, "--tail": _INT, "-n": _INT, "--timestamps": None, "-t": None},
@@ -1026,9 +1029,9 @@ _READ_SHAPES = (
     _Shape(
         ("grep",),
         # `-e` is deliberately NOT value-taking, and must never become so: it would consume the
-        # pattern, leaving the first FILE at operand 0 -- which `_reads_only_safe_paths` skips as
-        # the pattern. That pair read `/etc/shadow` under an AUTONOMOUS verdict. Left as a valueless
-        # short flag the pattern stays positional and every file is checked.
+        # pattern, leaving the first FILE at operand 0 -- which `_reads_only_safe_paths` skips
+        # whenever what stands there is not spelled absolute. Left as a valueless short flag the
+        # pattern stays positional and every file is checked.
         {"-A": _INT, "-B": _INT, "-C": _INT, "--include": _QUOTED},
         short=r"-[iEvnocleqrRFwxsah]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 6),
@@ -1078,7 +1081,7 @@ _READ_SHAPES = (
 # `zcrypto engine <sub>`: `exec-status` reads, `cycle --replace` deletes a boundary's record, and
 # `gate-export` writes a textfile. The read subcommands are named one by one for the same reason.
 _ZCRYPTO_READ_SUBS = ("exec-status", "report", "tracking-report", "decompose", "accum-replay", "soak-check")
-_ZCRYPTO_SHAPES = tuple(
+_FIRST_STAGE_SHAPES += tuple(
     _Shape(
         ("zcrypto", "engine", sub),
         {
@@ -1176,11 +1179,12 @@ _READ_SAFE_FILES = (
 def _reads_only_safe_paths(head: str, operands: list[str]) -> bool:
     """Every path a content head names must sit under a read-safe root, absolute and traversal-free.
 
-    `grep`'s first operand is skipped as its pattern, which holds only because no shape lets a flag
-    consume that pattern. A `*` cannot cross `/`, so a glob under a safe root stays under it; `..`
-    can leave, so it is refused outright.
+    `grep`'s first operand is skipped as its pattern only while it is not itself spelled absolute --
+    a flag that consumed the real pattern leaves a FILE standing in that operand. A `*` cannot cross
+    `/`, so a glob under a safe root stays under it; `..` can leave, so it is refused outright.
     """
-    paths = operands[1:] if head == "grep" else operands
+    skip = 1 if head == "grep" and operands and not operands[0].startswith("/") else 0
+    paths = operands[skip:]
     return all(".." not in path and (path.startswith(_READ_SAFE_DIRS) or path in _READ_SAFE_FILES) for path in paths)
 
 
@@ -1325,6 +1329,8 @@ _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
 
 
 def _matches(shapes, tokens: list[str]) -> list[str] | None:
+    """The operands of the shape admitting `tokens`, or None -- and a content head reading outside
+    the safe roots is admitted by no table, the veto sitting here because every table is read here."""
     for shape in shapes:
         operands = _match_shape(shape, tokens)
         if operands is None:
@@ -1332,6 +1338,8 @@ def _matches(shapes, tokens: list[str]) -> list[str] | None:
         check = _POSTCHECKS.get(shape.post) if shape.post else None
         if check and not check(tokens):
             continue
+        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens[0], operands):
+            return None
         return operands
     return None
 
@@ -1395,16 +1403,9 @@ def _classify_one(command: str, host: str | None) -> Tier:
     tokens, target = _strip_prefixes(first)
     if not tokens:
         return Tier.PREPARED
-    operands = _matches(_READ_SHAPES + _ZCRYPTO_SHAPES, tokens)
-    if operands is not None:
-        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens[0], operands):
-            return Tier.PREPARED
-        return Tier.AUTONOMOUS
-    lowered = command.lower()
-    if (
-        (target or host) in _TELEMETRY_HOSTS
-        and not any(obj in lowered for obj in _PROTECTED_OBJECTS)
-        and _matches(_TELEMETRY_SHAPES, tokens)
-    ):
-        return Tier.AUTONOMOUS
-    return Tier.PREPARED
+    operands = _matches(_FIRST_STAGE_SHAPES, tokens)
+    if operands is None and (target or host) in _TELEMETRY_HOSTS:
+        lowered = command.lower()
+        if not any(obj in lowered for obj in _PROTECTED_OBJECTS):
+            operands = _matches(_TELEMETRY_SHAPES, tokens)
+    return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED
