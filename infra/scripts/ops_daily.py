@@ -11,6 +11,7 @@ import http.client
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import traceback
 import urllib.error
@@ -560,6 +561,84 @@ def read_verdict(token: str, *, opener=urllib.request.urlopen) -> list[Check]:
     return checks
 
 
+# The security patching of the host that holds the live trade key: `/var/log/unattended-upgrades/`
+# is empty there, so the unit's own fields are the whole record, and `Result` and `ExecMainStatus`
+# describe the LAST run for as long as the timer stays stopped -- which is why the stamp's age is
+# read beside them.
+UPGRADE_HOST = "zcrypto"
+UPGRADE_UNIT = "apt-daily-upgrade.service"
+UPGRADE_STAMP = "/var/lib/apt/periodic/unattended-upgrades-stamp"
+# The stamp the upgrade itself writes, not `update-stamp`, which the download half touches on days no
+# upgrade runs. Two days rather than one because the stamps under that directory were observed about
+# a day apart, so a one-day bound would report normal spread as a stopped timer.
+UPGRADE_STALE_AFTER = timedelta(days=2)
+REBOOT_FLAG = "/var/run/reboot-required"
+REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
+UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
+
+# One ssh for every value, and every key printed unconditionally: an absent file then reads as an
+# empty VALUE, where a conditional `echo` would leave a missing key indistinguishable from a command
+# that never ran. Read-only by construction -- `systemctl show`, `stat`, `test`, `tr` -- because this
+# instrument never acts on a host.
+UPGRADE_COMMAND = (
+    "ssh",
+    UPGRADE_HOST,
+    f"systemctl show {UPGRADE_UNIT} -p Result -p ExecMainStatus -p ExecMainExitTimestamp; "
+    f'echo "StampEpoch=$(stat -c %Y {UPGRADE_STAMP} 2>/dev/null)"; '
+    f'echo "RebootRequired=$(test -e {REBOOT_FLAG} && echo yes)"; '
+    # `cat … | tr`, never `tr < …`: a redirect from a missing file is the SHELL's error, so the
+    # command's own `2>/dev/null` cannot suppress it and the absent-packages case would print a
+    # diagnostic on every run that reads it.
+    f"echo \"RebootPkgs=$(cat {REBOOT_PACKAGES} 2>/dev/null | tr '\\n' ' ')\"",
+)
+
+
+def ssh_read(command: tuple[str, ...]) -> str:
+    """The live runner: one read-only remote command's stdout, timeout-guarded, non-zero raising."""
+    return subprocess.run(command, capture_output=True, text=True, timeout=_TIMEOUT, check=True).stdout
+
+
+def read_unattended_upgrades(*, now: datetime, runner) -> Check:
+    """Whether the trade-key host's last unattended upgrade succeeded and its timer is still firing.
+
+    Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
+    """
+    try:
+        fields = dict(line.split("=", 1) for line in runner(UPGRADE_COMMAND).splitlines() if "=" in line)
+        result = fields["Result"]
+        status = fields["ExecMainStatus"]
+        # systemd's human form, not ISO. The weekday is dropped rather than matched with `%a`, whose
+        # abbreviations follow the RUNNER's locale and would make this parse fail off an English one.
+        # A field systemd leaves empty raises here, and a record this cannot read is the same finding
+        # as a host it cannot reach -- the convention `read_verdict` already follows.
+        ran = datetime.strptime(fields["ExecMainExitTimestamp"].split(" ", 1)[-1], "%Y-%m-%d %H:%M:%S %Z").replace(
+            tzinfo=timezone.utc
+        )
+        age = now - datetime.fromtimestamp(int(fields["StampEpoch"]), timezone.utc)
+    # An unreachable host, a timeout and a non-zero ssh are all `unreadable`, never a FAIL: a FAIL
+    # here says the host's patching is broken, which is not what a dropped connection shows.
+    except (*_UNREACHABLE, subprocess.SubprocessError) as exc:
+        return Check(UPGRADE_CHECK, " ".join(UPGRADE_COMMAND), ok=False, value=f"unreadable: {exc}")
+    value = (
+        f"Result={result}, ExecMainStatus={status}, "
+        f"last run {ran:%Y-%m-%dT%H:%M:%SZ}, stamp {int(age.total_seconds() // 3600)} h old"
+    )
+    # Informational, and deliberately not a Check of its own: a row that can never read FAIL is a
+    # guard that cannot fail. The operator choosing an attended reboot window wants WHICH packages
+    # `node_reboot_required` is already flagging.
+    if fields.get("RebootRequired"):
+        value += f"; reboot pending: {fields.get('RebootPkgs', '').strip() or 'flag set, packages unknown'}"
+    # A pending reboot is the normal state between a kernel patch and its attended window, so it is
+    # absent from `ok` by design: conflating it with a failed upgrade would report attention on every
+    # one of those days and bury the failed patch this check exists to surface.
+    return Check(
+        UPGRADE_CHECK,
+        " ".join(UPGRADE_COMMAND),
+        ok=result == "success" and status == "0" and age <= UPGRADE_STALE_AFTER,
+        value=value,
+    )
+
+
 def read_deploys(window: timedelta, *, now: datetime, path: Path | None = None) -> list[dict]:
     log = path or DEPLOY_LOG
     if not log.exists():
@@ -754,11 +833,13 @@ def main(argv: list[str]) -> int:
             f"# Daily pass\n\n**Verdict: attention** (exit 2)\n\n## Sources that could not be read\n- the vault could not be read, so no source was queried: {type(exc).__name__}: {exc}"
         )
         return 2
+    verdict = read_verdict(token)
+    verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),
         deadmen=read_deadmen(token),
-        verdict=read_verdict(token),
+        verdict=verdict,
         deploys=read_deploys(window, now=now),
         reminders=read_reminders(token, now=now, window=window),
         now=now,
