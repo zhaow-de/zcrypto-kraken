@@ -1818,8 +1818,7 @@ _GRAFANA_URL_SITES = 3
 def test_every_site_that_builds_a_grafana_url_is_pinned():
     """The instrument's source carries the literal `{GRAFANA_URL}` exactly `_GRAFANA_URL_SITES` times,
     so an endpoint added or dropped reds."""
-    lines = [line.strip() for line in _SCRIPT.read_text().splitlines() if "{GRAFANA_URL}" in line]
-    sites = sum(line.count("{GRAFANA_URL}") for line in lines)
+    sites = sum(line.count("{GRAFANA_URL}") for line in _SCRIPT.read_text().splitlines())
     assert sites == _GRAFANA_URL_SITES, (
         f"{sites} sites build a URL from GRAFANA_URL, pinned at {_GRAFANA_URL_SITES} -- pin the new one in "
         "`test_every_endpoint_the_instrument_builds_is_pinned` and raise `_GRAFANA_URL_SITES`:\n" + "\n".join(lines)
