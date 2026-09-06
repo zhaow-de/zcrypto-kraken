@@ -130,14 +130,44 @@ def test_default_cost_basis_is_the_registered_006():
 @pytest.mark.parametrize("field", ["fee_per_side", "spread_per_side"])
 def test_each_cost_term_is_read(grids220, base_build, builder, field):
     # A split whose second term is never read would be worse than no split: each field ALONE must
-    # move the net series, and only in the direction cost can push it — the quotient below is that
-    # field's implied per-bar turnover. base_build serves both builders because the two paths are
+    # move the net series, and by the book's own turnover per unit of cost — a sign check passes a
+    # half- or a double-charge. base_build serves both builders because the two paths are
     # bit-identical (test_fast_path_equivalence_mini_grid).
+    from cli.portfolio.crossfreq_system import apply_whole_book_limits
+    from cli.risk import apply_position_caps
+
     cfg = CrossfreqSystemConfig(**{"assets": CFG2.assets, field: getattr(CFG2, field) + 0.001})
     bumped = builder(*grids220, config=cfg)
     assert bumped.ungoverned_net != base_build.ungoverned_net
-    turnover = [(base_build.ungoverned_net[k] - bumped.ungoverned_net[k]) / 0.001 for k in range(base_build.n_periods)]
-    assert min(turnover) >= 0.0 and max(turnover) > 0.0  # cost only ever subtracts, and it bit
+    n = base_build.n_periods
+    # The pre-governor book the cost is charged on, rebuilt from the sleeves because positions never
+    # read the cost — only the net-of-cost step, and the B-sleeve QA comparator on both its sides.
+    third = 1 / 3
+    combined = {
+        a: [
+            third * base_build.sleeve_positions["B"][a][k]
+            + third * base_build.sleeve_positions["A1"][a][k]
+            + third * base_build.sleeve_positions["A2"][a][k]
+            for k in range(n + 1)
+        ]
+        for a in CFG2.assets
+    }
+    book = apply_whole_book_limits(apply_position_caps(combined, long_cap=CFG2.long_cap, short_cap=CFG2.short_cap))
+    turnover, prev = [], dict.fromkeys(CFG2.assets, 0.0)
+    for k in range(n):
+        tk = 0.0
+        for a in CFG2.assets:
+            p = book[a][k]
+            tk += abs(p - prev[a])
+            prev[a] = p
+        turnover.append(tk)
+    assert max(turnover) > 0.0  # the fixture trades, so the comparison below is not vacuous
+
+    delta = cfg.cost_per_side - CFG2.cost_per_side
+    charged = [(base_build.ungoverned_net[k] - bumped.ungoverned_net[k]) / delta for k in range(n)]
+    # The quotient is a cancellation of two same-magnitude nets, so it lands within float rounding
+    # of the turnover it prices rather than on it.
+    assert max(abs(charged[k] - turnover[k]) for k in range(n)) <= 1e-12
 
 
 def test_end_to_end_shapes_and_identities(base_build, grids220):
