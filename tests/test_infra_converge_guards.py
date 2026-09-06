@@ -1521,3 +1521,210 @@ NAS = ANSIBLE / "roles" / "nas" / "tasks" / "main.yml"
 def test_nas_hash_scope_guard_refuses_what_the_cli_would(value, expected):
     task = find_task(load_tasks(NAS), "refuse an archive-pull hash scope the CLI would reject")
     assert all(truthy(c, {"nas_archive_pull_hash_scope": value}) for c in assert_that(task)) is expected
+
+
+def iter_tasks(tasks: list[dict], inherited: tuple[str, ...] = ()) -> list[tuple[dict, tuple[str, ...]]]:
+    # Leaves only, each carrying the `when:` its enclosing blocks impose — Ansible's own inheritance,
+    # so a task gated by its block reads as gated and a block never reads as a task in its own right.
+    out: list[tuple[dict, tuple[str, ...]]] = []
+    for t in tasks:
+        gates = inherited + tuple(str(c) for c in when_conditions(t))
+        children = [t[k] for k in ("block", "rescue", "always") if k in t]
+        if children:
+            for child in children:
+                out.extend(iter_tasks(child, gates))
+        else:
+            out.append((t, gates))
+    return out
+
+
+# --- A1: the check-mode timer guard reads only `ops_unit_install`'s AGGREGATE changed flag, so it
+# cannot separate a first install from an edit to a unit that already exists. The role's comment
+# says so; these fixtures are the assertion of it.
+OPS_UNITS = [
+    f"zcrypto-{n}.{k}" for n in ("verify-replay", "verified-replay", "panel-materialize", "tape-bars") for k in ("service", "timer")
+]
+
+
+def _unit_install(changed: list[bool], preexisting: bool) -> dict:
+    # The template module's per-item result, aggregated as a loop register: `diff.before` is empty
+    # for a file it created and carries the old bytes for one it edited.
+    results = [
+        {
+            "changed": c,
+            "dest": f"/etc/systemd/system/{unit}",
+            "state": "file",
+            "diff": {"before": "[Unit]\nDescription=old\n" if preexisting else "", "after": "[Unit]\nDescription=new\n"},
+        }
+        for unit, c in zip(OPS_UNITS, changed, strict=True)
+    ]
+    return {"changed": any(changed), "results": results, "skipped": False}
+
+
+FIRST_INSTALL = _unit_install([True] * 8, preexisting=False)
+ONE_EDITED = _unit_install([True] + [False] * 7, preexisting=True)
+NOTHING_CHANGED = _unit_install([False] * 8, preexisting=True)
+
+
+@pytest.mark.parametrize(
+    ("check_mode", "register", "expected", "why"),
+    [
+        (True, FIRST_INSTALL, False, "first install under --check: no unit was written, so skip"),
+        (True, ONE_EDITED, False, "one PRE-EXISTING unit edited: the guard skips all four previews anyway"),
+        (True, NOTHING_CHANGED, True, "nothing changed under --check: every unit exists, so preview the enable"),
+        (False, ONE_EDITED, True, "REAL run: the render already wrote the units — never skip"),
+    ],
+)
+def test_the_timer_guard_suppresses_the_preview_for_a_changed_unit_that_already_existed(check_mode, register, expected, why):
+    task = find_task(load_tasks(OPS), OPS_TIMER_ENABLE)
+    variables = {"ansible_check_mode": check_mode, "ops_unit_install": register}
+    assert truthy(when_conditions(task), variables) is expected, why
+
+
+def test_the_timer_guard_cannot_tell_a_first_install_from_an_edit_to_an_existing_unit():
+    """The guard reads the aggregate `changed` alone, so the two 8-item shapes evaluate identically."""
+    when = when_conditions(find_task(load_tasks(OPS), OPS_TIMER_ENABLE))
+    fresh = truthy(when, {"ansible_check_mode": True, "ops_unit_install": FIRST_INSTALL})
+    edited = truthy(when, {"ansible_check_mode": True, "ops_unit_install": ONE_EDITED})
+    assert fresh == edited, f"the guard now separates the shapes (first-install={fresh}, edited={edited}); re-read its comment"
+    assert edited is not truthy(when, {"ansible_check_mode": True, "ops_unit_install": NOTHING_CHANGED}), (
+        "the guard must still evaluate differently when nothing changed, or it gates nothing"
+    )
+
+
+# --- A2: a probe without `failed_when: false` aborts the play on a non-zero rc, so the guard that
+# reads its rc never evaluates at all.
+def test_every_ops_probe_never_fails_the_play():
+    probes = [t for t, _ in iter_tasks(load_tasks(OPS)) if str(t.get("name", "")).startswith("probe")]
+    assert probes, "no probe selected in the ops role — the name convention the selection reads has moved"
+    print(f"ops-role probes selected: {len(probes)} — {[t['name'] for t in probes]}")
+    for probe in probes:
+        assert probe.get("failed_when") is False, (
+            f"{probe['name']!r} carries failed_when={probe.get('failed_when')!r}: a non-zero rc aborts the play "
+            "before the guard that reads it can run"
+        )
+
+
+# --- A3: the ack apparatus above the daemon.json template task exists only because that task
+# notifies a handler that bounces dockerd. Ordering stays green when the notify is deleted.
+DOCKER_HANDLERS = ANSIBLE / "roles" / "docker" / "handlers" / "main.yml"
+DAEMON_JSON_TEMPLATE = "configure the docker daemon (bounded json-file log driver)"
+
+
+def test_the_daemon_json_task_notifies_a_handler_that_restarts_dockerd():
+    task = find_task(load_tasks(DOCKER), DAEMON_JSON_TEMPLATE)
+    notify = task.get("notify", [])
+    notify = [notify] if isinstance(notify, str) else list(notify)
+    assert notify, f"{DAEMON_JSON_TEMPLATE!r} notifies nothing, so the ack guarding it guards no restart"
+
+    handlers = {h["name"]: h for h in load_tasks(DOCKER_HANDLERS)}
+    missing = [n for n in notify if n not in handlers]
+    assert not missing, f"{missing} is notified but not defined in {DOCKER_HANDLERS.name}: {sorted(handlers)}"
+    # by the handler's ACTION, not its name: a renamed-to-no-op handler keeps every name check green
+    bouncers = [
+        n
+        for n in notify
+        if any(
+            isinstance(v, dict) and v.get("name") == "docker" and v.get("state") == "restarted"
+            for k, v in handlers[n].items()
+            if k != "name"
+        )
+    ]
+    assert bouncers, f"no notified handler restarts dockerd, so the ack above this task is decoration: {notify}"
+
+
+# --- A4: the role states the digest gate as its own convention. The two documented exclusions
+# (panel-regenerate, the stale-alloy removal and drift check) consume no image reference, which is
+# the property this selection reads — never their names.
+OPS_DIGEST_GATE = "ops_image_digest is defined"
+
+
+def test_every_image_consuming_ops_task_is_gated_on_the_digest():
+    selected, rest = [], []
+    for task, gates in iter_tasks(load_tasks(OPS)):
+        body = yaml.safe_dump({k: v for k, v in task.items() if k != "when"}, allow_unicode=True)
+        (selected if "ops_image" in body else rest).append((task, gates))
+    assert selected, "no image-consuming ops task selected — the selection rule stopped matching"
+    print(f"image-consuming ops tasks: {len(selected)} of {len(selected) + len(rest)} — {[t['name'] for t, _ in selected]}")
+
+    # without this the selection could be 'every digest-gated task' and the loop below a tautology
+    assert any(not any(OPS_DIGEST_GATE in g for g in gates) for _, gates in rest), (
+        "every unselected task is digest-gated too, so this selection proves nothing about the gate"
+    )
+    for task, gates in selected:
+        assert any(OPS_DIGEST_GATE in g for g in gates), f"{task['name']!r} consumes an image reference ungated: {list(gates)}"
+
+
+# --- A5: an empty hash scope renders a bare assignment, which both consumers read as `full`.
+NAS_ENV_TEMPLATE = ANSIBLE / "roles" / "nas" / "templates" / "env.j2"
+NAS_COMPOSE = REPO / "infra" / "nas" / "compose.yaml"
+NAS_PULL_ENTRYPOINT = REPO / "infra" / "nas" / "pull-entrypoint.sh"
+HASH_SCOPE_ENV = "ARCHIVE_PULL_HASH_SCOPE"
+_HASH_SCOPE_EXPANSION = re.compile(r"\$\{" + HASH_SCOPE_ENV + r"[^}]*\}")
+
+
+def _render_nas_env(hash_scope: str) -> str:
+    from ansible.template import trust_as_template
+
+    text = NAS_ENV_TEMPLATE.read_text()
+    variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(nas_\w+)", text))}
+    variables["nas_archive_pull_hash_scope"] = hash_scope
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+
+
+@pytest.mark.parametrize(("scope", "expected"), [("", f"{HASH_SCOPE_ENV}="), ("incremental", f"{HASH_SCOPE_ENV}=incremental")])
+def test_nas_env_renders_an_empty_hash_scope_as_a_bare_assignment(scope, expected):
+    """An empty value must render `NAME=`, not `NAME=""` — a quoted empty defeats the consumers' `:-` default."""
+    rendered = [line for line in _render_nas_env(scope).splitlines() if line.startswith(HASH_SCOPE_ENV)]
+    assert rendered == [expected]
+
+
+@pytest.mark.parametrize(("value", "expected"), [("", "full"), ("incremental", "incremental")])
+@pytest.mark.parametrize("path", [NAS_COMPOSE, NAS_PULL_ENTRYPOINT], ids=lambda p: p.name)
+def test_both_hash_scope_consumers_substitute_full_for_an_empty_assignment(path, value, expected):
+    """Evaluated, not spelled: `:-` substitutes on empty as well as unset, and `-` would not."""
+    import os
+    import subprocess
+
+    expansions = sorted(set(_HASH_SCOPE_EXPANSION.findall(path.read_text())))
+    assert expansions, f"{path.name} no longer expands {HASH_SCOPE_ENV}"
+    for expansion in expansions:
+        out = subprocess.run(
+            ["bash", "-c", f'echo "{expansion}"'],
+            capture_output=True,
+            text=True,
+            env={HASH_SCOPE_ENV: value, "PATH": os.environ["PATH"]},
+        ).stdout.strip()
+        assert out == expected, f"{path.name}'s {expansion} yields {out!r} for {value!r}, not {expected!r}"
+
+
+# --- A6: the echo's negated clause and the assert's first disjunct must stay the same expression;
+# both are extracted from the committed YAML, because retyping either here would only move the drift.
+OPS_PINS_ECHO = "pins override accepted — the reason, on the record"
+
+
+def _first_balanced_group(expr: str, start: int = 0) -> str:
+    open_at = expr.index("(", start)
+    depth = 0
+    for i in range(open_at, len(expr)):
+        depth += {"(": 1, ")": -1}.get(expr[i], 0)
+        if depth == 0:
+            return expr[open_at : i + 1]
+    raise AssertionError(f"unbalanced parentheses from {open_at} in {expr!r}")
+
+
+def test_the_pins_echo_negates_the_asserts_own_first_disjunct():
+    tasks = load_tasks(OPS)
+    disjunct = _first_balanced_group(" ".join(assert_that(find_task(tasks, OPS_PINS))))
+    echo = " ".join(when_conditions(find_task(tasks, OPS_PINS_ECHO)))
+    marker = "and not "
+    assert echo.count(marker) == 1, f"the echo's negation is no longer unambiguous: {echo!r}"
+    negated = _first_balanced_group(echo, echo.index(marker) + len(marker))
+
+    # a vacuous "" == "" pass is the failure mode of extraction, so pin what the disjunct must contain
+    assert "regex_search" in disjunct and "ops_fleet_pins_text" in disjunct, (
+        f"extraction missed the recorded-digest test: {disjunct!r}"
+    )
+    assert " ".join(negated.split()) == " ".join(disjunct.split()), (
+        f"the echo records an override on other cases:\n echo:   {negated}\n assert: {disjunct}"
+    )
