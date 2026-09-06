@@ -97,6 +97,18 @@ def test_scan_hours_buckets_by_pair_and_kind(tmp_path):
     assert scan_hours(tmp_path, "trades") == {"ETH/EUR": {H}}
 
 
+def test_scan_hours_skips_a_year_directory_too_large_for_a_c_int(tmp_path):
+    """A `2147483648` year directory is skipped, and the well-formed hour beside it is still found."""
+    # `int()` is arbitrary-precision, so the throw is `datetime`'s C-int year conversion:
+    # `datetime(2**31 - 1, ...)` raises ValueError but `datetime(2**31, ...)` raises OverflowError,
+    # which an `except ValueError` does not catch — the scan dies instead of ignoring the directory.
+    _final(tmp_path, "BTC/EUR", "book", H)
+    oversized = tmp_path / "BTC" / "EUR" / "book" / str(2**31) / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.parquet"
+    oversized.parent.mkdir(parents=True)
+    pl.DataFrame({"ts": [H]}).write_parquet(oversized)
+    assert scan_hours(tmp_path, "book") == {"BTC/EUR": {H}}
+
+
 def test_scan_hours_of_a_missing_root_is_empty(tmp_path):
     assert scan_hours(tmp_path / "nope", "book") == {}
 
