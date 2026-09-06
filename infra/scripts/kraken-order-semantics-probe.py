@@ -2099,8 +2099,10 @@ def preflight(args) -> None:
     if args.notional > args.max_notional:
         raise SystemExit(f"REFUSING: --notional {args.notional} is above --max-notional {args.max_notional}")
     if args.notional < 1.0:
-        # Kraken's costmin on the EUR pairs is 0.45; anything near it turns a venue rejection into
-        # something that reads like an adapter failure. Refuse here, where the cause is legible.
+        # EUR-pair costmin is 0.45 in `cli.engine.instruments.COSTMIN`, pinned to the newest
+        # `data/snapshots/kraken-refdata-*.json` by tests/test_costmin_drift.py, which turns red when
+        # the venue moves it; a notional near it turns a venue rejection into what reads like an
+        # adapter failure.
         raise SystemExit(f"REFUSING: --notional {args.notional} is too small to clear the venue's costmin floor")
     if args.away < MIN_AWAY_FRACTION:
         raise SystemExit(f"REFUSING: --away {args.away} is below the protocol's {MIN_AWAY_FRACTION}")
