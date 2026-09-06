@@ -785,7 +785,7 @@ CAPTURE_UNIT = Path(__file__).resolve().parents[1] / "infra/ansible/roles/captur
 
 
 def _unit_directives(unit: str) -> list[tuple[str, str, str]]:
-    """Every `(section, key, value)` the unit assigns, in file order; comments and blank lines dropped."""
+    """One `(section, key, value)` per line, split on its first `=`, in file order; blank, comment and section lines dropped."""
     section, out = "", []
     for raw in unit.splitlines():
         line = raw.strip()  # systemd strips before parsing, so an INDENTED directive is still live
@@ -800,7 +800,7 @@ def _unit_directives(unit: str) -> list[tuple[str, str, str]]:
 
 
 def test_the_capture_unit_orders_itself_against_no_clock_service():
-    """The premise the two leading-clock tests below rest on, read from the unit file this repo installs: it
+    """The premise the leading-clock tests below rest on, read from the unit file this repo installs: it
     orders itself after no clock service, and `Restart=always` keeps re-running construction until a start
     lands in that window."""
     directives = _unit_directives(CAPTURE_UNIT.read_text())
