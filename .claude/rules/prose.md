@@ -8,7 +8,7 @@
 - **A claim that can be an assertion, a test or a hook becomes one, and the sentence goes** — the interpreter checks code for free; nothing checks prose but a second reader.
 - **No coverage claims.** What a guard catches is what its assertions assert, and what it does not catch is never written — an enumerated blind spot is a completeness claim by omission; a blind spot that matters gets a test or a topic.
 - **A number only where the reader needs a VALUE to act**, with the command that produced it and an it-drifts note — the latest value, never superseded ones stacked beside it; a property ("costs per inode") is stated and its measurement named, never quantified.
-- **Every citation resolves from the repo alone** — a symbol, a test name, `T<NNNN>`, `spec NNNNN`, a path; a plan-task number carries its serial on the same line or the one it wraps from (`tests/test_code_prose_citations.py`); a hash is copied from git output, only for a commit that will not be rewritten — before push, cite by subject. **A closed citation is re-tensed, never deleted.**
+- **Every citation resolves from the repo alone** — a symbol, a test name, `T<NNNN>`, `spec NNNNN`, a path; a plan-task number carries its serial on the same line or the one it wraps from (`tests/test_code_prose_citations.py`); a hash is copied from git output, only for a commit that will not be rewritten — before push, cite by subject. **A closed citation re-tenses its sentence to the outcome — never a status annotation on the id (`(T0039, resolved)` is noise: a reader looks the topic up), never deleted where a reader would look the history up.**
 - **Never describe live host state** — config prose says what a setting does, not what a host currently is.
 
 ## Code (`cli/`, `tests/`, `infra/`)
@@ -18,6 +18,7 @@
 - **Pruning has four dispositions**: cut (false or stale), condense (true but long — prefer it to cutting), keep (load-bearing, or unverifiable but valuable), relocate (true but about another symbol — check the target first; it is often already there). Ask *is this about this symbol?* before *is this true?* A preceding block describes what follows it; only a same-line trailing comment binds to its line. Findings agreed per file before editing, false-or-stale first; a config file's non-comment lines extracted before and after, byte-identical.
 - Internal tokens are fine in code prose except `WP<N>`, banned repo-wide (`operator-facing-text.md`).
 - **`infra/scripts/prose-tripwire.py` flags the block, file, row, section or entry over its threshold** — a flagged one passes the necessity gate at review or is cut; the thresholds are the script's, not this file's.
+- **The commit gate runs it as a ratchet against `infra/scripts/prose-tripwire-baseline.txt`**, which records today's offenders as conscious keeps and fails only on one it does not record at that size or larger: cut what the hook names, or — keeping it consciously — re-record the baseline with `--write-baseline` in the same commit.
 
 ## Docs (`docs/`, runbooks)
 

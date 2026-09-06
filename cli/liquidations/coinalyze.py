@@ -309,11 +309,9 @@ def _run(data_dir: Path, api_key: str, poll_seconds: int, healthcheck_url: str |
 
     # Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
     # object at all -- every _poll_once call below then passes metrics=None, a no-op.
-    # Unwrapped, unlike capture's `CaptureCollector` registration (cold-review M2): `_PollMetrics`
-    # only constructs stock `Counter`/`Gauge` instruments, which implement `describe()` -- so
-    # `CollectorRegistry.register()` never evaluates them eagerly the way it does a custom
-    # collector without one -- and this registry is fresh per process, so construction can never
-    # collide on a name either. Nothing live is read here, so there is nothing to raise over.
+    # Unwrapped, unlike capture's `CaptureCollector` registration: `_PollMetrics` constructs only
+    # stock `Counter`/`Gauge` instruments, whose registration reads nothing live, and this registry
+    # is fresh per process, so nothing here can collide on a name either.
     metrics = None
     port = metrics_port_from_env()
     if port is not None:

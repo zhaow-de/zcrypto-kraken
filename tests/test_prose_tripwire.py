@@ -1,4 +1,4 @@
-"""Each prose check trips one unit over its bar and passes at it; `--since` shows only new offenders."""
+"""Each prose check trips one unit over its bar and passes at it; `--since` and the baseline ratchet report only offenders the recorded past does not cover."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _REPO = Path(__file__).resolve().parents[1]
+_BASELINE = "infra/scripts/prose-tripwire-baseline.txt"
 _SCRIPT = _REPO / "infra" / "scripts" / "prose-tripwire.py"
 _spec = importlib.util.spec_from_file_location("prose_tripwire", _SCRIPT)
 tw = importlib.util.module_from_spec(_spec)
@@ -111,8 +113,13 @@ class TestTheTokenizer:
         total, prose, code = tw.measure_python(src)
         assert (total, prose, code) == (2, 0, 2)
 
-    def test_a_triple_quoted_string_is_prose(self) -> None:
+    def test_a_triple_quoted_string_outside_a_docstring_position_is_code(self) -> None:
         src = 'x = """\nnot code\n"""\ny = 1\n'
+        total, prose, code = tw.measure_python(src)
+        assert (total, prose, code) == (4, 0, 4)
+
+    def test_a_triple_quoted_string_in_a_docstring_position_is_prose(self) -> None:
+        src = '"""d\nd\n"""\ny = 1\n'
         total, prose, code = tw.measure_python(src)
         assert (total, prose, code) == (4, 3, 1)
 
@@ -138,6 +145,53 @@ class TestFileProse:
     def test_an_unparseable_file_is_skipped_not_reported(self) -> None:
         assert tw.measure_python("def (:\n") is None
         assert tw.offenders_for("a.py", "def (:\n") == []
+
+
+class TestTheFileProseFloor:
+    def _src(self, code: int) -> str:
+        """Two comment lines (under the block bar) over `code` code lines — over the percentage at both sizes."""
+        return "# a\n# b\n" + "".join(f"x{i} = {i}\n" for i in range(code))
+
+    def test_the_percentage_bar_starts_at_the_floor(self) -> None:
+        offs = tw.offenders_for("a.py", self._src(tw.FILE_PROSE_FLOOR))
+        assert _kinds(offs) == ["file-prose"]
+
+    def test_a_file_one_code_line_under_the_floor_is_not_measured(self) -> None:
+        src = self._src(tw.FILE_PROSE_FLOOR - 1)
+        assert tw.measure_python(src)[1] * 100 > tw.FILE_PROSE_PERCENT * tw.measure_python(src)[0]
+        assert tw.offenders_for("a.py", src) == []
+
+    def test_a_one_class_module_with_its_one_sentence_docstring_is_not_reported(self) -> None:
+        assert tw.offenders_for("cli/x/errors.py", 'class E(Exception):\n    """One sentence."""\n') == []
+
+
+class TestStringLiterals:
+    """A triple-quoted literal counts as prose only where the AST puts a docstring."""
+
+    N = 5
+
+    def _lines(self, opener: str, closer: str) -> list[str]:
+        return [opener] + ["d"] * (self.N - 2) + [closer]
+
+    def test_a_module_docstring_over_the_bar_is_a_block(self) -> None:
+        offs = tw.offenders_for("a.py", _py(self._lines('"""d', '"""'), 6 * self.N))
+        assert [(o.kind, o.measured) for o in offs] == [("comment-block", self.N)]
+
+    def test_an_assigned_literal_of_the_same_size_is_code(self) -> None:
+        assert tw.offenders_for("a.py", _py(self._lines('SQL = """', '"""'), 6 * self.N)) == []
+
+    def test_an_argument_literal_of_the_same_size_is_code(self) -> None:
+        assert tw.offenders_for("a.py", _py(self._lines('f("""', '""")'), 6 * self.N)) == []
+
+    def test_a_function_docstring_is_a_block_and_a_literal_in_its_body_is_not(self) -> None:
+        body = "\n".join("    " + line for line in self._lines('BODY = """', '"""'))
+        doc = "\n".join("    " + line for line in self._lines('"""d', '"""'))
+        offs = tw.offenders_for("a.py", f"def g():\n{doc}\n{body}\n    return 1\n" + "z = 0\n" * (12 * self.N))
+        assert [(o.line, o.kind, o.measured) for o in offs] == [(2, "comment-block", self.N)]
+
+    def test_a_literal_does_not_push_a_file_over_the_prose_percentage(self) -> None:
+        src = 'BLOB = """\n' + "d\n" * 60 + '"""\n' + "x = 1\n" * 20
+        assert tw.offenders_for("a.py", src) == []
 
 
 class TestTableRow:
@@ -212,6 +266,27 @@ class TestSection:
         assert _kinds(tw.offenders_for("a.md", f"## H\n{body}\n")) == ["section"]
 
 
+class TestTheOpenTopicsSectionExemption:
+    """A topic file and its index grow a section per registration, so only the section bar is dropped."""
+
+    def _section(self) -> str:
+        return "## H\n" + "b" * tw.SECTION_BYTES + "\n"
+
+    def test_a_long_section_in_a_reference_page_trips(self) -> None:
+        assert _kinds(tw.offenders_for("docs/reference/x.md", self._section())) == ["section"]
+
+    @pytest.mark.parametrize("path", ["docs/open-topics/T0001-x.md", "docs/open-topics/README.md"])
+    def test_the_same_section_under_open_topics_does_not(self, path: str) -> None:
+        assert tw.offenders_for(path, self._section()) == []
+
+    def test_the_table_row_bar_still_applies_there(self) -> None:
+        row = "|" + "a" * tw.TABLE_ROW_CHARS + "|"
+        assert _kinds(tw.offenders_for("docs/open-topics/T0001-x.md", f"# t\n\n{row}\n")) == ["table-row"]
+
+    def test_a_nested_path_that_only_looks_like_it_is_not_exempt(self) -> None:
+        assert _kinds(tw.offenders_for("docs/open-topics/sub/x.md", self._section())) == ["section"]
+
+
 class TestChangelogEntry:
     PATH = "docs/iterations-history-phase9.md"
 
@@ -250,6 +325,32 @@ class TestTruePositives:
         assert tw.offenders_for("docs/reference/x.md", src) == []
 
 
+class TestVaultContent:
+    PATH = "infra/ansible/group_vars/all/vault.yml"
+
+    def _header(self) -> str:
+        return "\n".join(["# c"] * (tw.COMMENT_BLOCK_LINES + 1))
+
+    def test_a_comment_block_in_a_plain_yaml_file_is_reported(self) -> None:
+        """The true positive at the same path: the skip is by content, so a non-vault file still trips."""
+        assert _kinds(tw.offenders_for(self.PATH, self._header() + "\nkey: value\n")) == ["comment-block"]
+
+    def test_a_per_value_vault_blob_takes_the_file_out_of_scope(self) -> None:
+        src = self._header() + "\nkey: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          6162636465\n"
+        assert tw.offenders_for(self.PATH, src) == []
+
+    def test_a_whole_file_vault_blob_is_out_of_scope(self) -> None:
+        assert tw.offenders_for("a.yml", "$ANSIBLE_VAULT;1.1;AES256\n6162636465\n" + self._header() + "\n") == []
+
+    def test_a_line_opening_with_the_vault_password_variable_is_not_vault_content(self) -> None:
+        """The blob's header ends in `;`: an `$ANSIBLE_VAULT`-prefixed variable at a line's start is not one."""
+        src = "$ANSIBLE_VAULT_PASSWORD_FILE=vault-pass.sh\n" + self._header() + "\ntrue\n"
+        assert _kinds(tw.offenders_for("infra/ansible/scripts/run.sh", src)) == ["comment-block"]
+
+
+_GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+
+
 class TestScope:
     @pytest.fixture
     def repo(self, tmp_path: Path, monkeypatch) -> Path:
@@ -269,12 +370,22 @@ class TestScope:
             "docs/plans/00001-z.md",
             "docs/research/r.md",
             "README.md",
+            "infra/README.md",
+            "infra/runbooks/README.md",
+            "infra/nas/README.md",
+            "infra/ops/README.md",
+            "infra/ansible/files/README.md",
+            "infra/external-systems.md",
+            "infra/nas/ledger-correction-20260714-link-eur.md",
+            "docs/open-topics/README.md",
             ".claude/rules/k.md",
             "cli/n.json",
         ):
             (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / rel).write_text("# t\n")
         monkeypatch.chdir(tmp_path)
+        subprocess.run([*_GIT, "init", "-q"], check=True)
+        subprocess.run([*_GIT, "add", "-A", "-f", "."], check=True)
         return tmp_path
 
     def test_the_default_scope(self, repo: Path) -> None:
@@ -283,14 +394,29 @@ class TestScope:
             "README.md",
             "cli/a.py",
             "docs/iterations-history-phase1.md",
+            "docs/open-topics/README.md",
             "docs/open-topics/T0001-x.md",
             "docs/reference/f.md",
             "docs/universe/h.md",
+            "infra/README.md",
+            "infra/ansible/files/README.md",
             "infra/c.sh",
             "infra/d.yml",
+            "infra/external-systems.md",
+            "infra/nas/README.md",
+            "infra/ops/README.md",
+            "infra/runbooks/README.md",
             "infra/runbooks/e.md",
             "tests/b.py",
         ]
+
+    def test_a_research_report_stays_out(self, repo: Path) -> None:
+        """Point-in-time reports are out of the default scope, as `docs/specs` and `docs/plans` are."""
+        assert "docs/research/r.md" not in tw.default_paths()
+
+    def test_a_dated_record_beside_a_readme_stays_out(self, repo: Path) -> None:
+        """`infra/` is walked for READMEs, not for every page: a dated record is point-in-time."""
+        assert "infra/nas/ledger-correction-20260714-link-eur.md" not in tw.default_paths()
 
     def test_an_explicit_directory_still_honours_the_exclusions(self, repo: Path) -> None:
         got = sorted(tw.expand_paths(["docs"]))
@@ -308,6 +434,87 @@ class TestScope:
 
     def test_an_explicit_file_is_scanned_as_named(self, repo: Path) -> None:
         assert tw.expand_paths(["docs/specs/00001-z.md"]) == ["docs/specs/00001-z.md"]
+
+
+class TestTheIndexIsTheDefaultScope:
+    """The index supplies the path set, so an untracked file cannot refuse a commit that leaves it out."""
+
+    @pytest.fixture
+    def repo(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        subprocess.run([*_GIT, "init", "-q"], check=True)
+        (tmp_path / "cli").mkdir()
+        (tmp_path / "cli" / "kept.py").write_text("x = 1\n")
+        subprocess.run([*_GIT, "add", "-f", "cli/kept.py"], check=True)
+        assert tw.main(["--write-baseline", "base.txt"]) == 0
+        return tmp_path
+
+    def test_an_untracked_offender_passes_and_the_same_file_staged_fails(self, repo: Path, capsys) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (repo / "cli" / "fresh.py").write_text(_py(["# fresh"] * n, 6 * n))
+        assert tw.main(["--check-baseline", "base.txt"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+        subprocess.run([*_GIT, "add", "-f", "cli/fresh.py"], check=True)
+        assert tw.main(["--check-baseline", "base.txt"]) == 1
+        assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
+
+    def test_a_tracked_file_deleted_from_disk_is_reported_not_opened(self, repo: Path, capsys) -> None:
+        """The bytes come from the worktree, so a deletion the index still lists is a keep retired, never a read."""
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (repo / "cli" / "gone.py").write_text(_py(["# gone"] * n, 6 * n))
+        subprocess.run([*_GIT, "add", "-f", "cli/gone.py"], check=True)
+        assert tw.main(["--write-baseline", "base.txt"]) == 0
+        assert (repo / "base.txt").read_text().startswith("cli/gone.py:1: comment-block")
+        (repo / "cli" / "gone.py").unlink()
+        assert tw.main(["--check-baseline", "base.txt"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 1"]
+
+    def test_a_named_path_is_scanned_tracked_or_not(self, repo: Path, capsys) -> None:
+        """An explicit argument is the caller's word, not the index's."""
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (repo / "cli" / "fresh.py").write_text(_py(["# fresh"] * n, 6 * n))
+        assert tw.main(["--check-baseline", "base.txt", "cli/fresh.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
+
+
+class TestADefaultScopeThatCannotBeRead:
+    """The default scope is the whole index: where it cannot be read as such, the run refuses rather than scanning nothing."""
+
+    def _offender(self) -> str:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        return _py(["# c"] * n, 6 * n)
+
+    @pytest.fixture
+    def outside(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "cli").mkdir()
+        (tmp_path / "cli" / "a.py").write_text(self._offender())
+        return tmp_path
+
+    @pytest.fixture
+    def repo(self, outside: Path) -> Path:
+        subprocess.run([*_GIT, "init", "-q"], check=True)
+        subprocess.run([*_GIT, "add", "-f", "cli/a.py"], check=True)
+        (outside / "base.txt").write_text("")
+        return outside
+
+    def test_outside_a_checkout_it_refuses_and_names_the_remedy(self, outside: Path, capsys) -> None:
+        assert tw.main([]) == 2
+        assert capsys.readouterr().err.splitlines() == ["not a git checkout — name paths explicitly"]
+
+    def test_outside_a_checkout_a_named_path_is_still_scanned(self, outside: Path, capsys) -> None:
+        assert tw.main(["cli/a.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[0].startswith("cli/a.py:1: comment-block")
+
+    def test_from_the_root_the_staged_offender_is_named(self, repo: Path, capsys) -> None:
+        assert tw.main(["--check-baseline", str(repo / "base.txt")]) == 1
+        assert capsys.readouterr().out.splitlines()[0].startswith("cli/a.py:1: comment-block")
+
+    def test_from_a_subdirectory_it_refuses_rather_than_calling_that_tree_clean(self, repo: Path, monkeypatch, capsys) -> None:
+        """`git ls-files` prints paths relative to cwd, so the roots below the root match nothing."""
+        monkeypatch.chdir(repo / "cli")
+        assert tw.main(["--check-baseline", str(repo / "base.txt")]) == 2
+        assert "the repository root" in capsys.readouterr().err
 
 
 class TestTheCommandLine:
@@ -353,11 +560,15 @@ class TestTheCommandLine:
             tw.main(["--help"])
         assert exc.value.code == 0
         text = capsys.readouterr().out
-        for name in ("COMMENT_BLOCK_LINES", "FILE_PROSE_PERCENT", "TABLE_ROW_CHARS", "SECTION_BYTES", "CHANGELOG_BULLETS"):
+        for name in (
+            "COMMENT_BLOCK_LINES",
+            "FILE_PROSE_PERCENT",
+            "FILE_PROSE_FLOOR",
+            "TABLE_ROW_CHARS",
+            "SECTION_BYTES",
+            "CHANGELOG_BULLETS",
+        ):
             assert f"{name}={getattr(tw, name)}" in text
-
-
-_GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
 
 
 def _commit(*paths: str) -> None:
@@ -442,3 +653,106 @@ class TestSince:
     def test_without_since_everything_is_shown(self, repo: Path, capsys) -> None:
         assert tw.main(["old.py"]) == 1
         assert capsys.readouterr().out.splitlines()[-1].endswith("(total 1)")
+
+
+class TestTheBaselineRatchet:
+    """The ratchet fails on an offender the baseline does not record at that size or larger, never on a keep."""
+
+    N = 5
+
+    @pytest.fixture
+    def tree(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "kept.py").write_text(_py(["# kept"] * self.N, 6 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        return tmp_path
+
+    def test_the_baseline_is_one_line_per_offender_carrying_its_anchor(self, tree: Path) -> None:
+        expected = f"kept.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}\t# kept"
+        assert (tree / "base.txt").read_text().splitlines() == [expected]
+
+    def test_an_anchorless_offender_leaves_no_trailing_whitespace_for_a_hook_to_strip(self, tree: Path) -> None:
+        (tree / "kept.py").write_text("# a\n# b\n" + "".join(f"x{i} = {i}\n" for i in range(tw.FILE_PROSE_FLOOR)))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        written = (tree / "base.txt").read_text()
+        assert written.splitlines() == ["kept.py:1: file-prose 33.3 > 20"]
+        assert written == written.rstrip() + "\n"
+
+    def test_a_moved_offender_passes(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").write_text("y = 0\n" * 10 + _py(["# kept"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+
+    def test_a_block_that_grew_by_a_line_fails_and_is_counted_grown(self, tree: Path, capsys) -> None:
+        """The anchor matched and the size rose: one grown block, not one new offender beside one retired keep."""
+        (tree / "kept.py").write_text(_py(["# kept"] * (self.N + 1), 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"grown: kept.py:1: comment-block {self.N + 1} > {tw.COMMENT_BLOCK_LINES} recorded {self.N}"
+        assert out[-1] == "new: 0 grown: 1 retired: 0"
+
+    def test_the_recorded_block_unchanged_passes(self, tree: Path, capsys) -> None:
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+
+    def test_a_block_that_shrank_but_is_still_over_the_bar_passes(self, tree: Path, capsys) -> None:
+        """The arm is directional: a keep getting shorter is the improvement the ratchet exists to allow."""
+        big = tw.COMMENT_BLOCK_LINES + 3
+        (tree / "kept.py").write_text(_py(["# kept"] * big, 6 * big))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        (tree / "kept.py").write_text(_py(["# kept"] * (big - 1), 6 * big))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+
+    def test_a_second_offender_in_a_recorded_file_fails_and_names_it(self, tree: Path, capsys) -> None:
+        block = _py(["# kept"] * self.N, 6 * self.N)
+        (tree / "kept.py").write_text(block + _py(["# other"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"kept.py:{7 * self.N + 1}: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[-1] == "new: 1 grown: 0 retired: 0"
+
+    def test_a_duplicate_of_the_recorded_offender_is_new_and_not_the_keep_grown(self, tree: Path, capsys) -> None:
+        """The recorded entry is consumed by the first block, so the second has nothing smaller to have grown from."""
+        block = _py(["# kept"] * self.N, 6 * self.N)
+        (tree / "kept.py").write_text(block + block)
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"kept.py:{7 * self.N + 1}: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[-1] == "new: 1 grown: 0 retired: 0"
+
+    def test_an_offender_in_an_unrecorded_file_fails_and_is_printed(self, tree: Path, capsys) -> None:
+        (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py", "fresh.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"fresh.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[-1] == "new: 1 grown: 0 retired: 0"
+
+    def test_a_cleaned_offender_passes_and_is_reported_retired(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").write_text("y = 0\n")
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 1"]
+
+    def test_a_failing_check_names_the_remedy_on_stderr(self, tree: Path, capsys) -> None:
+        (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py", "fresh.py"]) == 1
+        assert "--write-baseline base.txt" in capsys.readouterr().err
+
+    def test_a_passing_check_says_nothing_on_stderr(self, tree: Path, capsys) -> None:
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().err == ""
+
+    def test_a_missing_baseline_exits_two_and_says_so(self, tree: Path, capsys) -> None:
+        assert tw.main(["--check-baseline", "no-such.txt", "kept.py"]) == 2
+        assert "no-such.txt" in capsys.readouterr().err
+
+
+def test_the_pre_commit_hook_runs_the_check_against_the_committed_baseline() -> None:
+    """The ratchet is inert unless .pre-commit-config.yaml wires it over the script's own scope."""
+    config = yaml.safe_load((_REPO / ".pre-commit-config.yaml").read_text())
+    hooks = [h for repo in config["repos"] if repo["repo"] == "local" for h in repo["hooks"]]
+    hook = next(h for h in hooks if h["id"] == "prose-tripwire")
+    assert "--check-baseline" in hook["entry"]
+    assert _BASELINE in hook["entry"]
+    assert hook["always_run"] is True and hook["pass_filenames"] is False
+    assert (_REPO / _BASELINE).is_file(), "the hook names a baseline that is not committed"

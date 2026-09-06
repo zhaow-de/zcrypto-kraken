@@ -90,7 +90,7 @@ def _get_bytes(url: str, *, opener) -> bytes:
                 return response.read()
         except urllib.error.HTTPError as exc:
             if exc.code is None or exc.code < 500:
-                raise  # 4xx (incl 404) is definitive -- the caller distinguishes it
+                raise  # a non-5xx status (incl 404) is definitive -- the caller distinguishes it
             last_exc = exc
             if attempt < _MAX_RETRIES:
                 _logger.warning(

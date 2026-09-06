@@ -389,7 +389,7 @@ class _CycleGauges:
         self.order_notional_eur = Gauge(
             "zcrypto_engine_order_notional_eur", "Intended order notional (EUR), summed across every cycle.", registry=registry
         )
-        self.cycle_success: Gauge | None = None  # lazy -- see seed_cycle_success (cold-review I4)
+        self.cycle_success: Gauge | None = None  # lazy -- see seed_cycle_success
         self.cycle_completed_at = Gauge(
             "zcrypto_engine_cycle_completed_at_seconds", "Unix timestamp the most recent cycle completed at.", registry=registry
         )

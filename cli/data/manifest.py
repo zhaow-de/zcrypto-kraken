@@ -1,10 +1,9 @@
 """The manifest contract (spec 00099): one shape, so no consumer needs per-set knowledge.
 
 Five writers plus an external freeze used to emit four `series` shapes, three timestamp spellings
-and two digest names. Two attempts to read that zoo generically failed nine cold-review rounds
-between them, the findings moving each round because a generic reader over a zoo is a pile of
-special cases discovered one review at a time. This module is the other answer: normalise the
-writers, and give every consumer one reader.
+and two digest names. A generic reader over that zoo is a pile of special cases discovered one
+review at a time, so this module takes the other answer: normalise the writers, and give every
+consumer one reader.
 
 The load-bearing decision is that `series` is keyed by the parquet's path RELATIVE TO THE DATASET
 ROOT. The path is the key, so a consumer never derives one -- which is what makes a path-bound

@@ -145,7 +145,7 @@ A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regen
 
 ## NAS converges (`nas`)
 
-The archive-pull tier — outside the canary regime (no secondary, no bake owed); converges are `--limit nas`, and the pin is `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml`, the one committed capture-image pin.
+The archive-pull tier — outside the canary regime (no secondary, no bake owed); converges are `--limit nas`, and the pin is `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml`, the one committed capture-image pin. Pin a `develop` build, never a branch build. Edit that file to re-pin: there is no `nas_capture_image_digest`, and passing one is silently accepted as an unused extra var while the converge re-pins nothing.
 
 - **There is no `nas_alloy_digest`** — the Alloy pin here is `nas_alloy_image`, and the capture/ops currently-running-digest discipline does not transfer: passing it is silently accepted as an unused extra var. The role deploys `infra/nas/config.alloy` unconditionally but restarts Alloy only under `-e nas_apply_compose=true`, which every apply task is gated on; without that flag the converge is render-only and the new config sits on disk unread.
 

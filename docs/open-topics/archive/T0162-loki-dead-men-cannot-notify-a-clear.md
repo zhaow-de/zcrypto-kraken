@@ -34,4 +34,4 @@ A guard landed with it, coupling the two files rather than restating either: `te
 
 ## Suggested next steps
 
-_(none — resolved.)_ **Do not "fix" a silent clear by editing rule expressions.** That was tried and disproved; `alerts.yaml`'s comment beside `nas-archive-pull-stalled` records why.
+_(none — resolved.)_ **Do not "fix" a silent clear by editing rule expressions.** That was tried and disproved — the attribution and the reading that killed it are in `## Why this matters` above. The receiver, not the expression, decides whether a clear is announced: `alerts.yaml`'s comment beside `nas-archive-pull-stalled` now points at `zcrypto-engine-log-dead`, where that mechanism sits beside the test enforcing it.

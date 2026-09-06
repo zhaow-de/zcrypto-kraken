@@ -807,3 +807,10 @@ ______________________________________________________________________
 - `infra/runbooks/drills-telemetry.md` binds every drill below it with the throwaway-subject and textfile-injection rules, and derives from its own bounds the log class no pipeline observes and the reminder that a drill proves wiring, never timing.
 - `docs/reference/fleet.md` points at those pages instead of carrying their procedures, so a reader has one home per instruction rather than two that drift.
 - `zcrypto data rebuild`'s reference-data fetch (`cli/snapshot/fetch.py`) refuses a body that is not a JSON object, a body carrying no `result`, and a `result` that is not an object — three messages naming what arrived, where an operator used to read a traceback about a dict key.
+## 2026-09-06 — T0164 resolved: the global prose cleanup lands, and the tripwire becomes a ratchet
+
+- `infra/scripts/prose-tripwire.py` runs at commit as a ratchet over `infra/scripts/prose-tripwire-baseline.txt`: a new offender, or a recorded one that grew, blocks the commit; the remedy is to cut it or record it as a keep with `--write-baseline` in the same commit.
+- The tripwire skips vault content by content, applies the file-prose bar only above a code-line floor, counts a string literal as prose only in docstring position, exempts `docs/open-topics/` from the section bar, and reads every README under `infra/` — a flagged line is one a reader should look at.
+- `.claude/rules/prose.md` names the ratchet and its remedy and says a closed citation re-tenses its sentence rather than annotating the id; `CLAUDE.md`'s commit gate lists the ratchet.
+- The `cli/`, `tests/`, `infra/` and reference files the cleanup reached carry prose that says only what the code cannot; the files the owner kept at their original prose are recorded keeps in the baseline, held from growing.
+- `.claude/skills/zcrypto-rollout-image/SKILL.md`'s NAS section says every rollout pins a `develop` build and that the digest extra var is silently unused, where the pins row used to.

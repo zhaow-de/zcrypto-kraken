@@ -27,7 +27,7 @@ _MAX_LEVERAGE = 10
 _PLAN_KEYS = frozenset({"plan_id", "created_at", "intents"})
 _INTENT_KEYS = frozenset({"symbol", "side", "action", "mode", "notional_eur", "qty", "leverage", "offset_pct", "hold_minutes"})
 _MAX_HOLD_MINUTES = 60
-# Sec 10's 250% floor at rung scale: required margin (notional / leverage, summed over margin
+# Master-plan §10's 250% floor at rung scale: required margin (notional / leverage, summed over margin
 # intents) times this multiplier must fit under the account's free collateral.
 _MARGIN_FLOOR_MULTIPLIER = 2.5
 
