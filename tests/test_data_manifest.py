@@ -447,6 +447,8 @@ def test_every_writer_emits_a_manifest_the_reader_accepts(module, tmp_path):
     consumer actually uses -- a shape that only a bespoke assertion accepts is the zoo again."""
     m = read_manifest(_PRODUCERS[module](tmp_path))
     assert m.schema_version == SCHEMA_VERSION, module
+    if module == "cli/ohlc/reach.py":
+        assert m.identity == "subset:continuous", module
     assert m.identity_digest, module
     assert m.vouched, module
     assert all(k.endswith(".parquet") for k in m.series), module
