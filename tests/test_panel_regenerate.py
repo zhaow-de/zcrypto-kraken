@@ -1,9 +1,4 @@
-"""zcrypto-panel-regenerate: delete-and-rebuild as one refusing flow (spec 00083 D2).
-
-The template renders with fixed test vars; systemctl/du/date are PATH stubs writing a call
-log, so ordering claims ("nothing deleted before the typed gate") are asserted against what
-actually ran. /dev/tty gates run under a pty.
-"""
+"""zcrypto-panel-regenerate: delete-and-rebuild as one refusing flow (spec 00083 D2)."""
 
 import os
 import pty
@@ -46,23 +41,15 @@ case "$*" in
 esac
 exit 0
 """
-# journalctl was absent from this harness until the completion-line block existed, so that block's
-# SUCCESS path -- the one that captures hours_unanchored/hours_unsettled -- had never executed
-# anywhere: every run silently took the `|| echo` fallback.
-#
-# It logs to CALL_LOG alongside systemctl, and that is load-bearing rather than incidental. The
-# defect this block exists to prevent is the timer being restarted BEFORE the journal read, and
-# `systemctl start …timer` prints nothing -- so an ordering assertion made on stdout cannot see it.
-# A stdout-anchored check passed against exactly that defect when it was constructed. One ordered
-# log covering both commands is the only place the ordering is observable.
+# The stub logs to CALL_LOG alongside systemctl: `systemctl start …timer` prints nothing, so an
+# ordered log covering both commands is the only place the journal read's position between the
+# rebuild and the timer restart is observable.
 #
 # The emitted text mirrors the real completion line field-for-field (cli/panel/command.py), with the
 # `-o short-iso` timestamp the script now asks for: a harness whose model of the line is wrong
 # teaches the wrong shape to whoever reads it next.
 # The argv goes to its OWN file, not into CALL_LOG: the ordering assertions need a stable marker,
-# while the flags need pinning separately. Without this the `--since`/`-o short-iso` anchoring is
-# untested -- a revert to the un-anchored `-o cat` form passed the whole suite when probed, which is
-# the same silent-revert hole the vacuous checklist assertion was.
+# while the flags need pinning separately.
 JOURNAL_READ = "journalctl completion-read"
 STUB_JOURNALCTL = (
     "#!/usr/bin/env bash\n"
@@ -95,9 +82,8 @@ def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None):
     overrides = {"ops_panel_subdir": panel_subdir}
     if data_dir is not None:
         overrides["ops_data_dir"] = data_dir
-    # Render through Jinja, the way Ansible does — NOT str.replace. The substitution harness this
-    # replaced could not see a Jinja syntax error, and one shipped: the template failed on its
-    # first real converge with every test here green.
+    # Render through Jinja, the way Ansible does — NOT str.replace: a str.replace harness cannot
+    # see a Jinja syntax error at all.
     values = {var: val.format(data=data, nas=nas) for var, val in {**VARS, **overrides}.items()}
     text = ansible_render(text, **values)
     assert "{{" not in text and "{%" not in text, "unrendered template syntax left behind"
@@ -220,10 +206,8 @@ def test_no_tty_refuses_restarts_timer_and_deletes_nothing(tmp_path):
 
 @pytest.mark.parametrize("state", ["active", "activating"])
 def test_an_in_flight_materialize_run_refuses_and_restarts_the_timer(state, tmp_path):
-    # Stopping the TIMER does not stop a run already under way, and step 4's `rm -rf` under a live
-    # materialize half-deletes a tree the running process believes it owns. `activating` is the
-    # state that matters: the unit is Type=oneshot, so that is where an hourly run spends its whole
-    # runtime -- and it is precisely the state `systemctl is-active`'s EXIT CODE calls not-active.
+    # Step 4's `rm -rf` under a live materialize half-deletes a tree the running process believes
+    # it owns.
     script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
     env["FAKE_UNIT_ACTIVE"] = state
     r = subprocess.run(["setsid", str(script)], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
@@ -327,10 +311,8 @@ def test_happy_path_order_and_checklist(tmp_path):
     assert rc == 0
     assert not panel.exists()
     seq = calls(log)
-    # The journal read sits between the rebuild and the timer restart, and this equality is what
-    # pins it: the timer is Persistent=true, so a restart can fire a queued catch-up tick whose
-    # numbers then win `tail -1`. `systemctl start …timer` prints nothing, so only an ordered call
-    # log can see that inversion -- a stdout-position check passes straight through it.
+    # The journal read must sit between the rebuild and the timer restart: the timer is
+    # Persistent=true, so a restart can fire a queued catch-up tick whose numbers then win `tail -1`.
     assert seq == [
         *STEP1,
         "systemctl start --wait zcrypto-panel-materialize.service",
@@ -351,20 +333,15 @@ def test_failed_rebuild_leaves_timer_stopped(tmp_path):
 
 
 # --- what the render path itself must guarantee ----------------------------------------------
-# Two defects shipped here, both invisible to the harness of their day. First: bash's string-length
-# expansion opens with a brace-hash pair, which Jinja reads as a comment tag — the template did not
-# render at all, caught only by a real converge, because the harness then rendered by str.replace.
-# Second: the raw-block fix rendered fine under a bare jinja2.Environment and installed BROKEN shell,
-# because Ansible sets trim_blocks=True and ate the newline after the closing tag. Hence the rule
-# these tests enforce: render through Ansible's own engine, then check the result is valid bash.
+# The rule these tests enforce: render through Ansible's own engine, then check the result is
+# valid bash.
 
 
 def ansible_render(source, **values):
     """Render through ANSIBLE's templar, not a bare jinja2.Environment.
 
-    Load-bearing distinction, learned twice on the same file: bare Jinja defaults to
-    trim_blocks=False while Ansible sets it True, so a template can render perfectly here and
-    still install broken shell on the host. Only the real engine settles it.
+    Bare Jinja defaults to trim_blocks=False while Ansible sets it True, so a template can render
+    perfectly here and still install broken shell on the host.
     """
     from ansible.parsing.dataloader import DataLoader
     from ansible.template import Templar, trust_as_template
@@ -407,10 +384,6 @@ def test_every_ansible_template_is_parseable_jinja():
     assert not broken, "unparseable Jinja templates: " + "; ".join(broken)
 
 
-# The closing checklist is the ONLY artifact this routine leaves an operator, and its previous
-# version was asserted by `"NAS" in out and "Un-pause" in out` -- which the OLD text satisfied
-# verbatim, so the whole rewrite was unpinned and a revert would have shipped green. Each assertion
-# below fails against that old text.
 def test_the_closing_checklist_is_safe_and_ordered(tmp_path):
     script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
     rc, out = run_tty(script, env, ["paused"])
@@ -418,10 +391,9 @@ def test_the_closing_checklist_is_safe_and_ordered(tmp_path):
 
     # (c) The completion line must be captured BEFORE the timer is restarted. The timer is
     # Persistent=true, so restarting it can fire a queued catch-up tick whose numbers then win
-    # `tail -1` -- the T0111 drill saw exactly that (hours_written=80 hours_skipped=6370).
-    # Asserted on the CALL LOG, not on stdout. `systemctl start …timer` prints nothing, so hoisting
-    # it above the journal read while leaving `echo "timer restarted."` in place is invisible to a
-    # stdout-position check -- a review constructed that exact defect and the stdout form survived.
+    # `tail -1` -- the T0111 drill saw exactly that. Asserted on the CALL LOG, not on stdout:
+    # `systemctl start …timer` prints nothing, so hoisting it above the journal read while leaving
+    # `echo "timer restarted."` in place is invisible to a stdout-position check.
     assert "completion line" in out, "the rebuild's completion line is not printed at all"
     seq = calls(log)
     assert JOURNAL_READ in seq, "the journal was never read"

@@ -1,11 +1,4 @@
-"""TDD for `cli/panel/primitives.py` -- the pure 1s L2 panel primitive math (spec 00052 D2).
-
-All values here are hand-computed from the book fixtures per the exact formulas in spec 00052 D2:
-microprice = (ask_qty*bid + bid_qty*ask)/(bid_qty+ask_qty); imbalance_l1 = bid_qty/(bid_qty+ask_qty);
-fill_bps walks price-ordered levels (asks ascending for a buy, bids descending for a sell)
-accumulating price*qty EUR until the notional is filled (partial last level), then compares the
-resulting VWAP ("effective" price) to mid in bps -- None if the visible side is too shallow.
-"""
+"""TDD for `cli/panel/primitives.py` -- the pure 1s L2 panel primitive math (spec 00052 D2)."""
 
 from __future__ import annotations
 
@@ -55,13 +48,8 @@ def test_notionals_eur():
 
 
 def test_btc_eur_reference_is_pinned_to_the_measured_value():
-    """A literal pin, not a derived/approx check -- `BTC_EUR_REFERENCE` is a MEASUREMENT, not a
-    formula, so nothing else in the suite can catch a wrong value (the per-quote ladder test only
-    restates `eur_rung / BTC_EUR_REFERENCE`, which passes identically whatever the constant is).
-
-    Provenance: mean `mid` over BTC/EUR panel-1s across `BTC_EUR_REFERENCE_WINDOW`, 1,180,800 rows =
-    exactly 328 contiguous hours, no gaps, measured 2026-08-06 (spec 00085 D1 Task 1 Step 0).
-    """
+    """A literal pin, not a derived check: `BTC_EUR_REFERENCE` is a MEASUREMENT (spec 00085 D1 Task 1
+    Step 0), never a formula to re-derive."""
     from cli.panel.primitives import BTC_EUR_REFERENCE
 
     assert BTC_EUR_REFERENCE == 55876.28413495087
@@ -75,7 +63,6 @@ def test_the_ladder_is_per_quote_and_btc_rungs_are_eur_equivalent():
 
     assert notionals_for("EUR") == (100.0, 1_000.0, 10_000.0)
     btc = notionals_for("BTC")
-    # Each BTC rung is the BTC quantity worth the same EUR as the EUR rung at the pinned reference.
     for eur_rung, btc_rung in zip((100.0, 1_000.0, 10_000.0), btc, strict=True):
         assert btc_rung == pytest.approx(eur_rung / BTC_EUR_REFERENCE, rel=1e-12)
     # The rungs must be *different* numbers, or the ladder is not actually quote-aware.
@@ -95,7 +82,6 @@ def test_an_unknown_quote_refuses_rather_than_defaulting_to_eur():
 
 
 def test_sample_row_basic_values_and_shallow_depth_levels():
-    # best bid = 100 (max key), best ask = 101 (min key); bid_qty=2, ask_qty=1.
     bids = {Decimal("100"): Decimal("2"), Decimal("99"): Decimal("3")}
     asks = {Decimal("101"): Decimal("1"), Decimal("102"): Decimal("4")}
 
@@ -111,7 +97,6 @@ def test_sample_row_basic_values_and_shallow_depth_levels():
     assert row["spread_bps"] == pytest.approx((101.0 - 100.0) / 100.5 * 1e4)
     assert row["microprice"] == pytest.approx((1 * 100.0 + 2 * 101.0) / (2 + 1))
     assert row["imbalance_l1"] == pytest.approx(2 / (2 + 1))
-    # only 2 price levels per side exist -> K=5 and K=10 both fall back to summing everything.
     assert row["depth_qty_bid_l1"] == pytest.approx(2.0)
     assert row["depth_qty_bid_l5"] == pytest.approx(2.0 + 3.0)
     assert row["depth_qty_bid_l10"] == pytest.approx(2.0 + 3.0)
@@ -124,7 +109,6 @@ def test_sample_row_basic_values_and_shallow_depth_levels():
 
 
 def test_fill_bps_single_level_partial_fill_both_sides():
-    # One level per side -- also covers K > available levels (K=1/5/10 all equal the single level).
     bids = {Decimal("100"): Decimal("10")}
     asks = {Decimal("101"): Decimal("10")}
     mid = (100.0 + 101.0) / 2  # 100.5
@@ -132,7 +116,6 @@ def test_fill_bps_single_level_partial_fill_both_sides():
     row = sample_row(bids, asks, quote="EUR", updates=0)
 
     assert row is not None
-    # buy €100: ask level notional = 101*10 = 1010 >= 100 -> only a fraction of the level is eaten;
     # effective = 100 / (100/101) = 101 (the level's own price, since it's a partial single-level fill).
     expected_ask_100 = (101.0 - mid) / mid * 1e4
     assert row["fill_bps_ask_100"] == pytest.approx(expected_ask_100)
@@ -148,8 +131,6 @@ def test_fill_bps_single_level_partial_fill_both_sides():
 
 
 def test_fill_bps_multi_level_walk_with_partial_last_level():
-    # Buy €1,000 walking the ask side: level1 (100x2=200) and level2 (101x3=303) are fully consumed
-    # (503 total), leaving 497 to eat from level3 (200x100=20000, deep) -- a partial fill of level3.
     asks = {Decimal("100"): Decimal("2"), Decimal("101"): Decimal("3"), Decimal("200"): Decimal("100")}
     bids = {Decimal("99"): Decimal("50")}
     mid = (99.0 + 100.0) / 2  # 99.5
@@ -162,7 +143,6 @@ def test_fill_bps_multi_level_walk_with_partial_last_level():
     effective = 1_000.0 / base_qty
     expected = (effective - mid) / mid * 1e4
     assert row["fill_bps_ask_1k"] == pytest.approx(expected)
-    # K > available (only 3 ask levels) -> l5/l10 both sum all three.
     assert row["depth_qty_ask_l5"] == pytest.approx(2.0 + 3.0 + 100.0)
     assert row["depth_qty_ask_l10"] == pytest.approx(2.0 + 3.0 + 100.0)
 
@@ -184,7 +164,6 @@ def test_fill_bps_none_when_side_too_shallow_but_numeric_at_smaller_notional():
     assert row["fill_bps_ask_100"] == pytest.approx((100.0 - mid) / mid * 1e4)
     assert row["fill_bps_ask_1k"] is None
     assert row["fill_bps_ask_10k"] is None
-    # the deep bid side fills all three rungs -- a single-price book, so effective == price exactly.
     assert row["fill_bps_bid_100"] == pytest.approx((mid - 99.0) / mid * 1e4)
     assert row["fill_bps_bid_1k"] == pytest.approx((mid - 99.0) / mid * 1e4)
     assert row["fill_bps_bid_10k"] == pytest.approx((mid - 99.0) / mid * 1e4)
@@ -226,9 +205,7 @@ def test_sample_row_crossed_or_locked_book_computes_spread_honestly(bid_price, a
 
 
 def test_fill_bps_bid_multi_level_walk_with_partial():
-    # Review minor #2 (f7a2e4d review): the multi-level partial walk tested directly on the BID
-    # side (a sell). Bids 100x2, 99x3, 98x200; asks 101x1 -> mid = 100.5. Selling EUR 1000 consumes
-    # 100*2=200, 99*3=297, then a partial 503/98 base at 98.
+    # Selling EUR 1000: 100*2 = 200 and 99*3 = 297 consumed, leaving a partial 503/98 base at 98.
     bids = {Decimal("100"): Decimal("2"), Decimal("99"): Decimal("3"), Decimal("98"): Decimal("200")}
     asks = {Decimal("101"): Decimal("1")}
     row = sample_row(bids, asks, quote="EUR", updates=1)
@@ -254,8 +231,7 @@ def test_sample_row_fills_a_btc_quoted_book_that_eur_rungs_could_never_fill():
     assert row_btc["fill_bps_ask_100"] is not None
     assert row_btc["fill_bps_bid_100"] is not None
 
-    # The same book read with the EUR ladder asks for 100 BTC and cannot fill: this is the exact
-    # bug -- all six columns null -- and it must still be reproducible on demand.
+    # The same book read with the EUR ladder asks for 100 BTC and cannot fill.
     row_eur = sample_row(bids, asks, quote="EUR", updates=1)
     assert row_eur["fill_bps_ask_100"] is None
 

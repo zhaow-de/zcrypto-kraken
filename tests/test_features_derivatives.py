@@ -38,9 +38,9 @@ def test_align_asof_is_none_before_the_first_source_row():
 def test_a_null_source_row_erases_the_carry_rather_than_being_skipped():
     """Pins spec D5's null semantics: a null source value REPLACES the carry, it is not skipped.
     The competing reading (forward-fill the last observed value, skipping nulls) is equally
-    plausible and silently different -- Tasks 4 and 5 feed nulls through this exact path
-    (`oi_levels_from_raw`'s zero-to-None map, and the ratio columns' own nulls), so this is
-    load-bearing: a later "fix" to the other reading would move every OI and ratio feature."""
+    plausible and silently different -- the OI and ratio features feed nulls through this exact path
+    (`oi_levels_from_raw`'s zero-to-None map, and the ratio columns' own nulls), so a later "fix" to
+    the other reading would move every one of them."""
     src_ts = [_t(0), _t(4)]
     src_v = [1.0, None]
     grid = [_t(0), _t(2), _t(4), _t(6)]
@@ -65,14 +65,11 @@ def test_align_asof_refuses_a_length_mismatch_and_either_unsorted_input_but_perm
 def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
     """The look-ahead guard (spec D2/D10), in the form that actually bites.
 
-    An earlier draft appended FUTURE source rows beyond the grid's last stamp and asserted the
-    result was unchanged. The contract pin showed that test passes on a deliberate backward-fill
-    defect (`if t >= g: return x`, which reads the NEXT source row) as readily as on the correct
-    implementation, because rows past the grid's end cannot move any value under either semantics.
-
-    This form truncates instead: recompute over `grid[:k]` using only source rows stamped at or
-    before `grid[k-1]`, and demand the prefix match the full run's. The defect first mismatches at **k=2** (`[1.0, None]` vs `[1.0, 2.0]`); the correct implementation passes at
-    every k."""
+    Appending FUTURE source rows beyond the grid's last stamp proves nothing: rows past the grid's
+    end cannot move any value under a backward-fill defect (`if t >= g: return x`, which reads the
+    NEXT source row) either. This form truncates instead: recompute over `grid[:k]` using only
+    source rows stamped at or before `grid[k-1]`, and demand the prefix match the full run's. The
+    defect first mismatches at k=2 (`[1.0, None]` vs `[1.0, 2.0]`)."""
     src_ts, src_v = [_t(0), _t(8)], [1.0, 2.0]
     grid = [_t(0), _t(4), _t(8)]
     full = align_asof(src_ts, src_v, grid)
@@ -85,9 +82,8 @@ def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
 
 def test_funding_zscore_recovers_a_planted_value():
     """Planted signal (spec D10) under D7's pinned window: inclusive trailing window ending at k,
-    sample stdev. Nine identical prints then one outlier scores exactly 2.8460498941515410 --
-    verified by computation, not asserted as a threshold. An earlier draft asserted `> 3.0`, which
-    no window definition can produce: population stdev gives exactly 3.0, exclusive is undefined.
+    sample stdev. The score is asserted as a computed value, never as a threshold: `> 3.0` pins no
+    window at all, since population stdev gives exactly 3.0 and the exclusive window is undefined.
 
     The assertion is the FULL list, not `z[-1]`: it pins the length, the nine-`None` warm-up head
     that separates "undefined" from "exactly average", and the value -- and a `[-1]`-only form
@@ -139,9 +135,7 @@ def test_every_windowed_funding_feature_rejects_a_short_window():
 
 
 def test_every_funding_feature_reproduces_itself_on_a_truncated_prefix():
-    """The causality guard for this task's three functions (spec D2/D10), in the only form that
-    bites. `test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit` has the same property for
-    `align_asof`; it covers nothing here.
+    """The causality guard for the three funding features (spec D2/D10), in the only form that bites.
 
     Every assertion above is a fixed-input equality, and a window that reads one bar into the
     future agrees with the causal form at the last index -- so recompute over each prefix and
@@ -223,7 +217,7 @@ def test_every_windowed_oi_feature_rejects_a_short_window():
 
 
 def test_every_oi_feature_reproduces_itself_on_a_truncated_prefix():
-    """The causality guard for this task's three feature functions (spec D2/D10). See
+    """The causality guard for the three OI features (spec D2/D10). See
     `test_every_funding_feature_reproduces_itself_on_a_truncated_prefix` for why `[-1]` cannot carry
     it. The fixture rises and falls so no two candidate window offsets coincide."""
     levels = [100.0, 104.0, 99.0, 130.0, 128.0, 90.0, 155.0, 151.0]
@@ -257,19 +251,15 @@ def test_ratio_features_carry_nulls_and_real_zeros_through_untouched():
     zero in `sum_open_interest`, which is a venue hole.
 
     Every column gets a DIFFERENT head, and each is asserted against its own input rather than a
-    shared literal. The four columns are not interchangeable -- through 2022 one is 5.09 % null and
-    another 87.24 % -- so an implementation that broadcast one input list across all four output
-    keys would hand a trial the wrong column's values. Give them all the same list and that defect
-    cannot move this fixture.
+    shared literal. The four columns are not interchangeable, so an implementation that broadcast
+    one input list across all four output keys would hand a trial the wrong column's values. Give
+    them all the same list and that defect cannot move this fixture.
 
     Mis-keying has a second shape the distinct heads alone cannot catch: pairing output keys with
     input values POSITIONALLY -- zipping the module's canonical column order against
     `ratios.values()` -- agrees with the correct implementation for as long as the input arrives in
     `_RATIOS` order. So the call below hands the dict REVERSED; do not "simplify" it back to
-    `ratio_features(inputs)`, which re-blinds this fixture to that half while the assertions still
-    read as thorough. The ratio family has exactly two guards and this is the one that catches a
-    mis-key at all: `test_ratio_features_prefix_every_column_with_its_venue` asserts `set(out)`
-    alone and is blind to both shapes by design -- it pins the naming, not the pairing."""
+    `ratio_features(inputs)`, which re-blinds this fixture to that half."""
     inputs = {name: [float(i + 1), None, 0.0, 3.0] for i, name in enumerate(_RATIOS)}
     out = ratio_features(dict(reversed(list(inputs.items()))))
     for name, values in inputs.items():

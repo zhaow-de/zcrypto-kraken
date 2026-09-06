@@ -1,8 +1,5 @@
 """TDD for `cli/panel/materialize.py` -- the hour materializer + watermarked sweep (spec 00052
 Task 2: D3/D4/D5/D6).
-
-Fixture style mirrors `tests/test_archive_replay.py`'s `_book()`/`_explode()` helpers: synthetic
-exploded BOOK_SCHEMA hours, fanned out one row per price level exactly as the capture writer does.
 """
 
 from __future__ import annotations
@@ -555,15 +552,12 @@ def test_final_fractional_second_messages_reach_the_carried_book(tmp_path: Path)
 #
 # The panel builds a DENSE 3600-row/hour grid from a canonical archive that can have holes. Before
 # this column, a hole produced rows carrying a CARRIED-FORWARD book marked only by `updates == 0` --
-# which is also the marker for a genuinely quiet second. Measured on the real 2026-07-27 hour 07
-# blackout: 212 rows with 2 distinct `mid` values against 8 across the hour's other zero-update
-# seconds, in an hour holding its full 3600 rows and reading as complete. ~2,437 pair-seconds of
-# frozen book entered the research feature set indistinguishable from calm market.
+# which is also the marker for a genuinely quiet second.
 #
 # `stale_seconds` is the distinguishing property, emitted rather than inferred: seconds from the
 # last message actually applied to the book to this boundary. It is threaded across hours, because
-# the 2026-07-13 blackout began at 06:59:59.69 -- inside the PREVIOUS hour -- and a within-hour
-# counter would have restarted it at the boundary and understated it.
+# a blackout can begin inside the PREVIOUS hour and a within-hour counter would restart it at the
+# boundary and understate it.
 
 
 def _stale_messages() -> list[dict]:
@@ -672,12 +666,9 @@ def test_stale_seconds_is_in_the_schema_and_the_written_hour(tmp_path: Path) -> 
 
 
 def test_the_sweep_threads_the_clock_across_a_resumed_run(tmp_path: Path) -> None:
-    """The gap review found: every new test drove `materialize_hour` directly, so THREE separate
-    one-line deletions in the sweep -- dropping `last_msg_ts` from the `write_state` call, from the
-    `materialize_hour` call, or from the first-touch resume -- all survived while producing null
-    exactly where a large number belongs. Production takes the resume path on EVERY run (the hourly
-    timer is a fresh process resuming from the watermark), so those nulls would have headed every
-    hour, and a `> 30` filter drops nulls from BOTH sides of the partition.
+    """Production takes the resume path on EVERY run -- the hourly timer is a fresh process resuming
+    from the watermark -- so it is the SWEEP's own `last_msg_ts` wiring that carries the clock, and a
+    test driving `materialize_hour` directly leaves that wiring unexercised.
     """
     primary = tmp_path / "primary"
     reconciled = tmp_path / "reconciled"
@@ -734,8 +725,8 @@ def test_the_sweep_carries_the_clock_between_hours_of_a_SINGLE_run(tmp_path: Pat
     the whole suite green while every hour after the first reads `stale_seconds = null` at its head.
 
     That matters beyond the hourly timer: the panel REGENERATION is one sweep over every hour of
-    every pair, so this line is what carries staleness across ~470 hour boundaries in a row. Nulls
-    are the worst possible failure here, because a `> 30` filter drops them from BOTH sides.
+    every pair, so this line is what carries staleness across every hour boundary in it. Nulls are
+    the worst possible failure here, because a `> 30` filter drops them from BOTH sides.
     """
     primary = tmp_path / "primary"
     panel = tmp_path / "panel"

@@ -189,8 +189,7 @@ def test_a_series_key_that_is_not_a_relative_parquet_path_is_refused(bad):
 )
 def test_the_documents_own_identity_fields_are_refused_when_malformed(field, value):
     # This reader feeds committed provenance citations, so "refusing beats guessing" has to hold
-    # for the document's identity, not only for its series. A missing set_sha256 used to read as
-    # the empty string and be cited as a dataset's identity.
+    # for the document's identity, not only for its series.
     raw = build_manifest(_two(), written_at=WRITTEN_AT)
     raw[field] = value
     with pytest.raises(ManifestError):
@@ -213,15 +212,8 @@ def test_an_empty_series_map_is_refused_at_build():
 
 # --- the ordering pin, on fixtures that can actually bite -------------------------------------------
 #
-# The two legacy writers disagreed on ordering: `backfill.py` sorted interval keys as STRINGS
-# ('1440' < '240' < '60'), `reach.py` as INTEGERS. Path-lexicographic agrees with the first and
-# inverts the second, so reach's committed digests re-anchor -- deliberately, and only after the
-# converter has proved the per-series content identical.
-#
-# A pin only detects a wrong recipe on a MULTI-INTERVAL subset. Measured 2026-08-24, these are
-# degenerate and must never be substituted in: the local set's CONTINUOUS subset (12 series, all
-# interval 1440) and the hub set's DETACHED subset both produce the same digest under either
-# ordering, so a pin there passes under the very defect it names.
+# Path-lexicographic re-anchors reach's committed digests -- safe only because `convert_dataset`
+# refuses any conversion whose recomputed hash SET is not exactly what the legacy manifest attested.
 
 from pathlib import Path as _Path
 
@@ -233,9 +225,7 @@ def _reach_series(manifest_path, *, continuous):
     """Legacy-shaped rows and the value the legacy writer digested them to.
 
     Reads `provenance.legacy` once a set has been converted, so the pin keeps comparing against the
-    ORIGINAL recipe's output rather than quietly re-pinning itself to the new one -- which is the
-    only way it can still detect a change in ordering.
-    """
+    ORIGINAL recipe's output rather than re-pinning itself to the new one."""
     raw = json.loads(manifest_path.read_text())
     if raw.get("schema_version") is not None:
         legacy = raw["provenance"]["legacy"]
@@ -296,11 +286,8 @@ def test_one_span_bound_null_and_the_other_set_is_refused():
 
 
 def test_every_writer_emits_a_manifest_the_reader_accepts(tmp_path, monkeypatch):
-    """CI-runnable, and the point of the whole exercise: five producers, one shape.
-
-    Asserted through `read_manifest` rather than by comparing dicts, because the reader is what a
-    consumer actually uses -- a shape that only a bespoke assertion accepts is the zoo again.
-    """
+    """Asserted through `read_manifest` rather than by comparing dicts, because the reader is what a
+    consumer actually uses -- a shape that only a bespoke assertion accepts is the zoo again."""
     from cli.backfill.backfill import backfill_basket
     from cli.ohlc.ingest import ingest_basket
 

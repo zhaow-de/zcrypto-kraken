@@ -58,13 +58,9 @@ def test_quote_volume_in_eur_raises_if_fx_join_yields_fewer_aligned_rows_than_wi
 
 
 def test_quote_volume_in_eur_sorts_joined_rows_by_ts_before_taking_the_tail():
-    # polars join output order is not guaranteed to preserve ts order, so quote_volume_in_eur must
-    # sort the fx-joined frame by ts before .tail(window) - otherwise a differently-ordered fx frame
-    # can select stale rows instead of the most-recent ones.
-    #
-    # 50 days: oldest 20 carry a clearly different value (vwap=volume=99.0); most-recent 30 (== window)
-    # carry the value under test (volume=2.0, vwap=5.0 -> quote-volume 10.0), so a correctly-sorted
-    # computation sees only the target value and its median is exactly 10.0 * fx_close.
+    # polars join output order is not guaranteed to preserve ts order, so quote_volume_in_eur must sort
+    # the fx-joined frame by ts before .tail(window). The oldest 20 rows differ on purpose - with every
+    # row equal, an unsorted tail would land on the right answer by accident.
     vwaps = [99.0] * 20 + [5.0] * 30
     volumes = [99.0] * 20 + [2.0] * 30
     daily = _daily_frame(vwaps, volumes)  # ts 0..49, ascending

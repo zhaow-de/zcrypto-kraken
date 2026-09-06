@@ -1,10 +1,7 @@
-"""Guard: `archive-pull.sh.j2` renders to the ops writer cycle's shell script, and its own header
-records that a Jinja comment once ended a backslash continuation mid-flags — producing valid bash
-whose `if` condition silently became "--mint: command not found", which `bash -n` cannot catch.
-So rendering is pinned here, and the assertions read the rendered text rather than the template.
-
-`trim_blocks=True, lstrip_blocks=False` mirrors Ansible's own Jinja defaults, matching
-`test_infra_compose_templates.py`."""
+"""Guard for `archive-pull.sh.j2`: the assertions read the RENDERED text, never the template — a
+Jinja comment inside a backslash-continuation chain renders valid bash whose `if` condition has
+silently become "--mint: command not found", which `bash -n` cannot catch. `trim_blocks=True,
+lstrip_blocks=False` mirrors Ansible's own Jinja defaults, matching `test_infra_compose_templates.py`."""
 
 import re
 import shutil
@@ -62,8 +59,7 @@ def test_the_repair_count_is_exported_as_a_monotone_total():
     read_at = r.find("prev_repaired=$(awk")
     assert read_at != -1, "the previous total must be read back, or the counter resets every run"
     # ORDER is the load-bearing property, not the line's presence: the whole .prom is rewritten each
-    # run, so a read placed after the mv silently resets the counter every time. A reviewer moved
-    # this line below the mv and the text-only assertion still passed.
+    # run, so a read placed after the mv silently resets the counter every time.
     assert read_at < r.index('mv "$backfill_textfile.tmp"'), (
         "the previous total is read AFTER the file is replaced -- the counter resets every run"
     )
@@ -97,14 +93,10 @@ def test_the_repair_count_parse_matches_what_the_cli_actually_prints():
 
 
 def test_a_failed_run_still_writes_every_series(tmp_path):
-    """The file is rewritten whole each run; omitting a line DELETES the series, and the existing
-    staleness rule is noDataState: Alerting -- that shape already paged once (2026-07-17).
-
-    This RUNS the block rather than inspecting its text. An earlier version asserted each printf sat
-    at the block's own indentation, which a reviewer defeated three ways: a wrapper with the printf
-    left at column 8, an `&&` guard on one line, and -- in the false-positive direction -- a
-    legitimate dedent that failed all four with a message blaming a conditional that was not there.
-    Executing it is the only form that pins the property instead of a formatting convention."""
+    """The file is rewritten whole each run; omitting a line DELETES the series, and the staleness
+    rule is noDataState: Alerting. This RUNS the block rather than inspecting its text: an assertion
+    on where each printf sits pins a formatting convention, not the property, and fails on a
+    legitimate dedent."""
     bash = shutil.which("bash")
     if bash is None:  # pragma: no cover - bash is present on every image we run
         pytest.skip("bash not available")
@@ -114,22 +106,17 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
         + len('mv "$backfill_textfile.tmp" "$backfill_textfile"')
     ]
     prom = tmp_path / "trade-backfill.prom"
-    # Pre-seed a known total: presence alone does not pin monotonicity. A reviewer moved the
-    # prev_repaired read BELOW the arithmetic (still above the mv, so the order assertion held) and
-    # the counter silently reset to the per-run value every run while every test stayed green.
+    # Pre-seed a known total: presence alone does not pin monotonicity, and neither does the order
+    # assertion above -- a read below the arithmetic still resets the counter to the per-run value.
     prom.write_text(
         "zcrypto_trade_backfill_hours_repaired_after_loss_total 5\n"
-        # last_success is the OTHER carry-forward, and it was unpinned: rewriting its fallback to a
-        # literal 0 passed every test here. A zero makes `time() - 0` enormous and the staleness rule
-        # -- noDataState: Alerting -- pages critical on the first bad day, which is the 2026-07-17
-        # incident by a different route.
+        # last_success is the OTHER carry-forward: a literal 0 makes `time() - 0` enormous and the
+        # staleness rule -- noDataState: Alerting -- pages critical on the first bad day.
         "zcrypto_trade_backfill_last_success_timestamp 1753700000\n"
     )
-    # A FAILED run with no parseable count -- the case that must still write all four.
-    # The slice runs in isolation, so a conditional wrapping the WHOLE block is invisible to it --
-    # a reviewer wrapped `backfill_textfile=` ... `mv` in `if [ "$backfill_rc" -eq 0 ]` and every
-    # test passed while a failed run wrote nothing and left exit_code stale at 0. Balance the slice
-    # structurally so an enclosing `if` shows up as an unmatched `fi` in the surrounding text.
+    # A FAILED run with no parseable count. The slice runs in isolation, so a conditional wrapping
+    # the WHOLE block is invisible to it -- balance the slice structurally instead, so an enclosing
+    # `if` shows up as an unmatched `fi` in the surrounding text.
     before = r[: r.index('backfill_textfile="')]
     opens = len([ln for ln in before.splitlines() if re.match(r"\s*if\s", ln)])
     closes = len([ln for ln in before.splitlines() if re.match(r"\s*fi\s*$", ln)])
@@ -153,8 +140,7 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
     ):
         assert f"{series} " in written, f"{series} is missing after a FAILED run -- the series is deleted"
 
-    # The seeded 5 must survive a failed, count-less run: prev + 0 == 5. A read that happens after
-    # the arithmetic, or after the mv, yields 0 here.
+    # The seeded 5 must survive a failed, count-less run: prev + 0 == 5.
     def _val(text: str, name: str) -> str:
         return next(ln for ln in text.splitlines() if ln.startswith(name)).split()[1]
 
@@ -165,9 +151,7 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
         "last_success was not carried forward on a failed run -- a 0 here pages the staleness rule"
     )
 
-    # Now a SUCCESSFUL run carrying a real repair: the previous total must be ADDED to, not replaced.
-    # Without this the add is only ever exercised as prev + 0, and an implementation that resets on
-    # exactly the runs which can carry a repair passes everything above.
+    # Now a SUCCESSFUL run carrying a real repair: without one the add is only ever exercised as prev + 0.
     prom.write_text("zcrypto_trade_backfill_hours_repaired_after_loss_total 5\n")
     ok = subprocess.run(
         [bash, "-c", f'set -u\nbackfill_rc=0\nbackfill_repaired="3"\n' + block.replace(target, f'"{prom}"')],
@@ -181,11 +165,9 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
 
 
 def test_the_outer_cycle_carries_last_success_forward_on_failure(tmp_path):
-    """The sibling of the trade-backfill carry-forward, and the higher-severity one: its series
-    backs a CRITICAL rule (`time() - ops_archive_pull_last_success_timestamp > 10800`,
-    noDataState: Alerting). A literal 0 there makes that expression ~1.79e9 and pages critical
-    forever from the first failed cycle. Fixing the backfill twin left this one unpinned, so a
-    reviewer's `success=0` mutant survived the entire suite."""
+    """The sibling of the trade-backfill carry-forward, and the higher-severity one: its series backs
+    a CRITICAL rule (`time() - ops_archive_pull_last_success_timestamp > 10800`, noDataState:
+    Alerting), so a literal 0 there pages critical forever from the first failed cycle."""
     bash = shutil.which("bash")
     if bash is None:  # pragma: no cover - bash is present on every image we run
         pytest.skip("bash not available")

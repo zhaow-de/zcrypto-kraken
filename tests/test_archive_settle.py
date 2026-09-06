@@ -203,13 +203,6 @@ def test_a_stream_with_no_data_at_all_is_not_a_total_loss():
 
 # --- total_loss must not fire on a legitimately EMPTY trades hour ---------------------------------
 #
-# Found in production on 2026-07-14, on the very first reconcile cycle: LINK/EUR trades hour 02 was
-# ledgered `total_loss` -- permanent, unrecoverable loss -- and logged at ERROR, which pages through
-# the archive-pull ERROR rule and books into the monotonic residual counter wired to a
-# permanent-loss alarm. It was nothing of the kind: LINK/EUR traded 8 times in hour 01 and 9 times in
-# hour 04, and simply had ZERO prints in hour 02. The book segment for that same pair+hour EXISTS, so
-# the stream was demonstrably connected the whole time.
-#
 # Book updates are continuous; trades are event-driven and sparse. `is_total_loss`'s bracketing rule
 # ("an absence is only a HOLE when real data brackets it") is right for a continuous stream and wrong
 # for an event-driven one. The book hour is the witness that settles it: if the book committed a final
@@ -256,16 +249,12 @@ def test_book_stream_keeps_the_old_behaviour_when_it_has_no_witness() -> None:
 
 # --- the gap-rate signal must exist in DETECT-ONLY, or its alert is a decoration ------------------
 #
-# `healed_gap_seconds_total` counts only `minted` records, and minting stays OFF for the whole T0039
-# soak. So the "chronically gappy primary" alarm -- the one the plan says discharges T0003's
-# gap-rate-alert item -- would be pinned at 0 for the entire period it is most needed, while looking
-# like working alerting. A degrading primary whose every gap the secondary quietly heals trips neither
-# the residual-gap rule nor either dead-man; the gap RATE is the only thing that reveals it.
-#
-# `would_mint` already carries `healed_seconds` (the seconds the secondary witnessed and COULD heal),
-# so the signal exists in the ledger -- it just was not exported. `healable` counts it in both modes;
-# `healed` stays honest and counts only what was actually written. The per-(pair,kind,hour) dedup
-# matters because the flip to --mint re-ledgers the same hour as `minted`: one gap, not two.
+# `healed_gap_seconds_total` counts only `minted` records, so in a detect-only cycle the "chronically
+# gappy primary" alarm would be pinned at 0 while looking like working alerting. A degrading primary
+# whose every gap the secondary quietly heals trips neither the residual-gap rule nor either dead-man;
+# the gap RATE is the only thing that reveals it. `would_mint` carries `healed_seconds` (the seconds
+# the secondary witnessed and COULD heal), so `healable` counts it in both modes while `healed` stays
+# honest and counts only what was actually written.
 
 
 def _totals_of(records: list[dict]) -> dict[str, float]:
@@ -301,9 +290,7 @@ def test_healable_does_not_double_count_when_a_would_mint_hour_is_later_minted()
 # --- per-intersection-window booking (T0103) -------------------------------------------------------
 #
 # `fleet_dark_windows` finds the INTERSECTION -- the window in which every stream was silent -- and
-# booking it x stream count under-books every stream but the one that returned first. Measured on
-# 2026-07-13: intersection 266.178874 s, sum of each stream's own window 2,696.031909 s over 10
-# streams, so 34.243169 s (1.27%) was booked nowhere.
+# booking it x stream count under-books every stream but the one that returned first.
 
 
 def test_the_containing_window_is_the_streams_own_silence_around_the_fleet_window():
@@ -503,8 +490,7 @@ def test_three_or_more_windows_are_never_classified():
     # THE re-derivation. With 3+ windows there is no way to tell which gaps are the episode's own
     # sputtering and which are healthy traffic separating unrelated incidents -- and an aggregate
     # dominance check lets one large genuine outage's dark time carry an unrelated pair of disjoint
-    # blips to venue_silent. Constructed against the aggregate rule, which passed it. Refusing costs
-    # nothing measurable: every both_streams_silent record in the live ledger has one window or two.
+    # blips to venue_silent.
     three = [
         DarkWindow(start=_at(0), end=_at(3000), seconds=3000.0),
         DarkWindow(start=_at(3001), end=_at(3002), seconds=1.0),
@@ -571,8 +557,7 @@ def test_containing_dark_window_accepts_us_arrays_identically():
 
 
 # Microsecond widths whose correctly-rounded quotient `us / 1e6` differs in the last bit from the
-# product `us * 1e-6`. 29.7% of random sub-hour widths differ; ZERO whole-second widths do -- and
-# every other construction in this file is whole-second, so nothing else here can see the swap.
+# product `us * 1e-6`; no whole-second width does, which is why these are not round numbers.
 _DIVERGENT_US = (30_000_001, 2_999_999_999, 3_599_999_999)
 
 
@@ -642,7 +627,7 @@ def test_us_array_refuses_an_ndarray_that_is_not_already_int64_microseconds(dtyp
 # the array is already int64. Nothing downstream catches it either: `command.py` books the fleet-dark
 # residual BEFORE the heal block ever hands the same frame to `_message_ts`, so a `ms` column would
 # shrink a real outage 1000x below the threshold and book a fabricated 1970-anchored window into a
-# counter that can never be walked back. This function is the only guard on that path.
+# counter that can never be walked back.
 
 
 def _book_ts(offsets: list[float], *, unit: str = "us", tz: str | None = "UTC") -> pl.Series:

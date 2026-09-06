@@ -51,10 +51,6 @@ def test_multiple_gaps():
 
 
 def test_duplicates_are_reported_and_never_counted_as_gaps():
-    """v1 of the exploratory probe conflated these: sorted duplicates give (x, x), which trips a
-    naive `b != a+1` and yields a negative-width 'gap'. `unique()` is what actually prevents this
-    here (post-`unique()`, `b > a` always holds, so `>` and `!=` are equivalent) — not the choice
-    of comparator."""
     d = detect(_f([10, 11, 11, 12]))
     assert d.duplicate_ids == [11]
     assert d.gaps == []
@@ -72,11 +68,9 @@ def test_unsorted_input_is_handled():
 
 
 def test_non_monotone_ts_across_a_gap_is_normalized_and_warned(caplog):
-    """The T0026 reconnect-overwrite signature: `ts` runs DESCENDING while `trade_id` still
-    increases. Un-normalized, this gap's ts_lo/ts_hi would come out INVERTED (ts_lo > ts_hi),
-    sending REST a `since` after the `until` -- silently yielding nothing. This must genuinely
-    fail if the normalization is removed: reverting to plain `tss[i]`/`tss[i + 1]` makes
-    `g.ts_lo <= g.ts_hi` false for this fixture."""
+    """The T0026 reconnect-overwrite signature — `ts` DESCENDING while `trade_id` still increases.
+    Un-normalized, this gap's ts_lo/ts_hi invert, handing REST a `since` after the `until`, which
+    silently yields nothing."""
     df = pl.DataFrame(
         [
             {

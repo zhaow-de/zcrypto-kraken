@@ -1,10 +1,5 @@
-"""Tests for `_evaluate_journal`'s cache wiring and `gate-export --cache` (spec 00060 T2):
-threading a cache_path back in place of a fresh `replay_cycle` call for unchanged cycles, while
-`JournalCounts` is derived from the resulting `CycleOutcome` in one place regardless of whether it
-came from cache or replay (the trap: incrementing counters only inside the replay branches would
-silently stop counting cache hits). Journal fixtures mirror tests/test_engine_gate_export.py's
-shapes (real, replayable records; concordance.build_crossfreq_system_fast is monkeypatched to a
-fast deterministic stub -- no dataset access, no real strategy rebuild)."""
+"""Tests for `_evaluate_journal`'s cache wiring and `gate-export --cache`: a cached CycleOutcome,
+and the counts derived from it, must equal the replay it replaces."""
 
 from __future__ import annotations
 
@@ -133,16 +128,9 @@ def _counted_replay_cycle(monkeypatch, calls: list[datetime]):
 
 
 def test_unparseable_cycle_json_does_not_open_the_gate(tmp_path, monkeypatch):
-    """The single most consequential pin on this branch. `_evaluate_journal`'s parse-failure branch
-    classifies an unreadable `cycle-*.json` as `validation_failed=True` -- flip that one keyword to
-    `compare_passed=True` and every existing test still passes, because none of them checks the
-    GATE the operator actually reads. On a 14-clean-day journal with exactly one record corrupted
-    mid-streak, that one-keyword flip turns evidence we cannot verify into evidence that PASSED:
-    `gate_met` flips False -> True and `last_failure` flips set -> None, on the exact artifact that
-    authorises real-money trading. Asserted at JOURNAL level (`evaluate_gate`'s `gate_met` /
-    `last_failure`), not merely that the corrupted cycle itself classifies as a failure -- the
-    per-cycle classification passing proves nothing about whether the gate the operator reads still
-    closes."""
+    """An unreadable `cycle-*.json` classifies as `validation_failed` and the gate stays shut.
+    Asserted at JOURNAL level (`evaluate_gate`'s `gate_met`/`last_failure`), because the per-cycle
+    classification says nothing about the gate the operator actually reads."""
     journal = tmp_path / "journal"
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
 
@@ -176,9 +164,8 @@ def test_warm_cache_equals_cold_cache(tmp_path, monkeypatch):
     _write_success_record(journal, CYCLE_TS)
     _write_success_record(journal, CYCLE_TS + timedelta(hours=4))
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
-    # hour=12 is neither cycle's rotation slice (CYCLE_TS -> 13, CYCLE_TS+4h -> 23), so this test's
-    # warm/cold comparison isn't incidentally muddied by a forced reverification -- that's covered
-    # by its own tests below.
+    # hour=12 is neither cycle's rotation slice (CYCLE_TS -> 13, CYCLE_TS+4h -> 23), so a forced
+    # reverification cannot muddy this warm/cold comparison.
     now = CYCLE_TS + timedelta(hours=4, minutes=10)
 
     cold_entries, cold_counts, cold_newest, cold_stats = command._evaluate_journal(journal, cache_path=None, now=now)
@@ -189,7 +176,6 @@ def test_warm_cache_equals_cold_cache(tmp_path, monkeypatch):
     )
     warm_entries, warm_counts, warm_newest, warm_stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
 
-    # Same CycleOutcome lists across no-cache, cold-with-cache, and warm.
     assert cold_cache_entries == cold_entries
     assert warm_entries == cold_entries
 
@@ -200,14 +186,12 @@ def test_warm_cache_equals_cold_cache(tmp_path, monkeypatch):
 
     assert cold_cache_newest == cold_newest == warm_newest
 
-    # Same evaluate_gate verdict across all three.
     cold_status = evaluate_gate(cold_entries, now=now)
     cold_cache_status = evaluate_gate(cold_cache_entries, now=now)
     warm_status = evaluate_gate(warm_entries, now=now)
     assert cold_cache_status == cold_status
     assert warm_status == cold_status
 
-    # Cache stats sanity: cold-with-cache replayed everything, warm replayed nothing.
     assert cold_cache_stats.replayed == 2
     assert cold_cache_stats.from_cache == 0
     assert warm_stats.replayed == 0
@@ -247,12 +231,10 @@ def test_warm_cache_replays_only_the_new_cycle(tmp_path, monkeypatch):
 
 
 def test_vanished_record_evicted_from_the_cache(tmp_path, monkeypatch):
-    """Finding 17/G17: a cache entry whose journal record no longer exists must not be retained.
-    `final_cache` is built from `updated_entries` (this run's records only), so a record deleted
-    from the journal must drop out of the cache too -- retention would poison
-    `oldest_verification_age` permanently, since rotation only forces replays for records still IN
-    the journal: a stale entry that survives can never be re-verified, so the staleness metric
-    would rise forever, masking a real rotation stall behind a permanent false alarm."""
+    """A cache entry whose journal record no longer exists is evicted: `final_cache` is built from
+    this run's records alone. Retention would poison `oldest_verification_age` permanently --
+    rotation only forces replays for records still IN the journal, so a surviving entry could never
+    be re-verified and the staleness metric would rise forever, masking a real rotation stall."""
     journal = tmp_path / "journal"
     record_path = _write_success_record(journal, CYCLE_TS)
     _write_success_record(journal, CYCLE_TS + timedelta(hours=4))
@@ -327,16 +309,11 @@ def test_replay_fingerprint_change_invalidates_everything(tmp_path, monkeypatch)
 
 
 def test_evaluate_journal_threads_the_replay_path_into_the_fingerprint(tmp_path, monkeypatch):
-    """Finding 18/G18 call-site pin: `_evaluate_journal`'s `replay_fingerprint(path=
-    _EVALUATE_JOURNAL_REPLAY_PATH)` call (cli/engine/command.py:223) must THREAD the route into the
-    fingerprint, not call `replay_fingerprint()` bare. Today `_EVALUATE_JOURNAL_REPLAY_PATH` IS
-    `"fast"` (the default), so a bare call is behaviour-identical -- the mutation is invisible until
-    a future route switch, at which point a stale cache would silently keep serving the old route's
-    verdicts. Monkeypatches `_EVALUATE_JOURNAL_REPLAY_PATH` to `"verified"` to separate the two
-    calls' fingerprints, builds a cache under `"fast"` via a real (untouched-constant) run, then
-    re-runs under `"verified"` and asserts the cache is REJECTED on the `replay_fp` mismatch -- a
-    bare `replay_fingerprint()` call would still compute the "fast" fingerprint and wrongly accept
-    the stale cache."""
+    """`_evaluate_journal` must THREAD its route into the fingerprint --
+    `replay_fingerprint(path=_EVALUATE_JOURNAL_REPLAY_PATH)`, never a bare `replay_fingerprint()`.
+    `_EVALUATE_JOURNAL_REPLAY_PATH` is `"fast"`, which is also the parameter's default, so a bare
+    call is behaviour-identical until a route switch -- at which point a stale cache would keep
+    serving the old route's verdicts."""
     journal = tmp_path / "journal"
     _write_success_record(journal, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
@@ -365,7 +342,7 @@ def test_cached_failure_stays_a_failure(tmp_path, monkeypatch):
     journal = tmp_path / "journal"
     _write_success_record(journal, CYCLE_TS)
     # Corrupt the on-disk snapshot post-write (same metadata, shifted closes) -> a pure hash
-    # mismatch, mirroring tests/test_engine_command.py's tampering pattern.
+    # mismatch.
     ts, closes = _series(CYCLE_TS, 240, 100.0)
     write_parquet(
         _snapshot_frame(ts, [c + 1.0 for c in closes]),
@@ -433,10 +410,9 @@ def test_no_cache_path_never_touches_the_fingerprint_layer(tmp_path, monkeypatch
 
 
 def test_broken_replay_fingerprint_degrades_not_aborts(tmp_path, monkeypatch):
-    """A cache is an optimization; gate evidence is not. `replay_fingerprint()` reads every module
-    files with no exception guard of its own -- an OSError there (an unreadable file, a bind-mount
-    hiccup) must degrade this run to a full replay without a cache, never abort the whole gate-export
-    run."""
+    """A cache is an optimization; gate evidence is not. `replay_fingerprint` reads every covered
+    module's bytes with no guard of its own, so an OSError there must degrade this run to a full
+    replay without a cache, never abort the gate-export run."""
     journal = tmp_path / "journal"
     _write_success_record(journal, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
@@ -457,14 +433,11 @@ def test_broken_replay_fingerprint_degrades_not_aborts(tmp_path, monkeypatch):
     assert not cache_path.exists()  # no cache read or written this run
 
 
-# Spec 00065 D8 -- the same degrade, driven through the REAL replay_fingerprint instead of a stub
-# that raises on demand. The test above proves _evaluate_journal handles an OSError; these two prove
-# the fingerprint layer actually PRODUCES one for the two breakages 00065 introduces the risk of --
-# the closure walk can now reach a module that the hand-written list never named. A walk that
-# swallowed the failure would compute a fingerprint over a SILENTLY SMALLER module set: the run
-# would look healthy, write a cache, and later serve verdicts keyed on a fingerprint that never saw
-# the unreadable module. Hence the assertion that no cache file is written, not merely that the run
-# survives.
+# Spec 00065 D8 -- the same degrade driven through the REAL replay_fingerprint rather than a stub
+# that raises: the closure walk can reach a module no hand-written list ever named. A walk that
+# swallowed the failure would fingerprint a SILENTLY SMALLER module set -- the run looks healthy,
+# writes a cache, and later serves verdicts keyed on a fingerprint that never saw the unreadable
+# module. Hence the assertion that no cache file is written, not merely that the run survives.
 
 
 def _degrading_tree(monkeypatch, tmp_path: Path) -> None:
@@ -594,14 +567,12 @@ def test_gate_export_no_cache_option_reports_zero_cached(tmp_path, monkeypatch):
 
 
 def test_tampered_parquet_with_intact_record_is_caught_within_one_rotation(tmp_path, monkeypatch):
-    """THE KEYSTONE (T0077/spec 00062). A cache hit skips replay_cycle entirely, which is the ONLY
-    place a journaled snapshot's parquet bytes are re-hashed -- evidence_fingerprint digests the
-    content_hash CLAIMED in the record, never a fresh read. So a snapshot altered on disk after its
-    first replay, with the record left untouched, is an otherwise-permanent stale PASS. Rotation
-    must force the cycle's own slice hour to replay despite the unchanged fingerprint, and a real
-    replay must then discover the tamper via the parquet content-hash check
-    (cli/engine/concordance.py:116). MUST FAIL if the eligibility test's `not reverify` clause is
-    removed: without it, every hour below stays a cache hit and the tamper is never caught."""
+    """THE KEYSTONE (T0077/spec 00062). A cache hit skips replay_cycle entirely, the ONLY place a
+    journaled snapshot's parquet bytes are re-hashed -- evidence_fingerprint digests the
+    content_hash CLAIMED in the record, never a fresh read -- so a snapshot altered on disk after
+    its first replay, record untouched, is an otherwise-permanent stale PASS. Rotation must force
+    the cycle's own slice hour to replay despite the unchanged fingerprint, and that replay must
+    discover the tamper on `replay_cycle`'s `snapshot_content_hash` check."""
     journal = tmp_path / "journal"
     parquet_path = journal / f"{CYCLE_TS:%Y-%m-%d}" / "snapshots" / f"cycle-{CYCLE_TS:%H}" / "BTC-240.parquet"
     _write_success_record(journal, CYCLE_TS)
@@ -720,12 +691,9 @@ def test_forced_reverification_failure_counts_as_replayed_and_moves_the_gate(tmp
 
     assert entries[0].mismatch is True
     assert counts.mismatches == 1
-    # replayed_ok is asserted BESIDE mismatches, pinning the two tallies against each other: a
-    # hash-mismatch outcome carries compare_passed=True (the CycleOutcome default -- compare never
-    # ran), so dropping the `not o.mismatch` guard from replayed_ok at command.py:266 would count
-    # this very cycle as a clean replay. That mutant survived all 65 tests on this branch until
-    # this line: the sibling of finding 13, in the same expression finding 13 pinned, left behind
-    # because that pin named the guard it had been told about rather than the expression's shape.
+    # replayed_ok is asserted BESIDE mismatches: a hash-mismatch outcome carries compare_passed=True
+    # (the CycleOutcome default -- compare never ran), so without the `not o.mismatch` guard in
+    # `_evaluate_journal`'s replayed_ok sum this very cycle would count as a clean replay.
     assert counts.replayed_ok == 0
     assert stats.replayed == 1
     assert stats.from_cache == 0
@@ -772,13 +740,11 @@ def test_verified_at_carried_on_hit_stamped_on_replay(tmp_path, monkeypatch):
 
 
 def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
-    """D7: no `_total`-suffixed cache gauge remains (`zcrypto_gate_cache_replayed`/`_hits` replace
-    the old `_replayed_total`/`_hits_total`). D5/D8: `zcrypto_gate_cache_oldest_verification_age_seconds`
-    and `zcrypto_gate_export_duration_seconds` are pinned to their EXACT expected value against a
-    monkeypatched `_utc_now`/`time.monotonic`, not just asserted present/`>= 0.0` -- the whole wiring
-    from `oldest_verification_age()`/`time.monotonic()` through `CacheStats` to the textfile line can
-    otherwise be replaced by a hardcoded `0.0` with every other test still green (spec 00062 review
-    Finding 1)."""
+    """D7: no `_total`-suffixed cache gauge remains. D5/D8:
+    `zcrypto_gate_cache_oldest_verification_age_seconds` and `zcrypto_gate_export_duration_seconds`
+    are pinned to their EXACT expected value against a monkeypatched `_utc_now`/`time.monotonic`,
+    because the whole wiring through `CacheStats` to the textfile line can be replaced by a
+    hardcoded `0.0` and still be present and `>= 0.0`."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     _write_success_record(journal, CYCLE_TS)
@@ -827,13 +793,9 @@ def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
 
 
 def test_mismatches_counts_a_real_compare_failure_and_replayed_ok_excludes_it(tmp_path, monkeypatch):
-    """Finding 12: `mismatches` must count a genuine compare_targets failure -- a recorded
-    final_targets that disagrees with a clean replay -- not only a hash mismatch. The mutant this
-    guards against drops `or not o.compare_passed` from the `mismatches` sum, so
-    zcrypto_gate_mismatch_total reads 0 while the gate is actually mismatching (MED-HIGH, not
-    MEDIUM, per the audit). Finding 13's flip side, pinned by the same fixture: `replayed_ok` must
-    exclude that same failed cycle -- the mutant there widens replayed_ok's condition so a failed
-    cycle is counted as replayed ok."""
+    """`mismatches` counts a genuine compare_targets failure -- a recorded final_targets that
+    disagrees with a clean replay -- not only a hash mismatch, and `replayed_ok` excludes that same
+    cycle: without either, zcrypto_gate_mismatch_total reads 0 while the gate is mismatching."""
     journal = tmp_path / "journal"
     record_path = _write_success_record(journal, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
@@ -855,23 +817,13 @@ def test_mismatches_counts_a_real_compare_failure_and_replayed_ok_excludes_it(tm
 
 
 def test_engine_journal_error_attributed_to_its_own_cycle(tmp_path, monkeypatch):
-    """Finding 19: `_replay_one`'s `except EngineJournalError` branch is not covered by the
-    which-cycle-produced-which-outcome attribution pattern the audit called airtight elsewhere
-    (see `_counted_replay_cycle`). Two journaled cycles, one tampered so replay_cycle's post-hash
-    metadata reconciliation disagrees (EngineJournalError, never HashMismatchError) -- pinned by
-    identity, not count: the TAMPERED cycle_ts must carry validation_failed=True and the CLEAN
-    cycle_ts must be unaffected, keyed by cycle_ts, not merely 'exactly one validation_failed
-    exists' -- a swapped classification for the wrong cycle would still pass a count-only check.
-
-    Also asserts `counts.replayed_ok` (review gap): `CycleOutcome.compare_passed` defaults True
-    (cli/engine/concordance.py:59), so `replayed_ok`'s `not o.mismatch and o.compare_passed` alone
-    is satisfied by a validation_failed outcome too -- only the `not o.validation_failed` guard
-    excludes it. Also killed by the keystone above (83 clean cycles beside 1 validation_failed,
-    asserting replayed_ok == 83) -- two independent pins, deliberately. An earlier draft of this
-    docstring claimed this fixture was the SUITE'S ONLY killer of that mutant; that was true when
-    the claim was written and false by the time it was committed, since the keystone landed in the
-    same commit. Corrected rather than deleted because understating coverage is the same
-    false-artifact class this branch keeps finding, just in the harmless direction."""
+    """`_replay_one`'s `except EngineJournalError` branch, pinned by IDENTITY rather than by count:
+    two journaled cycles, one tampered so replay_cycle's post-hash metadata reconciliation disagrees
+    (EngineJournalError, never HashMismatchError), and the assertions key on cycle_ts -- a swapped
+    classification would still satisfy 'exactly one validation_failed exists'. `counts.replayed_ok`
+    is asserted too: `CycleOutcome.compare_passed` defaults True, so `not o.mismatch and
+    o.compare_passed` alone is satisfied by a validation_failed outcome and only the
+    `not o.validation_failed` guard excludes it."""
     journal = tmp_path / "journal"
     tampered_path = _write_success_record(journal, CYCLE_TS)
     _write_success_record(journal, CYCLE_TS + timedelta(hours=4))

@@ -1,9 +1,6 @@
-"""Tests for the record-44 leg re-derivation (cli/portfolio/record44_legs.py).
-
-The registry-only and slicing tests run anywhere. The end-to-end re-derivation needs the canonical
-data/ohlc-full machine and takes ~85 s (the benchmark's inverse-vol weights plus seven SPA
-bootstraps); it pins every leg of record 44's benchmark-relative basis at the registered precision,
-so a change that silently moves any of them fails here.
+"""Tests for the record-44 leg re-derivation (cli/portfolio/record44_legs.py): every leg of
+record 44's benchmark-relative basis is pinned at its registered precision, so a change that
+silently moves any of them fails here.
 """
 
 from datetime import datetime, timedelta
@@ -31,18 +28,16 @@ def registered_metrics() -> dict:
 
 def test_var_trials_4h_reproduces_registered_value_exactly():
     """The DSR leg's var_trials is derivable from the committed registry alone — no dataset needed.
-    Bit-identical, not approximate: it is a pure function of 33 recorded A1 per-period Sharpes."""
+    Bit-identical, not approximate: it is a pure function of the recorded A1 per-period Sharpes."""
     assert a1_family_var_trials_4h() == registered_metrics()["var_trials_4h"]
 
 
 def test_calendar_year_slices_stamps_by_close_and_drops_stubs():
     """Bar k belongs to the year of h4_ts[k + 1], and the 2013/2026 stubs are excluded."""
-    # Bars starting 16:00, 20:00, 00:00 on the 2013/2014 boundary. The 20:00 bar STARTS in 2013 but
-    # CLOSES in 2014, so close-stamping keeps it and start-stamping would drop it as a stub —
-    # the fixture discriminates the two conventions.
+    # The 20:00 bar STARTS in 2013 but CLOSES in 2014, so close-stamping keeps it and start-stamping
+    # would drop it as a stub — the fixture discriminates the two conventions.
     h4_ts = [datetime(2013, 12, 31, 16) + timedelta(hours=4 * k) for k in range(4)]
     assert calendar_year_slices([1.0, 2.0, 3.0], h4_ts) == {"2014": [2.0, 3.0]}
-    # The other stub end, same rule.
     h4_ts_2026 = [datetime(2025, 12, 31, 16) + timedelta(hours=4 * k) for k in range(4)]
     assert calendar_year_slices([1.0, 2.0, 3.0], h4_ts_2026) == {"2025": [1.0]}
 

@@ -1,5 +1,4 @@
-"""Test doubles for the Loki push endpoint: a recording+scriptable fake server, and a silent
-one that accepts the TCP connection and then does nothing (for read-timeout tests)."""
+"""Test doubles for the Loki push endpoint."""
 
 from __future__ import annotations
 
@@ -12,13 +11,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 def handler_factory(status_code: int = 200, location: str | None = None) -> type[BaseHTTPRequestHandler]:
-    """Build a fresh request-handler class: records each POST/GET's `(path, headers, body)` on
-    its own `.requests` list (with a parallel `.request_times` of `time.monotonic()` stamps, so
-    callers can measure retry/backoff gaps) and replies with `.status_code` (+ `Location`, for
-    redirect tests). `.status_code` is a mutable class attribute -- flip it mid-test
-    (`handler_cls.status_code = 200`) to script a server that fails then recovers; capturing
-    `status_code` in a closure instead would freeze the reply for the server's whole lifetime.
-    A fresh class per call keeps `.requests` isolated between servers/tests."""
+    """Build a fresh request-handler class recording each POST/GET on its own `.requests`, with
+    `.request_times` monotonic stamps beside it for measuring retry gaps. `.status_code` is a mutable
+    CLASS attribute a test flips mid-run to script a server that fails then recovers; a closure would
+    freeze the reply for the server's lifetime, and one shared class would leak `.requests`."""
     initial_status = status_code
 
     class _RecordingHandler(BaseHTTPRequestHandler):
@@ -67,8 +63,8 @@ def FakeLoki(handler_cls: type[BaseHTTPRequestHandler] | None = None) -> Iterato
 
 @contextmanager
 def SilentServer() -> Iterator[str]:
-    """Accepts the TCP connection and then goes silent -- never reads, never responds -- so
-    callers can exercise the client's read-timeout path. Closes all held connections on exit."""
+    """Accepts the TCP connection and then goes silent -- never reads, never responds -- so callers
+    can exercise the client's read-timeout path."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     sock.listen()

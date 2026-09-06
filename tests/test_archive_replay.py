@@ -1,12 +1,8 @@
-"""TDD for `cli/archive/replay.py` — the canonical book continuity-replay driver (spec 00051 OPS-3).
+"""`cli/archive/replay.py` — the canonical book continuity-replay driver (spec 00051 OPS-3) and its CLI.
 
-Scope (finalized 2026-07-15, T0045): the archive stores price/qty as Float64, so the Kraken CRC is
-NOT byte-exact re-derivable — the stored `checksum` column is trusted as capture-time ground truth
-and is never compared against a re-derived one, and no "structural desync" heuristic exists (for a
-depth-bounded book a legitimate out-of-window update is indistinguishable from corruption without
-the CRC). What IS proven, per canonical hour: it opens with a snapshot, rows are ts-ordered, every
-message carries a checksum attestation, and the rows regroup + replay through `OrderBook` without a
-structural throw.
+No "structural desync" heuristic exists: without the CRC — not byte-exact re-derivable from Float64
+price/qty (T0045) — a legitimate out-of-window update is indistinguishable from corruption in a
+depth-bounded book.
 """
 
 from __future__ import annotations
@@ -280,19 +276,15 @@ _ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
 def _rendered(result: Result) -> str:
     """`result.output` with ANSI styling removed -- read output through this, never raw.
 
-    Typer renders usage errors through rich, and when color is on rich highlights option switches by
-    wrapping FRAGMENTS of them in escapes: `--state-dir` arrives as
-    `ESC[1;36m-ESC[0mESC[1;36m-stateESC[0mESC[1;36m-dirESC[0m`, so the literal substring is absent and
-    a plain `in` assertion tests the styling rather than the message. GitHub Actions turns color on
-    without a usable `TERM`, which is exactly the combination that styles these panels -- so the raw
-    form passes locally and fails only in CI. Reproduce with `FORCE_COLOR=1 uv run pytest`.
+    Typer renders usage errors through rich, which wraps FRAGMENTS of an option switch in escapes:
+    `--state-dir` arrives as `ESC[1;36m-ESC[0mESC[1;36m-stateESC[0mESC[1;36m-dirESC[0m`, so the
+    literal substring is absent and a plain `in` assertion tests the styling rather than the message.
+    GitHub Actions turns color on without a usable `TERM`, so the raw form passes locally and fails
+    only in CI. Reproduce with `FORCE_COLOR=1 uv run pytest`.
 
-    Stripping SGR is enough and de-wrapping is not needed: rich word-wraps the error panel at
-    whitespace and folds mid-token only for a word wider than the panel (76 columns at the runner's
-    default 80), which no option name here approaches; every assertion against the rich-rendered
-    surface is on a single such token. Everything else -- `typer.echo` and the logging
-    `StreamHandler` -- is never rich-rendered, so layout is untouched and the spacing-sensitive
-    assertions below still hold.
+    De-wrapping is not needed: rich folds mid-token only for a word wider than the panel, which no
+    option name here approaches, and `typer.echo` and the logging `StreamHandler` are never
+    rich-rendered, so the spacing-sensitive assertions below are untouched.
     """
     return _ANSI_SGR.sub("", result.output)
 
@@ -327,13 +319,11 @@ def test_cli_verify_replay_failed_hour_logs_at_warning_not_error(tmp_path: Path,
     primary = tmp_path / "primary"
     _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()[1:]))  # not anchored
 
-    # The CLI's root callback (`cli/__main__.py`) runs `cli.logging.config.configure` on every
-    # invocation, which sets `propagate = False` on the "zcrypto" logger. `caplog` only auto-attaches
-    # its capture handler to a logger that is ALREADY non-propagating when the fixture sets up
-    # (`_pytest.logging.catching_logs`), so a session whose first-ever CLI call is this very test
-    # would otherwise capture nothing. Attach the handler to "zcrypto" directly so the assertion
-    # holds regardless of test order/selection -- Logger.callHandlers always invokes a visited
-    # ancestor's own handlers en route up the chain, independent of that ancestor's own propagate flag.
+    # The CLI's root callback runs `cli.logging.config.configure`, which sets `propagate = False` on
+    # the "zcrypto" logger, and `caplog` auto-attaches only to a logger already non-propagating when
+    # the fixture sets up (`_pytest.logging.catching_logs`) -- so a session whose first CLI call is
+    # this test would capture nothing. Attach the handler to "zcrypto" directly: `Logger.callHandlers`
+    # invokes a visited ancestor's own handlers en route up the chain, whatever its propagate flag.
     zcrypto_logger = logging.getLogger("zcrypto")
     zcrypto_logger.addHandler(caplog.handler)
     try:

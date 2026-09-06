@@ -1,8 +1,5 @@
-"""The captured-spread cost term (T0014, spec 00066).
-
-The calibration is DATA: these tests pin the table's values and its provenance, so a recalibration
-is a deliberate edit with a new window stamp rather than silent drift -- the same discipline
-`SPOT_FEE_TIERS` gets in test_costs_fees.py."""
+"""The captured-spread cost term (T0014, spec 00066): the calibration is DATA, so these tests pin
+the table and its provenance, and a recalibration is a deliberate edit carrying a new window stamp."""
 
 import math
 
@@ -19,10 +16,9 @@ from cli.costs.spread import (
 )
 
 # Mean effective spread, bps per side, mid-relative. Keyed by FULL SYMBOL (spec 00085 D3): a
-# base-keyed table returns the EUR row for "ETH" while raising for "ETH/BTC", so the old shape's
-# failure mode was a silently wrong value. The inner keys stay the EUR notionals -- on a BTC-quoted
-# pair the rung is the BTC quantity worth that many EUR at the pinned FX reference (D1), so the key
-# names a grid point, not a currency amount in the quote.
+# base-keyed table returns the EUR row for "ETH" while raising for "ETH/BTC". The inner keys stay
+# EUR notionals -- on a BTC-quoted pair the rung is the BTC quantity worth that many EUR at the
+# pinned FX reference (D1), so the key names a grid point, not an amount in the quote.
 EXPECTED = {
     "ADA/EUR": {100: 2.383, 1_000: 2.686, 10_000: 5.389},
     "AVAX/EUR": {100: 2.417, 1_000: 2.838, 10_000: 6.031},
@@ -44,51 +40,26 @@ def test_table_matches_the_calibration_exactly():
 
 
 def test_provenance_is_pinned_so_a_recalibration_cannot_be_silent():
-    # A new window MUST come with a new stamp. Restamped 2026-08-08 (spec 00085 D4) onto ONE window
-    # shared by all twelve rows: the first full hour after the /BTC genesis through the last settled
-    # hour, so the two BTC-quoted legs carry the same provenance as the ten EUR ones rather than a
-    # second window to explain forever.
-    #
-    # 365 h == 15.21 days, which is what keeps Phase 2's ">=2 weeks of captured spreads" exit-bar row
-    # DISCHARGED. That is load-bearing and nothing else checks it: the first window drafted for this
-    # restamp ended 2026-08-06T06:00Z, ran 13.67 days, and would have silently un-discharged the bar
-    # with every test still green. If a future restamp shortens this window below 14 days, the bar
-    # goes with it.
-    #
-    # min_rows == max_rows == 365 * 3600 == 1_314_000 exactly: ZERO missing seconds and perfect joint
-    # sampling, against 0.602 % shared gaps in the superseded window. A short window on one pair
-    # cannot hide inside the mean.
-    #
-    # The EUR rows moved MATERIALLY across this restamp -- 9 of the 10 move >2 % at some rung, worst
-    # -25.01 % (DOT @1k) -- where the spec had estimated under 2 %. That is market variation between
-    # two disjoint windows, not drift in the pipeline: over the OLD window the same script against
-    # the REGENERATED tree still reproduces the OLD table exactly (test_costs_calibrate.py). Treat
-    # one window as a point estimate, never a constant.
+    # ONE window shared by every row (spec 00085 D4): a second window for the two BTC-quoted legs
+    # would be a provenance split to explain forever. Rows move materially between disjoint windows
+    # -- treat one window as a point estimate of a moving market, never a constant.
     assert CALIBRATION_WINDOW == ("2026-07-23T14:00:00Z", "2026-08-07T19:00:00Z")
     assert CALIBRATION_HOURS == 365
     assert CALIBRATION_MIN_ROWS == 1_314_000
 
 
 def test_the_window_still_clears_the_two_week_exit_bar():
-    """Phase 2's exit-bar row is ">=2 weeks of captured spreads", discharged by T0091 at 14.68 days
-    after a 13.1-day predecessor explicitly failed it.
-
-    This exists because the bar was nearly lost to a restamp: spec 00085's implementation plan
-    drafted a window ending 2026-08-06T06:00Z, which spans 13.67 days. Every other assertion in this
-    file would have stayed green on it -- the table, the provenance stamp, the row counts and the
-    reproduction control are all blind to span. Only reading the two timestamps catches it, so a
-    future restamp that shortens the window fails HERE rather than silently un-discharging a gate.
-    """
+    """The window spans at least two weeks, which is what keeps Phase 2's ">=2 weeks of captured
+    spreads" exit-bar row discharged: a restamp that shortens it fails here rather than
+    un-discharging the gate silently."""
     from datetime import datetime
 
     start, end = (datetime.fromisoformat(w.replace("Z", "+00:00")) for w in CALIBRATION_WINDOW)
     span_days = (end - start).total_seconds() / 86_400
     assert span_days >= 14.0, f"window spans {span_days:.2f} days, below the >=2-week exit bar"
-    # The stamped hour count must describe that same window, or the two drift apart silently. Bound
-    # it rather than equate it: `calibrate()` counts hourly FILES that OVERLAP the window, so
-    # `span / 3600` is the right answer only when the window is hour-aligned. The superseded
-    # 2026-07-08T13:47:33Z...2026-07-23T05:59:59Z window spans 352.21 h and correctly stamps 353,
-    # so an equality here would fail a perfectly good restamp for the wrong reason.
+    # Bounded rather than equated: `calibrate()` counts hourly FILES that OVERLAP the window
+    # (`cli/costs/calibrate.py::_hourly_files_in_window`), so `span / 3600` is exact only for an
+    # hour-aligned window, and an equality would fail a correctly stamped unaligned restamp.
     span_hours = (end - start).total_seconds() / 3_600
     assert math.floor(span_hours) <= CALIBRATION_HOURS <= math.ceil(span_hours) + 1
 
@@ -125,10 +96,7 @@ def test_interpolation_is_log_notional_and_respects_convexity():
     mid = effective_spread_bps("DOT/EUR", math.sqrt(1_000 * 10_000))
     lo, hi = EXPECTED["DOT/EUR"][1_000], EXPECTED["DOT/EUR"][10_000]
     assert lo < mid < hi
-    # The log-midpoint sits at the arithmetic mean of the endpoints...
     assert mid == pytest.approx((lo + hi) / 2, rel=1e-9)
-    # ...which is ABOVE the linear-in-notional reading at the same notional, i.e. the interpolator
-    # does not flatten the convexity the thin pairs actually exhibit.
     linear = lo + (hi - lo) * (math.sqrt(1_000 * 10_000) - 1_000) / (10_000 - 1_000)
     assert mid > linear
 
@@ -182,8 +150,7 @@ def test_carry_applies_whenever_a_margin_rate_is_given():
     [
         # margin_carry = notional * rate * (1 opening + floor(hold/4) rollovers). The OPENING charge
         # is unconditional, so a position opened and closed inside one 4h window still pays it --
-        # gating the whole leg on `hold_hours` silently dropped it (cost-understating), and every
-        # earlier test passed because none asserted a carry VALUE, only > 0 / == 0.
+        # gating the whole leg on `hold_hours` would silently drop it, understating cost.
         (0.0, 0.2),
         (3.9, 0.2),
         (4.0, 0.4),
@@ -203,8 +170,7 @@ def test_carry_matches_margin_carry_exactly_rather_than_reimplementing():
 
 
 def test_at_tier_one_fees_dominate_spread_even_on_the_widest_pair():
-    # Spec 00066 D4: the spread term is additive to the fee term, never a substitute. If a future
-    # edit swapped one for the other this guard catches the order-of-magnitude error.
+    # Spec 00066 D4: the spread term is additive to the fee term, never a substitute for it.
     r = round_trip_cost(1_000.0, pair="DOT/EUR", maker_rate=0.0040, taker_rate=0.0080, taker_open=True, taker_close=True)
     assert r["fee"] > 10 * r["spread"]
 

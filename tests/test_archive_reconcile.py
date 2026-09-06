@@ -271,12 +271,9 @@ def _row_conservation_holds(primary: pl.DataFrame, secondary: pl.DataFrame, gaps
 
 
 def test_head_interior_tail_gaps_are_spliced_without_duplicating_any_row():
-    # A regression here is exactly the one the adversarial review found: removing the per-gap
-    # cursor re-filter in `splice_book` still passes every OTHER test in this file, because none of
-    # them exercise 2+ gaps. With that mutation, the primary rows already emitted before an interior
-    # gap get RE-emitted at the next gap's "before" filter (which recomputes from the start of the
-    # hour, not from the cursor): rows (ts=600, 700) here would be duplicated, yielding primary row
-    # order [600, 700, 600, 700, 1200, 1300] instead of [600, 700, 1200, 1300].
+    # Removing the per-gap cursor re-filter in `splice_book` re-emits the primary rows already sent
+    # before an interior gap -- the next gap's "before" filter recomputes from the start of the hour,
+    # not from the cursor -- duplicating ts=600 and 700 here.
     primary = _book([(600, "update"), (700, "update"), (1200, "update"), (1300, "update")])
     secondary = _book([(100, "update"), (300, "update"), (900, "update"), (2000, "update"), (3000, "update")])
     gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
@@ -486,15 +483,9 @@ def test_union_is_idempotent():
 
 # --- T0103: measure the OUTPUT, not the input ----------------------------------------------------
 #
-# `healed_seconds` recorded the full WIDTH of a primary-silence window on the strength of one
-# secondary `update` row anywhere inside it, and `residual_seconds` on a minted record was the
-# literal 0.0. Measured on the real 2026-07-27 07:00 hour: 2,311.536587 s booked healed against
-# 82.955463 s actually filled -- 3.59% -- while the same hour separately recorded 2,385.847992 s of
-# both_streams_silent, so 2,187.027326 stream-seconds sat in BOTH a "we covered it" counter and a
-# "nobody covered it" counter in one cycle.
-#
-# `measure_residual` re-runs the window arithmetic over the SPLICED result, so what is reported is
-# what the mint actually inserted.
+# Admitting a gap on one secondary `update` row anywhere inside it says nothing about how much of the
+# window was filled. `measure_residual` re-runs the window arithmetic over the SPLICED result, so what
+# is reported is what the mint actually inserted.
 
 
 def _rows(pair: str, stamps: list[tuple[datetime, str]]) -> pl.DataFrame:
@@ -520,7 +511,7 @@ def test_measure_residual_reports_what_the_splice_did_not_fill():
 
 def test_measure_residual_is_empty_when_the_splice_genuinely_filled_the_gap():
     """The 2026-07-17 drill shape: a live secondary really does cover the window, and must not be
-    slandered by a stricter measure -- 99.84% of that event was genuinely healed."""
+    slandered by a stricter measure."""
     h0 = datetime(2026, 7, 27, 7, tzinfo=UTC)
     gap = Gap(start=h0, end=h0 + timedelta(seconds=100), seconds=100.0, start_is_primary_message=False, end_is_primary_message=True)
     spliced = _rows("BTC/EUR", [(h0 + timedelta(seconds=s), "update") for s in range(0, 101, 10)])
@@ -609,11 +600,9 @@ def test_overlap_seconds_ignores_a_window_that_does_not_touch_the_span():
 
 
 def test_a_non_monotonic_secondary_is_refused_by_both_detectors():
-    """The check that the unwitnessed-gap split briefly lost. `find_book_gaps` used to call
-    `_message_ts(secondary)` unconditionally, so an out-of-order secondary raised INSIDE the
-    caller's try and became a ledgered `failed` record. Filtering with `secondary_covers` alone
-    reads a non-monotonic frame happily -- and an hour with no witnessed gap would then have exited
-    0 with a published textfile, silently, on a stream the contract says must exit 1."""
+    """Filtering with `secondary_covers` alone reads a non-monotonic frame happily, so an hour whose
+    only silence is unwitnessed would exit 0 with a published textfile -- on a stream the contract
+    says must exit 1."""
     primary = _rows("BTC/EUR", [(H + timedelta(seconds=s), "update") for s in (0, 3000)])
     backwards = _rows("BTC/EUR", [(H + timedelta(seconds=s), "update") for s in (100, 200, 150)])
 
@@ -665,16 +654,13 @@ def test_us_round_trip_is_exact():
 def test_gap_seconds_is_bit_identical_to_the_datetime_arithmetic_it_replaced():
     """The binding rule of the vectorization: `diff_us / 1e6`, never `diff_us * 1e-6`.
 
-    1e-6 is not exactly representable, so the multiply rounds twice and moves the result for about
-    30% of microsecond widths -- a 3599.999999 s tail window becomes 3599.9999989999997. That is not
+    1e-6 is not exactly representable, so the multiply rounds twice and moves the result -- a
+    3599.999999 s tail window becomes 3599.9999989999997. That is not
     cosmetic. Traced through `_book_entry`, the moved value reaches `claimed_seconds`,
     `healed_seconds` (`claimed - unfilled`) and every `gaps_healed[].seconds` written to the JSONL,
     and through them the `healed_seconds` and `healable_seconds` counters. It does NOT reach
     `residual_seconds`: `measure_residual` recomputes from `(hi - lo).total_seconds()` on exact
     `dt_from_us` datetimes, so the monotonic residual counter is out of this blast radius.
-
-    Every OTHER test in this file uses whole-second offsets, where the two idioms agree bit-for-bit,
-    so nothing else here can see the difference -- which is exactly why this pin has to exist.
     """
     # The primary records one message 1 us into the hour, then dies: a 3599.999999 s tail gap.
     tail = _rows("BTC/EUR", [(H + timedelta(microseconds=1), "update")])
@@ -693,11 +679,10 @@ def test_gap_seconds_is_bit_identical_to_the_datetime_arithmetic_it_replaced():
 
 
 def test_message_ts_refuses_a_null_ts():
-    # On develop a null `ts` reaching `_primary_silence` raises a bare `TypeError` (NoneType minus
-    # datetime), and via the SECONDARY -- whose `_message_ts` return the finders discard, calling it
-    # for its monotonic check alone -- it raises nothing at all and the hour reconciles silently.
-    # Neither is acceptable here: as an int64 view a null is iNaT, the most negative int64, which
-    # fabricates a gap spanning the epoch and clamps the real tail silence out of the timeline.
+    # As an int64 view a null is iNaT, the most negative int64, which fabricates a gap spanning the
+    # epoch and clamps the real tail silence out of the timeline -- so the refusal is typed here
+    # rather than left to a bare `TypeError` in `_primary_silence`, which the secondary path (whose
+    # `_message_ts` return the finders discard) would not raise at all.
     df = _book([(0.0, "update")]).with_columns(pl.lit(None, dtype=pl.Datetime("us", "UTC")).alias("ts"))
     with pytest.raises(CaptureError, match="null ts"):
         _message_ts(df)
@@ -707,15 +692,12 @@ def test_message_ts_refuses_a_ts_column_whose_unit_is_not_microseconds():
     """Both wrong units are refused, because with the guard removed they fail in OPPOSITE ways.
 
     The int64 view reads the column's own unit as microseconds while `hour_start`/`hour_end` go
-    through `us_from_dt` and are always microseconds, so `edges` mixes two scales. Measured on this
-    exact 0 s/3300 s frame with the guard disabled:
-
-      * `ns` -- the first window is ~1.78e18 us and `dt_from_us` raises `OverflowError: date value
-        out of range`. Untyped, so `command.py`'s `except CaptureError` at the gap call site does not
-        catch it and the whole cycle dies instead of one hour being ledgered `failed`.
-      * `ms` -- nothing raises. The real 3300 s outage reads as 3.3 s and falls silently under the
-        threshold, never booked; meanwhile a fabricated 1782411804.3 s gap starting 1970-01-21
-        reaches `splice_book` and the ledger. Strictly worse than the crash.
+    through `us_from_dt` and are always microseconds, so `edges` mixes two scales. With the guard
+    disabled, `ns` raises an untyped `OverflowError` out of `dt_from_us` -- uncaught by `command.py`'s
+    `except CaptureError` at the gap call site, so the whole cycle dies instead of one hour being
+    ledgered `failed` -- while `ms` raises nothing at all: the real 3300 s outage reads as 3.3 s and
+    falls under the threshold while a fabricated 1970-anchored gap reaches `splice_book` and the
+    ledger. Strictly worse than the crash.
     """
     for unit in ("ns", "ms"):
         wrong = _book([(0.0, "update"), (3300.0, "update")]).with_columns(pl.col("ts").cast(pl.Datetime(unit, "UTC")))
@@ -726,9 +708,8 @@ def test_message_ts_refuses_a_ts_column_whose_unit_is_not_microseconds():
 
 
 def test_measure_residual_still_measures_after_the_message_ts_change():
-    # measure_residual consumes _message_ts (cold review C1): pin that a witnessed gap's residual
-    # arithmetic survives the int64 change byte-identically. The windows below are what DEVELOP
-    # returns for these exact inputs.
+    # `measure_residual` consumes `_message_ts`: a witnessed gap's residual arithmetic must survive
+    # the int64 change byte-identically.
     gap = Gap(start=H, end=H + timedelta(seconds=100), seconds=100.0, start_is_primary_message=False, end_is_primary_message=True)
     minted = _book([(50.0, "update")])
     residual = measure_residual([gap], minted, min_gap_seconds=30.0)

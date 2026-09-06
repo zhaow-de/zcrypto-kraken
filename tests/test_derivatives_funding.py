@@ -39,11 +39,9 @@ def _make_zip(rows: list[list]) -> bytes:
 
 
 def _fake_opener(zip_map: dict, *, corrupt_checksum: bool = False):
-    """A urllib.urlopen stand-in over an in-memory (perp, year, month) -> zip-bytes map.
-
-    A key absent from the map raises HTTP 404 (mimics a pre-listing / unpublished month). The
-    `.CHECKSUM` sibling returns the real sha256 of the mapped zip unless `corrupt_checksum`.
-    """
+    """A urllib.urlopen stand-in over an in-memory (perp, year, month) -> zip-bytes map: an absent
+    key 404s, the mode `fetch_funding_month` reads as a pre-listing or unpublished month, and the
+    `.CHECKSUM` sibling carries the zip's real sha256, so the verify path runs rather than passes."""
 
     def _open(url, timeout=None):
         is_checksum = url.endswith(".CHECKSUM")
@@ -223,10 +221,8 @@ def test_build_writes_parquet_manifest_and_roundtrips(tmp_path):
     ).hexdigest()
     assert manifest["set_sha256"] == expected_basket
 
-    # manifest.json on disk mirrors the returned dict
     assert json.loads((tmp_path / "manifest.json").read_text())["set_sha256"] == expected_basket
 
-    # round-trip read
     df = read_funding_series(tmp_path, "BTCUSDT")
     assert df.height == 2
     assert df.schema["ts"] == pl.Datetime("us", "UTC")
@@ -242,10 +238,9 @@ def test_perp_symbols_maps_ten_basket_assets():
 def _substrate_root(name: str) -> Path:
     """The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
 
-    Gating on `Path("data/<name>")` alone would be wrong. `data/` is per-checkout and a git
-    worktree's is empty, so such a gate skips wherever this suite runs from a worktree — and a skip
-    on the only machine holding the substrate is recorded as coverage.
-    """
+    `data/` is per-checkout and a worktree's is empty, so gating on `Path("data/<name>")` alone skips
+    wherever this suite runs from a worktree — a skip on the only machine holding the substrate,
+    recorded as coverage."""
     hot = resolve_hot_source(load_config()) / name
     return hot if hot.is_dir() else Path("data") / name
 
@@ -253,22 +248,19 @@ def _substrate_root(name: str) -> Path:
 _FUNDING_ROOT = _substrate_root("derivatives-funding")
 
 # A closed past window: a forward refresh extends the substrate beyond it and cannot move a count
-# taken over it. A NEW off-cadence stretch after this end sits outside the guard below and surfaces
-# only in the per-year coverage summary (spec 00110 D6).
+# taken over it.
 _CLOSED_WINDOW_END = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.mark.skipif(not _FUNDING_ROOT.is_dir(), reason="derivatives-funding substrate absent")
 def test_the_off_cadence_funding_prints_are_one_bounded_stretch_on_sol():
-    """Spec 00110 D7 rules the funding features' input a constant-interval print series, and rests
-    that ruling on the off-cadence population being one bounded stretch on one leg. A re-fetch that
-    re-derived that stretch differently would make the ruling wrong, and this is the only guard that
-    would notice.
+    """Spec 00110 D7 rules the funding features' input a constant-interval print series, resting that
+    ruling on the off-cadence population being one bounded stretch on one leg; a re-fetch that
+    re-derived that stretch differently would make the ruling wrong.
 
     The 101 here coincides in count with the zero-notional OI rows pinned in
-    `tests/test_derivatives_oi.py`; they are different populations on different substrates, so the
-    two assertions must not be folded together.
-    """
+    `tests/test_derivatives_oi.py`: different populations on different substrates, so the two
+    assertions must not be folded together."""
     prints = 0
     off_cadence: Counter[int] = Counter()
     off_perps = set()

@@ -1,8 +1,4 @@
-"""TDD for `infra/scripts/continuity.py`'s `--overlay` mode (spec 00050).
-
-`continuity.py` is a standalone script, not a package module, so it is loaded here via
-`importlib.util.spec_from_file_location` rather than a normal import.
-"""
+"""TDD for `infra/scripts/continuity.py`'s `--overlay` mode (spec 00050)."""
 
 from __future__ import annotations
 
@@ -38,8 +34,8 @@ def _write_hour(root: Path, pair: str, kind: str, hour: datetime, *, stamps: lis
 
 
 def _dense_stream(root: Path, pair: str, kind: str = "book") -> None:
-    """Two full hours at 1 s spacing -- comfortably clears D6's MIN_POOL (5,002 pooled intervals)
-    without asserting a specific threshold value, unlike `_two_streams` below."""
+    """Two full hours at 1 s spacing -- comfortably clears D6's MIN_POOL without asserting a specific
+    threshold value."""
     _write_hour(root, pair, kind, H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 1)])
     h1 = H + timedelta(hours=1)
     _write_hour(root, pair, kind, h1, stamps=[h1 + timedelta(seconds=s) for s in range(0, 3600, 1)])
@@ -88,21 +84,12 @@ def test_overlay_mode_adds_a_separate_canonical_section_without_the_exit_bar_ver
 
 
 def test_canonical_report_all_unmeasured_prints_no_exit_bar_verdict(tmp_path, capsys):
-    """Spec 00050 exit-bar isolation, on the ALL-unmeasured path Task 4 added: `report()`'s
-    `if not totals:` branch has its OWN `if show_exit_bar:` guard, separate from the one in the
-    measured-totals branch that `test_overlay_mode_adds_a_separate_canonical_section_without_the_exit_bar_verdict`
-    already exercises (that test's canonical view always contains a dense stream, so `totals` is
-    never empty there -- it never reaches this second site at all). A canonical/overlay report must
-    never print a verdict through EITHER site, even when every stream in it is unmeasured and the
-    informational `unmeasured: N stream(s) ...` reason line still prints.
+    """A canonical/overlay report never prints an exit-bar verdict, even on `report()`'s
+    all-unmeasured branch, where the informational `unmeasured: N stream(s)` reason line still prints.
 
-    That reason line is why `"unmeasured streams" not in out` is asserted as the exact two-word
-    phrase and not just `"unmeasured"`: the reason line legitimately carries the single word, while
-    `unmeasured streams` appears ONLY in the exit-bar verdict this report must never emit.
-
-    Calls `report()` directly (not `main()`) with `show_exit_bar=False` on a single sparse THIN/EUR
-    stream (120 rows in one hour, far under MIN_POOL) -- exactly the shape `--overlay` produces for
-    a healed-only stream too thin to self-calibrate.
+    That reason line is why `"unmeasured streams"` is asserted as the exact two-word phrase: the reason
+    line legitimately carries the single word, while `unmeasured streams` appears ONLY in the exit-bar
+    verdict this report must never emit.
     """
     raw = tmp_path / "raw"
     _write_hour(raw, "THIN/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
@@ -140,8 +127,7 @@ def test_an_empty_raw_tree_still_prints_the_canonical_section(tmp_path, capsys, 
 
 def test_a_window_with_no_data_reports_it_instead_of_dividing_by_zero(tmp_path, capsys, monkeypatch):
     """`--since` filters per stream, well after the empty-tree guard, so a window that excludes every
-    hour leaves `totals` empty and the TOTAL row divides by zero. Reproduced: the operator got a
-    traceback where a plain "nothing in this window" belongs -- and a traceback from a verification
+    hour leaves `totals` empty and the TOTAL row divides by zero -- and a traceback from a verification
     tool reads as "the tool is broken", not as "you asked about a window with no data"."""
     raw = tmp_path / "raw"
     _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
@@ -158,17 +144,15 @@ def test_a_window_with_no_data_reports_it_instead_of_dividing_by_zero(tmp_path, 
 def _column(out: str, prefix: str, field: str) -> str:
     """The value under `field` on the row starting with `prefix`, located by CHARACTER RANGE from the
     header -- not `str.split()`, which collapses blank cells (an UNMEASURED row's blank
-    thresh_s/gap_s/gap% slots, the TOTAL row's blank n/thresh_s slots), silently shifting every field
-    after the first blank one onto the wrong index instead of reading it as blank. Every column is
-    right-justified to a fixed width behind a single-space separator, so a field's cell always ENDS at
-    the same character offset as its header token, whether the cell holds a value or is blank; the
-    cell STARTS just after the preceding header token ends.
+    thresh_s/gap_s/gap% slots, the TOTAL row's blank n/thresh_s slots) and silently shifts every later
+    field onto the wrong index. Every column is right-justified to a fixed width behind a single-space
+    separator, so a cell always ENDS at its header token's offset and STARTS just after the preceding
+    token ends.
 
     The header row is located by its `pair` prefix, NOT by "the first line containing `field`": the
-    column names are ordinary words that also occur in the post-table reason notes ("... whose
-    spacing **tail** steepens ..."), and a `field in line` lookup silently falls through to a note
-    once the column it names is gone -- measured, `_column(out, "TOTAL", "tail")` then returns `''`
-    and a blank-cell assertion PASSES against a table with no `tail` column at all."""
+    column names are ordinary words that also occur in the post-table reason notes, so a
+    `field in line` lookup falls through to a note once the column it names is gone, and a blank-cell
+    assertion PASSES against a table with no such column at all."""
     lines = out.splitlines()
     header = next(line for line in lines if line.startswith("pair"))
     row = next(line for line in lines if line.startswith(prefix))
@@ -180,10 +164,9 @@ def _column(out: str, prefix: str, field: str) -> str:
 
 
 def test_column_reads_blank_cells_on_unmeasured_and_total_rows(tmp_path, capsys, monkeypatch):
-    """`_column` is now load-bearing for this file too (T0097 Finding 3): a `str.split()`-based
-    version misreads an UNMEASURED row's blank `gap_s` cell as its NEXT non-blank cell's value, and
-    raises `IndexError` on the TOTAL row (which has two blank cells of its own) -- exactly what this
-    file's own TOTAL-row lookups, such as `_column(out, "TOTAL", "tail")` above, need to survive."""
+    """A `str.split()`-based `_column` misreads an UNMEASURED row's blank `gap_s` cell as its NEXT
+    non-blank cell's value, and raises `IndexError` on the TOTAL row, which has two blank cells of its
+    own."""
     raw = tmp_path / "raw"
     _dense_stream(raw, "BTC/EUR")
     _write_hour(raw, "THIN/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
@@ -198,11 +181,9 @@ def test_column_reads_blank_cells_on_unmeasured_and_total_rows(tmp_path, capsys,
 
 
 def _two_streams(raw):
-    """BTC/EUR: 1 s spacing, hour H packed full plus 2,400 rows of H+1 -- 5,999 pooled intervals, all
-    1.0 s apart, so p99.99 == 1.0 and the derived threshold is 10.0. ADA/EUR: 2 s spacing, three FULL
-    hours -- 5,399 pooled intervals, all 2.0 s apart, threshold 20.0. Both clear D6's MIN_POOL (5,002)
-    with margin; the two streams' different spacings are what makes their derived thresholds differ,
-    which is the property this fixture exists to demonstrate."""
+    """BTC/EUR at 1 s spacing and ADA/EUR at 2 s, both clearing D6's MIN_POOL: the different spacings
+    are what make their derived thresholds differ, which is the property this fixture exists to
+    demonstrate."""
     h1 = H + timedelta(hours=1)
     h2 = H + timedelta(hours=2)
     _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 1)])
@@ -213,14 +194,12 @@ def _two_streams(raw):
 
 
 def test_the_table_prints_the_threshold_that_produced_each_gap(tmp_path, capsys, monkeypatch):
-    """The silence threshold is derived per pair from that pair's own spacing, so a `0.0000%` can
-    mean "no silence" or "the threshold is so wide nothing counts as silence". Printing the number
-    beside the percentage it produced is what lets an operator disbelieve the zero.
+    """The silence threshold is derived per pair from that pair's own spacing, so a `0.0000%` can mean
+    "no silence" or "the threshold is so wide nothing counts as silence"; printing the number beside
+    the percentage it produced is what lets an operator disbelieve the zero.
 
-    The EXACT derived values are asserted, not "some number above 100": this topic's own failure
-    mode is a threshold so wide that silence stops being detectable, and a `> 100` assertion passes
-    happily with the 5 s floor raised to 5000. These two streams also demonstrate the spread the
-    column exists to show -- same tool, 2x apart on spacing alone, thresholds 2x apart to match.
+    The EXACT derived values are asserted, not "some number above 100": a `> 100` assertion passes
+    happily with the floor raised to 5000.
     """
     raw = tmp_path / "raw"
     _two_streams(raw)

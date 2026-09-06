@@ -1,36 +1,20 @@
-"""The basket-vs-universe concordance pin (spec 00089 D2/D5, baseline shrunk per spec 00094 D7;
-the ruled baseline is T0137's).
-
-The traded basket is record 47's twelve legs -- the ten /EUR bases plus ETH/BTC and SOL/BTC held
-at structurally-zero targets (spec 00094 D1) -- a code constant, `cli/engine/store.py::BASKET`.
-The committed universe doc carries the selection. This test is the ONLY place the two meet: a
-future regeneration that shifts selection turns it red and forces a conscious edit of the ruled
-baseline -- divergence can never again arrive silently, and the engine host never reads the
-universe artifact.
-"""
+"""The basket-vs-universe concordance pin (spec 00089 D2/D5): a universe regeneration that shifts
+selection turns this red rather than letting `cli/engine/store.py::BASKET` diverge silently."""
 
 import re
 from pathlib import Path
 
 _DOC = Path(__file__).resolve().parent.parent / "docs" / "universe" / "point-in-time-universe.md"
 
-# The ruled exceptions -- each owned by T0137; editing either side without a ruling is the
-# drift this test exists to catch.
+# The ruled exceptions (T0137): editing either side without a ruling is the drift this test catches.
 
-# RULED (owner, 2026-08-14, T0137): DOT stays traded. The 150,000 volume floor it misses is a
-# footprint-sizing rule -- a full EUR 1,400 position is roughly 1% of median daily volume -- and
-# DOT at 146,957 is only 2% under it, with 6b rung sizes sitting far below that footprint.
-# Retiring it would trade a 2% miss for a standing deviation between the live book and record
-# 44's evidence base. No revisit deferral dangles: this test is the trigger, DOT's re-entry
-# included.
+# RULED (owner, T0137): DOT stays traded. It misses the universe's volume floor by ~2%, and that
+# floor is a footprint-sizing rule the traded rung sizes sit far below -- retiring DOT would trade a
+# marginal miss for a standing deviation between the live book and record 44's evidence base.
 RULED_TRADED_BUT_DESELECTED = {"DOT/EUR"}
 
-# RETIRED (T0137's 2026-08-14 multi-quote solve survey + the owner's same-day ruling): the /BTC
-# legs WERE genuinely unreachable, but the RECORDED REASON was wrong -- the adapter always saw
-# both XXBT-quoted legs, and the real obstacle was the engine's own EUR-only plumbing (base-keyed
-# PAIR_KEYS/INSTRUMENT_IDS/VenueState, EUR-only sizing and costmin). The owner ruled the /BTC
-# half pursued during 6b, ahead of phase 7, and spec 00094 removes that plumbing. Kept empty
-# rather than deleted so a future selected-but-unreachable divergence still has somewhere to land.
+# Kept empty rather than deleted: the /BTC legs' unreachability was retired by spec 00094 (T0137),
+# and an empty set is where a future selected-but-unreachable divergence lands.
 RULED_SELECTED_BUT_UNREACHABLE = set()
 
 

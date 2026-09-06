@@ -1,15 +1,4 @@
-"""TDD for `verify_replay_incremental` — the incremental orchestrator (spec 00078).
-
-Every test here is a CONSTRUCTED proof of one clause, not a restatement of it: the checkpoint caches
-only RAW per-hour facts and the chain verdict is refolded every run (D1), failures and manifest
-violations are never trusted from cache (D2/D3), new hours are mandatory while older stale hours
-drain oldest-first under a wall-clock budget (D4), the recorded environment does NOT invalidate (D5),
-the sampled audit re-verifies cache-trusted hours and never samples pending ones (D6), an empty or
-shrunken enumeration never destroys state (D7), and mid-run progress survives a kill (D8).
-
-The synthetic-tree idiom (per-level fan-out + committed final + `.sha256` sidecar) is
-`tests/test_archive_replay.py`'s, extended with the mutations these tests need.
-"""
+"""`verify_replay_incremental` — the incremental orchestrator (spec 00078)."""
 
 from __future__ import annotations
 
@@ -136,7 +125,7 @@ class Tree:
 
 def make_tree(tmp_path: Path, pairs: list[str], hours: int, *, snapshot_first_hour: bool = True) -> Tree:
     """`pairs` × `hours` contiguous canonical book hours. Hour 0 opens with a snapshot (so the whole
-    run chain-anchors); every later hour opens with an update, exactly like ~96% of real hours."""
+    run chain-anchors); every later hour opens with an update, like most real hours."""
     tree = Tree(primary=tmp_path / "primary", pairs=list(pairs), hours=0)
     for pair in pairs:
         for index in range(hours):
@@ -161,9 +150,7 @@ def test_equivalence_full_vs_warm_incremental(tmp_path: Path) -> None:
 
 
 def test_d1_sequence_chain_verdict_is_never_cached(tmp_path: Path) -> None:
-    """The review's breaking sequence: H chained through a good H-1; H-1 rewritten to fail; H must flip.
-
-    Caching `_chain_anchor`'s OUTPUT instead of the raw `opens_with_snapshot` fact makes anchoring
+    """Caching `_chain_anchor`'s OUTPUT instead of the raw `opens_with_snapshot` fact makes anchoring
     irrevocable (`True OR anything = True`) — hour 2 would stay green forever while its predecessor
     is broken, and `failed_hours` would read 0."""
     tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)  # hour0 snapshot; hours 1,2 chained
@@ -452,10 +439,9 @@ def test_flush_every_250_survives_a_kill(tmp_path: Path, monkeypatch: pytest.Mon
 def doctor_checkpoint(state: Path, key: tuple[str, datetime], **facts: object) -> None:
     """Plant a lie in one checkpoint row: the thing the audit exists to catch.
 
-    Only `opens_with_snapshot`, `rows`, `messages` (and `byte_hash`, together with its sidecar) can be
-    doctored INTO A REUSED ROW — `_cached_failure` re-replays any row whose
-    `error`/`ts_ordered`/`checksum_present`/`replay_ok` reads as a failure, so a lie there is caught by
-    the stale predicate and never reaches the audit at all."""
+    A lie that reads as a FAILURE never reaches the audit — `_cached_failure` re-replays any row whose
+    `error`/`ts_ordered`/`checksum_present`/`replay_ok` says so; only a lie the stale predicate reads
+    as HEALTHY survives into a reused row."""
     rows = load_checkpoint(state)
     assert rows is not None and key in rows
     rows[key] = dataclasses.replace(rows[key], **facts)
@@ -479,10 +465,10 @@ def test_audit_trips_on_a_doctored_fact(tmp_path: Path) -> None:
     """Plant a lie in the checkpoint; the audit must catch it (spec D6: "its own proof is mandatory").
 
     `opens_with_snapshot` is the fact to lie about. It is deliberately excluded from `_cached_failure`
-    (~96% of real hours open with a plain update), so the stale predicate structurally CANNOT see the
+    (most real hours open with a plain update), so the stale predicate structurally CANNOT see the
     lie — and it is the raw fact `_chain_anchor` folds, so a lie there silently greens a broken chain
     forever. `rows`/`messages` are in neither predicate at all — the shape of a mis-keyed or truncated
-    row. Without the audit, nothing in this instrument would ever notice either one."""
+    row."""
     tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=4)
     state = tmp_path / "state"
     verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
@@ -547,9 +533,7 @@ def test_audit_catches_bytes_rewritten_under_an_unchanged_sidecar(tmp_path: Path
 
 
 def test_audit_heals_the_returned_results_not_only_the_checkpoint(tmp_path: Path) -> None:
-    """The self-heal has two halves, and only one of them is load-bearing TONIGHT.
-
-    Patching just the checkpoint makes the audit report a mismatch while the returned results still
+    """Patching just the checkpoint makes the audit report a mismatch while the returned results still
     read every hour green — `failed_hours` would count 0 over a rotted archive, and `_chain_anchor`
     would fold the lie forward into every successor. So both are asserted: the audited hour's own
     verdict must carry the fresh failure, AND its successor — which anchors only through it — must
@@ -599,8 +583,8 @@ def test_audit_compares_every_cached_raw_fact() -> None:
     """Completeness pin on the compare tuple, by name — because one field in it cannot be pinned
     behaviourally: `_is_stale` only reuses an hour whose sidecar EQUALS its cached `byte_hash`, so a
     byte-hash divergence can never reach the audit without the manifest `error` it produces arriving
-    with it. Dropping `byte_hash` from the tuple therefore breaks no test above. This pins it (and
-    every other raw fact) anyway: a fact added to `CheckpointRow` and forgotten here fails this."""
+    with it. This pins it (and every other raw fact) anyway: a fact added to `CheckpointRow` and
+    forgotten here fails this."""
     forensics = {"pair", "hour", "verifier_version", "polars_version", "depth", "verified_at"}
     raw = [field.name for field in dataclasses.fields(CheckpointRow) if field.name not in forensics]
     row = CheckpointRow(
@@ -687,9 +671,9 @@ def test_audited_fresh_result_replaces_cached_row(tmp_path: Path) -> None:
 def test_audit_never_samples_pending_rows(tmp_path: Path) -> None:
     """Spec D6/F1: the audit samples the REUSED keys only. A pending row is known-stale by
     construction — here, two legitimately rewritten hours the budget deferred — so auditing one
-    mismatches with certainty, failing the run every single night of a legitimate drain (~74
-    consecutive nights at year-one archive size). That is the exact pathology this spec exists to
-    avoid, so the population itself is asserted, not just the (absence of) mismatches it produced."""
+    mismatches with certainty, failing the run every single night of a legitimate drain. That is the
+    exact pathology this spec exists to avoid, so the population itself is asserted, not just the
+    (absence of) mismatches it produced."""
     tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=6)
     state = tmp_path / "state"
     verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)

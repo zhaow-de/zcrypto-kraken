@@ -29,23 +29,21 @@ _XBT_LEG_ATTRS = {
 
 
 def _decimals(step: float) -> int:
-    """The decimal precision one venue step implies -- 0.01 -> 2, 0.0000001 -> 7. Kraken publishes
-    `pair_decimals`/`lot_decimals` alongside `tick_size`, and across the whole basket the step is
-    exactly `10 ** -decimals`, so deriving one from the other keeps the instrument self-consistent
-    the way a Cache instrument is."""
+    """The decimal precision one venue step implies. Kraken publishes `pair_decimals`/`lot_decimals`
+    alongside `tick_size` and the step is exactly `10 ** -decimals` across the basket, so deriving
+    one from the other keeps the fixture instrument self-consistent the way a Cache one is."""
     return max(0, -Decimal(str(step)).as_tuple().exponent)
 
 
 def _instrument(instrument_id: str, *, ordermin=0.01, lot_step=0.0001, tick_size=0.01) -> CurrencyPair:
     """A REAL `CurrencyPair` at one leg's precisions -- what `Cache.instrument()` hands back.
 
-    Its `id` is an `InstrumentId` and its three constraints are `Quantity`/`Price`, so the reader's
-    coercions are exercised instead of assumed: hand it plain floats and a `str` and every value
-    the reader freezes is already JSON-ready, which leaves `to_payload()`'s `json.dumps` green on a
-    shape the venue never sends -- while the live boundary raises on the first real instrument.
+    Its `id` and constraints are the real `InstrumentId`/`Quantity`/`Price` types, so the reader's
+    coercions run; plain floats would leave `json.dumps` green on a shape the venue never sends.
 
-    `min_notional` is left unset, mirroring observed live reality (module docstring, D5a): the
-    Kraken adapter never populates it, so costmin comes from the committed COSTMIN constant."""
+    `min_notional` is left unset, mirroring observed live reality (cli/engine/venuestate.py's module
+    docstring, D5a): the Kraken adapter never populates it, so costmin comes from the committed
+    COSTMIN constant."""
     iid = InstrumentId.from_str(instrument_id)
     base, quote = str(iid.symbol).split("/")
     price_precision, size_precision = _decimals(tick_size), _decimals(lot_step)
@@ -69,10 +67,8 @@ def _fake_position(signed_qty: float):
 
 
 class FakeCache:
-    """Duck-types the three Cache accessors venue_state_from_cache calls, matching their real
-    signatures (`instrument(instrument_id)`, `positions_open(instrument_id=...)`,
-    `account_for_venue(venue=...)`). Real `InstrumentId`/`Venue` objects are passed in by the
-    reader under test, and this cache matches them by str()."""
+    """Duck-types the Cache accessors `venue_state_from_cache` calls, matching them by `str()`
+    because the reader passes real `InstrumentId`/`Venue` objects."""
 
     def __init__(self, instruments: dict[str, object], positions: dict[str, list], account):
         self._instruments = instruments
@@ -105,9 +101,8 @@ def _all_instruments(**overrides):
 
 @pytest.fixture
 def fake_cache():
-    # Adversarial-ish: BTC/EUR carries an open short and DOGE/EUR an open long, so a caller
-    # netting positions against targets would see a nonzero effect -- a permissive fixture
-    # (everything flat/zero) would pass even if a consumer never read positions/balances at all.
+    # A permissive fixture (everything flat/zero) would pass even if a consumer never read
+    # positions or balances at all.
     positions = {
         INSTRUMENT_IDS["BTC/EUR"]: [_fake_position(-0.5)],
         INSTRUMENT_IDS["DOGE/EUR"]: [_fake_position(1234.0)],
@@ -165,10 +160,6 @@ def test_balances_are_read_by_currency_code(fake_cache):
 
 
 def test_the_xbt_legs_freeze_their_own_cache_constraints(fake_cache):
-    """What makes _XBT_LEG_ATTRS' distinctness deliberate rather than decorative: the reader must
-    carry each leg's OWN Cache-supplied ordermin/lot_step/tick_size through to the frozen state. A
-    reader that reused the EUR legs' generic fixture values for these two -- or defaulted them --
-    would go undetected without this."""
     vs = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW)
 
     for symbol, attrs in _XBT_LEG_ATTRS.items():
@@ -181,18 +172,15 @@ def test_the_xbt_legs_freeze_their_own_cache_constraints(fake_cache):
 
 
 def test_a_missing_min_notional_from_the_cache_produces_no_concordance_failure(fake_cache):
-    # D5a's fix, pinned directly: min_notional is None on every fake instrument by construction
-    # (matching observed live reality), yet costmin reads the committed constant -- not 0.0/None
-    # -- and the resulting state is concordance-clean.
     vs = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW)
     assert vs.instruments["BTC/EUR"].costmin == COSTMIN["BTC/EUR"][0]
     assert runtime_concordance(vs) == ConcordanceVerdict(ok=True, failures=())
 
 
 def test_costmin_quote_is_populated_per_symbol_from_the_committed_constant(fake_cache):
-    # spec 00094 D4: costmin_quote is NOT a venue reading either (module docstring, D5a) -- it is
-    # the same committed COSTMIN entry's quote currency, so a consumer can tell a BTC-denominated
-    # costmin from a EUR-denominated one without guessing.
+    # spec 00094 D4: costmin_quote is NOT a venue reading either (cli/engine/venuestate.py's module
+    # docstring, D5a) -- it is the same committed COSTMIN entry's quote currency, so a consumer can
+    # tell a BTC-denominated costmin from a EUR-denominated one without guessing.
     vs = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW)
     assert vs.instruments["BTC/EUR"].costmin_quote == "EUR"
     assert vs.instruments["ETH/BTC"].costmin_quote == "BTC"
@@ -301,13 +289,10 @@ def _library_standins():
 
 
 def test_no_stub_in_the_venue_reader_suite_offers_a_name_its_real_library_type_lacks():
-    """The direction nothing else covers. A stub MISSING something the reader calls fails loudly the
-    first time a test runs it -- the call raises. A stub OFFERING something the real type lacks
-    fails NOTHING: every test believes the fabricated attribute forever, and the live boundary is
-    the only place the read comes back wrong -- inside the swallow that journals nothing.
-
-    Every violation is collected rather than raised at the first: one red run should name all of
-    them, not send the reader round the loop once per stub."""
+    """A stub MISSING something the reader calls raises the first time a test runs it; a stub
+    OFFERING something the real type lacks fails NOTHING -- every test believes the fabricated
+    attribute forever, and only the live boundary reads it back wrong. Violations are collected
+    rather than raised at the first, so one red run names all of them."""
     violations = []
     for label, stub, real, plumbing in _library_standins():
         offered = {name for name in dir(stub) if not name.startswith("__")} - plumbing

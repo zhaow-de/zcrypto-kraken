@@ -2,8 +2,7 @@
 
 A required context GitHub never receives blocks every pull request permanently, and this repo
 sets `enforce_admins: true`, so that includes the owner -- recovery means hand-editing branch
-protection outside the repo. The coupling is invisible: the context string lives in
-`.github/settings.yml` and the name it must match is a `name:` field in a workflow file.
+protection outside the repo.
 """
 
 from pathlib import Path
@@ -29,10 +28,8 @@ def _conditional_trigger_reason(pr: object, branch: str) -> str | None:
     """Why a `pull_request` trigger might NOT fire for some PR into `branch`, or None if it always does.
 
     A required context has to arrive for EVERY pull request, so any filter that can skip a run is
-    disqualifying -- not merely a branch mismatch. `paths`/`paths-ignore` is the live danger rather
-    than a hypothetical: `capture-image.yml` in this same directory already uses one, so "add a
-    paths filter to save CI minutes" is an established idiom here, and a doc-only PR would then get
-    no check at all and sit BLOCKED with nothing red to explain why.
+    disqualifying -- not merely a branch mismatch. A `paths` filter added to save CI minutes would
+    leave a doc-only PR with no check at all, BLOCKED with nothing red to explain why.
     """
     if not isinstance(pr, dict):
         return None  # bare `pull_request:` -- no filters, fires for everything
@@ -49,14 +46,7 @@ def _conditional_trigger_reason(pr: object, branch: str) -> str | None:
 
 
 def _job_disqualifier(job: dict) -> str | None:
-    """Why a job's reported check-run name may not be exactly its `name:`, or None if it is.
-
-    A matrix job is reported per leg with the matrix values appended (`build (a, b)`), and a job
-    delegating with `uses:` is reported as `caller / callee` -- in both cases the bare name is a
-    string GitHub never emits, so requiring it blocks every PR while this file looks fine.
-    A job-level `if:` is a different defeat of the same gate: the job still reports, as `skipped`,
-    which SATISFIES a required check -- so the merge button goes green with the suite never run.
-    """
+    """Why a job's reported check-run name may not be exactly its `name:`, or None if it is."""
     if job.get("strategy") is not None:
         return "it has a `strategy:`, so GitHub appends the matrix values to the reported name"
     if job.get("uses") is not None:

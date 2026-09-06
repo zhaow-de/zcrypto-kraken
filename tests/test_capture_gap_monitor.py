@@ -45,10 +45,9 @@ def test_end_gap_with_no_open_gap_returns_zero():
 
 
 def test_end_gap_clamps_a_backward_stepped_clock():
-    # T0032 mirror for the per-pair windows: `at` comes straight from the wall clock, so an end
-    # before the start is a backward clock step (chrony makestep), not a caller bug. Pre-fix this
-    # raised CaptureError inside the consumer task and killed the daemon; the stepped clock cannot
-    # measure the window, so it books zero, closes it, and the next gap is trackable again.
+    # T0032 mirror for the per-pair windows: `at` is the wall clock, so an end before the start is a
+    # backward clock step (chrony makestep), not a caller bug — and an escaping error here kills the
+    # consumer task and with it the daemon.
     monitor = GapMonitor()
     monitor.start_gap("BTC/EUR", "reconnect", at=_at(120))
     assert monitor.end_gap("BTC/EUR", at=_at(0)) == 0.0  # clamped, not raised
@@ -59,8 +58,6 @@ def test_end_gap_clamps_a_backward_stepped_clock():
 
 
 def test_gap_seconds_clamps_open_pair_window_under_backward_clock():
-    # A reviewer measured gap_seconds(at=09:58) == -120.0 with a window opened at 10:00: an open
-    # window's contribution must clamp to >= 0, and must not eat other pairs'/windows' booked time.
     monitor = GapMonitor()
     monitor.start_gap("BTC/EUR", "reconnect", at=_at(0))
     monitor.end_gap("BTC/EUR", at=_at(30))  # 30 s legitimately booked
@@ -79,7 +76,6 @@ def test_gap_seconds_includes_still_open_window_when_at_given():
     monitor = GapMonitor()
     monitor.start_gap("BTC/EUR", "reconnect", at=_at(0))
     assert monitor.gap_seconds("BTC/EUR", at=_at(20)) == 20.0
-    # Without `at`, only closed gap time counts.
     assert monitor.gap_seconds("BTC/EUR") == 0.0
 
 
@@ -151,12 +147,8 @@ def test_ping_healthcheck_swallows_transport_errors(monkeypatch):
 
 # --- T0032: a disk-watermark breach must be BOOKED into the exit-bar gap accounting -------------
 #
-# A breach stops every write, but pre-fix the lost time never reached GapMonitor's gap_seconds --
-# the metric behind the SS12 <0.1% gap-time exit bar -- so a breach inside a clean run pages the
-# operator (the dead-man is withheld) while the automated bar reads CLEAN for a period that lost
-# data. The breach is booked via a DEDICATED window, independent of the per-pair `_open` gaps and
-# of the ping-withholding, and deliberately NOT via start_gap (whose idempotency a concurrent
-# checksum_resync gap would exploit to swallow it, resuming the ping while still breached).
+# A breach stops every write for every pair; unbooked into `gap_seconds`, it leaves the <0.1% gap-time
+# exit bar reading CLEAN over a window that lost data. Hence a DEDICATED window, never `start_gap`.
 
 
 def test_watermark_gap_accumulates_into_every_pair_gap_seconds():
@@ -164,15 +156,14 @@ def test_watermark_gap_accumulates_into_every_pair_gap_seconds():
     monitor.start_watermark_gap(at=_at(0))
     duration = monitor.end_watermark_gap(at=_at(45))
     assert duration == 45.0
-    # A breach loses data for ALL pairs at once, so it counts against every pair's gap budget.
     assert monitor.gap_seconds("BTC/EUR") == 45.0
     assert monitor.gap_seconds("ETH/EUR") == 45.0
 
 
 def test_watermark_gap_is_not_swallowed_by_a_concurrent_pair_gap():
-    # The exact idempotency trap the topic warns about: were the breach booked via start_gap, a
-    # checksum_resync gap already open on the pair would swallow it (start_gap no-ops when open) and
-    # its end_gap would resume the ping while still breached. A dedicated window can't be swallowed.
+    # Were the breach booked via `start_gap`, the checksum_resync gap already open on the pair would
+    # swallow it (`start_gap` no-ops when open) and its `end_gap` would resume the ping while still
+    # breached.
     monitor = GapMonitor()
     monitor.start_gap("BTC/EUR", "checksum_resync", at=_at(0))  # a per-pair gap is already open ...
     monitor.start_watermark_gap(at=_at(10))  # ... and a breach lands during it
@@ -204,11 +195,8 @@ def test_open_watermark_window_counts_as_of_at():
 
 def test_end_watermark_gap_clamps_a_backward_stepped_clock():
     # A wall clock stepped BACKWARD (chrony makestep, a VM snapshot-restore) across an open breach
-    # window must never raise: end_watermark_gap runs inside _disk_watermark_loop, a task nothing
-    # awaits until shutdown, so an escaping exception silently ENDS watermark polling for the life
-    # of the process — breached freezes, and a later REAL breach goes undetected while the dead-man
-    # pings green (the exact T0032 silent death). The stepped clock cannot measure the window, so
-    # it books zero, closes it, and the next breach is trackable again.
+    # window is a clock step, not a caller bug, and `end_watermark_gap` runs inside
+    # `_disk_watermark_loop`, which nothing awaits until shutdown — so it books zero, never raises.
     monitor = GapMonitor()
     monitor.start_watermark_gap(at=_at(120))
     assert monitor.end_watermark_gap(at=_at(0)) == 0.0  # the clock stepped back past the start: clamped

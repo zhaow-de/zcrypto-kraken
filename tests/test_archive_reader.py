@@ -53,9 +53,8 @@ def test_a_reconciled_only_hour_absent_from_the_primary_is_yielded(tmp_path):
 
 
 def test_an_overlay_only_hour_between_raw_hours_is_yielded_in_hour_order(tmp_path):
-    # Consumers concatenate hours in yield order and may NEVER re-sort rows by ts (L2 rows carry
-    # absolute quantities), so a healed hour appended after later raw hours would splice a different
-    # book. The contract: yields are sorted by (pair, hour), overlay-only hours included.
+    # The order is the contract: consumers concatenate in yield order and never re-sort, so an
+    # overlay-only hour is yielded in sequence, not after later raw hours.
     pri = tmp_path / "raw"
     rec = tmp_path / "overlay"
     _final(pri, "BTC/EUR", "book", H - timedelta(hours=1))  # 08 raw
@@ -87,13 +86,7 @@ def test_held_and_corrupt_files_are_never_yielded(tmp_path):
 
 
 def test_two_quote_dirs_under_one_base_stay_independent_streams(tmp_path):
-    """`ETH/EUR` and `ETH/BTC` must resolve as two separate pairs, never merged by base (T0092).
-
-    Until 2026-07-23 capture was EUR-only, so every base directory happened to hold exactly one
-    quote subdirectory. That was an observation, not a guarantee, and nothing in the suite pinned
-    it. `canonical_segments` keys on `BASE/QUOTE` by construction; this test makes a future
-    refactor back to base-keying fail loudly instead of silently merging two books.
-    """
+    """`ETH/EUR` and `ETH/BTC` resolve as two separate pairs, never merged by base (T0092)."""
     primary = tmp_path / "primary"
     _final(primary, "ETH/EUR", "book", H)
     _final(primary, "ETH/BTC", "book", H)

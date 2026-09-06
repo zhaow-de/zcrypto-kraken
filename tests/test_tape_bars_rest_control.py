@@ -1,16 +1,7 @@
-"""The tape's only independent witness -- and it expires (spec 00087 Verification).
-
-The tape starts 2026-07-08 and `ohlc-full` ends 2026-03-31, so they do NOT overlap and there is no
-canonical to check tape-bars against. Kraken's public REST OHLC does overlap, at 15m, for only about
-7.5 days back (the endpoint returns ~720 candles). This control therefore proves the whole chain --
-reconciled read -> ticks_to_bars -> day frame -- against an independent source, and it can only ever
-prove it for a RECENT day. It skips (never passes, never fails) when the archive is absent, when the
-REST call fails, or when the REST window no longer reaches a day the archive has healed: a network
-outage must not read as a data defect.
-
-The day is COMPUTED, never hardcoded: the newest archived day that is both `is_heal_complete` and
-wholly inside the REST window. A pinned date would silently rot out of the window within a week.
-"""
+"""Tape bars checked against Kraken's public REST OHLC (spec 00087 Verification), the only source
+that overlaps the tape now that `ohlc-full` has ended: REST reaches only ~720 candles back (~7.5
+days at 15m), so the day under test is COMPUTED — the newest heal-complete day wholly inside that
+window — and never a pinned date, which would rot out of the window within a week."""
 
 from __future__ import annotations
 
@@ -109,8 +100,7 @@ def test_tape_bars_match_kraken_rest_ohlc() -> None:
         # vwap is NOT a 1e-9 comparison, and that is a measured property of the source rather than a
         # widened tolerance: Kraken publishes vwap TRUNCATED to the pair's price precision (measured
         # 2026-08-10 on BTC/EUR 2026-08-09 -- 96/96 bars match under ROUND_DOWN to 0.1, 53/96 under
-        # round-half-even, so it truncates). The exact identity that holds is therefore the
-        # half-open tick interval below; `slack` only absorbs float representation at the edge.
+        # round-half-even). `slack` below only absorbs float representation at the edge.
         tick = float(_tick_size(theirs))
         published = float(theirs[_VWAP])
         slack = tick * 1e-9

@@ -106,11 +106,9 @@ def _clock(step: timedelta = timedelta(seconds=10)) -> SteppingClock:
 
 
 def _fake_builder(targets: dict[str, float], calls: list | None = None):
-    """Keyed by whatever it is handed -- which, on BOTH sides of the round trip, is
-    select_model_inputs' BASE keys, so `targets` is MODEL_TARGETS everywhere: the cycle contracts
-    the store to the ten EUR legs, and replay_cycle contracts the journaled twelve-symbol snapshots
-    the same way (one implementation, imported from cycle). The symbol-keyed TARGETS appear only
-    AFTER `_expand_to_basket`, which this stub never stands in for."""
+    """Keyed by whatever it is handed, which on BOTH sides of the round trip is
+    `select_model_inputs`' BASE keys -- so `targets` is MODEL_TARGETS everywhere. The symbol-keyed
+    TARGETS appear only AFTER `_expand_to_basket`, which this stub never stands in for."""
 
     def builder(daily_prices, daily_ts, h4_prices, h4_ts, *, config=None):
         if calls is not None:
@@ -145,10 +143,8 @@ def _journal_reader(root: Path):
 
 def _adversarial_venue_state() -> VenueState:
     """A VenueState hostile to the read-only pin: every ordermin/costmin sits far above any order
-    the fixture produces (the largest here is BTC/EUR's 0.2 * 1000.0 nav = 200 EUR notional), and
-    positions/balances carry large, non-flat values that would visibly move targets if netted. A
-    permissive VenueState (e.g. every constraint 0.0) would pass this test even if run_cycle
-    consulted it -- these numbers make the pin actually adversarial."""
+    the fixture produces, and positions/balances carry large, non-flat values that would visibly
+    move targets if netted. A permissive VenueState would pass even if run_cycle consulted it."""
     instruments = {
         symbol: InstrumentConstraints(
             symbol=symbol,
@@ -244,12 +240,8 @@ def test_the_success_record_journals_a_base_keyed_position_from_venue_state(tmp_
 
 
 def test_a_non_finite_venue_quantity_journals_no_position_rather_than_failing_the_record(tmp_path, monkeypatch):
-    """A non-finite quantity must not reach the record, and must not take the cycle down with it.
-
-    `validate_record` runs AFTER `_append_orders`, so a value that only fails there would leave an
-    orders block with no `cycle-<HH>.json` behind it -- which the next boundary's `_previous_success`
-    silently globs past. Venue truth never blocks the cycle: absence is the honest answer.
-    """
+    """A non-finite quantity must not reach the record, and must not take the cycle down with it:
+    venue truth never blocks the cycle, and absence is the honest answer."""
     from cli.engine.venuestate import VenueState
 
     config, rows_by, _ = _env(tmp_path, monkeypatch)
@@ -262,7 +254,6 @@ def test_a_non_finite_venue_quantity_journals_no_position_rather_than_failing_th
 
     result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock(), venue_state=vs)
 
-    # The cycle still succeeded -- a record exists, and it validates.
     record = from_json(result.record_path.read_text())
     validate_record(record)
     assert record.held is None
@@ -292,22 +283,19 @@ def test_the_success_record_journals_the_forming_row_closes(tmp_path, monkeypatc
 
     record = from_json(result.record_path.read_text())
     validate_record(record)
-    # BASE-keyed over the TEN /EUR legs -- never the twelve symbols final_targets carries.
     assert set(record.closes) == {s.split("/")[0] for s in EUR_SYMBOLS}
     assert set(record.final_targets) == set(ASSETS)
-    # The LAST 4h close: _series_rows walks _base(symbol) + i over range(N_H4), so the forming row
-    # is _base + 5. The first 4h close is _base + 0 and the last DAILY close is _base + 3 -- the two
-    # wrong series this pins away from, both of which a base-keyed ten-entry dict would also satisfy.
+    # The forming row is the LAST 4h close. The first 4h close and the last DAILY close are the two
+    # wrong series this pins away from, both of which a base-keyed ten-entry dict would satisfy.
     assert record.closes == {s.split("/")[0]: _base(s) + (N_H4 - 1) for s in EUR_SYMBOLS}
 
 
 def test_a_missing_forming_row_close_fails_the_cycle(tmp_path, monkeypatch):
     """A cycle that cannot price its own forming row is refused rather than journaled with a hole.
 
-    This refusal is NEW on the trade path -- it is not one the gate already makes. `replay_cycle`
-    extracts no closes at all, so such a cycle replays and passes the gate cleanly; only
-    `feeders.replay_stages`, the workstation reports path, refuses the same input today. Do not
-    read this guard as dead code duplicating a check downstream: nothing downstream makes it.
+    Nothing on the TRADE path makes this refusal: `replay_cycle` extracts no closes at all, so such
+    a cycle replays and passes the gate cleanly; only `feeders.replay_stages`, the reports path,
+    refuses the same input. Do not read the guard as duplicating a check downstream.
 
     Constructed at the contraction seam: after the staleness check every EUR leg carries the
     boundary stamp, so nothing a store fixture can express reaches this arm."""
@@ -332,12 +320,10 @@ def test_a_missing_forming_row_close_fails_the_cycle(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("bad", [-5.0, 0.0, float("nan"), float("inf")])
 def test_an_unusable_forming_row_close_fails_the_cycle_before_the_orders(tmp_path, monkeypatch, bad):
-    """The early guard is a SUPERSET of validate_record's closes checks, and must be. validate_record
+    """The early guard is a SUPERSET of validate_record's closes checks, and must be: validate_record
     runs on the CycleRecord -- after _append_orders has written orders.jsonl -- so a close caught
     only there leaves an orders block with no cycle-<HH>.json behind it, which the next boundary's
-    _previous_success globs straight past. The orders.jsonl assertion is what separates the two: a
-    guard narrowed back to `value is None` still raises (validate_record's EngineJournalError IS an
-    EngineError), it just raises too late."""
+    _previous_success globs straight past."""
     config, rows_by, _ = _env(tmp_path, monkeypatch)
     real = cycle.select_model_inputs
 
@@ -350,10 +336,8 @@ def test_an_unusable_forming_row_close_fails_the_cycle_before_the_orders(tmp_pat
     with pytest.raises(EngineError) as excinfo:
         run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
 
-    # The FILE assertions come first, deliberately. A `match=` on the raises() would short-circuit
-    # here and mask them: validate_record's own refusal is an EngineJournalError, which IS an
-    # EngineError, so a narrowed guard still raises -- it just raises after orders.jsonl is on disk.
-    # Asserting the artifacts before the message is what makes lateness the thing that fails.
+    # The FILE assertions come first: a narrowed guard still raises (validate_record's
+    # EngineJournalError IS an EngineError), so only the artifacts show that it raised too late.
     day_dir = config.journal_dir / "2026-07-10"
     assert not (day_dir / "orders.jsonl").exists()
     assert not (day_dir / "cycle-08.json").exists()
@@ -375,15 +359,15 @@ def _sleeve_result(position: float):
 
 def test_limits_bound_is_true_when_a_wired_limit_moves_the_book():
     # 0.9 per leg: the 0.20 long cap alone clips every asset, so the limited book differs from the
-    # combined one. Without this the False case below would pass against a function hardwired to
-    # False -- the failure mode that makes a counter that never increments look like a quiet book.
+    # combined one. Without this true positive the False case below would pass against a function
+    # hardwired to False.
     assert cycle._limits_bound(_sleeve_result(0.9)) is True
 
 
 def test_limits_bound_is_false_on_a_book_that_breaches_nothing():
-    # 0.01 per leg: 0.1 gross over ten assets -- inside the per-asset caps, the 1.5x gross ceiling,
-    # the [-0.5, +1.0] net band and the 2.5 margin floor. Every limit copies its input and only
-    # touches the bars it scales, so an unbreached book must come back bit-identical.
+    # 0.01 per leg: 0.1 gross over ten assets, inside every limit the stack applies. Each limit
+    # copies its input and only touches the bars it scales, so an unbreached book must come back
+    # bit-identical.
     assert cycle._limits_bound(_sleeve_result(0.01)) is False
 
 
@@ -424,12 +408,11 @@ def test_a_failed_cycle_carries_no_limit_verdict(tmp_path, monkeypatch):
 
 
 def test_happy_path_round_trips_through_replay_cycle_under_a_stub_builder(tmp_path, monkeypatch):
-    """SCOPE, because the name alone once promised more than the test delivered: the builder is
-    STUBBED on both sides here, so this pins the plumbing -- journaling, the snapshot manifest, the
-    key spaces the two sides hand the builder, the expansion -- and nothing about the grid the real
-    builder would actually receive. The real-builder round trip is
-    `test_real_builder_round_trips_through_replay_cycle` at the bottom of this file; a stub keyed by
-    whatever it is handed cannot tell a right grid from a wrong one."""
+    """SCOPE: the builder is STUBBED on both sides here, so this pins the plumbing -- journaling, the
+    snapshot manifest, the key spaces the two sides hand the builder, the expansion -- and nothing
+    about the grid the real builder would receive. A stub keyed by whatever it is handed cannot tell
+    a right grid from a wrong one; `test_real_builder_round_trips_through_replay_cycle` is the pin
+    that can."""
     config, rows_by, _ = _env(tmp_path, monkeypatch)
     result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
 
@@ -447,9 +430,8 @@ def test_happy_path_round_trips_through_replay_cycle_under_a_stub_builder(tmp_pa
 
 
 def test_persistently_lagging_tail_exhausts_reserve_as_refresh_deadline(tmp_path, monkeypatch):
-    # A lagging daily tail the venue never heals gets the FULL retry budget (settle-verify covers
-    # both grids), then honestly fails as refresh_deadline naming the pair -- not an instant
-    # stale_pair with unused reserve.
+    # A lagging tail the venue never heals gets the FULL retry budget, then fails as
+    # refresh_deadline -- not an instant stale_pair with unused reserve.
     rows_by = _store_rows({("DOGE/EUR", 1440): _series_rows("DOGE/EUR", 1440, drop_last=1)})  # daily tail one bar behind
     stale_fetch = {(a, iv): rows[-2:] for (a, iv), rows in rows_by.items()}  # fetch keeps returning the stale tail
     config, _, calls = _env(tmp_path, monkeypatch, rows_by=rows_by)
@@ -472,10 +454,9 @@ def test_persistently_lagging_tail_exhausts_reserve_as_refresh_deadline(tmp_path
 
 
 def test_stale_pair_sidecar_as_defense_in_depth(tmp_path, monkeypatch):
-    # With settle-verify covering both grids, _stale_pairs is the belt-and-braces invariant: it can
-    # fire only if settle reports clean while the raw read disagrees (a store race). Simulate that
-    # by patching the settle check; the invariant must still catch it and write the stale_pair
-    # sidecar rather than feeding a stale book to the builder.
+    # _stale_pairs can fire only if settle reports clean while the raw read disagrees (a store
+    # race), so the settle check is patched to simulate one: the invariant must still refuse rather
+    # than feed a stale book to the builder.
     import cli.engine.cycle as cycle_mod
 
     rows_by = _store_rows({("DOGE/EUR", 1440): _series_rows("DOGE/EUR", 1440, drop_last=1)})
@@ -667,7 +648,6 @@ def test_union_alignment_journals_none_at_absences_and_replays_clean(tmp_path, m
     assert frame["ts"].to_list() == h4_ts
     assert frame["close"].to_list()[gap_index] is None
 
-    # And it replays clean.
     record = from_json(result.record_path.read_text())
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(MODEL_TARGETS))
     replayed = replay_cycle(record, _journal_reader(config.journal_dir), path="fast")
@@ -753,7 +733,6 @@ def test_settle_pending_covers_the_daily_grid_at_midnight_boundaries(tmp_path):
 
     assert _settle_pending(store, midnight) == {"BTC/EUR": PAIR_KEYS["BTC/EUR"]}
 
-    # the settled daily bar clears the pending set
     fresh = [_row(daily_last - (3 - i) * timedelta(days=1), _base("BTC/EUR") + i) for i in range(4)]
     write_parquet(to_frame(fresh), store / "BTC" / "EUR" / "1440.parquet")
     assert _settle_pending(store, midnight) == {}
@@ -863,11 +842,9 @@ def test_venue_record_is_written_first_and_survives_a_failing_cycle(tmp_path, mo
 
 def test_targets_are_identical_with_and_without_venue_state(tmp_path, monkeypatch):
     """THE read-only pin: venue truth is journaled, never consulted. Two runs, identical inputs, one
-    with venue_state=None, the other with an ADVERSARIAL VenueState (ordermin/costmin set far above
-    every order the fixture produces; positions/balances that would visibly move targets if netted)
-    -- final_targets, orders, and the journaled cycle-HH.json bytes must be identical, full stop;
-    only CycleResult.venue differs. A permissive VenueState would pass even if the cycle consulted
-    it, proving nothing."""
+    with venue_state=None, the other with an ADVERSARIAL VenueState -- final_targets, orders and the
+    journaled record must be identical apart from `held`; only CycleResult.venue differs. A
+    permissive VenueState would pass even if the cycle consulted it, proving nothing."""
     monkeypatch.setattr(cycle, "_sleep", lambda seconds: None)
     monkeypatch.setattr(cycle, "build_crossfreq_system_fast", _fake_builder(MODEL_TARGETS))
 
@@ -884,12 +861,9 @@ def test_targets_are_identical_with_and_without_venue_state(tmp_path, monkeypatc
     assert none_result.targets == adversarial_result.targets == TARGETS
     assert none_result.orders == adversarial_result.orders
 
-    # `held` is the ONE venue-derived field the cycle record carries (T0150), so a raw byte compare
-    # of the two artifacts can no longer be the pin -- it would fail for the one difference that is
-    # supposed to exist. Narrowed rather than dropped: the position is asserted to have been
-    # journaled from the adversarial read, and then neutralised so the REST of the record is still
-    # compared byte-for-byte through the real serializer. Everything the venue must not touch is
-    # still pinned exactly as before.
+    # `held` is the ONE venue-derived field the cycle record carries, so a raw byte compare would
+    # fail for the one difference that is supposed to exist: assert the position was journaled from
+    # the adversarial read, then neutralise it and compare the rest byte-for-byte.
     none_record = from_json(none_result.record_path.read_text())
     adversarial_record = from_json(adversarial_result.record_path.read_text())
     assert none_record.held is None
@@ -1110,8 +1084,8 @@ def test_a_schema_1_predecessor_emits_only_genuine_deltas(tmp_path, monkeypatch)
 # --- D1/D2 through the REAL builder ---------------------------------------------------------------
 #
 # A hand-built expansion-only test would stay green if the pipeline fed the model differently, so
-# these two run the whole cycle -- fixture store -> select_model_inputs -> build_crossfreq_system_fast
-# -> _expand_to_basket -- against a standalone ten-asset build over the same ten EUR series.
+# the tests below run the whole cycle against a standalone ten-asset build over the same ten EUR
+# series.
 
 _REAL_N_DAILY = 300  # > the longest daily lookback in play (A2's 240 arm): a shorter history makes
 _REAL_N_H4 = 420  # every target 0.0, which no assertion below could tell from a structural zero
@@ -1214,16 +1188,15 @@ def test_a_btc_stamp_the_eur_legs_lack_moves_no_eur_window(tmp_path, monkeypatch
 
 
 def test_real_builder_round_trips_through_replay_cycle(tmp_path, monkeypatch):
-    """The round trip with NO stub anywhere: run_cycle reads the fixture store, contracts, builds,
-    expands and journals; replay_cycle then reads those journaled twelve-symbol snapshots back and
-    must reach the SAME builder grid and reproduce the same twelve targets exactly.
+    """The round trip with NO stub anywhere: run_cycle journals, and replay_cycle reads those
+    journaled twelve-symbol snapshots back and must reproduce the same twelve targets exactly.
 
-    This is the pin the stubbed round trip above structurally cannot be: a builder keyed by whatever
-    it is handed agrees with any grid, so it would stay green if replay fed the model a different
-    calendar, a different key space, or all twelve legs -- the last of which is a hard PortfolioError
-    on the real builder. `_real_store_rows(btc_only_stamp=True)` is deliberate: the journaled
-    snapshots then carry a stamp no EUR leg has, so the replay only matches if its own contraction
-    drops that stamp exactly as the cycle's did."""
+    A builder keyed by whatever it is handed agrees with any grid, so a stubbed round trip stays
+    green if replay feeds the model a different calendar, a different key space, or all twelve legs
+    -- the last of which is a hard PortfolioError on the real builder.
+    `_real_store_rows(btc_only_stamp=True)` is deliberate: the journaled snapshots then carry a
+    stamp no EUR leg has, so the replay only matches if its own contraction drops that stamp exactly
+    as the cycle's did."""
     config = _real_env(tmp_path, monkeypatch)
     rows_by = _real_store_rows(btc_only_stamp=True)
     _write_store(config.store_dir, rows_by)

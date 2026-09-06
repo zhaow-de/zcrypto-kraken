@@ -50,8 +50,7 @@ def test_mandatory_name_kept_even_when_failing_and_flagged():
 
 
 def test_mandatory_does_not_force_a_non_eur_quoted_leg_sharing_the_base():
-    # ETH/BTC shares base "ETH" with the mandatory ETH/EUR leg, but it is the discretionary
-    # BTC-quoted relative-value leg (master plan §3), not the flagship EUR-quoted pair.
+    # ETH/BTC shares base "ETH" with mandatory ETH/EUR but is the discretionary BTC-quoted leg (master plan §3).
     pairs = [_Pair(symbol="ETH/BTC", base="ETH", quote="BTC", leverage_buy=(1,))]
     volumes = {"ETH/BTC": 0.0}
     selection = finalize_universe(pairs, volumes)
@@ -69,7 +68,7 @@ def test_passing_entry_has_no_reasons():
 
 
 def test_candidate_at_200k_median_volume_passes_default_floor():
-    # T0002: the lowered €150k/day floor admits names around €200k that the old €1M floor dropped.
+    # T0002: the lowered default floor admits names around €200k that the old €1M floor dropped.
     pairs = [_Pair(symbol="FOO/EUR", base="FOO", quote="EUR")]
     volumes = {"FOO/EUR": 200_000.0}
     selection = finalize_universe(pairs, volumes)
@@ -111,12 +110,9 @@ def _pair(symbol, *, margin=True, leverage=(2, 5, 10)):
 
 
 def test_omitting_spreads_screens_nothing_but_still_records_the_gap():
-    """D4: the criterion is opt-in -- the *selection outcome* is unchanged for existing callers.
-
-    The output is NOT byte-identical to pre-T0024: every entry gains a `spread_bps` key, null here.
-    Comparing `finalize_universe(pairs, volumes)` against `spreads=None` would assert nothing at all
-    -- None is the default, so that is the same call twice (T0024 review).
-    """
+    """D4: the criterion is opt-in -- the selection outcome is unchanged for a caller that omits
+    `spreads`. Pinning that against an explicit `spreads=None` would assert nothing: `None` is the
+    default, so that is the same call twice."""
     pairs = [_pair("BTC/EUR"), _pair("DOT/EUR")]
     sel = finalize_universe(pairs, {"BTC/EUR": 1e7, "DOT/EUR": 2e5})
     assert sel.selected == ("BTC/EUR", "DOT/EUR")
@@ -126,10 +122,8 @@ def test_omitting_spreads_screens_nothing_but_still_records_the_gap():
 
 
 def test_the_shipped_cap_and_reference_notional_are_pinned():
-    """Both constants are load-bearing and every other test passes them explicitly, so nothing
-    else would notice an edit to them. The cap is 25 % of the tier-1 round-trip maker fee
-    (2 x 0.40 % = 80 bps -> 20 bps round trip -> 10 per side); the notional is the max-size
-    position the volume floor is already calibrated against (spec 00067 D1/D2)."""
+    """The tests that exercise the cap pass `max_spread_bps` explicitly and nothing here reads the
+    notional, so nothing else in this file would notice an edit to either constant."""
     assert DEFAULT_MAX_SPREAD_BPS == 10.0
     assert SPREAD_REFERENCE_NOTIONAL_EUR == 1_400.0
 
@@ -158,8 +152,7 @@ def test_exactly_at_the_cap_passes():
 
 def test_an_uncaptured_pair_is_recorded_as_unevaluated_and_NOT_rejected():
     """D3: a symbol outside the committed calibration is unevaluated, never auto-rejected -- absence
-    of evidence is not evidence of a wide spread. Since spec 00085 all twelve universe legs ARE
-    calibrated, so this pins the property for any future gap rather than for the /BTC legs."""
+    of evidence is not evidence of a wide spread."""
     sel = finalize_universe([_pair("ETH/BTC")], {"ETH/BTC": 5.8e5}, spreads={"BTC/EUR": 0.4}, max_spread_bps=10.0)
     entry = sel.entries[0]
     assert entry["selected"] is True
@@ -168,7 +161,6 @@ def test_an_uncaptured_pair_is_recorded_as_unevaluated_and_NOT_rejected():
 
 
 def test_spread_bps_is_present_on_every_entry_so_the_gap_is_visible():
-    """The artifact must show which symbols the cap did not evaluate."""
     pairs = [_pair("BTC/EUR"), _pair("ETH/BTC")]
     sel = finalize_universe(pairs, {"BTC/EUR": 1e7, "ETH/BTC": 5.8e5}, spreads={"BTC/EUR": 0.428}, max_spread_bps=10.0)
     got = {e["symbol"]: e["spread_bps"] for e in sel.entries}
@@ -176,7 +168,7 @@ def test_spread_bps_is_present_on_every_entry_so_the_gap_is_visible():
 
 
 def test_a_mandatory_pair_breaching_the_cap_is_kept_but_flagged():
-    """The mandatory override already exists; the spread reason must ride it like any other."""
+    """The spread reason rides the mandatory override like any other reason."""
     sel = finalize_universe([_pair("BTC/EUR")], {"BTC/EUR": 1e7}, spreads={"BTC/EUR": 99.0}, max_spread_bps=10.0)
     entry = sel.entries[0]
     assert entry["selected"] is True
@@ -185,7 +177,6 @@ def test_a_mandatory_pair_breaching_the_cap_is_kept_but_flagged():
 
 
 def test_a_pair_failing_volume_and_spread_reports_both_reasons():
-    """A pair failing BOTH volume and spread reports both, not just the first."""
     sel = finalize_universe([_pair("THIN/EUR")], {"THIN/EUR": 1.0}, spreads={"THIN/EUR": 50.0}, max_spread_bps=10.0)
     reasons = sel.entries[0]["reasons"]
     assert sel.entries[0]["selected"] is False

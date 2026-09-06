@@ -1,14 +1,7 @@
-"""The order-semantics harness's pure core — the rails that bound real money on a live account.
-
+"""The order-semantics harness's pure core — the rails that bound real money on a live account, and
+not a duplicate of the harness's own `--selftest`: these run in CI on every change to the repo.
 `infra/scripts/kraken-order-semantics-probe.py` is a standalone script, not a package module, so it
-loads via `importlib.util.spec_from_file_location` (the precedent `test_grafana_query.py` sets).
-
-The harness carries its own `--selftest`, which the operator runs immediately before pointing it at
-the venue. These tests are not a duplicate of it: they run in CI on every change to the repo, and
-they pin the two properties whose failure is silent and expensive — the leftover classification,
-which decides whether a run reports "nothing is resting", and the waiting primitive, which is the
-only thing that advances the sequence.
-"""
+loads via `importlib.util.spec_from_file_location` (the precedent `test_grafana_query.py` sets)."""
 
 from __future__ import annotations
 
@@ -33,7 +26,7 @@ _spec.loader.exec_module(probe)
 
 @dataclass
 class _Order:
-    """The two fields the classification reads off a cached order."""
+    """The field the classification reads off a cached order, beside the status the defect reads."""
 
     status: str
     is_closed: bool
@@ -77,14 +70,10 @@ def test_an_id_the_cache_has_no_record_of_is_outstanding_rather_than_clean():
 
 
 def test_the_snapshot_a_caller_keeps_is_never_read_as_never_submitted():
-    """THE money defect this classification exists to make impossible.
-
-    A held order stays `INITIALIZED` with `is_closed` False for the whole life of the process,
-    whatever the venue does. Classified by status, that reads "never submitted, nothing at the
-    venue" and the run reports a clean bill while the order rests at Kraken. Classified by whether
-    the Cache says it is closed, the same object is outstanding — which is what a cancel sweep and
-    a non-zero exit code hang off.
-    """
+    """THE money defect this classification exists to make impossible: a held order stays
+    `INITIALIZED` with `is_closed` False for the whole life of the process, whatever the venue does,
+    so classified by status it reads "never submitted, nothing at the venue" and the run reports a
+    clean bill while the order rests at Kraken."""
     split = probe.classify_submitted(["a"], {"a": HELD_SNAPSHOT}.get)
 
     assert split.outstanding == ["a"]
@@ -92,11 +81,8 @@ def test_the_snapshot_a_caller_keeps_is_never_read_as_never_submitted():
 
 
 def test_the_defect_and_the_correct_reading_disagree_on_the_same_order():
-    """The fixture the test above stands on is one the defect can actually move.
-
-    Reading the status the way "INITIALIZED means never submitted" would calls this order finished;
-    reading `is_closed` off the Cache's copy calls it outstanding. Both readings are computed here,
-    on one object, so the fixture cannot degenerate into one where the defect and the correct
+    """The fixture the test above stands on is one the defect can actually move: both readings are
+    computed here on one object, so it cannot degenerate into one where the defect and the correct
     behaviour agree.
     """
     dismissed_by_status = HELD_SNAPSHOT.status == "INITIALIZED"
@@ -253,8 +239,7 @@ def test_two_pending_waits_are_refused():
 
 
 def _strategy(*argv: str):
-    """A probe strategy with no node behind it. Enough for the two paths below, which are pure
-    Python either side of the one library call each is about."""
+    """A probe strategy with no node behind it."""
     args = probe.build_parser().parse_args([*argv, "--no-exec"])
     args.selected_probes = {4}
     state = probe.RunState()
@@ -296,9 +281,8 @@ def test_submit_refuses_once_the_node_is_stopping():
 
 
 def test_a_stopping_run_abandons_the_probes_it_has_not_reached():
-    """Stopping the node FLUSHES its pending clock alerts, so an interrupted run's settle alert
-    fires during the shutdown. Without this the whole remaining sequence ran there -- measured:
-    an interrupted `--probes all` recorded nine rows it had never actually run."""
+    """Stopping the node FLUSHES its pending clock alerts, so an interrupted run's settle alert fires
+    during the shutdown, and without this the whole remaining sequence ran there (measured)."""
     strategy, state = _strategy()
     ran: list[str] = []
     strategy._steps = [("4a", "n", lambda: ran.append("4a")), ("4b", "n", lambda: ran.append("4b"))]
@@ -330,7 +314,7 @@ def test_a_running_sequence_still_advances():
 
 
 class _FilledOrder:
-    """A cached order that filled. `final_read`'s position warning reads only these two."""
+    """A cached order that filled -- `is_closed` for the classification, `filled_qty` for the position warning."""
 
     filled_qty = 0.001
     is_closed = True

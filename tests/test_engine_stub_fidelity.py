@@ -16,18 +16,12 @@ The two directions are NOT symmetric, and only one of them is self-policing:
     it: a stub node carrying an attribute the library never had kept the whole `engine run` suite
     green while production raised on that same read, at start, on the live trade path.
 
-So each library stand-in owes both directions -- most cover them in two tests, a few in one -- and
-the classification below is what makes "each" checkable.
-`test_every_test_double_in_the_engine_suite_is_classified` walks EVERY `test_engine_*.py` in this
-directory and refuses a double that is not in the table; `test_every_guard_the_table_names_exists`
-refuses a table entry whose guard has been renamed or deleted. A new stub is therefore a red test
-until somebody says, in writing, what it models.
+So each library stand-in owes both directions, and the classification below is what makes "each"
+checkable.
 
-The module list is derived from the directory rather than written down, so the file's opening claim
-is true rather than aspirational: a hand-written list silently exempts every module nobody
-remembered to add, which is how five library stand-ins in the venue-reader suite went unguarded.
-The cost is the point -- a NEW `test_engine_*.py` carrying a double is a red run until its doubles
-are classified here.
+The module list is derived from the directory rather than written down: a hand-written list
+silently exempts every module nobody remembered to add. The cost is the point -- a NEW
+`test_engine_*.py` carrying a double is a red run until its doubles are classified here.
 
 Three verdicts, and the reason the distinction matters:
 
@@ -38,13 +32,8 @@ Three verdicts, and the reason the distinction matters:
   NOT_A_STANDIN not a test double -- a fixture-environment helper, or a class that models an event
                 rather than a type. The doubles such a helper installs are registered on their own.
 
-One fact the table records rather than fixes, because measuring it is the honest answer:
-`_fake_instrument`'s `make_qty`/`make_price` are not restatements at all -- they are BOUND off a
-real `CurrencyPair` at the leg's precisions, so the library itself does the rounding. Delegation
-beats verification wherever the real type is constructible offline, and where it is constructible
-the double should not exist at all: the order events, the quote, the commission and the currency
-this suite once restated are built from the library's own classes now, and are absent from the
-table for that reason.
+Delegation beats verification wherever the real type is constructible offline, and where it is
+constructible the double should not exist at all.
 
 Nothing here imports the modules it classifies: the walk reads them as source, so this file cannot
 be satisfied by a stub and costs no collection-time nautilus import.
@@ -60,16 +49,12 @@ MODULES = tuple(sorted(p.name for p in Path(__file__).parent.glob("test_engine_*
 
 # What the walk must still find per module, so a walker that stops seeing a whole SHAPE of double
 # reads as red rather than as a short table. Per module rather than one number for all of them: a
-# single floor is only ever as strong as the smallest inventory, and lowering it for that module
-# silently un-guards every other one. Each sits below its module's real count where the inventory
-# is big enough for slack to mean anything -- a floor tracking the count exactly goes red on every
-# legitimate stub removal, which is how a guard gets loosened to nothing in one edit. The small
-# inventories sit AT their count: one below, the floor would tolerate losing a third or more of
-# them, which is not a vacuity check at all, so a removal there is meant to be read.
-#
-# Keyed only by the modules that HAVE doubles, in lock-step with the table below (its own test
-# holds them there). A module absent from both is one the walk found nothing in, where any floor
-# above zero would be a claim rather than a check.
+# single floor is only ever as strong as the smallest inventory. Each sits below its module's real
+# count where the inventory is big enough for slack to mean anything -- a floor tracking the count
+# exactly goes red on every legitimate stub removal; the small inventories sit AT their count,
+# where one below would tolerate losing a third or more of them. Keyed only by the modules that HAVE
+# doubles: a module absent from both this and the table is one the walk found nothing in, where any
+# floor above zero would be a claim rather than a check.
 _WALK_FLOOR = {
     "test_engine_concordance.py": 1,
     "test_engine_command.py": 3,
@@ -132,12 +117,11 @@ TABLE: dict[str, dict[str, Standin]] = {
         "_Run": Standin(NOT_A_STANDIN, "a value record for one CLI invocation's exit code, output and file mtimes", ()),
         "_Slice": Standin(NOT_A_STANDIN, "a value record naming a copied journal slice and its per-file minimums", ()),
     },
-    # The red button drives the venue's HTTP client directly rather than the node, so all but one
-    # of its doubles stand in for something the venue hands over. `typing.Any` is what the client's
-    # signatures promise, which is why the real answer classes are named per row rather than read
-    # off a signature -- the offers guard is what keeps each name, and its KIND, honest against the
-    # real class: `_Book` once restated OrderBook's `bids`/`asks` METHODS as plain lists and every
-    # name-only check agreed.
+    # The red button drives the venue's HTTP client directly rather than the node, so all but one of
+    # its doubles stand in for what the venue hands over. `typing.Any` is what the client's signatures promise,
+    # which is why the real answer classes are named per row rather than read off a signature -- the
+    # offers guard keeps each name, and its KIND, honest against the real class: `_Book` once
+    # restated OrderBook's `bids`/`asks` METHODS as plain lists and every name-only check agreed.
     "test_engine_flatten.py": {
         "FakeClient": Standin(LIBRARY, "nautilus_trader.adapters.kraken.KrakenSpotHttpClient", (_BINDS_FLATTEN, _OFFERS_FLATTEN)),
         # `request_instruments()`'s row. Measured against the installed adapter's public listing
@@ -250,13 +234,11 @@ def _discovered_doubles(module: str) -> set[str]:
 
 
 def _doubles_in(tree: ast.Module) -> set[str]:
-    """The test doubles a walk can find without being told: every top-level class -- defined with
-    `class` or bound by a class factory -- plus every top-level non-test function that builds a
-    `SimpleNamespace`. Those are the suite's stub shapes.
+    """The test doubles a walk can find without being told, in a parsed tree.
 
     Deliberately over-broad on the class half: it sweeps in helpers that turn out not to be doubles
-    at all, and the table has to say so for each. That is the trade -- a rule tight enough to admit
-    only real stubs is a rule that can be stepped around by naming one differently.
+    at all, and the table has to say so for each. A rule tight enough to admit only real stubs is
+    one that can be stepped around by naming a stub differently.
 
     Takes a parsed tree rather than a module name so the factory branch can be handed a synthetic
     one: it has no live member in this directory today, so nothing else here would notice its
@@ -300,14 +282,12 @@ plain_value = 5
 def test_the_class_factory_branch_of_the_walk_finds_an_assignment_form_double():
     """The branch's own floor, and the only one it has.
 
-    `X = namedtuple(...)` binds a class through an assignment, which no `ClassDef` walk sees -- and
-    this suite has already carried a library stand-in in exactly that spelling, sitting unclassified
-    inside a module the walk was reading. Nothing in this directory is spelled that way TODAY, so
-    deleting the branch re-opens that blind spot with every test still green. This is what goes red.
+    Nothing in this directory is spelled `X = namedtuple(...)` TODAY, so deleting the branch
+    re-opens that blind spot with every test still green. This is what goes red.
 
-    Both directions are asserted from one snippet. Discovering the four factory forms is the
-    true positive; the three ordinary assignments beside them are the true negative, without which a
-    branch that simply claimed every assignment target would pass."""
+    Both directions are asserted from one snippet: discovering the factory forms is the true
+    positive; the ordinary assignments beside them are the true negative, without which a branch
+    that simply claimed every assignment target would pass."""
     found = _doubles_in(ast.parse(_FACTORY_FORMS))
 
     assert found == {"BareCall", "DottedCall", "BuiltinType", "TypedTuple"}, sorted(found)
@@ -316,9 +296,8 @@ def test_the_class_factory_branch_of_the_walk_finds_an_assignment_form_double():
 
 @pytest.mark.parametrize("module", MODULES)
 def test_every_test_double_in_the_engine_suite_is_classified(module):
-    """A new stub is a red test until the table says what it models. Without this, extending the
-    suite's stub inventory is invisible -- which is how seven separate restatements each reached
-    production behaviour before a human happened to read them."""
+    """A new stub is a red test until the table says what it models; without it, extending the
+    suite's stub inventory is invisible."""
     discovered = _discovered_doubles(module)
     floor = _WALK_FLOOR.get(module, 0)
     assert len(discovered) >= floor, f"the walk found only {sorted(discovered)} in {module} -- it is checking nothing"

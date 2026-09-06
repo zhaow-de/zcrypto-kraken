@@ -35,7 +35,7 @@ def _plan(**overrides):
     return parse_plan(_text(**overrides))
 
 
-# ---- parse_plan: one refusal per shape rule, each flipping alone -------------------------------
+# ---- parse_plan --------------------------------------------------------------------------------
 
 
 def test_parse_plan_rejects_non_json():
@@ -117,8 +117,7 @@ def test_parse_plan_rejects_a_non_object_intent():
 
 
 def test_parse_plan_rejects_an_unknown_intent_key():
-    # The exact typo a reviewer named: "levarage" would otherwise parse cleanly as a SPOT intent,
-    # silently dropping the operator's intended leverage instead of refusing.
+    # "levarage" parses cleanly as a SPOT intent, silently dropping the operator's intended leverage.
     intent = _intent()
     intent["levarage"] = 3
     with pytest.raises(ProbePlanError, match="unknown key"):
@@ -226,13 +225,13 @@ def test_parse_plan_accepts_a_valid_margin_intent():
     assert plan.intents[0].leverage == 2
 
 
-# ---- rest-hold: the vocabulary, the two fields, and their refusals -----------------------------
+# ---- rest-hold ---------------------------------------------------------------------------------
 
 
 def test_the_mode_vocabulary_is_pinned_so_a_new_mode_cannot_arrive_unnoticed():
-    """Every mode name is a branch in the executor. A mode added here and nowhere else runs with
-    `execute` semantics -- joining the touch and crossing the spread at the time box -- so the
-    vocabulary is pinned and widening it is a deliberate, reviewed edit."""
+    """Every mode name is a branch in the executor. A mode added here and nowhere else joins the
+    touch like `execute` -- `ProbeExecutor._limit_price`'s fall-through -- so the vocabulary is pinned and
+    widening it is a deliberate, reviewed edit."""
     assert probeplan.MODES == frozenset({"execute", "rest-cancel", "rest-hold"})
 
 
@@ -249,8 +248,7 @@ def _rest_hold_intent() -> dict:
 
 
 def test_a_rest_hold_intent_without_both_fields_is_refused():
-    """The two fields are what distinguish this mode; an intent missing either has no price and no
-    duration, and there is no default that would be safe to invent for a live order."""
+    """There is no default price or duration safe to invent for a live order."""
     for missing in ("offset_pct", "hold_minutes"):
         raw = _rest_hold_intent()
         del raw[missing]
@@ -273,16 +271,10 @@ def test_the_two_fields_are_refused_on_every_other_mode():
 
 @pytest.mark.parametrize("hold", [0, -1, 61, 600, 45.5, "45", True])
 def test_a_hold_outside_the_cap_is_refused(hold):
-    """The cap is what keeps a plan from resting an order indefinitely -- the one bound on this
-    mode that does not depend on anything else in the system still working.
-
-    The last three fixtures hold the TYPE half of that guard in place, which the int cases cannot
-    reach: 45.5 is in range as a number, so only `isinstance` can refuse it; "45" additionally
-    pins that the refusal is a ProbePlanError -- `1 <= "45"` raises TypeError, which
-    `Executor._read_plan`'s `except (ProbePlanError, OSError)` does not catch, so the malformed
-    plan would be neither journaled nor deleted and every later tick would re-read it; and True is
-    an int by subclass whose range check PASSES, so only the explicit bool arm can refuse it --
-    without that arm `hold_minutes: true` parses as a one-minute hold and `--check` prints it."""
+    """The cap is what keeps a plan from resting an order indefinitely -- the one bound on this mode
+    that does not depend on anything else in the system still working. The non-int fixtures are
+    deliberate: 45.5 and "45" reach only the type arm, and True is an int by subclass whose range
+    check passes, so only the explicit bool arm refuses it."""
     with pytest.raises(probeplan.ProbePlanError, match="hold_minutes"):
         probeplan._parse_intent(_rest_hold_intent() | {"hold_minutes": hold})
 
@@ -297,11 +289,8 @@ def test_a_non_positive_offset_is_refused(offset):
 
 @pytest.mark.parametrize("offset", ["5.0", "abc"])
 def test_a_non_numeric_offset_is_refused(offset):
-    """`_parse_positive_number`'s type half, which this mode is the first caller to depend on: a
-    bool is caught by the half beside it, and no numeric fixture can reach this one. Dropped,
-    `"5.0"` becomes five percent silently, and `"abc"` raises ValueError -- which
-    `Executor._read_plan`'s `except (ProbePlanError, OSError)` does not catch, so the plan is
-    neither journaled nor deleted and every later tick re-reads it."""
+    """Without `_parse_positive_number`'s isinstance arm, `"5.0"` would silently become five
+    percent."""
     with pytest.raises(probeplan.ProbePlanError, match="offset_pct"):
         probeplan._parse_intent(_rest_hold_intent() | {"offset_pct": offset})
 
@@ -331,7 +320,6 @@ def test_plan_refusals_an_expired_plan_refuses():
 
 
 def test_plan_refusals_age_exactly_at_the_ttl_passes():
-    # Strict '>' -- age == PLAN_TTL exactly must NOT refuse.
     created_at = NOW - PLAN_TTL
     plan = _plan(created_at=created_at.isoformat())
     reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
@@ -358,8 +346,7 @@ def test_plan_refusals_over_cap_notional_refuses():
 
 
 def test_plan_refusals_notional_exactly_at_the_cap_passes():
-    # Strict '>' -- the boundary itself must NOT refuse, or a future '>' -> '>=' regression is
-    # invisible.
+    # The boundary itself must NOT refuse, or a '>' -> '>=' regression is invisible.
     plan = _plan(intents=[_intent(notional_eur=100.0)])
     reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
     assert reasons == ()
@@ -392,22 +379,21 @@ def test_plan_refusals_margin_floor_passes_at_free_zeur_100():
 
 
 def test_plan_refusals_margin_floor_refuses_at_free_zeur_50():
-    # Same plan as above; 75 > 50 refuses.
     plan = _margin_plan()
     reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=50.0)
     assert reasons == ("margin floor: 75.00 EUR required exceeds free_zeur 50.00 EUR",)
 
 
 def test_plan_refusals_margin_required_exactly_at_free_zeur_passes():
-    # Same plan as above (margin_required == 75.0 exactly); the boundary itself must NOT refuse.
+    # margin_required == 75.0 exactly; the boundary itself must NOT refuse.
     plan = _margin_plan()
     reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=75.0)
     assert reasons == ()
 
 
 def test_plan_refusals_a_nan_free_zeur_refuses():
-    # The executor passes free_zeur from a live venue balance -- validate at the point of use, not
-    # only at config-parse time. nan defeats "required > nan" (always False).
+    # The executor passes free_zeur from a live venue balance -- validated at the point of use, not
+    # only at config-parse time.
     plan = _plan()
     reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=float("nan"))
     assert reasons == ("free_zeur is not finite: nan",)

@@ -1,9 +1,4 @@
-"""vault-pass.sh refuses ansible-inventory --host/--list ancestry (spec 00083 D4).
-
-The test launches vault-pass.sh as a CHILD of a wrapper script literally named
-`ansible-inventory`, so /proc/<ancestor>/cmdline genuinely contains the banned form —
-the ancestry walk is exercised for real, not simulated. sops is stubbed via ZCRYPTO_SOPS_BIN.
-"""
+"""vault-pass.sh refuses `ansible-inventory --host/--list/--vars` ancestry (spec 00083 D4)."""
 
 import os
 import stat
@@ -23,9 +18,8 @@ def make_stub_sops(tmp_path):
 def run_under(tmp_path, wrapper_name, wrapper_args):
     """Run vault-pass.sh as a CHILD of a process whose cmdline is `<wrapper_name> <args>`.
 
-    No `exec` in the wrapper — exec would replace the wrapper's process image, so no ancestor
-    would ever carry the banned cmdline and the walk would find nothing (cold-review C1).
-    """
+    No `exec` in the wrapper: exec would replace its process image, leaving no ancestor carrying
+    the banned cmdline for the walk to find."""
     wrapper = tmp_path / wrapper_name
     wrapper.write_text(f'#!/usr/bin/env bash\n"{SCRIPT}"\n')
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)

@@ -127,10 +127,8 @@ def _series(textfile: Path) -> dict[str, float]:
 
 
 def test_detect_only_is_the_default_and_mints_nothing(tmp_path, monkeypatch):
-    """The load-bearing default. `--min-gap-seconds` is not yet validated cross-host (T0039): the
-    measured single-host max natural quiescence is 14.78 s and one secondary update row is enough to
-    witness, so a coalescing artifact could trip a phantom splice — an unaudited data swap into an
-    unbackfillable archive. Detect-only ledgers what it WOULD do and writes no parquet."""
+    """Detect-only by default so an ad-hoc run ledgers what it WOULD splice and writes no parquet;
+    the deployed reconciler passes `--mint`, which is the option's own help."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     _plant_primary_gap(pri, sec, H)
@@ -164,8 +162,7 @@ def test_mint_writes_the_healed_hour_into_the_overlay(tmp_path, monkeypatch):
 
 def test_a_detect_only_rerun_never_re_ledgers_the_same_hour(tmp_path, monkeypatch):
     """The ledger is the counters' backing store AND detect-only's only output. Re-appending the same
-    `would_mint` every cycle would inflate every cumulative counter by up to --window-hours and bias
-    T0039's soak distribution toward the hours that sat in the window longest."""
+    `would_mint` every cycle would inflate every cumulative counter by up to --window-hours."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     _plant_primary_gap(pri, sec, H)
@@ -191,8 +188,8 @@ def test_a_mint_rerun_is_a_no_op(tmp_path, monkeypatch):
 
 
 def test_a_soaked_would_mint_hour_still_mints_when_the_flag_flips(tmp_path, monkeypatch):
-    """T0039's end state: the soak ledgers `would_mint`, the threshold is pinned, the operator flips
-    to --mint. Hours still inside the window must be healed, not skipped as already-decided."""
+    """An hour already ledgered `would_mint` and still inside the window must be healed when the flag
+    flips, not skipped as already-decided."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     _plant_primary_gap(pri, sec, H)
@@ -352,9 +349,7 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
     assert result.exit_code == 0
     series = _series(out)
     # Name-only admission below would stay green on a gauge wired to nothing, and a zero here reads as
-    # a healthy scan rather than a broken one. This pins that it carries a real measurement. It does
-    # NOT prove both halves are summed -- the load half alone is also > 0 -- and no cheap assertion
-    # does; what guards that is the single production call site passing one accumulated variable.
+    # a healthy scan rather than a broken one. This pins that it carries a real measurement.
     assert float(series["zcrypto_reconcile_ledger_scan_seconds"]) > 0.0, series["zcrypto_reconcile_ledger_scan_seconds"]
     assert set(series) == {
         "zcrypto_reconcile_last_success_timestamp_seconds",
@@ -364,9 +359,8 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
         'zcrypto_reconcile_source_lag_seconds{source="secondary"}',
         "zcrypto_reconcile_spliced_hours_total",
         "zcrypto_reconcile_union_hours_total",
-        # `healable` is the gap RATE, and it must be non-zero in detect-only: `healed` counts only
-        # minted hours, and minting stays off for the whole T0039 soak, so the degrading-primary
-        # alarm would be pinned at 0 exactly when it is most needed.
+        # `healable` is the gap RATE and must be non-zero in detect-only: `healed` counts only
+        # minted hours, so the degrading-primary alarm would otherwise read 0 in that mode.
         "zcrypto_reconcile_healable_gap_seconds_total",
         "zcrypto_reconcile_healed_gap_seconds_total",
         "zcrypto_reconcile_residual_gap_seconds_total",
@@ -409,12 +403,9 @@ def test_textfile_reports_cycle_duration_and_stamps_completion(tmp_path):
 def test_the_cli_stamps_the_clock_read_at_the_END_of_the_cycle(tmp_path, monkeypatch):
     """The end stamp must be a SECOND clock read, taken after the work — not the start value relabelled.
 
-    The test above calls `_write_textfile` directly with two explicit stamps, so it cannot see what
-    `reconcile()` actually passes. Every other CLI test fakes `_utc_now` as a constant, which makes
-    `ended == now` and lets a regression to `ended=now` at the call site ship green — and that
-    regression IS the measured defect (a cycle stamping 08:12:16 while it completed 08:35:06). So this
-    fake returns a SEQUENCE: `reconcile()` reads the clock exactly twice, and the second read must be
-    the one that reaches the stamp.
+    A constant `_utc_now` fake makes `ended == now`, so a regression to `ended=now` at the call site
+    would ship green. This fake returns a SEQUENCE instead: `reconcile()` reads the clock exactly
+    twice, and the second read must be the one that reaches the stamp.
     """
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
@@ -589,12 +580,11 @@ def test_a_wrong_unit_ts_column_fails_that_hour_instead_of_killing_the_cycle(tmp
 def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
     """An empty mirror (no finals at all) has +Inf lag, and it MUST be spelled the Prometheus way.
 
-    `_lag` returns math.inf for a mirror with zero hours, and the exporter's own comment says that
-    "+Inf trips the source-lag rule". But an f-string renders math.inf as the literal `inf`, which the
-    Prometheus text format does not accept -- and node-exporter's textfile collector rejects the WHOLE
-    file on one bad line, so a single infinite lag would drop EVERY zcrypto_reconcile_* series for that
-    scrape. Reachable at cold bring-up (a mirror that exists but has not committed a final yet) or a
-    total loss on one host -- exactly when source-lag most needs to fire.
+    `_lag` returns `math.inf` for a mirror with zero hours, but an f-string renders it as the literal
+    `inf`, which the Prometheus text format does not accept -- and node-exporter's textfile collector
+    rejects the WHOLE file on one bad line, so a single infinite lag would drop EVERY
+    zcrypto_reconcile_* series for that scrape. Reachable at cold bring-up or a total loss on one host
+    -- exactly when source-lag most needs to fire.
     """
     import math
 
@@ -673,12 +663,6 @@ def test_textfile_publishes_the_ledger_record_count(tmp_path):
 
 
 # --- the counters describe the OUTPUT, not the input (T0103) --------------------------------------
-#
-# The 2026-07-27 07:00 UTC blackout: both mirrors went dark together and the secondary contributed
-# only its post-resubscribe tail. `healed_seconds` was the full window WIDTH, admitted on one
-# secondary update anywhere inside it, so the ledger claimed 2,311.536587 s healed against
-# 82.955463 s actually spliced -- and the alert that reads it told an operator "every gap was
-# covered" for 24 h. These two tests are that shape, and both fail against the pre-fix wiring.
 
 
 def _outage(pri: Path, sec: Path, hour: datetime, pair: str, *, secondary_dark: bool) -> None:
@@ -760,9 +744,9 @@ def test_the_gap_rate_still_sees_the_full_window_the_secondary_witnessed(tmp_pat
 
 
 def test_the_provenance_sidecar_records_what_the_hour_still_lacks(tmp_path, monkeypatch):
-    """`residual_gaps` was a literal `[]` at every mint call, so every provenance file on the NAS
-    claims a complete hour. The sidecar is the cheapest audit surface there is -- a pure file
-    assertion over data already on disk -- and it is worthless while it always says the same thing."""
+    """The sidecar must carry the hour's measured residual: it is the cheapest audit surface there is
+    -- a pure file assertion over data already on disk -- and a `residual_gaps` that is always `[]`
+    claims every minted hour is complete."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
@@ -776,8 +760,8 @@ def test_the_provenance_sidecar_records_what_the_hour_still_lacks(tmp_path, monk
 
 def test_the_gap_rate_still_reads_the_full_window_when_the_heal_was_almost_nothing(tmp_path, monkeypatch):
     """`claimed_seconds` and `healed_seconds` must stay distinguishable in the shape that separates
-    them: collapsing the rate onto the measured heal would drop the real event's degrading-primary
-    signal from 2,311 s to 83 s."""
+    them: collapsing the rate onto the measured heal would shrink the degrading-primary signal to the
+    fraction the secondary happened to cover."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
@@ -848,10 +832,9 @@ def test_a_pair_that_minted_before_the_fleet_detector_ran_is_not_booked_twice(tm
 
 # --- the pair with the biggest hole and no ledger record at all (T0103) ---------------------------
 #
-# ADA/EUR lost 208.566668 s in the 2026-07-27 blackout -- the largest hole in the canonical archive
-# for that hour -- and produced NO record. Its secondary held 200 rows inside the gap, every one a
-# `snapshot` at a single timestamp and not one an `update`, so `secondary_covers` was False,
-# `find_book_gaps` returned [] and the `if not gaps: continue` path wrote nothing.
+# `secondary_covers` is False for a window whose only secondary rows are snapshots, so `find_book_gaps`
+# returns [] for it -- and without the `unwitnessed` state the biggest holes are the ones that leave
+# no record at all.
 
 
 def _unwitnessed(pri: Path, sec: Path, hour: datetime, pair: str) -> None:
@@ -936,9 +919,9 @@ def test_an_unwitnessed_gap_is_decided_once_not_re_ledgered_every_cycle(tmp_path
 
 def test_a_non_monotonic_secondary_still_fails_the_hour_instead_of_exiting_clean(tmp_path, monkeypatch):
     """The contract (`--help` and README): exit 1 on an integrity failure, a non-monotonic stream
-    among them. When the unwitnessed split dropped the secondary's monotonicity check, an hour whose
-    only silence was UNWITNESSED reached the end of the cycle, published a textfile and refreshed
-    `last_success_timestamp` -- exit 0 on a stream the archive cannot trust."""
+    among them. Without the secondary's monotonicity check an hour whose only silence is UNWITNESSED
+    reaches the end of the cycle, publishes a textfile and refreshes `last_success_timestamp` -- exit
+    0 on a stream the archive cannot trust."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     _unwitnessed(pri, sec, H, "BTC/EUR")
@@ -1115,13 +1098,11 @@ def test_a_present_but_empty_final_is_booked_the_intersection_not_the_whole_hour
 
 
 def test_an_unknown_ledger_state_moves_no_counter(tmp_path, monkeypatch):
-    """T0103's parked ledger correction is an appended `state: "correction"` note carrying no counter
-    field, and its whole safety argument is that `_totals` ignores it BY CONSTRUCTION — any record
-    that lowered `healed_gap_seconds_total` would read to Prometheus as a reset and report the
-    post-reset value as fresh healing, louder than the fiction it corrects.
-
-    Nothing pinned that. A refactor giving unknown states a default contribution would silently arm
-    the attended write, months later, with no test between it and the CRITICAL page."""
+    """A ledger correction is an appended `state: "correction"` note carrying no counter field, and its
+    whole safety argument is that `_totals` ignores it BY CONSTRUCTION — any record that lowered
+    `healed_gap_seconds_total` would read to Prometheus as a reset and report the post-reset value as
+    fresh healing, louder than the fiction it corrects. A refactor giving unknown states a default
+    contribution would move a counter on such a note, with no test between it and the CRITICAL page."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     rec.mkdir(parents=True, exist_ok=True)
@@ -1245,8 +1226,8 @@ def test_the_dark_episode_counter_partitions_the_booked_seconds(tmp_path, monkey
 
 
 def test_a_record_written_before_the_discriminator_existed_counts_as_undetermined(tmp_path, monkeypatch):
-    """D4a. The two real historical episodes are already in the live ledger with no `verdict`, and
-    `_decided` prevents re-deciding them. The counter must NEVER retroactively claim knowledge the
+    """D4a. A record written before the discriminator existed carries no `verdict`, and `_decided`
+    prevents re-deciding it. The counter must NEVER retroactively claim knowledge the
     system did not have -- a verdict-less record is `undetermined`, not `venue_silent`.
     """
     pri, sec, rec = _roots(tmp_path)
@@ -1272,8 +1253,7 @@ def test_a_record_written_before_the_discriminator_existed_counts_as_undetermine
 
 
 def test_an_unrecognized_verdict_string_counts_as_undetermined_not_a_crash(tmp_path, monkeypatch):
-    """D4a's sibling gap: the neighbouring test covers a MISSING verdict (a pre-discriminator
-    record); this covers an UNRECOGNIZED one. The ledger is append-only and outlives any single
+    """An UNRECOGNIZED verdict, not a missing one. The ledger is append-only and outlives any single
     image version -- widen the verdict vocabulary later, then roll back to this code (a normal
     operation -- `.claude/skills/zcrypto-rollout-image/SKILL.md`'s `Ops converges` makes it a
     re-converge to the recorded digest), and it must not crash-loop indexing a `dark_<verdict>` key

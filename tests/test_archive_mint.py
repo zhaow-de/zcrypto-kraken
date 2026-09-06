@@ -42,10 +42,8 @@ def _block(source: str, offsets: list[float], **kw) -> Block:
 def _blocks() -> list[Block]:
     """Primary, then secondary — and the secondary's rows are EARLIER than the primary's.
 
-    Deliberately not time-sorted: `splice_book` emits block order, not time order, and a mint that
-    "helpfully" sorted would reconstruct a different book (L2 rows carry absolute quantities). The
-    price column doubles as a row fingerprint so the on-disk order is checkable.
-    """
+    Deliberately not time-sorted: `splice_book` emits block order, and sorting would reconstruct a
+    different book (L2 rows carry absolute quantities)."""
     return [_block("primary", [10.0, 20.0]), _block("secondary", [1.0, 2.0])]
 
 
@@ -78,9 +76,6 @@ def _mint(root: Path, **kw):
     return mint_hour(root, "BTC/EUR", "book", H, kw.pop("blocks", _blocks()), schema=BOOK_SCHEMA, tool_version="test", **kw)
 
 
-# --- the plan's five ---------------------------------------------------------------------------
-
-
 def test_mint_writes_a_verifiable_final_with_provenance(tmp_path):
     p = _mint(tmp_path)
     assert p == _hour_dir(tmp_path) / "09.parquet"
@@ -94,7 +89,6 @@ def test_mint_writes_a_verifiable_final_with_provenance(tmp_path):
 
 def test_rows_land_in_block_order_never_sorted(tmp_path):
     p = _mint(tmp_path)
-    # block order (10, 20 | 1, 2), NOT time order (1, 2, 10, 20)
     assert pl.read_parquet(p)["price"].to_list() == [10.0, 20.0, 1.0, 2.0]
 
 
@@ -126,7 +120,7 @@ def test_ledger_is_append_only_jsonl(tmp_path):
     assert [json.loads(line)["state"] for line in lines] == ["minted", "both_streams_silent"]
 
 
-# --- the hour-boundary contract (the caveat the plan flags) -------------------------------------
+# --- the hour-boundary contract -----------------------------------------------------------------
 
 
 def _tail_gap(end: datetime) -> Gap:
@@ -149,7 +143,6 @@ def test_a_tail_gap_ending_on_the_exclusive_hour_boundary_is_accepted(tmp_path):
 def test_a_tail_gap_that_stops_short_of_the_exclusive_hour_boundary_is_rejected(tmp_path):
     # Callers pass `hour_end` as the EXCLUSIVE next-hour boundary (10:00:00). 09:59:59.999999 makes
     # splice_book's tail filter (`ts >= gaps[-1].end`) admit primary rows AFTER the secondary block.
-    # It must be loud, not silent.
     bad = _tail_gap(datetime(2026, 7, 16, 9, 59, 59, 999_999, tzinfo=UTC))
     with pytest.raises(CaptureError, match="hour boundary"):
         _mint(tmp_path, gaps_healed=[bad])
@@ -248,11 +241,7 @@ def test_blocks_that_do_not_match_the_schema_are_refused(tmp_path):
 
 
 def test_a_kill_between_the_sidecar_and_the_rename_leaves_no_final(tmp_path):
-    """The invariant, exercised: `09.parquet` on disk ALWAYS means committed + complete + manifested.
-
-    The kill is induced for real, not mocked: an obstruction on the provenance path (which is written
-    after the sidecar and before the publishing rename) aborts the mint at exactly that point.
-    """
+    """The invariant, exercised: `09.parquet` on disk ALWAYS means committed + complete + manifested."""
     d = _hour_dir(tmp_path)
     d.mkdir(parents=True)
     (d / "09.provenance.json").mkdir()  # rename onto a directory -> IsADirectoryError, mid-mint
@@ -267,7 +256,6 @@ def test_a_kill_between_the_sidecar_and_the_rename_leaves_no_final(tmp_path):
     # the half-state is invisible to the archive verifier: it checks finals, and there is none
     assert verify_tree(tmp_path, now=HOUR_END).checked == 0
 
-    # and the next run re-mints cleanly over it
     (d / "09.provenance.json").rmdir()
     p = _mint(tmp_path)
     assert verify_manifest(p) is True
@@ -436,9 +424,7 @@ def test_replace_true_re_mints_and_the_manifest_tracks_the_new_bytes(tmp_path):
 
 def test_extra_provenance_may_not_shadow_a_base_field(tmp_path):
     """The guard exists so a caller cannot make the provenance lie about the file it certifies:
-    overriding `sha256` or `hour` would let the record disagree with the bytes it attests. Untested
-    guards are one refactor away from silently not guarding, so the raising branch is pinned here.
-    """
+    overriding `sha256` or `hour` would let the record disagree with the bytes it attests."""
     hour = datetime(2026, 7, 11, 2, tzinfo=UTC)
     for field in ("sha256", "hour", "tool"):
         with pytest.raises(CaptureError, match="may not override the base field"):

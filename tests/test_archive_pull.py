@@ -153,7 +153,7 @@ def _part(root: Path, pair: str, kind: str, hour: str, idx: int) -> Path:
 
 
 def test_verify_tree_reports_which_finals_verified() -> None:
-    """`verified` is the set of OK final paths -- the authority prune uses to know what is safe to remove."""
+    """`verified` lists the finals that hashed OK, and a failed final is not among them."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
@@ -168,11 +168,11 @@ def test_verify_tree_reports_which_finals_verified() -> None:
 def test_prune_stale_parts_removes_parts_of_a_verified_final_only(tmp_path: Path) -> None:
     from cli.archive.pull import prune_stale_parts, verify_tree
 
-    # hour 10: verified final + 3 stale parts -> parts pruned, final kept
+    # hour 10: a verified final beside 3 stale parts
     _seg(tmp_path, "BTC/EUR", "book", "10")
     for i in range(3):
         _part(tmp_path, "BTC/EUR", "book", "10", i)
-    # hour 12: parts but NO final (live/unpublished hour) -> left completely alone
+    # hour 12: parts but NO final -- a live, unpublished hour
     live = [_part(tmp_path, "BTC/EUR", "book", "12", i) for i in range(2)]
 
     r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
@@ -201,8 +201,8 @@ def test_prune_leaves_parts_of_an_UNVERIFIABLE_final_alone(tmp_path: Path) -> No
 
 
 def test_prune_never_touches_a_held_spill_beside_a_verified_final(tmp_path: Path) -> None:
-    """A `.held` file is a quarantined spill -- potentially the only copy of some rows. The glob keys
-    on `.part`, so it must never match `.held`; this pins that a widening of the glob would be caught."""
+    """A `.held` file is a quarantined spill, potentially the only copy of some rows: the prune glob
+    keys on `.part` and must never match it, while the real stale part beside it is still pruned."""
     from cli.archive.pull import prune_stale_parts, verify_tree
 
     _seg(tmp_path, "BTC/EUR", "book", "10")
@@ -219,8 +219,8 @@ def test_prune_never_touches_a_held_spill_beside_a_verified_final(tmp_path: Path
 
 
 def test_prune_leaves_parts_of_an_ERRORING_final_alone(tmp_path: Path) -> None:
-    """A final whose manifest is MISSING errors (CaptureError), not just mismatches -- it must land in
-    `failed`, never `verified`, so its parts (the only intact copy) are untouched."""
+    """A final whose manifest is MISSING errors (CaptureError) rather than mismatching, and must stay
+    out of `verified`, so its parts (the only intact copy) are untouched."""
     from cli.archive.pull import prune_stale_parts, verify_tree
 
     _seg(tmp_path, "BTC/EUR", "book", "10")
@@ -383,12 +383,9 @@ def test_a_narrowed_scope_without_a_slice_is_refused(tmp_path: Path) -> None:
 
 
 def _squashed(output: str) -> str:
-    """CLI output with ANSI styling removed and whitespace collapsed.
-
-    Typer's OptionHighlighter styles each hyphen of an option separately, so a raw `r.output` holds
-    `-\x1b[0m\x1b[1;36m-channel` and never the literal; the rich panel also word-wraps at COLUMNS,
-    which can split the name across lines. Strip then squash.
-    """
+    """CLI output with ANSI styling removed and whitespace collapsed: Typer's OptionHighlighter styles
+    each hyphen of an option separately, so `--channel` never appears literally in `r.output`, and the
+    rich panel word-wraps at COLUMNS, which can split it across lines."""
     return re.sub(r"\s+", "", re.sub(r"\x1b\[[0-9;]*m", "", output))
 
 

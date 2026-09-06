@@ -1,10 +1,6 @@
 """Guard: `set -g window-size manual` CRASHES the tmux 3.5a server ("server exited unexpectedly")
-the next time a session or window is created. On 2026-07-30 it was shipped into the managed
-~/.tmux.conf as the D13 resize mitigation; when agentboard later created its own session on that
-poisoned server, the whole tmux server died and took the live zcrypto session with it (spec 00075
-D13/D15, ledger incident). `set -g default-size` alone is harmless; the reflow it was meant to
-prevent is recoverable, the crash is not. This test fails if that line is ever reintroduced into a
-tmux config this repo manages, so the landmine cannot come back."""
+the next time a session or window is created. `set -g default-size` alone is harmless; the reflow
+it was meant to prevent is recoverable, the crash is not."""
 
 from pathlib import Path
 

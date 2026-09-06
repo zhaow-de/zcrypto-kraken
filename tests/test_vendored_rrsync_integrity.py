@@ -7,11 +7,7 @@ both destroys the provenance and edits security code into custody (spec 00056 D2
 Nothing in the repo stops that rewrite by itself: the file has no `.py` suffix but a python3
 shebang, so tools identify it as Python. Its protection is a set of exclusions -- pre-commit's
 top-level `exclude:` (which covers EVERY hook) plus ruff's own `exclude` -- and a deleted line in
-either file silently un-protects it. Measured 2026-07-24: with the pre-commit exclusion removed,
-`trailing-whitespace` rewrote the file (it carries trailing spaces on line 265).
-
-This test is deliberately not a unit test of our own code. It is a tripwire: exclusions prevent
-the edit, and this notices if one ever gets through.
+either file silently un-protects it.
 """
 
 import hashlib

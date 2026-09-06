@@ -84,7 +84,6 @@ def test_fetch_oi_day_verifies_checksum_and_parses_metrics(tmp_path):
     rows = fetch_oi_day("BTCUSDT", datetime(2026, 6, 30, tzinfo=UTC), opener=opener)
 
     assert rows is not None and len(rows) == 3
-    # [epoch_ms, sum_oi, sum_oi_value, toptrader_ratio, ls_ratio, taker_ratio]
     first = rows[0]
     assert first[1] == 100.5  # sum_open_interest
     assert first[2] == 100000.0  # sum_open_interest_value
@@ -96,8 +95,8 @@ def test_missing_day_returns_none_not_error(tmp_path):
 
 
 def test_transient_5xx_is_retried_then_succeeds(tmp_path, monkeypatch):
-    """data.binance.vision 503s intermittently under a long backfill; a 5xx server error must be
-    retried, not abort the run (a 4xx like 404 stays definitive -- see the missing-day test)."""
+    """data.binance.vision 503s intermittently under a long backfill, so a 5xx is retried rather
+    than aborting the run."""
     monkeypatch.setattr("cli.derivatives.oi._RETRY_BACKOFF_SECONDS", 0.0)  # no real sleep in the test
     url = _day_url("BTCUSDT", "2026-06-30")
     base = _Opener({url: _zip_of(_metrics_csv("2026-06-30", "BTCUSDT"), "m.csv")})
@@ -176,8 +175,8 @@ def test_unexpected_header_is_fatal(tmp_path):
 
 
 def test_early_history_double_published_rows_collapse_to_one(tmp_path):
-    """2020-09..2021-05 metrics publish every row TWICE (byte-identical). Dedup must collapse each
-    to a single bar with the right value -- verified against real Vision data, pinned here."""
+    """2020-09..2021-05 metrics publish every row TWICE (byte-identical); dedup must collapse each
+    to a single bar with the right value."""
     row = "2026-06-30 00:00:00,BTCUSDT,100.5,100000.0,2.1,1.2,2.0,0.94"
     csv = _HEADER + "\n" + row + "\n" + row + "\n"  # every row duplicated
     opener = _Opener({_day_url("BTCUSDT", "2026-06-30"): _zip_of(csv, "m.csv")})
@@ -219,7 +218,6 @@ def test_checksum_mismatch_is_fatal(tmp_path):
     csv = _metrics_csv("2026-06-30", "BTCUSDT")
     url = _day_url("BTCUSDT", "2026-06-30")
     zip_bytes = _zip_of(csv, "BTCUSDT-metrics-2026-06-30.csv")
-    # a wrong checksum body -> the verify must reject, never silently accept
     opener = _Opener({url: zip_bytes, url + ".CHECKSUM": b"deadbeef  BTCUSDT-metrics-2026-06-30.zip\n"})
 
     with pytest.raises(DerivativesError, match="checksum mismatch"):
@@ -247,8 +245,7 @@ def test_backfill_skips_leading_404s_then_a_hole_is_fatal(tmp_path):
 
 def test_trailing_404_frontier_is_tolerated_not_fatal(tmp_path):
     """Binance publishes each day's metrics with a ~1-2 day lag, so the most recent day(s) 404.
-    Those trailing 404s are the unpublished frontier, NOT a hole -- take what's published and stop.
-    (This is the 2026-07-24 bug: a midnight-crossing run aborted on the not-yet-published 07-23.)"""
+    Those trailing 404s are the unpublished frontier, NOT a hole -- take what's published and stop."""
     files = {
         _day_url("BTCUSDT", "2026-06-30"): _zip_of(_metrics_csv("2026-06-30", "BTCUSDT"), "a.csv"),
         _day_url("BTCUSDT", "2026-07-01"): _zip_of(_metrics_csv("2026-07-01", "BTCUSDT"), "b.csv"),
@@ -272,7 +269,6 @@ def test_trailing_gap_beyond_the_lag_tolerance_is_fatal(tmp_path):
 
     files = {_day_url("BTCUSDT", "2026-06-30"): _zip_of(_metrics_csv("2026-06-30", "BTCUSDT"), "a.csv")}
     opener = _Opener(files)
-    # data ends 06-30; then a run of 404s far exceeding the tolerance up to the boundary
     far = 2 + _MAX_TRAILING_LAG_DAYS  # e.g. 6 days of trailing 404
     with pytest.raises(DerivativesError, match="exceeds the .* publication-lag tolerance"):
         backfill_oi(
@@ -304,7 +300,6 @@ def test_interior_hole_still_fatal_when_data_resumes_after_the_gap(tmp_path):
 def test_resume_reuses_existing_perp_files_and_only_fetches_the_missing(tmp_path):
     """resume=True must not re-fetch a perp whose oi.parquet already exists -- an interrupted backfill
     finishes by building only the missing symbols, then regenerates the manifest over the full set."""
-    # BTCUSDT is 'already done' from a prior run.
     existing = pl.DataFrame(
         {
             "ts": [datetime(2026, 6, 30, tzinfo=UTC)],
@@ -339,7 +334,6 @@ def test_resume_reuses_existing_perp_files_and_only_fetches_the_missing(tmp_path
     )
     assert not any("BTCUSDT" in u for u in fetched), "resume must NOT re-fetch the completed BTCUSDT"
     assert any("ETHUSDT" in u for u in fetched), "the missing ETHUSDT must be fetched"
-    # the manifest covers the full set, reusing the existing BTC series
     assert set(manifest["series"]) == {"BTCUSDT/oi.parquet", "ETHUSDT/oi.parquet"}
     assert manifest["series"]["BTCUSDT/oi.parquet"]["rows"] == 1  # the reused frame
 
@@ -361,7 +355,6 @@ def test_backfill_returns_sorted_deduped_typed_frame(tmp_path):
     assert frame["ts"].n_unique() == frame.height
     assert frame.schema["ts"] == pl.Datetime("us", "UTC")
     assert frame.schema["sum_open_interest"] == pl.Float64
-    # 5-minute cadence preserved
     diffs = frame.filter(pl.col("ts") < datetime(2026, 7, 1, tzinfo=UTC))["ts"].diff().drop_nulls()
     assert (diffs == timedelta(minutes=5)).all()
 
@@ -384,10 +377,8 @@ def test_build_substrate_writes_per_perp_files_and_a_manifest(tmp_path):
     assert manifest["set_sha256"]
     assert set(manifest["series"]) == {"BTCUSDT/oi.parquet", "ETHUSDT/oi.parquet"}
     assert manifest["provenance"]["source"].endswith("daily/metrics")
-    # round-trips
     got = read_oi_series(tmp_path, "BTCUSDT")
     assert got.height == 3
-    # the manifest hash is byte-reproducible across two identical builds
     m2 = json.loads((tmp_path / "manifest.json").read_text())
     assert m2["set_sha256"] == manifest["set_sha256"]
 
@@ -395,10 +386,9 @@ def test_build_substrate_writes_per_perp_files_and_a_manifest(tmp_path):
 def _substrate_root(name: str) -> Path:
     """The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
 
-    Gating on `Path("data/<name>")` alone would be wrong. `data/` is per-checkout and a git
-    worktree's is empty, so such a gate skips wherever this suite runs from a worktree — and a skip
-    on the only machine holding the substrate is recorded as coverage.
-    """
+    `data/` is per-checkout and a worktree's is empty, so gating on `Path("data/<name>")` alone skips
+    wherever this suite runs from a worktree — a skip on the only machine holding the substrate,
+    recorded as coverage."""
     hot = resolve_hot_source(load_config()) / name
     return hot if hot.is_dir() else Path("data") / name
 
@@ -412,11 +402,9 @@ _CLOSED_WINDOW_END = datetime(2026, 1, 1, tzinfo=UTC)
 
 @pytest.fixture(scope="module")
 def oi_panel() -> dict[str, pl.DataFrame]:
-    """The ten perps' OI series, read once for the three assertions below (~5M rows over NFS).
-
-    Keyed on `PERP_SYMBOLS` rather than on whatever the directory holds, so a missing leg raises
-    instead of quietly shrinking the panel the counts are taken over.
-    """
+    """The ten perps' OI series, read once for the assertions below (~5M rows over NFS), keyed on
+    `PERP_SYMBOLS` rather than on whatever the directory holds, so a missing leg raises instead of
+    quietly shrinking the panel the counts are taken over."""
     return {perp: read_oi_series(_OI_ROOT, perp) for perp in sorted(PERP_SYMBOLS.values())}
 
 
@@ -450,8 +438,7 @@ def test_the_oi_zero_populations_hold_over_a_closed_window(oi_panel):
     The two OI zero sets NEST rather than coincide — 101 rows read a zero notional against a healthy
     positive `sum_open_interest` — so a guard on the first column alone is blind to the second's
     count moving. `sum_taker_long_short_vol_ratio == 0.0` is the opposite case, a real all-sell bar
-    D5 rules must be ACCEPTED, and is pinned here so that ruling's population cannot drift either.
-    """
+    D5 rules must be ACCEPTED."""
     window = {perp: frame.filter(pl.col("ts") < _CLOSED_WINDOW_END) for perp, frame in oi_panel.items()}
     assert sum(frame.height for frame in window.values()) == 4_426_251
     zeros = {

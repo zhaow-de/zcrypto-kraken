@@ -1,11 +1,6 @@
-"""Tests for the record-44 builder (cli/portfolio/crossfreq_system.py): verified + fast paths.
-
-Unit tests run on synthetic two-asset grids (no dataset), including the CI-unconditional
-fast-vs-verified equivalence checks. Two tests need the canonical data/ohlc-full machine: the
-frozen-figure regression reproduces registry trial 44 end to end and is slow (~4 min measured:
-the three A2 arms run twice — once inside the builder's ~2 min verified-path build, once for the
-driver-transcribed sleeve-anchor QA), and the fast-path full-history equivalence gate builds both
-paths once (~2 min, dominated by the verified build).
+"""Tests for the record-44 builder (cli/portfolio/crossfreq_system.py), verified and fast paths:
+the synthetic two-asset grids run anywhere, the two DATA_ROOT-gated tests need the canonical
+data/ohlc-full machine.
 """
 
 import math
@@ -99,9 +94,8 @@ def test_degenerate_inputs():
 
 
 def test_dummy_close_semantics():
-    # The synthetic forming-bar close reuses the last close; a None last close stays None (honest
-    # delisted-tail semantics — an asset absent at the snapshot's edge stays absent on the forming
-    # bar instead of being resurrected from an older price).
+    # The None cases carry the decision: an asset absent at the snapshot's edge stays absent on the
+    # forming bar rather than being resurrected from an older price.
     from cli.portfolio.crossfreq_system import _dummy_close
 
     assert _dummy_close([100.0, 101.0]) == 101.0
@@ -125,9 +119,8 @@ def base_build(grids220):
 
 def test_default_cost_basis_is_the_registered_006():
     # The fee/spread split is a renaming, NOT a re-pricing: the two defaults must keep summing to
-    # bit-exactly the 0.006/side basis every registered record-44 figure was measured at. `==`, not
-    # approx — an edit to either default that moves the basis must fail here rather than silently
-    # invalidate the frozen figures below.
+    # bit-exactly the 0.006/side basis every registered record-44 figure was measured at, so an edit
+    # that moves the basis fails here instead of silently invalidating the frozen figures below.
     assert CrossfreqSystemConfig().cost_per_side == 0.006
     assert CrossfreqSystemConfig().fee_per_side == 0.0040
     assert CrossfreqSystemConfig().spread_per_side == 0.0020
@@ -137,12 +130,9 @@ def test_default_cost_basis_is_the_registered_006():
 @pytest.mark.parametrize("field", ["fee_per_side", "spread_per_side"])
 def test_each_cost_term_is_read(grids220, base_build, builder, field):
     # A split whose second term is never read would be worse than no split: each field ALONE must
-    # move the net series. Raise one term by 10 bps holding the other, and require the net series to
-    # change in the only direction cost can push it. What is pinned here is DIRECTION, not magnitude:
-    # the quotient below is the implied per-bar turnover, and it is only asserted non-negative and
-    # somewhere positive — a half- or double-charging defect is caught by the data-gated frozen-figure
-    # regression, not here. base_build is the verified build for both builders — the two paths are
-    # bit-identical, pinned separately by test_fast_path_equivalence_mini_grid.
+    # move the net series, and only in the direction cost can push it — the quotient below is that
+    # field's implied per-bar turnover. base_build serves both builders because the two paths are
+    # bit-identical (test_fast_path_equivalence_mini_grid).
     cfg = CrossfreqSystemConfig(**{"assets": CFG2.assets, field: getattr(CFG2, field) + 0.001})
     bumped = builder(*grids220, config=cfg)
     assert bumped.ungoverned_net != base_build.ungoverned_net
@@ -151,10 +141,6 @@ def test_each_cost_term_is_read(grids220, base_build, builder, field):
 
 
 def test_end_to_end_shapes_and_identities(base_build, grids220):
-    # The synthetic mini-grid end-to-end: shapes, the hand-checkable day_index structure, and an
-    # independent recomputation of every layer downstream of the sleeves (fixed 1/3 combine ->
-    # caps -> whole-book limits -> costing -> governor -> targets) compared exactly against the
-    # builder's output.
     from cli.portfolio import daily_cadence_governor
     from cli.risk import apply_gross_leverage_cap, apply_margin_floor, apply_net_exposure_band, apply_position_caps
 
@@ -231,10 +217,8 @@ def test_newest_row_carries_daily_sleeve_content(base_build):
 
 
 def test_newest_row_extend_by_one_real_bar(base_build):
-    # Invariant (b): extend the 4h grid by one real bar (same daily grid — the live mid-day case);
-    # the previously-newest row is now interior and must be reproduced exactly, and every
-    # completed-bar quantity is prefix-stable (the frozen figures pin exactly this no-append
-    # equivalence on the real dataset).
+    # Invariant (b): the live mid-day case — with one more real 4h bar the previously-newest row is
+    # now interior, and every completed-bar quantity must be reproduced exactly.
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(220, n_extra_h4=1)
     ext = build_crossfreq_system(d_prices, d_ts, h_prices, h_ts, config=CFG2)
     n = base_build.n_periods
@@ -250,10 +234,8 @@ def test_newest_row_extend_by_one_real_bar(base_build):
 
 
 def test_newest_row_extend_by_one_real_daily_bar(base_build):
-    # The daily-grid mirror of the 4h extend-by-one invariant: synthetic_grids(221) adds one REAL
-    # daily bar (and its day of real 4h bars); every previously-newest row — including the daily
-    # sleeves' forming-day row, now decided from a real daily close — must be reproduced exactly,
-    # and every completed-bar quantity is prefix-stable.
+    # The daily-grid mirror: one more REAL daily bar means the daily sleeves' forming-day row is now
+    # decided from a real daily close, and it too must be reproduced exactly.
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(221)
     ext = build_crossfreq_system(d_prices, d_ts, h_prices, h_ts, config=CFG2)
     n = base_build.n_periods
@@ -281,9 +263,8 @@ def test_newest_row_dummy_close_insensitivity(base_build, monkeypatch):
 
 
 def test_whole_book_limits_composition_bites_and_clears_every_ceiling():
-    # The §10 stack itself (order + defaults), on a hand-built book the builder's long-only shadow
-    # book never reaches: bar 0 breaches gross leverage (2.1 > 1.5) and then the margin floor,
-    # bar 1 breaches the net band (1.4 > 1.0). Guards against the wiring being inert code.
+    # A hand-built book the builder's long-only shadow book never reaches: bar 0 breaches gross
+    # leverage (2.1 > 1.5) and then the margin floor, bar 1 breaches the net band (1.4 > 1.0).
     from cli.portfolio.crossfreq_system import apply_whole_book_limits
     from cli.risk import apply_gross_leverage_cap, apply_margin_floor, apply_net_exposure_band, margin_level
 
@@ -335,8 +316,7 @@ def test_whole_book_limits_are_wired_between_caps_and_the_governor(grids220, bui
 
 
 def assert_results_equivalent(fast: CrossfreqSystemResult, verified: CrossfreqSystemResult, tol: float = 1e-12):
-    # The equivalence gate's shape: exact on every integer field, elementwise <= tol on every float
-    # series (final_targets, both nets, multipliers, all sleeve positions).
+    # Exact on every integer field, elementwise <= tol on every float series.
     assert fast.n_periods == verified.n_periods
     assert fast.day_index == verified.day_index
     assert fast.cap_breach_bars == verified.cap_breach_bars
@@ -355,8 +335,6 @@ def assert_results_equivalent(fast: CrossfreqSystemResult, verified: CrossfreqSy
 
 
 def test_fast_path_equivalence_mini_grid(base_build, grids220):
-    # The CI-unconditional equivalence check: on the synthetic 220-day fixture the fast path must
-    # reproduce the verified path on every field (exact integers, <= 1e-12 elementwise floats).
     fast = build_crossfreq_system_fast(*grids220, config=CFG2)
     assert_results_equivalent(fast, base_build)
     # The paths are in fact bit-identical by construction — enforce it in CI, not just on the data machine.
@@ -375,9 +353,8 @@ def test_fast_path_equivalence_mini_grid_mid_day(base_build):
 
 
 def test_fast_path_equivalence_none_bearing_grid():
-    # None paths in CI: a late-listed asset with mid-history gaps and a delisted None tail, plus a
-    # mid-history BTC union gap — the shapes that exercise _trailing_stdevs' None counter,
-    # _map_own_to_union, ret_valid masking, and _dummy_close's None-tail semantics.
+    # The None-bearing shapes, in CI: a late listing, mid-history gaps and a delisted tail on AAA,
+    # plus a BTC union gap that forces the ffill path.
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(220)
     for prices, span in ((d_prices, len(d_ts)), (h_prices, len(h_ts))):
         aaa = list(prices["AAA"])
@@ -450,9 +427,8 @@ def max_dd(rs):
 
 @pytest.mark.skipif(not DATA_ROOT.exists(), reason="canonical dataset not present")
 def test_frozen_figures_regression():
-    # Registry trial 44's figures, reproduced through the committed verified path (the iter-081
-    # driver's QA gates, made permanent). Extent guard FIRST, then the driver-transcribed sleeve
-    # anchors, then the builder's frozen headline figures.
+    # Registry trial 44's figures, reproduced through the committed verified path — the iter-081
+    # driver's QA gates, made permanent.
     from cli.alpha import A1Config, A2Config, a1_book_returns, a2_book_returns
     from cli.alpha.a1 import _asset_returns, _inverse_vol_weights
     from cli.benchmark.strategies import dynamic_inverse_vol_basket, sma_gate, vol_target
@@ -584,8 +560,7 @@ def test_frozen_figures_regression():
 
 
 def _load_union_guarded(interval):
-    # The full-history loader with the extent guard (per-pair bar count + last ts pinned to the
-    # frozen trial-43/44 oracle) — fails loudly before any figure comparison if the dataset drifts.
+    # The full-history loader, extent-guarded: it fails before any figure comparison, not after.
     from cli.ohlc.dataset import read_parquet
 
     frames = {a: read_parquet(DATA_ROOT / a / "EUR" / f"{interval}.parquet") for a in ASSETS}
@@ -606,12 +581,8 @@ def _load_union_guarded(interval):
 
 @pytest.mark.skipif(not DATA_ROOT.exists(), reason="canonical dataset not present")
 def test_fast_path_full_history_equivalence():
-    """The equivalence gate (spec 00040, hard): fast vs verified over the full frozen history —
-    elementwise <= 1e-12 on final_targets and both net series, IDENTICAL cap_breach_bars and
-    governor_engaged_bars, headline Sharpes/maxDD rounding to the same 4dp values.
-
-    Measured wall-clock on the data machine (2026-07-10): verified 111.5 s, fast 1.9 s (~58x).
-    """
+    """The equivalence gate (spec 00040, hard): fast vs verified over the full frozen history, down
+    to the headline figures rounding to the same 4dp values."""
     from cli.validation import sharpe
 
     d_ts, d_prices = _load_union_guarded(1440)
@@ -626,7 +597,6 @@ def test_fast_path_full_history_equivalence():
     print(f"\nwall-clock: verified {t_verified:.1f}s, fast {t_fast:.1f}s ({t_verified / t_fast:.1f}x)")
 
     assert_results_equivalent(fast, verified)
-    # headline figures (registry record 44's set) round to the same 4dp values
     assert round(sharpe(fast.governed_net, periods_per_year=2190), 4) == round(
         sharpe(verified.governed_net, periods_per_year=2190), 4
     )

@@ -50,8 +50,6 @@ def test_conversion_rewrites_the_manifest_and_touches_no_parquet_byte(tmp_path):
 
 
 def test_relative_paths_come_from_the_tree_not_from_the_legacy_keys(tmp_path):
-    # The hub's reach set keys `ADA` against `ADA/EUR/1440.parquet`. A converter that trusted keys
-    # could not convert the sets that most need converting.
     root = tmp_path / "ohlc-reachlike"
     _legacy_set(root, series_keys_are_bases=True)
     convert_dataset(root, apply=True)
@@ -89,13 +87,7 @@ def test_a_detached_set_declares_both_subsets_and_names_continuous_as_its_identi
 
 
 def test_per_series_legacy_evidence_survives_conversion(tmp_path):
-    """The case the first version of this guard did NOT construct, and the omission cost real data.
-
-    Reach records its seam evidence PER ROW -- `rest_first`/`rest_last` name a REST window that
-    expires, so they are recoverable from nothing once dropped. The original converter preserved
-    only top-level legacy keys and the original test asserted only top-level fields, so the guard
-    passed while `ohlc-reach-20260813`'s per-series record was erased.
-    """
+    """Reach records its seam evidence PER ROW, so conversion must carry every row across."""
     root = tmp_path / "ohlc-reachlike"
     frames = {"ADA/EUR/1440.parquet": to_frame(_rows(5)), "ADA/EUR/60.detached.parquet": to_frame(_rows(3))}
     for relpath, frame in frames.items():
@@ -138,15 +130,14 @@ def test_per_series_legacy_evidence_survives_conversion(tmp_path):
     rows = read_manifest(root / "manifest.json").provenance["legacy"]["series"]
     assert len(rows) == 2, "the per-series legacy rows must survive, not just the top-level keys"
     cont = next(r for r in rows if r["status"] == "continuous")
-    # These five are recoverable from nothing: the REST window they describe has expired.
+    # These seam fields describe a REST window that expires: once dropped they are recoverable from nothing.
     assert cont["rest_first"] == "2026-08-01T00:00:00+00:00"
     assert cont["rest_last"] == "2026-08-13T00:00:00+00:00"
     assert cont["overlap_bars"] == 607 and cont["gap_bars"] == 0 and cont["appended"] == 113
 
 
 def test_legacy_fields_the_contract_does_not_name_are_preserved_verbatim(tmp_path):
-    # Reach's seam evidence was computed against a REST window that has since expired, and each
-    # set's original fetched_at is a freeze moment nothing else records.
+    # Each set's original fetched_at is a freeze moment nothing else records.
     root = tmp_path / "ohlc-thing"
     _legacy_set(root)
     convert_dataset(root, apply=True)
@@ -156,9 +147,8 @@ def test_legacy_fields_the_contract_does_not_name_are_preserved_verbatim(tmp_pat
 
 
 def test_a_legacy_manifest_attesting_nothing_is_refused_rather_than_vouched_blind(tmp_path):
-    """The drift refusal used to be skipped entirely when nothing was attested, so a set with no
-    per-series hash converted with ZERO content proof -- silently, and while the docs claimed every
-    conversion was proved. Refusing is the only honest option: there is nothing to prove against."""
+    """Refusing is the only honest option when a legacy manifest attests no content hash at all:
+    there is nothing to prove the conversion against."""
     root = tmp_path / "ohlc-thing"
     write_parquet(to_frame(_rows(5)), root / "ADA/EUR/1440.parquet")
     (root / "manifest.json").write_text(json.dumps({"fetched_at": "2026-07-01T00:00:00+00:00", "series": {"ADA": {"rows": 5}}}))
@@ -167,8 +157,7 @@ def test_a_legacy_manifest_attesting_nothing_is_refused_rather_than_vouched_blin
 
 
 def test_the_v0_dataset_hash_spelling_still_proves_the_conversion(tmp_path):
-    # v0 wrote its content hash under `dataset_hash`, so a `sha256`-only walk saw nothing and the
-    # proof was skipped. Both spellings now count, so a v0 set converts WITH proof rather than without.
+    # v0 wrote its content hash under `dataset_hash`, so a `sha256`-only walk sees nothing to prove against.
     root = tmp_path / "ohlc"
     frame = to_frame(_rows(5))
     write_parquet(frame, root / "ADA/1440.parquet")
@@ -183,7 +172,6 @@ def test_the_v0_dataset_hash_spelling_still_proves_the_conversion(tmp_path):
     convert_dataset(root, apply=True)
     assert read_manifest(root / "manifest.json").series["ADA/1440.parquet"]["sha256"] == dataset_hash(frame)
 
-    # ...and a v0 set whose content has since drifted is refused, like any other.
     root2 = tmp_path / "ohlc2"
     write_parquet(to_frame(_rows(5)), root2 / "ADA/1440.parquet")
     (root2 / "manifest.json").write_text(

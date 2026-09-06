@@ -1,18 +1,7 @@
-"""The controls that make the provenance mechanism non-vacuous (spec 00086 D7).
-
-Two halves, deliberately gated differently.
-
-The **record-44 control** runs where the canonical data lives: the committed loading path over
-`data/ohlc-full`'s record-44 slice must reproduce the figures registry record 44 registered, and the
-block that same loading path accumulates must equal the frozen slice extent. The figures are asserted
-against LITERALS *and* against the real registry — literals alone would drift with the build, the
-registry alone would let a drifted registry and a drifted build cancel each other out.
-
-The **end-to-end control** runs everywhere, including a bare checkout with no `data/` at all:
-synthetic parquets in tmp -> loader -> block -> `append()` -> reload -> the stored `dataset_hash`
-re-derives from the stored block. No real dataset and no manifest are involved, which is the coverage
-the manifest-reading designs could not have.
-"""
+"""The controls that make the provenance mechanism non-vacuous (spec 00086 D7): record 44's figures
+are asserted against LITERALS *and* the real registry, since literals alone drift with the build and
+the registry alone lets a drifted registry and build cancel out; the synthetic control is deliberately
+ungated, building under `tmp_path` so a bare checkout still proves the identity path."""
 
 from __future__ import annotations
 
@@ -37,8 +26,8 @@ _RECORD_44 = 44
 _GOVERNOR_ENGAGED_BARS = 7302
 _CAP_BREACH_BARS = 1318
 
-# The record-44 slice of data/ohlc-full as the capturing loader observes it — 10 assets x {1440, 240},
-# measured 2026-08-09. The span's upper bound is the 4h leg's last bar START; the daily leg ends 00:00.
+# The record-44 slice of data/ohlc-full as the capturing loader observes it — 10 assets x {1440, 240}.
+# The span's upper bound is the 4h leg's last bar START; the daily leg ends 00:00.
 _FROZEN_FILES = 20
 _FROZEN_ROWS = 202_405
 _FROZEN_SPAN = ["2013-09-10 00:00:00+00:00", "2026-03-31 20:00:00+00:00"]
@@ -106,9 +95,8 @@ def test_the_whole_identity_path_round_trips_on_synthetic_data(tmp_path):
     record = reloaded[0]
     assert record.schema_version == 4
     assert record.datasets == block
-    # The derivation survives the write and the reload, and it is the STORED block it is derived from.
     assert record.dataset_hash == compute_hash(record.datasets) == appended.dataset_hash
-    # ...and the stored digests are the files' own bytes, so the round trip is not self-referential.
+    # The stored digests are the files' own bytes, so the round trip is not self-referential.
     entry = record.datasets["ohlc-synthetic"]
     assert entry["rows"] == sum(series.values())
     for relpath in series:

@@ -48,10 +48,8 @@ def _m15_series(start: datetime, end_boundary: datetime, *, base: float, mult_fn
 
 
 def test_slot_key_on_decision_boundary():
-    # 2020-2022 dense grid. Every return whose DECISION BOUNDARY falls on Monday 00:00 UTC (i.e.
-    # ts[k] = Sunday 20:00) is strongly negative; everything else mildly positive. By 2022 the
-    # (0, Monday) cell has ~104 training obs (>= 100) summing negative -> gated; all other cells
-    # sum positive -> open. The Sunday-20:00 stamps keying (0, Monday) is exactly the F3 slot key.
+    # 6576 stamps = 2020-2022, so by 2022 the (0, Monday) cell holds ~104 training obs, past
+    # min_cell_obs=100, and its negative sum can gate; every other cell sums positive.
     ts = _grid(datetime(2020, 1, 1, tzinfo=UTC), 6576)
     noc = [-0.01 if _bcell(t) == (0, 0) else 0.001 for t in ts[:-1]]
     gates = seasonality_gates(noc, ts, config=B1Config())
@@ -68,10 +66,9 @@ def test_slot_key_on_decision_boundary():
 
 
 def test_walk_forward_isolation():
-    # A strongly negative (0, Monday)-cell pattern planted ONLY in year Y+1 (2021); 2020 is flat
-    # positive. Year 2020's gates are untrained (no interval closes <= 2020-01-01) -> all open, and
-    # 2021's table is trained only on flat 2020 (thin cells anyway) -> all open. A full-sample
-    # (leaky) estimator would see the 2021 negatives (104 obs across both years) and gate.
+    # The negative (0, Monday) pattern is planted only in 2021, so a full-sample (leaky) estimator
+    # would see it (104 obs across both years) and gate; walk-forward, 2021's table is trained on
+    # flat 2020 alone.
     ts = _grid(datetime(2020, 1, 1, tzinfo=UTC), 4386)
     noc = [-0.05 if (t.year == 2021 and _bcell(t) == (0, 0)) else 0.001 for t in ts[:-1]]
     gates = seasonality_gates(noc, ts, config=B1Config())
@@ -82,12 +79,10 @@ def test_walk_forward_isolation():
 
 
 def test_completion_time_rule():
-    # 2019-2021 dense grid; year Y+1 = 2021, training cut = boundaries <= 2021-01-01T00:00Z.
-    # Three disputed stamps get a -1.0 return inside otherwise +0.0001 cells (>= 100 obs each), so
-    # 2021's gate on each cell reveals exactly whether the disputed return was in 2021's training:
-    #   - ts 2020-12-31 20:00 (interval closes 2021-01-01 00:00, boundary cell (0, Friday)): IN.
-    #   - ts 2020-12-31 16:00 (closes 2020-12-31 20:00, cell (20, Thursday)): IN.
-    #   - ts 2021-01-01 00:00 (closes 2021-01-01 04:00, cell (4, Friday)): NOT in.
+    # Training cut for 2021 = boundaries <= 2021-01-01T00:00Z. Each disputed stamp's -1.0 sits in a
+    # cell of otherwise +0.0001 returns (>= 100 obs), so 2021's gate on that cell reveals whether
+    # the disputed return was inside 2021's training. Boundary cells, in fixture order:
+    #   ts Dec-31 20:00 -> (0, 4); ts Dec-31 16:00 -> (20, 3); ts Jan-1 00:00 -> (4, 4).
     ts = _grid(datetime(2019, 1, 1, tzinfo=UTC), 6576)
     disputed_in_a = datetime(2020, 12, 31, 20, tzinfo=UTC)
     disputed_in_b = datetime(2020, 12, 31, 16, tzinfo=UTC)
@@ -109,9 +104,8 @@ def test_completion_time_rule():
             continue
         checked.add(cell)
     assert checked == {(0, 4), (20, 3), (4, 4)}
-    # Fold assignment is by year(ts[k]): the boundary-crossing stamp (ts 2020-12-31 20:00, boundary
-    # 2021-01-01 00:00) is gated by 2020's table (thin -> open), NOT by 2021's -- whose training set
-    # contains this very return, so gating it with the new table would be a one-stamp self-leak.
+    # Fold assignment is by year(ts[k]), so the boundary-crossing stamp is gated by 2020's thin
+    # table: gating it with 2021's -- whose training set contains this very return -- would self-leak.
     k_cross = ts.index(disputed_in_a)
     assert gates[k_cross] == 1
 
@@ -120,9 +114,8 @@ def test_completion_time_rule():
 
 
 def test_thin_cell_open_and_favorable_rule():
-    # Same planted pattern as test 1. In 2021 the (0, Monday) cell has only ~52 training obs
-    # (< min_cell_obs=100) -> thin -> OPEN despite the negative sum; by 2022 it has ~104 obs
-    # summing negative -> gated; every other 2022 cell has >= 100 obs summing positive -> open.
+    # The planted pattern of test_slot_key_on_decision_boundary: the (0, Monday) cell holds ~52
+    # training obs in 2021 and ~104 in 2022.
     ts = _grid(datetime(2020, 1, 1, tzinfo=UTC), 6576)
     noc = [-0.01 if _bcell(t) == (0, 0) else 0.001 for t in ts[:-1]]
     gates = seasonality_gates(noc, ts, config=B1Config())
@@ -146,7 +139,6 @@ def test_hold_through_carries_previous_conditioned_position_verbatim():
     out = condition_positions(positions, gates, scales)
     assert out["X"] == [2.0, 2.0, 2.0, 2.5]  # held stamps carry 2.0 verbatim (zero turnover); update = target * scale
     assert out["Y"] == [-1.0, -1.0, -1.0, 1.0]
-    # Books start flat: a gate-0 first stamp holds 0.0, not the raw target.
     out0 = condition_positions({"X": [7.0, 1.0]}, [0, 1], [1.0, 1.0])
     assert out0["X"] == [0.0, 1.0]
 
@@ -155,9 +147,8 @@ def test_hold_through_carries_previous_conditioned_position_verbatim():
 
 
 def test_scaler_own_median_normalization():
-    # Asset A2 lists mid-series with ~3x A1's vol LEVEL: own-normalization (plus the 180-boundary
-    # neutrality warm-up) means the listing itself never trips the 0.5 scale. A genuine 3x vol
-    # SPIKE in A1's own series (vs its own trailing median) does.
+    # Asset A2 lists mid-series at ~3x A1's vol LEVEL: under own-normalization the listing itself
+    # never trips the 0.5 scale, while a 3x SPIKE in A1's own series does.
     cfg = B1Config()
     union = _grid(datetime(2024, 1, 1, tzinfo=UTC), 402)  # 401 return indices / boundaries
     last_boundary = union[-2] + FOUR_H
@@ -192,11 +183,9 @@ def test_scaler_neutral_before_180_prior_boundaries():
 
 
 def test_scaler_excludes_asset_below_min_vol_bars():
-    # A1 carries an exactly-1.6x own-vol spike over the last boundary's window (1.6 > 1.5 alone;
-    # (1.6 + 1.0) / 2 = 1.3 < 1.5 when averaged with a neutral-ish second asset). Variant A: A2 has
-    # only 20 stale bars -> excluded at the last boundary -> state 1.6 -> 0.5. Variant B: A2 dense
-    # with constant vol -> included with state 1.0 -> mean 1.3 -> no scaling. Discriminates
-    # exclusion (< min_vol_bars) from inclusion, and pins the mean-of-states composition.
+    # A1's spike is exactly 1.6x its own trailing vol: 1.6 alone trips the 1.5 threshold, but
+    # (1.6 + 1.0) / 2 = 1.3 does not -- so the two variants discriminate a second asset EXCLUDED
+    # (< min_vol_bars) from one included, and pin the mean-of-states composition.
     union = _grid(datetime(2024, 1, 1, tzinfo=UTC), 200)  # 199 boundaries; last has 198 prior (>= 180)
     last_boundary = union[-2] + FOUR_H
     spike_start = last_boundary - timedelta(hours=24)

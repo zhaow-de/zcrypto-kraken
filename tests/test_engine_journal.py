@@ -1,6 +1,5 @@
-"""Tests for the journal contract (cli/engine/journal.py): the pinned content-hash byte layout,
-None -> NaN encoding, to_json/from_json round-trip, and validate_record's schema + snapshot-
-boundary (no-peek) invariant checks. No dataset access -- everything here is synthetic."""
+"""The journal record contract (cli/engine/journal.py): its pinned content-hash byte layout, schema
+validation, and the snapshot-boundary (no-peek) invariant."""
 
 import json
 from datetime import datetime, timedelta
@@ -20,10 +19,8 @@ from cli.engine import (
 
 # --- snapshot_content_hash: the pinned byte layout ----------------------------------------------
 
-# Computed independently (struct.pack("<q", epoch_seconds) per ts, then struct.pack("<d", ...) per
-# close, NaN for None, sha256 of the two blocks concatenated) for two naive UTC bar-start stamps
-# (2024-01-01T00:00Z = epoch 1704067200, 2024-01-01T04:00Z = epoch 1704081600) and closes
-# [100.0, None] -- pinned so the byte layout can never silently change.
+# Computed independently of the code under test -- struct.pack("<q", epoch_seconds) per ts,
+# struct.pack("<d", close) per close with NaN for None, sha256 of the two blocks concatenated.
 _EXPECTED_HASH = "fb5c564f0ff9ba2201efcf6fc4ca8585a33349424d9dbd7364b4526f40698557"
 
 
@@ -74,10 +71,8 @@ VALID_DAILY_LAST = datetime(2026, 7, 9, 0, 0)
 
 
 def _valid_record(**overrides) -> CycleRecord:
-    # schema_version is a LITERAL 1, not the imported SCHEMA_VERSION (now 2 post spec 00094) --
-    # this fixture's base-keyed pair/final_targets are a v1 shape, and schema-version-generic
-    # tests below (snapshot-boundary, field-type checks, ...) must stay pinned to v1 regardless of
-    # which schema is newest. See _valid_record_v2 for the symbol-keyed v2 counterpart.
+    # schema_version is a LITERAL 1, not the imported SCHEMA_VERSION: this fixture's base-keyed
+    # pair/final_targets are a v1 shape, and the tests below must stay pinned to v1 as schemas advance.
     snapshots = overrides.pop(
         "snapshots",
         (
@@ -123,10 +118,8 @@ def test_valid_record_at_midnight_cycle():
 
 
 def test_wrong_schema_version():
-    # 99 is not in _LOADABLE_SCHEMA_VERSIONS ({1, 2}) -- must be refused for THAT reason (match
-    # pins the message), not incidentally via the schema-aware key check (2 is now a valid,
-    # loadable version, so validate_record(_valid_record(schema_version=2)) would raise for the
-    # wrong reason -- _valid_record's fixture stays base-keyed, which is a v1 shape).
+    # 99 is outside _LOADABLE_SCHEMA_VERSIONS, so the refusal is for THAT reason (the match pins the
+    # message): 2 is loadable, and would instead raise on this base-keyed fixture's v1 shape.
     with pytest.raises(EngineJournalError, match="unsupported schema_version"):
         validate_record(_valid_record(schema_version=99))
 
@@ -212,9 +205,8 @@ def test_h4_boundary_violation():
 
 
 def test_daily_boundary_violation_at_non_midnight_cycle():
-    # cycle_ts is 08:00 (non-midnight); a daily last_ts of "today" (2026-07-10 00:00) instead of the
-    # correct "yesterday" (2026-07-09 00:00) must be rejected -- guards against an off-by-one that
-    # only shows up away from a midnight cycle.
+    # A daily last_ts of "today" instead of the correct "yesterday" is the off-by-one that only
+    # shows up away from a midnight cycle.
     bad_daily = _entry("BTC", "1440", datetime(2026, 7, 7, 0, 0), datetime(2026, 7, 10, 0, 0))
     with pytest.raises(EngineJournalError):
         validate_record(_valid_record(snapshots=(_entry("BTC", "240", datetime(2026, 7, 9, 20, 0), VALID_H4_LAST), bad_daily)))
@@ -254,11 +246,9 @@ def test_from_json_missing_key():
 
 # --- schema 2 (spec 00094): the v1 golden compatibility pin --------------------------------------
 
-# Captured with `to_json` from the code AS IT STOOD BEFORE schema 2 existed (SCHEMA_VERSION == 1,
-# no _LOADABLE_SCHEMA_VERSIONS, no schema-aware key checks) -- a literal byte-for-byte snapshot of
-# what a real v1 journal record on disk looks like. This is the compatibility pin: schema 2 must
-# not change one byte of how a v1 record round-trips. Regenerating this string from current code
-# would prove nothing about compatibility -- it must stay exactly as captured.
+# Captured with `to_json` from the code as it stood BEFORE schema 2 existed -- a real v1 record on
+# disk, byte for byte. Regenerating it from current code would prove nothing about compatibility:
+# it must stay exactly as captured.
 _V1_GOLDEN_JSON = (
     '{"builder_path": "fast", "code_version": "1.4.2+fast", "completed_at": "2026-07-10T08:03:12", '
     '"cycle_ts": "2026-07-10T08:00:00", "final_targets": {"BTC": 0.1373, "ETH": -0.0621}, "schema_version": 1, '
@@ -294,18 +284,12 @@ _GOLDEN_ETH_1440_CLOSES = [2100.25, 2101.25, None, 2103.25]
 
 
 def test_v1_golden_round_trips_byte_identically():
-    # The compatibility pin itself: parse the golden, re-serialize, and the bytes must be identical
-    # to what was captured pre-schema-2 -- a real v1 record on disk must still load and re-emit
-    # exactly the same JSON post-change.
     restored = from_json(_V1_GOLDEN_JSON)
     assert to_json(restored) == _V1_GOLDEN_JSON
     validate_record(restored)  # a real v1 record must still validate post-change
 
 
 def test_v1_golden_hash_stability():
-    # snapshot_content_hash is untouched by schema 2 (no record-level hash exists) -- recomputing
-    # from the golden's raw (ts, closes) inputs must still reproduce the exact hashes embedded in
-    # the golden JSON, proving the byte layout has not silently shifted.
     assert (
         snapshot_content_hash(_GOLDEN_BTC_240_TS, _GOLDEN_BTC_240_CLOSES)
         == "c1c1132ceec88bc8f14ea18070aff5d80e9f2a6a3019840ce021e7dc6379fa3d"
@@ -406,9 +390,8 @@ def test_v1_snapshot_pair_symbol_key_refused():
 
 # --- closes: the forming row's 4h close per model base -------------------------------------------
 
-# closes is BASE-keyed over the TEN /EUR legs the model sees; final_targets is SYMBOL-keyed over the
-# TWELVE-symbol basket. The two key spaces sit side by side in one record and never merge -- the
-# model did not widen at schema 2, so closes stays base-keyed in both schemas.
+# closes is BASE-keyed over the /EUR legs the model sees; final_targets is SYMBOL-keyed over the
+# basket. The two key spaces sit side by side in one record and never merge.
 _EUR_BASES = ("ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP")
 _BASKET_TARGETS = {f"{base}/EUR": 0.05 for base in _EUR_BASES} | {"ETH/BTC": 0.0, "SOL/BTC": 0.0}
 
@@ -418,7 +401,7 @@ def _ten_eur_closes() -> dict[str, float]:
 
 
 def _record(**overrides) -> CycleRecord:
-    """A v2 record carrying the full twelve-symbol final_targets -- the shape run_cycle writes."""
+    """A v2 record carrying the full basket in final_targets -- the shape run_cycle writes."""
     fields = {"final_targets": dict(_BASKET_TARGETS)}
     fields.update(overrides)
     return _valid_record_v2(**fields)
@@ -438,8 +421,8 @@ def test_closes_are_base_keyed_ten_and_positive():
 
 
 def test_an_artifact_without_closes_still_loads():
-    # The records already on disk have no closes key. A reader that raised on them would take the
-    # tracking report down over its own upgrade -- this IS the readers-before-writer guarantee.
+    # A reader that raised on a record written before the key existed would take the tracking report
+    # down over its own upgrade -- this IS the readers-before-writer guarantee.
     payload = json.loads(to_json(_record(closes=_ten_eur_closes())))
     del payload["closes"]
     assert from_json(json.dumps(payload)).closes is None
@@ -449,7 +432,6 @@ def test_an_artifact_without_closes_still_loads():
 def test_a_corrupt_closes_is_refused_at_load_not_left_to_validate_record(corrupt):
     # from_json's callers do not all call validate_record (the soak/report loaders read a record
     # straight off disk), so a truncated artifact whose closes is a list or a scalar must fail HERE.
-    # dict() is the same coercion final_targets already gets, one line above.
     payload = json.loads(to_json(_record(closes=_ten_eur_closes())))
     payload["closes"] = corrupt
     with pytest.raises(EngineJournalError):
@@ -481,8 +463,7 @@ def test_nav_and_held_round_trip():
 
 
 def test_to_json_omits_nav_and_held_when_absent():
-    # Same contract closes established: omission, never '"nav": null'. A record predating these
-    # keys must re-serialize byte-identically, which the v1 golden pins.
+    # Same contract closes established: omission, never '"nav": null'.
     payload = json.loads(to_json(_record()))
     assert "nav" not in payload
     assert "held" not in payload
@@ -501,10 +482,9 @@ def test_validate_record_refuses_a_non_positive_nav():
 
 
 def test_from_json_type_guards_nav_at_read_time():
-    """`closes` and `held` are coerced at READ time because several callers read a record without
-    ever calling `validate_record`. `nav` needs the same guard, and `bool` is the case a plain
-    isinstance check misses: `True` is an `int`, `isfinite(True)` is True, and it is > 0 -- so a
-    corrupted `"nav": true` would clear every downstream check and score the cycle at NAV=1."""
+    """`nav` is guarded at READ time like `closes` and `held`: `True` is an `int`, `isfinite(True)`
+    is True and it is > 0, so a corrupted `"nav": true` would clear every downstream check and score
+    the cycle at NAV=1."""
     payload = json.loads(to_json(_record(nav=1000.0)))
     for bad in (True, "1000", [1000]):
         payload["nav"] = bad

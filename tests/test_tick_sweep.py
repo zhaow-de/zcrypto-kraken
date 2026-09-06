@@ -13,11 +13,8 @@ from cli.tick.materialize import materialize
 def _day(root: Path, pair: str, day: date, *, start_id: int, hours: list[int] | None = None) -> int:
     """One trade per present hour, trade_ids SEQUENTIAL from `start_id`; returns the next unused id.
 
-    Ids advance only when a trade prints -- they are unrelated to the calendar. A fixture that keys
-    ids off the hour number fabricates an id hole at every quiet hour and every skipped day, so the
-    heal gate refuses healthy days for a reason that reads exactly like a code bug. Tests therefore
-    CHAIN start_id explicitly.
-    """
+    Ids advance only when a trade prints, so keying them off the hour number fabricates a hole at
+    every quiet hour and every skipped day: tests CHAIN start_id explicitly."""
     next_id = start_id
     for h in range(24) if hours is None else hours:
         hour = datetime(day.year, day.month, day.day, h, tzinfo=UTC)
@@ -51,7 +48,7 @@ def _after(day: date, *, hours: float) -> datetime:
 
 
 def test_an_unsettled_day_is_deferred_then_taken_once_settled(tmp_path):
-    """D3's pre-filter: 26h past day end is the boundary, and the watermark must not move early."""
+    """D3's pre-filter: 26h past day end is the boundary."""
     src, out = tmp_path / "src", tmp_path / "out"
     d = date(2026, 8, 1)
     nid = _day(src, "BTC/EUR", d, start_id=0)
@@ -92,8 +89,7 @@ def test_a_sidecar_is_written_and_matches_the_final(tmp_path):
 
 
 def test_a_corrupt_segment_is_isolated_and_the_sweep_continues(tmp_path):
-    """D4: one broken day must not cost the others. `errors` is for the EXCEPTIONAL -- a corrupt
-    segment -- because an incomplete tape is `days_unhealed`, not an error."""
+    """D4: a corrupt segment is isolated into `errors` and costs its own day only."""
     src, out = tmp_path / "src", tmp_path / "out"
     nid = 0
     for d in (date(2026, 8, 1), date(2026, 8, 2), date(2026, 8, 3)):
@@ -108,8 +104,8 @@ def test_a_corrupt_segment_is_isolated_and_the_sweep_continues(tmp_path):
 
 
 def test_a_quiet_hour_does_not_block_a_day(tmp_path):
-    """The withdrawn 24-hour rule would refuse this forever. An absent hour file means QUIET -- no
-    trade printed, so no id was consumed -- and the id stream runs contiguous straight across it."""
+    """An absent hour file means QUIET -- no trade printed, so no id was consumed -- and the id
+    stream runs contiguous straight across it."""
     src, out = tmp_path / "src", tmp_path / "out"
     nid = _day(src, "BTC/EUR", date(2026, 8, 1), start_id=0)
     nid = _day(src, "BTC/EUR", date(2026, 8, 2), start_id=nid, hours=[h for h in range(24) if h != 13])
@@ -129,10 +125,7 @@ def _holed_day(root: Path, pair: str, day: date, *, drop_hour: int | None = None
     """A day of calendar-keyed monotone ids (24 per day), optionally with one hour's trade MISSING
     -- file and id together, a real hole.
 
-    Unlike `_day`, ids here are keyed off the calendar so that dropping an hour leaves a genuine gap
-    in the sequence. Days written with this helper must be CALENDAR-CONSECUTIVE, or the keying
-    itself fabricates holes between them.
-    """
+    Days here must be CALENDAR-CONSECUTIVE, or the keying itself fabricates holes between them."""
     base = (day - _EPOCH).days * 24
     for h in range(24):
         if drop_hour is not None and h == drop_hour:
@@ -211,7 +204,7 @@ def test_a_healed_day_inside_the_rescan_window_is_picked_up_later(tmp_path):
 
 
 def test_every_pair_in_the_archive_is_swept(tmp_path):
-    """D4: pairs are discovered, never hardcoded -- the capture set has already changed once."""
+    """D4: pairs are discovered, never hardcoded."""
     src, out = tmp_path / "src", tmp_path / "out"
     d = date(2026, 8, 1)
     for pair in ("BTC/EUR", "ETH/BTC"):

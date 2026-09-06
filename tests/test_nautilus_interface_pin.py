@@ -1,11 +1,7 @@
-"""Every nautilus symbol this project depends on, pinned by path, shape and value.
-
-The development pin moves daily and upstream reshapes our exact surface -- `KrakenExecClientConfig`
-became `KrakenExecutionClientConfig` and `trader_id` was removed from the exec config within four
-days of each other. This file answers "what changed under us on this bump?" for the whole surface we
-actually use, in one run. It is deliberately preferred over adopting more of the library to widen
-coverage: adopting does not deepen coverage of what we depend on, it enlarges what we depend on.
-"""
+"""Every nautilus symbol this project depends on, pinned by path, shape and value: the development
+pin moves daily and upstream reshapes our exact surface, so this file answers "what changed under us
+on this bump?" in one run — deliberately preferred over adopting more of the library, which does not
+deepen what we depend on but enlarges it."""
 
 import ast
 import importlib
@@ -14,14 +10,13 @@ from pathlib import Path
 import pytest
 
 # (module, symbol) for every nautilus name imported anywhere under cli/, at the module path cli/
-# imports it FROM -- a re-export upstream drops is a live-path import error, and pinning the same
-# object through a different path would pass while production crashes. Coverage of this list against
-# the tree is DERIVED below rather than claimed here, so a new import cannot land unpinned.
+# imports it FROM -- pinning the same object through a different path would pass while a dropped
+# re-export broke the live import site.
 #
-# Two entries are not import sites. `nautilus_trader.__version__` is what the arming gate reads
-# through `cli/engine/execgate.py`'s bare module import, which has no symbol to name; `LiquiditySide`
-# cli/ never imports at all, and it is pinned because the venue's own member NAMES are persisted into
-# forensic rows off live fill events (`cli/engine/command.py` pins the lower-cased set against it).
+# Not every entry is an import site: `nautilus_trader.__version__` is what the arming gate reads
+# through `cli/engine/execgate.py`'s bare module import, and `LiquiditySide`, which cli/ never
+# imports, is pinned because the venue's member NAMES are persisted into forensic rows off live
+# fill events (`cli/engine/command.py` pins the lower-cased set against it).
 PINNED_SYMBOLS = [
     ("nautilus_trader", "__version__"),
     ("nautilus_trader.adapters.kraken", "KRAKEN"),
@@ -79,15 +74,10 @@ def test_every_symbol_we_import_still_exists_where_we_import_it(module_path, sym
 
 
 def test_the_pin_covers_every_nautilus_name_cli_imports():
-    """The list above is only worth what its completeness is worth, and a hand-kept list drifts the
-    moment an import lands beside it -- silently, because every other test here passes on a list
-    that is merely SHORTER than the truth. So the truth is read off the tree instead of restated:
-    every `from nautilus_trader... import X` under cli/ must appear in `PINNED_SYMBOLS` under the
+    """Every `from nautilus_trader... import X` under cli/ must appear in `PINNED_SYMBOLS` under the
     module it is imported FROM, and a bare `import nautilus_trader...` must have its module pinned
-    through some entry.
-
-    One-directional on purpose: the pin may hold names cli/ does not import (a persisted enum has no
-    import site), so only the tree-minus-pin direction is an offence."""
+    through some entry. One-directional on purpose: the pin may hold names cli/ does not import (a
+    persisted enum has no import site), so only the tree-minus-pin direction is an offence."""
     imported: set[tuple[str, str]] = set()
     modules_imported: set[str] = set()
     files = sorted(Path("cli").rglob("*.py"))
@@ -132,7 +122,7 @@ def test_enum_member_names_and_integer_values_are_unchanged(enum_name):
         )
 
 
-# Defaults we rely on WITHOUT setting them. A default that flips is the quietest possible change.
+# Library defaults, pinned even where cli/engine/node.py now states them: a flip is the quietest possible change.
 def test_the_strategy_management_defaults_we_rely_on_are_unchanged():
     """These arm order management inside the library, which reaches the venue without passing
     through any method a subclass can override. The external observer sets them explicitly, but a
@@ -158,10 +148,8 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
 
 def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
     """`cli/engine/node.py` states these three rather than inheriting them (spec 00100 D15), so the
-    defaults no longer reach production -- but the pin stays: it is what tells us the world moved.
-    They set how long the engine waits on an unanswered order before minting that order's terminal
-    event itself, and a bump that moved any of them would mean our stated values had stopped being
-    restatements and started being a deliberate divergence worth re-deriving."""
+    defaults no longer reach production -- but the pin stays: a bump that moved any of them would
+    turn our stated values from restatements into a deliberate divergence worth re-deriving."""
     from nautilus_trader.config import LiveExecutionEngineConfig
 
     config = LiveExecutionEngineConfig()
@@ -172,9 +160,8 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
 
 def test_every_order_event_the_executor_routes_on_carries_the_reconciliation_flag():
     """The flag is the executor's only way to tell a terminal the engine minted from one the venue
-    sent, and it reads it off the event with a `getattr` default. If a class ever stopped carrying
-    it the read would silently answer False and the manufactured terminal would drive a fallback
-    again -- the exact defect D15 removes -- with nothing else red."""
+    sent, and it reads it off the event with a `getattr` default -- so a class that stopped carrying
+    it would silently answer False and drive the fallback D15 removes."""
     from nautilus_trader.model import OrderCanceled, OrderExpired, OrderFilled, OrderRejected
 
     for cls in (OrderRejected, OrderCanceled, OrderExpired, OrderFilled):
@@ -183,9 +170,8 @@ def test_every_order_event_the_executor_routes_on_carries_the_reconciliation_fla
 
 def test_the_exec_client_transport_default_we_now_override_is_unchanged():
     """`cli/engine/node.py` now sets `use_ws_trade=False` explicitly (spec 00100 D10), so this
-    default no longer reaches production -- but the pin stays: it is what tells us the world moved.
-    If the library default ever flips to False, our explicit `False` stops being a decision and
-    starts being a restatement, and D10's re-derivation-for-WS reasoning is worth revisiting."""
+    default no longer reaches production -- but the pin stays: if the library default ever flips to
+    False, our explicit `False` stops being a decision and D10's reasoning is worth revisiting."""
     from nautilus_trader.adapters.kraken import KrakenExecutionClientConfig
     from nautilus_trader.model import AccountId
 
@@ -193,10 +179,9 @@ def test_the_exec_client_transport_default_we_now_override_is_unchanged():
     assert config.use_ws_trade is True
 
 
-# Existence is not enough: every drift this file exists to catch has been a SIGNATURE change --
-# an argument removed, an argument newly required, a keyword rejected outright. These construct
-# each config exactly the way `cli/engine/node.py` constructs it, so the pin fails on the call we
-# actually make rather than on a name that happens to survive.
+# Existence is not enough -- a removed or newly-required argument leaves the name intact. These
+# construct each config the way `cli/engine/node.py` constructs it, so the pin fails on the call we
+# actually make.
 def test_the_kraken_client_configs_accept_the_arguments_we_pass():
     from nautilus_trader.adapters.kraken import (
         KrakenDataClientConfig,
@@ -224,11 +209,10 @@ def test_the_kraken_client_configs_accept_the_arguments_we_pass():
     )
 
 
-# The two readings spec 00101 D1 rests on, measured here rather than remembered: `0` is accepted and
-# reads back as `0`, and `None` is NOT "off" -- it silently falls back to the adapter default and
-# reinstates the reconnect loop. Readings only: that `0` actually silences the timer is measured
-# behaviourally by `test_the_shipped_value_stops_the_loop` in tests/test_engine_data_socket.py.
-# A future upstream change to either reading would pass every other test.
+# The readings spec 00101 D1 rests on, measured rather than remembered: `None` is not "off" -- it
+# falls back to the adapter default and reinstates the reconnect loop. Readings only; that `0`
+# actually silences the timer is `test_the_shipped_value_stops_the_loop` in
+# tests/test_engine_data_socket.py.
 def test_ws_idle_timeout_zero_disables_and_none_means_the_default():
     from nautilus_trader.adapters.kraken import KrakenDataClientConfig, KrakenEnvironment, KrakenProductType
 

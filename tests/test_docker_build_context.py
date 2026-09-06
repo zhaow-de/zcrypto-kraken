@@ -1,12 +1,8 @@
 """Every `COPY` source in the Dockerfile must survive `.dockerignore`.
 
-This exists because the image build is NOT gated at PR time: `capture-image.yml` triggers on
-`push` to develop/main, while `coverage.yml` runs on pull requests. So a Dockerfile or
-`.dockerignore` change passes every PR check and breaks `develop` after the merge -- which is
-exactly what happened on 2026-08-24, when a `COPY docs/reference/vouched-dataset-hashes.jsonl`
-landed against a `.dockerignore` that excludes `docs/`.
-
-This test costs no image build, so it runs in the ordinary suite and catches the class at PR time.
+The image build is NOT gated at PR time: `capture-image.yml` triggers on `push` to develop/main,
+while `coverage.yml` runs on pull requests. So a Dockerfile or `.dockerignore` change passes every
+PR check and breaks `develop` after the merge.
 """
 
 import re
@@ -19,7 +15,7 @@ DOCKERIGNORE = ROOT / ".dockerignore"
 
 
 def _ignore_patterns():
-    """(pattern, is_exception) in file order. Docker applies LAST match wins."""
+    """(pattern, is_exception) in file order."""
     out = []
     for raw in DOCKERIGNORE.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -63,8 +59,6 @@ def test_every_copy_source_exists_in_the_repo():
 
 
 def test_no_copy_source_is_excluded_by_dockerignore():
-    # The failure mode this names: the build fails with "not found" for a file that is plainly
-    # present in the repo, because the context never carried it.
     excluded = [s for s in _copy_sources() if _excluded(s.rstrip("/"))]
     assert not excluded, (
         f"Dockerfile COPYs {excluded}, which .dockerignore excludes from the build context — "
@@ -73,7 +67,6 @@ def test_no_copy_source_is_excluded_by_dockerignore():
 
 
 def test_the_exclusion_check_actually_detects_an_excluded_path():
-    # True positive for the guard above: `docs/` is excluded, so a path under it that carries no
-    # exception must read as excluded. Without this, an always-False checker would pass silently.
+    # True positive for the guard above: without this, an always-False checker would pass silently.
     assert _excluded("docs/research/00.master-plan.md")
     assert not _excluded("cli/data/sync.py")

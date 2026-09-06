@@ -124,9 +124,8 @@ def test_raw_mirror_is_never_written(tmp_path):
 
 
 def test_a_wholly_missing_hour_is_healed_from_rest_alone(tmp_path):
-    """A gap spanning an ENTIRELY missing hour -- a capture outage's primary scenario -- must mint
-    a NEW overlay hour from the REST rows alone, not just count them recovered and drop them
-    (there is no `frames[h]` entry for an hour with no canonical file at all)."""
+    """A gap spanning an ENTIRELY missing hour -- a capture outage's primary scenario -- must mint a
+    NEW overlay hour from the REST rows alone, not merely count them recovered and drop them."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     missing_hour = H + dt.timedelta(hours=1)
     later_hour = H + dt.timedelta(hours=2)
@@ -154,10 +153,8 @@ def test_a_wholly_missing_hour_is_healed_from_rest_alone(tmp_path):
 
 
 def test_recovered_row_in_an_unsettled_hour_is_deferred_not_dropped(tmp_path):
-    """A row REST would serve, but whose ts falls in an hour that hasn't settled (hour + 2h > now),
-    must be neither minted (the settle rule stays) nor reported as recovered -- it lands in the
-    honest `trades_deferred` bucket: fetched, not yet landed, for a later run to pick up once the
-    hour settles."""
+    """A row REST serves whose ts lands in an unsettled hour is neither minted nor counted as
+    recovered: it goes to `trades_deferred`, for a later run once the hour settles."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     settled_hour = dt.datetime(2026, 7, 11, 20, tzinfo=dt.UTC)
     unsettled_hour = dt.datetime(2026, 7, 11, 23, tzinfo=dt.UTC)  # NOW - 1h: not yet 2h old
@@ -176,11 +173,9 @@ def test_recovered_row_in_an_unsettled_hour_is_deferred_not_dropped(tmp_path):
 
 
 def test_d9_catches_a_mint_that_silently_did_nothing(tmp_path, monkeypatch):
-    """The invariant re-check (D9) must FIRE on a real violation, not just stay quiet on a clean
-    sweep. Stub `mint_hour` to silently no-op -- simulating "reported recovery it never performed",
-    the exact bug class this branch shipped once -- so the union succeeds in memory but nothing is
-    ever published to disk. D9 re-reads the settled canonical view from disk, so it must catch the
-    unhealed gap and log/record it, rather than let the in-memory counters report a false success."""
+    """The invariant re-check (spec 00053 D9) fires on a real violation: with `mint_hour` stubbed to
+    a silent no-op the union succeeds in memory and nothing reaches disk, so the re-read of the
+    settled canonical view must catch the unhealed gap instead of trusting the in-memory counters."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 11, 15, 16])  # 12,13,14 missing
 
@@ -194,9 +189,8 @@ def test_d9_catches_a_mint_that_silently_did_nothing(tmp_path, monkeypatch):
 
 
 def test_an_unreadable_segment_is_isolated_and_the_sweep_continues(tmp_path):
-    """A corrupt/bit-rotten segment (exactly what an rsync'd NAS mirror can produce) for one pair
-    must not abort the whole pass: it becomes a per-pair `errors` entry, and the sweep continues to
-    heal a real gap in another pair."""
+    """A corrupt segment for one pair -- what an rsync'd NAS mirror can produce -- becomes a per-pair
+    `errors` entry while the sweep continues into another pair's real gap."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 15], pair="BTC/EUR")
     corrupt = primary / "BTC" / "EUR" / "trades" / "2026/07/11" / "02.parquet"
@@ -211,9 +205,8 @@ def test_an_unreadable_segment_is_isolated_and_the_sweep_continues(tmp_path):
 
 
 def test_a_partially_recoverable_gap_is_re_minted_fuller_on_retry(tmp_path):
-    """The `replace=True` retry path: run 1 recovers what REST offers, leaving a residual gap
-    (`trades_unrecoverable`); run 2, with REST now serving the rest, must re-mint the FULLER union,
-    not skip the hour because it was already minted once."""
+    """The `replace=True` retry path: run 1 recovers what REST offers and leaves a residual gap; run
+    2, with REST serving the rest, re-mints the FULLER union rather than skipping a minted hour."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 16])  # 11..15 missing
 
@@ -233,9 +226,8 @@ def test_a_partially_recoverable_gap_is_re_minted_fuller_on_retry(tmp_path):
 
 
 def test_detect_only_reports_missing_and_duplicate_magnitude(tmp_path):
-    """detect-only is spec 00053 D11's loss report: it must surface the DETECTOR's findings --
-    `trades_missing` and `duplicate_rows_found` -- even though nothing is healed in this mode.
-    `trades_recovered` and `duplicates_collapsed` must stay 0: detect-only heals nothing."""
+    """detect-only is spec 00053 D11's loss report: it surfaces the DETECTOR's findings --
+    `trades_missing` and `duplicate_rows_found` -- while healing nothing."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 11, 11, 15])  # duplicate 11 (1 dup row); 12,13,14 missing (3 ids)
     res = backfill(primary, overlay, now=NOW, detect_only=True, fetch=lambda *a, **k: _rows([12, 13, 14]))
@@ -247,10 +239,9 @@ def test_detect_only_reports_missing_and_duplicate_magnitude(tmp_path):
 
 
 def test_real_sweep_reports_found_and_landed_counters_together(tmp_path):
-    """A real (--mint) sweep must report BOTH what the detector FOUND (`trades_missing`,
-    `duplicate_rows_found`) and what actually LANDED (`trades_recovered`, `duplicates_collapsed`).
-    Only partial recovery here, so found (4 missing) != landed (2 recovered) -- a mutation that
-    conflates the found-counter with the landed-counter is caught."""
+    """A real (--mint) sweep reports BOTH what the detector FOUND (`trades_missing`,
+    `duplicate_rows_found`) and what actually LANDED (`trades_recovered`, `duplicates_collapsed`);
+    recovery is deliberately partial here, so conflating the two reads differently."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 11, 11, 16])  # duplicate 11 (1 dup row); 12,13,14,15 missing (4 ids)
     res = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([12, 14]))  # only 2 of 4 recovered
@@ -262,10 +253,9 @@ def test_real_sweep_reports_found_and_landed_counters_together(tmp_path):
 
 
 def test_cross_hour_duplicate_is_reported_not_silently_collapsed(tmp_path):
-    """A trade_id duplicated ACROSS an hour boundary (the T0026 reconnect-overwrite signature)
-    cannot be fixed by `union_trades`, which mints per-hour -- neither hour alone contains a
-    duplicate. That is fine, but it must surface as a residual finding (`duplicates_cross_hour`),
-    never as a `duplicates_collapsed` count that didn't actually happen."""
+    """A trade_id duplicated ACROSS an hour boundary (the T0026 reconnect-overwrite signature) is
+    not fixable by `union_trades`, which mints per-hour -- so it must surface as a residual finding
+    (`duplicates_cross_hour`), never as a `duplicates_collapsed` count that never happened."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     hour_b = H + dt.timedelta(hours=1)
     _write(primary, [10, 11, 12], hour=H)
@@ -279,11 +269,9 @@ def test_cross_hour_duplicate_is_reported_not_silently_collapsed(tmp_path):
 
 
 def test_fetch_failed_ids_land_in_their_own_summary_bucket(tmp_path, caplog):
-    """T0078: a gap whose fetch RAISES must surface its missing ids in the run-level
-    `trades_fetch_failed` bucket — before this, they landed in no printed bucket at all
-    (the per-gap `continue` skipped even the unrecoverable accounting), so README's
-    "a run can never read as clean by omitting one" was false for exactly this class.
-    The ids must appear in fetch_failed ONLY — not double-counted into unrecoverable."""
+    """T0078: a gap whose fetch RAISES surfaces its missing ids in the run-level
+    `trades_fetch_failed` bucket, and there ONLY -- never also in `trades_unrecoverable`, which
+    counts ids the fetch answered without."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 11, 16])  # ids 12..15 missing -> 4 ids in one gap
 
@@ -297,10 +285,9 @@ def test_fetch_failed_ids_land_in_their_own_summary_bucket(tmp_path, caplog):
     assert res.trades_recovered == 0
     assert res.trades_unrecoverable == 0  # no double-count: fetch never answered
     assert len(res.errors) == 1
-    # The RESULT carrying the bucket is not enough: T0078's acceptance criterion is the printed
-    # summary, and there are two printers. This pins the logger line; the CLI's own typer.echo is
-    # pinned separately in test_trades_command.py. Caught at review — without this, deleting
-    # `fetch_failed=%d` from the format string left all 20 tests green.
+    # The result object carrying the bucket is not enough: T0078's acceptance criterion is the
+    # PRINTED summary, and there are two printers. This pins the logger line; the CLI's own
+    # typer.echo is pinned in test_trades_command.py.
     summary = next(r.message for r in caplog.records if "trade backfill complete" in r.message)
     assert "fetch_failed=4" in summary
 
@@ -309,9 +296,8 @@ def test_fetch_failed_ids_land_in_their_own_summary_bucket(tmp_path, caplog):
 
 
 def _write_book(root, hour=H, pair="BTC/EUR", first_s=0, last_s=3599):
-    """A book final for the same (pair, hour). The witness is that it SPANS the hour — a final that
-    merely exists proves only that one book event landed somewhere in it, which a capture restart
-    at :45 produces too (and our own image converges restart capture)."""
+    """A book final for the same (pair, hour), spanning `first_s`..`last_s`. The mode it answers is
+    whether the final SPANS the hour: one that merely exists proves only that a book event landed."""
     d = root / pair.split("/")[0] / pair.split("/")[1] / "book" / f"{hour:%Y/%m/%d}"
     d.mkdir(parents=True, exist_ok=True)
     pl.DataFrame(
@@ -332,11 +318,9 @@ def _write_book(root, hour=H, pair="BTC/EUR", first_s=0, last_s=3599):
 
 
 def test_rows_fetched_for_an_hour_whose_mint_fails_land_in_their_own_bucket(tmp_path, monkeypatch, caplog):
-    """T0087: the mint's `except ... continue` isolates a bad hour but also skips the recovered
-    tally, so rows the REST really served were counted in NO printed bucket -- not `recovered`
-    (they never landed), not `unrecoverable` (REST served them), not `fetch_failed` (the fetch
-    succeeded). The run is never silently clean, but the number was visible only inside the
-    invariant-violation message."""
+    """T0087: rows REST served for an hour whose mint RAISES land in `trades_mint_failed` -- not
+    `recovered` (they never landed), not `unrecoverable` (REST served them), not `fetch_failed` (the
+    fetch succeeded), so without their own bucket they would be printed nowhere."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 11, 15, 16])  # 12,13,14 missing
 
@@ -349,16 +333,14 @@ def test_rows_fetched_for_an_hour_whose_mint_fails_land_in_their_own_bucket(tmp_
 
     assert res.trades_mint_failed == 3, "the three rows REST served and the mint dropped"
     assert res.trades_recovered == 0 and res.trades_unrecoverable == 0 and res.trades_fetch_failed == 0
-    # Two printers, both pinned: T0078's review found that deleting a bucket from the logger's
-    # format string left every test green because only the result object was asserted.
+    # Both printers are pinned: the result object alone cannot see a bucket dropped from the format string.
     summary = next(r.message for r in caplog.records if "trade backfill complete" in r.message)
     assert "mint_failed=3" in summary
 
 
 def test_a_mint_failure_still_trips_the_accounting_invariant(tmp_path, monkeypatch):
-    """The decision behind the new counter: it is REPORTED but never SUBTRACTED. A fetched-but-
-    unminted row is retryable -- the next run re-detects and re-fetches it -- so treating it as an
-    explained absence would make the strongest check in the sweep go quiet on a real failure."""
+    """The counter is REPORTED but never SUBTRACTED: a fetched-but-unminted row is retryable, so
+    treating it as an explained absence would silence the sweep's strongest check on a real failure."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 11, 15, 16])
 
@@ -371,11 +353,9 @@ def test_a_mint_failure_still_trips_the_accounting_invariant(tmp_path, monkeypat
 
 
 def test_a_trades_hour_absent_while_its_book_sibling_survived_is_counted_when_repaired(tmp_path, caplog):
-    """T0043: `is_total_loss` classifies a both-mirrors trades loss as "nobody traded" (a quiet pair
-    genuinely prints nothing for an hour), and the REST backfill then repairs it SILENTLY -- so a
-    real infrastructure loss left no operator-visible trace of ever having happened. The signature
-    that distinguishes the two: no trades final, a BOOK final for the same hour proving the
-    connection was alive, and rows the REST tape had for it."""
+    """T0043: `is_total_loss` cannot tell a lost trades file from a quiet pair, so a repaired
+    infrastructure loss left no trace. The signature that separates them: no trades final, a BOOK
+    final spanning the same hour, and rows the REST tape had for it."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 11], hour=H)
     _write(primary, [20, 21], hour=H + dt.timedelta(hours=2))  # brackets the hole
@@ -412,10 +392,8 @@ def test_a_quiet_pair_with_no_book_witness_is_not_a_repaired_loss(tmp_path):
 
 
 def test_a_book_final_that_starts_mid_hour_is_not_a_witness(tmp_path):
-    """The false positive the mere-existence check could not see, and the one our own operations
-    produce: capture is down for part of the hour and reconnects at :45, so a book final for that
-    hour EXISTS while the pair was simply quiet across the connected part. Nothing was lost, and a
-    counter whose entire purpose is loss attribution must not say otherwise."""
+    """The false positive our own operations produce: capture reconnects at :45, so a book final for
+    the hour EXISTS while the pair was merely quiet across the connected part -- nothing was lost."""
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _write(primary, [10, 11], hour=H)
     _write(primary, [20, 21], hour=H + dt.timedelta(hours=2))

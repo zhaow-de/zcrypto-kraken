@@ -57,19 +57,13 @@ def test_missing_primary_root_exits_2(tmp_path):
 
 
 def test_clean_sweep_echoes_every_counter_and_exits_zero(tmp_path):
-    """No gap, no duplicate: the sweep still must echo EVERY bucket -- pairs, gaps_found,
-    trades_missing, duplicate_rows_found, trades_recovered, trades_unrecoverable, trades_deferred,
-    trades_fetch_failed, trades_mint_failed, duplicates_collapsed, duplicates_cross_hour,
-    hours_minted, hours_repaired_after_loss, errors -- so a hidden bucket can never silently
-    misreport what was found or what was healed."""
+    """A clean sweep still echoes each counter bucket asserted below, so a zero cannot go missing."""
     primary_root = tmp_path / "primary"
     reconciled_root = tmp_path / "reconciled"
     _write_settled_hour(primary_root, "BTC/EUR", H, [10, 11, 12])
 
-    # --log-level ERROR: `backfill()` logs this exact same summary via its own logger at INFO, and
-    # with no `--log <path>` the default is plain-text-to-stdout (see README) -- without silencing it
-    # the assertions below would pass off that duplicate line even if the CLI's own echo dropped a
-    # bucket. Raising the threshold isolates the command's own `typer.echo`.
+    # --log-level ERROR isolates the command's own echo: `backfill()` logs this same summary at INFO
+    # to stdout, which would satisfy the assertions below even if the echo dropped a bucket.
     r = runner.invoke(app, ["--log-level", "ERROR", "archive", "backfill-trades", str(primary_root), str(reconciled_root)])
     assert r.exit_code == 0
     out = _plain(r.stdout)
