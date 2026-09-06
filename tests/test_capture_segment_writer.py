@@ -789,7 +789,7 @@ def _unit_directives(unit: str) -> list[tuple[str, str, str]]:
     section, out = "", []
     for raw in unit.splitlines():
         line = raw.strip()  # systemd strips before parsing, so an INDENTED directive is still live
-        if not line or line.startswith("#"):
+        if not line or line.startswith(("#", ";")):  # systemd.syntax(7): either character opens a comment
             continue
         if line.startswith("[") and line.endswith("]"):
             section = line
@@ -800,17 +800,19 @@ def _unit_directives(unit: str) -> list[tuple[str, str, str]]:
 
 
 def test_the_capture_unit_orders_itself_against_no_clock_service():
-    """The premise the two leading-clock tests below rest on: nothing holds this unit back until the clock is
-    stepped, and `Restart=always` keeps re-running construction until a start lands in that window."""
+    """The premise the two leading-clock tests below rest on, read from the unit file this repo installs: it
+    orders itself after no clock service, and `Restart=always` keeps re-running construction until a start
+    lands in that window."""
     directives = _unit_directives(CAPTURE_UNIT.read_text())
 
-    # Read the ordering the unit ends up WITH, rather than searching for the spellings it must not carry:
-    # `After=` accumulates across lines and an empty value resets the list, so a clock service joining it
-    # under any name moves this set.
+    # Read the ordering the unit ends up WITH, rather than searching for the spellings it must not carry.
+    # `After=` only ever accumulates — `man 5 systemd.unit`: dependencies "cannot be reset to an empty list,
+    # so dependencies can only be added in drop-ins" — so an empty `After=` clears nothing, and a clock
+    # service joining the unit under any name moves this set.
     after: list[str] = []
     for section, key, value in directives:
         if section == "[Unit]" and key == "After":
-            after = after + value.split() if value else []
+            after += value.split()
     assert set(after) == {"docker.service", "network-online.target"}, f"an ordering dependency changed: {after}"
 
     # `Restart=` is scalar, so systemd takes the LAST assignment: a second one further down would decide.
