@@ -2,7 +2,7 @@
 
 Every observed change in which of the deployable's sleeves carry exposure, with the gross on each side of it.
 
-The deployable (registry record 47, superseding 44) combines three sleeves — **B**, **A1**, **A2** — at fixed one-third weights, and the exposure governor halves the result. A sleeve sitting flat contributes zero and costs nothing to carry; it re-arms on its own signal, with no deploy and no config change. So the book's *structure* changes without anything in this repo changing, and nothing but this file records that it did.
+The deployable (registry record 47, superseding 44) combines three sleeves — **B**, **A1**, **A2** — at fixed one-third weights, which the exposure governor scales down only under drawdown — its multiplier is 1.0 until the ladder's first rung. A sleeve sitting flat contributes zero and costs nothing to carry; it re-arms on its own signal, with no deploy and no config change. So the book's *structure* changes without anything in this repo changing, and nothing but this file records that it did.
 
 **Why the file exists.** [T0124](../open-topics/archive/T0124-deployable-runs-as-a-one-sleeve-book.md) found the book had been running as a one-sleeve book for months and that no document said so. The `zcrypto-engine-sleeve-count-changed` alert now announces each transition, but it ages out within a day by design and is not a record; its runbook's step 4 says to write the transition down, and this is where. A later go-live gate reads the composition history, not the alert.
 
