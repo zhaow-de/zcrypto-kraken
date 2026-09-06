@@ -59,6 +59,14 @@ STUB_JOURNALCTL = (
     " pairs_out_of_scope=2 hours_written=6370 hours_skipped=0 hours_unsettled=1"
     ' hours_unanchored=2 rows=22827108 errors=0"\n'
 )
+# The same read, finding nothing to report: `systemctl start --wait` returning does not prove
+# journald committed the unit's last lines, so the completion line can be genuinely unreadable.
+STUB_JOURNALCTL_NO_COMPLETION = (
+    "#!/usr/bin/env bash\n"
+    f'echo "{JOURNAL_READ}" >> "$CALL_LOG"\n'
+    'echo "$*" >> "$CALL_LOG.journalctl-argv"\n'
+    'echo "-- No entries --"\n'
+)
 STUB_DU_SMALL = '#!/usr/bin/env bash\necho -e "1\\t$2"\n'
 STUB_DU_HUGE = '#!/usr/bin/env bash\necho -e "99999999\\t$2"\n'
 # A du that fails on ONE of its two inputs. The canonical tree is the NFS-side one that goes away
@@ -71,7 +79,7 @@ echo -e "1\\t$2"
 """
 
 
-def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None):
+def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None, journalctl_stub=STUB_JOURNALCTL):
     text = TEMPLATE.read_text()
     data = tmp_path / "data"
     nas = tmp_path / "nas"
@@ -92,7 +100,7 @@ def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None):
     script.chmod(0o755)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name, body in (("date", STUB_DATE), ("systemctl", STUB_SYSTEMCTL), ("du", du_stub), ("journalctl", STUB_JOURNALCTL)):
+    for name, body in (("date", STUB_DATE), ("systemctl", STUB_SYSTEMCTL), ("du", du_stub), ("journalctl", journalctl_stub)):
         p = bin_dir / name
         p.write_text(body)
         p.chmod(0o755)
@@ -439,3 +447,22 @@ def test_the_closing_checklist_is_safe_and_ordered(tmp_path):
     assert "READ-ONLY here" in out and "/volume1/ZhaoCrypto" in out, (
         "the checklist still does not say WHERE to delete, which was the original defect"
     )
+
+
+def test_an_unread_completion_line_prints_the_recovery_command(tmp_path):
+    """A journal read that finds no completion line must hand back the command that re-reads it: the
+    step-6 NAS deletion branches on `hours_unanchored`, whose only other source is this line, and
+    silence there reads as nothing to record."""
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL, journalctl_stub=STUB_JOURNALCTL_NO_COMPLETION)
+    rc, out = run_tty(script, env, ["paused"])
+    assert rc == 0
+    assert JOURNAL_READ in calls(log), "the journal was never read"
+    # Not degenerate: the success branch cannot have run, or a passing recovery assertion proves nothing.
+    assert "hours_written=" not in out, "the stub still emitted a completion line; this is the success branch"
+
+    assert "could not read it back" in out, "an unread completion line is silent -- the operator is told nothing"
+    # Runnable, not merely apologetic: the unit, THIS rebuild's anchor (a bare tail -1 can hand back
+    # a queued catch-up tick's numbers), and the field to grep.
+    assert "zcrypto-panel-materialize.service" in out
+    assert '--since "@1785751200"' in out, "the recovery command is not anchored to this rebuild's start"
+    assert "grep hours_written" in out, "the recovery command names no field to look for"
