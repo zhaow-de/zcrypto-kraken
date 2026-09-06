@@ -277,7 +277,7 @@ loki.relabel "journal_units" {
   // across both. KNOWN, BENIGN divergence from that scheme: loki.source.journal below
   // unconditionally injects job="loki.source.journal.zcrypto_units" into its streams, while
   // nothing reads `job` today (every selector and alert keys only on host/container/level).
-  // Unifying the fleet's label scheme is T0020's dashboards/labelling pass.
+  // Unifying the fleet's label scheme was T0020's dashboards/labelling pass, resolved.
   rule {
     target_label = "host"
     replacement  = "ops"

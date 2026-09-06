@@ -99,9 +99,9 @@ ops_alloy_image: grafana/alloy
 # else references the path, and a var would be dead config. This role renders it from
 # group_vars/observed/vault.yml, owned by zcrypto-alloy -- the same pattern the nas role uses.
 
-# OPS-5 (spec 00054 D2): the overlay writer's knobs. DETECT-ONLY still applies -- the reconciler
-# ledgers `would_mint` and writes no parquet, and flipping to --mint is T0039's call rather than
-# this role's. The gap default is deliberately about twice the measured single-host maximum natural
+# OPS-5 (spec 00054 D2): the overlay writer's knobs. DETECT-ONLY is this role's default, and the
+# flip to --mint is a named host_vars setting rather than a default change -- T0039, resolved,
+# records the evidence that unlocked it. The gap default is deliberately about twice the measured single-host maximum natural
 # quiescence, because one secondary update row is enough to witness a gap, so a per-connection
 # coalescing artifact could otherwise trip a phantom splice -- an unaudited data swap into an
 # archive that cannot be backfilled. The cost asymmetry is why it errs high: a missed gap is a
@@ -112,8 +112,8 @@ ops_reconcile_window_hours: 48
 
 # The --mint flip (spec 00050 Task 12's last step). DEFAULT FALSE: minting writes healed hours into
 # custody and the ledger's dedupe means a wrong verdict is never revisited, so enabling it is a
-# deliberate act with a name, unlocked only once --min-gap-seconds is pinned from real cross-host
-# data. False means --detect-only: every would_mint is ledgered and no parquet is written. The two
+# deliberate act with a name, taken where the host is described rather than here. False means
+# --detect-only: every would_mint is ledgered and no parquet is written. The two
 # correlated-loss detectors run regardless and are never minted from.
 ops_reconcile_mint: false
 

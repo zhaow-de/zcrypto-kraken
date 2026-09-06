@@ -60,11 +60,10 @@ services:
       - /etc/alloy/config.alloy
     volumes:
       # Alternate-path RO mounts (mounting over Alloy's own container /proc//sys is impossible) --
-      # config.alloy points procfs_path/sysfs_path/rootfs_path at these. Ops DOES hold a live
-      # private key today (`sync_nas_archive`, deploy:deploy 0600, under /home/deploy/.ssh, the
-      # NAS-pull channel, pre-dating this task) -- so this mount is exactly the T0030 residual the
-      # NAS carries; the `user:` override above (zcrypto-alloy, not `deploy`) is what keeps it from
-      # reading that key directly.
+      # config.alloy points procfs_path/sysfs_path/rootfs_path at these. /host/root:ro exposes the
+      # host filesystem to whatever uid the container runs as -- the same residual the NAS carries
+      # (T0030); the `user:` override above (zcrypto-alloy, not `deploy`) is what keeps this stack
+      # out of `deploy`'s own keys.
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
