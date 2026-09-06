@@ -384,7 +384,6 @@ def test_every_ansible_template_is_parseable_jinja():
     assert not broken, "unparseable Jinja templates: " + "; ".join(broken)
 
 
-# The closing checklist is the ONLY artifact this routine leaves an operator.
 def test_the_closing_checklist_is_safe_and_ordered(tmp_path):
     script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
     rc, out = run_tty(script, env, ["paused"])

@@ -185,8 +185,8 @@ def test_a_heading_without_its_brackets_is_still_a_finding(tmp_path):
 
 def test_a_finding_written_at_section_level_is_surfaced_not_swallowed(tmp_path):
     """A severity heading at one or two hashes is a typo of the required form, and it matches the
-    section pattern — so it WOULD close the open block and vanish at exit 0, the silent drop this
-    guard exists to prevent."""
+    section pattern — so it closes the open block, and without `MALFORMED` it would also vanish at
+    exit 0, the silent drop this guard exists to prevent."""
     text = (
         "### [Important] · [in-original] · docs/plans/00000-x.md:40\n**Quote:** `q`\n"
         "## [Critical] · [in-original] · docs/plans/00000-x.md:41\n**Quote:** `r`\n"
