@@ -41,7 +41,7 @@ _OHLC_INTERVALS = ["1440", "240", "60"]
 _UNIVERSE_VOLUME_WINDOW_DAYS = 30
 # Days tolerated between a symbol's newest daily bar and the rebuild stamp: a chosen convention, far
 # tighter than the 30-day window it protects, and deliberately unsatisfiable by the QUARTERLY OHLCVT
-# dumps alone -- a universe rebuild needs a live-tailed source, not a fresh dump ingest (T0093, resolved).
+# dumps alone -- a universe rebuild needs a live-tailed source, not a fresh dump ingest (T0093).
 UNIVERSE_MAX_OHLC_STALENESS_DAYS = 7
 
 
@@ -101,9 +101,9 @@ def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
 
 def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> None:
     """Refuse a universe build from an OHLC set that does not reach the present: the volume criterion
-    is a TRAILING 30-day median, describing current tradeability only if the newest bar is recent
-    (T0093, resolved). Checked on the STALEST symbol -- a basket `max` would let one fresh symbol vouch
-    for stale ones -- so a delisted symbol fails the rebuild, a corporate action wanting a human (T0025, resolved)."""
+    is a TRAILING 30-day median, describing current tradeability only if the newest bar is recent.
+    Checked on the STALEST symbol -- a basket `max` would let one fresh symbol vouch
+    for stale ones -- so a delisted symbol fails the rebuild, a corporate action wanting a human (T0025)."""
     as_of = datetime.strptime(ctx.stamp, "%Y%m%d").replace(tzinfo=UTC)
     symbol, last_bar = min(last_bars.items(), key=lambda kv: kv[1])
     staleness_days = (as_of - last_bar).days
@@ -161,12 +161,12 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     if missing:
         # `escalate` compares the SELECTED set against band bounds and cannot see that the SOURCE was
         # narrower, so a missing leg would shrink the universe silently. Refuse here, naming the legs,
-        # rather than an untyped FileNotFoundError from inside polars several frames later (T0093, resolved).
+        # rather than an untyped FileNotFoundError from inside polars several frames later.
         raise DataSyncError(f"data rebuild: universe source is missing candidate leg(s): {', '.join(missing)} -- under {ohlc_root}")
     btc_eur = read_parquet(ohlc_root / "BTC" / "EUR" / "1440.parquet")
     dailies = {s: read_parquet(ohlc_root / s.split("/")[0] / s.split("/")[1] / "1440.parquet") for s in symbols}
     # Freshness BEFORE the medians: `quote_volume_in_eur` raises on a short frame, so a stale set that
-    # is also short would report a row count and never diagnose the staleness (T0093, resolved).
+    # is also short would report a row count and never diagnose the staleness.
     last_bars = {symbol: daily["ts"][-1] for symbol, daily in dailies.items() if daily.height}
     if last_bars:
         _require_fresh_ohlc(last_bars, ctx)
@@ -179,10 +179,10 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
         for symbol, daily in dailies.items()
     }
 
-    # Spread cap (T0024, spec 00067, resolved): priced from the committed calibration at the max-size
+    # Spread cap (T0024, spec 00067): priced from the committed calibration at the max-size
     # position the volume floor uses, keyed by FULL SYMBOL (spec 00085 D3) -- the calibration covers the
     # BTC-quoted legs, so membership alone decides. A symbol absent from the table is recorded
-    # `spread_bps: None` by `finalize_universe`, never rejected (T0092, resolved).
+    # `spread_bps: None` by `finalize_universe`, never rejected.
     spreads = {
         symbol: round(effective_spread_bps(symbol, SPREAD_REFERENCE_NOTIONAL_EUR), 3)
         for symbol in symbols
@@ -198,12 +198,12 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     spread_cap = {
         "max_spread_bps": DEFAULT_MAX_SPREAD_BPS,
         "reference_notional_eur": SPREAD_REFERENCE_NOTIONAL_EUR,
-        # T0014 (resolved) / spec 00066: the spread model this provenance field cites.
+        # T0014 / spec 00066: the spread model this provenance field cites.
         "source": "cli/costs/spread.py — mean effective spread at size",
         "unevaluated_count": sum(1 for e in selection.entries if e["spread_bps"] is None),
     }
     manifest_path = ohlc_root / "manifest.json"
-    # Fail closed on a missing manifest (T0094, resolved): `backfill_basket` always writes one, so its
+    # Fail closed on a missing manifest: `backfill_basket` always writes one, so its
     # absence means a broken or half-written set, and an empty provenance hash reads as a value and
     # compares EQUAL across two unrelated broken builds -- a directory name is not an identity.
     if not manifest_path.exists():
@@ -235,7 +235,7 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
             "refusing to write an artifact that cannot cite the set it was built from"
         ) from exc
     # Name the set this build READ and how fresh it was: a hash alone stops resolving once a directory
-    # is retired (T0093, resolved). The published bar is the STALEST symbol's newest -- the value
+    # is retired. The published bar is the STALEST symbol's newest -- the value
     # `_require_fresh_ohlc` tests, and the only one every symbol's trailing window ends at or after.
     provenance = {
         "snapshot_sha256": snapshot["raw_sha256"],

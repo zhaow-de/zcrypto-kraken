@@ -29,12 +29,12 @@ class GapMonitor:
     def __init__(self) -> None:
         self._open: dict[str, _OpenGap] = {}
         self._closed_seconds: dict[str, float] = {}
-        # The disk-watermark breach window (T0032, resolved): a breach stops EVERY write, so it is one
+        # The disk-watermark breach window (T0032): a breach stops EVERY write, so it is one
         # global window, independent of `_open` — were it routed through the idempotent per-pair
         # `start_gap`, a concurrent gap would swallow it.
         self._watermark_open: datetime | None = None
         self._watermark_seconds: float = 0.0
-        # Upstream silence -- a subscribed, CONNECTED stream receiving nothing (T0101, resolved;
+        # Upstream silence -- a subscribed, CONNECTED stream receiving nothing (T0101;
         # spec 00073). Its own per-pair window for the same reason the watermark has one, and because the
         # two faults co-occur: a venue that stops publishing is exactly when a book stops passing its checksum.
         self._silent_open: dict[str, datetime] = {}
@@ -106,7 +106,7 @@ class GapMonitor:
         """Total gap seconds for `pair` — its own gaps, the global disk-watermark breach and upstream silence, plus each
         still-open window's contribution as of `at`, clamped to >= 0 against a backward-stepped clock. The three kinds
         are summed INDEPENDENTLY, each answering a different question, so the total is an upper bound that can exceed
-        the elapsed wall clock and is never a coverage ratio (T0105, resolved, records why)."""
+        the elapsed wall clock and is never a coverage ratio (T0105 records why)."""
         total = self._closed_seconds.get(pair, 0.0) + self._watermark_seconds + self._silent_seconds.get(pair, 0.0)
         open_gap = self._open.get(pair)
         if open_gap is not None and at is not None:
@@ -120,7 +120,7 @@ class GapMonitor:
 
     def gap_ratio(self, pair: str, *, window_seconds: float, at: datetime | None = None) -> float:
         """Gap seconds over `window_seconds`. CAN EXCEED 1.0 (see `gap_seconds`), so a consumer treating it as a fraction
-        of elapsed time must say what it does above 1.0 (T0105, resolved, records why)."""
+        of elapsed time must say what it does above 1.0."""
         if window_seconds <= 0:
             raise CaptureError(f"window_seconds must be > 0, got {window_seconds}")
         return self.gap_seconds(pair, at=at) / window_seconds
@@ -139,7 +139,7 @@ class GapMonitor:
     def is_healthy(self, pairs: list[str]) -> bool:
         """True iff none of `pairs` currently has an open gap; DELIBERATELY not `is_silent` (spec 00073 D3), because
         this gates the healthchecks.io ping for EVERY pair at once and an unfitted silence bar would darken the fleet's
-        last-resort liveness signal — silence pages through its own Grafana rules instead (T0105, resolved)."""
+        last-resort liveness signal — silence pages through its own Grafana rules instead."""
         return not any(self.is_open(pair) for pair in pairs)
 
 
@@ -169,7 +169,7 @@ class DiskWatermark:
     def check(self) -> bool:
         """Recompute breach state from current free space, returning True iff healthy; logs only on the transition. A
         probe that RAISES sets `measurable` False and re-raises, because "cannot measure" is not "healthy": freezing
-        `breached` while the dead-man pings green is the T0032 (resolved) silent death."""
+        `breached` while the dead-man pings green is the T0032 silent death."""
         try:
             free = self.usage_fn(self.path).free
         except Exception:

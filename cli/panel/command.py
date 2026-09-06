@@ -192,7 +192,7 @@ def materialize(
     if pair is not None and pair.count("/") != 1:
         raise typer.BadParameter(f"--pair {pair}: expected BASE/QUOTE (e.g. BTC/EUR)")
     if pair is not None and pair.split("/")[-1] not in NOTIONALS_BY_QUOTE:
-        # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing. (T0092, resolved)
+        # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing.
         raise typer.BadParameter(f"--pair {pair}: its quote has no notional ladder ({', '.join(NOTIONALS_BY_QUOTE)})")
 
     since_dt = _parse_since(since) if since is not None else None

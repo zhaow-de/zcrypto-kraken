@@ -1,4 +1,4 @@
-"""Captured-spread cost term (T0014, resolved; spec 00066), calibrated from our own L2 capture (`l2-panel`, spec 00052)
+"""Captured-spread cost term (spec 00066), calibrated from our own L2 capture (`l2-panel`, spec 00052)
 rather than from a vendor quote. Recalibration moves the table AND the provenance constants together, restamping
 `docs/reference/captured-spread-calibration.md`; `tests/test_costs_spread.py` pins both.
 """

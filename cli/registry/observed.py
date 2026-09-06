@@ -83,7 +83,7 @@ class ObservedReader:
             # At the manifests' own grade: they vouch FRAME-CONTENT hashes (`dataset_hash`), never file-byte ones, so a
             # byte-grade test here would refuse every healthy read; and on the FULL frame, because the freeze vouched the
             # whole series. Path-BOUND where an attestation names this path -- a swap inside one set leaves the hash SET
-            # unchanged; a manifest predating the path-keyed contract offers only membership (T0132, resolved).
+            # unchanged; a manifest predating the path-keyed contract offers only membership (T0132).
             if (expected := self._attestations(dataset)[1].get(relpath)) is not None:
                 if dataset_hash(full) != expected:
                     raise RegistryError(

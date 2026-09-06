@@ -1,6 +1,6 @@
 """Re-derivation of registry record 44's benchmark-relative validation legs from committed code — no tuning knobs and only
 frozen inputs, because re-running it is the whole point. This basis, not record 44's registered ADOPT vs incumbent
-trial 43, is what the go/no-go gate rests on (T0125, resolved, records the ruling). The conventions spec 00038 left
+trial 43, is what the go/no-go gate rests on (T0125 records the ruling). The conventions spec 00038 left
 unwritten are pinned below and never appended to it — its sha256 is the `spec_hash` that verifies records 43 and 44."""
 
 from __future__ import annotations

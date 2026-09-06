@@ -30,7 +30,7 @@ logger = get_logger("ohlc.reach")
 REACH_INTERVALS: tuple[int, ...] = (1440, 240, 60)
 
 # Seconds between successive public-API calls -- the floor `cli/trades/rest.py` measured on this same throttled
-# family (1.5 s was refused as `EGeneral:Too many requests`, T0053, resolved); never lower it without a new measurement.
+# family (1.5 s was refused as `EGeneral:Too many requests`, T0053); never lower it without a new measurement.
 MIN_REST_INTERVAL_SECONDS = 3.0
 
 

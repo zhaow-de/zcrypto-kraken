@@ -1457,7 +1457,7 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The degrading-primary detector (T0003, resolved, records the origin).
+      # The degrading-primary detector (T0003 records the origin).
       #
       # A primary that is quietly falling apart -- reconnecting constantly, dropping seconds at a time
       # -- trips NOTHING else: every gap is healed by the secondary, so residual stays flat; it keeps

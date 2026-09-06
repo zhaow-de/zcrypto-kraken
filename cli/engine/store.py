@@ -19,7 +19,7 @@ from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
 logger = get_logger("engine.store")
 
 # The single committed source of truth for the engine's basket (spec 00094). DOT/EUR is kept
-# despite the universe regeneration deselecting it -- an owner ruling (T0137, resolved), never an
+# despite the universe regeneration deselecting it -- an owner ruling (T0137), never an
 # oversight; tests/test_basket_concordance.py pins it.
 BASKET: tuple[str, ...] = (
     "ADA/EUR",

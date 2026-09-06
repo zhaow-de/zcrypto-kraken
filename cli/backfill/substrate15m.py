@@ -14,7 +14,7 @@ from cli.tick.reconcile import reconcile
 
 _SECS_15M = INTERVAL_SECONDS["15"]
 _SECS_1H = INTERVAL_SECONDS["60"]
-# The tick-reconciliation acceptance band ratified in T0004 (resolved): a bar matches when every O/H/L/C relative
+# The tick-reconciliation acceptance band ratified in T0004: a bar matches when every O/H/L/C relative
 # difference is within 1 %, so `reconcile`'s `pct_within_tol` at this band is the acceptance rate.
 _ACCEPTANCE_TOL = 1e-2
 # Seam price tolerance: re-bucketing moves O/H/L/C by copy/max/min, never arithmetic, so this is slack around values

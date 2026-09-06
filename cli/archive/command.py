@@ -625,11 +625,10 @@ def reconcile(
             logger.error("archive reconcile: the %s mirror is missing path=%s", label, root)
             raise typer.Exit(2)
 
-    # `_load_ledger` + `_totals` are the two halves of the O(ledger) scan T0044 tracked (resolved
-    # 2026-08-27; the trigger now lives in infra/runbooks/ops.md#reconcile-ledger-scan-cost), and sit
-    # ~500 lines apart, so the cost is summed rather than measured around one call. Published as
-    # `zcrypto_reconcile_ledger_scan_seconds`: the whole-cycle gauge cannot see this growing until it
-    # already dominates, which is far too late to be a warning.
+    # `_load_ledger` + `_totals` are the two halves of the O(ledger) scan and sit ~500 lines apart, so the
+    # cost is summed rather than measured around one call. Published as `zcrypto_reconcile_ledger_scan_seconds`:
+    # the whole-cycle gauge cannot see this growing until it already dominates, which is far too late to be a
+    # warning. The alert trigger lives in infra/runbooks/ops.md#reconcile-ledger-scan-cost.
     _scan_started = time.perf_counter()
     try:
         records = _load_ledger(reconciled_root)
