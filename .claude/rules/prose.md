@@ -8,7 +8,7 @@
 - **A claim that can be an assertion, a test or a hook becomes one, and the sentence goes** — the interpreter checks code for free; nothing checks prose but a second reader.
 - **No coverage claims.** What a guard catches is what its assertions assert, and what it does not catch is never written — an enumerated blind spot is a completeness claim by omission; a blind spot that matters gets a test or a topic.
 - **A number only where the reader needs a VALUE to act**, with the command that produced it and an it-drifts note — the latest value, never superseded ones stacked beside it; a property ("costs per inode") is stated and its measurement named, never quantified.
-- **Every citation resolves from the repo alone** — a symbol, a test name, `T<NNNN>`, `spec NNNNN`, a path; a plan-task number carries its serial on the same line or the one it wraps from (`tests/test_code_prose_citations.py`); a hash is copied from git output, only for a commit that will not be rewritten — before push, cite by subject. **A closed citation is re-tensed, never deleted.**
+- **Every citation resolves from the repo alone** — a symbol, a test name, `T<NNNN>`, `spec NNNNN`, a path; a plan-task number carries its serial on the same line or the one it wraps from (`tests/test_code_prose_citations.py`); a hash is copied from git output, only for a commit that will not be rewritten — before push, cite by subject. **A closed citation re-tenses its sentence to the outcome — never a status annotation on the id (`(T0039, resolved)` is noise: a reader looks the topic up), never deleted where a reader would look the history up.**
 - **Never describe live host state** — config prose says what a setting does, not what a host currently is.
 
 ## Code (`cli/`, `tests/`, `infra/`)
