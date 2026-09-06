@@ -20,7 +20,8 @@ from cli.archive.replay import Census, ReplayResult
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/ops/templates/verify-replay.sh.j2"
 
-# the settings every golden pin below was rendered with -- a change re-renders every pin
+# StrictUndefined is the load-bearing setting: a variable the role sets and a test omits must raise
+# here, never render empty into a pin that then looks fine
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 CONTEXT = {
