@@ -197,7 +197,7 @@ Aged `engine-journal` day-directories are no longer being deleted on the host th
 1. **Rule out the telemetry plane.** If the alloy-dark canary for the capture primary is also firing, this is that incident — the prune is probably fine and unobservable.
 2. **Ask whether the timer ran**: `ssh zcrypto`, then `systemctl list-timers zcrypto-engine-journal-prune.timer` and `journalctl -u zcrypto-engine-journal-prune -n 5 --no-pager`. Its log line names `deleted=`, `kept=` and the cutoff.
 3. **Look for the file**: `ls -la /var/lib/zcrypto-node-textfile/engine-journal-prune.prom`. Absent or non-`0644` is the transport family above — follow `capture-textfile-transport` from there.
-4. **Check the disk before deciding it is only a metric**: `df -h /` and `du -sh /var/lib/zcrypto/engine-journal` (the path the unit passes; read it from the rendered unit rather than assuming).
+4. **Check the disk before deciding it is only a metric**: `df -h /` and `du -sh /var/lib/zcrypto-engine/journal`.
 5. **Do not casually start the service to clear the alert** — it is a real delete of aged day-directories on the engine host. It is idempotent and floored at the newest `engine_journal_retention_days`, but read its journal first and know what you are running.
 
 ### Retire when
