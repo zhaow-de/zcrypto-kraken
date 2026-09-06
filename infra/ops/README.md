@@ -125,8 +125,8 @@ one unit.
 
 Same optional-ping semantics as the replay timers for the panel: role var
 `ops_panel_healthcheck_url`, defaulting to empty (skips the ping entirely). The overlay-writer
-cycle pings **nothing** — the archive-pull dead-man died with the pull (T0058; see the attended
-retirement step above for the healthchecks.io check), and the cycle's own failure paths are the
+cycle pings `ops_archive_pull_healthcheck_url` on rc 0, gate-skips included, so that dead-man
+measures the cycle's own liveness rather than the upstream's; its other failure paths are the
 `ops_archive_pull_exit_code` alert plus the reconcile/trade-backfill staleness alerts.
 
 ### The `sync_panel` replication channel (the NAS pulls this node)
