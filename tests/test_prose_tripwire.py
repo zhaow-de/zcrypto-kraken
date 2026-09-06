@@ -477,6 +477,46 @@ class TestTheIndexIsTheDefaultScope:
         assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
 
 
+class TestADefaultScopeThatCannotBeRead:
+    """The default scope is the whole index: where it cannot be read as such, the run refuses rather than scanning nothing."""
+
+    def _offender(self) -> str:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        return _py(["# c"] * n, 6 * n)
+
+    @pytest.fixture
+    def outside(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "cli").mkdir()
+        (tmp_path / "cli" / "a.py").write_text(self._offender())
+        return tmp_path
+
+    @pytest.fixture
+    def repo(self, outside: Path) -> Path:
+        subprocess.run([*_GIT, "init", "-q"], check=True)
+        subprocess.run([*_GIT, "add", "-f", "cli/a.py"], check=True)
+        (outside / "base.txt").write_text("")
+        return outside
+
+    def test_outside_a_checkout_it_refuses_and_names_the_remedy(self, outside: Path, capsys) -> None:
+        assert tw.main([]) == 2
+        assert capsys.readouterr().err.splitlines() == ["not a git checkout — name paths explicitly"]
+
+    def test_outside_a_checkout_a_named_path_is_still_scanned(self, outside: Path, capsys) -> None:
+        assert tw.main(["cli/a.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[0].startswith("cli/a.py:1: comment-block")
+
+    def test_from_the_root_the_staged_offender_is_named(self, repo: Path, capsys) -> None:
+        assert tw.main(["--check-baseline", str(repo / "base.txt")]) == 1
+        assert capsys.readouterr().out.splitlines()[0].startswith("cli/a.py:1: comment-block")
+
+    def test_from_a_subdirectory_it_refuses_rather_than_calling_that_tree_clean(self, repo: Path, monkeypatch, capsys) -> None:
+        """`git ls-files` prints paths relative to cwd, so the roots below the root match nothing."""
+        monkeypatch.chdir(repo / "cli")
+        assert tw.main(["--check-baseline", str(repo / "base.txt")]) == 2
+        assert "the repository root" in capsys.readouterr().err
+
+
 class TestTheCommandLine:
     @pytest.fixture
     def tree(self, tmp_path: Path, monkeypatch) -> Path:

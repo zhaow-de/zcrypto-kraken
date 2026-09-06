@@ -244,8 +244,20 @@ def _walk(root: str, suffixes: tuple[str, ...]) -> list[str]:
     return found
 
 
+class Refused(Exception):
+    """What `main()` prints before exiting 2: a default scope that cannot be read is never an empty one."""
+
+
 def _tracked() -> list[str]:
     """The index, so the default scope is the commit's content: a staged file is in it, an untracked one is not."""
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, encoding="utf-8", errors="replace")
+    if top.returncode:
+        raise Refused("not a git checkout — name paths explicitly")
+    root = top.stdout.strip()
+    # `git ls-files` prints paths relative to cwd, which the roots and globs below are not: from anywhere but the
+    # root they would match nothing, and an unread tree would report clean.
+    if os.path.realpath(root) != os.path.realpath(os.getcwd()):
+        raise Refused(f"{root} is the repository root — the default scope is read there, or name paths explicitly")
     listed = subprocess.run(["git", "ls-files", "-z"], capture_output=True, encoding="utf-8", errors="replace", check=True)
     return [p for p in listed.stdout.split("\0") if p]
 
@@ -373,7 +385,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write-baseline", metavar="PATH", help="write today's offenders to PATH as the ratchet's baseline")
     parser.add_argument("--check-baseline", metavar="PATH", help="fail only on an offender PATH does not record")
     args = parser.parse_args(argv)
-    paths = expand_paths(args.paths) if args.paths else default_paths()
+    try:
+        paths = expand_paths(args.paths) if args.paths else default_paths()
+    except Refused as refusal:
+        print(refusal, file=sys.stderr)
+        return 2
     offenders = scan(paths)
     if args.write_baseline:
         with open(args.write_baseline, "w", encoding="utf-8") as fh:
