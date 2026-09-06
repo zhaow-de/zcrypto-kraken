@@ -103,7 +103,9 @@ def _fires_on_absence(rule) -> bool:
 
 
 def test_a_rule_that_fires_on_absence_can_notify_its_clear():
-    """The receiver is the whole difference, so the receiver is what this asserts."""
+    """A rule that fires on ABSENCE must not sit on a receiver that suppresses resolved notices --
+    the receiver is the whole difference between a clear that reaches the channel and one that
+    never arrives."""
     suppressed = _receivers_suppressing_resolve()
     mute = [
         (r["uid"], (r.get("notification_settings") or {}).get("receiver"))
