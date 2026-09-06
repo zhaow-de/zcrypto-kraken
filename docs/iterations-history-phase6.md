@@ -802,7 +802,7 @@ ______________________________________________________________________
 
 - `infra/runbooks/engine-procedures.md`'s `engine-adhoc-key-read` carries the one-off read that needs the live trade key — the engine image, the `--entrypoint` override, the workstation-side stdin form, and the window that read has to sit in, whose 30-minute floor is a fallback the journal arm SUBSTITUTES rather than an earlier-of-two.
 - `infra/runbooks/zaccess.md`'s `zaccess-converge` and `zaccess-revoke-client-cert` carry the bridgehead's two attended procedures; its sshd offers two authentication tries because that is `devsec.hardening`'s own default, not a setting in this repo.
-- `infra/runbooks/zaccess.md`'s `zaccess-bridgehead-dark` says the bridgehead's Alloy is the one that takes no digest operand and owes no bake, so its config changes converge with a plain `site.yml --limit`.
+- `infra/runbooks/zaccess.md`'s `zaccess-alloy-converge` says the bridgehead's Alloy is the one that takes no digest operand and owes no bake, so its config changes converge with a plain `site.yml --limit`.
 - `infra/runbooks/ops-node.md`'s `agentboard-node-upgrade` and `infra/runbooks/nas.md`'s `nas-file-transfer` carry the two procedures that belong to those hosts rather than to the capture pair.
 - `infra/runbooks/drills-telemetry.md` binds every drill below it with the throwaway-subject and textfile-injection rules, and derives from its own bounds the log class no pipeline observes and the reminder that a drill proves wiring, never timing.
 - `docs/reference/fleet.md` points at those pages instead of carrying their procedures, so a reader has one home per instruction rather than two that drift.

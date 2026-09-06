@@ -44,6 +44,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 - [`zaccess-converge`](zaccess.md#zaccess-converge) — PROCEDURE: converging the bridgehead needs an agent holding only its own key, and the command that builds one.
 - [`zaccess-revoke-client-cert`](zaccess.md#zaccess-revoke-client-cert) — PROCEDURE: dropping a client cert's pin, and the host copy the converge does not delete.
+- [`zaccess-alloy-converge`](zaccess.md#zaccess-alloy-converge) — PROCEDURE: the bridgehead's Alloy is the fleet's one native-deb Alloy — no digest operand, no bake, an ungated config copy.
 - [`zaccess-bridgehead-dark`](zaccess.md#zaccess-bridgehead-dark) — ALERT: the bridgehead's Alloy stopped shipping.
 - [`zaccess-disk-high`](zaccess.md#zaccess-disk-high) — ALERT: the bridgehead's root filesystem is under 15% free.
 - [`zaccess-tunnel-stale`](zaccess.md#zaccess-tunnel-stale) — ALERT: the WireGuard tunnel's handshake age is over 300 s at one end or both.

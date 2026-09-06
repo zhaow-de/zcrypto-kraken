@@ -16,7 +16,7 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 - **The live trade key reaches the engine as container environment** — `/opt/zcrypto-engine/engine.env`, `0600 root:root`, pulled in by the rendered compose as `env_file`. An ad-hoc read that needs it therefore runs inside the engine image, and inside the engine play's own window because it shares the key with the running engine: `infra/runbooks/engine-procedures.md`'s `engine-adhoc-key-read` carries the procedure.
 - SSH as `zcrypto-deploy` (**passwordless sudo** — non-interactive `sudo` over ssh works). Root is key-only break-glass, installed by hand at bootstrap.
 - **The bridgehead's sshd offers only two authentication tries**, `devsec.hardening`'s own default, and the five fleet deploy keys load into one agent — so its converges need an agent holding only that host's key: `infra/runbooks/zaccess.md`'s `zaccess-converge` carries the procedure.
-- **The bridgehead's Alloy is a native deb followed from apt, not a pinned image** — no digest operand, no pins row, no bake: `infra/runbooks/zaccess.md`'s `zaccess-bridgehead-dark` carries what converging it takes.
+- **The bridgehead's Alloy is a native deb followed from apt, not a pinned image** — no digest operand, no pins row, no bake: `infra/runbooks/zaccess.md`'s `zaccess-alloy-converge` carries what converging it takes.
 
 - **The bridgehead's break-glass is Linode LISH** (serial console, provider panel) — root key-only SSH is the normal path; LISH is the recovery path when SSH is unreachable (`os_hardening` keeps `ttyS0` for it).
 - **Route53: `zhaow.me` delegates `zaccess.zhaow.me` to its own hosted zone** (`Z0912077…`), where the apex `A`/`AAAA` (→ the Linode) and the `tmux.`/`nas.` `CNAME`s and the Let's Encrypt `CAA` live. The apex address records MUST live in that child zone, not the parent — a parent `A` co-located with the `NS` delegation is shadowed and never served. DNS is created by hand (spec `00075` D18).
@@ -66,10 +66,10 @@ Recipes for inducing a fault without touching production. The telemetry-tier dri
 
 **Inducing a fault on a throwaway subject, and what a drill's latency does and does not prove**, are `infra/runbooks/drills-telemetry.md`'s standing rules and bound derivations.
 
-**The node-exporter textfile directory is the alert path's own injection point** — `infra/runbooks/drills-telemetry.md`'s standing rules carry both induction recipes and what a drill's latency does and does not prove.
+**The node-exporter textfile directory is the alert path's own injection point** — that recipe is a standing rule on the same page.
 
 ## Telemetry labels
 
 - Loki labels: `container`, `host`, `job`, `level`, `service_name`; `host ∈ {nas, ops, zcrypto, zcrypto-red}`.
-- The bridgehead ships Prometheus under `host="zaccess"` (native apt Alloy, not a container — so no image digest and no pins row; see `infra/runbooks/zaccess.md`'s `zaccess-bridgehead-dark`). Its `zaccess_wireguard_handshake_age_seconds` and `zaccess_tls_not_after_seconds` also arrive under `host="ops"` from the ops-side probe — the tunnel and NAS cert are watched from both ends.
+- The bridgehead ships Prometheus under `host="zaccess"` (native apt Alloy, not a container — so no image digest and no pins row; see `infra/runbooks/zaccess.md`'s `zaccess-alloy-converge`). Its `zaccess_wireguard_handshake_age_seconds` and `zaccess_tls_not_after_seconds` also arrive under `host="ops"` from the ops-side probe — the tunnel and NAS cert are watched from both ends.
 - Prometheus carries the same four `host` values **plus** `host="primary"`/`"secondary"` on one series each (`zcrypto_reconcile_trade_deficit_rows_total`, `cli/archive/command.py` — the one reconcile series using `host=` where its siblings use `source=`; the pre-existing textfile label wins over the ops Alloy's `external_labels host="ops"`) — do not assume `host=` is uniform when keying rules or queries.

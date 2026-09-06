@@ -34,15 +34,39 @@ Nothing fired. A client certificate is to lose its access to the mTLS edge.
 
 ### What it means
 
-Delete its PEM from `infra/ansible/roles/access/files/pinned-leaves/` and converge. `access_pinned_leaves` globs that directory and the Caddyfile template renders one `file /etc/caddy/pinned-leaves/<name>.pem` line per PEM inside its `verifier leaf` block, so the re-rendered Caddyfile drops the pin and the leaf is refused at the next handshake.
+The pins are PEMs in `infra/ansible/roles/access/files/pinned-leaves/`. `access_pinned_leaves` globs that directory and the Caddyfile template renders one `file /etc/caddy/pinned-leaves/<name>.pem` line per PEM inside its `verifier leaf` block, so removing a PEM and re-rendering drops the pin and the leaf is refused at the next handshake. The role ships the directory with `ansible.builtin.copy`, which has no `--delete`, so the host keeps its copy of a PEM the repo no longer has — inert, because the Caddyfile no longer names it.
 
 ### What to do
 
-The role ships that directory with `ansible.builtin.copy`, which has no `--delete`, so **also `sudo rm /etc/caddy/pinned-leaves/<name>.pem` on the bridgehead** for hygiene; the file is inert either way, because the Caddyfile no longer names it. Confirm by value: `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reads 0.
+1. **Delete the PEM from the repo and converge** — `infra/ansible/roles/access/files/pinned-leaves/<name>.pem`, then `site.yml --limit zaccess --tags access`. That converge needs a single-identity agent: [`zaccess-converge`](#zaccess-converge). This step is the revocation; the two below only tidy up and confirm it.
+2. **Remove the host copy** — `sudo rm /etc/caddy/pinned-leaves/<name>.pem` on the bridgehead, for hygiene.
+3. **Confirm by value**: `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reads 0.
 
 ### Retire when
 
 `infra/ansible/roles/access/templates/Caddyfile.j2` no longer renders one `file` line per PEM from `access_pinned_leaves` — the glob is what makes deleting the PEM the revocation.
+
+______________________________________________________________________
+
+<a name="zaccess-alloy-converge"></a>
+
+## zaccess-alloy-converge — PROCEDURE: shipping an Alloy config change to the bridgehead
+
+### What you are seeing
+
+Nothing fired. You are changing the bridgehead's `config.alloy` or a keep-regex, and looking for the digest operand and the bake gate the other Alloys make you satisfy.
+
+### What it means
+
+**The bridgehead's Alloy takes no digest operand and owes no bake** — unlike the capture and ops Alloys, which refuse an ordinary converge after a config edit. It is a native deb whose version is FOLLOWED from apt: the `access` role installs it `state: present` with no version and clears any `dpkg` hold, because a hold makes `apt upgrade` skip it silently and a forced version turns an upstream bump into a failed task that drops the host from the play. Its `config.alloy` is an ungated `copy`, so every converge ships it and a hand edit cannot outlive the next run. There is no `zaccess_alloy_digest` and no pins row — that is deliberate, not an oversight, so do not add one; read the installed version off the host with `dpkg-query -W alloy`. A keep-regex or `config.alloy` change under `infra/ansible/roles/access/files/` converges with a plain `site.yml --limit zaccess --tags access`, whose SSH-agent constraint is [`zaccess-converge`](#zaccess-converge).
+
+### What to do
+
+Edit the file under `infra/ansible/roles/access/files/`, then converge with a plain `site.yml --limit zaccess --tags access` — the ungated `copy` ships it. No digest to bump, no bake to wait for, no drift assert to satisfy. Read the installed version back with `dpkg-query -W alloy` on the host.
+
+### Retire when
+
+`infra/ansible/roles/access/tasks/main.yml` installs Alloy at a pinned version, or stops clearing the `dpkg` hold, or ships `config.alloy` behind a `when:` — any one of those makes the bridgehead owe an operand like every other host, and this section stops being the exception it exists to record.
 
 ______________________________________________________________________
 
@@ -65,8 +89,6 @@ The bridgehead runs Alloy **natively** (an apt package, no docker) — the only 
 3. `journalctl -u alloy --no-pager -n 100` — a config parse failure (a hand edit that didn't survive the next converge, or a credentials rotation that didn't reach `/etc/default/alloy`) is the usual cause on this host, since the config copy here is deliberately ungated (every converge ships it, so there is no separate drift-assert task to catch a bad render before it lands).
 4. `systemctl restart alloy` is the usual fix. If it will not stay up, check `/etc/default/alloy` for the six `GRAFANA_*` values and re-converge (`--limit zaccess --tags access`) to re-render them — that converge needs a single-identity SSH agent — [`zaccess-converge`](#zaccess-converge).
 5. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
-
-**This Alloy takes no digest operand and owes no bake** — unlike the capture and ops Alloys, which refuse an ordinary converge after a config edit. It is a native deb whose version is FOLLOWED from apt: the `access` role installs it `state: present` with no version and clears any `dpkg` hold, because a hold makes `apt upgrade` skip it silently and a forced version turns an upstream bump into a failed task that drops the host from the play. Its `config.alloy` is an ungated `copy`, so every converge ships it and a hand edit cannot outlive the next run. There is no `zaccess_alloy_digest` and no pins row — that is deliberate, not an oversight, so do not add one; read the installed version off the host with `dpkg-query -W alloy`. A keep-regex or `config.alloy` change under `infra/ansible/roles/access/files/` converges with a plain `site.yml --limit zaccess --tags access`, whose SSH-agent constraint is [`zaccess-converge`](#zaccess-converge).
 
 ### Retire when
 
