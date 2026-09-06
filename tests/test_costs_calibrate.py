@@ -88,22 +88,23 @@ def test_calibrate_refuses_when_the_only_btc_eur_rows_fall_outside_the_window(tm
         calibrate(panel_root, window_start, window_end)
 
 
-def test_calibrate_ignores_an_oversized_year_directory(tmp_path: Path) -> None:
-    # `datetime()` narrows the year to a C int: a `<YYYY>` directory at 2**31 exactly raises
-    # OverflowError, not the ValueError one less raises and a narrower guard catches, out of
-    # `_hourly_files_in_window` and out of `calibrate`.
+def test_calibrate_ignores_a_year_directory_that_is_not_a_date(tmp_path: Path) -> None:
+    # Both arms leave `_hourly_files_in_window`, and `calibrate` with it, if the guard names one:
+    # `int("nope")` raises ValueError, while `datetime()` narrows the year to a C int, so a `<YYYY>`
+    # directory at 2**31 exactly raises OverflowError instead.
     panel_root = tmp_path / "l2-panel"
     W_START = datetime(2026, 7, 24, 0, tzinfo=timezone.utc)
     W_END = datetime(2026, 7, 24, 2, tzinfo=timezone.utc)
     for h in (0, 1):
         _panel_hour(panel_root, "BTC/EUR", W_START + timedelta(hours=h), mid=60_000.0, fill=1.5)
-    oversized = panel_root / "BTC" / "EUR" / "panel-1s" / str(2**31) / "01" / "01" / "00.parquet"
-    oversized.parent.mkdir(parents=True)
-    oversized.write_bytes(b"garbage under a year directory no writer of ours can produce")
+    for year in (str(2**31), "nope"):
+        stray = panel_root / "BTC" / "EUR" / "panel-1s" / year / "01" / "01" / "00.parquet"
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes(b"garbage under a year directory no writer of ours can produce")
 
     result = calibrate(panel_root, W_START, W_END)
 
-    # The two well-formed hours and ONLY those -- a guard around the whole loop body would report 0.
+    # The two well-formed hours and ONLY those -- a guard that swallowed every hour would report 0.
     assert result.hours == 2
     assert result.min_rows == result.max_rows == 7_200
     assert result.table["BTC/EUR"][100] == pytest.approx(1.5)
