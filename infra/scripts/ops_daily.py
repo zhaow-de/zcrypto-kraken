@@ -582,6 +582,10 @@ UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 # instrument never acts on a host.
 UPGRADE_COMMAND = (
     "ssh",
+    # Stdin is inherited, so a changed host key or a password fallback would hold this read until the
+    # timeout rather than failing it -- a silent daily stall on the check for a host gone quiet.
+    "-o",
+    "BatchMode=yes",
     UPGRADE_HOST,
     f"systemctl show {UPGRADE_UNIT} -p Result -p ExecMainStatus -p ExecMainExitTimestamp; "
     f'echo "StampEpoch=$(stat -c %Y {UPGRADE_STAMP} 2>/dev/null)"; '

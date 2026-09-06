@@ -1963,6 +1963,15 @@ def test_the_measured_host_reading_passes_and_costs_exactly_one_ssh():
     assert runner.calls == [ops_daily.UPGRADE_COMMAND], runner.calls
 
 
+def test_the_ssh_the_check_runs_fails_a_prompt_rather_than_waiting_on_one():
+    """Spelt out rather than compared against `UPGRADE_COMMAND`, which a dropped flag would carry with
+    it: without the flag this ssh waits on inherited stdin for a prompt until the pass times out."""
+    runner = _host_answering()
+    _upgrade(runner)
+    (argv,) = runner.calls
+    assert argv[:3] == ("ssh", "-o", "BatchMode=yes"), argv
+
+
 @pytest.mark.parametrize("result", ["exit-code", "timeout", "signal"])
 def test_a_result_other_than_success_is_attention(result):
     """`Result` is read as a value, not as a presence: any non-`success` word systemd records fails."""
