@@ -1,4 +1,4 @@
-"""Each prose check trips one unit over its bar and passes at it; `--since` shows only new offenders."""
+"""Each prose check trips one unit over its bar and passes at it; `--since` and the baseline ratchet report only offenders the recorded past does not cover."""
 
 from __future__ import annotations
 
@@ -342,9 +342,9 @@ class TestVaultContent:
     def test_a_whole_file_vault_blob_is_out_of_scope(self) -> None:
         assert tw.offenders_for("a.yml", "$ANSIBLE_VAULT;1.1;AES256\n6162636465\n" + self._header() + "\n") == []
 
-    def test_the_vault_password_variable_is_not_vault_content(self) -> None:
-        """`ANSIBLE_VAULT_PASSWORD_FILE` names the password file; the blob's header ends in `;`."""
-        src = 'VPF="${ANSIBLE_VAULT_PASSWORD_FILE:-vault-pass.sh}"\n' + self._header() + "\ntrue\n"
+    def test_a_line_opening_with_the_vault_password_variable_is_not_vault_content(self) -> None:
+        """The blob's header ends in `;`: an `$ANSIBLE_VAULT`-prefixed variable at a line's start is not one."""
+        src = "$ANSIBLE_VAULT_PASSWORD_FILE=vault-pass.sh\n" + self._header() + "\ntrue\n"
         assert _kinds(tw.offenders_for("infra/ansible/scripts/run.sh", src)) == ["comment-block"]
 
 
@@ -648,6 +648,15 @@ class TestTheBaselineRatchet:
         (tree / "kept.py").write_text("y = 0\n")
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 1"]
+
+    def test_a_failing_check_names_the_remedy_on_stderr(self, tree: Path, capsys) -> None:
+        (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py", "fresh.py"]) == 1
+        assert "--write-baseline base.txt" in capsys.readouterr().err
+
+    def test_a_passing_check_says_nothing_on_stderr(self, tree: Path, capsys) -> None:
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().err == ""
 
     def test_a_missing_baseline_exits_two_and_says_so(self, tree: Path, capsys) -> None:
         assert tw.main(["--check-baseline", "no-such.txt", "kept.py"]) == 2
