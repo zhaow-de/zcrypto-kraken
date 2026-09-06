@@ -81,7 +81,7 @@ def scan_hours(root: Path, kind: str) -> dict[str, set[datetime]]:
         parts = path.parts
         try:
             hour = datetime(int(parts[-4]), int(parts[-3]), int(parts[-2]), int(match.group(1)), tzinfo=UTC)
-        except ValueError:  # a hand-made directory that is not a date — not ours, ignore it
+        except ValueError, OverflowError:  # a hand-made directory that is not a date — not ours, ignore it
             continue
         found.setdefault(f"{parts[-7]}/{parts[-6]}", set()).add(hour)
     return found

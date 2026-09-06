@@ -29,7 +29,7 @@ def _hour_ts(path: Path) -> datetime | None:
         hh = path.stem
         d, m, y = path.parent.name, path.parent.parent.name, path.parent.parent.parent.name
         return datetime(int(y), int(m), int(d), int(hh), tzinfo=UTC)
-    except ValueError, IndexError:
+    except ValueError, IndexError, OverflowError:
         return None
 
 

@@ -148,6 +148,29 @@ def test_unreadable_parquet_is_isolated_not_raised(tmp_path: Path) -> None:
     assert result.replay_ok is False
 
 
+def test_a_year_directory_that_is_not_a_date_loses_its_hour_not_the_run(tmp_path: Path) -> None:
+    """Both arms: an hour under a non-numeric year and under one past the C-int ceiling replay with `hour=None`."""
+    # `int()` is arbitrary-precision, so the two throws come from different calls: `int("nope")` raises
+    # ValueError, while `datetime(2**31, ...)` raises OverflowError from its C-int year conversion.
+    # `replay_segment` reads `_hour_from_path` before the try that isolates every other failure, so a
+    # throw here escapes its never-raises contract.
+    frame = _explode("BTC/EUR", H, _coherent_messages())
+    well_formed = _book(tmp_path, "BTC/EUR", H, frame)
+    oversized = tmp_path / "BTC" / "EUR" / "book" / str(2**31) / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.parquet"
+    notadate = tmp_path / "BTC" / "EUR" / "book" / "nope" / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.parquet"
+    for stray in (oversized, notadate):
+        stray.parent.mkdir(parents=True)
+        frame.write_parquet(stray, compression="zstd")
+
+    assert replay_segment(well_formed, "BTC/EUR", depth=10).hour == H  # the true positive keeps its identity
+
+    for stray in (oversized, notadate):
+        result = replay_segment(stray, "BTC/EUR", depth=10)
+        assert result.hour is None, stray  # unidentifiable, not a raise
+        assert result.replay_ok is True, stray  # the bytes are fine; only the path's hour was unreadable
+        assert result.error is None, stray
+
+
 def test_out_of_order_ts_is_flagged(tmp_path: Path) -> None:
     messages = [
         {"offset": 10, "type": "snapshot", "bids": [(100.0, 1.0)], "asks": [(101.0, 1.0)], "checksum": 11},

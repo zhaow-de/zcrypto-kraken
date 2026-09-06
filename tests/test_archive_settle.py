@@ -97,6 +97,17 @@ def test_scan_hours_buckets_by_pair_and_kind(tmp_path):
     assert scan_hours(tmp_path, "trades") == {"ETH/EUR": {H}}
 
 
+def test_scan_hours_skips_a_year_directory_that_is_not_a_date(tmp_path):
+    """Both arms of the skip: a non-numeric year and one past the C-int ceiling, the real hour still found."""
+    # Two different throws, `int("nope")` and `datetime(2**31, ...)`, so an `except` naming one lets the other kill the scan.
+    _final(tmp_path, "BTC/EUR", "book", H)
+    for year in (str(2**31), "nope"):
+        stray = tmp_path / "BTC" / "EUR" / "book" / year / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.parquet"
+        stray.parent.mkdir(parents=True)
+        pl.DataFrame({"ts": [H]}).write_parquet(stray)
+    assert scan_hours(tmp_path, "book") == {"BTC/EUR": {H}}
+
+
 def test_scan_hours_of_a_missing_root_is_empty(tmp_path):
     assert scan_hours(tmp_path / "nope", "book") == {}
 

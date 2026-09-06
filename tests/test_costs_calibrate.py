@@ -88,6 +88,28 @@ def test_calibrate_refuses_when_the_only_btc_eur_rows_fall_outside_the_window(tm
         calibrate(panel_root, window_start, window_end)
 
 
+def test_calibrate_ignores_a_year_directory_that_is_not_a_date(tmp_path: Path) -> None:
+    # Both arms leave `_hourly_files_in_window`, and `calibrate` with it, if the guard names one:
+    # `int("nope")` raises ValueError, while `datetime()` narrows the year to a C int, so a `<YYYY>`
+    # directory at 2**31 exactly raises OverflowError instead.
+    panel_root = tmp_path / "l2-panel"
+    W_START = datetime(2026, 7, 24, 0, tzinfo=timezone.utc)
+    W_END = datetime(2026, 7, 24, 2, tzinfo=timezone.utc)
+    for h in (0, 1):
+        _panel_hour(panel_root, "BTC/EUR", W_START + timedelta(hours=h), mid=60_000.0, fill=1.5)
+    for year in (str(2**31), "nope"):
+        stray = panel_root / "BTC" / "EUR" / "panel-1s" / year / "01" / "01" / "00.parquet"
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes(b"garbage under a year directory no writer of ours can produce")
+
+    result = calibrate(panel_root, W_START, W_END)
+
+    # Exactly the two well-formed hours: neither stray contributes one, and neither takes one with it.
+    assert result.hours == 2
+    assert result.min_rows == result.max_rows == 7_200
+    assert result.table["BTC/EUR"][100] == pytest.approx(1.5)
+
+
 def test_the_committed_script_reproduces_the_table_it_replaces():
     """The committed script (spec 00085 D5) over the SUPERSEDED window must still reproduce the
     SUPERSEDED table and provenance: the standing control that attributes a restamp's move to the

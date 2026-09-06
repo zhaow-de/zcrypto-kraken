@@ -89,6 +89,27 @@ def test_verify_tree_empty_sidecar_counts_failed(tmp_path):
     assert any("BTC/EUR/book/2026/07/12/10.parquet" in f for f in r.failed)
 
 
+def test_verify_tree_walks_past_a_year_directory_that_is_not_a_date(tmp_path):
+    """Both arms: a non-numeric year and one past the C-int ceiling are hashed like any other final, losing only their hour."""
+    # `int()` is arbitrary-precision, so the two throws come from different calls: `int("nope")` raises
+    # ValueError, while `datetime(2**31, ...)` raises OverflowError from its C-int year conversion.
+    # `_hour_ts` runs at the top of the walk, outside every try, so the narrower except aborted the whole
+    # NAS sweep -- and the `pull complete ... failed=0` line the dead-man matches comes only after it.
+    _seg(tmp_path, "BTC/EUR", "book", "10")
+    for year in (str(2**31), "nope"):
+        d = tmp_path / "BTC" / "EUR" / "book" / year / "07" / "12"
+        d.mkdir(parents=True)
+        p = d / "11.parquet"
+        pl.DataFrame({"x": [1, 2, 3]}).write_parquet(p)
+        (d / "11.parquet.sha256").write_text(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n")
+
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
+
+    assert r.checked == 3 and r.ok == 3 and r.failed == ()
+    # the true positive keeps its stamp: neither undatable path contributes an hour, and neither blanks one
+    assert r.newest_ts == datetime(2026, 7, 12, 10, tzinfo=UTC)
+
+
 def test_pull_ok_exits_zero(tmp_path, monkeypatch):
     dest = tmp_path / "arch"
     dest.mkdir()

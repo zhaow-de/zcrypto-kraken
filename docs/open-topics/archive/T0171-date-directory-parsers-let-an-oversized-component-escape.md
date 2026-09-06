@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # Date-directory parsers let an oversized component escape
@@ -32,8 +32,12 @@ None of the seven is under `cli/capture/`, so nothing unbackfillable is at risk 
 
 The same defect was fixed on the capture path by the commit `fix(capture): a stray year directory raises past the except that promised to skip it`. Its review swept `_hour_of` over malformed components — empty, signs, C-int and C-long edges, NAME\_MAX digit runs, PEP 515 underscores, unicode digit scripts, strings past the int-str conversion limit, embedded NUL — and reported `ESCAPING TYPES: NONE`, so `ValueError` and `OverflowError` are the whole set `datetime()` raises on those axes. The fix there was to widen the `except` and leave the docstring standing, because the code then makes the sentence true.
 
-## Suggested next steps
+## Resolution
 
-- One `fix(cli)` PR. Widen the five guarded sites to also catch `OverflowError`; the three comments then state what the code does.
-- **A decision at pick time, not a task**: `cli/costs/calibrate.py` and `cli/tick/materialize.py` parse with no guard at all. Whether a foreign directory in the tree each owns should be skipped like the others or refused loudly is a judgement about those two commands, and it should be made deliberately rather than by copying the pattern.
-- One constructed test per site, built the way the capture one was: an oversized-year directory planted beside a well-formed one, red before the widening and green after, with the well-formed final still parsing as the true positive.
+All seven sites are guarded and each guard is constructed against both of its arms.
+
+The five that had a guard were widened to name `OverflowError` beside what they already caught, one commit each: `fix(archive): the canonical reader's skip promise did not cover an oversized year`, `fix(archive): the settlement scan's skip promise did not cover an oversized year`, `fix(archive): an oversized year broke replay_segment's never-raises contract`, `fix(archive): an oversized year aborted the NAS verify walk mid-sweep`, and `fix(panel): the watermark's promise to ignore a hand-made directory raises past it`.
+
+The two that had none were decided rather than patterned, and they were decided differently, on who writes the tree. `cli/costs/calibrate.py` reads the panel copy the NAS pulls, which `panel materialize`'s own refusals tell an operator to hand-delete from, so a foreign directory there is expected and is **skipped** — the guard wraps the `datetime()` construction alone, leaving the window comparison outside it. `cli/tick/materialize.py`'s output tree has one writer, `publish_day`, so a path that is not a date is corruption of canonical output: `_watermark` **refuses**, naming the path — `fix(tick): a foreign year directory crashes the watermark that nothing guarded`, with `fix(costs): a stray year directory raises out of the calibration's file walk` for the skip. That refusal is read outside the sweep's per-day `except`, so it aborts the run instead of being booked as one day's error while publishing continues against a corrupt tree.
+
+Each site carries a test that plants both a non-numeric year and one past the C-int ceiling beside a well-formed final, because `int()` is arbitrary-precision: `int("nope")` raises ValueError before any date arithmetic, and only `datetime()`'s C-int year conversion raises OverflowError. Every guard was proven by narrowing it back to each arm alone under `infra/scripts/mutate-probe.sh`, control proven, and every mutation was killed by an uncaught throw at the guarded line rather than by a downstream assertion.

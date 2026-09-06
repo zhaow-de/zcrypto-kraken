@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.capture.segment_writer import TRADE_SCHEMA
+from cli.tick import command
 
 runner = CliRunner()
 
@@ -101,3 +102,29 @@ def test_settle_hours_is_overridable(tmp_path):
     assert res.exit_code == 0
     assert "days_unsettled=1" in res.output
     assert not list(out.rglob("*.parquet"))
+
+
+def test_a_refusal_reaches_the_operator_as_a_refusal_not_a_traceback(tmp_path, monkeypatch):
+    """`_watermark`'s refusal is a decision: one logged ERROR naming the path, exit 1, and no traceback."""
+    src, out = tmp_path / "src", tmp_path / "out"
+    _day(src, "BTC/EUR", date(2020, 1, 1), start_id=0)
+    stray = out / "BTC" / "EUR" / "nope" / "01" / "01.parquet"
+    stray.parent.mkdir(parents=True)
+    stray.write_bytes(b"a path publish_day cannot have written")
+
+    # NOT caplog: cli/logging/config.py sets `propagate = False` on the `zcrypto` logger and
+    # cli/__main__.py calls configure() on every CliRunner invocation, so the record reaches pytest's
+    # root handler only sometimes -- measured empty whenever this test runs on its own.
+    errors: list[str] = []
+    monkeypatch.setattr(command.logger, "error", lambda fmt, *a, **k: errors.append(fmt % a if a else fmt))
+
+    res = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--reconciled-root", str(tmp_path / "r")])
+
+    assert res.exit_code == 1, res.output
+    # `cli/__main__.py::run` -- the wrapper that logs "unhandled exception -- aborting" and lets the
+    # traceback print -- is not in CliRunner's path, so what separates a refusal from a fault here is
+    # which exception leaves the command: SystemExit out of `typer.Exit`, never the TickError itself.
+    assert isinstance(res.exception, SystemExit), res.exception
+    assert len(errors) == 1, errors
+    assert str(stray) in errors[0], errors[0]
+    assert "published path is not <YYYY>/<MM>/<DD>.parquet" in errors[0], errors[0]
