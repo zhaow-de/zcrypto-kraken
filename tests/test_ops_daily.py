@@ -6,6 +6,7 @@ here is shaped to what the live Grafana API returns, never to what the parser ex
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import http.client
 import importlib.util
 import io
@@ -19,6 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "ops_daily.py"
 _spec = importlib.util.spec_from_file_location("ops_daily", _SCRIPT)
@@ -1757,3 +1759,126 @@ def test_todays_ten_real_descriptions_all_pass():
     checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
     assert len(checks) == 10, len(checks)
     assert ops_daily.check_descriptions(checks) == []
+
+
+# --- T0168: the claims the pass rests on that nothing asserted -------------------------------------------------
+
+
+def _dies_mid_read():
+    """An opener whose 200 fails while its BODY is read, rather than at open like every other fixture."""
+
+    class _TruncatedBody:
+        def read(self, *args):
+            raise http.client.IncompleteRead(b"")
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        yield _TruncatedBody()
+
+    return opener
+
+
+@pytest.mark.parametrize(
+    ("reader", "source"),
+    [
+        ("read_alerts", "the rules API"),
+        ("read_logs", "the log plane"),
+        ("read_deadmen", "the dead-man count"),
+        ("read_reminders", "the healable counter"),
+    ],
+)
+def test_a_body_that_dies_mid_read_is_an_unreadable_source_on_every_reader(reader, source, tmp_path, monkeypatch):
+    """Each reader reports a truncated body as ITS OWN unreadable source instead of raising -- the read
+    side of `_UNREACHABLE`, which every fixture that fails at open leaves unexercised."""
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "k")
+    extra = {
+        "read_alerts": {"now": NOW, "window": DAY},
+        "read_logs": {"window": DAY},
+        "read_deadmen": {},
+        "read_reminders": {"now": NOW, "window": DAY, "register": _register(tmp_path, *_TWO_SWEEPS)},
+    }[reader]
+    read = getattr(ops_daily, reader)("tok", opener=_dies_mid_read(), **extra)
+    assert read.unreadable is not None, f"{reader} read a body that died mid-read as a clean source"
+    assert source in read.unreadable, read.unreadable
+
+
+def test_the_reminders_field_of_the_report_carries_no_default():
+    """`Report.reminders` carries neither default, so no caller can build a Report whose reminders
+    source was never read and which reports nothing due."""
+    (reminders,) = [f for f in dataclasses.fields(ops_daily.Report) if f.name == "reminders"]
+    assert reminders.default is dataclasses.MISSING, reminders.default
+    assert reminders.default_factory is dataclasses.MISSING, reminders.default_factory
+
+
+# Counted from the committed script, where the binding on its own line carries no `{...}` and the
+# three interpolations are the sites that build a URL.
+_GRAFANA_URL_SITES = 3
+
+
+def test_every_site_that_builds_a_grafana_url_is_pinned():
+    """The instrument interpolates `GRAFANA_URL` at exactly `_GRAFANA_URL_SITES` places -- this catches
+    a site ADDED, never whether the endpoints the pins name are the right ones."""
+    sites = [line.strip() for line in _SCRIPT.read_text().splitlines() if "{GRAFANA_URL}" in line]
+    assert len(sites) == _GRAFANA_URL_SITES, (
+        f"{len(sites)} sites build a URL from GRAFANA_URL, pinned at {_GRAFANA_URL_SITES} -- pin the new one in "
+        "`test_every_endpoint_the_instrument_builds_is_pinned` and raise `_GRAFANA_URL_SITES`:\n" + "\n".join(sites)
+    )
+
+
+# `-e`/`--regexp` take the pattern as their own argument and `-f`/`--file` take a file of them, so any
+# of the four made value-taking moves the first FILE into the operand slot the path check skips.
+_PATTERN_CONSUMING_FLAGS = ("-e", "--regexp", "-f", "--file")
+
+
+def test_neither_grep_shape_carries_a_flag_that_consumes_the_pattern():
+    """`_reads_only_safe_paths` skips grep's operand 0 as the pattern, which is sound only while no
+    flag can consume it."""
+    tables = ops_daily._READ_SHAPES + ops_daily._ZCRYPTO_SHAPES + ops_daily._FILTER_SHAPES + ops_daily._TELEMETRY_SHAPES
+    greps = [shape for shape in tables if shape.head == ("grep",)]
+    print([sorted(shape.flags) for shape in greps])
+    assert len(greps) == 2, f"expected the read and the filter grep shape, selected {greps}"
+    carried = sorted({flag for shape in greps for flag in _PATTERN_CONSUMING_FLAGS if flag in shape.flags})
+    assert not carried, f"a grep shape made {carried} value-taking, which shifts the first file into the skipped slot"
+
+
+_ALERTS = Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml"
+_METRIC = re.compile(r"zcrypto_[a-z_]+")
+
+
+def _rules_reading(metric: str, rules: list[dict]) -> list[dict]:
+    return [r for r in rules if any(metric in (q.get("model") or {}).get("expr", "") for q in r.get("data", []))]
+
+
+def test_each_bounded_verdict_check_agrees_with_the_rule_it_mirrors():
+    """A bounded check passes exactly where its owning rule stays quiet, the threshold read out of
+    `alerts.yaml` on both sides rather than restated here."""
+    rules = yaml.safe_load(_ALERTS.read_text())["rules"]
+    # The checks that mirror a threshold rule: bounded AND naming one metric. The `up` pair is bounded
+    # and names none, so a rule cannot be found for it and it is not one of these.
+    mirrored = [(n, e, b) for n, e, b in ops_daily.VERDICT_CHECKS if b is not None and len(set(_METRIC.findall(e))) == 1]
+    assert [n for n, _, _ in mirrored] == ["engine cycle age", "reconcile source lag", "logship drops"], mirrored
+
+    disagreements = []
+    for name, expr, bound in mirrored:
+        (metric,) = set(_METRIC.findall(expr))
+        owning = _rules_reading(metric, rules)
+        assert len(owning) == 1, f"{name}: {metric} is read by {[r['uid'] for r in owning]}, so no single rule owns it"
+        (rule,) = owning
+        (node,) = [d for d in rule["data"] if d["refId"] == rule["condition"]]
+        (condition,) = node["model"]["conditions"]
+        # The complement below reads `gt` as "healthy at or below"; another evaluator would invert it.
+        assert condition["evaluator"]["type"] == "gt", f"{name}: {rule['uid']} evaluates {condition['evaluator']}"
+        (threshold,) = condition["evaluator"]["params"]
+        for probe in (float(threshold), float(threshold) + 1):
+            fires = probe > threshold
+            if bound(probe) != (not fires):
+                disagreements.append(f"{name} vs {rule['uid']} at {probe}: check ok={bound(probe)}, rule fires={fires}")
+    assert not disagreements, disagreements
+
+
+def test_the_healthchecks_fixture_carries_no_key_the_read_only_fetch_never_returns():
+    """The fixture's keys stay inside the trio the read-only key returns, so it cannot vouch for a
+    payload shape production never sends."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json"
+    extra = sorted({key for check in json.loads(fixture.read_text()) for key in check} - {"name", "tags", "desc"})
+    assert not extra, f"the fixture grew {extra}, which the read-only fetch does not return"
