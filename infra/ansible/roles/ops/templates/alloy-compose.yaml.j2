@@ -23,9 +23,9 @@ services:
     container_name: grafana-alloy
     restart: unless-stopped
     # DIVERGENCE 2: run as the dedicated `zcrypto-alloy` uid/gid (a non-login system user created by
-    # the role, looked up via `getent` -- tasks/main.yml), NOT the `deploy` uid/gid that owns the
-    # live `sync_nas_archive` private key under /home/deploy/.ssh. `deploy` would be readable
-    # directly through the /host/root:ro mount below, with no escalation needed at all -- defeating
+    # the role, looked up via `getent` -- tasks/main.yml), NOT `deploy`, whose home is where a
+    # private key would sit. Such a home is readable directly through the /host/root:ro mount
+    # below, with no escalation needed at all -- defeating
     # the protection this stack claims to replicate from the NAS (T0030, uid 1031 there). This
     # mirrors the NAS's dedicated-uid choice rather than merely resembling it (review finding 1).
     user: "{{ ops_alloy_uid }}:{{ ops_alloy_gid }}"
