@@ -1826,29 +1826,41 @@ def test_every_site_that_builds_a_grafana_url_is_pinned():
     )
 
 
-# The whole set of value-taking flags the grep shapes carry, pinned as a set rather than as a list of
-# spellings to forbid, so every addition is re-read: a flag whose VALUE supplies grep's pattern -- `-e`,
-# `-f` -- leaves the first FILE at operand 0, which `_reads_only_safe_paths` skips as the pattern. The
-# four pinned here take their OWN value, so the pattern stays positional and every file is checked.
-_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--include"}
+# `_reads_only_safe_paths` checks every operand a read-shape grep names except operand 0, which it
+# skips as the pattern. A flag that DISPLACES the pattern -- `-e`, `-f` -- moves a FILE into that
+# skipped operand, so each flag pinned here takes its own value and the pattern stays positional.
+_READ_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--include"}
 
 
-def test_neither_grep_shape_carries_a_flag_that_consumes_the_pattern():
-    """`_reads_only_safe_paths` skips grep's operand 0 as the pattern, which is sound only while no
-    flag on any shape table the module defines can consume it."""
-    tables = [
-        value
-        for name, value in vars(ops_daily).items()
-        if name.endswith("_SHAPES") and isinstance(value, (tuple, list)) and all(isinstance(s, ops_daily._Shape) for s in value)
-    ]
-    greps = [shape for table in tables for shape in table if shape.head == ("grep",)]
-    print([sorted(shape.flags) for shape in greps])
-    assert len(greps) == 2, f"expected the read and the filter grep shape, selected {greps} from {len(tables)} tables"
-    valued = {flag for shape in greps for flag, spec in shape.flags.items() if spec is not None}
-    assert valued == _GREP_VALUE_FLAGS, (
-        f"the grep shapes' value-taking flags are {sorted(valued)}, pinned at {sorted(_GREP_VALUE_FLAGS)} -- "
-        "re-read the change against `_reads_only_safe_paths`: a flag whose value supplies the pattern, like `-e`, "
-        "leaves the first FILE at operand 0"
+def test_the_read_grep_shape_takes_no_flag_that_displaces_its_pattern():
+    """`_reads_only_safe_paths` checks a read-shape grep's file operands, which is all of them only
+    while the operand it skips holds the pattern."""
+    greps = [shape for shape in ops_daily._READ_SHAPES if shape.head == ("grep",)]
+    assert len(greps) == 1, f"expected one grep shape in _READ_SHAPES, selected {greps}"
+    valued = {flag for flag, spec in greps[0].flags.items() if spec is not None}
+    assert valued == _READ_GREP_VALUE_FLAGS, (
+        f"the read grep shape's value-taking flags are {sorted(valued)}, pinned at {sorted(_READ_GREP_VALUE_FLAGS)} -- "
+        "a flag that displaces the pattern, like `-e` or `-f`, leaves a FILE at the operand "
+        "`_reads_only_safe_paths` skips"
+    )
+
+
+# `arity=(1, 1)` gives the filter-shape grep exactly one operand, which is its pattern. A flag that
+# DISPLACES the pattern leaves that single operand to the next token, and the arity still admits it --
+# so each flag pinned here takes its own value.
+_FILTER_GREP_VALUE_FLAGS = {"-A", "-B", "-C"}
+
+
+def test_the_filter_grep_shape_takes_no_flag_that_displaces_its_pattern():
+    """`arity=(1, 1)` admits one operand for a filter-shape grep, and that operand is the pattern only
+    while no flag the shape carries can displace it."""
+    greps = [shape for shape in ops_daily._FILTER_SHAPES if shape.head == ("grep",)]
+    assert len(greps) == 1, f"expected one grep shape in _FILTER_SHAPES, selected {greps}"
+    assert greps[0].arity == (1, 1), greps[0].arity
+    valued = {flag for flag, spec in greps[0].flags.items() if spec is not None}
+    assert valued == _FILTER_GREP_VALUE_FLAGS, (
+        f"the filter grep shape's value-taking flags are {sorted(valued)}, pinned at {sorted(_FILTER_GREP_VALUE_FLAGS)} -- "
+        "a flag that displaces the pattern, like `-e` or `-f`, leaves the shape's one operand to a file it reads"
     )
 
 
