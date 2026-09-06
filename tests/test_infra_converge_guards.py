@@ -1486,6 +1486,40 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     assert roots and all("npm root -g" in r for r in roots), f"the root must come from npm's global prefix: {roots}"
 
 
+# --- the zaccess tunnel's port is declared three times and reconciled nowhere: the server's
+# ListenPort, the client's Endpoint port, and the UDP port the bridgehead's firewall opens. A drift
+# among them reaches no page — a peer that never handshakes leaves `wg show latest-handshakes` at 0,
+# zaccess-probe.sh.j2's `[ "$hs" -gt 0 ]` then writes no gauge, and zaccess-tunnel-stale is noDataState: OK.
+ACCESS_DEFAULTS = ANSIBLE / "roles" / "access" / "defaults" / "main.yml"
+ACCESS_OPS_DEFAULTS = ANSIBLE / "roles" / "access_ops" / "defaults" / "main.yml"
+ACCESS_HOST_VARS = ANSIBLE / "group_vars" / "access_host" / "vars.yml"
+WG_UDP_PORTS = "firewall_extra_udp_ports"
+
+
+def _declared(path: Path, key: str):
+    data = yaml.safe_load(path.read_text())
+    assert isinstance(data, dict) and key in data, f"{path.relative_to(ANSIBLE)} no longer declares {key}"
+    return data[key]
+
+
+def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
+    """The two role defaults and the UDP port the access host opens carry one port between them."""
+    ports = {
+        "roles/access/defaults:access_wg_listen_port": _declared(ACCESS_DEFAULTS, "access_wg_listen_port"),
+        "roles/access_ops/defaults:access_ops_wg_listen_port": _declared(ACCESS_OPS_DEFAULTS, "access_ops_wg_listen_port"),
+    }
+    # the opened list is read as a whole: were it a second port long, which member the tunnel needs
+    # would be this selection's guess, so the shape is refused instead of picked from.
+    opened = _declared(ACCESS_HOST_VARS, WG_UDP_PORTS)
+    assert isinstance(opened, list) and len(opened) == 1, (
+        f"group_vars/access_host:{WG_UDP_PORTS} is {opened!r}, not the single tunnel port this selection can read"
+    )
+    ports[f"group_vars/access_host:{WG_UDP_PORTS}"] = opened[0]
+    assert len(set(ports.values())) == 1, (
+        f"the zaccess tunnel's port declarations disagree, and a tunnel that never handshakes publishes no gauge: {ports}"
+    )
+
+
 NAS = ANSIBLE / "roles" / "nas" / "tasks" / "main.yml"
 
 
