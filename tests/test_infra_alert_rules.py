@@ -1169,6 +1169,34 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
 
 
+_SLACK_TEMPLATE = REPO / "infra/grafana/notification-templates/zcrypto-slack.tmpl"
+# The operator name for each host label, read from the template that renders it -- the vocabulary a
+# summary must use, since a phone shows that name and nothing else.
+_HOST_VOCABULARY = re.compile(r'eq \. "([^"]+)" \}\}([^\n{]+)')
+
+
+def test_the_headroom_summary_names_the_hosts_its_expression_actually_reads():
+    """A summary is read on a phone with nothing open, so "512 MiB elsewhere" promised every other
+    Alloy host while the expression selects four by name. The edge runs the apt Alloy under no
+    container and no cap, so this ratio has no denominator for it and `zcrypto-alloy-dark-zaccess`
+    owns its OOM; a CAPPED host is forced in by the memory-limited-job test above."""
+    vocabulary = dict(_HOST_VOCABULARY.findall(_SLACK_TEMPLATE.read_text()))
+    vocabulary = {label: name.strip() for label, name in vocabulary.items()}
+    assert len(vocabulary) >= 5, f"the host vocabulary parse found only {vocabulary} -- the template's shape moved"
+
+    rule = _rule(_ALLOY_HEADROOM)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    selected = {h for match in re.findall(r'host=~?"([^"]+)"', expr) for h in match.split("|")}
+    assert selected <= set(vocabulary), f"the expression selects a host the notification template cannot name: {selected}"
+
+    summary = rule["annotations"]["summary"]
+    named = {label for label, name in vocabulary.items() if re.search(rf"\b{re.escape(name)}\b", summary, re.I)}
+    assert named == selected, (
+        f"the summary names {sorted(named) or 'no host'} while the expression reads {sorted(selected)} -- a paged "
+        f"operator is told this rule watches hosts it does not, or is not told about ones it does"
+    )
+
+
 def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
     """`ops_alloy_memory_limit` is not overridden outside `roles/ops/defaults/main.yml`, the only
     file `test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling` reads -- the sibling
