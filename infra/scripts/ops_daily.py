@@ -1178,34 +1178,19 @@ _READ_SAFE_FILES = (
 )
 
 
-# grep's recursion switches, its own closed set. With one of them and no file operand grep walks the
-# working directory, which over `ssh` is the deploy user's home -- named by no read-safe root, and
-# reached through no operand a path check could read.
-_GREP_RECURSIVE = frozenset({"-r", "-R", "--recursive", "--dereference-recursive"})
-
-
-def _greps_a_directory_tree(tokens: list[str]) -> bool:
-    """Whether a flag among `tokens` turns grep recursive -- a long switch, or `r`/`R` in a cluster."""
-    for token in tokens[1:]:
-        if not token.startswith("-") or token == "-":
-            continue
-        name = token.partition("=")[0]
-        if name in _GREP_RECURSIVE or (not name.startswith("--") and {"r", "R"} & set(name[1:])):
-            return True
-    return False
-
-
-def _reads_only_safe_paths(tokens: list[str], operands: list[str]) -> bool:
+def _reads_only_safe_paths(tokens: list[str], operands: list[str], *, first_stage: bool) -> bool:
     """Every path a content head names must sit under a read-safe root, absolute and traversal-free.
 
     `grep`'s operand 0 is its PATTERN, skipped however it is spelled, because no shape admits an
     option that could put a file there -- `test_no_grep_shape_admits_a_pattern_source_option` holds
     that for every table here. A `*` cannot cross `/`; `..` can leave, so it is refused outright. A
-    recursive grep naming no file reads a tree no operand names, and is refused rather than skipped.
+    FIRST-stage content head naming no file is refused rather than asked which flag recursed it: an
+    admitted filter flag's own ARGUMENT can turn grep recursive, so what is read is the file list --
+    empty, it walks the working directory or reads a stdin the daily pass never supplies.
     """
     head = tokens[0]
     paths = operands[1:] if head == "grep" else operands
-    if head == "grep" and not paths and _greps_a_directory_tree(tokens):
+    if first_stage and not paths:
         return False
     return all(".." not in path and (path.startswith(_READ_SAFE_DIRS) or path in _READ_SAFE_FILES) for path in paths)
 
@@ -1350,7 +1335,7 @@ def _curl_is_read(tokens: list[str]) -> bool:
 _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
 
 
-def _matches(shapes, tokens: list[str]) -> list[str] | None:
+def _matches(shapes, tokens: list[str], *, first_stage: bool) -> list[str] | None:
     """The operands of the shape admitting `tokens`, or None -- and a content head reading outside
     the safe roots is admitted by no table, the veto sitting here because every table is read here."""
     for shape in shapes:
@@ -1360,7 +1345,7 @@ def _matches(shapes, tokens: list[str]) -> list[str] | None:
         check = _POSTCHECKS.get(shape.post) if shape.post else None
         if check and not check(tokens):
             continue
-        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens, operands):
+        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens, operands, first_stage=first_stage):
             return None
         return operands
     return None
@@ -1420,14 +1405,14 @@ def _classify_one(command: str, host: str | None) -> Tier:
     if not stages or not all(stages):
         return Tier.PREPARED
     first, *filters = stages
-    if not all(_matches(_FILTER_SHAPES, stage) is not None for stage in filters):
+    if not all(_matches(_FILTER_SHAPES, stage, first_stage=False) is not None for stage in filters):
         return Tier.PREPARED
     tokens, target = _strip_prefixes(first)
     if not tokens:
         return Tier.PREPARED
-    operands = _matches(_FIRST_STAGE_SHAPES, tokens)
+    operands = _matches(_FIRST_STAGE_SHAPES, tokens, first_stage=True)
     if operands is None and (target or host) in _TELEMETRY_HOSTS:
         lowered = command.lower()
         if not any(obj in lowered for obj in _PROTECTED_OBJECTS):
-            operands = _matches(_TELEMETRY_SHAPES, tokens)
+            operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True)
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED

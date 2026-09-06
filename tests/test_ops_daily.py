@@ -1041,7 +1041,7 @@ def test_the_real_reads_survive_the_allowlists(cmd, host):
         "cat /home/deploy/.ssh/*",
         "grep -rF LOKI /etc/zcrypto-ops/",
         "grep -r . /home/deploy/.ssh/",
-        # A recursive grep naming no file walks the working directory, which over `ssh ops` is the
+        # A first-stage grep naming no file walks the working directory, which over `ssh ops` is the
         # deploy user's home, `.ssh/` included -- a read reaching it through no operand at all.
         "grep -r .",
         "grep -r zcrypto",
@@ -1172,17 +1172,48 @@ def test_a_dereferencing_recursion_is_admitted_by_no_grep_shape():
         assert ops_daily.classify_action(passing, host="ops") is ops_daily.Tier.AUTONOMOUS, passing
 
 
-def test_a_recursive_grep_naming_no_file_is_refused_however_the_switch_is_spelled(monkeypatch):
-    """The refusal reads grep's recursion switches, not the cluster the shapes happen to admit today:
-    a shape widened to take `--recursive` is refused by the same rule that refuses `-r`."""
-    assert ops_daily.classify_action("grep -r zcrypto", host="ops") is ops_daily.Tier.PREPARED
+@pytest.mark.parametrize(
+    ("refused", "passing"),
+    [
+        # A recursion switch reads a tree no operand names.
+        ("grep -r SECRET", "grep -r SECRET /var/log/"),
+        # ugrep recurses on an `--include` whose glob holds a `/`, so an admitted FILTER flag reaches
+        # that same tree with no recursion switch anywhere in the command.
+        ("grep --include='sub/' SECRET", "grep --include='sub/' SECRET /var/log/"),
+        ("grep --include='**/*.conf' SECRET", "grep --include='**/*.conf' SECRET /var/log/"),
+        # No switch at all: with no file and no stage before it, grep reads a stdin the pass never
+        # supplies.
+        ("grep SECRET", "grep SECRET /var/log/syslog"),
+        ("cat", "cat /var/log/syslog"),
+    ],
+)
+def test_a_first_stage_content_head_naming_no_file_is_refused(refused, passing):
+    """A first-stage `cat` or `grep` with an empty file list is PREPARED, and the same command naming
+    a read-safe file is AUTONOMOUS: what decides is the file list, never which flag was spelled."""
+    assert ops_daily.classify_action(refused, host="ops") is ops_daily.Tier.PREPARED, refused
+    assert ops_daily.classify_action(passing, host="ops") is ops_daily.Tier.AUTONOMOUS, passing
+
+
+@pytest.mark.parametrize(
+    ("flag", "spec", "cmd"),
+    [
+        ("--recursive", None, "grep --recursive SECRET"),
+        # `-d recurse` recurses where GNU grep reads it, and takes its mode as a separate word.
+        ("-d", ops_daily._NAME, "grep -d recurse SECRET"),
+    ],
+)
+def test_the_refusal_reads_the_file_list_and_not_the_flag_table(monkeypatch, flag, spec, cmd):
+    """A grep shape widened to admit a recursion flag no real shape takes still refuses the command
+    when it names no file, and still passes it when it names a read-safe one."""
+    for unwidened in (cmd, f"{cmd} /var/log/"):
+        assert ops_daily.classify_action(unwidened, host="ops") is ops_daily.Tier.PREPARED, f"unwidened: {unwidened}"
     widened = tuple(
-        dataclasses.replace(shape, flags={**shape.flags, "--recursive": None}) if shape.head == ("grep",) else shape
+        dataclasses.replace(shape, flags={**shape.flags, flag: spec}) if shape.head == ("grep",) else shape
         for shape in ops_daily._FIRST_STAGE_SHAPES
     )
     monkeypatch.setattr(ops_daily, "_FIRST_STAGE_SHAPES", widened)
-    assert ops_daily.classify_action("grep --recursive zcrypto", host="ops") is ops_daily.Tier.PREPARED
-    assert ops_daily.classify_action("grep --recursive zcrypto /var/log/", host="ops") is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED, cmd
+    assert ops_daily.classify_action(f"{cmd} /var/log/", host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
 
 
 def test_no_shape_table_admits_a_content_head_reading_outside_the_safe_roots(monkeypatch):
