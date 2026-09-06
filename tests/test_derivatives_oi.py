@@ -15,6 +15,7 @@ from cli.config import load_config, resolve_hot_source
 from cli.derivatives.errors import DerivativesError
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.derivatives.oi import (
+    _FLOAT_COLUMNS,
     backfill_oi,
     build_oi_substrate,
     fetch_oi_day,
@@ -89,11 +90,10 @@ def test_fetch_oi_day_verifies_checksum_and_parses_metrics(tmp_path):
     assert first[2] == 100000.0  # sum_open_interest_value
 
 
-def test_fetch_oi_day_pins_the_rows_positional_contract(tmp_path):
+def test_fetch_oi_day_pins_the_rows_positional_contract():
     """`fetch_oi_day` returns positional rows that every reader indexes by number, so a reorder of
     `_FLOAT_COLUMNS` moves a value into its neighbour's slot with nothing raising; one distinct
     sentinel per metrics column makes any swap land a different number where it is read from."""
-    from cli.derivatives.oi import _FLOAT_COLUMNS
 
     line = "2026-06-30 00:00:00,BTCUSDT,11.0,12.0,13.0,14.0,15.0,16.0"
     opener = _Opener({_day_url("BTCUSDT", "2026-06-30"): _zip_of(_HEADER + "\n" + line + "\n", "m.csv")})
