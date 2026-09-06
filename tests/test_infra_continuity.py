@@ -405,12 +405,12 @@ def test_second_ratio_is_load_bearing():
 def test_legitimate_heavy_tails_stay_measured():
     """No false positive on legitimate spacing shapes.
 
-    bursty-typical and bimodal are seed-independent below the cut, so they are asserted over a range
-    of seeds; pareto alpha=1.1 and lognormal sigma=3 straddle the cut BY CONSTRUCTION -- the cut IS a
-    Pareto tail's per-decade ratio at alpha=1, and alpha=1.1's is 10^(1/1.1) = 8.1 -- so their seeds
-    are pinned, an unpinned one being a lottery that fails HEALTHY code rather than a signal.
+    bursty-typical and bimodal are swept over 200 seeds rather than pinned; pareto alpha=1.1 and
+    lognormal sigma=3 straddle the cut BY CONSTRUCTION -- the cut IS a Pareto tail's per-decade ratio
+    at alpha=1, and alpha=1.1's is 10^(1/1.1) = 8.1 -- so their seeds are pinned, an unpinned one
+    being a lottery that fails HEALTHY code rather than a signal.
     """
-    for seed in range(10):
+    for seed in range(200):
         for name, sample in (
             ("bursty-typical", _bursty(20_000, random.Random(seed))),
             ("bimodal", _bimodal(20_000, random.Random(seed))),
