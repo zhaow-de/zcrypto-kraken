@@ -43,8 +43,7 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # describe the PREVIOUS image for about an hour after a roll -- check the textfile's mtime first.
 # ROLLBACK rolls the REPO STATE, not just this pin: `pull-entrypoint.sh` is a bind mount, so an
 # image roll leaves it in place passing `--hash-scope`, which no image before `a3a3837e` accepts, and
-# flipping the
-# scope to `full` does not help because the flag is still sent. Converge from a pre-spec-00102 state
+# flipping the scope to `full` does not help because the flag is still sent. Converge from a pre-spec-00102 state
 # WITH `-e nas_apply_compose=true`; without the flag the role is render-only and still reports
 # success. Delete the `archive-pull-*.prom` textfiles on the way out, or their gauges stay frozen
 # and keep feeding the dashboard. What a rollout cost belongs in that rollout's fleet-pins row,

@@ -134,8 +134,7 @@
 # as an explicit uid:gid, but an ssh login's egid is the account's PRIMARY group, which is not
 # zcrypto. Without setgid the pushed subtrees drift group and break the custody-wide group-zcrypto
 # invariant (spec 00048), which is the precondition for the exit-23 whole-pull failure class.
-# Siblings are
-# plain 0775 because each has one writer whose egid already is zcrypto.
+# Siblings are plain 0775 because each has one writer whose egid already is zcrypto.
 - name: ensure the hot/ hub directory exists (setgid so both writers' children inherit group zcrypto)
   ansible.builtin.file:
     path: /volume1/ZhaoCrypto/hot
