@@ -89,6 +89,25 @@ def test_fetch_oi_day_verifies_checksum_and_parses_metrics(tmp_path):
     assert first[2] == 100000.0  # sum_open_interest_value
 
 
+def test_fetch_oi_day_pins_the_rows_positional_contract(tmp_path):
+    """`fetch_oi_day` returns positional rows that every reader indexes by number, so a reorder of
+    `_FLOAT_COLUMNS` moves a value into its neighbour's slot with nothing raising; one distinct
+    sentinel per metrics column makes any swap land a different number where it is read from."""
+    from cli.derivatives.oi import _FLOAT_COLUMNS
+
+    line = "2026-06-30 00:00:00,BTCUSDT,11.0,12.0,13.0,14.0,15.0,16.0"
+    opener = _Opener({_day_url("BTCUSDT", "2026-06-30"): _zip_of(_HEADER + "\n" + line + "\n", "m.csv")})
+
+    rows = fetch_oi_day("BTCUSDT", datetime(2026, 6, 30, tzinfo=UTC), opener=opener)
+
+    assert rows is not None and len(rows) == 1
+    assert len(rows[0]) == 1 + len(_FLOAT_COLUMNS)
+    # Row index 6 is `_FLOAT_COLUMNS[5]` — the create_time stamp holds index 0.
+    assert _FLOAT_COLUMNS[5] == "sum_taker_long_short_vol_ratio"
+    assert rows[0][0] == int(datetime(2026, 6, 30, tzinfo=UTC).timestamp() * 1000)
+    assert rows[0][1:] == [11.0, 12.0, 13.0, 14.0, 15.0, 16.0]
+
+
 def test_missing_day_returns_none_not_error(tmp_path):
     opener = _Opener({})  # every URL 404s
     assert fetch_oi_day("BTCUSDT", datetime(2020, 1, 1, tzinfo=UTC), opener=opener) is None
