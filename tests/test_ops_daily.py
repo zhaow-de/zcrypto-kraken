@@ -1959,7 +1959,15 @@ def test_no_grep_shape_admits_a_pattern_source_option():
 # `-R` follows a symlink met while descending a spelled directory, where `-r` does not, so the letter
 # reads a file no operand names. Three commands are not the claim: a table gaining the letter would
 # leave them green, so the sweep is over every grep shape the module discovers.
-_GREP_DEREFERENCING_TOKENS = ["-R", *(f"-R{c}" for c in string.ascii_letters), *(f"-{c}R" for c in string.ascii_letters)]
+_GREP_DEREFERENCING_TOKENS = [
+    "-R",
+    *(f"-R{c}" for c in string.ascii_letters),
+    *(f"-{c}R" for c in string.ascii_letters),
+    # the letter is not the spelling: GNU's long form does the same thing, and escaped the probe above
+    # until a review measured it reading through a link on both binaries here
+    "--dereference-recursive",
+    "--dereference-recursive=X",
+]
 
 
 def test_no_grep_shape_admits_the_dereferencing_recursion_letter():
@@ -1972,6 +1980,31 @@ def test_no_grep_shape_admits_the_dereferencing_recursion_letter():
     assert not admitted, (
         f"grep shapes admitting the dereferencing recursion letter: {admitted} -- `-R` follows a symlink "
         "met below the operand, reading a file the spelled-path check never sees"
+    )
+
+
+# A list of forbidden spellings cannot be complete -- the long form above escaped the letter probe
+# until a review found it. So the surface itself is pinned: a flag or cluster added to a grep shape
+# reds here, and is justified where it is read rather than merely typed into the table.
+_GREP_SHAPE_SURFACE = {
+    "_FILTER_SHAPES": (("-A", "-B", "-C"), r"-[iEvnoclqFwxa]{1,8}|-[ABC]\d{1,3}"),
+    "_FIRST_STAGE_SHAPES": (("--include", "-A", "-B", "-C"), r"-[iEvnoclqrFwxsah]{1,8}|-[ABC]\d{1,3}"),
+}
+
+
+def test_the_grep_shapes_admit_exactly_the_pinned_surface():
+    """Every grep shape the module exposes admits exactly the flags and cluster pinned here."""
+    surface = {
+        name: (tuple(sorted(shape.flags)), shape.short)
+        for name in sorted(vars(ops_daily))
+        if name.endswith("_SHAPES")
+        for shape in getattr(ops_daily, name)
+        if shape.head == ("grep",)
+    }
+    assert surface, "no grep shape discovered -- the pin, not the classifier, is what failed"
+    assert surface == _GREP_SHAPE_SURFACE, (
+        f"the grep shapes' admitted surface moved:\n  found:  {surface}\n  pinned: {_GREP_SHAPE_SURFACE}\n"
+        "a widened surface is a new class of command the daily pass may run unattended"
     )
 
 
