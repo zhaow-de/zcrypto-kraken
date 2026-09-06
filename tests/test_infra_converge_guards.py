@@ -1654,20 +1654,19 @@ def _expand_src(src: str, loop) -> list[str]:
     return [render(src, {"item": item}) for item in items]
 
 
-def _role_asset(name: str) -> Path | None:
+def _role_asset(name: str, module: str) -> Path | None:
     # Ansible's own resolver, so a role asset is found however its `src:` is spelled — `x.j2` and
-    # `templates/x.j2` name the same file. `None` is off the role: unresolvable, or resolved by the
-    # resolver's last resort, the working directory.
+    # `templates/x.j2` name the same file. The subdir is the one the MODULE searches, so a basename
+    # living in both is read from the copy the task would actually render. `None` is off the role:
+    # unresolvable, or resolved by the resolver's last resort, the working directory.
     from ansible.errors import AnsibleError
 
-    for subdir in ("templates", "files"):
-        try:
-            found = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name))
-        except AnsibleError:
-            continue
-        if found.is_file() and OPS_ROLE.resolve() in found.resolve().parents:
-            return found
-    return None
+    subdir = "files" if module.rsplit(".", 1)[-1] == "copy" else "templates"
+    try:
+        found = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name))
+    except AnsibleError:
+        return None
+    return found if found.is_file() and OPS_ROLE.resolve() in found.resolve().parents else None
 
 
 def _body_text(task: dict) -> str:
@@ -1676,17 +1675,17 @@ def _body_text(task: dict) -> str:
 
 
 def _consumed_text(task: dict) -> str:
-    # The task's body plus the text of every file it renders. RESOLUTION decides, not spelling: what
+    # The task's body plus the text of every file its `src:` names. RESOLUTION decides, not spelling: what
     # resolves inside the role is read however the `src:` is written; what resolves nowhere is off
     # the role — skipped in silence where the `src:` is written as a path (the NFS mount source, the
     # controller-side copy), refused by name where it is a bare filename this role should own.
     text = _body_text(task)
-    for value in task.values():
+    for module, value in task.items():
         src = value.get("src") if isinstance(value, dict) else None
         if not isinstance(src, str):
             continue
         for name in _expand_src(src, task.get("loop")):
-            resolved = _role_asset(name) if isinstance(name, str) else None
+            resolved = _role_asset(name, module) if isinstance(name, str) else None
             if resolved is None:
                 assert "/" in src, (
                     f"{task['name']!r} renders {name!r}, which resolves to no file under {OPS_ROLE.name}/: this selection "
