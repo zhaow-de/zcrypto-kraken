@@ -156,10 +156,19 @@ def _prefix_anchored(tree: ast.Module, src: str, line_vars: set[str]) -> set[int
         # a YAML document is always true and exempts the substring for free.
         if not isinstance(n, ast.BoolOp) or not isinstance(n.op, ast.And):
             continue
+        # The anchor's CONTENT, not just its spelling: `startswith("")` is true of every line, so an
+        # empty prefix exempts any substring for free -- and a prefix this reads as no literal at all
+        # (a name, a tuple of alternatives) is one whose exclusion of comments it cannot judge.
         names = {
             root
             for v in n.values
-            if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "startswith"
+            if isinstance(v, ast.Call)
+            and isinstance(v.func, ast.Attribute)
+            and v.func.attr == "startswith"
+            and len(v.args) == 1
+            and isinstance(v.args[0], ast.Constant)
+            and isinstance(v.args[0].value, str)
+            and v.args[0].value
             for root in (_root_name(v.func.value),)
             if root
         }
@@ -242,12 +251,27 @@ def t():
     tasks = (REPO / "infra/m.yml").read_text()
     assert f"dest: {b}" in tasks
 """,
+    "empty prefix anchor on a line": """
+def t():
+    unit = (REPO / "infra/u.service").read_text()
+    assert any(line.startswith("") and "ProtectSystem=strict" in line for line in unit.splitlines())
+""",
 }
 
 
 @pytest.mark.parametrize("label", sorted(_MUST_CATCH), ids=list(sorted(_MUST_CATCH)))
 def test_the_guard_catches_each_known_evasion(label: str) -> None:
     assert _violations(_MUST_CATCH[label]), f"the guard no longer catches: {label}"
+
+
+def test_the_guard_accepts_a_real_prefix_anchor() -> None:
+    """The true positive beside the empty-prefix case above: a prefix that does exclude comments stays exempt."""
+    src = """
+def t():
+    unit = (REPO / "infra/u.service").read_text()
+    assert any(line.startswith("ReadWritePaths=") and "/var/lib/x" in line for line in unit.splitlines())
+"""
+    assert not _violations(src)
 
 
 def test_the_guard_accepts_a_declared_exception() -> None:
