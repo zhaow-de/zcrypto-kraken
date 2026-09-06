@@ -3,7 +3,7 @@
 <a name="order-semantics-verification"></a>
 
 Attended operator procedure for `infra/scripts/kraken-order-semantics-probe.py`, the six-probe protocol re-run demanded by the
-memo's **Version re-check rule** ("a fresh ~€0.20 zero-fill + round-trip pass must re-run the
+**Version re-check rule** ("a fresh ~€0.20 zero-fill + round-trip pass must re-run the
 order-semantics probes before the engine trades on the new version" —
 `docs/reference/adapter-verification/1.230.0.md`). Nothing trades until the engine is armed by
 hand, so it gates **arming**, not merging: the repo may sit on a bumped version indefinitely while
@@ -16,7 +16,7 @@ pin, and it may need deciding days before anything else here.
 hand, in order. Nothing here belongs in a subagent: host- and credential-touching steps die at the
 permission gate there.
 
-The harness is committed because the obligation recurs and the probes are only comparable across versions if they are the *same* probes. It prints the memo table ready to paste; the run's evidence JSON stays outside the repo tree.
+The harness is committed because the obligation recurs and the probes are only comparable across versions if they are the *same* probes.
 
 ______________________________________________________________________
 
@@ -24,9 +24,9 @@ ______________________________________________________________________
 
 |  |  |
 | -- | -- |
-| Money at risk, normal path | probe 5's round-trip only: ~EUR 10 notional, ~EUR 0.17 in fees + spread (2026-07-10 measured EUR 0.1618) |
+| Money at risk, normal path | probe 5's round-trip only: ~EUR 10 notional, ~EUR 0.16 in fees + spread — every recorded pass in `docs/reference/adapter-verification/` |
 | Money at risk, worst case | one unexpected fill per probe-4 order, each bounded by the harness's per-order ceiling (default EUR 15) |
-| Left-resting risk | the harness cancels by client order id on every exit path — the sequence's own teardown, then again while the node stops — and then reads every submitted id back out of the cache once the node has stopped; exit code 3 means something survived that read, and the terminal prints the ids to cancel by hand |
+| Left-resting risk | every submitted client order id is cancelled on each exit path, then re-read after the node stops; exit 3 means one survived, and the terminal prints them to cancel by hand |
 | Blast radius on the live engine | none by construction: the engine is disarmed; probe orders reach it as `events.order.EXTERNAL` with no ledgered row, so its filter counts, logs and drops them |
 
 ______________________________________________________________________
@@ -40,7 +40,7 @@ curl -s https://status.kraken.com/api/v2/scheduled-maintenances.json \
   | python3 -c 'import json,sys; [print(m["name"], m["scheduled_for"], [c["name"] for c in m["components"]]) for m in json.load(sys.stdin)["scheduled_maintenances"]]'
 ```
 
-Abort if a window carrying `WebSocket` or `REST` **in `components`, or in its `name` (an API, not a ticker)** overlaps your run — an empty `components` array is not an absent impact (measured 2026-09-02: *"Scheduled maintenance for Kraken Prime REST, WebSocket, and FIX API"* ships `components: []`). Entries have appeared as little as 41 h (1.7 days) ahead — measured, not promised — so an empty feed is never evidence the window is clear — **check again immediately before step 4**.
+Abort if a window carrying `WebSocket` or `REST` **in `components`, or in its `name` (an API, not a ticker)** overlaps your run — an empty `components` array is not an absent impact. An empty feed is never evidence the window is clear: **check again immediately before step 4**.
 
 ### 1.2 The engine's 4-hour boundary
 
@@ -63,9 +63,7 @@ The engine cycles at **00/04/08/12/16/20 UTC** and must complete inside `[B, B+3
 
 ### 1.3 The key's IP allowlist — the step that will otherwise fail every run
 
-Per spec 00039 decision 3 the workstation IP was a **verification-window-only** exception and was
-removed when the 2026-07-10 memo landed; the VPS/engine host is the key's only allowlisted host
-today. So:
+Spec 00039 decision 3 makes the workstation IP a **verification-window-only** exception, closed again at step 7.3 after every pass — so it is absent when you start:
 
 1. Kraken → Settings → API → `zcrypto-engine` → edit IP restrictions → **add the workstation's
    current public IP** (`curl -s https://api.ipify.org`).
@@ -76,14 +74,7 @@ putting a probe process beside the live engine on the same host is not worth the
 
 ### 1.4 The account is funded
 
-The probes need enough EUR to (a) let probe 5 buy ~EUR 10 and (b) let the venue accept the resting
-margin orders. Check at Kraken → Balances, or let **probe 1** tell you — but read it knowing that
-what the account object reports under `spot_account_type=MARGIN` is the adapter's choice and is not
-readable from the wheel. It was measured once as **TradeBalance-derived equity in
-`margin_balance_asset`** rather than per-asset wallet balances (2026-07-10 Observation 3); on a
-build that has not been probed, treat that as the shape to **check for**, not the shape to expect.
-Either way, wallet truth is the Kraken UI or the raw `Balance` endpoint — record which of the two
-probe 1 gave you.
+The probes need enough EUR to (a) let probe 5 buy ~EUR 10 and (b) let the venue accept the resting margin orders. Check at Kraken → Balances, or let **probe 1** tell you — but what the account object reports under `spot_account_type=MARGIN` is the adapter's choice and is not readable from the wheel, so treat it as a shape to **check for** on the build in front of you, not one to expect. Wallet truth is the Kraken UI or the raw `Balance` endpoint — record which of the two probe 1 gave you.
 
 If the balance is short, fund it *before* the run, not between probes.
 
@@ -102,12 +93,7 @@ conflict, and the conflict resolves in exactly one direction — the record does
 
 - **Freeze before the pass.** The version you run the probes against must be the version that is
   still pinned when the engine is armed. Land the bump you intend to arm on, then stop.
-- **Any later bump re-disarms the engine, at the next deploy.** Be precise about when: a bump in the
-  repo does not touch a container that is already running, so an engine armed on the old version
-  keeps trading on it. What the bump kills is the *path forward* — the armed converge is refused
-  from that tree, and once an image built from it is deployed the gate refuses to arm too. Nothing
-  warns you at the moment of the bump; the suite stays green by design, and the refusal arrives at
-  the arming step, which is the worst moment to discover it.
+- **Any later bump blocks arming, from the next deploy on.** A bump in the repo does not touch a container that is already running, so an engine armed on the old version keeps trading on it. What the bump kills is the *path forward* — the armed converge is refused from that tree, and once an image built from it is deployed the gate refuses to arm too. Nothing warns you at the moment of the bump; the suite stays green by design, and the refusal arrives at the arming step, which is the worst moment to discover it.
 - **A bump that lands after a pass is a decision to re-run the pass**, at the full attended cost, or
   to revert the pin. There is no third option, and "the diff looks harmless" is not one: this
   procedure exists precisely because a bump can move fill, cancel, post-only or reconciliation
@@ -136,28 +122,11 @@ The wrappers pass `-I` to both interpreters, which isolates Python's environment
 
 Run from the worktree root (both paths above are relative to it) and pass `--evidence-dir "$EVID"` on every invocation: the evidence default is the cwd, which inside the repo would drop JSONs into git.
 
-The version the harness demands is the one `pyproject.toml` pins, read from the file at every
-invocation rather than restated in the script — so the check above and the harness's own refusal
-read the same operand, and neither can go stale as the pin moves. It refuses to start against an
-interpreter that does not match, and that refusal is the point of the run, never a nuisance to
-bypass: clear it with `uv sync`, not with `--expect-nautilus`. (A run from a tree where
-`pyproject.toml` is unreadable refuses too, naming `--expect-nautilus` — it will not guess the
-string this run is supposed to establish.)
+The harness reads the version it demands from `pyproject.toml` at every invocation, so it and the check above cannot disagree, and it refuses to start against an interpreter that does not match. That refusal is the point of the run, never a nuisance to bypass: clear it with `uv sync`, never with `--expect-nautilus` or `--allow-version-mismatch`.
 
 ### 2.1 What the record records — settled before the pass, not discovered at it
 
-`cli/engine/order-semantics-verified.json` lists **exact, complete version strings, matched
-exactly**. There is no family match, no prefix match, no "rc4 covers all rc4 nightlies". That is a
-decision, not an accident of the implementation, and it is not up for revisiting at an arming
-window:
-
-- The probes measure **one build**. A prefix that vouched for builds nobody ran would make the
-  record say something no attended run ever established, which is the only thing the record is for.
-- Both guards already do exact membership and are tested against the near-misses that would
-  otherwise slip through — a prefix, a trailing `.post1`, a leading space. Loosening the match means
-  weakening both at once, from a file whose entire purpose is to be hard to loosen.
-- The cost of exactness is §1.6's freeze. That is the price, it is known, and it is cheaper than a
-  guard that vouches for a build nobody measured.
+`cli/engine/order-semantics-verified.json` lists **exact, complete version strings, matched exactly** — no family match, no prefix, no "rc4 covers all rc4 nightlies". The probes measure **one build**, so a prefix would make the record vouch for builds no attended run ever touched, which is the only thing the record is for. The cost of that exactness is §1.6's freeze, and it is not up for revisiting at an arming window.
 
 **The string to record is the one the interpreter reports**, not the one you read off the pin:
 
@@ -174,10 +143,7 @@ deployed image makes the converge assert refuse a version the running engine doe
 what `engine-procedures.md`'s pre-probe step 2 is for — converge from the revision the running digest was built
 from, and the two operands agree by construction. Reaching for `-e arming_override=...` because
 "the record obviously contains it" is the wrong move here; reconcile the tree instead.
-Keeping them coincident is `tests/test_nautilus_adapter.py::test_pinned_version`'s job, and it is
-why the pin uses PEP 440 arbitrary equality (`===`): the index publishes both `<version>` and
-`<version>+<build>` for the same wheel, and `==` matches the local-segment form and orders it above,
-so `==` can install a build whose `__version__` is not the string anyone wrote down.
+Keeping them coincident is `tests/test_nautilus_adapter.py::test_pinned_version`'s job; its `_NAUTILUS_PIN` comment carries why the pin must use `===` rather than `==`.
 
 ______________________________________________________________________
 
@@ -189,22 +155,13 @@ Two checks, both free, both without credentials.
 $PY $PROBE --selftest
 ```
 
-**Expect:** every line `ok`, then `SELFTEST PASSED (<n> checks)`, exit 0. This exercises the pure
-rails — the notional ceilings, the 25 % distance floor re-measured after quantization, the
-quote-freshness and crossed-quote refusals, the client order id collision guard, the leftover
-classification that decides whether a run may report "nothing is resting", and the waiting primitive
-the whole sequence advances on — and proves each one *bites* on the defect it names. A `FAIL` line
-here means **stop**: the rails that bound the money are broken.
+**Expect:** every line `ok`, then `SELFTEST PASSED (<n> checks)`, exit 0. Each check names the rail it exercises. A `FAIL` line here means **stop**: the rails that bound the money are broken.
 
 ```
 $PY $PROBE --probes 3 --no-exec --evidence-dir "$EVID"
 ```
 
-**Expect:** the node starts with a data client only (a warning `No exec_clients configuration found`
-is correct here), quotes arrive for all 10 EUR pairs within seconds, probe 3 reports `PASS`, the node
-shuts down, exit 0. This is a public-market-data connection: no credentials, no orders, nothing to
-lose. It proves the node assembly, the WS path, the callback sequence, the teardown and the exit path
-all work before the trade key is anywhere near the process.
+**Expect:** the node starts with a data client only, quotes arrive for all 10 EUR pairs within seconds, probe 3 reports `PASS`, the node shuts down, exit 0. This is a public-market-data connection: no credentials, no orders, nothing to lose, and it proves the node assembly, the WS path, the callback sequence and the teardown before the trade key is anywhere near the process.
 
 **Failure here is a harness problem, not an adapter finding.** Fix it before step 4.
 
@@ -218,20 +175,9 @@ ______________________________________________________________________
 RUN=infra/scripts/probe-with-vaulted-key.sh
 ```
 
-`$RUN` decrypts `kraken_trade_api_key` and `kraken_trade_api_secret` from
-`infra/ansible/group_vars/engine_host/vault.yml` (T0061 moved them there from `capture_host`) using
-`infra/ansible/scripts/vault-pass.sh` — the documented sops+GPG path from `infra/README.md`, which
-keeps its own ancestry refusals — and `execve`s the harness with the two values in the child's
-environment. It never echoes them, never writes them to a file, and never puts them on a command
-line, so `ps` shows the harness's flags and nothing else; it is one process throughout, so they
-never cross a pipe either. The program it runs is **hardcoded** and arguments select nothing, which
-is what lets the operation be permitted narrowly rather than as a general secrets-reading
-capability. It refuses outside the repo root, so neither the harness nor the vault path can be
-shadowed.
+`$RUN` decrypts `kraken_trade_api_key` and `kraken_trade_api_secret` from `infra/ansible/group_vars/engine_host/vault.yml` (T0061 moved them there from `capture_host`) through `infra/ansible/scripts/vault-pass.sh`, the sops+GPG path `infra/README.md` documents, and `execve`s the harness with the two values in the child's environment — never echoed, never written, never on a command line. The program it runs is **hardcoded** and arguments select nothing, which is what lets the operation be permitted narrowly rather than as a general secrets-reading capability.
 
-**From here on, every invocation that needs the key runs as `$RUN <args>` in place of
-`$PY $PROBE <args>` — the same arguments, nothing else changes.** §3's two checks need no
-credentials and keep using `$PY $PROBE`. So §5.1's dry run is:
+**From here on, every invocation that needs the key runs as `$RUN <args>` in place of `$PY $PROBE <args>`, the same arguments and nothing else changed.** §3's two checks need no credentials and keep using `$PY $PROBE`. So §5.1's dry run is:
 
 ```
 $RUN --probes all --evidence-dir "$EVID"
@@ -242,19 +188,10 @@ Rules, all of them absolute:
 - Never write either value into a file, a history-recorded command, or a subagent prompt.
 - Never run `ansible-inventory --host` / `--list` / `--graph --vars` — `ansible.cfg` sets
   `vault_password_file`, so all three print the cleartext key.
-- The harness reads both **values**, not merely their presence: `exec_client_config()` takes them
-  from `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` and passes them into
-  `KrakenExecutionClientConfig(api_key=…, api_secret=…)`, which requires them. What bounds the
-  exposure is what it does next — they are never stored on a harness object, logged, printed,
-  interpolated into a message, or written to the evidence file, and its refusals name the two
-  VARIABLES, never their contents.
+- The harness reads both **values**, not merely their presence — `exec_client_config()` passes `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` into `KrakenExecutionClientConfig`, which requires them — and never stores, logs, prints or writes them; its refusals name the two VARIABLES, never their contents.
 - Close the shell when the run is done. Nothing sensitive should be in it, and that is the check.
 
-**Nonce warning (2026-07-10 Observation 4):** the adapter was measured using finer-than-millisecond
-nonces. After any harness run, millisecond-nonce REST scripts on the same key then got
-`EAPI:Invalid nonce`. Assume it still holds — any sidecar tooling you reach for afterwards must use
-`time_ns()` nonces — since assuming it does costs nothing and assuming it does not costs a debugging
-session.
+**Nonce warning:** the adapter has been measured minting finer-than-millisecond nonces (`docs/reference/adapter-verification/1.230.0.md`), so after a harness run a millisecond-nonce REST script on the same key gets `EAPI:Invalid nonce` — give any sidecar tooling you reach for afterwards `time_ns()` nonces.
 
 ______________________________________________________________________
 
@@ -281,20 +218,9 @@ would make and stop there.
 - every `client_order_id` has the shape `O-<stamp>-901-P6V-<n>` — **never** `…-001-000-…`, which is
   the production engine's.
 
-Also read probe 2's row: it lists any **pre-existing** open order or position that read can see.
-Anything there must be explained before you place a probe order — a `REVIEW` verdict on probe 2 is a
-stop sign, not a footnote. **An empty row is a floor, not a clear venue.** Probe 2 reads the same
-startup-reconciliation cache §5.4 describes, so it cannot see an order resting on BTC/EUR, ETH/EUR,
-XRP/EUR, LTC/EUR or ETH/BTC
-([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), and
-`--pair` defaults to **BTC/EUR** — so a leftover from an earlier run, on the pair you are about to
-trade, is exactly what this row cannot list. Read Kraken → Trade → Open Orders by eye before §5.2
-places anything. The harness prints that caveat beneath the row.
+Also read probe 2's row: it lists any **pre-existing** open order or position that read can see. Anything there must be explained before you place a probe order — a `REVIEW` verdict on probe 2 is a stop sign, not a footnote. **An empty row is a floor, not a clear venue.** Probe 2 reads the startup-reconciliation cache, which cannot see an order resting on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), and `--pair` defaults to **BTC/EUR** — so a leftover from an earlier run, on the pair you are about to trade, is exactly what this row cannot list. Read Kraken → Trade → Open Orders by eye before §5.2 places anything.
 
-**Verdicts you should see:** 1 `PASS`, 2 `PASS`, 3 `PASS`, 4a–4d `DRY-RUN`, 5 `GATED`, 6 `PASS`.
-Probe 5 reads `GATED` rather than `DRY-RUN` because `--probe5` without `--apply` is refused at
-preflight — but it now prints the money order it *would* place, so read that line here rather than
-meeting it for the first time in the live run.
+**Verdicts you should see:** 1 `PASS`, 2 `PASS`, 3 `PASS`, 4a–4d `DRY-RUN`, 5 `GATED`, 6 `PASS`. Probe 5 reads `GATED` rather than `DRY-RUN` because its money gate `--probe5` was not given — it still prints the money order it *would* place, so read that line here rather than meeting it for the first time in the live run.
 
 ### 5.2 Probes 1–4 for real — the zero-fill sweep
 
@@ -309,15 +235,13 @@ Between the printed probes, watch for:
 
 | Sub-probe | Healthy | What failure looks like |
 | -- | -- | -- |
-| 4a | `accepted (<venue id>), rested, cancel confirmed; filled_qty=0.0` | any `filled_qty` > 0 (a fill at 30 % from market is a reportable finding, not noise); `cancel NOT confirmed` (an order is still working — see §8) |
-| 4b | `filled_qty=0.0` and a terminal status. Which terminal event carries it — `OrderCanceled` (venue-initiated) or an `OrderRejected` naming post-only — is the adapter's mapping and this run's **observation**: either is a pass, and **recording which one you saw is part of the deliverable**. A build not yet probed has no expected answer here; do not carry an earlier build's forward | `filled_qty` > 0 ⇒ post-only protection did not hold. This is an order-semantics failure and per spec 00039 decision 1 it triggers the pre-approved thin-engine fallback. An `OrderRejected` for any *other* reason is not a pass either — the harness scores it FAIL, because the venue never exercised post-only |
-| 4b, alternative | verdict `REVIEW` with "order RESTED instead of being protected" | the quote moved between pricing and submission so nothing crossed. **Protocol artifact, not an adapter failure** — re-run with `--probes 4 --apply`, which re-runs all of 4a–4d (there is no sub-probe selector; the extra three are bounded and zero-fill) |
+| 4a | `accepted (<venue id>), rested, cancel confirmed; filled_qty=0.0` | any `filled_qty` > 0 — a fill 30 % from market is reportable; `cancel NOT confirmed` — an order is still working, see §8 |
+| 4b | `filled_qty=0.0` and a terminal `OrderCanceled` or post-only `OrderRejected` — either passes | `filled_qty` > 0 ⇒ post-only did not hold ⇒ spec 00039 D1's fallback; any *other* `OrderRejected` is FAIL, protection never exercised |
+| 4b, alternative | `REVIEW`, "order RESTED instead of being protected" | the quote moved before submission and nothing crossed — protocol artifact, not adapter failure; re-run `--probes 4 --apply` |
 | 4c | `accepted … cancel confirmed` with leverage 2 accepted by the venue | a rejection naming leverage ⇒ margin semantics failure ⇒ fallback path |
 | 4d | same, for the leveraged **sell** (the short) | as 4c |
 
-A `REFUSED` row is a rail doing its job — nothing was submitted for that sub-probe. Read the reason:
-a stale quote, a size under the venue minimum, a distance that quantized under 25 %. Fix the input
-(`--notional`, `--max-quote-age`) and re-run that probe with `--probes <n>` (which re-runs all of its lettered sub-probes — there is no sub-probe selector). **A refusal is never an adapter result.**
+A `REFUSED` row submitted nothing for that sub-probe. Read the reason — a stale quote, a size under the venue minimum, a distance that quantized under 25 % — then fix the input (`--notional`, `--max-quote-age`) and re-run that probe with `--probes <n>`, which re-runs all of its lettered sub-probes; there is no sub-probe selector, and the extra ones are bounded and zero-fill. **A refusal is never an adapter result.**
 
 ### 5.3 Probe 5 — the only step that spends money
 
@@ -339,16 +263,9 @@ closing `SELL` plan → `market sell @ <px> filled` → verdict `PASS`.
 - A note about the closing quantity being "floored … dust will remain" means a sliver of BTC stays
   in the wallet. Below the leg's `ordermin` that is terminal dust, not a position — record it, do not
   chase it.
-- Whether a spot buy under `spot_account_type=MARGIN` shows an OpenPositions row is **per build, and only one
-  record carries the reading**: `2.0.0rc4.dev20260825` reports `open positions=1` after the buy and 0 after the
-  closing sell. Neither earlier record answers it — the harness's "may open none" is a note asking for the
-  reading, not a result. Read it on the build in front of you and record it. On a build that has not been probed that is a thing
-  to check and record, not a thing to expect; either way it is not by itself a failure, and probe 5
-  is judged on the fill and the flat close. The harness prints this reminder inline.
+- Whether a spot buy under `spot_account_type=MARGIN` shows an OpenPositions row is **per build**: read it on the build in front of you and record it in that version's `docs/reference/adapter-verification/` record. Either answer is a pass — probe 5 is judged on the fill and the flat close.
 
-Record the fee from the fill: 2026-07-10 measured **0.80 %/side** against a modelled 0.6 %, inside
-the pre-registered 2× band. A materially different number is a cost-model input (T0014), not an
-adapter failure.
+Record the fee from the fill and compare it with the rate the cost model charges: `cli/costs/fees.py`'s tier 1 is **0.80 %/side** taker, and each recorded pass measured exactly that. A materially different number is a cost-model input (the calibration T0014 delivered), not an adapter failure.
 
 ### 5.4 Probe 6 — post-run reconciliation, as a fresh process
 
@@ -356,22 +273,13 @@ adapter failure.
 $RUN --probes 6 --evidence-dir "$EVID"
 ```
 
-Running it as its **own invocation** is deliberate: the new node's startup reconciliation reads venue
-truth rather than the previous process's cache. (Probe 6 also runs in-process at the end of a full
-run, but from the cache that run already holds -- it cannot force a fresh venue read, and says so by
-marking its own row REVIEW. The separate invocation is the stronger check and the one to quote.)
+Running it as its **own invocation** is deliberate: the new node's startup reconciliation reads venue truth rather than the previous process's cache. Probe 6 also runs in-process at the end of every run, but a run that submitted anything cannot force a fresh venue read and marks its own row `REVIEW` — the separate invocation is the one to quote.
 
 **Expect:** `open orders 0 (ours 0, other 0), open positions 0`, `PASS`, exit 0.
 
-**That zero is a floor, not a total, and this probe is where it matters most.** Startup
-reconciliation's order read cannot see a row on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC
-([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)),
-and `--pair` defaults to **BTC/EUR** — so the order a run is most likely to have left resting is
-exactly the one this count cannot include, and a PASS here is not on its own evidence the account is
-clear. The harness prints that caveat beneath the row. §7.1's by-eye read at Kraken is what closes
-it, which is why that section calls the UI the tie-breaker rather than a formality.
+**That zero is a floor, not a total, and this probe is where it matters most.** Startup reconciliation's order read cannot see a row on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), and `--pair` defaults to **BTC/EUR** — so the order a run is most likely to have left resting is exactly the one this count cannot include. A PASS here is not on its own evidence the account is clear; §7.1's by-eye read at Kraken is what closes it.
 
-- `ours` non-zero ⇒ **verdict FAIL**, and the open ids are printed in probe 6's own rows ⇒ go to §8 now. Expect exit **3**, with the cancel-by-hand banner: the final read sweeps every probe-shaped order that read can see, including ones this invocation never submitted, so a leftover an earlier run left behind is adopted by startup reconciliation and counted as outstanding — subject to the floor above, which on the default pair is what decides whether this branch fires at all. FAIL and the banner read the same cache, so expect the same ids -- but they are read at different moments, and the node holds its clients open for `--order-timeout` seconds after the stop (default 30), so a cancel or fill the venue confirms in that window can legitimately move an id between the two.
+- `ours` non-zero ⇒ **verdict FAIL**, the open ids printed in probe 6's own rows ⇒ go to §8 now, and expect exit **3** with the cancel-by-hand banner. The final read sweeps every probe-shaped order it can see, including ones this invocation never submitted, so an earlier run's leftover is adopted by startup reconciliation and counted here — subject to the floor above. FAIL and the banner read the same cache at different moments, so an id can legitimately move between them while the node still holds its clients open after the stop.
 - `other` non-zero ⇒ `REVIEW` ⇒ something at the venue is not ours. Adjudicate before signing off.
 
 ______________________________________________________________________
@@ -381,9 +289,11 @@ ______________________________________________________________________
 | Code | Meaning | Action |
 | -- | -- | -- |
 | 0 | every executed probe passed | proceed to §7 |
-| 1 | a probe FAILED or errored, **or** a preflight rail refused the invocation before anything started (its message begins `REFUSING:` and no node was built) | read the row; an order-semantics/reconciliation failure (probes 2, 4–6) triggers the pre-approved fallback, anything else is documented and escalated (spec 00039 decision 1) |
-| 2 | a probe was refused, **or** the run stopped before its sequence finished | **Read the harness's own output before deciding which of the two this is — they need opposite actions.** A *refusal* (`!! REFUSED before the node was built:`, or a probe row whose verdict is `REFUSED`) submitted nothing for that probe: fix the input and re-run it. A run that *stopped* — an interrupt, an exec client that died, any abnormal exit from the node — may have left a real **open position** that no order read can see, because probe 5's buy filled, its closing sell never ran, and the buy is CLOSED. The harness says so: the `!!` banner `a fill with no closing leg is an OPEN POSITION` and the matching line under *notes requiring a human decision*. Flatten by hand per §8 before re-running anything |
+| 1 | a probe FAILED or errored, **or** a preflight rail refused the run (message begins `REFUSING:`) | a probe 2/4–6 failure triggers spec 00039 D1's pre-approved fallback; escalate anything else |
+| 2 | a probe was refused, **or** the run stopped before its sequence finished | the two need opposite actions — read the paragraph below the table before deciding which |
 | 3 | **something was left resting** | §8, immediately |
+
+**Exit 2 is two different events.** A *refusal* (`!! REFUSED before the node was built:`, or a probe row whose verdict is `REFUSED`) submitted nothing for that probe: fix the input and re-run it. A run that *stopped* — an interrupt, an exec client that died, any abnormal exit from the node — may have left a real **open position** that no order read can see, because probe 5's buy filled, its closing sell never ran, and the buy is CLOSED. The harness says so: the `!!` banner `a fill with no closing leg is an OPEN POSITION`, and the matching line under *notes requiring a human decision*. Flatten by hand per §8 before re-running anything.
 
 ______________________________________________________________________
 
@@ -396,8 +306,7 @@ tie-breaker, not the harness.
 
 ### 7.2 Against the live engine
 
-Probe orders reach the engine as `events.order.EXTERNAL` with no ledgered row, so its filter counts,
-logs and drops them without acting. Read the counter by value from the workstation:
+Read the three counters by value from the workstation:
 
 ```
 uv run python infra/scripts/grafana-query.py \
@@ -422,14 +331,7 @@ ssh zcrypto 'ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/'
 A `cycle-<HH>.json` with `completed_at` inside `[B, B+30 min]` for the first boundary after the run.
 That is the outcome that says the probes cost the engine nothing.
 
-**That boundary is normally hours away when you finish**, because §1.2 puts the run at B+35 or later
-— so this check is almost always **deferred, not done**, and the write-up happens first. Carry it
-across that gap explicitly: give the version's record an **`## Owed checks not discharged by this pass`** section naming the exact boundary (`HH:00 UTC` on the run's date) and what would satisfy it,
-then come back at that boundary, take the reading, and **write it into that same section** as its
-outcome. The record is the registration; the arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) refuses to arm
-while any item in it is open, which is what makes the deferral bite instead of evaporating. The same
-applies to any reading this section asks for that the run could not take — an `unmatched` delta with
-no before-reading, for instance, is an absolute number and not the rise this section wants.
+**That boundary is normally hours away when you finish**, because §1.2 puts the run at B+35 or later, so this check is almost always deferred. Carry it across the gap in the record, never in prose: give the version's record an **`## Owed checks not discharged by this pass`** section naming the exact boundary (`HH:00 UTC` on the run's date) and what would satisfy it, then come back at that boundary, take the reading, and **rewrite that bullet as its outcome**. The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) refuses to arm while any item there is open, which is what makes the deferral bite instead of evaporating. Any other reading this section asks for that the run could not take belongs in the same section — an `unmatched` delta with no before-reading is an absolute number, not the rise this section wants.
 
 ### 7.3 Close the IP exception — mandatory
 
@@ -439,23 +341,16 @@ Do this in the same session as the run. Then close the credential-bearing shell.
 
 ### 7.4 Write it up
 
-`kraken-order-semantics-probe.py` prints the table under
-`PROBE RESULTS -- paste these rows into docs/reference/adapter-verification/<version>.md`, and writes
-`evidence-<stamp>.json` into `--evidence-dir` (default: the cwd) with the full event stream, every planned order, and every
-client order id. **Then sweep the homes of "<version> is unverified" in the SAME change**, or the next reader meets a contradiction — the act that satisfies the predicate updates none of the others:
+The harness prints the table under `PROBE RESULTS -- paste these rows into docs/reference/adapter-verification/<version>.md` and writes `evidence-<stamp>.json` into `--evidence-dir`. **Then sweep the homes of "<version> is unverified" in the SAME change**, or the next reader meets a contradiction — the act that satisfies the predicate updates none of the others:
 
-1. **Add the version to `cli/engine/order-semantics-verified.json`**, exactly as the interpreter spells it (§2.1). This clears BOTH guards at once, since they share the file — and it is the act that says the re-run happened, a reviewed diff rather than a memory. Never add a version without the `docs/reference/adapter-verification/<version>.md` doc recording its PASS.
-2. **`tests/test_engine_execgate.py`**, which pins the record's exact contents and therefore **FAILS deliberately the moment you do (1)**. That failure is the routing for the rest of this list: its assertion message enumerates the sweep and points back here. Update it deliberately, never by pasting whatever the diff shows.
-3. **The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window)** — pre-probe step 3, which names the verified version and its record, and step 4's live-orders-boot caveat, which is version-scoped in the same way.
+1. **Add the version to `cli/engine/order-semantics-verified.json`**, exactly as the interpreter spells it (§2.1) — the act that says the re-run happened, and the one that clears both guards. Never add a version without the `docs/reference/adapter-verification/<version>.md` record carrying its PASS.
+2. **`tests/test_engine_execgate.py`**, which pins the record's exact contents and therefore **FAILS deliberately the moment you do (1)** — that failure is the routing for the rest of this list, and its assertion message points back at it. Update it deliberately, never by pasting whatever the diff shows.
+3. **The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window)** — pre-probe step 4, whose unmatched-external baseline and live-orders-boot caveat both name the version they were taken on.
 4. **The previous version's `docs/reference/adapter-verification/` record**, cross-linked so the series reads as one and neither file claims to be current.
 
-**What is deliberately NOT on this list, and why.** `tests/test_nautilus_adapter.py` used to assert a hardcoded version and go red at every bump; that red was the routing. It no longer does: it now checks only that the installed version equals the version `pyproject.toml` pins, which stays green across bumps and carries no version string to sweep. The pin moves on a nightly cadence, and a test that goes red on every routine move stops being read and starts being repaired — so the routing moved to where it cannot be repaired away:
+**`tests/test_nautilus_adapter.py` is deliberately NOT on this list**: it compares the installed version with the pin, so it stays green across bumps and carries no version string to sweep. Nothing goes red at a bump, by design — the debt is collected at arming, by the converge assert and the runtime gate, each of which blocks the money rather than a test run.
 
-- **At a bump, nothing goes red, and nothing is supposed to.** The repo sitting on a bumped version while disarmed is the blessed state. The debt is collected at arming, by the converge assert and the runtime gate, each of which blocks the money rather than a test run. §1.6 is what keeps that from ambushing you.
-- **At the write-up, item (2) still goes red**, because the thing you just changed is the thing it pins. One deliberate failure, at the one moment a human is already editing the record — which is what a tripwire is for.
-
-Paste the table; leave the evidence JSON where `--evidence-dir` put it (`$EVID`, outside the repo tree) and never commit it
-("the raw evidence JSONs are preserved in the session scratchpad").
+Paste the table; leave the evidence JSON where `--evidence-dir` put it (`$EVID`, outside the repo tree) and never commit it.
 
 The memo update must state the exact version the verification now binds to, and every observation
 this run recorded rather than matched — probe 4b's terminal event, probe 1's balance shape, and
@@ -474,32 +369,13 @@ believes is still working.
 2. If a probe-5 buy filled and its sell did not, flatten the position by hand in the same place.
 3. Only then, re-run `$RUN --probes 6 --evidence-dir "$EVID"` and confirm `open orders 0 (ours 0 …)` — **and confirm it a second time on Kraken's own Open Orders page**, because that count is blind on the five pairs §5.4 names and a leftover on one of them reads as a clean zero.
 
-Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads
-the resting orders reconciliation put in its cache, finds no ledgered row for a probe order, and
-**cancels it** — a silent interaction between two systems, in the logs of only one of them. And on
-BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR and ETH/BTC that read is blind
-([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), so
-a probe order left resting on one of those is not cancelled either — it just keeps working. Both
-outcomes say the same thing: leave nothing for it to find.
+Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads the resting orders reconciliation put in its cache, finds no ledgered row for a probe order, and **cancels it** — a silent interaction between two systems, in the logs of only one of them. On the five legs where that read is blind ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)) it is not cancelled either — it just keeps working. Both outcomes say the same thing: leave nothing for it to find.
 
-**Ctrl-C behaviour:** one Ctrl-C is safe. It reaches two handlers. Nautilus's stops the trader
-within a millisecond, which is what runs the harness's cancel-everything sweep — issued while the
-exec client is still connected, because the node holds its clients open for `--order-timeout`
-seconds after the stop (default 30) precisely so those cancels can reach the venue. The harness's
-own handler prints the banner and then swallows every later interrupt, deliberately, so the sweep
-always completes. An interrupted run still prints its table and its leftover banner, and exits **2**
-— or **3** if anything survived the sweep. If you must abandon it, `kill -9` the process from
-another terminal and go straight to §8 by hand.
+**Ctrl-C behaviour:** one Ctrl-C is safe. It stops the node, which runs the harness's cancel-everything sweep while the exec client is still connected — the node holds its clients open for `--order-timeout` seconds after the stop precisely so those cancels can reach the venue. Every later interrupt is swallowed, deliberately, so the sweep always completes. An interrupted run still prints its table and its leftover banner, and exits **2** — or **3** if anything survived the sweep. If you must abandon it, `kill -9` the process from another terminal and work this section by hand.
 
-**What an interrupt does NOT do is finish the run.** Every probe the sequence had not yet reached is
-abandoned, the terminal says how many, and their rows never appear — so an interrupted run is never
-a partial pass to read verdicts out of. Re-run the probes you still owe, as their own invocation.
+**What an interrupt does NOT do is finish the run.** Every probe the sequence had not yet reached is abandoned — the terminal says how many — and their rows never appear, so an interrupted run is never a partial pass to read verdicts out of. Re-run the probes you still owe, as their own invocation.
 
-**If the interrupt landed after a fill, you may be holding a position.** The closing leg of probe 5
-is a submission, and an interrupted run refuses to submit anything further — deliberately, so an
-abort cannot open new exposure on the way out, but it means a filled buy has no closing sell. The
-harness prints every submitted order with a non-zero fill under a flatten-by-hand banner: go to
-Kraken → Trade and flatten before doing anything else, then §8's step 3.
+**If the interrupt landed after a fill, you may be holding a position.** An interrupted run refuses to submit anything further — deliberately, so an abort cannot open new exposure on the way out, but it means a filled probe-5 buy has no closing sell. The harness prints every submitted order with a non-zero fill under a flatten-by-hand banner: go to Kraken → Trade and flatten before doing anything else, then step 3 above.
 
 ______________________________________________________________________
 
@@ -517,10 +393,4 @@ $RUN --probes 6 --evidence-dir "$EVID"                  # fresh-process venue re
 $RUN --probes 4 --apply --log-level INFO --evidence-dir "$EVID"  # re-run probe 4, adapter narrating
 ```
 
-Knobs worth knowing: `--pair` (default `BTC/EUR`), `--notional` (default 10), `--max-notional`
-(default 15, hard ceiling 50 — the harness **refuses**, never clamps), `--away` (default 0.30,
-protocol floor 0.25), `--max-quote-age` (default 10 s), `--probe3-basket` (also subscribe `ETH/BTC`
-and `SOL/BTC`; off by default so the probe-3 row stays comparable with the 2026-07-10 memo), and
-`--order-timeout` (default 30 s), which is both how long a probe waits for an accept or a cancel
-confirmation **and** the window an interrupted run's cancels have to reach the venue — raise it and
-you widen both, so an interrupt costs that much more time before the process exits.
+`--help` lists every knob and its default. What it does not say: `--max-notional` cannot be raised past a hard ceiling of 50 (the harness **refuses**, never clamps); `--probe3-basket` adds `ETH/BTC` and `SOL/BTC`, and leaving it off is what keeps the probe-3 row comparable with the recorded passes; and raising `--order-timeout` widens the interrupt window with it, so an interrupt then costs that much more time before the process exits.
