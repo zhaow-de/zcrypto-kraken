@@ -2,7 +2,10 @@
 provisioning API, which rejects a malformed rule with a bare HTTP 400 whose body the script
 discards -- a failure only an attended push can reach, and one that names neither rule nor field."""
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -131,6 +134,59 @@ def test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve():
     assert burst, (
         "no rule pins a resolve-suppressing receiver any more -- if that was deliberate, "
         "grafana-push.sh should stop minting one; T0047 put the ERROR-log rules there"
+    )
+
+
+# --- notification_settings must survive the payload the push actually sends ----------------------
+# The script's rule payload is built by one jq program; this runs THAT program rather than a copy of
+# it, so a projection or a `del` added there fails here instead of silently defaulting a field on the
+# next attended push. The datasource half is read back live by the script itself (T0034).
+_RULE_PAYLOAD_JQ = re.compile(r"rule_payload=\$\(jq\b.*?'(.*?)'\s*<<<\"\$\{rules_json\}\"", re.S)
+
+
+def _pushed_payload(program: str, rules_json: str, uid: str) -> dict:
+    """One rule's PUT body, produced by `grafana-push.sh`'s own jq program under placeholder values
+    that cannot collide with anything in the file."""
+    proc = subprocess.run(
+        ["jq", "--arg", "uid", uid, "--arg", "prom", "P", "--arg", "loki", "L", "--arg", "folder", "F", program],
+        input=rules_json,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"the push's jq program failed on {uid}: {proc.stderr}"
+    return json.loads(proc.stdout)
+
+
+def test_notification_settings_survive_the_payload_the_push_sends():
+    """`repeat_interval` is set by exactly one rule, so a payload step that dropped or defaulted it
+    would cost that rule its re-notify interval and leave every other rule's block intact -- nothing
+    on any surface would say so. The block is compared whole, and it carries no `${...}` placeholder,
+    so equality is exact rather than a re-implementation of the script's substitution."""
+    if shutil.which("jq") is None:  # pragma: no cover - jq is present wherever grafana-push.sh runs
+        pytest.skip("jq not available, so the push's own payload program cannot be run")
+    program = _RULE_PAYLOAD_JQ.search(PUSH.read_text())
+    assert program, "grafana-push.sh no longer builds its rule payload with a jq program this test can run"
+    jq_program = program.group(1)
+    assert "select(.uid == $uid)" in jq_program, f"the extracted program is not the per-rule payload builder: {jq_program!r}"
+
+    rules = _rules()
+    rules_json = json.dumps(rules)
+    configured = {r["uid"]: r["notification_settings"] for r in rules if "notification_settings" in r}
+    assert configured, "no rule sets notification_settings -- this guard would pass vacuously"
+    repeating = sorted(uid for uid, ns in configured.items() if "repeat_interval" in ns)
+    assert repeating, (
+        "no rule sets a non-default repeat_interval, so this guard can no longer see the field it "
+        "exists for -- a payload dropping only repeat_interval would pass it"
+    )
+
+    dropped = {
+        uid: (_pushed_payload(jq_program, rules_json, uid).get("notification_settings"), settings)
+        for uid, settings in configured.items()
+    }
+    dropped = {uid: pair for uid, pair in dropped.items() if pair[0] != pair[1]}
+    assert not dropped, (
+        f"the payload grafana-push.sh sends does not carry the notification_settings the file "
+        f"declares (uid: sent, declared): {dropped}"
     )
 
 
