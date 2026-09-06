@@ -167,7 +167,7 @@ zcrypto archive pull <source> <dest>
 | `--slice` | The rotation index for `--hash-scope incremental`, `0`–`23`: the caller's cycle counter modulo 24. Required with `incremental`. |
 | `--textfile` | Write this run's verify cost as Prometheus textfile-collector gauges here. Needs `--channel`. |
 | `--channel` | The `channel` label on the `--textfile` gauges, e.g. `capture`. |
-| `--verify` / `--no-verify` | Hash-verify pulled segments against their `.sha256` sidecars (default `--verify`). `--no-verify` is for archive-only sources with no sidecars, such as the engine journal. |
+| `--verify` / `--no-verify` | Hash-verify pulled segments against their `.sha256` sidecars (default `--verify`). `--no-verify` is for archive-only sources with no sidecars, e.g. the engine journal. |
 
 `pull` exits **2** on an rsync transport failure (a partial pull is never verified as authoritative — this also covers a missing `ARCHIVE_SSH_KEY`) or a bad option combination (`--textfile` without `--channel`, or `--hash-scope incremental` without `--slice`), **1** if any pulled segment fails its manifest hash check, else **0**. The rsync-over-ssh transport reads `ARCHIVE_SSH_KEY` (the private key path, required), `ARCHIVE_SSH_PORT` (default `10022`), and `ARCHIVE_SSH_KNOWN_HOSTS` (a `UserKnownHostsFile` path). Host-key checking is strict (`StrictHostKeyChecking=yes`), so `ARCHIVE_SSH_KNOWN_HOSTS` must be pre-seeded with the remote host key — an unknown or changed key fails the pull closed rather than trusting it.
 
