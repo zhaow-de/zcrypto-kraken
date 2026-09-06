@@ -155,5 +155,5 @@ def test_committed_spec_hash_lookup_is_sane():
     # Guards the predicate, as `test_git_tracked_lookup_is_sane` does for the tracked set.
     hashes = _committed_spec_hashes()
     assert len(hashes) > 50
-    deployable = next(r for r in _records() if r["trial_id"] == 44)
-    assert deployable["spec_hash"] in hashes  # the deployable's own pin must be live, not exempted
+    record_44 = next(r for r in _records() if r["trial_id"] == 44)
+    assert record_44["spec_hash"] in hashes  # 44 is outside LEGACY_SPEC_HASH_ORPHANS, so its pin must resolve here

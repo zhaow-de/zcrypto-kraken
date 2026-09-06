@@ -1342,6 +1342,46 @@ def test_an_unparseable_plan_is_journaled_and_deleted(tmp_path):
     assert not path.exists()
 
 
+def _raw_plan_text(**fields: str) -> str:
+    """One plan document as TEXT, each named field replaced by a raw JSON fragment -- a 5000-digit
+    integer is not a value `json.dumps` can be handed."""
+    intent = {"symbol": '"BTC/EUR"', "side": '"buy"', "action": '"open"', "mode": '"execute"', "notional_eur": "30.0"}
+    intent.update(fields)
+    body = ", ".join(f'"{key}": {value}' for key, value in intent.items())
+    created = (NOW - timedelta(minutes=5)).isoformat()
+    return f'{{"plan_id": "p-1", "created_at": "{created}", "intents": [{{{body}}}]}}'
+
+
+# Measured against this tree: each fragment drives `parse_plan` past its own ProbePlanError into the
+# named builtin -- an unhashable value on a frozenset membership test, an integer too large for
+# `float()`, and one longer than the 4300 digits `int()` will convert.
+@pytest.mark.parametrize(
+    ("field", "exception_class"),
+    [
+        ({"side": '["buy"]'}, "TypeError"),
+        ({"notional_eur": "1" + "0" * 400}, "OverflowError"),
+        ({"notional_eur": "1" + "0" * 5000}, "ValueError"),
+    ],
+    ids=["side-is-a-json-list", "notional-is-a-400-digit-integer", "notional-is-a-5000-digit-integer"],
+)
+def test_a_plan_whose_parse_raises_past_probeplanerror_is_journaled_by_class_and_deleted(tmp_path, field, exception_class):
+    """A malformed document that leaves `parse_plan` as a builtin rather than a ProbePlanError is
+    journaled under its class and deleted, so no later tick re-reads it."""
+    ex = _executor(tmp_path)
+    path = _plan_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_raw_plan_text(**field))
+
+    ex.on_timer(NOW)
+    ex.on_timer(NOW)  # the tick that re-reads a file the refusal failed to delete
+
+    assert not path.exists()
+    entry = _plan_entry(tmp_path)
+    assert entry["plan_id"] == "unparseable" and entry["disposition"] == "refused"
+    assert entry["reasons"][0].startswith(f"{exception_class}: ")
+    assert len(_record(tmp_path)["plans"]) == 1
+
+
 def test_the_dedup_window_is_computed_in_utc_not_the_callers_offset(tmp_path):
     """A plan ledgered early on one UTC day, re-dropped a few hours later while the caller's clock
     carries a negative offset: `now.date()` in that offset is still the PREVIOUS day, so an

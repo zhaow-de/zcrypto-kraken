@@ -51,7 +51,7 @@ def _after(day: date, *, hours: float) -> datetime:
 
 
 def test_an_unsettled_day_is_deferred_then_taken_once_settled(tmp_path):
-    """D3's pre-filter: 26h past day end is the boundary."""
+    """D3's pre-filter: 26h past day end is the boundary, and the watermark crosses it with the day."""
     src, out = tmp_path / "src", tmp_path / "out"
     d = date(2026, 8, 1)
     nid = _day(src, "BTC/EUR", d, start_id=0)
@@ -60,10 +60,12 @@ def test_an_unsettled_day_is_deferred_then_taken_once_settled(tmp_path):
     early = materialize(src, tmp_path / "r", out, now=_after(d, hours=25))
     assert early.days_written == 0 and early.days_unsettled == 2
     assert not list(out.rglob("*.parquet"))
+    assert _watermark(out, "BTC/EUR") is None
 
     late = materialize(src, tmp_path / "r", out, now=_after(d, hours=27))
     assert late.days_written == 1 and late.days_unsettled == 1  # the successor day is still young
     assert (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
+    assert _watermark(out, "BTC/EUR") == d
 
 
 def test_a_published_day_is_skipped_not_rewritten(tmp_path):
@@ -102,6 +104,7 @@ def test_a_corrupt_segment_is_isolated_and_the_sweep_continues(tmp_path):
     res = materialize(src, tmp_path / "r", out, now=_after(date(2026, 8, 3), hours=27))
     assert len(res.errors) == 1 and res.errors[0][0] == "BTC/EUR"
     assert res.days_written == 1  # 08-02; 08-01 errored, 08-03 is the live edge
+    assert res.days_unhealed == 1  # 08-03 alone: an unreadable segment buys an error, never an unhealed count
     assert not (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
     assert (out / "BTC" / "EUR" / "2026" / "08" / "02.parquet").exists()
 

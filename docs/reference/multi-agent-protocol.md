@@ -35,7 +35,7 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 
 ## The hourly tick
 
-**The coordinator is unpoked.** The tick resumes a stalled payload turn; nothing resumes main's. So main opens every turn by reading its own last declared next step against what actually happened — an announced send with nothing in the peer's inbox, a "next: X" with no X — before it reads anything else. The owner's `...` is the fallback, not the mechanism.
+**The coordinator is unpoked.** The tick resumes a stalled payload turn; nothing resumes main's, so `agent-ops.md`'s announcing rule is main's own check at the top of every turn.
 
 Main runs it from an in-session `CronCreate` job — session-only, fires only while main is idle, **expires after seven days**: reinstall it at every restart and every week. Its cron field, like every one-shot read's, is in the process's zone — UTC — never a conversion to the owner's.
 

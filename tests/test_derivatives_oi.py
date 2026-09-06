@@ -15,6 +15,7 @@ from cli.config import load_config, resolve_hot_source
 from cli.derivatives.errors import DerivativesError
 from cli.derivatives.funding import PERP_SYMBOLS
 from cli.derivatives.oi import (
+    _FLOAT_COLUMNS,
     backfill_oi,
     build_oi_substrate,
     fetch_oi_day,
@@ -87,6 +88,24 @@ def test_fetch_oi_day_verifies_checksum_and_parses_metrics(tmp_path):
     first = rows[0]
     assert first[1] == 100.5  # sum_open_interest
     assert first[2] == 100000.0  # sum_open_interest_value
+
+
+def test_fetch_oi_day_pins_the_rows_positional_contract():
+    """`fetch_oi_day` returns positional rows that every reader indexes by number, so a reorder of
+    `_FLOAT_COLUMNS` moves a value into its neighbour's slot with nothing raising; one distinct
+    sentinel per metrics column makes any swap land a different number where it is read from."""
+
+    line = "2026-06-30 00:00:00,BTCUSDT,11.0,12.0,13.0,14.0,15.0,16.0"
+    opener = _Opener({_day_url("BTCUSDT", "2026-06-30"): _zip_of(_HEADER + "\n" + line + "\n", "m.csv")})
+
+    rows = fetch_oi_day("BTCUSDT", datetime(2026, 6, 30, tzinfo=UTC), opener=opener)
+
+    assert rows is not None and len(rows) == 1
+    assert len(rows[0]) == 1 + len(_FLOAT_COLUMNS)
+    # Row index 6 is `_FLOAT_COLUMNS[5]` — the create_time stamp holds index 0.
+    assert _FLOAT_COLUMNS[5] == "sum_taker_long_short_vol_ratio"
+    assert rows[0][0] == int(datetime(2026, 6, 30, tzinfo=UTC).timestamp() * 1000)
+    assert rows[0][1:] == [11.0, 12.0, 13.0, 14.0, 15.0, 16.0]
 
 
 def test_missing_day_returns_none_not_error(tmp_path):
@@ -381,6 +400,34 @@ def test_build_substrate_writes_per_perp_files_and_a_manifest(tmp_path):
     assert got.height == 3
     m2 = json.loads((tmp_path / "manifest.json").read_text())
     assert m2["set_sha256"] == manifest["set_sha256"]
+
+
+def test_the_oi_manifest_digest_reproduces_across_two_builds(tmp_path):
+    """`set_sha256` is the identity a downstream verification pins, so it must be a function of the
+    data alone: two builds of the same published days — different roots, different clocks, so the
+    second walks two unpublished days the first never reached — agree on it while their `written_at`
+    differs."""
+    files = {
+        _day_url("BTCUSDT", "2026-06-30"): _zip_of(_metrics_csv("2026-06-30", "BTCUSDT"), "a.csv"),
+        _day_url("ETHUSDT", "2026-06-30"): _zip_of(_metrics_csv("2026-06-30", "ETHUSDT"), "b.csv"),
+    }
+
+    def _build(root: str, now: datetime) -> dict:
+        return build_oi_substrate(
+            tmp_path / root,
+            perps={"BTC": "BTCUSDT", "ETH": "ETHUSDT"},
+            start=datetime(2026, 6, 30, tzinfo=UTC),
+            clock=lambda: now,
+            opener=_Opener(files),
+        )
+
+    first = _build("first", datetime(2026, 7, 1, 12, tzinfo=UTC))
+    second = _build("second", datetime(2026, 7, 3, 9, tzinfo=UTC))
+
+    assert first["written_at"] != second["written_at"]  # two runs, not one dict read twice
+    assert first["series"]["BTCUSDT/oi.parquet"]["rows"] == 3  # not two empty sets agreeing
+    assert first["set_sha256"] == second["set_sha256"]
+    assert json.loads((tmp_path / "second" / "manifest.json").read_text())["set_sha256"] == first["set_sha256"]
 
 
 def _substrate_root(name: str) -> Path:

@@ -3,6 +3,7 @@
 canonical data/ohlc-full machine and share one derivation through module-scoped fixtures.
 """
 
+import sys
 from datetime import datetime, timedelta
 
 import pytest
@@ -234,6 +235,11 @@ def test_neither_book_holds_a_durable_lead_across_the_cost_axis(sweep):
     assert sweep["lead_counts"][43] > 0 and sweep["lead_counts"][44] > 0
     assert sweep["highest_lead_multiplier"][43] > 2.0
     assert sweep["highest_lead_multiplier"][44] > 2.0
+
+    # Every counted lead is an ordering rather than a rounding artifact: the smallest margin on the
+    # grid clears a worst-case one-rounding-per-bar accumulation in the two Sharpes it compares.
+    largest_sharpe = max(max(abs(row[1]), abs(row[2])) for row in sweep["grid"])
+    assert sweep["min_abs_diff"] > sys.float_info.epsilon * UNION_BARS[240] * largest_sharpe
 
     # A claim about the measured execution band is only earned if the sweep covered it, and the band
     # is not one-sided either.

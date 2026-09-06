@@ -251,8 +251,8 @@
 # The absolute path to rrsync keeps the forced command independent of the login shell's PATH.
 #
 # The capture data export the NAS pulls lands on zcrypto-data, the m2m data user, not the admin
-# account (spec 00057). `exclusive: false` ADDS it; removing the admin's old copy is registered in
-# T0169 and happens after the NAS repoints, so the pull never drops.
+# account (spec 00057). `exclusive: false` ADDS it; the admin account carries no copy of it (T0169),
+# and the NAS repointed first, so the pull never dropped.
 - name: install the sync_capture pubkey as a forced-command entry on zcrypto-data (segments read-only)
   ansible.posix.authorized_key:
     user: zcrypto-data

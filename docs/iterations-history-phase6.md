@@ -825,3 +825,10 @@ ______________________________________________________________________
 - A `zcrypto_` metric name spelled with a capital now reds: Prometheus names are case-sensitive, so it is a different series from its lowercase twin and the alloy sweep, which keys on `.lower()`, would answer for the twin.
 - The template harnesses say what their `_ENV` line is actually for — `StrictUndefined`, so a variable a test omits raises rather than rendering empty into a golden pin — and no longer claim a parity with ansible that nothing asserts.
 - T0174 is archived; the empty `_HEADROOM_DELIBERATELY_ABSENT` exemption list, the ansible-defaults parity claim and the derived guard's `zcrypto_*`-only scope are dropped with their reasons recorded there.
+## 2026-09-06 — T0169 resolved: the cleanup residue's host side, measured and closed
+
+- The base role no longer carries the logrotate-removal task; a converge changes nothing there.
+- The old capture and hot-push keys are gone from every admin account on the capture hosts and the NAS, and the workstation's `nas-hot` alias reaches the data user under its rrsync jail — an operator repointing or cleaning keys by hand finds nothing left to do.
+- The `zcrypto-archive-pull` unit and the `ops_archive_pull_*` metrics keep their names by decision; nothing renames them and no alert is re-provisioned.
+- The engine's exec journal refuses a probe plan whose parse raises, naming the exception class in the row's reason, and the plan file is deleted rather than re-read every tick.
+- A live-venue test runs only under `ZCRYPTO_LIVE_VENUE_TESTS=1`; without it the skip names the flag, and with it every venue answer short of the expected one fails.

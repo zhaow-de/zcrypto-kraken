@@ -1047,11 +1047,19 @@ class ProbeExecutor:
 
         try:
             plan = parse_plan(path.read_text())
-        except (ProbePlanError, OSError) as exc:
+        except (ProbePlanError, OSError, TypeError, ValueError, OverflowError) as exc:
             # An unreadable file cannot be journaled verbatim, so it is journaled as the refusal it
-            # is -- and still deleted, or the next tick re-reads the same broken file forever.
+            # is -- and still deleted, or the next tick re-reads the same broken file forever. The
+            # builtins join ProbePlanError because a malformed document can leave the parser as one
+            # of them, and the reason carries the class: str(exc) alone never says which refused.
             if self._journal_plan(
-                cycle_ts, verdict, now, plan_id="unparseable", plan={}, disposition="refused", reasons=(str(exc),)
+                cycle_ts,
+                verdict,
+                now,
+                plan_id="unparseable",
+                plan={},
+                disposition="refused",
+                reasons=(f"{type(exc).__name__}: {exc}",),
             ):
                 self._delete(path)
             return

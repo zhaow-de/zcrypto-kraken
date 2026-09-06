@@ -5,13 +5,13 @@ window — and never a pinned date, which would rot out of the window within a w
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from cli.config import load_config
-from cli.ohlc.errors import OHLCError
 from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 from cli.tick.materialize import BASE_INTERVAL_MINUTES, build_day, is_heal_complete, segment_index
 
@@ -40,6 +40,10 @@ def _tick_size(row: list) -> Decimal:
 
 
 def test_tape_bars_match_kraken_rest_ohlc() -> None:
+    # Opt-in, not reachability-gated: a skip on an unreachable venue is an outage read as coverage, so
+    # once the flag is set `fetch_ohlc`'s OHLCError is left to FAIL this test rather than skip it.
+    if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
+        pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
     if not PRIMARY_ROOT.exists():
         pytest.skip(f"trade archive absent at {PRIMARY_ROOT} — data-bearing workstation only")
 
@@ -48,14 +52,9 @@ def test_tape_bars_match_kraken_rest_ohlc() -> None:
     if not archived:
         pytest.skip(f"no {PAIR} trade segments under {PRIMARY_ROOT}")
 
-    try:
-        rows = fetch_ohlc(PAIR_KEY, BASE_INTERVAL_MINUTES)
-    except OHLCError as exc:
-        # A transport/API failure is a NETWORK outcome, not a data outcome. Failing here would
-        # indict the tape for someone else's downtime, so it must skip and say which it was.
-        pytest.skip(f"Kraken REST unreachable (network, not data): {exc}")
+    rows = fetch_ohlc(PAIR_KEY, BASE_INTERVAL_MINUTES)
     if not rows:
-        pytest.skip(f"Kraken REST returned no {PAIR_KEY} candles at {BASE_INTERVAL_MINUTES}m")
+        pytest.fail(f"Kraken REST returned no {PAIR_KEY} candles at {BASE_INTERVAL_MINUTES}m")
 
     stamps = sorted(datetime.fromtimestamp(int(row[_TIME]), UTC) for row in rows)
     # The newest row is the still-forming candle, so `day_end <= stamps[-1]` is exactly the condition
