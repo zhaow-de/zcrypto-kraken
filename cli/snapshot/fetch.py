@@ -24,7 +24,7 @@ def fetch_public(method: str) -> dict:
         raise SnapshotError(f"invalid JSON from {method}: {exc}") from exc
 
     if not isinstance(payload, dict):
-        raise SnapshotError(f"response for {method} is {type(payload).__name__}, not a JSON object: {payload!r}")
+        raise SnapshotError(f"response for {method} is {type(payload).__name__}, not a JSON object: {payload!r:.200}")
     errors = payload.get("error") or []
     if errors:
         raise SnapshotError(f"Kraken API error for {method}: {errors}")

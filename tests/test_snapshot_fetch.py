@@ -35,7 +35,7 @@ def test_fetch_public_returns_result_on_success(monkeypatch):
 
 def test_fetch_public_raises_on_nonempty_error_array(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: _error_response(["EGeneral:Invalid arguments"]))
-    with pytest.raises(SnapshotError):
+    with pytest.raises(SnapshotError, match="Kraken API error for AssetPairs"):
         fetch_public("AssetPairs")
 
 
