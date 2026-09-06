@@ -1,7 +1,6 @@
-"""The firewall template gained optional extra-port lists for the zaccess bridgehead (spec 00075
-D8). The capture hosts pass neither variable, so their rendered ruleset must be BYTE-IDENTICAL
-to the pre-seam output -- an internet-facing L2 host's firewall must never change as a side
-effect of another host's feature."""
+"""The capture hosts pass neither extra-port variable, so their rendered ruleset must be
+BYTE-IDENTICAL to the pre-seam output (spec 00075 D8) -- an internet-facing L2 host's firewall
+must never change as a side effect of another host's feature."""
 
 from pathlib import Path
 

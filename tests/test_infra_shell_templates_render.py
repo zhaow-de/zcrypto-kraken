@@ -22,7 +22,8 @@ RUNTIME_FACTS = {
     "ops_image_digest": "sha256:" + "ab" * 32,
     "ops_textfile_dir": "/var/lib/zcrypto-ops/textfile",
     "ops_data_dir": "/var/lib/zcrypto-ops",
-    # The engine role reads these from getent at converge time and declares them in no defaults
+    # The engine role reads these from getent at converge time and its defaults declare neither, so
+    # the render has no other source for them.
     "engine_uid": "998",
     "engine_gid": "998",
 }
