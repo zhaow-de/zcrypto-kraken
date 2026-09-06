@@ -1898,17 +1898,22 @@ def _plant_dangling_alone(role: Path) -> None:
 # That division of labour is what lets absence stay silent up there, so it is constructed here rather
 # than argued: each shape the resolver cannot refuse must red the walk, on the walk's own assertion.
 @pytest.mark.parametrize(
-    ("what", "plant"),
+    ("what", "plant", "name", "resolver_reads"),
     [
-        ("a dangling twin beside a real asset, which the resolver reads as the real one", _plant_dangling_twin),
-        ("a dangling link alone, which the resolver reads as an absence", _plant_dangling_alone),
+        ("a dangling twin beside a real asset", _plant_dangling_twin, "zz_twin.j2", "files/zz_twin.j2"),
+        ("a dangling link alone", _plant_dangling_alone, "zz_absent.j2", None),
     ],
 )
-def test_the_presence_walk_refuses_what_the_resolver_cannot(tmp_path, monkeypatch, what, plant):
-    """Each shape the resolver admits or passes over reds the broken-link assertion of the walk above."""
+def test_the_presence_walk_refuses_what_the_resolver_cannot(tmp_path, monkeypatch, what, plant, name, resolver_reads):
+    """Each shape reds the broken-link assertion of the walk above, with the resolver's own reading of
+    the same name pinned beside it — the real twin, or nothing — since the division is the claim."""
     role = _ops_role_copy(tmp_path)
     plant(role)
     monkeypatch.setitem(globals(), "OPS_ROLE", role)
+    read = _role_asset(name)
+    assert (str(read.relative_to(role)) if read else None) == resolver_reads, (
+        f"{name!r} reads as {read!r}: the resolver's reading is what leaves this case to the walk"
+    )
     with pytest.raises(AssertionError, match=r"carries a name whose target does not exist"):
         test_no_ops_role_asset_is_a_broken_link()
 
