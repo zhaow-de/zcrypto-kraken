@@ -40,7 +40,7 @@ Two Grafana alerts on the same unit, `zcrypto-archive-pull.service` — despite 
 4. **If reconcile failed, look for a leftover container first.** `sudo docker ps -a --filter name=zcrypto-reconcile` — after a dockerd crash the leftover makes the next run fail on the name conflict; `sudo docker rm zcrypto-reconcile`. Then `sudo systemctl status docker`.
 5. **Check the mount.** `ls /mnt/zhao-crypto/capture-segments | tail`. It is a `soft` NFS automount (`infra/ansible/roles/ops/tasks/main.yml`), so a hung NAS surfaces EIO rather than hanging, and that EIO fails the cycle loudly — the CLI treats an unreadable segment as an integrity fact, never as absence, so it cannot ledger a false verdict.
 6. **Check the image.** The run is `--pull never`, so a digest the host never pulled fails every tick: `sudo docker image inspect --format '{{.Id}}' ghcr.io/zhaow-de/zcrypto-capture@<the ops digest from docs/reference/fleet-pins.md>`. Scope every inspect to the field you need — never `{{json .Config}}`, never `{{json .Config.Env}}`, never `docker compose config`.
-7. **Re-running is attended.** `sudo systemctl start zcrypto-archive-pull.service`. Reconcile is detect-only on this host (`ops_reconcile_mint: false`) and the ledger dedupes, so a re-run costs nothing but time; it also runs the daily backfill if today's stamp is absent.
+7. **Re-running is attended.** `sudo systemctl start zcrypto-archive-pull.service`. Reconcile MINTS on this host (`ops_reconcile_mint: true`, `host_vars/zcrypto-ops`), so a re-run writes healed hours into custody rather than costing only time; the ledger dedupes, so repeating it does not double-book, but it is a write; it also runs the daily backfill if today's stamp is absent.
 8. **Verify by outcome, from the workstation**: `bash infra/scripts/ops-postverify.sh`. Its `archive-pull exit code` check is the exit-code rule's own operand; nothing there reads the stalled rule's gauge — `reconcile freshness (s)` reads `reconcile.prom`'s mtime, which a gate-skip never refreshes. `(no series)` is a FAIL, never a zero.
 9. **Never read "nothing was lost" out of these two rules.** They are unit liveness. Loss is booked by the reconciler, and hour H is bookable no earlier than H+2 h, at the next `:12`/`:42` tick after that.
 
@@ -88,7 +88,7 @@ Only the trade tape is affected. Book data — the unbackfillable part — is un
    sudo rm /var/lib/zcrypto-ops/.trade-backfill-last-utc-day
    sudo systemctl start zcrypto-archive-pull.service
    ```
-   Both steps are safe to repeat — reconcile is detect-only and its ledger dedupes, the backfill is watermarked. If the gate is skipping, this run will skip too and change nothing; fix the `.pull-status` cause first.
+   Both steps are safe to repeat — the reconcile ledger dedupes and the backfill is watermarked — but reconcile MINTS here, so repeating it is a write to custody, not a no-op. If the gate is skipping, this run will skip too and change nothing; fix the `.pull-status` cause first.
 7. **Verify the metric moved, not the unit's exit status**: `zcrypto_trade_backfill_exit_code` back at 0 and `zcrypto_trade_backfill_last_success_timestamp` advanced, read through `uv run python infra/scripts/grafana-query.py` from the workstation. The unit exits 0 on a failed backfill, so `$?` proves nothing here.
 8. **Expect the downstream page if this persists.** tape-bars defers any day whose trade tape is not heal-complete and exits 0 while doing so, so a stalled healer surfaces next as `Ops · tape-bars not advancing` — `infra/runbooks/ops.md#zcrypto-ops-tapebars-not-advancing`.
 
