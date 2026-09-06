@@ -54,7 +54,7 @@ A test name is read before its body, a live-host claim in a template is a claim 
 
 ### From the docs remainder (T0164, branch `cleanup/prose-docs-remainder`)
 
-- `docs/reference/kraken-snapshot-register.md`'s row `#127` stays far over the row bar because nearly every clause is a protected figure; the one cuttable piece is the Fee-tab "+$1 shortfall" reading convention, whose durable home is `.claude/skills/zcrypto-refdata-sweep/SKILL.md` step 7. That step now reads the account through the API rather than the screen, so the convention may be obsolete rather than relocatable — decide which before moving it.
+- `docs/reference/kraken-snapshot-register.md`'s re-confirmation log row `#2 (monthly, 2026-09-04)` stays far over the row bar because nearly every clause is a protected figure; the one cuttable piece is the Fee-tab "+$1 shortfall" reading convention, whose durable home is `.claude/skills/zcrypto-refdata-sweep/SKILL.md` step 7. That step now reads the account through the API rather than the screen, so the convention may be obsolete rather than relocatable — decide which before moving it.
 - `docs/reference/multi-agent-protocol.md` stays over the section bar; the only remaining honest candidate is its preamble duplicating `.claude/rules/agent-ops.md`, which is a call for the owner rather than a prose cut.
 - `docs/reference/capture-era-data-hygiene-map.md`'s 2026-09-03 row records an unexplained ~28 s remainder with no registered topic. It survives this pass verbatim; it wants an owner, not an edit.
 
