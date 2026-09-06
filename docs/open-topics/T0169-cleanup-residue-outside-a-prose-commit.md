@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ---
 
 # Cleanup residue outside a prose commit
@@ -52,16 +52,37 @@ A test name is read before its body, a live-host claim in a template is a claim 
 
 - `infra/scripts/kraken-order-semantics-probe.py:2102` — "Kraken's costmin on the EUR pairs is 0.45" is a venue value in prose with no measurement named beside it, in a file an operator runs against real money. Outside a prose pass's reach; it is the one number in that file that can go stale in silence.
 
+## Done so far
+
+On `fix/t0169-cleanup-residue`, each bullet's landing commits are that branch's and every one names its own file in its subject.
+
+### The six in-repo next steps
+
+- **The two soak tests** now say what their bodies assert. `test_offbyone_shifted_store_breaks_chain` asserts `chain_ok is True` and is `test_the_chain_identity_holds_on_shift_detectable_closes`; the second reads record 47, which `_instrument_expectations` selects — the asserted constants do not discriminate, since records 44 and 47 both carry 7302 and 1318.
+- **The segment writer's three counts** are the property statement the file already used four other times: "every pair and both kinds". Twelve pairs across two kinds is twenty-four streams, so "the other 19" and "the 20 streams" could not both hold with the first.
+- **The template's live-host sentence** is gone: config prose says what `/host/root:ro` exposes and what the `user:` override keeps out of reach, not what a host currently holds.
+- **The two detect-only comments** say the role default is detect-only and the mode is whatever `ops_reconcile_mint` selects; the flip is a named `host_vars` setting, and neither comment asserts what a host runs.
+- **The `T0020` pointer** is cut rather than re-tensed: the sentence above it already states what a reader acts on, and once the labelling pass landed the clause added no action.
+- **The two adapter-verification records** cite `infra/runbooks/engine-procedures.md`'s `engine-probe-window` — three citations, not two: pre-probe step 3, pre-probe step 4 and the arming section. `engine.md` carries no pre-probe step at all since spec 00104 moved them.
+
+### Four Findings bullets taken with them, on the coordinator's ruling
+
+- **`tests/test_grafana_auth.py`** imports `pytest`. `test_the_password_helper_is_EXECUTED_never_read`'s guard against reading the vault-password file called `pytest.fail` in a file that never imported it, so tripping it raised `NameError`; where that read sits inside an `except Exception:` the guard passed silently green, because `Failed` derives from `BaseException` and `NameError` does not.
+- **`tests/test_archive_scan_cache.py`**'s two trailing comments credit the caller's refusal to cache a changed hour, which is what covers the blind case; `delete_cache` owes the ledger-only mutation.
+- **`tests/test_engine_concordance.py`** cites `compare_targets`' `tol` by symbol; the line it named was empty.
+- **`infra/ansible/scripts/vault-pass.sh`**'s header names `--host/--list/--vars`, matching its own case pattern, its refusal message and `fleet-deploys.md`.
+
+### Two rulings applied while the branch was open
+
+- **`cli/engine/soak.py`** and **`cli/panel/primitives.py`**: `# D9` is `spec 00059 D9`; `# 34` and `# 17` were the `len()`s of the literals beside them and are gone; the panel constant cites `spec 00085 D1 Task 1 Step 0`, the form its own test already wrote.
+- **Topic ids carry no status annotation** in the files this branch touched — five annotations across `cli/panel/primitives.py`, the ops role's defaults and its archive-pull template. The same form elsewhere in the tree is the sweep registered under `## Suggested next steps` below.
+
 ## Suggested next steps
 
-- Rename the two soak tests to what they assert, in the same PR as the next change to that file.
-- Reconcile the segment writer's counts against `cli/capture/` 's configured universe and keep one property statement, not three numbers — `cli/` is the running cleanup's scope.
-- Cut the template's live-host sentence; what the compose file mounts is what it says.
+- **A status annotation on a topic id, wherever it still stands.** The owner's rule is that a topic id is never annotated with its status — a reader looks the topic up and sees it, and the annotation goes stale on its own while the id does not. This branch applied it only where it edited; the rest is a mechanical sweep. Enumerate with `git grep -nE 'T0[0-9]{3}[^)]{0,30}(resolved|archived)' -- cli/ infra/ docs/reference README.md`, and re-tense each sentence to what is true rather than deleting the id, keeping it where a reader would look up the history. `infra/ansible/group_vars/observed/vault.yml` is never edited.
+
 - **Owner's decision**: the archive-pull → overlay-writer rename is either owed (then its own topic, a converge and a re-provision of every alert that names the metrics) or not (then the names stay, and this line is the record of that).
 - Tripwire: exclude a string literal assigned to a variable or passed as an argument from the docstring count, with a fixture that trips on a real docstring and passes on a probe source.
 - **Host-state-gated**: delete the logrotate task once `/etc/logrotate.d/zcrypto-capture-docker` is absent on every capture host and on the engine host. Nothing in `tests/` reads it (`git grep -ln logrotate -- tests/` is empty).
 - **Host action**: read the admin account's `~/.ssh/authorized_keys` on each capture host for the old capture key and remove it if present; `T0068`'s repoint, the precondition the comment names, is already recorded resolved.
 - **Host action, one change**: remove the old hot-push pubkey from `~zcrypto-deploy/.ssh/authorized_keys` on the NAS once the `zcrypto-data` path is verified, AND repoint the workstation's `nas-hot` alias to `zcrypto-data` in the same change.
-- **Stale detect-only prose in two code comments**, for whoever next touches those files: `infra/ansible/roles/ops/defaults/main.yml` and `roles/ops/templates/archive-pull.sh.j2` both still describe the ops reconciler as detect-only. `infra/ansible/host_vars/zcrypto-ops/vars.yml:46` has read `ops_reconcile_mint: true` since 2026-07-17 (`cb4e7fec`), which is the line that refutes them. The same claim on `infra/runbooks/ops-node.md` and `infra/ops/README.md` is fixed in the docs branch; these two are code comments and outside its scope.
-- **A dead deferral pointer**: `infra/ansible/roles/ops/files/config.alloy` carries a `T0020` pointer to work that is done. Re-tense it — `prose.md` says a closed citation is re-tensed, never deleted — when that file is next touched.
-- **Two adapter-verification records cite a file that no longer carries what they name**: `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md` and `1.230.0.md` cite `infra/runbooks/engine.md`'s "pre-probe step 3 / step 4" and its "arming checklist". Spec `00104` moved both PROCEDURE sections to `engine-procedures.md`, and `engine.md` has no pre-probe step at all. These are the files an arming operator opens to find the owed checks, so the re-cite is worth doing before the next arming pass.

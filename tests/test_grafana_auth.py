@@ -6,6 +6,8 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "grafana_auth.py"
 _spec = importlib.util.spec_from_file_location("grafana_auth", _SCRIPT)
 ga = importlib.util.module_from_spec(_spec)

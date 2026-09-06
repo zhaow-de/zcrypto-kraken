@@ -36,11 +36,10 @@
 // rrsync pull keys (T0030). Ops replicates the SAME shape -- mount /:/host/root:ro, keep
 // `filesystem` -- because free disk space is wanted here too (this host holds the overlay
 // writer's tree, the panel, and the liquidations archive; the local rsync mirrors it also held
-// are retired since T0058 -- canonical trees are read over NFS now). Ops DOES hold a live private
-// key today: `sync_nas_archive`
-// (deploy:deploy, 0600, under /home/deploy/.ssh), the NAS-pull channel's key, pre-dating this task
-// -- so running Alloy as `deploy` would let the /host/root mount read it directly, no escalation
-// needed at all, defeating the protection this comment claims to replicate. (The
+// are retired since T0058 -- canonical trees are read over NFS now, and the `sync_nas_archive` key
+// pair went with that channel). Running Alloy as a user whose home COULD hold a private key would
+// let the /host/root mount read it directly, no escalation needed at all, defeating the protection
+// this comment claims to replicate. (The
 // RECONCILED_SOURCE channel is not an ops-side private key at all: its private half lives on the
 // NAS; ops holds only a forced-command `authorized_keys` PUBLIC entry, which is not secret
 // material.) Alloy here instead runs as the dedicated `zcrypto-alloy` system user (nologin,
@@ -277,7 +276,6 @@ loki.relabel "journal_units" {
   // across both. KNOWN, BENIGN divergence from that scheme: loki.source.journal below
   // unconditionally injects job="loki.source.journal.zcrypto_units" into its streams, while
   // nothing reads `job` today (every selector and alert keys only on host/container/level).
-  // Unifying the fleet's label scheme is T0020's dashboards/labelling pass.
   rule {
     target_label = "host"
     replacement  = "ops"

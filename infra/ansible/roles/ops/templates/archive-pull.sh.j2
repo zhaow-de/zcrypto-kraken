@@ -92,9 +92,10 @@ if [ -n "$skip_reason" ]; then
     # to Loki via this unit's journal (T0060).
     echo "zcrypto-archive-pull: WARNING: writer cycle SKIPPED (fail-closed gate): $skip_reason"
 else
-    # Role C (spec 00050), on this host since OPS-5 (spec 00054 D2). DETECT-ONLY by default -- it
-    # ledgers every `would_mint` and writes no parquet until T0039's soak has pinned
-    # --min-gap-seconds from real cross-host data. That flip is T0039's call, NOT this script's.
+    # Role C (spec 00050), on this host since OPS-5 (spec 00054 D2). The mode is whatever
+    # `ops_reconcile_mint` selects; DETECT-ONLY is the role default, and it ledgers every
+    # `would_mint` and writes no parquet. T0039 pinned --min-gap-seconds and records the flip;
+    # this script renders the mode, it never chooses it.
     #
     # T0060: every ephemeral `docker run --rm` here carries a stable `--name` -- unnamed runs got a
     # fresh engine-random name each time, and each name minted a brand-new Loki stream, forever, on

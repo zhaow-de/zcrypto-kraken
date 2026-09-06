@@ -155,7 +155,7 @@ def test_realized_series_forward_join_and_chain_ok(tmp_path):
     assert rs.chain_ok is True and rs.implausible is False
 
 
-def test_offbyone_shifted_store_breaks_chain(tmp_path):
+def test_the_chain_identity_holds_on_shift_detectable_closes(tmp_path):
     """Non-monotone, distinct closes joined correctly still satisfy the chain identity: chain_ok is
     True. `test_chain_consistent_detects_gap` pins the identity's False path."""
     d = datetime(2026, 7, 16, tzinfo=UTC)
@@ -659,7 +659,7 @@ def test_reconcile_verdicts_rejects_off_vocabulary_labels_on_every_branch(primar
         reconcile_verdicts(primary, secondary)
 
 
-def test_instrument_expectations_reads_record_44():
+def test_instrument_expectations_reads_record_47():
     exp = _instrument_expectations(Path("docs/reference/trial-registry.jsonl"))
     assert exp["governor_engaged_bars"] == 7302 and exp["cap_breach_bars"] == 1318
 

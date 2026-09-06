@@ -719,8 +719,8 @@ class SegmentWriter:
         except Exception:
             # The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
             # (EIO, ENOSPC despite DiskWatermark) away from taking down the single consumer task —
-            # i.e. capture for all 12 pairs and both kinds. This buffer is lost either way; the other
-            # 19 streams need not be. The dead-man's switch goes red on the watermark breach that
+            # i.e. capture for every pair and both kinds. This buffer is lost either way; the other
+            # streams need not be. The dead-man's switch goes red on the watermark breach that
             # normally causes this, and the traceback names the pair.
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)
 
@@ -821,7 +821,7 @@ class SegmentWriter:
         The happy path decodes each input exactly ONCE — the read IS the validation. Only if it
         actually fails is every input decoded on its own, to quarantine the unreadable one and merge
         the rest: pre-validating every part on every rotation cost a 27s event-loop stall at each
-        hour boundary across the 20 streams, starving the healthcheck and disk-watermark loops.
+        hour boundary across every stream, starving the healthcheck and disk-watermark loops.
         """
         tmp_path = merging_path.with_name(merging_path.name + ".tmp")
         try:
@@ -911,7 +911,7 @@ class SegmentWriter:
                 except OSError:
                     # The one operation in `__init__` that could raise — and a read-only remount (the
                     # aftermath of the very ENOSPC condition DiskWatermark exists for) makes it do so
-                    # for all 20 streams, on every restart: a crash loop, the worst outcome there is.
+                    # for every stream, on every restart: a crash loop, the worst outcome there is.
                     # A leftover tmp is re-derivable garbage. It is not worth the daemon.
                     logger.exception("could not remove a stale tmp pair=%s kind=%s path=%s", self._pair, self._kind, tmp)
         for merging_path in sorted(root.rglob("*.parquet.merging")):
