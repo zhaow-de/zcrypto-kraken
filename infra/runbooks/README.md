@@ -107,6 +107,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-capture-load-high`](hosts.md#zcrypto-capture-load-high) — ALERT: a capture host's 1-minute load average is above 1.5 per core.
 - [`zcrypto-capture-reboot-pending`](hosts.md#zcrypto-capture-reboot-pending) — ALERT: `/run/reboot-required` has existed on a capture host for 15 minutes.
 - [`zcrypto-capture-textfile-missing`](hosts.md#zcrypto-capture-textfile-missing) and [`zcrypto-capture-textfile-unreadable`](hosts.md#zcrypto-capture-textfile-unreadable) and [`zcrypto-reboot-probe-stale`](hosts.md#zcrypto-reboot-probe-stale) and [`zcrypto-oneoff-textfile-stale`](hosts.md#zcrypto-oneoff-textfile-stale) — ALERT: Four warning-severity rules over **one transport**.
+- [`zcrypto-engine-journal-prune-dead`](hosts.md#zcrypto-engine-journal-prune-dead) — ALERT: the primary's daily engine-journal prune has not completed in over 26 hours, or its completion gauge has vanished.
 
 ### [`observability.md`](observability.md) — the telemetry planes themselves
 

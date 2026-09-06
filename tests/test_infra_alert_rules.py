@@ -215,11 +215,12 @@ NOT_A_FAULT_SIGNAL = {
     "process_max_fds",
     "process_open_fds",
     "process_virtual_memory_bytes",
-    # Prune bookkeeping -- the fault is the timer STOPPING, which the staleness rules own.
+    # Prune bookkeeping -- LEVELS whose every value is legitimate. The fault is the run STOPPING, and
+    # `zcrypto-engine-journal-prune-dead` reads the one gauge that says whether it did, so these
+    # three are the detail read once it has paged.
     "zcrypto_engine_journal_prune_deleted_days",
     "zcrypto_engine_journal_prune_kept_days",
     "zcrypto_engine_journal_prune_oldest_day_age_seconds",
-    "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
     # The execution safety envelope's unwatched families; armed, kill_tripped and
     # last_evaluation_timestamp_seconds are watched, and this list is what keeps that true.
     #   gate_level is the SUMMARY its inputs (armed, kill switch, restart hold, venue) already reduce
@@ -560,6 +561,67 @@ def test_the_sleeve_composition_rule_stays_quiet_while_the_series_does_not_exist
     assert rule["noDataState"] == "OK", "an engine that has not yet published a composition would page"
     assert rule["execErrState"] == "Alerting", "a broken query would leave the composition silently unwatched"
     assert rule["labels"]["severity"] == "warning", "this announces a change in the book, not a fault"
+
+
+# --- the journal-prune liveness rule: the ABSENCE is the alarm ------------------------------------
+# A deleted `.prom` takes its mtime series away rather than ageing it, so the mtime rule's empty
+# result meets `noDataState: OK` and nothing fires. This rule reads the value the prune writes on
+# completion, under `noDataState: Alerting`, so the vanishing pages.
+
+_PRUNE_DEAD = "zcrypto-engine-journal-prune-dead"
+_PRUNE_STALE_MTIME = "zcrypto-oneoff-textfile-stale"
+
+
+def test_the_prune_liveness_rule_reads_the_completion_gauge_rather_than_the_files_mtime():
+    """The two reads are not interchangeable: a restore or an rsync refreshes an mtime over a prune
+    that never ran, and only a completed run writes the gauge. Reading mtime here would leave the
+    pair with two views of the same lie."""
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in _rule(_PRUNE_DEAD)["data"])
+    assert "zcrypto_engine_journal_prune_last_run_timestamp_seconds" in expr, f"not the completion gauge: {expr!r}"
+    assert "node_textfile_mtime_seconds" not in expr, f"this is the mtime rule's read, not this rule's: {expr!r}"
+    assert len(_PRUNE_DEAD) <= _UID_MAX, f"{len(_PRUNE_DEAD)} chars -- the create call will 400"
+
+
+def test_a_vanished_prune_gauge_pages_while_a_daily_run_stays_quiet():
+    """Replays gauge histories through the rule's OWN threshold, `for:` and `noDataState` (read from
+    `alerts.yaml`, never restated): a timer running daily, one stopped with its `.prom` left behind,
+    and a `.prom` deleted so the series never exists. Only `noDataState` decides the third, which the
+    closing assertion shows by re-running all three under the mtime rule's `OK` posture."""
+    rule, minute, day = _rule(_PRUNE_DEAD), 60, 24 * 3600
+    bar, hold_for = _threshold(rule), _duration_seconds(rule["for"])
+    first_run = 1 * 3600 + 23 * 60  # the timer's 01:23 UTC start
+
+    def fires(runs: list[int], no_data_state: str) -> bool:
+        """`runs` are the completion times; the series exists only while at least one precedes t."""
+        run = 0
+        for t in range(first_run, first_run + 10 * day, minute):
+            last = max((at for at in runs if at <= t), default=None)
+            firing = no_data_state == "Alerting" if last is None else (t - last) > bar
+            run = run + minute if firing else 0
+            if run >= hold_for:
+                return True
+        return False
+
+    daily = [first_run + n * day for n in range(10)]
+    stopped = daily[:3]  # the timer stops on the third day; the .prom stays, so the gauge freezes
+    deleted: list[int] = []  # the file is removed, so the series never exists at all
+
+    verdicts = {
+        name: fires(runs, rule["noDataState"]) for name, runs in (("daily", daily), ("stopped", stopped), ("deleted", deleted))
+    }
+    assert verdicts == {"daily": False, "stopped": True, "deleted": True}, (
+        f"the rule does not discriminate a live daily prune from a stopped or deleted one: {verdicts}"
+    )
+
+    # The defect this rule exists to close, constructed: under the mtime rule's posture the deleted
+    # arm alone flips to silence, so `noDataState` is doing the work and not the threshold.
+    under_ok = {name: fires(runs, "OK") for name, runs in (("daily", daily), ("stopped", stopped), ("deleted", deleted))}
+    assert under_ok == {"daily": False, "stopped": True, "deleted": False}, (
+        f"the simulation cannot reproduce the silence `noDataState: OK` causes -- it is proving nothing: {under_ok}"
+    )
+    assert _rule(_PRUNE_STALE_MTIME)["noDataState"] == "OK", (
+        "the mtime rule no longer swallows the empty result, so re-derive whether this rule's Alerting posture is still the only cover"
+    )
 
 
 # --- the runbook link an alert sends an operator to must actually exist ---------------------------
