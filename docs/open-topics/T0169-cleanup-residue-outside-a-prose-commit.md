@@ -50,7 +50,7 @@ A test name is read before its body, a live-host claim in a template is a claim 
 
 ### From the `tests/` remainder (T0164, branch `cleanup/prose-tests-remainder`)
 
-- `infra/scripts/kraken-order-semantics-probe.py:2143` — "Kraken's costmin on the EUR pairs is 0.45" is a venue value in prose with no measurement named beside it, in a file an operator runs against real money. Outside a prose pass's reach; it is the one number in that file that can go stale in silence.
+- `infra/scripts/kraken-order-semantics-probe.py:2102` — "Kraken's costmin on the EUR pairs is 0.45" is a venue value in prose with no measurement named beside it, in a file an operator runs against real money. Outside a prose pass's reach; it is the one number in that file that can go stale in silence.
 
 ## Suggested next steps
 
