@@ -402,6 +402,34 @@ def test_build_substrate_writes_per_perp_files_and_a_manifest(tmp_path):
     assert m2["set_sha256"] == manifest["set_sha256"]
 
 
+def test_the_oi_manifest_digest_reproduces_across_two_builds(tmp_path):
+    """`set_sha256` is the identity a downstream verification pins, so it must be a function of the
+    data alone: two builds of the same published days — different roots, different clocks, so the
+    second walks two unpublished days the first never reached — agree on it while their `written_at`
+    differs."""
+    files = {
+        _day_url("BTCUSDT", "2026-06-30"): _zip_of(_metrics_csv("2026-06-30", "BTCUSDT"), "a.csv"),
+        _day_url("ETHUSDT", "2026-06-30"): _zip_of(_metrics_csv("2026-06-30", "ETHUSDT"), "b.csv"),
+    }
+
+    def _build(root: str, now: datetime) -> dict:
+        return build_oi_substrate(
+            tmp_path / root,
+            perps={"BTC": "BTCUSDT", "ETH": "ETHUSDT"},
+            start=datetime(2026, 6, 30, tzinfo=UTC),
+            clock=lambda: now,
+            opener=_Opener(files),
+        )
+
+    first = _build("first", datetime(2026, 7, 1, 12, tzinfo=UTC))
+    second = _build("second", datetime(2026, 7, 3, 9, tzinfo=UTC))
+
+    assert first["written_at"] != second["written_at"]  # two runs, not one dict read twice
+    assert first["series"]["BTCUSDT/oi.parquet"]["rows"] == 3  # not two empty sets agreeing
+    assert first["set_sha256"] == second["set_sha256"]
+    assert json.loads((tmp_path / "second" / "manifest.json").read_text())["set_sha256"] == first["set_sha256"]
+
+
 def _substrate_root(name: str) -> Path:
     """The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
 
