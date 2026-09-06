@@ -57,9 +57,8 @@ def test_the_role_default_preserves_todays_behaviour():
 
 
 def test_the_capture_group_flips_both_hosts_and_only_them():
-    """Group membership carries the "and only them" half: a capture host outside this group keeps
-    Automatic-Reboot "true" and reboots unattended on an unbackfillable VPS, while a non-capture host
-    inside it silently loses the patch reboots T0027 rules it must keep."""
+    """Membership carries the "and only them" half: a capture host outside this group reboots
+    unattended on an unbackfillable VPS, a non-capture host inside it loses T0027's patch reboots."""
     assert _yaml(CAPTURE_GROUP_VARS)[VAR] == "false"
     hosts = _yaml(INVENTORY)["all"]["children"]["capture_host"]["hosts"]
     assert set(hosts) == {"zcrypto", "zcrypto-red"}, f"capture_host membership drifted: {sorted(hosts)}"

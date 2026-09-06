@@ -44,9 +44,8 @@ def _rendered(**overrides) -> str:
 
 
 def _reconcile_mode_line(rendered: str) -> str:
-    """The mode flag as it sits in the reconcile chain, read POSITIONALLY: the footgun this file
-    guards drops a line out of the backslash chain without changing the text anywhere else, so a
-    substring search still finds `--mint` in a script that no longer passes it."""
+    """The mode flag as it sits in the reconcile chain, read POSITIONALLY: the footgun drops the line
+    without touching the text elsewhere, so a substring search still finds `--mint` in a script without it."""
     anchor = "if ! docker run --rm --pull never"
     assert rendered.count(anchor) == 1, "the reconcile chain is no longer the only one -- the slice below is ambiguous"
     start = rendered.index(anchor)
@@ -65,16 +64,14 @@ def test_the_rendered_script_is_valid_bash():
 
 
 def test_the_reconcile_mode_flag_survives_the_continuation_chain():
-    """The flag this file's docstring is about: dropped from the chain, the render stays valid bash
-    whose if-condition has silently become `--mint: command not found`."""
+    """Dropped from the chain, the render stays valid bash whose if-condition has become `--mint: command not found`."""
     assert _reconcile_mode_line(_rendered()) == "--detect-only \\"
     assert _reconcile_mode_line(_rendered(ops_reconcile_mint=True)) == "--mint \\"
 
 
 def test_a_string_override_is_cast_before_it_selects_the_mode():
-    """`| bool` is LOAD-BEARING, as the template's own comment says: `-e ops_reconcile_mint=false`
-    arrives as the STRING "false", which is truthy, so without the cast the override meant to DISABLE
-    minting would enable it -- on the host whose reconcile writes into canonical custody."""
+    """`| bool` is LOAD-BEARING: `-e ops_reconcile_mint=false` arrives as the STRING "false", which is
+    truthy, so without the cast the override meant to DISABLE minting enables it into canonical custody."""
     assert _reconcile_mode_line(_rendered(ops_reconcile_mint="false")) == "--detect-only \\"
     assert _reconcile_mode_line(_rendered(ops_reconcile_mint="true")) == "--mint \\"
 

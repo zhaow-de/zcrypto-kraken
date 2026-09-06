@@ -66,9 +66,7 @@ def test_nonzero_exit_code_fails(tmp_path):
 
 
 def test_a_frozen_writer_fails_even_though_the_exit_code_still_reads_zero(tmp_path):
-    """THE case the exit code cannot see. One printf block in archive-pull.sh.j2 writes the exit code
-    and last_success together, so a converge that stops the timer freezes both and the exit code goes
-    on reporting the last clean cycle's zero. Only the dead-man's own operand moves."""
+    """THE case the exit code cannot see: one printf block writes both, so a stopped timer leaves it reading a clean zero."""
     r = run_postverify(tmp_path, {"ARCHIVE_FRESH_OUT": "query\n  {host=zcrypto-ops} = 20000"})
     assert r.returncode == 1
     assert "FAIL archive-pull freshness" in r.stdout
