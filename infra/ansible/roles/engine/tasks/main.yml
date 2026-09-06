@@ -1,19 +1,16 @@
 ---
-# Deploys the shadow engine as a second compose service beside capture (same image, compose-level
-# entrypoint override; spec docs/specs/00042-vps-deployment-design.md): the §8-hardening gate
-# first, then the zcrypto-engine account, the state dirs, the QA'd store (only when absent), the
-# secrets env file, zcrypto.toml, the compose file, the systemd unit, and the rrsync journal pull
-# channel. Like capture, the unit's own ExecStartPre/ExecStart/ExecStop ("docker compose pull" /
-# "up" / "down") owns the actual pull+run — ansible only starts/enables/restarts it.
+# Deploys the shadow engine as a second compose service beside capture -- same image, compose-level
+# entrypoint override (spec 00042). Like capture, the unit's own ExecStartPre/ExecStart/ExecStop own
+# the actual pull and run; ansible only starts, enables and restarts it.
 
-# --- 1. The §8-hardening gate — asserts before anything else. The probes are read-only and run
-# with check_mode: false so a --check dry-run still evaluates the gate; any failure aborts the
-# role before a single secret is rendered.
+# The §8-hardening gate asserts before anything else: the probes are read-only and run with
+# `check_mode: false`, so a --check dry run still evaluates it, and any failure aborts the role
+# before a single secret is rendered.
 #
-# `noqa: command-instead-of-module` on the systemctl probes below: that rule assumes systemctl is
-# being used to MANAGE a unit, where ansible.builtin.systemd is the idempotent choice. These read
-# state to feed an assert — the module would act on the very thing being observed. The exemption is
-# per-task, not a global skip, so a genuine state-managing systemctl elsewhere still fails the lint.
+# `noqa: command-instead-of-module` on the systemctl probes: that rule assumes systemctl is MANAGING
+# a unit, where the module is idempotent. These read state to feed an assert, and the module would
+# act on the thing being observed. Per-task, so a genuine state-managing systemctl elsewhere still
+# fails the lint.
 - name: "§8 gate — probe nftables enablement (a RemainAfterExit oneshot: is-active alone can be stale)"  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl is-enabled nftables
   register: engine_gate_nft_enabled
@@ -22,15 +19,13 @@
   check_mode: false
 
 - name: "§8 gate — probe the live nftables ruleset for content"
-  # No pipe, deliberately. This was `nft list ruleset | grep -q .`, whose rc is GREP's alone: an
-  # `nft` that failed while emitting any output still matched and reported rc 0 — passing the
-  # firewall gate that guards the live trade key on a host whose ruleset could not be read.
-  # `set -o pipefail` is NOT the fix. `grep -q` exits on first match, so nft can die of SIGPIPE: the
-  # pipeline returned 141 on a HEALTHY host (measured), which would fail the gate closed and block
-  # every engine deploy. Worse, that outcome is a race on the pipe buffer — a small ruleset may let
-  # nft finish first and return 0 — so pipefail here buys a FLAKY gate, not a fixed one.
-  # Dropping the pipe makes rc unambiguously nft's own and moves the non-empty test to an explicit
-  # assert below — strictly more precise than grep's exit code.
+  # No pipe, deliberately. As `nft list ruleset | grep -q .` the rc was GREP's alone, so an `nft`
+  # that failed while emitting any output still matched and reported 0 -- passing the firewall gate
+  # that guards the live trade key on a host whose ruleset could not be read. `set -o pipefail` is
+  # NOT the fix: `grep -q` exits on first match, so nft can die of SIGPIPE and the pipeline returns
+  # 141 on a HEALTHY host, failing the gate closed; and that outcome races the pipe buffer, so
+  # pipefail buys a FLAKY gate rather than a fixed one. Without the pipe the rc is unambiguously
+  # nft's own and the non-empty test is an explicit assert below.
   ansible.builtin.command: /usr/sbin/nft list ruleset
   register: engine_gate_nft_ruleset
   changed_when: false
@@ -100,20 +95,19 @@
   ansible.builtin.assert:
     that:
       - engine_gate_sshd.rc == 0
-      # `prohibit-password` (key-only root break-glass, decided 2026-07-14) is accepted alongside
-      # `no`: the gate's substance is that NO password-based access exists anywhere, and key-only
-      # root satisfies it. `yes` (password root) still fails.
-      # NOTE `sshd -T` normalizes `prohibit-password` to its legacy alias `without-password`, so the
-      # config value and the effective value spell it differently — both must be accepted or this
-      # gate fails on a host that is correctly configured. (A --check run cannot catch this: check
-      # mode never writes sshd_config, so `sshd -T` still reports the OLD value and the gate passes.)
+      # `prohibit-password` is accepted alongside `no`: the gate's substance is that no password-
+      # based access exists anywhere, and key-only root satisfies it, while `yes` still fails. `sshd
+      # -T` normalises it to the legacy alias, so the config value and the effective value spell it
+      # differently and both must be accepted or the gate fails on a correctly configured host --
+      # which a --check run cannot catch, since check mode never writes sshd_config and `sshd -T`
+      # still reports the OLD value.
       - engine_gate_sshd.stdout is search('(?m)^permitrootlogin (no|prohibit-password|without-password)$')
       - engine_gate_sshd.stdout is search('(?m)^passwordauthentication no$')
-      # \\b (not \b): assert `that:` expressions unicode-escape the Jinja string literal, so a
-      # single \b reaches the regex as backspace (\x08) and silently never matches.
-      # Superset gate (spec 00057 D1, T0068): both the m2m pull user (zcrypto-data) and the
-      # renamed admin (zcrypto-deploy) must be present in AllowUsers; deploy/root may also be
-      # present (transitional superset, roles/hardening/defaults/main.yml) — that's fine.
+      # `\\b`, not `\b`: assert `that:` expressions unicode-escape the Jinja string literal, so a
+      # single `\b` reaches the regex as a backspace and silently never matches. Superset gate (spec
+      # 00057 D1, T0068): both the m2m pull user and the renamed admin must be present in
+      # AllowUsers, and deploy or root may also be present -- roles/hardening/defaults/main.yml says
+      # why `deploy` must never be re-added.
       - engine_gate_sshd.stdout is search('(?m)^allowusers .*\\bzcrypto-data\\b')
       - engine_gate_sshd.stdout is search('(?m)^allowusers .*\\bzcrypto-deploy\\b')
     fail_msg: >-
@@ -124,14 +118,11 @@
       {{ engine_gate_sshd.stdout_lines | select("match", "^(allowusers|allowgroups|denyusers|denygroups|permitrootlogin|passwordauthentication)") | list }};
       stderr: {{ engine_gate_sshd.stderr | default("") | trim }}
 
-# --- 1b. spec 00082 converge guards (wave 1), immediately after the §8 gate and before anything is
-# --- written to the host. Probe idiom: probes never fail or change; the assert refuses with the fix
-# --- in the message. Tests: tests/test_infra_converge_guards.py.
-#
-# Hoisted out of §7 (the compose render it originally guarded) so the TARGETED message comes first:
-# engine_image_digest defaults to "", and the residency preflight below would otherwise answer a
-# forgotten -e with a `docker pull` of a ref ending in a bare `@`, losing the pointer to where the
-# digest comes from. Same order as the capture role.
+# spec 00082 converge guards (wave 1), immediately after the §8 gate and before anything is written.
+# Probe idiom: probes never fail or change, and the assert refuses with the fix in its message.
+# Hoisted out of the compose render it originally guarded so the TARGETED message comes first --
+# otherwise the residency preflight answers a forgotten `-e` with a `docker pull` of a ref ending in
+# a bare `@`, losing the pointer to where the digest comes from.
 - name: fail fast if the pinned engine image digest was not supplied
   ansible.builtin.assert:
     that: engine_image_digest | length > 0
@@ -156,12 +147,11 @@
       window must hold only stop → migration-if-any → start inside the inter-cycle gap. Pre-stage it
       first: sudo docker pull {{ engine_image }}@{{ engine_image_digest }}
 
-# spec 00083 D5: the capture role's canary parity, mirrored. There is no engine secondary — the
-# secondary's CAPTURE bake is the engine's canary gate (fleet-pins.md records it in those words) —
-# so an engine re-pin is refused until the new digest runs as capture on the secondary. This play
-# targets the engine host only, so the mirror drops the capture block's inventory_hostname scoping;
-# everything else mirrors modulo the engine_ prefix. canary_override is deliberately SHARED with
-# the capture assert: one gate concept, one override, and the echo below lands the reason either way.
+# spec 00083 D5, the capture role's canary parity mirrored. There is no engine secondary -- the
+# secondary's CAPTURE bake IS the engine's canary gate -- so an engine re-pin is refused until the
+# new digest runs as capture on the secondary. This play targets the engine host only, so the mirror
+# drops the capture block's host scoping. `canary_override` is deliberately SHARED with the capture
+# assert: one gate concept, one override.
 - name: probe — the running engine digest (canary scope)
   ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-engine
   register: engine_running_parity_probe
@@ -269,11 +259,11 @@
       record it immediately after).
   when: engine_running_digest_probe.rc == 0 and engine_fleet_pins_text is defined
 
-# spec 00082 D1 (second half), same shape as the capture role's pins echo: the reason reaches the
-# play log only when the override was actually ACCEPTED, i.e. the replaced digest is genuinely
-# unrecorded. Gating on the override merely being PRESENT would print a "why" on runs that overrode
-# nothing. The negated clause below is the assert's own first disjunct character-for-character, so a
-# future edit to one that is not mirrored in the other shows up as a textual mismatch.
+# spec 00082 D1: the reason reaches the play log only when the override was ACCEPTED, i.e. the
+# replaced digest is genuinely unrecorded -- gating on the override merely being PRESENT would print
+# a why on runs that overrode nothing. The negated clause below is the assert's own first disjunct
+# character-for-character, so an edit to one that is not mirrored in the other shows up as a textual
+# mismatch.
 - name: pins override accepted — the reason, on the record
   ansible.builtin.debug:
     msg: "pins_override accepted: {{ pins_override }}"
@@ -283,43 +273,38 @@
     and (pins_override | default('') | string | length > 8)
     and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 
-# --- 1b. The arming backstop. Arming the engine on a nautilus version whose attended
-# order-semantics pass has not run was, until now, prevented only by prose in a runbook — the
-# mechanical guard that used to catch it (the version pin making a bump PR CI-red) stopped applying
-# the moment the bump was allowed to land ahead of the re-run. This restores a machine check at the
-# only moment that matters: the converge that would actually arm the engine.
+# The arming backstop: a machine check at the only moment that matters, the converge that would
+# actually arm the engine. Until it existed, arming on a nautilus version whose attended order-
+# semantics pass had not run was prevented only by prose.
 #
 # The arming intent is read from the TREE's own template, because that is where arming is expressed
-# (the runbook has the operator flip `exec_armed = false` -> `true` there; there is deliberately no
-# -e override for the value itself). The test is inverted on purpose: the converge counts as
-# DISARMED only when the template carries the literal `exec_armed = false`. Anything else — `true`,
-# or a Jinja expression whose value this role cannot know at assert time — counts as ARMED and must
-# clear the gate. Fail-closed, so a future templating of that line cannot silently make the guard
-# inert.
+# and there is deliberately no `-e` override for the value. The test is inverted on purpose: a
+# converge counts as DISARMED only when the template carries the literal `exec_armed = false`, and
+# anything else -- `true`, or a Jinja expression this role cannot evaluate at assert time -- counts
+# as ARMED and must clear the gate. Fail-closed, so templating that line cannot silently make the
+# guard inert.
 - name: arming backstop — read the tree's arming intent, nautilus pin, and verified-version record
   ansible.builtin.set_fact:
     engine_config_template_text: "{{ lookup('file', role_path ~ '/templates/zcrypto.toml.j2') }}"
     engine_pyproject_text: "{{ lookup('file', playbook_dir ~ '/../../pyproject.toml') }}"
     engine_verified_nautilus: "{{ (lookup('file', playbook_dir ~ '/../../cli/engine/order-semantics-verified.json') | from_json).verified_nautilus_versions | default([]) }}"
 
-# An unparseable pin yields '' from the join, and '' is in no list, so it REFUSES — the same
-# fail-closed direction as the disarmed test above.
+# An unparseable pin yields '' from the join, and '' is in no list, so it REFUSES -- the same fail-
+# closed direction as the disarmed test above.
 #
-# `=+` with `=` excluded from the capture, not `==`: pyproject pins with PEP 440 arbitrary equality
-# (`===`), and `==(...)` swallows only two of the three, capturing "=<version>" — a string in no
-# record, so the guard would refuse an armed converge on a version whose pass really did run, while
-# its own fail_msg named that version as recorded. The only exit from that contradiction is
-# arming_override, i.e. the money guard talked around exactly where it is meant to hold.
+# `=+` with `=` excluded from the capture, not `==`: pyproject pins with PEP 440 arbitrary equality,
+# and `==(...)` swallows only two of the three characters, capturing a string in no record. The
+# guard would then refuse an armed converge on a version whose pass really did run, while its own
+# fail_msg named that version as recorded -- and the only exit from that contradiction is the
+# override, i.e. the money guard talked around exactly where it is meant to hold.
 #
-# The record is SHAPE-CHECKED before `in` is allowed to see it, and that is not defensive padding:
-# Jinja's `in` is SUBSTRING containment on a string and KEY containment on a mapping, so a record
-# whose list degraded to "1.230.0, 1.232.0" would VOUCH for the unverified 1.232.0, and a bare
-# "1.230.0" would vouch for the prefix "1.230". Both measured through this repo's templar harness.
-# Anything that is not a proper sequence collapses to [], which vouches for nothing — this guard's
-# contract is "cannot vouch => refuse", and a malformed record is exactly a cannot-vouch.
-# The SAME ternary guards the fail_msg: `join` raises on a null or scalar record, and a Jinja
-# TypeError in place of the diagnostic would leave the operator with no idea why the converge
-# refused — the task fails either way, but only one of those two outcomes is readable.
+# The record is SHAPE-CHECKED before `in` sees it, which is not padding: Jinja's `in` is SUBSTRING
+# containment on a string and KEY containment on a mapping, so a record whose list degraded to a
+# comma-joined string would VOUCH for an unverified version, and a bare string would vouch for a
+# prefix of itself. Anything not a proper sequence collapses to [], which vouches for nothing -- the
+# contract is cannot-vouch means refuse. The same ternary guards the fail_msg, because `join` raises
+# on a null or scalar record and a Jinja TypeError in place of the diagnostic leaves the operator
+# with no idea why the converge refused.
 - name: arming backstop — refuse an ARMED converge on a nautilus version whose order-semantics pass has not run
   ansible.builtin.assert:
     that: >-
@@ -403,16 +388,14 @@
     - "{{ engine_state_dir }}/store"
     - "{{ engine_state_dir }}/journal"
 
-# --- 4. Store delivery — only when absent: converges never clobber a live store. Run a
-# delivering converge away from a 4h-boundary+30-min window (the workstation soak rewrites
-# data/engine-store/ inside it — a mid-write copy could deliver a truncated parquet).
+# Store delivery, only when absent: converges never clobber a live store. Run a delivering converge
+# away from a 4h-boundary+30-min window, where the workstation soak rewrites the store and a mid-
+# write copy could deliver a truncated parquet.
 #
-# VPS store-poisoning runbook (the code's `zcrypto engine seed` repair is workstation-only — the
-# image carries no canonical dataset): systemctl stop zcrypto-engine, rm -rf
-# <engine_state_dir>/store, re-run
-# `site.yml --tags engine -e converge_primary=true -e engine_image_digest=sha256:<...>` (the flag is
-# required or the guard drops this host and the engine play silently skips; the only-when-absent copy
-# re-delivers), systemctl start zcrypto-engine.
+# VPS store-poisoning repair, since `zcrypto engine seed` is workstation-only and the image carries
+# no canonical dataset: stop the unit, remove the store dir, re-run the engine-tagged converge with
+# `-e converge_primary=true` and the digest -- the flag is required or the guard drops this host and
+# the engine play silently skips, and the only-when-absent copy re-delivers -- then start the unit.
 - name: probe whether the store was already delivered (BTC subtree present)
   ansible.builtin.stat:
     path: "{{ engine_state_dir }}/store/BTC"
@@ -535,11 +518,10 @@
 # since bookworm (rsync 3.2.4 promoted it out of /usr/share/doc/rsync/scripts/). The absolute
 # path keeps the forced command independent of the login shell's PATH.
 
-# The journal export the NAS pulls lands on zcrypto-data (the m2m data user, spec 00057), not the
-# admin `deploy`. zcrypto-data is not the journal's owner (zcrypto-engine is), so it joins the
-# zcrypto-engine group to TRAVERSE the 0750 dirs; and the journal files must be group-READABLE for the
-# rrsync -ro pull. exclusive:false so it never disturbs zcrypto-data's other keys (deploy's old copy
-# was dropped at the cutover and deploy no longer exists — see the header above).
+# The journal export the NAS pulls lands on zcrypto-data, the m2m data user (spec 00057), not the
+# admin account. That user is not the journal's owner, so it joins the owning group to TRAVERSE the
+# 0750 dirs, and the journal files must be group-READABLE for the rrsync -ro pull. `exclusive:
+# false` so it never disturbs that user's other keys.
 - name: install the sync pubkey as a forced-command entry on zcrypto-data (journal read-only)
   ansible.posix.authorized_key:
     user: zcrypto-data
@@ -563,12 +545,10 @@
     recurse: true
     mode: g+rX
 
-# --- Journal retention (spec 00070, T0021) -----------------------------------------------------
-# Bounds the VPS journal at a {{ engine_journal_retention_days }}-day tail. Deployed AFTER the pull
-# plumbing above, deliberately: the NAS mirror is what makes deleting a local day safe, so the path
-# that copies days off the host is established before the one that removes them.
-# Idempotent with the capture role's identical task -- declared in both so neither play depends on
-# the other's ordering (spec 00071).
+# Journal retention (spec 00070, T0021), deployed AFTER the pull plumbing deliberately: the NAS
+# mirror is what makes deleting a local day safe, so the path that copies days off the host is
+# established before the one that removes them. Declared in both this role and capture's so neither
+# play depends on the other's ordering (spec 00071).
 - name: ensure the node-exporter textfile directory exists
   ansible.builtin.file:
     path: "{{ engine_textfile_dir }}"
