@@ -369,6 +369,11 @@ class TestScope:
             "README.md",
             "infra/README.md",
             "infra/runbooks/README.md",
+            "infra/nas/README.md",
+            "infra/ops/README.md",
+            "infra/ansible/files/README.md",
+            "infra/external-systems.md",
+            "infra/nas/ledger-correction-20260714-link-eur.md",
             "docs/open-topics/README.md",
             ".claude/rules/k.md",
             "cli/n.json",
@@ -389,8 +394,12 @@ class TestScope:
             "docs/reference/f.md",
             "docs/universe/h.md",
             "infra/README.md",
+            "infra/ansible/files/README.md",
             "infra/c.sh",
             "infra/d.yml",
+            "infra/external-systems.md",
+            "infra/nas/README.md",
+            "infra/ops/README.md",
             "infra/runbooks/README.md",
             "infra/runbooks/e.md",
             "tests/b.py",
@@ -399,6 +408,10 @@ class TestScope:
     def test_a_research_report_stays_out(self, repo: Path) -> None:
         """Point-in-time reports are out of the default scope, as `docs/specs` and `docs/plans` are."""
         assert "docs/research/r.md" not in tw.default_paths()
+
+    def test_a_dated_record_beside_a_readme_stays_out(self, repo: Path) -> None:
+        """`infra/` is walked for READMEs, not for every page: a dated record is point-in-time."""
+        assert "infra/nas/ledger-correction-20260714-link-eur.md" not in tw.default_paths()
 
     def test_an_explicit_directory_still_honours_the_exclusions(self, repo: Path) -> None:
         got = sorted(tw.expand_paths(["docs"]))

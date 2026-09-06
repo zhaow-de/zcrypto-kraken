@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long sections, long changelog entries.
-Usage: prose-tripwire.py [--since REV | --write-baseline PATH | --check-baseline PATH] [PATH ...] — default scope cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/README.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/.
+Usage: prose-tripwire.py [--since REV | --write-baseline PATH | --check-baseline PATH] [PATH ...] — default scope cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/**/README.md infra/external-systems.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/.
 An offender's identity in the baseline is its path, its kind and its anchor — a block's first line, or a row's or heading's first cell, whitespace-normalised — never its line number, which every edit above it moves."""
 
 from __future__ import annotations
@@ -31,7 +31,9 @@ KINDS = ("comment-block", "file-prose", "table-row", "section", "changelog-entry
 CODE_ROOTS = ("cli", "tests", "infra")
 CODE_SUFFIXES = (".py", ".sh", ".yml", ".yaml")
 DOC_ROOTS = ("docs/reference", "docs/universe", "infra/runbooks")
-DOC_GLOBS = ("docs/iterations-history*.md", "docs/open-topics/*.md", "infra/README.md", "README.md")
+# A README is its directory's living doc wherever it sits, so `infra/` is walked for those by rule;
+# a dated record beside one is point-in-time and stays out, for `docs/research/`'s reason.
+DOC_GLOBS = ("docs/iterations-history*.md", "docs/open-topics/*.md", "infra/**/README.md", "infra/external-systems.md", "README.md")
 EXCLUDED = ("docs/specs/", "docs/plans/", "docs/research/", "docs/open-topics/archive/", "docs/reference/ops-journal/", ".claude/")
 # A topic file and its index gain a registry section per registration, so only the section bar is dropped.
 EXEMPT = {"docs/open-topics/*.md": ("section",)}
@@ -245,7 +247,7 @@ def _walk(root: str, suffixes: tuple[str, ...]) -> list[str]:
 def default_paths() -> list[str]:
     found = [p for root in CODE_ROOTS for p in _walk(root, CODE_SUFFIXES)]
     found += [p for root in DOC_ROOTS for p in _walk(root, (".md",))]
-    found += [_norm(p) for pattern in DOC_GLOBS for p in sorted(glob.glob(pattern)) if os.path.isfile(p)]
+    found += [_norm(p) for pattern in DOC_GLOBS for p in sorted(glob.glob(pattern, recursive=True)) if os.path.isfile(p)]
     return sorted({p for p in found if not _excluded(p)})
 
 
