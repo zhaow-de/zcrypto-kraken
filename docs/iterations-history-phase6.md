@@ -830,3 +830,5 @@ ______________________________________________________________________
 - The base role no longer carries the logrotate-removal task; a converge changes nothing there.
 - The old capture and hot-push keys are gone from every admin account on the capture hosts and the NAS, and the workstation's `nas-hot` alias reaches the data user under its rrsync jail — an operator repointing or cleaning keys by hand finds nothing left to do.
 - The `zcrypto-archive-pull` unit and the `ops_archive_pull_*` metrics keep their names by decision; nothing renames them and no alert is re-provisioned.
+- The engine's exec journal refuses a probe plan it cannot parse for any reason, naming the exception class in the row's reason, and the plan file is deleted rather than re-read every tick.
+- A live-venue test runs only under `ZCRYPTO_LIVE_VENUE_TESTS=1`; without it the skip names the flag, and with it every venue answer short of the expected one fails.
