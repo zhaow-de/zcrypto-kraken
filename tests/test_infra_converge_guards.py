@@ -1637,27 +1637,44 @@ OPS_ROLE = ANSIBLE / "roles" / "ops"
 
 
 def _expand_src(src: str, task: dict) -> list[str]:
-    # `{{ item }}` against a literal `loop:` — a list, or a Jinja expression over literals; a `loop:`
-    # the templar cannot expand is refused by task name, because the names it would have expanded to
-    # are exactly the assets that would otherwise go unread.
+    # The names one `src:` stands for. `loop:` is the only repetition expanded here, so a task that
+    # repeats through a `with_*` key is refused, by name, rather than read at its unexpanded spelling.
+    # The templar is given `playbook_dir` and nothing else; a name it leaves carrying Jinja, or leaves
+    # as something other than a string, is refused the same way.
     from ansible.errors import AnsibleError
     from ansible.template import trust_as_template
 
-    def render(text: str, variables: dict):
+    def render(text: str, **extra):
         try:
+            variables = {"playbook_dir": str(ANSIBLE)} | extra
             return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
         except AnsibleError:
             return text
 
-    loop = task.get("loop")
-    if "{{" not in src or loop is None:
-        return [src]
-    items = loop if isinstance(loop, list) else render(loop, {}) if isinstance(loop, str) else None
-    assert isinstance(items, list) and items, (
-        f"{task['name']!r} renders {src!r} over a `loop:` this selection cannot expand ({loop!r}): the "
-        "assets it expands to go unread"
+    repeats = sorted(k for k in task if k.startswith("with_"))
+    assert not repeats, (
+        f"{task['name']!r} repeats {src!r} over {repeats}, which this selection does not expand: the assets "
+        "that repetition names go unread"
     )
-    return [render(src, {"item": item}) for item in items]
+    loop = task.get("loop")
+    if loop is None:
+        names = [render(src)]
+    else:
+        items = loop if isinstance(loop, list) else render(loop) if isinstance(loop, str) else None
+        assert isinstance(items, list) and items, (
+            f"{task['name']!r} renders {src!r} over a `loop:` this selection cannot expand ({loop!r}): the "
+            "assets it expands to go unread"
+        )
+        names = [render(src, item=item) for item in items]
+    for name in names:
+        assert isinstance(name, str), (
+            f"{task['name']!r} expands {src!r} to {name!r}, which is not a name this selection can resolve: "
+            "the asset it stands for goes unread"
+        )
+        assert "{{" not in name and "{%" not in name, (
+            f"{task['name']!r} expands {src!r} to {name!r}, which the templar left unrendered: the asset it stands for goes unread"
+        )
+    return names
 
 
 def _shape(path: Path) -> str:
@@ -1667,34 +1684,23 @@ def _shape(path: Path) -> str:
 
 
 def _asset_candidates(name: str) -> list[Path]:
-    # Under each asset directory: the name as spelled, present by `lexists` so a link counts whatever
-    # it points at, else Ansible's own resolver for the equivalent spellings that reach the same asset
-    # through the role root, kept to what lands inside the role.
-    from ansible.errors import AnsibleError
-
+    # Ansible's own resolver decides what the name reaches under each asset directory. This selection
+    # adds the two conditions it needs, both on the NORMALIZED result: it exists, and it lies inside
+    # the role. So two spellings that reach one file are one candidate, and a name that reaches
+    # anywhere else — an absolute path, one climbing out through `../` — reaches nothing here.
     found: list[Path] = []
     for subdir in ("files", "templates"):
-        base = OPS_ROLE / subdir
-        direct = Path(os.path.normpath(base / name))
-        if direct.is_relative_to(base) and os.path.lexists(direct):
-            path = direct
-        else:
-            try:
-                path = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name))
-            except AnsibleError:
-                continue
-            if not path.is_relative_to(OPS_ROLE):
-                continue
-        if path not in found:
+        path = Path(os.path.normpath(DataLoader().path_dwim_relative(str(OPS_ROLE), subdir, name)))
+        if path.is_relative_to(OPS_ROLE) and os.path.lexists(path) and path not in found:
             found.append(path)
     return found
 
 
 def _role_asset(name: str) -> Path | None:
-    # Candidacy is decided on existence before anything is filtered, so the only silent outcome is
-    # absence: two candidates pass only as one file's content under both directories, one passes only
-    # as a regular file inside the role, and every other shape — a directory, a link leaving the role,
-    # a broken link — is refused by name and by what it is.
+    # Two candidates pass only as one file's content under both asset directories, one passes only as
+    # a regular file inside the role, and anything else a candidate can be — a directory, a link
+    # leaving the role — is refused by name and by what it is. Absence is the one silent outcome, and
+    # it says no spelling of the name reached an existing path inside the role.
     found = _asset_candidates(name)
     if not found:
         return None
@@ -1720,24 +1726,21 @@ def _body_text(task: dict) -> str:
 
 
 def _consumed_text(task: dict) -> str:
-    # The task's body plus the text of every file its `src:` names. RESOLUTION decides, not spelling: what
-    # resolves inside the role is read however the `src:` is written; what resolves nowhere is off
-    # the role — skipped in silence where the `src:` is written as a path (the NFS mount source, the
-    # controller-side copy), refused by name where it is a bare filename this role should own.
+    # The task's body plus the text of every file its `src:` names. Nothing here reads how a `src:` is
+    # written: each is expanded to names, each name resolved, and a file the resolution places inside
+    # the role is read — the NFS export and the controller-side copy resolve elsewhere and add nothing.
     text = _body_text(task)
     for value in task.values():
-        src = value.get("src") if isinstance(value, dict) else None
-        if not isinstance(src, str):
+        if not isinstance(value, dict) or "src" not in value:
             continue
+        src = value["src"]
+        assert isinstance(src, str), (
+            f"{task['name']!r} names a `src:` that is not a string ({src!r}): this selection cannot resolve it"
+        )
         for name in _expand_src(src, task):
-            resolved = _role_asset(name) if isinstance(name, str) else None
-            if resolved is None:
-                assert "/" in src, (
-                    f"{task['name']!r} renders {name!r}, which resolves to no file under {OPS_ROLE.name}/: this selection "
-                    "cannot read what that task consumes"
-                )
-                continue
-            text += resolved.read_text()
+            resolved = _role_asset(name)
+            if resolved is not None:
+                text += resolved.read_text()
     return text
 
 
