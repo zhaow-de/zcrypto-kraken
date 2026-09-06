@@ -1,7 +1,4 @@
-"""CLI tests for `zcrypto engine gate-export` (spec 00041 SS the CLI): CliRunner over the new
-Prometheus-textfile + dead-man's-switch-ping command, with the same journal-fixture shapes the
-report/replay tests use (real, replayable records -- no network, no dataset). `_gate_ping` gets its
-own direct coverage mirroring cli/engine/cycle.py's `_ping_healthcheck` tests."""
+"""CLI tests for `zcrypto engine gate-export`: the Prometheus textfile it writes and the dead-man's-switch ping."""
 
 import json
 import types
@@ -26,8 +23,8 @@ CYCLE_TS = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
 PAIRS = ("BTC", "ETH")
 TARGETS = {"BTC": 0.2, "ETH": 0.05}
 
-# Multi-day fixtures (Fix 2 regression coverage): a day starting at hour 0 so evaluate_gate never
-# excludes it as a mid-day-start partial first day (see cli/engine/concordance.py).
+# A day starting at hour 0: evaluate_gate EXCLUDES a mid-day-start first day rather than failing it
+# (`excluded_day` in cli/engine/concordance.py).
 GATE_CYCLE_HOURS = (0, 4, 8, 12, 16, 20)
 DAY0 = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
 
@@ -103,10 +100,8 @@ def _write_success_record(
 
 
 def _write_clean_day(journal_dir: Path, day: datetime, *, skip_hour: int | None = None, late_hour: int | None = None) -> None:
-    """Write a full 6-cycle day (00/04/08/12/16/20 UTC), mirroring how test_engine_concordance.py's
-    _clean_day builds multi-day gate fixtures -- optionally dropping one boundary (`skip_hour`, a
-    missing cycle) or pushing one boundary's completed_at outside the 30-minute freshness window
-    (`late_hour`, a late cycle)."""
+    """Write a full 6-cycle day (00/04/08/12/16/20 UTC); `late_hour` pushes one boundary's
+    completed_at past the 30-minute freshness window `evaluate_gate` checks."""
     for h in GATE_CYCLE_HOURS:
         if h == skip_hour:
             continue
@@ -127,7 +122,7 @@ def _fake_builder(targets: dict[str, float]):
 @pytest.fixture
 def clean_journal(tmp_path, monkeypatch) -> Path:
     """A single clean success record at CYCLE_TS; `_utc_now` sits 10 min after it, so the default
-    lag-fail threshold (5h) is never tripped."""
+    `--lag-fail-seconds` threshold is never tripped."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     _write_success_record(journal, CYCLE_TS)
@@ -138,12 +133,10 @@ def clean_journal(tmp_path, monkeypatch) -> Path:
 
 @pytest.fixture
 def mismatch_journal(tmp_path, monkeypatch) -> Path:
-    """A full DAY0 (6 cycles) whose 00:00 record's schema_version is tampered with post-write --
-    replay_cycle's validate_record rejects it, so _evaluate_journal counts a validation failure (a
-    mismatch_total contributor), same shape as test_replay_classifies_a_validation_failure. Wrapped
-    in a full evaluated day (not a lone mid-day cycle) so evaluate_gate actually SCORES the day
-    unclean -- Fix 2's `clean` check reads status.streak/last_failure, which only reflect complete,
-    scored days."""
+    """A full DAY0 (6 cycles) whose 00:00 record's schema_version is tampered with post-write, so
+    `_evaluate_journal` counts a validation failure. A whole day, not a lone mid-day cycle:
+    `evaluate_gate` scores only days whose freshness window has elapsed, so nothing shorter moves
+    streak or last_failure."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     _write_clean_day(journal, DAY0)
@@ -158,11 +151,9 @@ def mismatch_journal(tmp_path, monkeypatch) -> Path:
 
 @pytest.fixture
 def sidecar_journal(tmp_path, monkeypatch) -> Path:
-    """DAY0's 12:00 boundary has ONLY a failed-cycle sidecar (the normal stale_pair/
-    refresh_deadline failure path run_cycle writes, no success record for that cycle); the other 5
-    boundaries are clean successes, so the day is fully scored. _evaluate_journal tallies the
-    sidecar in sidecar_count and evaluate_gate scores the day unclean, so mismatch_total must be
-    >= 1 and the ping must be /fail."""
+    """DAY0's 12:00 boundary has ONLY a failed-cycle sidecar (the stale_pair/refresh_deadline path
+    run_cycle writes, no success record for that cycle); the other 5 boundaries are clean successes,
+    so the day is complete and scored. `_evaluate_journal` tallies the sidecar in sidecar_count."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     _write_clean_day(journal, DAY0, skip_hour=12)
@@ -182,9 +173,9 @@ def sidecar_journal(tmp_path, monkeypatch) -> Path:
 
 @pytest.fixture
 def missing_cycle_journal(tmp_path, monkeypatch) -> Path:
-    """DAY0's only complete day is missing its 12:00 boundary entirely. _evaluate_journal never
-    fabricates absent entries, so mismatch_total stays 0 -- the exact blind spot Fix 2 closes:
-    evaluate_gate's streak/last_failure (missing cycle) must still drive the dead-man to /fail."""
+    """DAY0's only complete day is missing its 12:00 boundary entirely. `_evaluate_journal` never
+    fabricates absent entries, so mismatch_total stays 0 and only evaluate_gate's streak sees the
+    break."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     _write_clean_day(journal, DAY0, skip_hour=12)
@@ -196,8 +187,8 @@ def missing_cycle_journal(tmp_path, monkeypatch) -> Path:
 @pytest.fixture
 def late_cycle_journal(tmp_path, monkeypatch) -> Path:
     """DAY0's only complete day has all 6 boundaries present, but the 08:00 cycle's completed_at
-    falls outside the 30-minute freshness window. Same blind spot as missing_cycle_journal:
-    replay/compare both pass (mismatch_total stays 0), only evaluate_gate's streak reset catches it."""
+    falls outside the 30-minute freshness window: replay and compare both pass, so mismatch_total
+    stays 0 and only evaluate_gate's streak reset catches it."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     _write_clean_day(journal, DAY0, late_hour=8)
@@ -208,11 +199,9 @@ def late_cycle_journal(tmp_path, monkeypatch) -> Path:
 
 @pytest.fixture
 def recovered_gate_journal(tmp_path, monkeypatch) -> Path:
-    """DAY0 breaks (its 00:00 record's schema_version is tampered with post-write -> a validation
-    failure), then DAY0+1 and DAY0+2 are fully clean -- the gate recovers to streak=2 even though
-    mismatch_total stays >=1 (a cumulative counter over the whole journal). This is the
-    /fail-forever regression: the old `mismatch_total == 0` gate would never clean-ping again once
-    ANY cycle in journal history had failed; the new streak-based gate correctly pings clean."""
+    """DAY0 breaks (its 00:00 record's schema_version is tampered with post-write), then DAY0+1 and
+    DAY0+2 are fully clean: the streak recovers to 2 while mismatch_total, a cumulative counter over
+    the whole journal, stays >= 1."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     day1, day2 = DAY0 + timedelta(days=1), DAY0 + timedelta(days=2)
@@ -279,8 +268,6 @@ def test_gate_export_mismatch_pings_fail_and_counts(tmp_path, monkeypatch, misma
 
 
 def test_gate_export_sidecar_failure_counts_and_pings_fail(tmp_path, monkeypatch, sidecar_journal):
-    # A failed-cycle sidecar breaks the gate day: it must count in mismatch_total AND flip the
-    # dead-man to /fail (the regression the review caught -- sidecars were invisible to both).
     out = tmp_path / "gate.prom"
     pings: list[tuple[str, bool]] = []
     monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
@@ -294,8 +281,7 @@ def test_gate_export_sidecar_failure_counts_and_pings_fail(tmp_path, monkeypatch
 
 
 def test_gate_export_missing_cycle_in_last_complete_day_pings_fail(tmp_path, monkeypatch, missing_cycle_journal):
-    # A missing cycle breaks evaluate_gate's streak but contributes NOTHING to mismatch_total (Fix
-    # 2's bug: the old `clean = mismatch_total == 0` check was blind to this break entirely).
+    # A missing cycle breaks evaluate_gate's streak but contributes nothing to mismatch_total.
     out = tmp_path / "gate.prom"
     pings: list[tuple[str, bool]] = []
     monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
@@ -318,9 +304,8 @@ def test_gate_export_missing_cycle_in_last_complete_day_pings_fail(tmp_path, mon
 
 
 def test_gate_export_late_cycle_in_last_complete_day_pings_fail(tmp_path, monkeypatch, late_cycle_journal):
-    # Same blind spot as the missing-cycle case: a late cycle resets the streak but is invisible to
-    # mismatch_total (replay/compare both pass -- only the freshness-window check in evaluate_gate
-    # catches it).
+    # A late cycle resets the streak but is invisible to mismatch_total: replay and compare both
+    # pass, and only evaluate_gate's freshness-window check catches it.
     out = tmp_path / "gate.prom"
     pings: list[tuple[str, bool]] = []
     monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
@@ -343,8 +328,8 @@ def test_gate_export_late_cycle_in_last_complete_day_pings_fail(tmp_path, monkey
 
 
 def test_gate_export_recovered_gate_pings_clean_despite_historical_mismatch(tmp_path, monkeypatch, recovered_gate_journal):
-    # The /fail-forever fix: a historical break (still counted in the cumulative mismatch_total)
-    # must not keep pinging /fail once the gate has recovered to a fresh clean streak.
+    # A historical break, still counted in the cumulative mismatch_total, must not keep pinging
+    # /fail once the gate has recovered a clean streak.
     out = tmp_path / "gate.prom"
     pings: list[tuple[str, bool]] = []
     monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
@@ -369,14 +354,8 @@ def test_gate_export_recovered_gate_pings_clean_despite_historical_mismatch(tmp_
 
 
 def test_gate_export_lag_beyond_lag_fail_seconds_pings_fail(tmp_path, monkeypatch, clean_journal):
-    """Covers the COMMAND-level `--lag-fail-seconds` check only: the newest journaled cycle is older
-    than the threshold, so the dead-man is pinged /fail. It was previously named
-    `..._stale_journal_pings_fail`, which read as though it covered `evaluate_gate`'s dead-engine
-    streak reset -- it does not, and a T0076 audit found that reset entirely unpinned while this
-    test sat green beside it. A name that implies a guarantee it does not provide is worse than a
-    missing test, because it stops anyone looking. The reset itself is pinned by
-    `test_gate_dead_engine_after_5_days_silence_resets_streak_not_stale_streak` in
-    tests/test_engine_concordance.py."""
+    """The COMMAND-level `--lag-fail-seconds` check: the newest journaled cycle is older than the
+    threshold, so the dead-man is pinged /fail."""
     out = tmp_path / "gate.prom"
     pings = []
     monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
@@ -413,7 +392,6 @@ def test_gate_export_no_healthcheck_url_never_pings(tmp_path, monkeypatch, clean
 
 
 def test_gate_export_atomic_no_partial_on_write_error(tmp_path, monkeypatch, clean_journal):
-    # --textfile points at a path whose parent is unwritable (doesn't exist) -> non-zero, no partial file.
     bad = tmp_path / "nope" / "gate.prom"
 
     result = runner.invoke(app, ["engine", "gate-export", "--journal-dir", str(clean_journal), "--textfile", str(bad)])

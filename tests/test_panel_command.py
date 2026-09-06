@@ -1,9 +1,7 @@
 """TDD for `cli/panel/command.py` -- the `zcrypto panel materialize` CLI (spec 00052 Task 3).
 
-Fixture style mirrors `tests/test_panel_materialize.py`'s `_book()`/`_explode()` helpers (mirrored
-here per the plan's "import or mirror" allowance, matching this repo's convention of each command
-test file carrying its own tiny synthetic-archive fixtures rather than cross-importing another
-test module).
+`_book()`/`_explode()` mirror `tests/test_panel_materialize.py`'s deliberately: each command test
+file carries its own synthetic-archive fixtures rather than cross-importing another test module.
 """
 
 from __future__ import annotations
@@ -449,10 +447,8 @@ def test_since_parsing_edges(tmp_path):
 
 
 def test_materialize_skips_pairs_whose_quote_has_no_ladder_in_the_sweep(tmp_path: Path) -> None:
-    """A quote with no entry in `NOTIONALS_BY_QUOTE` must never be materialized (T0092/spec 00085
-    D1: the sweep now walks every quote that HAS a ladder -- BTC included -- so the property that
-    survives is "no ladder for this quote", not "not EUR". USD has no ladder entry.
-    """
+    """A quote with no entry in `NOTIONALS_BY_QUOTE` must never be materialized -- the property is
+    "no ladder for this quote", not "not EUR" (T0092/spec 00085 D1). USD has no ladder entry."""
     primary = tmp_path / "primary"
     panel_root = tmp_path / "panel"
     _seed_primary(primary, "ETH/EUR", H)
@@ -505,15 +501,10 @@ def test_a_btc_quoted_pair_is_accepted_by_the_pair_option(tmp_path: Path) -> Non
 
 
 def test_a_second_sweep_over_a_prior_btc_hour_is_counted_and_not_refused(tmp_path: Path) -> None:
-    """Closes two guards neither existing test discriminates (T0092 review): `_affected_pairs`'
-    `NOTIONALS_BY_QUOTE` membership check and `_check_generation`'s stray-scope check both revert to
-    their old EUR-only form and every existing test still passes. `test_an_out_of_scope_subtree_...`
-    never materializes a real BTC hour before checking, and `test_a_btc_quoted_pair_is_accepted_...`
-    runs on a fresh tree where the stray check never executes (absent manifest -> `write_meta` and
-    return) and dies at the `--pair` `BadParameter` on its second call before `_check_generation` is
-    reached. Only a tree that already holds a BTC hour from a PRIOR sweep exercises both: the
-    completion line's `pairs=` count on the first run, and the generation guard's stray-hour scan
-    (which must not mistake that BTC hour for one the sweep will never revisit) on the second."""
+    """Only a tree that already holds a BTC hour from a PRIOR sweep exercises both `_affected_pairs`'
+    `NOTIONALS_BY_QUOTE` membership check and `_check_generation`'s stray-scope check: the completion
+    line's `pairs=` count on the first run, and the generation guard's stray-hour scan (which must not
+    mistake that BTC hour for one the sweep will never revisit) on the second."""
     primary = tmp_path / "primary"
     panel_root = tmp_path / "panel"
     _seed_primary(primary, "ETH/EUR", H)

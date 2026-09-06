@@ -1,13 +1,4 @@
-"""The recovery ladder wired into the daemon (spec 00072, T0008).
-
-`tests/test_desync_recovery_ladder.py` covers the decision arithmetic. This covers the seam: that
-the daemon tells the ladder when a pair desyncs and recovers, that the periodic loop turns the
-ladder's decisions into real client calls, and that rung 3 actually forces a reconnect.
-
-The loop is time-driven, not message-driven, and that is deliberate: a grace period keyed on
-incoming messages would depend on the stuck pair still receiving traffic, and would re-evaluate
-hundreds of times per second at depth-100 rather than once per tick.
-"""
+"""The seam between the daemon and the recovery ladder (spec 00072, T0008)."""
 
 from __future__ import annotations
 
@@ -191,17 +182,9 @@ def test_the_drill_knob_is_absent_from_every_infra_config():
 
 
 # --- The seam the mutation review found completely untested ---------------------------------------
-# Deleting `recovery.note_desync(...)`, `recovery.note_recovered(...)`, or the `recovery` argument
-# from _consume's call all SURVIVED the entire suite: a ladder nobody arms, with every test green.
-# That is the T0035/T0100 failure class one level down -- a mechanism nobody proved runs -- which is
-# the exact trap this whole branch exists to escape.
-#
-# Calling the real handler kills the first two. It does NOT kill the third: a second review re-ran
-# the mutations and found dropping `recovery` from _consume's call still passed all 2424 tests,
-# because these tests pass the ladder explicitly and so never observe the production CALL SITE. The
-# argument now has no default -- dropping it is a TypeError, not a silent None -- and
-# `test_the_consumer_arms_the_ladder_it_was_given` drives _consume itself so that TypeError is
-# actually reached by the suite. Covering a callee is not covering its caller.
+# `recovery` has no default on `_consume`: dropping it is a TypeError, not a silent None. Covering a
+# callee is not covering its caller, so `test_the_consumer_arms_the_ladder_it_was_given` drives
+# `_consume` itself.
 
 
 def _book_msg(pair: str) -> dict:
@@ -267,13 +250,9 @@ def test_the_consumer_arms_the_ladder_it_was_given():
 
 
 async def _test_the_consumer_arms_the_ladder_it_was_given():
-    """The production call site, not just the handler it calls.
-
-    `_run` builds one DesyncRecovery and hands it to `_consume`, which must pass it down to
-    `_handle_book_message` on every book message. Nothing else in the suite executes that hop, so a
-    review found the argument could be dropped there with all 2424 tests still green -- the daemon
-    would resubscribe on the transition and then nobody would ever escalate, which is exactly the
-    defect this branch was built to fix, silently reintroduced.
+    """The production call site, not just the handler it calls: `_consume` must pass the ladder it was
+    given down to `_handle_book_message`, or the daemon resubscribes on the transition and nobody ever
+    escalates.
     """
     from cli.capture.command import _consume
 
@@ -305,12 +284,9 @@ class _StubWatermark:
 
 
 def test_the_drill_knob_moves_the_book_state_not_just_the_return_value():
-    """Drill run 1's defect, pinned. Returning False while leaving `book.desynced` False makes every
-    forced failure read as a fresh transition: the guard re-fires rung 1 in a storm, and the
-    recovery loop — which reads live book state — never engages. The knob then simulates a different
-    fault, convincingly enough to look like a pass.
-
-    The earlier knob test passes `book=None`, so it structurally cannot see this line.
+    """Returning False while leaving `book.desynced` False makes the knob simulate a different fault:
+    every forced failure reads as a fresh transition, and the recovery loop -- which reads live book
+    state -- never engages.
     """
     from cli.capture import command
 

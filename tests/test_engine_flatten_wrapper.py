@@ -1,12 +1,7 @@
 """Guard: the rendered `zcrypto-flatten` wrapper starts the flatten command and not the capture
-daemon, refuses to run a second live client beside a still-running engine, and writes the kill file
-BEFORE it stops the unit.
-
-Rendered through a bare jinja2 Environment with Ansible's own block settings
-(`tests/test_infra_tape_bars_template.py`'s precedent), then EXECUTED against fakes on PATH
-(`tests/test_converge_sh.py`'s precedent) -- the properties that matter here are orderings, and no
-text assertion can see an ordering.
-"""
+daemon, refuses a second live client beside a still-running engine, and writes the kill file BEFORE
+it stops the unit -- all orderings, which no text assertion can see, so the rendered script is
+EXECUTED against fakes on PATH."""
 
 from __future__ import annotations
 
@@ -45,16 +40,10 @@ def _render(**overrides) -> str:
 
 
 def _harness(tmp_path, *, state_dir=None, unit_active_calls=0, create_exec_dir=True):
-    """A bin/ of fakes on PATH. `systemctl is-active` succeeds for the first `unit_active_calls`
-    probes, so a unit that never goes inactive can be modelled.
-
-    `sleep` is faked to a no-op: the wrapper's stop-wait polls once a second for its whole bound, and
-    the property under test is the refusal, never the wall clock spent reaching it.
-
-    `create_exec_dir=False` models the FRESHLY CONVERGED host: the role creates the state dir,
-    store/ and journal/ and never exec/, which the engine's own kill-file writer creates lazily on
-    a host that has tripped a kill. Creating it unconditionally here would put every wrapper test on
-    a host that has already tripped one, which is the case the button is least often used on."""
+    """A bin/ of fakes on PATH, one per knob: `unit_active_calls` models a unit that never goes
+    inactive, `sleep` is a no-op because the property under test is the refusal and never the wall
+    clock spent reaching it, and `create_exec_dir=False` models the freshly converged host, whose
+    state dir carries store/ and journal/ but no exec/."""
     state = state_dir or (tmp_path / "state")
     if create_exec_dir:
         (state / "exec").mkdir(parents=True, exist_ok=True)
@@ -108,10 +97,9 @@ def _log(log: Path) -> list[str]:
 
 
 def _docker_argv(log: Path) -> list[str]:
-    """The argv the fake `docker` was actually invoked with. Every assertion about what the container
-    is told to run reads THIS and never the rendered text: a value the wrapper holds in a shell
-    variable is not a token of the render, so a text assertion hunting for one silently pins
-    nothing."""
+    """The argv the fake `docker` was actually invoked with -- read instead of the rendered text,
+    because a value the wrapper holds in a shell variable is not a token of the render and a text
+    assertion hunting for one pins nothing."""
     (line,) = [entry for entry in _log(log) if "docker" in entry]
     return line.split()
 
@@ -170,11 +158,9 @@ def test_execute_writes_the_kill_file_before_it_stops_the_unit(tmp_path):
 
 
 def test_execute_creates_the_missing_exec_directory_before_writing_the_kill_file(tmp_path):
-    """A freshly converged or rebuilt host has no `exec/`: the role creates only the state dir,
-    store/ and journal/, and the engine's own kill-file writer is what creates it lazily — on a host
-    that has already tripped a kill, which is not the host the button is pressed on. Without the
-    wrapper's own mkdir the redirection dies under `set -eu` with nothing latched and the engine
-    still trading."""
+    """A freshly converged host has no `exec/` -- the role creates only the state dir, store/ and
+    journal/ -- so without the wrapper's own mkdir the redirection dies under `set -eu` with nothing
+    latched and the engine still trading."""
     script, state, log, env = _harness(tmp_path, create_exec_dir=False)
     assert not (state / "exec").exists()
     result = _run(script, env, ["--execute"])
@@ -222,8 +208,7 @@ def test_the_role_installs_the_wrapper_root_owned_and_not_world_readable():
 
 
 def test_the_template_renders_with_nothing_left_undefined():
-    """`_ENV` is `StrictUndefined`, so a `{{ name }}` this file's own CONTEXT does not carry
-    RAISES rather than surviving into the output -- the assertion is that the render completes
-    and produces the script. Whether the ROLE defines every name is
-    `tests/test_infra_shell_templates_render.py`'s question, not this file's."""
+    """`_ENV` is `StrictUndefined`, so a `{{ name }}` this file's CONTEXT does not carry RAISES
+    rather than surviving into the output. Whether the ROLE defines every name is
+    `tests/test_infra_shell_templates_render.py`'s question."""
     assert _render().startswith("#!/bin/sh")

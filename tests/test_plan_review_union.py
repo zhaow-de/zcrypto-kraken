@@ -1,11 +1,7 @@
-"""Guard for `.claude/skills/zcrypto-plan-review/scripts/union.py`'s two load-bearing claims.
-
-The union keeps the MAXIMUM severity when two reports grade one `path:line` differently, and its
-counts come from the parsed headings rather than from any summary line a report carries. Both are
-the properties a consolidating agent gets wrong (`docs/research/90.spec-plan-review-protocol.md`),
-so both are pinned here with fixtures where the defect and the correct behaviour differ — and a
-heading nested one level deeper, indented, or list-prefixed is still a finding, never silently a body line.
-"""
+"""Guard for `.claude/skills/zcrypto-plan-review/scripts/union.py`: the union keeps the MAXIMUM
+severity when two reports grade one `path:line` differently, and its counts come from the parsed
+headings, never from a report's own summary line — the two properties a consolidating agent gets
+wrong (`docs/research/90.spec-plan-review-protocol.md`)."""
 
 from __future__ import annotations
 
@@ -57,8 +53,7 @@ def test_shared_key_takes_the_maximum_severity_and_the_most_recent_origin(tmp_pa
 
 def test_counts_come_from_headings_not_from_a_report_summary_line(tmp_path):
     proc, _ = _run(tmp_path, _A, _B)
-    # Report A's own summary line claims "Important 0"; the headings say one Critical (the merged
-    # key), one Important (:77) and one Minor (:40) across three distinct keys.
+    # `_A`'s own summary line claims "Important 0", so a count read off summaries cannot produce this.
     assert proc.stdout.strip() == (
         "counts (from headings): Critical 1 · Important 1 · Minor 1 · keys 3 · raw findings 4 · unparsed 0"
     )
@@ -174,9 +169,8 @@ def test_fences_follow_commonmark_and_an_unclosed_one_is_surfaced(tmp_path):
 
 
 def test_a_heading_without_its_brackets_is_still_a_finding(tmp_path):
-    """The template once wrote the shape as `[Critical|Important|Minor]`, which every reviewer read as
-    choose-one notation and rendered bare. A parser keyed on literal brackets then counted a real
-    Critical as zero — measured on this skill's own first live run, eleven findings, `unparsed 11`."""
+    """A reviewer who renders the severity bare — reading a `[Critical|Important|Minor]` shape as
+    choose-one notation — leaves a parser keyed on literal brackets counting a real Critical as zero."""
     bare = (
         "### Critical · in-original · docs/plans/00000-x.md:30\n**Quote:** `a`\n"
         "### Important · last-fix · docs/plans/00000-x.md:31\n**Quote:** `b`\n"
@@ -190,9 +184,9 @@ def test_a_heading_without_its_brackets_is_still_a_finding(tmp_path):
 
 
 def test_a_finding_written_at_section_level_is_surfaced_not_swallowed(tmp_path):
-    """A severity heading at one or two hashes is a typo of the required form. It matches the section
-    pattern, so before this guard it closed the open block and vanished at exit 0 — the silent drop the
-    script exists to prevent, and the one failure mode its counts cannot survive."""
+    """A severity heading at one or two hashes is a typo of the required form, and it matches the
+    section pattern — so it closes the open block and vanishes at exit 0, the silent drop the script
+    exists to prevent."""
     text = (
         "### [Important] · [in-original] · docs/plans/00000-x.md:40\n**Quote:** `q`\n"
         "## [Critical] · [in-original] · docs/plans/00000-x.md:41\n**Quote:** `r`\n"

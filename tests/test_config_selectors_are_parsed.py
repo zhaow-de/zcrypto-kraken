@@ -5,10 +5,6 @@ values, so it cannot tell the setting apart from something that merely mentions 
 
 Parse the file (`yaml.safe_load`, `json.loads`) or select by prefix (`line.strip().startswith(key)`).
 Where substring really is the right semantics, declare it: `# config-selector-ok: <why>`.
-
-Not covered, deliberately: reader helpers reached through an intermediate variable; AnnAssign,
-walrus and tuple bindings; the CONTENT of a prefix anchor (`startswith("")` exempts anything);
-`not in` and `re.search`; and files outside `infra/`.
 """
 
 from __future__ import annotations
@@ -28,7 +24,7 @@ _MARKER = "config-selector-ok:"
 
 
 def _path_consts(tree: ast.Module, src: str) -> set[str]:
-    """Module-level names whose value names a path under infra/."""
+    """Names whose value names a path under infra/."""
     return {
         t.id
         for n in ast.walk(tree)
@@ -45,7 +41,7 @@ def _reads_infra(node: ast.AST, src: str, consts: set[str]) -> bool:
 
 
 def _infra_text_vars(tree: ast.Module, src: str) -> set[str]:
-    """Names bound to the TEXT of a file under infra/, directly or through a module-level path const."""
+    """Names bound to the TEXT of a file under infra/, directly or through a path const."""
     consts = _path_consts(tree, src)
     out: set[str] = set()
     for n in ast.walk(tree):
@@ -125,11 +121,10 @@ def _line_vars(tree: ast.Module, src: str, haystacks: set[str]) -> set[str]:
 _GRANDFATHERED = {
     "test_infra_converge_guards.py",  # pre-existing at the guard's introduction
     "test_panel_regenerate.py",  # pre-existing at the guard's introduction
-    # Added when haystack tracking learned to follow helper returns and derived bindings. They
-    # assert on rendered output. That is NOT comment-free -- a j2 template's comments survive into
-    # the render -- so the justification is narrower: the needles are specific rendered command
-    # strings with low collision risk. `test_infra_archive_pull_template.py`'s metric-name assert is
-    # the weakest of them and sits on the hazard.
+    # Admitted because they assert on rendered output, where the needles are specific rendered
+    # command strings with low collision risk -- NOT because a render is comment-free, since a j2
+    # template's comments survive into it. `test_infra_archive_pull_template.py`'s metric-name
+    # assert is the weakest of them and sits on the hazard.
     "test_infra_archive_pull_template.py",
     "test_infra_firewall_template.py",
     "test_infra_verify_replay_template.py",
@@ -195,8 +190,7 @@ def _violations(src: str, name: str = "<src>") -> list[str]:
     ]
 
 
-# Each of these evaded an earlier version of this guard. Proving it on every run is cheaper than
-# rediscovering them: a change that stops catching one of these fails HERE, not in six months.
+# Each of these evaded an earlier version of this guard.
 _MUST_CATCH = {
     "const path, inline read": """
 ROLE = REPO / "infra/x"

@@ -1,22 +1,7 @@
-"""TDD for `infra/scripts/prune-host-images.py` — the image prune the pins-update step runs.
-
-Nothing in the fleet removed Docker images until this script existed: on 2026-08-23 zcrypto-red
-held 13 images (35.73 GB, 88% reclaimable) on a 49 GB disk against 7.2 GB of actual capture data,
-at <10% free. The capture daemon stops appending below `DEFAULT_MIN_FREE_BYTES` (1 GiB), and L2
-capture is unbackfillable, so that was one image pull from permanent data loss.
-
-Every test here constructs the defect it names rather than asserting the happy path, and none of
-them touches a host: all host I/O sits behind `Docker`, and the planner is pure.
-
-THE load-bearing case is `test_capture_and_engine_diverged_on_zcrypto_keep_four_capture_digests`:
-capture and the engine are independent rows on the SAME host sharing ONE image repo, so mid-rollout
-that repo legitimately needs four resident digests. The real pins file cannot exercise it (both rows
-currently carry the same digest), hence the synthetic fixture.
-
-The mirror of that case is the SILENT UNDER-KEEP: any shape that drops a row drops that row's
-rollback operand, which no container holds, so nothing else in the design covers it. Those tests
-live under "the catastrophic direction".
-"""
+"""TDD for `infra/scripts/prune-host-images.py` — the image prune the pins-update step runs. The
+capture daemon stops appending below `DEFAULT_MIN_FREE_BYTES` and L2 capture is unbackfillable, so a
+host that never removes an image is one pull from permanent data loss; the mirror danger is the
+SILENT UNDER-KEEP, where a dropped row takes the rollback operand no container holds."""
 
 import ast
 import importlib.util
@@ -125,7 +110,7 @@ def test_the_real_file_puts_capture_and_the_engine_on_one_host_sharing_one_repo(
 
 @pytest.mark.parametrize("host", ["zcrypto", "zcrypto-red", "zcrypto-ops", "nas"])
 def test_the_multi_host_alloy_row_contributes_to_every_host_it_names(host):
-    """The host cell lists four hosts comma-separated. Read as one opaque string, Alloy's digests
+    """The host cell lists its hosts comma-separated. Read as one opaque string, Alloy's digests
     would be missing from every host's keep-set and the resident Alloy would be pruned."""
     rows = pm.parse_pins_table(pm.DEFAULT_PINS.read_text())
     (alloy,) = [row for row in rows if row.service == "alloy"]
@@ -398,12 +383,9 @@ def test_the_script_never_reaches_for_a_blanket_prune():
     """`docker image prune -a` / `docker system prune` would take the recorded rollback operands —
     exactly the digests this script exists to protect. Removal is one explicit ref at a time.
 
-    Two checks over the AST's non-docstring string constants, because either alone has a hole:
-    exact membership misses a whole command spelled as ONE constant, and a bare substring sweep
-    cannot tell an argv token from prose (`filesystem` contains `system`). Docstrings are excluded —
-    the module's names the blanket forms in order to forbid them, which a raw grep cannot tell from
-    a call site.
-    """
+    Two checks, because either alone has a hole: exact membership misses a whole command spelled as
+    ONE constant, and a substring sweep cannot tell an argv token from prose (`filesystem` contains
+    `system`). Docstrings are excluded — the script names the blanket forms in order to forbid them."""
     tree = ast.parse(SCRIPT.read_text())
     docstrings = {
         id(node.body[0].value)

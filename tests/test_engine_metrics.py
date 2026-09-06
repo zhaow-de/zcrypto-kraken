@@ -52,8 +52,7 @@ MODEL_TARGETS = {base: round(0.1 * (i + 1), 3) for i, base in enumerate(MODEL_BA
 TARGETS = {f"{base}/EUR": value for base, value in MODEL_TARGETS.items()} | dict.fromkeys(BTC_SYMBOLS, 0.0)
 NOW = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
 
-# `_reset_metrics_sink` (cycle._metrics_sink reset after every test) now lives in tests/conftest.py
-# so every file in the suite is protected, not just this one.
+# `cycle._metrics_sink` is reset after every test by `_reset_metrics_sink` in tests/conftest.py.
 
 
 def _base(asset: str) -> float:
@@ -114,8 +113,7 @@ def _clock(step: timedelta = timedelta(seconds=10)) -> _SteppingClock:
 #     off-by-one reads 0.0 for all three sleeves -- exactly the false "the book is flat" claim these
 #     gauges exist to prevent, and one that would poison the alert's baseline.
 #   - the abs(): two sleeves carry a NEGATIVE leg, so an extraction that summed raw positions would
-#     read A1 as -0.5 and A2 as 0.125 rather than 0.5 and 0.375.
-# B is flat, mirroring the measured dormant state; A1/A2 carry the book.
+#     disagree with SLEEVE_GROSS_EXPECTED below.
 # Base-keyed: sleeve books come back from the builder in the model's own key space.
 SLEEVE_FORMING = {
     "B": dict.fromkeys(MODEL_BASES, 0.0),
@@ -178,12 +176,10 @@ def test_sink_called_on_success_with_completed_at_and_duration(tmp_path, monkeyp
 
 
 def test_run_cycle_extracts_each_sleeves_forming_row_gross(tmp_path, monkeypatch):
-    # THE end-to-end pin on the extraction itself. Every other sleeve test in this file drives
-    # `_CycleGauges.update` with a hand-built CycleResult, so none of them can see run_cycle reading
-    # the WRONG ROW out of the builder: mutating `[result.n_periods]` to `[result.n_periods - 1]`
-    # left all of them green. That mutation ships sleeve_gross={0,0,0} and active_sleeves=0 -- the
-    # book reported permanently flat, and the composition-changed alert baselined on a lie, so the
-    # eventual fix deploy fires a spurious page.
+    # THE end-to-end pin on the extraction: every other sleeve test drives `_CycleGauges.update`
+    # with a hand-built CycleResult, so none can see run_cycle read the WRONG ROW out of the
+    # builder. A row off by one ships sleeve_gross all-zero and active_sleeves=0 -- the book
+    # reported permanently flat, and the composition-changed alert baselined on a lie.
     config = _env(tmp_path, monkeypatch)
 
     result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(_store_rows()), clock=_clock())
@@ -490,10 +486,9 @@ def test_a_failed_cycle_leaves_the_last_target_weights_standing():
 
 
 # --- command.py: sleeve occupancy (T0124's rung-3 precondition) ------------------------------------
-# The deployable combines three sleeves at fixed 1/3 weights and two of them have been flat for
-# months. Nothing observed that, and nothing would observe them RE-ARMING either -- which roughly
-# moves portfolio gross by an amount only measurement can give. These two series make the composition, and any
-# change to it, visible; they do not by themselves say what the gross did.
+# The deployable combines three sleeves at fixed weights, and nothing observed which of them carried
+# exposure, or when one RE-ARMED. These two series make the composition, and any change to it,
+# visible; they do not by themselves say what the gross did.
 
 SLEEVE_GROSS = {"B": 0.0, "A1": 0.0, "A2": 0.32}
 
@@ -535,7 +530,6 @@ def test_cycle_gauges_publish_per_sleeve_gross_and_the_active_count():
     gross = {sample.labels["sleeve"]: sample.value for sample in families["zcrypto_engine_sleeve_gross"].samples}
     assert gross == SLEEVE_GROSS
     assert len(families["zcrypto_engine_sleeve_gross"].samples) == 3  # one series per sleeve, always
-    # The one-sleeve book as measured across every journaled cycle: only A2 carries exposure.
     assert families["zcrypto_engine_active_sleeves"].samples[0].value == 1.0
 
 
@@ -993,7 +987,7 @@ def test_venue_gauges_exist_after_seeding():
     assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == 0.0
     assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 0.0
     # DERIVED from len(INSTRUMENT_IDS), never a literal -- a future basket re-ratification moves one
-    # committed place; this pins the CURRENT basket size at 12.
+    # committed place.
     assert reg.get_sample_value("zcrypto_venue_instruments_expected") == len(INSTRUMENT_IDS) == 12
     assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 0.0
 
@@ -1002,9 +996,9 @@ def test_venue_gauges_update_moves_all_four_from_a_cycle_results_venue_summary()
     reg = CollectorRegistry()
     gauges = _VenueGauges(reg)
     snapshot_at = CYCLE_TS + timedelta(minutes=1)
-    # 11, not 12: the eager constructor seed (`command.py:623`) also sets this gauge to
-    # len(INSTRUMENT_IDS) == 12, so a value equal to the seed can't tell "update() moved it" from
-    # "the seed was never touched" -- 11 is a value the seed cannot produce.
+    # 11, not 12: `_VenueGauges.__init__`'s eager seed also sets this gauge to len(INSTRUMENT_IDS),
+    # so a value equal to the seed cannot tell "update() moved it" from "the seed was never
+    # touched".
     result = _venue_result({"loaded": 9, "expected": 11, "failures": 1, "snapshot_at": snapshot_at.isoformat()})
 
     gauges.update(result.venue)
@@ -1148,8 +1142,8 @@ def test_run_metrics_port_set_serves_process_and_engine_series_seeded_at_startup
 
 
 def test_run_with_an_empty_journal_leaves_cycle_success_unpublished(tmp_path, monkeypatch):
-    # THE I4 regression (cold-review, 00069 final review): a brand-new deployment (empty journal,
-    # never populated by `_run_env`) must not publish zcrypto_engine_cycle_success at all before
+    # A brand-new deployment (empty journal, never populated by `_run_env`) must not publish
+    # zcrypto_engine_cycle_success at all before
     # the first real cycle completes -- a freshly-registered Gauge defaults to 0.0, which would
     # read as "the last cycle failed" for up to 4h. Absence is honest; a published 0 is a claim.
     port = _free_port()
@@ -1182,10 +1176,9 @@ def _zcrypto_caplog_attached(caplog):
 
 
 def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path, monkeypatch, caplog):
-    # THE Critical (spec 00069 T3/T4 review): _seed_completed_at reads arbitrary on-disk journal
-    # artifacts (from_json / _sidecar_fields); an unreadable cycle-*.json (bad mode/ownership on
-    # the bind mount) raises PermissionError, which the pre-fix code caught only EngineJournalError
-    # around -- crash-looping the engine daemon at startup, on the trade-key host, before
+    # _seed_completed_at reads arbitrary on-disk journal artifacts (from_json / _sidecar_fields); an
+    # unreadable cycle-*.json (bad mode/ownership on the bind mount) raises PermissionError, which
+    # uncaught crash-loops the engine daemon at startup, on the trade-key host, before
     # build_shadow_node is ever reached. Metrics setup must degrade (logged), never abort `run()`.
     journal_dir = tmp_path / "journal"
     _write_success_record(
@@ -1215,10 +1208,10 @@ def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path
 
 
 def test_run_seeds_the_venue_timestamp_from_the_newest_on_disk_record(tmp_path, monkeypatch):
-    # Cold-review MAJOR 1: without this seed, a routine restart (which always lands inside the
-    # inter-cycle gap, fleet-deploys.md) would leave zcrypto_venue_snapshot_timestamp_seconds at
-    # its eager 0.0 default -- read as `time() - 0` ~= 1.77e9 -- and zcrypto-venue-snapshot-stale
-    # would false-page "the writer has stopped" against an engine that merely restarted.
+    # Without this seed, a routine restart (which always lands inside the inter-cycle gap,
+    # fleet-deploys.md) would leave zcrypto_venue_snapshot_timestamp_seconds at its eager 0.0
+    # default -- read as `time() - 0` -- and zcrypto-venue-snapshot-stale would false-page "the
+    # writer has stopped" against an engine that merely restarted.
     journal_dir = tmp_path / "journal"
     snapshot_at = datetime(2026, 7, 9, 12, 1, tzinfo=UTC)
     _write_venue_record(journal_dir, datetime(2026, 7, 9, 12, 0, tzinfo=UTC), loaded=9, failures=1, snapshot_at=snapshot_at)
@@ -1320,7 +1313,7 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
     # the alert for up to 4h until the next cycle completes.
     assert registry.get_sample_value("zcrypto_exec_restart_hold") == 1
     assert registry.get_sample_value("zcrypto_exec_gate_level") == LEVEL_CODE[GateLevel.REDUCE_ONLY]
-    # The venue half of the same sink closure (cold-review MAJOR 2): _VenueGauges.update is tested
+    # The venue half of the same sink closure: _VenueGauges.update is tested
     # directly elsewhere with hand-built dicts, but only this test drives run()'s actual composition
     # -- `if venue_gauges is not None: venue_gauges.update(result.venue)` -- so a broken wire (a
     # dropped call, the wrong attribute) fails SILENTLY in production exactly like the exec half would.
@@ -1376,11 +1369,10 @@ def test_a_raising_startup_evaluation_never_prevents_the_engine_from_starting(tm
 
 
 def test_the_exec_ledger_writes_even_when_the_metrics_port_is_unset(tmp_path, monkeypatch):
-    # THE property this task exists to fix: a manual `zcrypto engine run` on the host never sets
-    # ZCRYPTO_METRICS_PORT, and the pre-fix code installed the sink INSIDE `if port is not None:` --
-    # so a misconfigured/manual engine would journal cycles with no execution record and no error.
-    # No registry is built here at all (build_registry/start_metrics_server are left unpatched and
-    # must never be called), so this also pins that the gauge half stays correctly inert.
+    # A manual `zcrypto engine run` on the host never sets ZCRYPTO_METRICS_PORT, and an engine whose
+    # sink were installed only alongside the exporter would journal cycles with no execution record
+    # and no error. No registry is built here at all (build_registry/start_metrics_server are left
+    # unpatched and must never be called), so the gauge half is pinned inert too.
     monkeypatch.delenv(METRICS_PORT_ENV_VAR, raising=False)
     registry_calls = []
     monkeypatch.setattr(command, "build_registry", lambda: registry_calls.append(1) or CollectorRegistry())
@@ -1755,10 +1747,9 @@ def test_the_tracking_state_alphabet_never_publishes_zero_and_the_help_names_eve
 
 # --- this file's own stub node is a restatement of LiveNode / LiveNodeHandle ---------------------
 #
-# tests/test_engine_stub_fidelity.py classifies every test double in the engine suite and names the
-# guard below; the reasoning that makes it worth having lives there. The names `run()` READS off a
-# node are checked against the real class in tests/test_engine_command.py -- one walk over the one
-# production module covers both files' stubs, so only the offered direction is owed here.
+# tests/test_engine_stub_fidelity.py names the guard below. The names `run()` READS off a node are
+# checked against the real class in tests/test_engine_command.py, so only the offered direction is
+# owed here.
 
 
 def test_the_stub_node_offers_nothing_the_real_type_lacks():

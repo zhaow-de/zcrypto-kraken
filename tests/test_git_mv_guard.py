@@ -4,7 +4,6 @@ The trap: `git mv` after an unstaged edit stages a rename of the INDEX version, 
 unstaged -- porcelain `RM`. Repo-side pre-commit structurally cannot see it (the framework stashes
 unstaged changes before hooks run), so the moment the trap forms is the only place to catch it.
 
-The test boundary is the committed script run as a subprocess with synthetic hook JSON on stdin.
 The script judges the repo the command NAMES -- `git -C <dir>` or a leading `cd <dir> &&` -- and
 falls back to the PROCESS cwd only when the command names none (it never reads a `cwd` field in
 the JSON), so a case pins both the subprocess cwd and the directory written into the command.
@@ -59,11 +58,7 @@ def hook_payload(command: str) -> dict:
 
 
 def make_rm_state_repo(path: Path) -> Path:
-    """Put `path` into the exact trap state: committed file, EDITED unstaged, then `git mv`.
-
-    Proves its own premise -- if porcelain does not actually report `RM`, every assertion built
-    on it would be vacuous, so the state is asserted here rather than assumed.
-    """
+    """Put `path` into the exact trap state: committed file, EDITED unstaged, then `git mv`."""
     init_repo(path)
     (path / "old.txt").write_text("original content\n")
     git(path, "add", "old.txt")

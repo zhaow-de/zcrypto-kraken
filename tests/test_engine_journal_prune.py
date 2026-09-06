@@ -5,13 +5,10 @@ The unit under test is the **shell script the `engine` role installs**
 fixture journal tree — not a Python re-implementation. What deletes bytes on the trade-key host is
 that file; a second implementation would only be a second thing to get wrong.
 
-The load-bearing assertions are the NEGATIVE ones, and one of them is not about disk at all.
 `cli/engine/cycle.py` derives each cycle's orders as a delta against the most recent journaled
 cycle, located by globbing this tree; with no prior record every delta becomes the full target and
 the engine rebuilds the whole book ("the shadow book starts flat"). So the prune must keep the
-newest `retention_days` day-dirs REGARDLESS of age — the guard is inert in healthy operation and
-is the only thing standing between a >60-day engine outage and a spurious book rebuild (spec
-00070 D2).
+newest `retention_days` day-dirs REGARDLESS of age (spec 00070 D2).
 
 Dates are taken from the directory NAME, never from mtime (D4): the name is the day's identity,
 while an mtime is rewritten by any restore or rsync.
@@ -192,10 +189,8 @@ def test_the_published_file_is_readable_by_the_non_root_collector(tmp_path):
     """Alloy runs as the non-root zcrypto-alloy user, and `mv` PRESERVES mktemp's 0600 — so without
     an explicit chmod this .prom publishes root-only and the collector gets EACCES.
 
-    This shipped broken: the retro-fix that made this unit pass --textfile again was inert on
-    delivery, failing in exactly the silent mode T0100 exists to record, while the staleness alert
-    shipped alongside it was structurally unable to surface the failure (the collector skips an
-    unreadable file BEFORE stamping its mtime, so there is no series to go stale).
+    A staleness alert cannot stand in for this: the collector skips an unreadable file BEFORE
+    stamping its mtime, so there is no series to go stale.
     """
     _day(tmp_path, 40)
     for n in range(1, 15):
@@ -267,7 +262,7 @@ def test_deletes_the_whole_day_never_a_partial(tmp_path):
 # --- The systemd wiring ------------------------------------------------------------------------
 # The script above is only correct if the unit invokes it the way it expects. A mismatch here is
 # near-silent: the timer fires nightly, the oneshot fails, and nothing pages — the journal simply
-# grows while the fleet looks healthy. These two guard the seam.
+# grows while the fleet looks healthy.
 
 ROLE = Path(__file__).resolve().parents[1] / "infra/ansible/roles/engine"
 
@@ -276,7 +271,7 @@ def _role_vars() -> dict[str, str]:
     """Every role default the unit template interpolates, discovered from the template itself.
 
     Discovered rather than listed: a hardcoded list silently stops covering a variable the moment
-    the template grows one, and this seam is the only thing pinning the unit to the role.
+    the template grows one.
     """
     text = (ROLE / "defaults/main.yml").read_text()
     template = (ROLE / "templates/zcrypto-engine-journal-prune.service.j2").read_text()
@@ -312,8 +307,8 @@ def test_the_unit_invokes_the_script_the_role_installs_with_the_argument_order_i
     # Positional order is <journal-dir> <retention-days>: swapped, the retention parse rejects a
     # path and the unit fails closed rather than sweeping with a nonsense window.
     assert _prune(Path("/nonexistent"), days).returncode == 2
-    # The guard stays, its allow-list grows by exactly the one flag T0100 added. Anything else is
-    # an argument nobody reasoned about reaching a script that deletes bytes on the trade-key host.
+    # Anything beyond `--textfile` is an argument nobody reasoned about reaching a script that
+    # deletes bytes on the trade-key host.
     assert rest[:1] == ["--textfile"], f"unexpected argument: {rest}"
     assert len(rest) == 2, f"--textfile takes exactly one path: {rest}"
 

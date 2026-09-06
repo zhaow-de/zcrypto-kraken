@@ -1,14 +1,12 @@
 """The tracking module's arithmetic, and the `engine tracking-report` end-to-end true-positive.
 
 The end-to-end tests read `/mnt/zhao-crypto/engine-journal` and SKIP when that mount is absent --
-which it is in CI, so **a green CI run has not exercised the command against real journaled
-evidence**. What still covers the arithmetic there is this file's mount-free unit tests and the
-mount-free `mixed_schema_fixture` CLI tests; the real-journal end-to-end run is a workstation gate,
-run by hand and recorded at closeout.
+which it is in CI, so a green CI run has not exercised the command against real journaled
+evidence; that run is a workstation gate, run by hand and recorded at closeout.
 
-Replaying three complete ISO weeks means 126 cycles through the real builder (~3 minutes), so each
-distinct command line is invoked ONCE at session scope and the tests read that single run rather
-than re-invoking. The runs are read-only, so sharing them costs no isolation.
+Replaying three complete ISO weeks through the real builder is slow, so each distinct command line
+is invoked ONCE at session scope and the tests read that single run; the runs are read-only, so
+sharing them costs no isolation.
 """
 
 import json
@@ -810,8 +808,7 @@ def _synth_slice(root: Path, schema_versions: tuple[int, ...], *, start: datetim
 
     Built from `tests.basket_fixture`'s REAL builds, so every record genuinely replays: a fixture
     whose records all failed to replay would run the renderer over an empty report and could not
-    tell a working pipeline from a broken one. Two cycles replay in about a second, so everything
-    that does not actually need real journaled evidence is tested here and runs in CI.
+    tell a working pipeline from a broken one.
     """
     journal = root / "journal"
     for offset, schema_version in enumerate(schema_versions):
@@ -937,7 +934,7 @@ def test_simulated_fills_produce_a_non_degenerate_report(tracking_json):
     # The true-positive proper. Everything above still passes with the REALIZED half dead: the floor
     # is computed without a single fill. Three complete weeks with fills must therefore DECIDE --
     # an always-refusing realized half leaves every week undecided and the verdict at
-    # insufficient-data, which is exactly what zero journaled fills cannot distinguish today.
+    # insufficient-data.
     assert payload["tracking"]["complete_gate_eligible_weeks"] == 3
     assert payload["tracking"]["verdict"] == "pass"
     assert payload["cost"]["n_fills"] > 0 and payload["cost"]["realized_fee_per_side"] > 0

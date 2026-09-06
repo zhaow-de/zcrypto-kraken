@@ -1,9 +1,4 @@
-"""converge.sh: preview-first, typed-limit confirm, then the real pass (spec 00083 D1).
-
-Every test copies the script into a scratch dir beside a FAKE run.sh that appends its argv
-(one line per invocation) to invocations.log — the tests assert on what actually ran, never
-only on exit codes.
-"""
+"""converge.sh: preview-first, typed-limit confirm, then the real pass (spec 00083 D1)."""
 
 import os
 import pty
@@ -73,10 +68,8 @@ def run_with_tty(script, args, reply):
 def run_with_ctty_but_piped_stdin(script, args, piped_reply, deadline=3.0):
     """Controlling pty attached (so the tty gate opens) but stdin is a PIPE carrying the reply.
 
-    The CHANNEL is the whole subject here. Every other test in this file drives the confirm through
-    the pty, so a script that read `reply` from stdin instead of /dev/tty passes all of them
-    (measured) -- the pty IS stdin there. This shape separates the two: the gate finds a controlling
-    terminal, nobody types on it, and the answer the operator never gave arrives on a pipe.
+    Every other test drives the confirm through the pty, where the pty IS stdin, so a script that
+    read `reply` from stdin instead of /dev/tty passes all of them (measured).
 
     Returns the exit code, or None if the process was still running at the deadline (blocked on
     /dev/tty -- the correct behavior). Kills it either way.
@@ -164,10 +157,9 @@ def test_wrong_confirmation_aborts(tmp_path):
 
 
 def _clear_deploy_env(monkeypatch):
-    """`ZCRYPTO_DEPLOY_LOG` / `ZCRYPTO_ANSIBLE_DIR`, cleared before every converge.sh exec in this
-    file that does not set them itself -- pty.fork() inherits pytest's os.environ verbatim, so a
-    developer shell exporting either would make the script under test write outside the fixture path
-    the assertions read. `run_recording` sets both on `os.environ` on purpose, for its own tests, and
+    """`ZCRYPTO_DEPLOY_LOG` / `ZCRYPTO_ANSIBLE_DIR`, cleared because pty.fork() inherits pytest's
+    os.environ verbatim: a developer shell exporting either would send the script's writes outside
+    the fixture path the assertions read. `run_recording` sets both on `os.environ` on purpose and
     must never be routed through this helper."""
     monkeypatch.delenv("ZCRYPTO_DEPLOY_LOG", raising=False)
     monkeypatch.delenv("ZCRYPTO_ANSIBLE_DIR", raising=False)
@@ -194,10 +186,8 @@ def test_limit_equals_form_is_parsed(tmp_path, monkeypatch):
 
 
 # --- the machine line: every real pass leaves one JSON record, the operator types none of it ----------
-# The digest, the timestamp and the target of every converge used to be hand-typed into
-# docs/reference/fleet-pins.md afterwards -- 15 commits on one rollout branch, and a digest written
-# from memory is the one operand a rollback cannot afford to have wrong. The script knows all three
-# at the moment the pass returns, so it writes them.
+# A digest written from memory is the one operand a rollback cannot afford to have wrong, and the
+# script knows the digest, the timestamp and the target at the moment the pass returns.
 
 import json  # noqa: E402 -- the block above is the file's own section header
 
@@ -287,11 +277,9 @@ def test_an_aborted_confirm_records_nothing(tmp_path):
 
 
 # --- the committed pins: a tier whose digest is a FILE must still name it in the record -------------
-# The NAS pin is `nas_capture_image` in host_vars, not an `-e` flag, so its machine line recorded
-# `nas_apply_compose` and no digest at all -- on the one tier whose pin lives in git. The rollback
-# operand was recoverable (revision + the committed file) but not READABLE, which defeats the point
-# of writing the line from the pass that set it. Read from the plaintext vars file, never through
-# `ansible-inventory --host`, which decrypts the vault.
+# The NAS pin is `nas_capture_image` in host_vars, so no `-e` carries it and the operand is
+# recoverable only as revision-plus-committed-file, which defeats the point of the machine line.
+# Read from the plaintext vars file, never `ansible-inventory --host`, which decrypts the vault.
 
 
 def write_host_vars(tmp_path, host, body):
@@ -339,18 +327,12 @@ def test_a_limit_with_no_host_vars_records_an_empty_pin_map_not_a_missing_key(tm
 
 
 # --- `dirty` must describe the TREE ANSIBLE RENDERS, not the log this script just wrote ------------
-# Measured on the first live rollout: the 13:18:16Z converge recorded dirty=false, appended its own
-# line, and the 13:20:28Z converge two minutes later recorded dirty=true against the same revision --
-# dirtied by nothing but the recorder. The flag means "revision does not fully describe what was
-# deployed", which is real (ansible renders from the working tree); the log cannot affect that.
+# The flag means "revision does not fully describe what was deployed", which ansible rendering from
+# the working tree makes real; the recorder's own appended line cannot affect that.
 
 
 def make_repo_harness(tmp_path, monkeypatch):
-    """A real git repo laid out as the script expects: <repo>/infra/ansible/scripts/converge.sh.
-
-    _clear_deploy_env: the asserts below read the fixture's own deploy-log path, and run_with_tty's
-    exec would otherwise inherit a developer shell's ZCRYPTO_DEPLOY_LOG / ZCRYPTO_ANSIBLE_DIR.
-    """
+    """A real git repo laid out as the script expects: <repo>/infra/ansible/scripts/converge.sh."""
     _clear_deploy_env(monkeypatch)
     repo = tmp_path / "repo"
     scripts = repo / "infra" / "ansible" / "scripts"

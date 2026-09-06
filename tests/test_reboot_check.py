@@ -1,19 +1,6 @@
-"""The attended-reboot detector (spec 00071, T0027).
-
-Flipping `Automatic-Reboot` to false creates a new gap: a kernel flag nobody notices. This timer is
-what closes it, so the harness is part of the decision, not an optional extra.
-
-As with `tests/test_engine_journal_prune.py`, the unit under test is the **shell script the capture
-role installs**, driven with `bash` over a fixture directory — not a Python re-implementation.
-
-Two things carry most of the weight here, and neither is about the happy path:
-
-- The script must read **`/run`**, not `/var/run`. `/var/run` is a compatibility symlink; it works
-  today, but the flag's real home is `/run` and the indirection is exactly the kind of thing that
-  breaks silently under a hardened unit's namespace.
-- It must publish `0` explicitly, never "no file". An absent series is indistinguishable from a
-  dead exporter, so "no reboot pending" has to be a value, not a silence.
-"""
+"""The attended-reboot detector (spec 00071, T0027): the shell script the capture role installs,
+driven with `bash` over a fixture directory, since `Automatic-Reboot "false"` leaves a kernel flag
+nobody else notices."""
 
 from __future__ import annotations
 
@@ -44,11 +31,9 @@ def _series(prom: Path) -> dict[str, float]:
 
 
 def _installed_dests(role_tasks_yaml: str) -> set[str]:
-    """Every `dest:` the role actually installs, parsed.
-
-    A substring check against the file's text matches a comment or a fail_msg naming the path, and
-    is also blind to a SUFFIXED dest -- `.../zcrypto-reboot-check-TYPO` contains the real name.
-    """
+    """Every `dest:` the role actually installs, parsed: a substring check over the file's text
+    matches a comment or a fail_msg naming the path, and is blind to a SUFFIXED dest --
+    `.../zcrypto-reboot-check-TYPO` contains the real name."""
     return {
         str(v).strip()
         for task in yaml.safe_load(role_tasks_yaml) or []
@@ -58,12 +43,9 @@ def _installed_dests(role_tasks_yaml: str) -> set[str]:
 
 
 def _rw_paths(rw: str) -> set[str]:
-    """The paths ReadWritePaths actually grants.
-
-    Substring over the raw line is blind to a longer sibling: `/var/lib/x-backup` contains
-    `/var/lib/x`, so a typo'd unit reads as writable. The leading `-` is systemd's may-not-exist
-    marker, not part of the path.
-    """
+    """The paths ReadWritePaths actually grants: substring over the raw line is blind to a longer
+    sibling (`/var/lib/x-backup` contains `/var/lib/x`), and the leading `-` is systemd's
+    may-not-exist marker, not part of the path."""
     return {p.lstrip("-") for p in rw.removeprefix("ReadWritePaths=").split()}
 
 
@@ -108,12 +90,10 @@ def test_the_prom_is_well_formed_for_the_collector(tmp_path):
 
 
 def test_the_write_is_atomic_leaving_no_partial_file(tmp_path):
-    """The collector globs this directory continuously; it must never read a half-written file.
-
+    """The collector globs this directory continuously and must never read a half-written file.
     Asserted by INODE, not by the absence of temp files: a truncate-in-place rewrite (`> "$out"`)
     leaves no temp file either, so the no-turd check alone passes precisely *because* the safety
-    mechanism was removed. A rename gives a new inode; an in-place rewrite keeps it.
-    """
+    mechanism was removed."""
     prom = tmp_path / "reboot.prom"
     assert _run(tmp_path / "nope", prom).returncode == 0
     first = prom.stat().st_ino
@@ -129,9 +109,7 @@ def test_the_write_is_atomic_leaving_no_partial_file(tmp_path):
 def test_the_published_file_is_readable_by_the_non_root_collector(tmp_path):
     """Alloy runs as the non-root zcrypto-alloy user. mktemp creates 0600 and `mv` PRESERVES it, so
     without an explicit chmod the .prom is published root-only and the collector gets EACCES —
-    metrics silently absent, which is exactly the T0100 failure mode. This is not hypothetical: the
-    sibling journal-prune script shipped with precisely this bug and a review caught it.
-    """
+    metrics silently absent, which is exactly the T0100 failure mode."""
     prom = tmp_path / "reboot.prom"
     assert _run(tmp_path / "nope", prom).returncode == 0
     mode = prom.stat().st_mode & 0o777
@@ -150,8 +128,7 @@ def test_missing_arguments_are_refused(tmp_path):
 
 
 # --- The systemd + ansible seam -----------------------------------------------------------------
-# Same reasoning as the journal prune's seam test: a rename or an argument-order change fails
-# nightly in a oneshot nobody watches.
+# A rename or an argument-order change fails in a oneshot nobody watches.
 
 
 def _rendered_unit() -> str:
@@ -205,12 +182,7 @@ def test_protectsystem_strict_still_permits_writing_the_textfile_dir():
 
 
 def test_only_the_timer_is_enabled_not_the_oneshot():
-    """Enabling the oneshot as well would prune/probe on every boot.
-
-    The earlier form of this test split on "systemd_service" and inspected only [-1] — the region
-    after the LAST of three occurrences in this file, which does not contain the reboot-check task
-    at all. It passed without ever looking at the thing it named.
-    """
+    """Enabling the oneshot as well would probe on every boot."""
     import yaml
 
     tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
@@ -235,9 +207,8 @@ def _flatten(tasks):
 
 
 def test_the_timer_actually_repeats():
-    """Content coverage for the .timer file, which nothing parsed before: removing OnUnitActiveSec
-    leaves a timer that fires once at boot and never again — converging green, publishing a gauge
-    that freezes at its first value."""
+    """Removing OnUnitActiveSec leaves a timer that fires once at boot and never again — converging
+    green, publishing a gauge that freezes at its first value."""
     timer = (ROLE / "files/zcrypto-reboot-check.timer").read_text()
     assert any(l.strip().startswith("OnUnitActiveSec=") for l in timer.splitlines()), (
         "without a repeat interval this fires once per boot"

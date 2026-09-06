@@ -1,22 +1,4 @@
-"""A connected-but-silent book stream is observable (spec 00073, T0101).
-
-On 2026-07-27 both capture hosts lost all 12 book streams for ~209 s and the daemon booked NOTHING:
-`zcrypto_capture_gap_seconds_total` read 0.0 on every pair across 97.57 h of uptime containing 33
-reconnects, and neither host's log held a single `gap start` line. Every liveness signal answered
-correctly -- the socket was open, the library keepalive completed >=11 ping/pong round trips, and no
-gap window existed -- because nothing in `cli/capture/` read a last-message timestamp.
-
-Three properties carry this design, each with a test that fails if it is removed:
-
-1. **Silence is booked from `last_seen`, not from detection.** Stamping the window at `now` would
-   silently discard the threshold's worth of every outage.
-2. **`last_seen` is recorded before every early return.** A disk-watermark breach stops the writers;
-   it must not also blind the watchdog, or the two silent-loss modes compound.
-3. **The dead-man is NOT gated on silence in this iteration** (D3). `is_healthy()` gates the ping for
-   ALL pairs, so an unfitted threshold would darken the fleet's liveness signal on both hosts --
-   strictly worse than the metric gap being fixed. Booking first, gating once the distribution is
-   measured.
-"""
+"""A connected-but-silent book stream is observable (spec 00073, T0101)."""
 
 from __future__ import annotations
 
@@ -29,15 +11,10 @@ T0 = datetime(2026, 7, 27, 7, 0, 0, tzinfo=UTC)
 
 
 # --- The monitor's own silence window ------------------------------------------------------------
-# A DEDICATED window, exactly as the disk watermark has one and for the same reason: `start_gap` is
-# idempotent per pair, so routing silence through it would let a concurrent checksum_resync gap
-# swallow the silence -- and worse, whichever closed first would book the other's window as its own.
 
 
 def test_silence_is_booked_from_when_the_stream_went_quiet_not_from_detection():
-    """Property 1. The watchdog cannot notice until the threshold has already elapsed, so stamping
-    the window at detection time discards exactly the threshold from every outage -- 30 s of every
-    gap, forever, in the under-reporting direction this whole topic is about."""
+    """The window is stamped at the last message, so the whole outage is booked."""
     m = GapMonitor()
     last_seen = T0
     m.start_silence("BTC/EUR", at=last_seen)  # stamped at last_seen, detected 30 s later
@@ -62,8 +39,8 @@ def test_an_open_silence_window_accrues_against_a_clock():
 
 
 def test_start_silence_is_idempotent_and_the_earliest_stamp_wins():
-    """The watchdog re-evaluates every 5 s while a pair stays silent; a second open must not reset
-    the window's start, or a long outage books one tick's worth."""
+    """A second open while a pair stays silent must not reset the window's start, or a long outage
+    books one tick's worth."""
     m = GapMonitor()
     m.start_silence("BTC/EUR", at=T0)
     m.start_silence("BTC/EUR", at=T0 + timedelta(seconds=5))
@@ -92,12 +69,8 @@ def test_a_backward_clock_step_cannot_produce_negative_gap():
 
 
 def test_silence_does_not_gate_the_dead_man_in_this_iteration():
-    """Property 3, and it is a DELIBERATE negative. `is_healthy()` gates the healthchecks.io ping for
-    every pair at once, so wiring a threshold fitted to ~4 days of thin-leg data into it would let
-    one twitchy pair darken the liveness signal on both capture hosts.
-
-    When this is intentionally reversed, this test is the thing that must be rewritten -- which is
-    the point: the change cannot happen by accident.
+    """A DELIBERATE negative (spec 00073 D3): silence must not gate the healthchecks.io ping, which
+    `is_healthy()` withholds for every pair at once.
     """
     m = GapMonitor()
     m.start_silence("BTC/EUR", at=T0)
@@ -122,22 +95,17 @@ def test_silence_and_a_desync_gap_are_independent_windows():
 
 
 def test_the_status_channel_is_recognised_rather_than_discarded():
-    """D1. Kraken pushes `status` automatically on connect and on every engine-state change, and its
-    planned-downtime notification carries an `effectiveTime`. `classify()` must return "status" so
-    `_consume` records it instead of discarding it. While the frame fell through to "other" and was
-    dropped, "did Kraken announce the outage?" was UNANSWERABLE rather than answered no -- an empty
-    log is not an absent event when nothing logs the event.
+    """D1: the venue's own `status` frame must classify as "status" so `_consume` records it rather
+    than dropping it as "other".
     """
     assert classify({"channel": "status", "type": "update", "data": [{"system": "online"}]}) == "status"
     assert classify({"channel": "status", "type": "update", "data": [{"system": "maintenance"}]}) == "status"
 
 
 def test_the_consumer_counts_and_records_the_venue_status_it_receives(monkeypatch):
-    """D1 is "log AND count, keeping system and effectiveTime" -- a log line alone answers the
-    question only for whoever thinks to grep Loki. `effectiveTime` is the field that would carry a
-    planned-downtime lead time -- the number the pre-drain decision waited on ([[T0105]], settled
-    2026-08-06: the first real event carried None throughout, and the pre-drain was dropped);
-    capturing `system` while dropping it would have answered only the easy half.
+    """D1 is "log AND count": the frame is counted by `system` AND logged with the `effectiveTime` a
+    planned-downtime notice carries -- a counter alone drops the lead time, a log line alone answers
+    only for whoever thinks to grep Loki.
     """
     import asyncio
 
@@ -154,11 +122,8 @@ def test_the_consumer_counts_and_records_the_venue_status_it_receives(monkeypatc
             }
 
     venue_status: dict[str, int] = {}
-    # The counter alone cannot see the half this test is NAMED for: drop `effectiveTime` from the log
-    # line and `venue_status` is unchanged, so the suite would stay green while every frame logged
-    # `effective_time=None` whether or not Kraken sent one -- and that `None` is the reading the
-    # pre-drain was dropped on. `zcrypto` loggers set `propagate = False` (`cli/logging/config.py`),
-    # so `caplog` sees nothing and the line has to be captured at the logger itself.
+    # `zcrypto` loggers set `propagate = False` (`cli/logging/config.py`), so `caplog` sees nothing --
+    # the line has to be captured at the logger itself.
     logged: list[tuple] = []
     monkeypatch.setattr(command.logger, "info", lambda *args: logged.append(args))
     asyncio.run(_consume(_StatusClient(), {}, {}, {}, _StubMonitor(), _StubWatermark(), DesyncRecovery(), {}, venue_status))
@@ -187,7 +152,7 @@ def test_repeated_venue_status_accumulates_per_system_value():
 
 def test_a_status_message_without_a_system_field_does_not_crash_the_consumer():
     """The consumer is the single task the whole daemon runs on; an unexpected payload shape here
-    kills capture for all 12 pairs and both kinds."""
+    kills capture for every pair and both kinds."""
     import asyncio
 
     from cli.capture.command import _consume
@@ -209,9 +174,8 @@ def test_a_status_message_without_a_system_field_does_not_crash_the_consumer():
 
 
 def test_the_consumer_routes_replies_back_to_the_client():
-    """T0102's seam. `note_reply` is what RELEASES the deferred subscribe, so a consumer that never
-    calls it leaves every resubscribe waiting out its full ack timeout before recovering -- a
-    mechanism nobody feeds, which is the failure class this project keeps rediscovering."""
+    """`note_reply` RELEASES the deferred subscribe, so a consumer that never calls it leaves every
+    resubscribe waiting out its full ack timeout before recovering."""
     import asyncio
 
     from cli.capture.command import _consume
@@ -245,18 +209,14 @@ def test_classifying_status_does_not_disturb_the_existing_categories():
 
 
 def test_an_ordinary_drop_keeps_the_fast_reconnect():
-    """~8.2 reconnects/day are ordinary drops that recover in 0.8-6.2 s. They must not be slowed."""
+    """Ordinary drops -- the common case -- must not be slowed by the service-restart floor."""
     assert compute_backoff(0) == 1.0
     assert compute_backoff(1) == 2.0
     assert compute_backoff(0, after_service_restart=False) == 1.0
 
 
 def test_a_service_restart_floors_the_first_delay_at_five_seconds():
-    """Kraken's documented guidance is to reconnect no faster than once every 5 s after maintenance.
-    Measured 2026-07-27: the primary's attempt 1 fired 1.0 s after the 1012 and was answered HTTP
-    503; attempt 2 succeeded. Reconnecting eagerly into a restarting venue cost ~3.9 s of extra
-    silence on the unbackfillable path.
-    """
+    """Kraken's guidance is to reconnect no faster than once every 5 s after maintenance."""
     assert compute_backoff(0, after_service_restart=True) == 5.0
 
 
@@ -267,10 +227,8 @@ def test_the_service_restart_floor_never_shortens_a_later_backoff():
 
 
 # --- The SEAM: the daemon must actually feed and drive the watchdog -------------------------------
-# T0008 shipped a ladder that passed 63 tests while nothing armed it, because every test called the
-# decision core directly and none called the production path. These call the real handler AND the
-# real consumer. `last_seen` is a required argument on both for the same reason: a defaulted one can
-# be dropped from a call site in silence, which is how that defect survived a whole review round.
+# `last_seen` is required, never defaulted, on both the handler and the consumer: a defaulted argument
+# can be dropped from a call site in silence.
 
 
 class _FakeClient:
@@ -340,10 +298,8 @@ def test_the_handler_records_last_seen_for_every_book_message():
 
 
 def test_last_seen_is_recorded_even_while_the_disk_watermark_is_breached():
-    """Property 2. A breach makes the handler `continue` past the writers, so L2 is discarded while
-    the socket stays connected -- T0032's silent-death shape. If the breach ALSO stopped `last_seen`
-    updating, the watchdog would book a phantom silence on top of a real loss, and the two
-    silent-loss modes would compound into one unreadable number.
+    """A watermark breach makes the handler `continue` past the writers, so `last_seen` must be
+    recorded before that early return -- a frozen one books a phantom silence on top of the real loss.
     """
     import asyncio
 
@@ -371,8 +327,7 @@ def test_last_seen_is_recorded_even_while_the_disk_watermark_is_breached():
 
 
 def test_the_consumer_hands_its_last_seen_map_down_to_the_handler():
-    """The production CALL SITE, not just the callee. Covering a handler is not covering its caller
-    -- that exact gap let a mutation survive the entire suite on the T0008 branch."""
+    """The production CALL SITE, not just the callee: covering a handler is not covering its caller."""
     import asyncio
 
     from cli.capture.command import _consume
@@ -425,8 +380,8 @@ def test_the_staleness_loop_books_silence_stamped_at_the_last_message():
 
 
 def test_the_staleness_loop_does_not_fire_inside_the_threshold():
-    """The load-bearing negative: the worst measured natural book spacing is 12.196 s (ETH/BTC), so
-    a threshold that fired early would book ordinary quiet as loss on the thinnest legs."""
+    """The load-bearing negative: the threshold sits above the worst natural book spacing, so firing
+    early would book ordinary quiet as loss on the thinnest legs."""
     import asyncio
 
     from cli.capture.command import _staleness_loop
@@ -447,13 +402,8 @@ def test_the_staleness_loop_does_not_fire_inside_the_threshold():
 
 
 def test_the_close_over_books_by_at_most_one_check_interval_and_never_under():
-    """Finding 8 of the pre-push review, pinned rather than left as prose.
-
-    The window closes at the pair's `last_seen` as of the CLOSING TICK, not at the first message
-    after the silence, so it absorbs up to one `interval` of live traffic. Bounded and always in the
-    same direction -- over, never under -- which is the safe direction for a counter whose whole
-    defect was under-reporting. If someone later closes at the true resume instant, this test tells
-    them the bound they are changing.
+    """The window closes at the closing tick's `last_seen`, over-booking by at most one `interval` and
+    never under -- the safe direction for a counter whose defect was under-reporting.
     """
     import asyncio
 
@@ -485,10 +435,9 @@ def test_the_close_over_books_by_at_most_one_check_interval_and_never_under():
 
 
 def test_gap_seconds_can_double_count_and_the_ratio_can_exceed_one():
-    """Finding 9, pinned as the deliberate behaviour it is. The three window kinds are summed
-    independently, so a pair desynced THROUGH an upstream blackout books those seconds twice and
-    `gap_ratio` exceeds 1.0. T0105 plans a rule on this counter; that rule must read it as an upper
-    bound on lost time, never as a fraction of the window."""
+    """The three window kinds are summed independently, so a pair desynced THROUGH an upstream
+    blackout books those seconds twice and `gap_ratio` exceeds 1.0: an upper bound on lost time,
+    never a fraction of the window."""
     m = GapMonitor()
     m.start_gap("BTC/EUR", "checksum_resync", at=T0)
     m.start_silence("BTC/EUR", at=T0)
@@ -503,10 +452,8 @@ def test_gap_seconds_can_double_count_and_the_ratio_can_exceed_one():
 
 
 def test_the_threshold_is_exclusive_at_the_boundary():
-    """`>` not `>=`, pinned. Spec 00073 D5 claims the threshold deliberately EQUALS the reconciler's
-    `--min-gap-seconds` so the two producers measure the same thing -- and T0103 separately records
-    that the reconciler's own two predicates disagree at exactly this boundary (`>=` vs `>`). An
-    unpinned boundary here would make that alignment claim untestable in the same way."""
+    """`>` not `>=`: the threshold deliberately equals the reconciler's `--min-gap-seconds`, so the
+    two producers measure the same thing only if they agree at the boundary."""
     import asyncio
 
     from cli.capture.command import _staleness_loop
@@ -545,8 +492,8 @@ def test_a_returning_stream_closes_the_silence_window():
 
 
 def test_a_pair_that_has_never_produced_a_message_is_not_booked_as_silent():
-    """Startup: before the first snapshot arrives there is no `last_seen`, and booking from process
-    start would charge every restart a threshold's worth of phantom gap on all 12 pairs."""
+    """Startup: before the first message there is no `last_seen`, and booking from process start
+    would charge every restart a threshold's worth of phantom gap on every pair."""
     import asyncio
 
     from cli.capture.command import _staleness_loop
@@ -567,13 +514,8 @@ def test_a_pair_that_has_never_produced_a_message_is_not_booked_as_silent():
 
 
 def test_the_staleness_loop_is_actually_scheduled_by_the_daemon():
-    """A watchdog nobody starts is [[T0100]]'s defect in another costume -- and this one was caught by
-    mutation rather than by reading: replacing `_run`'s `create_task(_staleness_loop(...))` with a
-    no-op sleep passed all 22 tests in this file. Every property above holds on a loop that never
-    runs, because every one of them drives the loop body directly.
-
-    Parsed, not grepped: the call must appear inside `_run`'s own body, and the task must be in the
-    shutdown tuples, or a cancelled-but-never-awaited task hangs the exit path.
+    """`_run` must schedule the loop and carry its task in BOTH shutdown tuples: a watchdog nobody
+    starts is T0100's defect in another costume.
     """
     import ast
     import inspect
@@ -585,11 +527,9 @@ def test_the_staleness_loop_is_actually_scheduled_by_the_daemon():
     tree = ast.parse(run_src.lstrip())
     called = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
     assert "_staleness_loop" in called, "_staleness_loop is defined but _run never schedules it"
-    # EVERY shutdown tuple must carry it. A task awaited but never cancelled hangs `_run` forever on
-    # its own `while True`: SIGTERM never completes, the container is SIGKILLed, and `writer.close()`
-    # never runs -- losing buffered rows on the unbackfillable path. Not hypothetical: the first
-    # version of this assertion counted occurrences of the word "staleness", which the create_task
-    # line alone satisfied, and the defect shipped and hung the suite for 89 minutes.
+    # A task awaited but never cancelled hangs `_run` on its own `while True`: SIGTERM never
+    # completes, the container is SIGKILLed, and `writer.close()` never runs -- losing buffered rows
+    # on the unbackfillable path.
     tuples = re.findall(r"for task in \(([^)]*)\):", run_src)
     assert len(tuples) >= 2, f"expected a cancel loop and an await loop in _run, found {len(tuples)}"
     for i, members in enumerate(tuples):
@@ -600,16 +540,9 @@ def test_the_staleness_loop_is_actually_scheduled_by_the_daemon():
 
 
 def test_run_hands_the_SAME_maps_to_the_producer_and_the_consumer_of_each():
-    """Findings 1 and 6 of the pre-push review: `_staleness_loop(pairs, monitor, {})` survived all
-    350 capture tests, and so did handing `_consume` a throwaway `venue_status`.
-
-    Making `last_seen` a required ARGUMENT only protects the producer side -- the third positional
-    parameter accepts any dict, so `_run` can hand the watchdog a map nothing ever writes and every
-    test still passes while T0101 ships un-fixed. This is the T0008/T0100 defect one call site over,
-    which is exactly why it is asserted structurally rather than trusted.
-
-    Parsed from `_run`'s AST: the identifier passed to `_consume` must be the identifier passed to
-    `_staleness_loop` / `CaptureCollector`, not merely *a* dict.
+    """A required `last_seen` argument protects only the producer side -- the parameter accepts any
+    dict -- so `_run` must be asserted to hand `_consume`, `_staleness_loop` and `CaptureCollector`
+    the SAME identifier, not merely a dict each.
     """
     import ast
     import inspect
@@ -640,9 +573,8 @@ def test_run_hands_the_SAME_maps_to_the_producer_and_the_consumer_of_each():
 
 
 def test_every_pair_is_seeded_so_a_never_delivered_stream_is_not_invisible():
-    """Finding 3. Without a seed, a pair that is subscribed and never sends anything has no
-    `last_seen`, so the watchdog skips it forever AND the gauge reports 0.0 -- the healthiest value
-    there is. The instrument built to see silence would be blind to total silence."""
+    """Without a seed, a subscribed pair that never delivers has no `last_seen`: the watchdog skips it
+    forever while its gauge reads 0.0, the healthiest value there is."""
     import ast
     import inspect
 
@@ -664,8 +596,7 @@ def test_every_pair_is_seeded_so_a_never_delivered_stream_is_not_invisible():
 
 
 def test_one_pair_raising_does_not_starve_the_others():
-    """T0008's H2, pre-empted here rather than re-learned: `pairs` is ordered, so a sweep-wide
-    try/except starves every pair after the raising one, deterministically and forever."""
+    """`pairs` is ordered, so a sweep-wide try/except would starve every pair after the raising one."""
     import asyncio
 
     from cli.capture.command import _staleness_loop

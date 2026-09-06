@@ -1,82 +1,14 @@
 """Guard: when an alert fires, the operator must be able to open a picture of what moved -- and the
 alert must say which picture.
 
-`test_infra_alloy_series.py` proves a series REACHES Grafana; `test_infra_alert_rules.py` proves
-something WATCHES it. Neither proves anyone can SEE it, and neither proves the page carries a link
-to it. The four assertions here close that, each against a source it DERIVES rather than a list a
-human maintains:
-
-1. every metric family any alert rule queries is drawn by some panel on some committed dashboard;
-2. every app-level family this repo publishes is drawn by some panel;
-3. every alerted family is keep-list admitted on the hosts its rule selects;
-4. every rule resolves to a real, non-row panel on the board its `__dashboardUid__` names, or
-   carries a runbook reference -- never neither -- and every `__panelId__` loads as a `str`.
-
-**(3) is the load-bearing one.** `test_infra_alloy_series.py` already guards keep-regex admission,
-but from a hand-curated per-host `required` list: it catches a LISTED family being dropped and is
-blind to a family missing from the list. That blindness is exactly how `zaccess` came to be
-structurally unable to fail its own `node_scrape_collector_success` alert -- admitted nowhere in the
-bridgehead's keep-regex, so `min by (host) (node_scrape_collector_success)` could never match that
-host, and the rule sat green while the host was invisible to it.
-
-The property this file actually provides, stated precisely rather than as "it cannot recur": the
-FAMILY set comes from `alerts.yaml` and the HOST set comes from the rule's own selectors, from
-`KEEP_REGEX_FILES` (the fleet topology) or from where this repo publishes the family -- never from
-the keep-regexes under audit. An earlier draft derived the fleet-wide host set from the keep-regexes
-themselves ("every host admitting `node_load1`"), which failed open at the exact hole it exists to
-close: deleting `node_load1` AND `node_scrape_collector_success` from the bridgehead's regex dropped
-that host out of the requirement set and every assertion here stayed green. Two edges remain, both
-named below under scope limits.
-
-**(4)'s string check is the one whose violation is not local.** `grafana-push.sh` does
-`yaml.safe_load` -> `json.dumps`, and Grafana's rule annotations are `map[string]string`: an
-unquoted `305` reaches the provisioning API as a JSON number, the API rejects the rule, and
-`curl -fsS` under `set -euo pipefail` aborts the whole push -- no rules AND no dashboards ship.
-
---- Family extraction from PromQL ---------------------------------------------------------------
-
-No PromQL parser exists in the locked dependency set (`prometheus-client` is an exposition library
-and ships none), and adding one for a guard test is not licensed here. What replaces it is not a
-denylist of function names -- that rots the moment PromQL grows one -- but STRUCTURAL removal:
-delete the regions of an expression that cannot contain a metric name (string literals, `$vars`,
-`{label matchers}`, `[ranges]`, `by (...)`/`on (...)` label lists), then keep every remaining
-identifier that is NOT immediately applied to an argument list. `rate`, `histogram_quantile` and
-whatever ships next are dropped because they are CALLED, not because they are listed.
-
-What it gets wrong, in full:
-
-* `{__name__="foo"}` names a family inside a label matcher; matchers are stripped, so that family is
-  invisible. PANEL-side that fails loud (a demand for a panel that already exists); RULE-side it
-  fails SILENT -- the family never enters `alerted_families()`, so nothing asks for its panel or its
-  keep-list admission. No such expression exists in this repo, and one would have to be written by
-  hand: no board or rule here selects by `__name__`.
-* a recording rule (`level:metric:op`) is indistinguishable from a raw family and would be required
-  to have a panel like any other. None exist today.
-* an expression that is not valid PromQL yields junk names rather than an error. Grafana's own push
-  is the syntax gate; this file is not a linter.
-* the host-scope reader (assertion 3) splits a `host=~"a|b"` value on `|`. A value carrying any
-  other regex metacharacter is read as "matches any host" instead of guessing -- which widens the
-  requirement for `node_*` families and relaxes it for the rest.
-
-`test_the_extractors_have_not_gone_blind` is what keeps a regression in any of this loud: without
-it, a broken strip makes every assertion above pass vacuously, which is the quietest possible
-failure.
-
-Scope limits, so nobody reads more into a green run than it earns:
-
-* **Panels only.** A family named solely by a template variable's `label_values(...)` query is not
-  covered -- a dropdown is not a visual clue.
-* **Loki is out of range.** LogQL stream selectors carry no metric families; log rules are covered
-  by assertion 4 alone.
-* **Assertion 3's host set for an UNSCOPED rule is only as good as the topology behind it.** A
-  `node_*` family is required on every host in `KEEP_REGEX_FILES`; an app family is required on
-  every host `PUBLISHER_HOSTS` maps its publishing file to. The two edges:
-  - a publisher under `cli/**` maps to no host -- a daemon's source says nothing about which machine
-    runs it -- so those families fall back to "admitted somewhere on the fleet". Dropping such a
-    family from ONE host's keep-regex while another still admits it passes here.
-  - `KEEP_REGEX_FILES` is hand-pinned, not derived. A host added to the fleet and not to that dict
-    is outside every fleet-wide requirement. It is a five-entry dict next to the four config paths
-    it names, and adding a host without its keep-regex file is not a silent edit.
+Family extraction from PromQL: no parser exists in the locked dependency set (`prometheus-client`
+is an exposition library and ships none), and adding one for a guard test is not licensed here.
+What replaces it is not a denylist of function names -- that rots the moment PromQL grows one --
+but STRUCTURAL removal: delete the regions of an expression that cannot contain a metric name
+(string literals, `$vars`, `{label matchers}`, `[ranges]`, `by (...)`/`on (...)` label lists), then
+keep every remaining identifier that is NOT immediately applied to an argument list. `rate`,
+`histogram_quantile` and whatever ships next are dropped because they are CALLED, not because they
+are listed.
 """
 
 import json
@@ -107,7 +39,7 @@ PROM_DS = "${GRAFANA_PROM_DS_UID}"
 #
 # This dict is also the FLEET TOPOLOGY, and that second job is why it is hand-pinned rather than
 # globbed: it is what an unscoped `node_*` rule is measured against. Deriving that set from the
-# keep-regexes instead makes the whole assertion circular -- see the module docstring.
+# keep-regexes instead makes the whole assertion circular.
 KEEP_REGEX_FILES = {
     "nas": REPO / "infra/nas/config.alloy",
     "ops": REPO / "infra/ansible/roles/ops/files/config.alloy",
@@ -139,19 +71,9 @@ PUBLISHER_HOSTS = (
 
 # --- Deliberate exclusions ----------------------------------------------------------------------
 # Families deliberately drawn by no panel. Each entry is a REVIEWED decision and the reason IS the
-# entry: a bare name here is drift wearing a test's clothes.
-#
-# The bar for adding one: charting the family would actively mislead, or it is a duplicate view of
-# one already charted. "We ran out of room" is not a reason -- densify the layout instead. And an
-# entry is only legitimate while some assertion would otherwise DEMAND that family: an entry nothing
-# asks for is a standing pre-waiver for a rule that has not been written yet, which
-# `test_the_not_charted_exclusions_stay_reviewed` now refuses.
-#
-# `node_filesystem_free_bytes` is the case that taught this: charted nowhere, admitted on
-# nas/ops/capture, and named by no rule -- so nothing asks for it and it needs no entry. If a rule
-# ever thresholds on it, that rule owes a panel like any other; what it must NOT get is a `free`
-# series plotted beside the avail-based lines the other three filesystem rules page on, since `free`
-# counts the root-reserved blocks `avail` excludes and the two percentages differ.
+# entry: a bare name here is drift wearing a test's clothes. The bar: charting the family would
+# actively mislead, or it is a duplicate view of one already charted -- "we ran out of room" is not
+# a reason, densify the layout instead.
 NOT_CHARTED: dict[str, str] = {}
 
 
@@ -286,9 +208,8 @@ def panel_families() -> dict[str, frozenset[str]]:
 
 
 # --- What this repo publishes ---------------------------------------------------------------------
-# Three publication mechanisms, three patterns. Anything a producer emits reaches Grafana through one
-# of them, and each canary in `test_the_publisher_scan_still_finds_each_source_kind` pins one path:
-# if a path breaks, every family it used to find silently drops out of assertion 2's candidate set.
+# Three publication mechanisms, three patterns, one canary each in
+# `test_the_publisher_scan_still_finds_each_source_kind`.
 #
 # Scope is the three namespaces this repo's own producers publish into. `node_*`, `process_*` and
 # `hc_*` come from node-exporter, prometheus_client and healthchecks.io -- not ours to chart
@@ -356,8 +277,7 @@ def keep_regexes() -> dict[str, re.Pattern[str]]:
 
 def publishing_hosts(family: str) -> frozenset[str] | None:
     """The hosts that run `family`'s producer, read off the publishing file's path via
-    `PUBLISHER_HOSTS`. None when no path maps -- a `cli/**` daemon, whose source cannot say which
-    machine runs it."""
+    `PUBLISHER_HOSTS`. None when no path maps."""
     hosts: set[str] = set()
     for where in published_app_families().get(family, ()):
         for prefix, mapped in PUBLISHER_HOSTS:
@@ -419,8 +339,7 @@ def test_every_alerted_family_is_charted():
 
 # --- (2) every app family we publish is drawn ------------------------------------------------------
 def test_every_published_app_family_is_charted():
-    """A producer we ship is a producer we can watch break. Publishing into a dashboard nobody drew is
-    how the `zcrypto_capture_*` and `zcrypto_engine_*` families stayed invisible for months."""
+    """A producer we ship is a producer we can watch break."""
     uncovered = sorted(set(published_app_families()) - set(panel_families()) - set(NOT_CHARTED))
     report = "\n".join(f"    {f}\n{_describe(f)}" for f in uncovered)
     assert not uncovered, (
@@ -487,8 +406,7 @@ def test_every_panel_id_annotation_is_a_string():
     """`grafana-push.sh` does `yaml.safe_load` -> `json.dumps` and Grafana's annotations are
     `map[string]string`, so an unquoted `305` arrives as a JSON number, the provisioning API rejects
     the rule with a bare 400, and `curl -fsS` under `set -euo pipefail` aborts the ENTIRE push --
-    every rule and every dashboard, not just this one. The blast radius is why this is its own
-    assertion: nothing else in the tree reads `__panelId__` at all."""
+    every rule and every dashboard, not just this one."""
     wrong = [
         (r["uid"], type(_annotations(r)["__panelId__"]).__name__)
         for r in _rules()
@@ -565,7 +483,7 @@ def test_the_extractors_have_not_gone_blind():
     assert len(panel_families()) >= 90, f"only {len(panel_families())} families drawn across {len(dashboards())} dashboards"
     assert len(published_app_families()) >= 60, f"only {len(published_app_families())} app families found in the source tree"
     # Label names (the matcher and `by (...)` strips) and the trailing letter of a duration literal
-    # (the `_IDENT` lookbehind) are the two ways this extractor degrades into nonsense.
+    # (the `_IDENT` lookbehind) are how this extractor degrades into nonsense.
     leaks = {"host", "source", "pair", "mountpoint", "system", "file", "le", "container", "level", "target", "outcome"}
     leaks |= set("smhdwy")
     junk = sorted((set(alerted_families()) | set(panel_families())) & leaks)
@@ -598,11 +516,10 @@ def test_the_publisher_scan_still_finds_each_source_kind(family):
 # A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
 # applies to EVERY field in it -- so a date unit parked there is handed the label strings too,
 # cannot coerce them, and renders every label column as `NaN`. Number-family units (`short`,
-# `bytes`) pass a string through untouched, which is why only the date family is banned here:
-# the two `Host vitals` / `healthchecks.io` tables carry `short` over a string `Machine` column
-# and render correctly. The unit belongs on an override scoped to the value column -- matched by
-# TYPE, not by name: a value field's name shifts with the frame count (see the guard below), so a
-# name-matched override silently stops applying the moment a query returns a single series.
+# `bytes`) pass a string through untouched, which is why only the date family is banned here.
+# The unit belongs on an override scoped to the value column -- matched by TYPE, not by name: a
+# value field's name shifts with the frame count (see the guard below), so a name-matched override
+# silently stops applying the moment a query returns a single series.
 _DATE_UNIT = re.compile(r"^(?:dateTime|time:)")
 
 
@@ -625,13 +542,10 @@ def test_no_table_panel_parks_a_date_unit_in_its_defaults():
 # with its refId ONLY to disambiguate several frames -- so the field is `Value #A` when the query
 # returns many series and a bare `Value` when it returns exactly one. A rename keyed on `Value`
 # therefore matches nothing in the ordinary multi-series case: the column keeps its raw name, and
-# every override aimed at the renamed name misses too, so the value renders unformatted. This is
-# invisible on a panel that also parks a unit in `fieldConfig.defaults`, because the default hits
-# the value column anyway -- which is exactly how it survived review on the log table.
+# every override aimed at the renamed name misses too, so the value renders unformatted.
 #
-# The name being data-dependent is why the value column's own overrides must match by TYPE; this
-# guard covers only the rename half. `_a_single_target_merged_table_matches_its_value_by_type`
-# below covers the other, and neither one alone would have caught the log table.
+# The name being data-dependent is also why the value column's own overrides must match by TYPE --
+# `test_a_single_target_merged_table_matches_its_value_by_type` below.
 _MERGING = frozenset({"merge", "joinByField"})
 
 
@@ -655,11 +569,10 @@ def test_a_merged_table_renames_the_refid_suffixed_value_column():
     )
 
 
-# The other half. A value column's NAME is data-dependent exactly when a single query's frame count
-# is -- one series yields `Value`, several yield `Value #<refId>` -- so such a panel must reach its
-# value column by TYPE, and a `byName` override there works only until the pickers narrow to one
-# stream. A panel with several targets is exempt: its frames are structural rather than data-driven,
-# so the suffix is stable (`Host vitals` joins four targets and names them `Value #A`..`Value #D`).
+# The other half: a single-target merged table must reach its value column by TYPE, since one series
+# yields `Value` and several yield `Value #<refId>` -- a `byName` override there works only until the
+# pickers narrow to one stream. A panel with several targets is exempt: its frames are structural
+# rather than data-driven, so the suffix is stable.
 _VALUE_FIELD = re.compile(r"^Value(?: #\w+)?$")
 _VALUE_PROPS = frozenset({"unit", "displayName"})
 
@@ -764,13 +677,9 @@ def _first_firing_value(condition: str, evaluator: float) -> str:
 def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     """Where a panel draws per-series thresholds, the charted series' bar must equal its rule's.
 
-    A responder paged by a rule opens the panel the annotation names. If that series has no bar, or
-    one calibrated for a different timer, the panel says "healthy" while the rule says "fire" -- and
-    the panel wins, because it is what a human looks at. Both defects that reached this repo were of
-    that shape: a series with no override at all, and one whose only visible line was another
-    series' threshold at twice the value. A third -- two files merged under one `max()`, so a dead
-    timer hid behind a live one -- is NOT caught: the rule and the panel then chart different
-    expressions, so no pair forms and this test is silent on it.
+    A responder paged by a rule opens the panel the annotation names: if that series has no bar, or
+    one calibrated for a different rule, the panel says "healthy" while the rule says "fire" -- and
+    the panel wins, because it is what a human looks at.
     """
     # `zcrypto-ops-tapebars-not-advancing` charts panel 402 refId F, which has no bar while A/B/C
     # do -- a live instance of exactly what this test forbids, in a dashboard whose intent needs its
@@ -796,9 +705,9 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
                 if s.get("value") is not None
             ]
         else:
-            # A series with no override inherits the panel default, which usually carries the bar. Reading an
-            # override on ANOTHER refId as "this panel bars per series" misjudged a panel whose only
-            # override REMOVES a bar, and made a healthy pairing look like a defect.
+            # A series with no override inherits the panel default, which usually carries the bar --
+            # reading another refId's override as "this panel bars per series" misjudges a panel
+            # whose only override REMOVES one.
             steps = [
                 s
                 for s in panel.get("fieldConfig", {}).get("defaults", {}).get("thresholds", {}).get("steps", [])

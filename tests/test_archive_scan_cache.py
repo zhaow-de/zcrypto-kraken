@@ -1,10 +1,4 @@
-"""Scan-cache fingerprints, persistence and skip preconditions (spec 00097 D4/D5).
-
-Every guard in `scan_cache` is fail-open to a SLOW full cycle; the defect each one names is
-constructed here and seen to trip it, and each group also carries a true positive — a healthy,
-production-shaped input that must still be cached and skipped — so an always-refusing module
-cannot ship green.
-"""
+"""Scan-cache fingerprints, persistence and skip preconditions (spec 00097 D4/D5)."""
 
 from __future__ import annotations
 
@@ -174,10 +168,8 @@ def test_fingerprint_survives_a_non_enoent_stat_error(tmp_path, monkeypatch):
 def test_a_mirror_landing_after_the_scan_is_never_cacheable(tmp_path):
     """Presence must come from `scans`, never from a fresh `stat` — or this is a live wrong-skip.
 
-    The examination reads only what `scan_hours` enumerated. Cycle N scans before the secondary
-    lands, so it performs no witness-based heal. A fingerprint that stat'd the disk would record the
-    late file as present and `complete=True`, and cycle N+1 — which DOES owe the heal — would compute
-    that same fingerprint and skip the hour forever.
+    A fingerprint that stat'd the disk would record the late file as present and `complete=True`, and
+    cycle N+1 — which DOES owe the heal — would compute that same fingerprint and skip the hour forever.
     """
     pri, sec, rec = tmp_path / "primary", tmp_path / "secondary", tmp_path / "reconciled"
     _write(pri, PAIR, "book", H)
@@ -234,12 +226,7 @@ def test_save_load_round_trip_atomic(tmp_path):
 
 
 def test_delete_cache_raises_rather_than_swallowing(tmp_path, monkeypatch):
-    """The deliberate asymmetry with `save_cache`, pinned so it is not "fixed" later.
-
-    A failed save is fail-open (the next cycle runs full). A SWALLOWED delete failure is
-    fail-closed-wrong: the caller believes the cache is gone, the stale file survives under the same
-    salt, and the next cycle honours stale skips.
-    """
+    """The deliberate asymmetry with `save_cache`, pinned so it is not "fixed" later."""
     root = tmp_path / "reconciled"
     salt = algo_salt(1.5, mint=True)
     save_cache(root, {"2026-07-16T09:00:00+00:00": _entry()}, salt=salt)
@@ -303,12 +290,9 @@ def test_load_survives_a_recursion_error(tmp_path, monkeypatch):
     """`RecursionError` is a `RuntimeError`, which the obvious except tuple misses. The contract is
     "never raises", so it is caught.
 
-    The defect is injected rather than provoked by a deeply nested file. Depth-based provocation is
-    environment-dependent — the same nesting that raises on a workstation parses cleanly under
-    `coverage run` in CI, which made the *control* assertion the flaky part of a test whose actual
-    subject is `load_cache`'s except tuple. Injecting the exception pins that tuple deterministically
-    everywhere; `test_load_survives_a_deeply_nested_corrupt_cache` below still exercises the real
-    file shape, without asserting which exception path it takes.
+    The defect is injected, not provoked by a deeply nested file: the depth at which CPython gives up
+    is environment-dependent — the same nesting parses cleanly under `coverage run` in CI — so
+    provoking it makes the control assertion the flaky part.
     """
     root = tmp_path / "reconciled"
     salt = algo_salt(1.5, mint=True)
@@ -323,11 +307,8 @@ def test_load_survives_a_recursion_error(tmp_path, monkeypatch):
 
 
 def test_load_survives_a_deeply_nested_corrupt_cache(tmp_path):
-    """The real file shape, whichever way the parser rejects it: `{}`, and no raise.
-
-    Deliberately asserts no specific exception — see the sibling above for why the depth at which
-    CPython gives up is not a property a test may pin.
-    """
+    """The real file shape, whichever way the parser rejects it: `{}` and no raise — the depth at
+    which CPython gives up is not a property a test may pin."""
     root = tmp_path / "reconciled"
     salt = algo_salt(1.5, mint=True)
     save_cache(root, {"2026-07-16T09:00:00+00:00": _entry()}, salt=salt)
@@ -485,11 +466,10 @@ def test_hand_repair_of_a_minted_hour_re_examines_it(tmp_path):
 
 
 def test_the_overlay_backstop_is_blind_for_the_minting_cycle_itself(tmp_path):
-    """The residue that `delete_cache` still covers — pinned, so the backstop is not mistaken for it.
+    """The overlay term's blind spot, pinned so the backstop is not mistaken for a replacement.
 
-    The stored fingerprint is the PRE-PASS one, so a MINTING cycle stores the PRE-mint fingerprint,
-    byte-identical to what removing the minted file restores. For that one hour, for that one cycle,
-    the overlay term cannot see the repair.
+    An entry holding the PRE-mint fingerprint cannot see a hand-repair that restores exactly that
+    file-set. The caller never writes one — it refuses to cache an hour the cycle changed.
     """
     pri, sec, rec = tmp_path / "primary", tmp_path / "secondary", tmp_path / "reconciled"
     _write(pri, PAIR, "book", H)

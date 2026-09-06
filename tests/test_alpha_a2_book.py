@@ -38,11 +38,9 @@ def _synthetic_universe(n=260):
 
 
 def _synthetic_universe_with_absent_asset(n=260):
-    # Same BTC/ETH/SOL legs as _synthetic_universe (BTC stays gap-free, per _validate_prices_by_asset),
-    # plus a fourth asset ALT that is absent (None) for a leading stretch (pre-listing) and, separately,
-    # drops a single mid-series point (a gap) -- the real-data union calendar iter-053's per-asset
-    # turnover + margin-carry cost model has to handle, which the gap-free _synthetic_universe fixture
-    # never exercises.
+    # _synthetic_universe plus ALT: absent (None) for a leading pre-listing stretch and dropping one
+    # mid-series point. BTC stays gap-free, which `_validate_prices_by_asset` requires; the mode this
+    # fixture answers is the union calendar's per-asset cost model, which the gap-free one cannot.
     universe = _synthetic_universe(n)
     listing_at = 40
     gap_at = 150
@@ -117,11 +115,9 @@ def test_a2_book_returns_asset_positions_reconstruct_net_returns():
 
 
 def test_a2_book_returns_reconstruct_identity_with_absent_asset():
-    # The gap-free reconstruct test above never exercises a None asset return -- iter-053's real-data
-    # universe has ALT absent (pre-listing) then gapped mid-series, and the per-asset-turnover +
-    # margin-carry cost model depends on this identity holding with ret_i[k] treated as 0.0 wherever
-    # it's None. returns_from_prices can't take a None-containing series, so use _asset_returns (the
-    # same helper a2_book_returns itself uses) to build the per-asset reference returns.
+    # The identity must hold with ret_i[k] treated as 0.0 wherever it is None, which the gap-free
+    # sibling never exercises. `returns_from_prices` refuses a None-containing series, so the
+    # reference returns come from `_asset_returns` -- the helper `a2_book_returns` itself uses.
     prices = _synthetic_universe_with_absent_asset(260)
     cfg = A2Config(lookbacks=(10, 20, 40), short="on", target_vol=0.10, **BASE_KWARGS)
     out = a2_book_returns(prices, config=cfg)
@@ -160,19 +156,10 @@ A2_LOOKBACK = 20
 
 
 def test_a2_turnover_below_a1_at_matched_horizon():
-    """Matched-horizon (window == gate_window) mechanism check -- NOT a claim that the production A2
-    book is cheaper than the production A1 book.
-
-    At the SAME lookback (A2_LOOKBACK == 20), Donchian-hold (A2) churns less than an SMA-gate flip
-    (A1): A2 lookback=20 turnover 0.04516 vs A1 gate_window=20 turnover 0.05745. That is the whole
-    scope of this test -- the structural reason A2 exists (positions persist until the opposite
-    channel breaks, instead of flipping on every gate crossing).
-
-    It does NOT generalize to "A2 beats A1 in production": A1 at a longer gate_window has LOWER
-    turnover than A2's matched-horizon figure -- gate_window=50 -> turnover 0.04133, gate_window=120
-    -> turnover 0.01723, both below A2's 0.04516. Which book is cheaper in production is an empirical
-    question for the real-data run, not settled by this test.
-    """
+    """At a matched horizon (A2 lookback == A1 gate_window) the Donchian hold churns less than the
+    SMA-gate flip, because a position persists until the opposite channel breaks instead of flipping
+    on every gate crossing. It does NOT generalize: A1 at a longer gate_window turns over less than
+    A2 does here, so which book is cheaper in production is a question for the real-data run."""
     prices = _synthetic_universe(260)
     cfg_a2 = A2Config(lookbacks=(A2_LOOKBACK,), short="off", target_vol=0.10, **BASE_KWARGS)
     out_a2 = a2_book_returns(prices, config=cfg_a2)

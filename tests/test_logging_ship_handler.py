@@ -11,9 +11,8 @@ from cli.logging.ship import LokiShipHandler, ShipConfig
 from tests.fake_loki import FakeLoki, SilentServer
 from tests.fake_loki import handler_factory as _handler_factory
 
-# Tightened timings (per the plan) so the suite stays fast; the *ratios* between them (min <<
-# max, timeout > flush_interval) are what several tests' properties depend on, not these
-# absolute numbers.
+# Tightened so the suite stays fast; the RATIOS (min << max, timeout > flush_interval) are what the
+# tests' properties depend on, not these absolute numbers.
 _TIGHT = {
     "flush_interval_s": 0.02,
     "timeout_s": 0.3,
@@ -82,12 +81,9 @@ def _wait_until(predicate, timeout: float = 1.0, interval: float = 0.005) -> boo
 
 
 def _assert_monotone_doubling_then_capped(gaps: list[float], backoff_min_s: float, backoff_max_s: float) -> None:
-    """Checks the shape of the retry gaps, comparing gaps only against each other (not against
-    an absolute bound): each measured gap also carries flush_interval_s plus the POST
-    round-trip on top of the backoff itself, so pinning to backoff_min_s/backoff_max_s exactly
-    flakes under CI scheduling jitter. Asserts: grows (not flat) on the first uncapped step,
-    never decreases, and stops growing by the end (capped) -- with only a loose ceiling on how
-    large that plateau can plausibly be."""
+    """Checks the shape of the retry gaps against each other, never against an absolute bound: each
+    measured gap carries flush_interval_s plus the POST round-trip on top of the backoff itself, so
+    pinning to backoff_min_s/backoff_max_s exactly flakes under CI scheduling jitter."""
     assert len(gaps) >= 3
     assert gaps[1] > gaps[0] * 1.3  # genuinely grows early on, not a flat retry interval
     slack = backoff_min_s  # generous relative to the min/max spread used by these tests
@@ -132,9 +128,9 @@ def test_ring_evicts_oldest_at_capacity(handler_factory):
 
 
 def test_drain_caps_the_first_batch_at_batch_max(handler_factory):
-    """Spec D9 / plan line 14: at most batch_max lines per POST. status_code=500 keeps the
-    first drained batch permanently held (a retry never clears it, so `_run` never calls
-    `_drain()` a second time) -- isolating the cap on a single drain from any later one."""
+    """At most batch_max lines per POST. status_code=500 keeps the first drained batch permanently
+    held (a retry never clears it, so `_run` never calls `_drain()` a second time) -- isolating the
+    cap on a single drain from any later one."""
     handler_cls = handler_factory(status_code=500)
     with FakeLoki(handler_cls) as url:
         handler = _make_handler(url, flush_interval_s=10.0, batch_max=3, ring_capacity=32, backoff_min_s=0.05, backoff_max_s=0.1)
@@ -208,17 +204,10 @@ def test_non_429_4xx_drops_the_batch_and_ships_the_next_with_recovery_count(hand
 
 
 def test_recovery_warning_exact_count_after_ring_overflow(handler_factory, ship_logger):
-    """Ring overflow (distinct from the 400 poisoned-batch drop, tested separately above):
-    batch_max is set larger than ring_capacity, so the worker's first drain always empties the
-    WHOLE ring in one shot (`min(len(ring), batch_max)` == len(ring) whenever batch_max exceeds
-    capacity). The 8-emit burst (a tight Python loop) lands roughly 200x faster than the 0.02s
-    flush interval, so the whole burst is in the ring long before the periodic timer could ever
-    fire; triggering the drain explicitly (rather than waiting on that timer) just makes it
-    happen deterministically instead of racing the timer, keeping dropped_total deterministic,
-    and leaves the ring empty for the rest of the outage -- so when the held
-    batch finally succeeds, the recovery warning lands in an EMPTY ring, not a full one (a full
-    ring would evict its own just-appended warning entry, triggering a second, spurious
-    recovery announcement for that one extra drop)."""
+    """Ring overflow, distinct from the 400 poisoned-batch drop above: batch_max exceeds
+    ring_capacity, so the worker's first drain empties the WHOLE ring and the recovery warning later
+    lands in an EMPTY ring -- a full one would evict its own just-appended warning entry and announce
+    a second, spurious recovery."""
     handler_cls = handler_factory(status_code=500)
     console = _ListHandler()
     ship_logger.addHandler(console)
@@ -281,12 +270,10 @@ def test_post_returns_retry_within_timeout_bound_against_silent_endpoint():
 
 
 def test_post_unexpected_exception_is_treated_as_retry_worker_survives():
-    """A `url` missing its scheme (a plausible Ansible-render typo) raises ValueError from
-    urllib, not one of _post's named transport exceptions. Without a catch-all this escapes
-    `_run`'s loop entirely and kills the worker thread permanently and silently -- defeating
-    spec 00068 D3's "a shipping failure is self-announcing; no silent dark window". `_post`
-    must treat it like any other transport failure: 'retry', so the worker survives and drops
-    keep accumulating instead of shipping going dark."""
+    """A `url` missing its scheme (a plausible Ansible-render typo) raises ValueError from urllib,
+    not one of `_post`'s named transport exceptions -- without a catch-all it escapes `_run`'s loop
+    and kills the worker thread permanently and silently, defeating spec 00068 D3's "a shipping
+    failure is self-announcing; no silent dark window"."""
     cfg = ShipConfig(url="127.0.0.1/loki/api/v1/push", username="alice", password="secret", host="h1", service="svc1")
     handler = LokiShipHandler(cfg, **_TIGHT, batch_max=2, ring_capacity=5)
     try:
@@ -345,12 +332,9 @@ def test_close_against_silent_endpoint_prints_exact_unshipped_count(capsys):
 
 
 def test_close_ships_a_still_held_batch_via_the_final_flush_loop(handler_factory, capsys):
-    """Exercises `_run`'s trailing `while True` best-effort flush specifically -- distinct from
-    `test_close_flushes_remainder_against_live_endpoint`, whose `close()` wakes the MAIN loop
-    (which drains and ships first). Here the batch is already sitting in `_held`, mid-backoff,
-    when `close()` fires: `_stop.set()` interrupts the interruptible `_stop.wait(backoff)`
-    immediately, tripping the main loop's `while not self._stop.is_set()` false -- only the
-    trailing loop can ship it from there."""
+    """Exercises `_run`'s trailing best-effort flush: the batch is already sitting in `_held`,
+    mid-backoff, when `close()` fires, so `_stop.set()` interrupts `_stop.wait(backoff)` and trips
+    the main loop's `while not self._stop.is_set()` false -- only the trailing loop can ship it."""
     handler_cls = handler_factory(status_code=500)
     with FakeLoki(handler_cls) as url:
         handler = _make_handler(url, batch_max=2, ring_capacity=16, flush_interval_s=10.0, backoff_min_s=0.3, backoff_max_s=1.0)
@@ -439,20 +423,16 @@ def test_last_cycle_timestamp_stalls_while_the_post_keeps_failing(handler_factor
     retrying cycle must not stamp it -- otherwise the row is green through a real outage."""
     handler_cls = handler_factory(status_code=500)  # 5xx -> 'retry', the wedged case
     with FakeLoki(handler_cls) as url:
-        # Short backoff, and the baseline captured BEFORE the first emit. The earlier form used a 5 s
-        # backoff and read the baseline after the first request, so a variant that wrongly stamps on
-        # the retry path had already stamped by then and the 0.3 s sleep sat inside the backoff wait
-        # -- it observed a short interval, never a stall, and a reviewer proved both the correct and
-        # the broken implementation passed it. Spanning several failing cycles is what discriminates.
+        # Short backoff, so several failing cycles elapse inside the wait: spanning several of them is
+        # what discriminates a variant that wrongly stamps on the retry path from one that does not.
         handler = _make_handler(url, batch_max=2, ring_capacity=32, backoff_min_s=0.05)
         try:
             for i in range(2):
                 handler.emit(_make_record(f"m{i}"))
             assert _wait_until(lambda: len(handler_cls.requests) >= 1)
-            # Seed AFTER the batch is held, not before: until then the worker is idle and idle cycles
-            # legitimately stamp every flush_interval_s (20 ms here), so any scheduling delay between
-            # a pre-emit seed and the emits made CORRECT code fail this. With a batch held, no idle
-            # cycle can intervene, so every later stamp would be the bug.
+            # Seed AFTER the batch is held: until then the worker is idle and idle cycles legitimately
+            # stamp every flush_interval_s, so a pre-emit seed made CORRECT code fail this. With a
+            # batch held, no idle cycle can intervene and every later stamp would be the bug.
             seed = handler.last_cycle_at
             assert _wait_until(lambda: len(handler_cls.requests) >= 4)  # several failed cycles elapsed
             assert handler.last_cycle_at == seed, "a retrying cycle must not advance the liveness gauge"
@@ -477,11 +457,8 @@ def test_last_cycle_timestamp_is_exported_as_its_own_series(fake_loki):
 
 
 def test_a_permanently_rejected_batch_still_advances_the_liveness_gauge(handler_factory):
-    """The drop path IS a completed cycle, and three artifacts now assert it as contract: the
-    gauge's HELP, the rule comment, and the operator-facing summary telling the responder NOT to
-    chase credentials. Nothing tested it -- deleting the stamp from the drop branch passed the
-    whole suite -- so a regression would silently restore the misdirection the summary was
-    rewritten to remove."""
+    """The drop path IS a completed cycle: `cli/obs/metrics.py`'s HELP for the gauge and the alert
+    rule's own comment both state it as contract."""
     handler_cls = handler_factory(status_code=400)  # non-429 4xx -> 'drop', permanently rejected
     with FakeLoki(handler_cls) as url:
         handler = _make_handler(url, batch_max=2, ring_capacity=32, flush_interval_s=5.0)

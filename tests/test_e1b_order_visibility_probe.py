@@ -1,8 +1,6 @@
 """Guard: `infra/scripts/e1b-order-visibility-probe.py` reads the venue with the LIVE trade key on
-the engine host. Two things must hold before it is ever run there, and neither is observable once it
-is running: it must touch no method that writes to the venue, and it must refuse rather than build a
-client when the credentials are absent. Both are asserted here against a stubbed client, because the
-only other place they could be checked is an attended run against real money."""
+the engine host, so before it is ever run there it must touch no method that writes to the venue and
+must refuse rather than build a client when the credentials are absent."""
 
 import asyncio
 import importlib.util
@@ -28,18 +26,15 @@ def _load():
 
 
 # The venue-write surface of `KrakenSpotHttpClient`, read from its stub rather than guessed.
-# `cancel_all_requests` is deliberately NOT here: it aborts in-flight HTTP requests client-side and
-# reaches no venue. It is still in the forbidden set below, because a probe has no reason to call it
-# and a future reader should not have to re-derive which `cancel_*` is which.
+# `cancel_all_requests` aborts in-flight HTTP requests client-side and reaches no venue, but stays in
+# FORBIDDEN: a probe has no reason to call it, and which `cancel_*` is which should not be re-derived.
 VENUE_WRITES = frozenset(
     {"submit_order", "submit_orders_batch", "cancel_order", "cancel_orders_batch", "cancel_all_orders", "modify_order"}
 )
 FORBIDDEN = VENUE_WRITES | {"cancel_all_requests"}
 
-# Not methods and not writes: `api_key` is an unmasked getter on the real client, so a stray
-# `print(client.api_key)` would put the live trade key on a terminal without touching anything the
-# write guards watch. The probe takes its credentials as positionals and never needs either name,
-# so their absence is checkable and free.
+# Not writes: `api_key` is an unmasked getter, so a stray `print(client.api_key)` puts the live trade
+# key on a terminal without touching anything the write guards watch, and the probe needs neither name.
 CREDENTIAL_ACCESSORS = frozenset({"api_key", "api_secret"})
 
 
@@ -84,8 +79,7 @@ def test_the_sweep_enumerates_all_eight_shapes_and_no_duplicate():
 
 def test_flattens_own_shape_is_one_of_the_eight():
     """`cli/engine/flatten.py` reads open orders with `open_only=True`, no `instrument_id`, on a
-    client it built bare — so the row that answers 'what does flatten see' must be in the table,
-    and must be marked, or the probe reports eight numbers and settles nothing."""
+    bare client -- that row must be in the table AND marked, or the probe settles nothing."""
     m = _load()
     flatten_like = [s for s in m.SHAPES if s.open_only and not s.by_instrument and not s.cache_populated]
     assert len(flatten_like) == 1, "exactly one shape is flatten's"
@@ -93,8 +87,7 @@ def test_flattens_own_shape_is_one_of_the_eight():
 
 
 def test_the_probe_touches_no_write_method():
-    """The whole point of the read-only claim. A stub records every attribute reached; any write
-    raises. This is the only place the claim can be checked without money on the line."""
+    """The read-only claim, checked in the only place it can be checked without money on the line."""
     m = _load()
     client = _RecordingClient(rows=[])
     asyncio.run(m.sweep(client, account_id="KRAKEN-001", pair="SOLEUR", instrument_id="SOL/EUR.KRAKEN"))
@@ -114,8 +107,7 @@ def test_the_sweep_makes_exactly_nine_venue_calls():
 
 
 def test_credentials_refuse_when_unset_and_never_echo_a_value(monkeypatch):
-    """The refusal names the VARIABLES. A refusal that quotes what it found puts the trade key in a
-    terminal and a scrollback."""
+    """The refusal names the VARIABLES: quoting what it found would put the trade key in a scrollback."""
     m = _load()
     monkeypatch.delenv(m.API_KEY_VAR, raising=False)
     monkeypatch.setenv(m.API_SECRET_VAR, "s3cr3t-not-a-real-secret")
@@ -134,9 +126,8 @@ def test_credentials_return_both_when_set(monkeypatch):
 
 
 def test_the_client_is_built_exactly_as_flatten_builds_it():
-    """`cli/engine/command.py` builds `KrakenSpotHttpClient(key, secret)` and passes nothing else.
-    If the probe adds an argument, its empty-cache row stops being flatten's row and the comparison
-    the run exists to make is no longer like-for-like."""
+    """`cli/engine/command.py` builds `KrakenSpotHttpClient(key, secret)` and nothing else: an
+    argument the probe adds would end the like-for-like comparison the run exists to make."""
     m = _load()
     seen = {}
 
@@ -151,18 +142,15 @@ def test_the_client_is_built_exactly_as_flatten_builds_it():
 
 
 # --- The attended run, behind an explicit opt-in ------------------------------------------------
-# Gated on a variable rather than on reachability: a test that skips when the venue is unreachable
-# reports a skip that reads as coverage, and CLAUDE.md names that failure directly. This never runs
-# in CI and never runs beside a normal suite; it exists so the attended operator has one command
-# that exercises the same code path the probe's `__main__` does.
+# Gated on a variable, never on reachability: a skip on an unreachable venue reads as coverage. It
+# gives an attended operator one command exercising the probe's own `__main__` path.
 LIVE_OPT_IN = "ZCRYPTO_E1B_LIVE"
 
 
 @pytest.mark.skipif(os.environ.get(LIVE_OPT_IN) != "1", reason=f"{LIVE_OPT_IN}=1 not set; this reaches the live venue")
 def test_the_live_sweep_returns_every_shape():
-    """Attended only, against the engine host, with the credentials in the environment. Asserts shape,
-    not content: how many rows each shape returns is the RESULT of the run, never something a test
-    should pin — pinning it here would make the probe's own finding a precondition of its passing."""
+    """Attended only. Asserts shape, not content: how many rows a shape returns is the RESULT of the
+    run, and pinning it would make the probe's own finding a precondition of its passing."""
     m = _load()
     key, secret = m.credentials()
     from nautilus_trader.model import AccountId, InstrumentId
@@ -182,45 +170,24 @@ def test_the_live_sweep_returns_every_shape():
 
 
 def test_the_shapes_are_ordered_empty_arm_first():
-    """`sweep` populates the cache once, on the first shape that asks for it, and never un-populates.
-    So the ORDER is load-bearing: a populated shape moved earlier would have every later
-    empty-labelled shape read against a populated cache, and both tests above would stay green — one
-    is set-based, the other counts calls."""
+    """`sweep` populates the cache once and never un-populates, so the ORDER is load-bearing: move a
+    populated shape earlier and every later empty-labelled shape reads a populated cache."""
     m = _load()
     assert [s.cache_populated for s in m.SHAPES] == [False] * 4 + [True] * 4
 
 
 def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text():
-    """The stub above guards the client handed to `sweep`. It cannot see a write on a SECOND client
-    built inside the script — a bare `KrakenSpotHttpClient(...)` in `_main`, say — because that
-    object never passes through the stub. Scanning the source closes exactly that gap, and it is the
-    check the commit message and the changelog entry claim exists."""
+    """The stub guards only the client handed to `sweep`: a SECOND client built inside the script
+    never passes through it, and scanning the source closes exactly that gap."""
     text = PROBE.read_text()
-    # A bare substring, not `f"{name}("` or `f".{name}"`: those two miss
-    # `getattr(client, "cancel_all_orders")`, which on a SECOND client the stub cannot see either —
-    # so the two guards together would both be green on a real write. Measured: the bare form has
-    # zero hits on this script today, so it costs nothing. What this does NOT see: a name built at
-    # runtime (`"cancel_all_" + orders_var`), and a credential leaked without naming an accessor —
-    # `print(key)` or `print(os.environ)`, both reachable in `_main`. Nor a name split across a
-    # concatenation: `"cancel_all_" + "orders"` is one constant to CPython but two strings to a
-    # reader of the source, and this scan is a reader of the source.
-    # No parse replaces this, and the reason is not the `getattr` case -- a parse unioning string
-    # constants with attribute names would catch that one. It is that this scan reads COMMENTS and
-    # docstrings, which are absent from every AST and which it is MEANT to read: the message below
-    # tells an editor who trips it on prose to reword the prose. A parse would also turn a syntax
-    # error in the probe into a collection error here instead of a refusal.
+    # A bare substring, not `f"{name}("` or `f".{name}"`: those miss a name reached through getattr.
+    # And no parse replaces it -- this scan is MEANT to read comments and docstrings, absent from any AST.
     # config-selector-ok: containment IS the semantics -- the needle is a name in arbitrary text
     present = sorted(name for name in FORBIDDEN | CREDENTIAL_ACCESSORS if name in text)
     assert not present, f"write or credential-accessor names in the probe's source: {present}"
-    # A write that names no client method at all -- a hand-rolled signed REST call built with httpx --
-    # is invisible to the stub AND to the scan above, since it borrows neither the adapter's methods
-    # nor its credential properties. Both sides lowercased: HTTP header names are case-insensitive and
-    # HTTP/2 lowercases every one on the wire, so `api-sign` is the spelling that actually goes out.
-    # The concatenation limit named above applies here too. Both scans read prose as source, so a
-    # comment or docstring naming an endpoint path trips this one -- the message says so, because
-    # that is what the tripped editor reads first.
-    # A hand-rolled signed call offers no syntax to parse for: these tokens can appear in a URL, a
-    # header dict key, or a bare variable.
+    # A hand-rolled signed REST call borrows neither the adapter's methods nor its credential
+    # properties, so the stub and the scan above both miss it. Lowercased because HTTP/2 lowercases
+    # every header name on the wire; prose in the probe naming an endpoint path trips this too.
     # config-selector-ok: containment over the lowercased text is the only selector spanning all three
     signing = sorted(t for t in ("private/", "api-sign") if t in text.lower())
     assert not signing, (

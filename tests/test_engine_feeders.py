@@ -304,8 +304,6 @@ def _two_asymmetric_cycles() -> list[CycleStages]:
 
 
 def test_stage_ratios_use_the_median_of_per_cycle_ratios():
-    # Two asymmetric cycles: median-of-ratios and ratio-of-medians differ, so this pins the basis.
-    # A single-cycle fixture cannot -- there the two definitions coincide.
     payload = decompose_payload(_two_asymmetric_cycles())
     # per-cycle cancellation ratios are 1.0 and 0.0 -> median 0.5.
     # ratio-of-medians would be median(combined)/median(mean_sleeve) = 0.06/0.09 = 0.667.
@@ -325,10 +323,8 @@ def test_decompose_render_names_each_consecutive_stage_ratio():
     text = _render_decompose(decompose_payload(_two_asymmetric_cycles()))
     assert "MEDIAN" in text
     # Each value pinned to ITS OWN label: asserting the labels alone would pass a summary whose
-    # three ratios were rendered against the wrong lines.
-    # `capped -> limited` is the whole-book limits' own share and `limited -> final` the governor's.
-    # Before they were split, the governor's column carried both, so a binding limit would have been
-    # reported as the governor de-levering -- the one event the limit-bound counter exists to name.
+    # ratios were rendered against the wrong lines. `capped -> limited` is the whole-book limits'
+    # own share and `limited -> final` the governor's.
     for label, value in (
         ("sleeve -> combined", "0.500"),
         ("combined -> capped", "1.000"),
@@ -344,11 +340,9 @@ def test_decompose_render_names_each_consecutive_stage_ratio():
 def test_a_binding_whole_book_limit_is_attributed_to_the_limits_not_the_governor():
     """The non-degenerate case: `limited` < `capped`, so the two shares differ.
 
-    Every other fixture has no limit binding, where `capped -> limited` is 1.000 and the merged
-    `capped -> final` label happened to read correctly. This is the cycle that separates them --
-    the limits take a quarter of the book and the governor half, and each share must land on its
-    own line. Under the old single column this cycle printed the multiplier, 0.500, against the
-    label `capped -> final` -- so the governor was credited with the limits' quarter as well.
+    Every other fixture has no limit binding, where `capped -> limited` is 1.000 and a single merged
+    `capped -> final` column would read correctly. Here the limits take a quarter of the book and
+    the governor half, so each share must land on its own line.
     """
     stages = [
         CycleStages(
@@ -424,8 +418,6 @@ def test_delta_below_ordermin_is_not_placed_and_accumulates():
 
 def test_costmin_refuses_a_delta_that_clears_the_quantity_floor():
     # target_qty = 0.1*1.0/0.10 = 1.0 unit: clears ordermin 0.5, but is worth EUR 0.10 < costmin.
-    # (An earlier draft used weight=1.0, giving 10 units worth EUR 1.00 -- which places, so the
-    # test was red against correct code. The arithmetic is the test here; check it, don't eyeball.)
     stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 0.1, 0.10)]
     payload = accumulation_payload(stages, {"BTC": (0.5, 0.45)}, [1.0])
     assert payload["by_nav"][1.0]["cycles"][0]["placed"] is False
@@ -855,13 +847,10 @@ def test_accum_replay_defaults_to_the_newest_venue_snapshot(tmp_path, monkeypatc
 
 # --- schema 2: the twelve-symbol journal, through the REAL builder ---------------------------------
 #
-# Every other CycleRecord in this file is schema_version=1 with a stubbed builder -- which is exactly
-# why the widening's PortfolioError went unnoticed here. That raise is NOT an EngineError (its MRO is
-# PortfolioError -> Exception), so `decompose_report`'s per-record `except EngineError` and the
-# command's own catch would BOTH have missed it: the first schema-2 record killed the whole command
-# with an unhandled traceback instead of being counted as one named failed cycle. The builder must be
-# real here -- a stub keyed by whatever it is handed accepts the twelve-symbol panel the real one
-# refuses, so it cannot see the defect at all.
+# Every other CycleRecord in this file is schema_version=1 with a stubbed builder. `PortfolioError`
+# is not an `EngineError`, so neither `decompose_report`'s per-record catch nor the command's own
+# would count a schema-2 failure as one named failed cycle -- an unhandled traceback kills the
+# whole command instead. Hence the REAL builder below.
 
 
 def _v2_record_and_reader() -> tuple[CycleRecord, object, dict[str, float]]:
@@ -901,8 +890,7 @@ def test_replay_stages_carries_the_records_journaled_nav():
 
     `executor._stage` and `replay_stages` are the two producers of `CycleStages`, and they feed the
     same `realized_drift`. If only one carries `nav`, a `shadow_nav_eur` change bands the human off
-    the weekly report at the LIVE value while the engine trips at the journaled one -- the exact
-    divergence `drift_bps`'s docstring says the shared core exists to prevent.
+    the weekly report at the LIVE value while the engine trips at the journaled one.
     """
     from dataclasses import replace
 
@@ -913,9 +901,7 @@ def test_replay_stages_carries_the_records_journaled_nav():
 
 
 def test_decompose_and_accum_replay_survive_a_schema_2_record():
-    """Both feeder reports, end to end on a v2 record. Before the contraction landed, the builder
-    raised PortfolioError here -- and because that is not an EngineError, `n_failed` would never
-    have reached 1: the report call itself died."""
+    """Both feeder reports, end to end on a v2 record."""
     record, reader, _ = _v2_record_and_reader()
 
     _, decompose = decompose_report([record], reader)

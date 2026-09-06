@@ -12,12 +12,10 @@ N = 500
 # while a beta=0 null's noise Sharpe (SE ~= 1/sqrt(N)) falls below it on the majority of seeds -> dsr < 0.5.
 VAR_TRIALS_PER_PERIOD = 1e-3
 
-# regime_slices/benchmark_slices now also feed benchmark_relative_worst_slice (T0009-ratified worst-slice
-# leg), which compounds returns via max_drawdown/total_return -- unlike sharpe(), that's not scale-invariant
-# in the sense of tolerating raw noise_sd=1.0 fixtures (individual periods routinely < -100%, breaking the
-# equity curve). sharpe() itself IS scale-invariant, so scaling a book down by this factor changes nothing
-# about the DSR/SPA/cost-stress legs or the recorded worst_slice_name/worst_slice_sharpe; it only keeps the
-# relative diagnostic's compounding well-defined.
+# regime_slices/benchmark_slices also feed benchmark_relative_worst_slice, which compounds returns via
+# max_drawdown/total_return: raw noise_sd=1.0 fixtures put individual periods below -100% and break the
+# equity curve. sharpe() is mean/stdev and so scale-invariant, which is why scaling a book down changes
+# nothing about the DSR/SPA/cost-stress legs or the recorded worst_slice_name/worst_slice_sharpe.
 _SLICE_SCALE = 0.01
 
 
@@ -65,9 +63,7 @@ def test_a1_kill_bar_planted_edge_passes():
         regime_slices=_book_regime_slices(book),
         benchmark_slices=_NOISE_BENCHMARK_SLICES,
     )
-    # dsr is a probability; a real edge must clear 0.95 (the T0009-ratified, 2026-07-09 López-de-Prado
-    # significance bar), not just > 0 (which the pre-fix gate accepted for a ~5e-43 underflow -- see
-    # test_a1_kill_bar_null_rarely_passes) or the pre-ratification 0.5 bar.
+    # dsr is a probability, and the ratified bar is 0.95 (T0009), not merely > 0.
     assert result["dsr"] > 0.95
     assert result["dsr_pass"] is True
     assert result["spa_pass"] is True
@@ -83,15 +79,10 @@ def test_a1_kill_bar_planted_edge_passes():
 
 
 def test_a1_kill_bar_null_rarely_passes():
-    # Mirrors tests/test_acceptance.py's null-false-positive-rate style: over 20 seeds, a beta=0 (no
-    # real edge) book should almost never clear all four kill-bar conditions simultaneously.
-    #
-    # This test also proves the DSR leg is a real gate, not the inert no-op it was before the fix. With
-    # the pre-fix `dsr > 0` gate on these beta=0 nulls the DSR leg passed 20/20 (deflated_sharpe_ratio is
-    # a probability that only underflows to ~5e-43, never <= 0), so only SPA/cost/slice discriminated.
-    # With the T0009-ratified `dsr > 0.95` gate (raised from the interim 0.5) and per-period var_trials,
-    # plus the benchmark-relative worst-slice leg, the observed per-leg null pass tally is dsr=0/20,
-    # spa=3/20, cost=8/20, slice=5/20, overall passes=0/20 -- the 0.95 bar now fails EVERY beta=0 null.
+    # Over 20 seeds, a beta=0 (no real edge) book should almost never clear all four kill-bar
+    # conditions at once. The DSR leg is the strictest: `deflated_sharpe_ratio` returns a normal CDF,
+    # so it underflows toward 0 but never reaches it and a `dsr > 0` gate cannot fail a null at all;
+    # the ratified 0.95 bar (T0009) is what makes this leg discriminate.
     passed = 0
     dsr_leg_passed = 0
     for seed in range(20):
@@ -112,8 +103,6 @@ def test_a1_kill_bar_null_rarely_passes():
         if result["dsr_pass"]:
             dsr_leg_passed += 1
     assert passed <= 2
-    # DSR is now the strictest leg: a beta=0 null essentially never clears dsr > 0.95 (vs 20/20 under the
-    # pre-fix gate, or a minority under the interim 0.5 bar).
     assert dsr_leg_passed <= 2
 
 
@@ -254,11 +243,10 @@ def test_a1_kill_bar_dsr_fails_between_old_and_new_bar():
 
 
 def test_a1_kill_bar_spa_decisive_window_diverges_from_full():
-    # The book's edge over the benchmark exists ONLY before decisive_start=230 (a constant 0.02/period
-    # drift on top of shared noise); from 230 on, book == benchmark exactly (no edge). The full window
-    # sees the pre-cut edge and is significant; the decisive (post-warm-up) window sees only the no-edge
-    # tail and is not -- exactly the divergence the T0009-ratified decisive-window SPA leg is meant to
-    # catch (net-of-cost inputs; decisive_start=230 is the benchmark's post-warm-up cut for B3+vt-dynamic).
+    # The book's edge over the benchmark exists ONLY before decisive_start (a constant drift on top
+    # of shared noise); from there on book == benchmark exactly. The full window sees the pre-cut
+    # edge and is significant, the decisive window is not -- the divergence the decisive-window SPA
+    # leg exists to catch (230 is the benchmark's post-warm-up cut for B3+vt-dynamic).
     decisive_start = 230
     rng = random.Random(1)
     book, benchmark = [], []
@@ -286,13 +274,10 @@ def test_a1_kill_bar_spa_decisive_window_diverges_from_full():
 
 
 def test_a1_kill_bar_relative_worst_slice_passes_despite_negative_sharpe():
-    # Mirrors test_benchmark_relative_worst_slice_exposure_blindness's construction: the fully-exposed
-    # book actually loses MORE than the near-flat benchmark (-4.51% vs -0.60% total return, drawdown
-    # 9.05% vs 0.70%) -- it passes purely because its bigger stdev shrinks the Sharpe ratio's magnitude,
-    # so its Sharpe is LESS negative than the benchmark's and `beats_benchmark_worst` keys on Sharpe.
-    # The point under test here: the T0009-ratified relative leg passes on a negative-Sharpe slice where
-    # the old absolute ("every slice Sharpe > 0") leg would have failed; the P&L/drawdown contradiction
-    # itself is asserted in the sibling exposure-blindness test.
+    # Same construction as test_benchmark_relative_worst_slice_exposure_blindness, where the P&L and
+    # drawdown contradiction is asserted: the fully-exposed book loses more than the near-flat
+    # benchmark yet has a LESS negative Sharpe, because its bigger stdev shrinks the ratio's magnitude
+    # and `beats_benchmark_worst` keys on Sharpe -- so the relative leg passes it.
     book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
     near_flat_benchmark = [0.0] * 16 + [-0.004, 0.001, -0.004, 0.001]
     fully_exposed_book = [0.05, -0.052] * 10
@@ -476,11 +461,9 @@ def test_net_of_cost_verdict_no_edge():
 
 
 def test_net_of_cost_verdict_zero_fee_winner_loses_net_of_cost():
-    # The A1 scenario this helper exists for: a book that beats the benchmark gross (small planted
-    # edge) but a1_kill_bar's SPA leg runs on zero-fee returns, over-crediting a high-turnover family
-    # that actually loses net-of-cost once a realistic per-period cost is charged. Here book_gross =
-    # benchmark + edge, book_net = book_gross - heavy_cost, with heavy_cost > edge so book_net trails
-    # the benchmark by a constant (edge - cost) every period.
+    # The scenario this helper exists for: a book that beats the benchmark GROSS but trails it once
+    # a realistic per-period cost is charged, which a comparison run on zero-fee returns reads as an
+    # edge and over-credits a high-turnover family.
     x, r = linear_signal(N, beta=0.8, noise_sd=1.0, seed=11)
     benchmark = sign_strategy_returns(x, r)
     edge = 0.002  # book's gross per-period edge over the benchmark, before cost
@@ -563,12 +546,10 @@ def test_benchmark_relative_worst_slice_known_answer():
 
 
 def test_benchmark_relative_worst_slice_exposure_blindness():
-    # Documents the real iter-053 2014 case (docs/research/09.phase4-a2-results.md): the frozen
-    # benchmark's gate held it ~87% flat, so its near-flat slice has a clearly negative per-period
-    # Sharpe (small mean, small stdev, both negative) yet only a small total loss and small drawdown.
-    # A fully-exposed challenger has a LESS negative Sharpe (bigger stdev shrinks the ratio's magnitude)
-    # while its larger swings compound into a BIGGER total loss and BIGGER drawdown -- the exact
-    # contradiction a Sharpe-only worst-slice leg hides.
+    # The real iter-053 2014 case (docs/research/09.phase4-a2-results.md): the frozen benchmark's
+    # gate held it near-flat, so its slice has a clearly negative per-period Sharpe yet only a small
+    # total loss and drawdown, while a fully-exposed challenger has a LESS negative Sharpe (bigger
+    # stdev shrinks the ratio) with a BIGGER loss and drawdown -- what a Sharpe-only leg hides.
     near_flat_benchmark = [0.0] * 16 + [-0.004, 0.001, -0.004, 0.001]
     fully_exposed_book = [0.05, -0.052] * 10
 

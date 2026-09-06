@@ -1,7 +1,5 @@
-"""CLI test for `zcrypto engine soak-check` (spec 00058): a short, contiguous 3-cycle synthetic
-journal + store with NO canonical dir wired -- exercises the command's plumbing, the NO-VERDICT
-gate (short window + canonical absent), the banner, and the atomic --json write, without needing
-the heavy real canonical build (that's the data-gated regression coverage in test_engine_soak.py)."""
+"""CLI tests for `zcrypto engine soak-check` (spec 00058): a short synthetic journal + store with NO
+canonical dir wired, so the command's plumbing runs without the heavy real canonical build."""
 
 import json
 from dataclasses import replace
@@ -148,11 +146,10 @@ def _mk_fake_null(n: int = 40) -> NullSystem:
 def _patch_canonical_pipeline(
     monkeypatch, *, available: bool = True, reason: str = "", identity_ok: bool = True, cap_consistent: bool = True
 ) -> None:
-    """Stub the canonical-present branch of `soak_report` so a command test can exercise the new
-    internals wiring without a real frozen canonical dataset or trial registry: `_canonical_present`
-    always True, `build_null`/`self_tests` return canned non-void results, and `realized_internals`
-    (which `soak_report` now calls) returns a `RealizedInternals` built from the actual scored
-    records it's given, with the caller-controlled `available`/`identity_ok`/`cap_consistent`."""
+    """Stub the canonical-present branch of `soak_report` so a command test needs no real frozen
+    canonical dataset or trial registry: `_canonical_present` always True, `build_null`/`self_tests`
+    canned non-void results, and `realized_internals` a `RealizedInternals` over the actual scored
+    records it is given, with the caller-controlled `available`/`identity_ok`/`cap_consistent`."""
     monkeypatch.setattr(soak, "_canonical_present", lambda canonical_dir: True)
     monkeypatch.setattr(soak, "build_null", lambda canonical_dir, fee=0.006, path="fast": _mk_fake_null())
     monkeypatch.setattr(
@@ -289,7 +286,7 @@ def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
     assert payload["internals"]["reason"] == "mocked internals rebuild degrade"
     assert payload["gating_verdicts"]["governor_engagement"]["verdict"] == "n/a"
     assert payload["gating_verdicts"]["cap_breach"]["verdict"] == "n/a"
-    # Fix 4: an unavailable-internals "n/a" nulls its numeric fields (live=0.0 would otherwise be
+    # An unavailable-internals "n/a" nulls its numeric fields (live=0.0 would otherwise be
     # indistinguishable from a genuinely-zero value to a JSON consumer) -- gross stays real, it
     # never degrades.
     for field in ("live", "median", "lo", "hi", "percentile", "effective_n", "width"):
@@ -299,11 +296,9 @@ def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
 
 
 def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, monkeypatch):
-    # Fix 3: a SoakError from realized_internals (e.g. a scored cycle's T-4h missing from the
-    # rebuilt grid) signals a genuine inconsistency and must PROPAGATE out of soak_report rather
-    # than being caught into the D7 degrade path -- correct by construction today (the call sits
-    # outside any try in soak_report), but pin it so a future refactor that wraps it in a broad
-    # except is caught.
+    # A SoakError from realized_internals (e.g. a scored cycle's T-4h missing from the rebuilt grid)
+    # signals a genuine inconsistency and must PROPAGATE out of soak_report rather than being caught
+    # into the D7 degrade path.
     _patch_config(monkeypatch, tmp_path)
     _patch_canonical_pipeline(monkeypatch)
 
@@ -332,13 +327,9 @@ def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, mon
 
 
 def test_unrecognized_verdict_label_aborts_cleanly_through_the_cli(tmp_path, monkeypatch):
-    # Fix 3 raises SoakError from reconcile_verdicts on a label outside metric_verdict's closed
-    # vocabulary (a code defect, never a data finding). This pins WHERE that raise lands, which was
-    # asserted rather than verified when the fix was designed: soak_report guards only
-    # realized_series, so the error propagates from analyze_soak to the CLI's `except EngineError`,
-    # which aborts with a one-line message. The point of the test is the NEGATIVE half -- a
-    # traceback, or a rendered report presenting a code defect as an instrument-fragility finding,
-    # would both defeat the fix.
+    # reconcile_verdicts raises SoakError on a label outside metric_verdict's closed vocabulary -- a
+    # code defect, never a data finding. soak_report guards only realized_series, so the raise
+    # reaches the CLI's `except EngineError` and aborts with a one-line message.
     _patch_config(monkeypatch, tmp_path)
     _patch_canonical_pipeline(monkeypatch)
 
@@ -597,15 +588,10 @@ def test_soak_check_spans_the_schema_boundary(tmp_path, monkeypatch):
     """A soak report over a window that straddles the deploy runs to a rendered report instead of
     aborting.
 
-    SCOPE, stated precisely because a scope note that overstates coverage is worse than none: the
-    canonical is absent here, so this exercises the journal read and `realized_series` -- the two
-    things that previously raised, `SoakError` on the changing asset set and the store path's
-    `ValueError` on a base key -- and NOTHING ELSE. The null build and the internals rebuild are
-    never reached on this path, and the canonical-gated tests in tests/test_engine_soak.py do not
-    cover their schema-2 behaviour either (they journal v1 records). That coverage is
-    `test_assemble_latest_grids_contracts_a_schema_2_record_to_the_model`,
-    `test_realized_internals_spans_the_schema_boundary_with_a_v2_latest`, and
-    `test_build_null_casts_its_book_onto_the_live_symbol_space`, all in tests/test_engine_soak.py."""
+    SCOPE: the canonical is absent here, so this exercises the journal read and `realized_series` --
+    the two things that previously raised, `SoakError` on the changing asset set and the store
+    path's `ValueError` on a base key. The null build and the internals rebuild are never reached on
+    this path."""
     _patch_config(monkeypatch, tmp_path)
     journal_dir, store_dir = _mk_straddling_journal_and_store(tmp_path)
     json_out = tmp_path / "report.json"

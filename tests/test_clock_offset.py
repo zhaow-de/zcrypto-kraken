@@ -1,19 +1,5 @@
-"""The host clock-skew exporter (spec 00103 D4, T0037).
-
-A clock leading the true hour lets a bogus exchange timestamp close an archive hour early, and no
-clock-referenced counter can see it (spec 00103 D1b). This exporter is that residual's ONLY detector.
-
-The unit under test is the **shell script the capture role installs**, driven with `bash` over a
-fixture `chronyc`, not a Python re-implementation. Three things carry the weight, and none of them is
-the happy path:
-
-- Both series must be emitted on EVERY run. An absent series is indistinguishable from a dead
-  exporter.
-- A chronyc that is missing, fails, or answers in an unrecognised shape must publish `NaN`, never a
-  fabricated `0` — a 0 offset reads as a perfectly disciplined clock.
-- The sign says which way the clock is wrong, and only one direction destroys data. `fast` (ahead)
-  is positive.
-"""
+"""The host clock-skew exporter (spec 00103 D4, T0037): the shell script the capture role installs,
+driven with `bash` over a fixture `chronyc`."""
 
 from __future__ import annotations
 
@@ -76,11 +62,8 @@ def _emit(tmp_path: Path, *, magnitude: str = "0.000012345", direction: str = "f
 
 
 def _installed_dests(role_tasks_yaml: str) -> set[str]:
-    """Every `dest:` the role actually installs, parsed.
-
-    A substring check against the file's text matches a comment or a fail_msg naming the path, and
-    is also blind to a SUFFIXED dest -- `.../zcrypto-reboot-check-TYPO` contains the real name.
-    """
+    """Every `dest:` the role actually installs, parsed: a substring check over the file's text
+    matches a comment or a fail_msg naming the path, and is blind to a SUFFIXED dest."""
     return {
         str(v).strip()
         for task in yaml.safe_load(role_tasks_yaml) or []
@@ -90,12 +73,9 @@ def _installed_dests(role_tasks_yaml: str) -> set[str]:
 
 
 def _rw_paths(rw: str) -> set[str]:
-    """The paths ReadWritePaths actually grants.
-
-    Substring over the raw line is blind to a longer sibling: `/var/lib/x-backup` contains
-    `/var/lib/x`, so a typo'd unit reads as writable. The leading `-` is systemd's may-not-exist
-    marker, not part of the path.
-    """
+    """The paths ReadWritePaths actually grants: substring over the raw line is blind to a longer
+    sibling (`/var/lib/x-backup` contains `/var/lib/x`), and the leading `-` is systemd's
+    may-not-exist marker, not part of the path."""
     return {p.lstrip("-") for p in rw.removeprefix("ReadWritePaths=").split()}
 
 
@@ -156,12 +136,10 @@ def test_the_prom_is_well_formed_for_the_collector(tmp_path):
 
 
 def test_the_write_is_atomic_leaving_no_partial_file(tmp_path):
-    """The collector globs this directory continuously; it must never read a half-written file.
-
+    """The collector globs this directory continuously and must never read a half-written file.
     Asserted by INODE, not by the absence of temp files: a truncate-in-place rewrite (`> "$out"`)
     leaves no temp file either, so the no-turd check alone passes precisely *because* the safety
-    mechanism was removed. A rename gives a new inode; an in-place rewrite keeps it.
-    """
+    mechanism was removed."""
     prom = tmp_path / "clock-offset.prom"
     chronyc = _chronyc(tmp_path, TRACKING.format(magnitude="0.1", direction="fast", leap="Normal"))
     assert _run(chronyc, prom).returncode == 0

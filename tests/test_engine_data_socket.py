@@ -1,18 +1,11 @@
 """The engine's Kraken data socket, measured against a loopback venue.
 
-spec 00101 D1 turns the adapter's idle timer off. Three claims ride on that and none of them is
-visible from a config assertion: that the timer is what produced the reconnect loop, that turning
-it off does not also disable reconnection, and that a dead peer is still caught by the heartbeat.
-Each is measured here against a WebSocket peer scripted to behave one way, so the defect and the
-correct behaviour differ on the same fixture.
+Offline by construction: the node talks to an HTTP server and a WebSocket server bound to 127.0.0.1
+in the probe's own process, so nothing off this machine is reached and this runs in CI.
 
-Offline by construction: the node talks to an HTTP server and a WebSocket server bound to
-127.0.0.1 in the probe's own process. Nothing off this machine is reached, so this runs in CI --
-unlike the venue-shaped row in `test_engine_node.py`, which is opt-in.
-
-A child interpreter for the same reason as every other node probe in this repo: a node installs
-process-wide signal handlers and runs its own Rust runtime, neither of which belongs in the pytest
-process. The Rust logger writes to stdout, and the counts are taken from the captured stream.
+A child interpreter, like every other node probe here: a node installs process-wide signal handlers
+and runs its own Rust runtime, neither of which belongs in the pytest process. The Rust logger
+writes to stdout, and the counts are taken from the captured stream.
 """
 
 import subprocess
@@ -34,15 +27,15 @@ _ONE_PAIR = """{
   }
 }"""
 
-# argv: mode, idle_ms, window_s, heartbeat_secs.
+# The peers the child can script, by mode:
 #
-#   silent      -- the peer accepts and then says nothing at all. At the adapter default this is
-#                  the production defect; at 0 it is the production fix.
-#   close_once  -- the peer accepts, waits, and closes the connection once, then accepts again and
-#                  stays silent. A real drop, with the idle timer off.
+#   silent      -- accepts, then says nothing at all. At the adapter default this is the production
+#                  defect; at 0 it is the production fix.
+#   close_once  -- accepts, waits, closes the connection once, then accepts again and stays silent:
+#                  a real drop, with the idle timer off.
 #   deaf        -- a raw socket that completes the WebSocket upgrade by hand and then answers
-#                  nothing, not even a ping. `websockets` auto-pongs, which is exactly the
-#                  behaviour that must NOT be present here, so this peer cannot use it.
+#                  nothing, not even a ping. `websockets` auto-pongs, the one behaviour that must
+#                  NOT be present here, so this peer cannot use it.
 #
 # A raw string: the child's source must carry the backslash escapes literally.
 _OFFLINE_PROBE = r"""

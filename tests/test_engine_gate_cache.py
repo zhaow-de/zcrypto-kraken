@@ -1,7 +1,5 @@
-"""Tests for the gate-export scoring cache primitives (cli/engine/gate_cache.py, spec 00060):
-replay_fingerprint (D3 -- covers the replay CODE, not just the journal), evidence_fingerprint
-(D2), and load_cache/save_cache (D5 fail-open, D6 atomic write). Everything here is synthetic --
-no dataset access, no real replay."""
+"""Tests for the gate-export scoring cache primitives in cli/engine/gate_cache.py (spec 00060):
+replay_fingerprint, evidence_fingerprint, and the load_cache/save_cache round trip."""
 
 from __future__ import annotations
 
@@ -152,19 +150,7 @@ def _assert_stale_entry_is_rejected(tmp_path, pristine: CycleRecord, tampered: C
     cache HIT, never by field presence in the digest -- a test asserting "the field appears in the
     payload" passes against a fingerprint that ignores it entirely. Stores an entry keyed on the
     PRISTINE record's evidence_fingerprint through a real save_cache/load_cache round trip, then
-    asserts the fingerprint differs once the record on disk is the TAMPERED one. A stale HIT here is
-    exactly the exploit the mutation audit proved end-to-end for all five fields
-    (docs/research/14.phase6-gate-guarantee-mutation-audits.md G5-G7, G9-G10).
-
-    SCOPE, stated precisely because an earlier version of this docstring overstated it: these five
-    RECONSTRUCT `_evaluate_journal`'s hit test (`command.py:255`, `cached_entry[0] == fp and not
-    reverify`); they do not OBSERVE it. `_evaluate_journal` is never called here, and the round trip
-    carries no discriminating power of its own -- every one of the five mutants is killed by the
-    first assertion, `fp_tampered != fp_pristine`. It earns its place by pinning evidence_fp
-    round-trip fidelity, not by proving the wiring. The end-to-end wiring is pinned separately by
-    `test_tampered_record_misses_cache` in tests/test_engine_gate_export_cache.py, which asserts
-    `calls == [CYCLE_TS]`. The two compose: that one proves the digest gates the cache, these five
-    prove each field is in the digest. Do not read them as end-to-end coverage."""
+    asserts the fingerprint differs once the record on disk is the TAMPERED one."""
     fp_pristine = evidence_fingerprint(pristine)
     fp_tampered = evidence_fingerprint(tampered)
     assert fp_tampered != fp_pristine
@@ -181,38 +167,30 @@ def _assert_stale_entry_is_rejected(tmp_path, pristine: CycleRecord, tampered: C
 
 
 def test_evidence_fingerprint_pins_first_ts_via_stale_hit(tmp_path):
-    # Finding 5/G5-G6: replay_cycle reconciles freshly-read data against entry.first_ts and raises
-    # EngineJournalError on disagreement -- a fingerprint blind to first_ts would let a cached PASS
-    # survive a tamper a real replay would reject outright (the audit's B04 exploit, re-confirmed
-    # end-to-end through _evaluate_journal).
+    # replay_cycle reconciles freshly-read data against entry.first_ts and raises
+    # EngineJournalError on disagreement, so a fingerprint blind to first_ts would let a cached PASS
+    # survive a tamper a real replay would reject outright.
     pristine = _record()
     tampered = _record(snapshots=_tamper_entry(0, first_ts=pristine.snapshots[0].first_ts + timedelta(hours=1)))
     _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
 
 
 def test_evidence_fingerprint_pins_last_ts_via_stale_hit(tmp_path):
-    # Finding 6/G5-G6: same tamper class as first_ts (the audit's B05 exploit) -- the other half of
-    # the replay_cycle reconciliation window.
+    # The same tamper class as first_ts -- the other half of replay_cycle's reconciliation window.
     pristine = _record()
     tampered = _record(snapshots=_tamper_entry(0, last_ts=pristine.snapshots[0].last_ts + timedelta(hours=1)))
     _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
 
 
 def test_evidence_fingerprint_pins_pair_via_order_preserving_stale_hit(tmp_path):
-    # Findings 7/G9-G10 (spec D3): evidence_fingerprint sorts entries by (pair, grid) before
-    # digesting them, so an order-CHANGING pair tamper is masked -- the digest would change from the
-    # reordering alone even if `pair` were dropped from the payload entirely. That masking is
-    # exactly what fooled the first mutation audit into ruling pair/grid "equivalent mutants" (see
-    # docs/research/14.phase6-gate-guarantee-mutation-audits.md G9-G10) -- one non-distinguishing
-    # probe is not evidence an "equivalent mutant" ruling generalizes. "ETH" -> "FTH" is
-    # order-PRESERVING: FTH still sorts after the UNTAMPERED "ETH"/1440 entry, into the same slot
-    # "ETH" held (canonical order stays [1, 0, 3, 2]), so only tampering `pair` itself -- never the
-    # reordering side-channel -- can move this test. NOT "sorts after BTC": ETH/1440 is also present,
-    # and a tamper chosen by that weaker rule (e.g. "CTH") reorders to [1, 0, 2, 3] and is MASKED --
-    # the digest would then move from the reordering alone, passing even with `pair` dropped entirely.
-    # `path` is deliberately left at its pristine "/snap/ETH/240.parquet" value
-    # (dataclasses.replace, not _entry()) so this test isolates `pair` from finding 10's `path` pin
-    # below.
+    # Spec D3: evidence_fingerprint sorts entries by (pair, grid) before digesting them, so an
+    # order-CHANGING pair tamper is masked -- the digest would move from the reordering alone even
+    # if `pair` were dropped from the payload entirely. "ETH" -> "FTH" is order-PRESERVING: FTH
+    # still sorts after the UNTAMPERED "ETH"/1440 entry, into the same slot "ETH" held, so only
+    # tampering `pair` itself can move this test. NOT "sorts after BTC": ETH/1440 is also present,
+    # and a tamper chosen by that weaker rule (e.g. "CTH") reorders and is MASKED. `path` is
+    # deliberately left at its pristine value (dataclasses.replace, not _entry()) so this test
+    # isolates `pair` from the `path` pin below.
     pristine = _record()
     tampered = _record(snapshots=_tamper_entry(2, pair="FTH"))
     _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
@@ -230,10 +208,9 @@ def test_evidence_fingerprint_pins_grid_via_order_preserving_stale_hit(tmp_path)
 
 
 def test_evidence_fingerprint_pins_path_via_stale_hit(tmp_path):
-    # Finding 10/G7: `path` is the file a real replay actually reads content from. Repointing one
-    # entry's path at ANOTHER pair's parquet -- via dataclasses.replace, so pair/grid/content_hash/
-    # n_bars/first_ts/last_ts on that entry stay byte-identical -- isolates `path` specifically (the
-    # audit's B07 exploit: same stale-HIT shape as every field above).
+    # `path` is the file a real replay actually reads content from. Repointing one entry's path at
+    # ANOTHER pair's parquet -- via dataclasses.replace, so pair/grid/content_hash/n_bars/first_ts/
+    # last_ts on that entry stay byte-identical -- isolates `path`.
     pristine = _record()
     tampered = _record(snapshots=_tamper_entry(0, path=pristine.snapshots[2].path))  # BTC/240 repointed at ETH/240's file
     _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
@@ -269,7 +246,7 @@ def test_replay_fingerprint_covers_replay_code(tmp_path, monkeypatch):
 
 
 def test_replay_fingerprint_default_covers_the_real_files():
-    # No monkeypatching -- exercises the real, hard-coded file list against the actual repo tree.
+    # No monkeypatching -- exercises the real closure against the actual repo tree.
     fp = replay_fingerprint()
     assert isinstance(fp, str)
     assert len(fp) == 64
@@ -296,11 +273,7 @@ def test_replay_fingerprint_changes_when_a_live_gap_module_changes(tmp_path, mon
 
 
 def test_replay_fingerprint_changes_when_an_original_module_changes(tmp_path, monkeypatch):
-    # Findings 1-4: these four were in the hand-enumerated list from before the T0075 audit, but no
-    # test asserted the fingerprint actually responds to their bytes -- they were droppable from
-    # the tuple without failing anything. Same tmp-copy pattern as
-    # test_replay_fingerprint_changes_when_a_live_gap_module_changes above (never mutate real repo
-    # source).
+    # Same tmp-copy pattern as the live-gap test above: never mutate real repo source.
     for real_path in (
         gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq_system.py",
         gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq.py",
@@ -391,17 +364,11 @@ def _write(path, text):
 
 
 def test_replay_roots_is_pinned_as_the_full_ordered_tuple():
-    # Spec 00065 D1, same whole-tuple discipline as 00064 D1. Coverage is now DERIVED, so the roots
-    # are the only hand-maintained input left -- and therefore the only thing that can silently
-    # drift. Exact tuple equality catches dropping a root, reordering, or a fourth going unpinned.
-    #
-    # This pin is doing real work, and it is measured, not assumed: TWO of the three roots are
-    # currently REDUNDANT. Dropping concordance.py or dataset.py leaves the closure at all 54
-    # modules (both are reachable from command.py), so no coverage test can see them go. Only
-    # command.py is load-bearing today -- dropping it loses 8 modules. That redundancy is a fact
-    # about today's import graph, not a reason to trim the tuple: each root is an independent
-    # replay entry point, and an edit that stops command.py importing concordance would silently
-    # drop the whole replay core out of coverage if concordance were not also a root.
+    # Spec 00065 D1: coverage is DERIVED, so the roots are the only hand-maintained input left --
+    # and therefore the only thing that can silently drift. Exact tuple equality catches dropping a
+    # root, reordering, or a fourth going unpinned. A root redundant in today's import graph stays:
+    # each is an independent replay entry point, and an edit that stopped command.py importing
+    # concordance would drop the whole replay core out of coverage if concordance were not a root.
     assert gate_cache._REPLAY_ROOTS == (
         gate_cache._REPO_ROOT / "cli" / "engine" / "concordance.py",
         gate_cache._REPO_ROOT / "cli" / "engine" / "command.py",
@@ -410,10 +377,10 @@ def test_replay_roots_is_pinned_as_the_full_ordered_tuple():
 
 
 def test_replay_code_paths_contains_every_previously_enumerated_module():
-    # Test-list 3. The twelve paths _REPLAY_CODE_PATHS enumerated by hand before 00065 must all
-    # still be covered -- the closure REPLACES that list, it must not shrink it. A walk that
-    # collapsed (e.g. an edge-resolution bug returning nothing) fails here rather than silently
-    # under-invalidating the cache.
+    # The paths `_REPLAY_CODE_PATHS` enumerated by hand before 00065 must all still be covered --
+    # the closure REPLACES that list, it must not shrink it. A walk that collapsed (e.g. an
+    # edge-resolution bug returning nothing) fails here rather than silently under-invalidating the
+    # cache.
     covered = set(gate_cache._replay_code_paths())
     for rel in (
         ("cli", "portfolio", "crossfreq_system.py"),
@@ -433,27 +400,19 @@ def test_replay_code_paths_contains_every_previously_enumerated_module():
 
 
 def test_replay_code_paths_contains_the_re_export_layers():
-    # Test-list 3 / D5+D10 -- specific modules hand-enumeration MISSED. NOT an exhaustive pin on
-    # the re-export layers: that job belongs to
-    # test_closure_covers_every_module_the_replay_roots_actually_execute, which enumerates nothing.
-    # This list is regression-anchoring for the two SEPARATE ways a package __init__ enters the
-    # closure, which fail independently:
+    # The two SEPARATE ways a package __init__ enters the closure, which fail independently:
     #   - D5 (the first four): `from cli.pkg import X` resolving to the package __init__ as well as
-    #     to cli/pkg/X.py. cli/engine/concordance.py:24 binds the fast builder THROUGH
-    #     cli/portfolio/__init__.py; rebinding it there changed every verdict while leaving the
-    #     pre-00065 fingerprint byte-identical.
-    #   - D10 (the last two): ANCESTOR packages, which execute on import of any leaf beneath them
-    #     and which the first cut of the walk omitted entirely -- exploitable the same way, at a
-    #     byte-identical fingerprint, with the whole suite green.
-    # Both were added after a pin that named only the modules someone had already thought of.
+    #     to cli/pkg/X.py. cli/engine/concordance.py binds the fast builder THROUGH
+    #     cli/portfolio/__init__.py, so rebinding it there changes every verdict while leaving a
+    #     leaf-only fingerprint byte-identical.
+    #   - D10 (the last two): ANCESTOR packages, which execute on import of any leaf beneath them.
     covered = set(gate_cache._replay_code_paths())
     for rel in (
         ("cli", "portfolio", "__init__.py"),
         ("cli", "risk", "__init__.py"),
         ("cli", "alpha", "__init__.py"),
         ("cli", "engine", "errors.py"),
-        # D10 ancestors -- on the same replay import path as the four above, and absent from both
-        # the closure and this test until the ancestor gap was found at review.
+        # D10 ancestors -- on the same replay import path as the four above.
         ("cli", "engine", "__init__.py"),
         ("cli", "ohlc", "__init__.py"),
     ):
@@ -513,12 +472,10 @@ def test_unparseable_module_is_still_digested(tmp_path, monkeypatch):
 
 
 def test_replay_code_paths_does_not_collapse(tmp_path):
-    # A floor, not a pin of the exact set: the closure measures 61 modules (54 before 00065 D10's
-    # ancestor fix), and every contains-test above would still pass if the walk collapsed to just
-    # the ~16 modules they name. This catches that collapse. It is deliberately loose -- adding or
-    # removing an import in cli/ legitimately moves the count, and this must not become a tripwire
-    # on ordinary edits; the exact-coverage guarantee is
-    # test_closure_covers_every_module_the_replay_roots_actually_execute's job, not this one's.
+    # A floor, not a pin of the exact set: every contains-test above would still pass if the walk
+    # collapsed to just the modules they name, and this catches that collapse. Deliberately loose --
+    # adding or removing an import in cli/ legitimately moves the count, and this must not become a
+    # tripwire on ordinary edits.
     assert len(gate_cache._replay_code_paths()) >= 40
 
 
@@ -547,11 +504,6 @@ def test_rebinding_the_fast_builder_in_the_portfolio_init_moves_the_fingerprint(
     # build_crossfreq_system_fast`, so every replay binds the fast builder THROUGH
     # cli/portfolio/__init__.py. Rebinding the name there to the VERIFIED daily-oracle builder makes
     # every replay compute a different verdict, without touching either builder's own module.
-    #
-    # Measured against the pre-00065 twelve-path enumeration, this exact edit was BYTE-IDENTICAL:
-    # sha256 484ae6ea48d61739d95fdba9a23c48560082ddeb38a71b706177ab031f9fdb84 both before and after
-    # it, with all 31 tests in this file green -- cli/portfolio/__init__.py was simply not one of
-    # the twelve hashed paths.
     tree = _clone_repo_cli(tmp_path, monkeypatch)
     init = tree / "cli" / "portfolio" / "__init__.py"
 
@@ -621,13 +573,11 @@ def test_from_cli_pkg_import_x_resolves_to_both_the_package_and_the_submodule(tm
     )
 
 
-# D8, half one: the EXCEPTION TYPE is the contract. `_evaluate_journal` degrades to the no-cache
-# path by catching OSError specifically (command.py:224), so a broken module must surface as an
-# OSError and nothing else -- any other type propagates through that guard and aborts a gate-export
-# run over what is only a cache optimization. The walk itself never raises; it is the digest's
-# read_bytes that fails, BY DESIGN, so a module that cannot be read can never be silently skipped.
-# (Half two -- that the caller actually degrades -- is pinned end-to-end against these same two
-# breakages in tests/test_engine_gate_export_cache.py.)
+# D8: the EXCEPTION TYPE is the contract. `_evaluate_journal` degrades to the no-cache path by
+# catching OSError specifically, so a broken module must surface as an OSError and nothing else --
+# any other type propagates through that guard and aborts a gate-export run over what is only a
+# cache optimization. The walk itself never raises; it is the digest's read_bytes that fails, BY
+# DESIGN, so a module that cannot be read can never be silently skipped.
 
 
 def test_replay_fingerprint_raises_oserror_when_a_root_is_missing(tmp_path, monkeypatch):
@@ -776,17 +726,11 @@ def test_load_cache_degrades_never_raises(tmp_path):
 
 
 def test_v1_cache_is_rejected_wholesale(tmp_path):
-    # D6 (finding 14/G14): CACHE_SCHEMA_VERSION 1 -> 2 (verified_at changes the entry shape). A v1
-    # file on disk must be rejected wholesale -- no partial read of its (now-shaped-differently)
-    # entries -- forcing one full replay and rewrite, per the existing fail-open contract (never a
-    # migration). The entry below is deliberately v2-SHAPED (verified_at present): a REAL v1 file
-    # would lack it and die on a KeyError inside the entry loop regardless of whether the explicit
-    # schema_version check fires at all -- which is exactly how this test used to pass for the
-    # wrong reason (the audit's `!=` -> `>` mutation slips a v1-declaring file straight past a
-    # KeyError-shaped payload undetected: `1 > 2` is False, so the check doesn't fire, but the
-    # entry loop then dies on the missing verified_at anyway, and the test still sees rejected).
-    # v2-shaping the row isolates the schema_version check as the ONLY thing that can reject this
-    # file, so the test now fails for the right reason.
+    # D6: a v1 file on disk is rejected wholesale -- no partial read of its differently shaped
+    # entries -- forcing one full replay and rewrite, per the fail-open contract (never a
+    # migration). The row below is deliberately v2-SHAPED (verified_at present): a real v1 row would
+    # lack it and die on a KeyError inside the entry loop whether or not the schema_version check
+    # fires, so v2-shaping isolates that check as the only thing that can reject this file.
     replay_fp = "fixed-replay-fp"
     path = tmp_path / "gate-cache.json"
     v1_payload = {
@@ -815,14 +759,8 @@ def test_v1_cache_is_rejected_wholesale(tmp_path):
 def test_higher_schema_version_is_also_rejected_wholesale(tmp_path):
     # The schema gate must reject ANY mismatched version, not just an older one -- a v2-shaped file
     # (verified_at present, so nothing else could reject it) declaring a version NEWER than
-    # CACHE_SCHEMA_VERSION exercises the other direction, which a `!=` -> `<` mutation (permissive
-    # toward newer versions) would silently accept while still passing the v1 test above.
-    # NOT a coverage gap being filled: test_load_cache_degrades_never_raises already carries a
-    # CACHE_SCHEMA_VERSION + 1 case and already kills `<`. This is a dedicated, named pin for the
-    # guarantee, where that one is a single bullet inside a six-case omnibus named for a different
-    # guarantee -- and it uses a POPULATED entries list where the omnibus uses [], so a mutant that
-    # rejects the version but still serves rows cannot hide behind an empty file. Recorded so the
-    # next reader does not mistake this for coverage that was previously missing.
+    # CACHE_SCHEMA_VERSION exercises the other direction. The entries list is POPULATED here, so a
+    # mutant that rejects the version but still serves rows cannot hide behind an empty file.
     replay_fp = "fixed-replay-fp"
     path = tmp_path / "gate-cache.json"
     v_next_payload = {
@@ -849,13 +787,11 @@ def test_higher_schema_version_is_also_rejected_wholesale(tmp_path):
 
 
 def test_load_cache_rejects_wholesale_on_one_malformed_row(tmp_path):
-    # Finding 11/G8 (spec D5): every existing fail-open test corrupts the file BEFORE the entry
-    # loop (truncated JSON, wrong schema, replay_fp mismatch, an unreadable path) -- this is the
-    # ONE path where "discard the file" and "skip the bad row" diverge: a structurally valid,
-    # correct-schema file with one good row and one malformed row (an unparseable cycle_ts). The
-    # malformed row's `datetime.fromisoformat` call is not individually guarded, so it propagates
-    # out of the entry loop into load_cache's own except clause and discards the WHOLE file -- the
-    # good row must never be served alone.
+    # Spec D5, the one path where "discard the file" and "skip the bad row" diverge: a structurally
+    # valid, correct-schema file with one good row and one malformed row (an unparseable cycle_ts).
+    # The malformed row's `datetime.fromisoformat` call is not individually guarded, so it
+    # propagates out of the entry loop into load_cache's own except clause and discards the WHOLE
+    # file.
     replay_fp = "fixed-replay-fp"
     path = tmp_path / "gate-cache.json"
 
@@ -884,7 +820,7 @@ def test_load_cache_rejects_wholesale_on_one_malformed_row(tmp_path):
 
 
 def test_load_cache_never_raises_on_wrong_top_level_type(tmp_path):
-    # D5 (finding 15/G15): valid JSON that parses fine but is the wrong top-level type -- a list,
+    # D5: valid JSON that parses fine but is the wrong top-level type -- a list,
     # not a dict -- raises TypeError on `payload["schema_version"]`; caught by the same except
     # tuple as every other fail-open path here, degrading to an empty, rejected cache rather than
     # propagating out of load_cache.
@@ -930,7 +866,7 @@ def test_save_cache_is_atomic(tmp_path, monkeypatch):
 
 
 def test_save_cache_never_raises_on_mixed_key_types(tmp_path):
-    # D5/D6 (finding 16/G16): save_cache's `sorted(cache.entries.items())` compares keys; a cache
+    # D5/D6: save_cache's `sorted(cache.entries.items())` compares keys; a cache
     # holding both a datetime and a str key raises TypeError from the comparison itself ("'<' not
     # supported between instances of 'str' and 'datetime.datetime'") -- the `TypeError` arm of
     # `except (OSError, TypeError)` is reachable and load-bearing, not dead code. Must degrade
@@ -1043,18 +979,6 @@ def test_closure_covers_every_module_the_replay_roots_actually_execute():
     enumerates nothing. Every other coverage test names the modules it expects, so it can only ever
     catch a gap someone already thought of; this one asks Python what actually executes and demands
     the closure be a superset.
-
-    It exists because the first cut of the closure walk failed it. `_resolve_module` mapped a dotted
-    name to the leaf file only, but importing `cli.engine.command` EXECUTES `cli/__init__.py` and
-    `cli/engine/__init__.py` first. SEVEN modules ran on every replay while unhashed -- the four
-    ancestor `__init__.py` files, plus cli/ohlc/{ingest,qa,reconstruct}.py, which became traversable
-    only once cli/ohlc/__init__.py entered the closure -- and it was
-    exploitable exactly like the hand-enumerated list before it: rebinding
-    `build_crossfreq_system_fast` in `cli/engine/__init__.py` made every replay run the VERIFIED
-    daily-oracle builder -- a different verdict -- at a byte-identical fingerprint, with all 64
-    tests in this file and its sibling passing. That is the THIRD round of the same
-    under-invalidation defect (hand list -> D9's two files -> ancestor packages), and enumerating
-    pins missed all three.
 
     Sub-process, not this one: pytest has already imported far more of `cli` than a replay does, so
     an in-process `sys.modules` read would silently pass by over-counting.

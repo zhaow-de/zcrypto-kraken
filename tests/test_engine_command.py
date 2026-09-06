@@ -1,8 +1,6 @@
-"""CLI tests for the `zcrypto engine` sub-app (spec 00041 SS The CLI): CliRunner over every
-subcommand with tmp dirs and monkeypatched seeder/cycle/builder stubs -- no network, no dataset,
-no live node. `run`'s fail-fast checks and its handling of a start the node could not complete are
-exercised against a stub node; nautilus lazy-import stays a subprocess check at the bottom; the
-attended soak is the live smoke."""
+"""CLI tests for the `zcrypto engine` sub-app (spec 00041 SS The CLI): CliRunner over the
+subcommands against tmp dirs and stubbed seeder, cycle, builder and node -- no network, no dataset,
+no live node."""
 
 import ast
 import json
@@ -552,13 +550,9 @@ def test_report_empty_journal_is_a_zero_streak_not_an_error(tmp_path, monkeypatc
 
 
 def test_execution_records_do_not_change_the_gate_report(tmp_path, monkeypatch):
-    """The load-bearing invariant, pinned at the real call sites rather than against
-    `evaluate_gate` directly (which never globs, so a test against it proves nothing): drive
-    `report` -> `_evaluate_journal` -> the `_journal_artifacts` call-site globs -> `evaluate_gate`
-    over a journal of clean days, once with no execution records and once with a refusing verdict
-    written beside every cycle record, and require byte-identical output. If a future call site
-    widens its glob to something that also sweeps up `exec-*.json`, this is the test that catches
-    the streak silently resetting on a deliberate refusal to trade."""
+    """Execution records must not change the gate report. Pinned at the real call sites rather than
+    against `evaluate_gate` directly, which never globs: if a call site widens its glob to something
+    that also sweeps up `exec-*.json`, the streak silently resets on a deliberate refusal to trade."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     day1 = datetime(2026, 7, 7, tzinfo=UTC)
@@ -614,7 +608,7 @@ def test_help_does_not_import_nautilus():
 
 def test_report_classifies_a_corrupt_snapshot_without_crashing(tmp_path, monkeypatch):
     # A truncated snapshot parquet (the partial-rsync case) is bad evidence -> validation-failed
-    # CycleOutcome, streak reset, no traceback (a review hardening item).
+    # CycleOutcome, streak reset, no traceback.
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     day = datetime(2026, 7, 7, tzinfo=UTC)
@@ -688,10 +682,9 @@ def _run_env(monkeypatch, tmp_path, *, symbols=BASKET) -> None:
     _write_basket_store(engine_cfg.store_dir, symbols)
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node())
-    # Stubbed for EVERY `run` test, not just the two that assert on it: the real re-arm would
-    # re-point this pytest process's own faulthandler at fd 2 (pytest's plugin aims it at its
-    # capture), and an earlier default-`sys.stderr` form left it switched OFF for the rest of the
-    # session -- silently removing native-crash dumps from every later test in the process.
+    # Stubbed for EVERY `run` test: the real re-arm re-points this pytest process's own faulthandler
+    # at fd 2 (pytest's plugin aims it at its capture), removing native-crash dumps from every later
+    # test in the process.
     monkeypatch.setattr(command, "faulthandler", types.SimpleNamespace(disable=lambda: None, enable=lambda **_: None))
 
 
@@ -761,12 +754,10 @@ def test_run_logs_the_effective_config_line(tmp_path, monkeypatch):
 
 def test_run_re_arms_faulthandler_immediately_after_the_node_is_built(tmp_path, monkeypatch):
     """Nothing else in the engine arms faulthandler, so without this call a native abort kills the
-    process with exit 134 and an empty stderr. Both calls and their order are pinned: it lands
-    before `node.run()`, and `disable()` precedes `enable()` (`enable()` installs the fatal-signal
-    handlers only while faulthandler considers itself disabled, so the pair is what makes this call
-    install its own whatever the process's prior state). The `file=2` is pinned too -- see the
-    sibling test for the defect the default form causes. `tests/test_engine_node.py` measures the
-    underlying library behaviour this rests on."""
+    process with exit 134 and an empty stderr. `disable()` precedes `enable()` because `enable()`
+    installs the fatal-signal handlers only while faulthandler considers itself disabled, so the
+    pair is what makes this call install its own whatever the process's prior state.
+    `tests/test_engine_node.py` measures the underlying library behaviour this rests on."""
     _run_env(monkeypatch, tmp_path)
     calls: list[object] = []
     monkeypatch.setattr(
@@ -866,12 +857,10 @@ def test_exec_status_prints_the_level_and_every_reason(tmp_path, monkeypatch):
 
     exec_dir(tmp_path).mkdir(parents=True)
     (exec_dir(tmp_path) / "restart-hold").touch()
-    # --state-dir makes the config's journal_dir irrelevant here; the venue read is stubbed so no
-    # test touches the network. Patch the symbol as imported INTO command.py, not at its source.
-    # The status "stubbed-by-test" is a sentinel no real reader can produce (Kraken's own strings,
-    # or "unreachable"/"unreadable") -- unlike "unreachable" it cannot pass by accident if the
-    # `venue_reader=read_system_status` seam were ever dropped from exec_status, in which case this
-    # test would silently start making a real network call instead of catching the regression.
+    # Patch the symbol as imported INTO command.py, not at its source. "stubbed-by-test" is a
+    # sentinel no real reader can produce, so -- unlike "unreachable" -- it cannot pass by accident
+    # if the `venue_reader=read_system_status` seam were ever dropped from exec_status and this test
+    # started making a real network call.
     monkeypatch.setattr(
         "cli.engine.command.read_system_status",
         lambda *, now, opener=None: VenueStatus(status="stubbed-by-test", ok=False, observed_at=now),
@@ -1064,10 +1053,9 @@ def test_probe_plan_check_refuses_a_qty_below_ordermin(tmp_path, monkeypatch):
 
 
 def test_probe_plan_check_refuses_a_qty_off_the_lot_step(tmp_path, monkeypatch):
-    # Deliberately ABOVE ordermin, so only the alignment check can produce the refusal -- with a qty
+    # Deliberately ABOVE ordermin, so only the alignment check can produce the refusal: with a qty
     # that fails both, the exit code and the printed "lot step <n>" floor line are identical whether
-    # the alignment check runs or not, and the test proves nothing (measured: that shape survived a
-    # mutation disabling the check entirely).
+    # the alignment check runs or not.
     _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR", ordermin=0.5, lot_step=0.1)})
     plan = _write_plan(tmp_path, [_intent(action="close", side="sell", notional_eur=None, qty=0.65)])
 
@@ -1220,12 +1208,11 @@ _NODE_PLUMBING = frozenset({"_raises"})
 
 
 def test_the_node_stub_offers_nothing_the_real_type_lacks():
-    """The direction the test above cannot cover. A stub MISSING something production reads fails
-    loudly the first time a test runs it. A stub OFFERING something the real type lacks fails
-    NOTHING -- every test simply believes the fabricated attribute, and production is the only place
-    the read comes back wrong. This file has already paid for that asymmetry once, with a stub node
-    carrying an attribute the library never had: production raised on the read, every test here
-    stayed green, and the raise landed on the live trade path."""
+    """The direction the test above cannot cover: a stub OFFERING something the real type lacks
+    fails NOTHING -- every test simply believes the fabricated attribute, and production is the only
+    place the read comes back wrong. This file has already paid for that asymmetry once, with a stub
+    node carrying an attribute the library never had while the raise landed on the live trade
+    path."""
     from nautilus_trader.live import LiveNode
 
     stub = _fake_node()

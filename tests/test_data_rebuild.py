@@ -164,17 +164,10 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     payload = json.loads((out_root / "point-in-time-universe.json").read_text())
     assert set(payload) == {"as_of", "entries", "escalate", "params", "provenance", "selected", "spread_cap"}
     assert payload["selected"] == ["BTC/EUR", "ETH/BTC"]
-    # Pins that the artifact's DECLARED window is the module constant, so the two cannot drift
-    # apart in the payload. It does NOT pin the constant->computation wiring: both sides of this
-    # assertion move together, so removing `window=` from the quote_volume_in_eur call would still
-    # pass. That wiring is correct at HEAD; pinning it needs a fixture whose last 30 rows differ
-    # from its last 20 (T0093 review).
     assert payload["params"]["median_quote_volume_window_days"] == rebuild._UNIVERSE_VOLUME_WINDOW_DAYS
     assert payload["provenance"]["ohlc_dataset_hash"] == "deadbeef"
     assert len(payload["provenance"]["snapshot_sha256"]) == 64
     # T0093: the artifact must name the set it was ACTUALLY built from, and how fresh that set was.
-    # The 2026-07-07 artifact cited `data/ohlc` by hash alone; when that directory was retired the
-    # citation became unresolvable, and nothing in the file said which window the volumes covered.
     assert payload["provenance"]["ohlc_dataset_dir"] == "ohlc-full"
     # The STALEST bar (ETH/BTC's 07-14), not the basket's newest (BTC/EUR's 07-18): only the stalest
     # supports "every symbol's window ends at or after this". Publishing max would fail here.
@@ -184,11 +177,9 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
 def test_refresh_universe_refuses_a_basket_with_no_manifest(tmp_path, monkeypatch):
     """A missing `manifest.json` must fail closed, never emit `ohlc_dataset_hash: ""` (T0094).
 
-    `backfill_basket` always writes a manifest, so its absence means a broken or half-written set --
-    exactly when a silent empty hash is most harmful. An empty string is also the wrong shape for
-    "unknown": it reads as a value and compares EQUAL across two entirely different broken builds,
-    so two artifacts could agree on provenance while sharing none. A directory name is not an
-    identity (that is T0093's whole story); the hash is what makes a citation resolvable.
+    `backfill_basket` always writes a manifest, so its absence means a broken or half-written set. An
+    empty string is the wrong shape for "unknown": it reads as a value and compares EQUAL across two
+    entirely different broken builds, so two artifacts could agree on provenance while sharing none.
     """
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
@@ -261,14 +252,9 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
     # The EUR leg carries the calibrated number at the reference notional -- not None, not 0.0.
     expected = round(effective_spread_bps("BTC/EUR", SPREAD_REFERENCE_NOTIONAL_EUR), 3)
     assert entries["BTC/EUR"] == expected
-    # INVERTED by spec 00085: the BTC-quoted leg is now calibrated, so it carries a real number
-    # where it previously carried None. This assertion is the re-key's proof at the production
-    # boundary -- with the base-keyed table `_refresh_universe` skipped the leg entirely, and with a
-    # base-keyed lookup it would have priced a EUR notional against a BTC ladder instead.
-    #
-    # The unevaluated path itself is NOT lost with this flip: an uncalibrated pair being recorded
-    # rather than auto-failed is pinned directly by
-    # test_universe_rules.py::test_an_uncaptured_pair_is_recorded_as_unevaluated_and_NOT_rejected.
+    # The BTC-quoted leg is calibrated too (spec 00085), and this assertion is the re-key's proof at
+    # the production boundary: with the base-keyed table `_refresh_universe` skipped the leg
+    # entirely, and with a base-keyed lookup it would price a EUR notional against a BTC ladder.
     assert entries["ETH/BTC"] == round(effective_spread_bps("ETH/BTC", SPREAD_REFERENCE_NOTIONAL_EUR), 3)
     assert payload["spread_cap"]["max_spread_bps"] == DEFAULT_MAX_SPREAD_BPS
     assert payload["spread_cap"]["reference_notional_eur"] == SPREAD_REFERENCE_NOTIONAL_EUR
@@ -277,11 +263,9 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
 
 def test_refresh_universe_refuses_a_stale_ohlc_set(tmp_path, monkeypatch):
     """T0093: the volume floor is a TRAILING 30-day median, so it is only meaningful if the dataset
-    reaches the present. `ohlc-full` stops where the OHLCVT dumps stop (2026-03-31 in the live set)
-    while the v0 REST set it replaced was live-fetched -- so this path can compute a "30-day median"
-    over a window months in the past and shrink the universe for what looks like a liquidity move.
-    Measured on the live data: AVAX/EUR reads 132,274.82 against the 150,000 floor and drops out,
-    with `escalate` staying False because 11 >= MIN_NAMES. Fail closed instead of selecting quietly.
+    reaches the present. `ohlc-full` stops where the OHLCVT dumps stop, so this path can compute a
+    "30-day median" over a window months in the past and shrink the universe for what looks like a
+    liquidity move. Fail closed instead of selecting quietly.
     """
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
@@ -435,10 +419,7 @@ def test_a_stray_non_stamp_directory_never_outranks_a_dated_source(tmp_path):
 
 def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(tmp_path, monkeypatch):
     """The WIRING, not just the resolver in isolation: `_refresh_universe` must call
-    `resolve_ohlc_source(ctx.data_root)`, not `_require_ohlc_full(ctx)` directly. Every other
-    `_refresh_universe` test in this file builds only an `ohlc-full` tree, so they all exercise the
-    resolver's fallback branch and would stay green even if the production line were reverted --
-    proven by hand: reverting that one line left the full suite passing. Here `ohlc-full` is stale
+    `resolve_ohlc_source(ctx.data_root)`, not `_require_ohlc_full(ctx)` directly. Here `ohlc-full` is stale
     (refuses if read) and a fresh, complete stamped sibling is what must actually get read, so a
     revert flips this test from a passing rebuild to an unhandled staleness DataSyncError."""
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
@@ -543,12 +524,9 @@ def test_rebuild_ohlc_reach_fails_closed_without_a_live_canonical(tmp_path, monk
 def test_every_rebuildable_dataset_is_an_authored_set():
     """A dataset this node can REBUILD is one it AUTHORS, so it must also be publishable.
 
-    Guards a real, silent failure mode. `authored_sets` drives `data push`; `push_hot` raises only
-    when a listed set is missing from DISK, never when a set is merely absent from the list. So a
-    dataset dropped from `authored_sets` is never pushed, the ops node can never `data fetch` it,
-    and NOTHING errors. That is exactly what a careless merge produces: two branches each appending
-    a different dataset to this one-line array conflict, and a resolution keeping only one side
-    looks clean. This assertion is what makes that loud.
+    `authored_sets` drives `data push`; `push_hot` raises only when a listed set is missing from DISK,
+    never when a set is merely absent from the list. So a dataset dropped from `authored_sets` is
+    never pushed, the ops node can never `data fetch` it, and NOTHING errors.
 
     The converse is deliberately NOT asserted -- `authored_sets` may legitimately hold sets that are
     not rebuildable (e.g. `ohlc-holdout-*`, a frozen one-off with a spent look budget).

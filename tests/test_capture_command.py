@@ -47,9 +47,7 @@ def test_default_pairs_raises_clear_error_on_malformed_universe_file(tmp_path):
 @pytest.mark.skipif(not _REPO_UNIVERSE.exists(), reason="generated (gitignored) universe JSON absent — see docs/universe/*.md")
 def test_default_pairs_from_local_universe_file():
     # A local sanity check on the real generated universe file when present: 12 selected symbols,
-    # 10 of them EUR-quoted (the "EUR majors"). Skips in CI / fresh checkouts (the file is a
-    # gitignored generated artifact); _default_pairs' logic itself is covered by the synthetic
-    # test_default_pairs_filters_to_eur_quoted above.
+    # 10 of them EUR-quoted (the "EUR majors").
     pairs = _default_pairs(_REPO_UNIVERSE)
     assert len(pairs) == 10
     assert all(p.endswith("/EUR") for p in pairs)
@@ -66,14 +64,9 @@ def test_newest_stamped_set_wins(tmp_path):
 
 
 def test_the_frozen_legacy_set_is_no_longer_a_fallback(tmp_path):
-    """Retired 2026-08-13, once `universe-20260813` was published and this resolver selected it.
-
-    The unstamped directory cannot be updated through the additive transport, so it is frozen at its
-    2026-07-07 content -- falling back to it would hand a six-week-old basket to the caller as if it
-    were current, which is a resolution bug wearing the costume of a successful read. A present
-    legacy set must therefore NOT satisfy the lookup: the assertion is that it raises even though the
-    old path exists and is readable, which is the only shape that distinguishes retirement from a
-    plain missing-file error.
+    """The unstamped directory cannot be updated through the additive transport, so it is frozen: a
+    fall-back would hand a stale basket to the caller as if it were current. A present legacy set must
+    therefore RAISE, not merely be absent.
     """
     legacy = tmp_path / "universe"
     legacy.mkdir()
@@ -133,9 +126,8 @@ def test_capture_help_lists_options():
 
 
 class _FakeClient:
-    """Replaces `CaptureClient` in `cli.capture.command` for an end-to-end wiring test: yields one
-    correctly-in-sync book snapshot + one trade, then hangs — forcing the `--duration` timeout path
-    to be what stops the run, exercising the finalize-on-shutdown behavior."""
+    """Replaces `CaptureClient`: yields one correctly-in-sync book snapshot and one trade, then hangs,
+    so the `--duration` timeout is what stops the run."""
 
     last_instance = None
 
@@ -185,10 +177,9 @@ class _FakeClient:
 
 
 class _CrashingFakeClient:
-    """A client whose `stream()` blows up mid-run — simulating a bug in message handling. The
-    supervisor (systemd/Docker `restart: unless-stopped`, per the T0003 design) is what's supposed
-    to bring capture back; that only works if the crash actually propagates instead of being
-    silently swallowed by the `--duration` timeout path."""
+    """A client whose `stream()` blows up mid-run: the supervisor (`restart: unless-stopped`, per the
+    T0003 design) only brings capture back if the crash propagates instead of being swallowed by the
+    `--duration` timeout path."""
 
     def __init__(self, pairs, depth):
         pass
@@ -240,10 +231,9 @@ class _CrashAfterDataFakeClient:
 
 
 def test_a_consumer_crash_still_flushes_every_writer_at_shutdown(tmp_path, monkeypatch):
-    # T0032 corollary: a task that died with a non-CancelledError re-raises its corpse's exception
-    # at the shutdown `await task` — pre-fix that escaped `_run`'s finally BEFORE the writer-close
-    # loop, so a crash lost up to flush_rows buffered rows per stream ON TOP of itself. The crash
-    # must still propagate (the supervisor is what restarts capture), but every writer flushes first.
+    # T0032 corollary: a task that died with a non-CancelledError re-raises its corpse's exception at
+    # the shutdown `await task`; the crash must still propagate (the supervisor restarts capture), but
+    # every writer flushes first.
     monkeypatch.setattr("cli.capture.command.CaptureClient", _CrashAfterDataFakeClient)
     result = runner.invoke(
         app,
@@ -329,10 +319,8 @@ def test_capture_end_to_end_writes_segments_with_fake_client(tmp_path, monkeypat
 
 
 # --- T0032: a disk-watermark breach must STOP the dead-man ping ------------------------------
-#
-# On breach the daemon stops writing every row (_handle_book_message / _handle_trade_message
-# return early) but the WS stays connected and no gap opens -- so without this guard the
-# healthchecks.io dead-man keeps reporting GREEN while the unbackfillable L2 stream is lost.
+# On breach the handlers return early while the WS stays connected and no gap opens, so an ungated
+# dead-man keeps reporting GREEN while the unbackfillable L2 stream is lost.
 
 
 class _StubClient:
@@ -381,8 +369,6 @@ def test_healthcheck_withheld_when_disk_watermark_breached(monkeypatch):
 def test_healthcheck_withheld_when_disk_probe_cannot_measure(monkeypatch):
     # T0032(c): while the probe is failing, `breached` freezes at its last (green) value -- so the ping
     # must be gated on `measurable` too, or a disk that fills DURING the outage keeps pinging green.
-    # This pins the `and watermark.measurable` wiring in _healthcheck_loop directly: without it, a probe
-    # outage over a healthy-looking `breached` would keep pinging.
     from cli.capture import command as cmd
     from cli.capture.gap_monitor import DiskWatermark, GapMonitor
 
@@ -407,8 +393,7 @@ def test_healthcheck_withheld_when_disk_probe_cannot_measure(monkeypatch):
 def test_disk_watermark_loop_books_the_breach_into_gap_accounting():
     # T0032: withholding the dead-man ping PAGES the operator, but the lost time must ALSO reach
     # GapMonitor's gap_seconds -- the exit-bar metric -- or the automated bar reads clean for a window
-    # that actually lost data. The watermark loop opens the dedicated breach window on a breach and
-    # closes it when the disk clears, independent of the ping-withholding.
+    # that actually lost data.
     from cli.capture import command as cmd
     from cli.capture.gap_monitor import DiskWatermark, GapMonitor
 
@@ -430,11 +415,9 @@ def test_disk_watermark_loop_books_the_breach_into_gap_accounting():
 
 
 def test_disk_watermark_loop_survives_a_backward_clock_step_across_a_breach(monkeypatch):
-    # T0032: a breach opens; chrony steps the wall clock BACK past the window's start; the disk
-    # clears; then a SECOND real breach. Pre-fix, end_watermark_gap raised on the stepped clock and
-    # the loop task died silently (nothing awaits it until shutdown): watermark.check() never ran
-    # again, breached froze at False, and the dead-man kept pinging green while the second breach
-    # dropped every write — the exact silent death this loop exists to prevent.
+    # T0032: a backward clock step must not kill the loop task. Nothing awaits it until shutdown, so
+    # `watermark.check()` would never run again, `breached` would freeze at False, and the dead-man
+    # would keep pinging green through the next real breach.
     from cli.capture import command as cmd
     from cli.capture.gap_monitor import DiskWatermark, GapMonitor
 
@@ -497,12 +480,9 @@ def test_disk_watermark_loop_survives_a_failing_usage_probe(monkeypatch):
 
 
 # --- T0036: exactly ONE process may write the segment tree ---------------------------------------
-#
 # `SegmentWriter._flush_buffer` derives the next part sequence from the hour directory and names the
-# part deterministically, so two processes pick the SAME sequence and write the SAME file — shredding
-# each other's rows (measured: 70 of 120 destroyed). Within one process the 20 writers are safe
-# (disjoint pair/kind roots); nothing prevented a SECOND process — an overlapping restart, or a human
-# running `zcrypto capture` beside the service.
+# part deterministically, so two processes pick the SAME sequence and shred each other's rows. Within
+# one process the writers are safe (disjoint pair/kind roots); nothing prevented a SECOND process.
 
 _TAKE_THE_LOCK = """
 import sys
@@ -533,11 +513,9 @@ def test_a_second_os_process_cannot_take_the_segment_tree_lock(tmp_path):
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the directory's write bit")
 def test_an_unwritable_data_dir_does_not_crash_loop_the_daemon(tmp_path):
-    # The lock must not re-create the crash loop the `.tmp` cleanup guard just removed. On a
-    # read-only remount — the aftermath of the very ENOSPC condition DiskWatermark exists for — the
-    # lockfile cannot be created; under `restart: always` a raise there loops the daemon forever on
-    # exactly the failure we most need it to survive and REPORT. An unwritable disk has nothing to
-    # corrupt, so the lock is skipped, loudly, and the daemon runs (its writes fail loudly too).
+    # On a read-only remount the lockfile cannot be created, and under `restart: unless-stopped` a
+    # raise there loops the daemon forever on the very failure it most needs to survive and REPORT. An
+    # unwritable disk has nothing to corrupt, so the lock is skipped, loudly, and the daemon runs.
     tmp_path.chmod(0o500)
     try:
         with single_instance_lock(tmp_path):  # must not raise

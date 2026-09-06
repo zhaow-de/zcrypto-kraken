@@ -1,12 +1,7 @@
 """Guard: the ops verify-replay runner must publish the counts its alerting now reads, and must
 ping the dead-man on RUN success rather than on exit code (spec 00077 D5).
 
-The pre-00077 shape gated the ping on `rc == 0`. Once any bad hour exists `rc` is 1 forever, so the
-ping is withheld forever and healthchecks.io pages forever -- the same defect the exit-code alert
-had, in a second channel. These tests exist to keep that from coming back.
-
-`trim_blocks=True, lstrip_blocks=False` mirrors Ansible's own Jinja defaults, matching
-`test_infra_archive_pull_template.py`."""
+`trim_blocks=True, lstrip_blocks=False` mirrors Ansible's own Jinja defaults."""
 
 import logging
 import os
@@ -80,24 +75,22 @@ def test_every_series_is_emitted_with_help_and_type(series):
 
 
 def test_the_ping_gates_on_run_ok_not_on_exit_code():
-    """spec 00077 D5 -- the load-bearing fix. Findings are a data fact; liveness is a run fact.
+    """spec 00077 D5 -- the dead-man ping gates on run_ok, not on the exit code.
 
-    Assert on the literal `if` line that guards `curl`, not a wide substring window around it: the
-    D5 comment and the `ops_verify_replay_run_ok` printf line both contain the word "run_ok", so a
-    loose "run_ok appears somewhere nearby" check is satisfied by prose and never actually inspects
-    the gate -- deleting the gate entirely (`if [ -n "$URL" ]; then`) still passed that shape of
-    assertion (review round 1, finding 1)."""
+    Assert on the literal `if` line that guards `curl`, not a substring window around it: the D5
+    comment and the `ops_verify_replay_run_ok` printf line both contain the word "run_ok", so a
+    loose "run_ok appears somewhere nearby" check is satisfied by prose and never inspects the
+    gate."""
     out = _render()
     assert 'if [ "$run_ok" -eq 1 ] && [ -n "$URL" ]; then' in out, "the dead-man ping must gate on run_ok"
 
 
 def test_the_docker_run_is_captured_not_piped():
     """`set -u` without `pipefail`: `docker run | tee` reports tee's status, so every failure
-    would read as success. The precedent (archive-pull.sh.j2) captures to a file and cats it back.
+    would read as success.
 
-    The naive form of this test cannot fail: the T0060 comment block contains the words "docker
-    run", so a first-match line lookup finds prose, and the real command spans continuation lines
-    so a pipe would sit on a later line anyway. Join the continuations and assert on the redirect."""
+    Comment lines are excluded and continuations joined before the assertion: the template's header
+    comment also spells `archive verify-replay`, and the real command spans continuation lines."""
     out = _render()
     joined = out.replace("\\\n", " ")
     cmd = next(ln for ln in joined.splitlines() if "archive verify-replay" in ln and not ln.strip().startswith("#"))
@@ -112,12 +105,7 @@ def test_only_the_checkpoint_dir_is_writable():
     verifies -- an instrument that can write to what it audits can heal its own findings away, and
     the container runs as the same uid that owns the overlay. So the state dir gets its OWN narrow
     mount and both source mounts stay `:ro`; widening either (the one-character "fix" for a
-    checkpoint permission error) must fail here. `/nas` is held read-only by the fstab entry and the
-    DSM export too, so this is the third layer rather than the only one -- but the test's name
-    claims every mount, so it checks every mount.
-
-    Asserted on the joined docker-run command, not on the whole render: the mount strings also
-    appear in prose, so a substring search over the file passes on a comment alone."""
+    checkpoint permission error) must fail here."""
     out = _render()
     joined = out.replace("\\\n", " ")
     cmd = next(ln for ln in joined.splitlines() if "archive verify-replay" in ln and not ln.strip().startswith("#"))
@@ -130,8 +118,6 @@ def test_only_the_checkpoint_dir_is_writable():
     assert ":/data:rw" not in cmd, f"/data must never be writable -- the instrument would be able to edit what it verifies: {cmd}"
     assert f'-v "{state}:/state:rw"' in cmd, f"the checkpoint dir needs its own writable mount: {cmd}"
     assert "--state-dir /state" in cmd, f"the runner must engage incremental mode: {cmd}"
-    # The mount alone is inert without the flag, and the flag alone fails the run (the CLI's
-    # write-failure path withholds the summary) -- so both are pinned, and against the SAME command.
 
 
 def _sed(expr: str, log: str) -> str:
@@ -148,10 +134,8 @@ def _sed(expr: str, log: str) -> str:
 def _parse_seds(rendered: str) -> dict[str, str]:
     """Every field the template parses, derived FROM the template: {field: sed expression}.
 
-    Derived, never listed here, so a sixth field added to the runner with no coverage fails the
-    field-set assertion below instead of being silently skipped -- the `00077` defect in its general
-    form (there, covering `failed=` silently dropped `hours=`, and renaming the CLI's `hours=` then
-    shipped green while node_exporter rejected the whole textfile)."""
+    Derived, never listed here, so a field added to the runner with no coverage fails the field-set
+    assertion below instead of being silently skipped."""
     exprs: dict[str, str] = {}
     for m in re.finditer(r"sed -n '([^']*)'", rendered):
         expr = m.group(1)
@@ -163,11 +147,8 @@ def _parse_seds(rendered: str) -> dict[str, str]:
         assert expr.startswith("s/.*") and expr.endswith(".*/" + r"\1" + "/p"), (
             f"sed expression is not a whole-line substitution capturing exactly one digit run: {expr!r}"
         )
-        # Flags after /p are forbidden PROSPECTIVELY, not because one collides today: measured, an
-        # `I`-flagged `failed=` matches nothing extra on the real failing-hour line (`FAILED` is
-        # followed by whitespace, never `FAILED=`). It starts mattering the day any line prints
-        # `Failed=<n>`, which a case-insensitive pattern would then read as the summary. Stating the
-        # true reason matters: a rationale that can be disproved gets the assertion deleted with it.
+        # Forbidden PROSPECTIVELY, not because a flag collides today: the day any line prints
+        # `Failed=<n>`, a case-insensitive `failed=` would read it as the summary.
         assert expr.endswith("/p"), f"sed expression carries a flag after /p -- keep every pattern case-sensitive: {expr!r}"
         # Keyed by field, so a SECOND sed for an already-seen field would overwrite the first and
         # leave the coverage assertion below satisfied while one expression went entirely unproven.
@@ -217,9 +198,8 @@ _STUB_RESULT = ReplayResult(
     error=None,
 )
 
-# A currently-failing hour whose `error=` carries a literal `failed=7`. Incremental mode echoes and
-# logs a line for exactly the failing hours, so this is what puts the hostile text into a real run's
-# captured output.
+# A currently-failing hour, so the CLI's own per-hour line puts `_HOSTILE_ERROR`'s `failed=7` into
+# a real run's captured output.
 _HOSTILE_RESULT = ReplayResult(
     pair="ETH/EUR",
     hour=datetime(2026, 7, 14, 3, tzinfo=UTC),
@@ -240,8 +220,7 @@ def _cli_log_lines(caplog: pytest.LogCaptureFixture, argv: list[str]):
     on the CLI's first-ever invocation, and `caplog` only auto-attaches to an ALREADY
     non-propagating logger at fixture setup -- so a session whose first CLI call is this very test
     would otherwise capture nothing. Attach the handler to "zcrypto" directly so the assertion holds
-    regardless of test order/selection (same fix as
-    `test_cli_verify_replay_failed_hour_logs_at_warning_not_error` in test_archive_replay.py)."""
+    regardless of test order/selection."""
     zcrypto_logger = logging.getLogger("zcrypto")
     zcrypto_logger.addHandler(caplog.handler)
     caplog.clear()
@@ -254,24 +233,12 @@ def _cli_log_lines(caplog: pytest.LogCaptureFixture, argv: list[str]):
 
 
 def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch, tmp_path):
-    """Run the template's own seds over lines in the CLI's REAL format, so wording drift on either
-    side fails here. Formats from cli/archive/command.py's two `logger.info` calls in verify_replay.
+    """The template's own seds, run over lines in the CLI's REAL format, so wording drift on either
+    side fails here. Formats: `cli/archive/command.py`'s `logger.info` calls in verify_replay.
 
-    Two checks, for two kinds of drift. (1) the TEMPLATE side, over a hardcoded log built from
-    today's known-good format. (2) the CLI side: an earlier version asserted a literal format
-    string was a substring of the emitter's whole source text -- the reviewer proved that
-    satisfiable by prose: rename the live `logger.info` call to something else entirely and leave
-    the OLD literal sitting in an adjacent comment, and the textual check still passed (review
-    round 3, finding 4). Made executable instead: run the real CLI command through `CliRunner`,
-    capture the REAL records via `caplog`, and feed their actual `getMessage()` through the same
-    seds -- a rename anywhere in the live call, comment loophole included, then changes what is
-    actually parsed, not just what text sits nearby.
-
-    EVERY parsed field is covered, and the field list is derived from the template (`_parse_seds`)
-    rather than listed here: round 3's version extracted only the `failed=` expression, so renaming
-    the CLI's `hours=%d` to `total=%d` left every test green while `hours_total` went empty in
-    production -- a valueless printf, which makes node_exporter reject the WHOLE textfile and drop
-    every series (review round 4)."""
+    Both sides are executed rather than read: a textual check that the CLI's source contains the
+    format string is satisfied by the literal sitting in an adjacent comment, so the log lines come
+    from `CliRunner` + `caplog` instead."""
     sed_exprs = _parse_seds(_render())
     assert sorted(sed_exprs) == sorted(_REAL_LOG_EXPECTED), (
         f"the template parses {sorted(sed_exprs)} but this test covers {sorted(_REAL_LOG_EXPECTED)} -- "
@@ -282,9 +249,8 @@ def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureF
         got = _sed(sed_exprs[field], _REAL_LOG)
         assert got == expected, f"the template's sed did not extract {field}={expected} from the CLI's real output, got {got!r}"
 
-    # (2): stub the heavier replay computation (already covered by tests/test_archive_replay.py) so
-    # only the CLI's own census/summary formatting is under test, then run the real command the way
-    # the runner does -- with `--state-dir`, which is what makes it print a census at all.
+    # Stub the heavier replay computation so only the CLI's own census/summary formatting is under
+    # test, and pass `--state-dir`, which is what makes it print a census at all.
     census = Census(replayed=288, reused=5712, audited=25, audit_mismatches=(), pending=3, evicted=1, duration_s=1381.7)
     monkeypatch.setattr(command_mod.replay_mod, "verify_replay_incremental", lambda *a, **kw: ([_STUB_RESULT], census))
     result, lines = _cli_log_lines(
@@ -328,9 +294,7 @@ def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureF
 
     # The audit-mismatch shape, live: the census IS printed (with the mismatch count) while the
     # summary is withheld -- which is why `mismatches` is the one census series the runner must NOT
-    # gate on run_ok, and why `run_ok` must keep deriving from the summary alone. A failing hour
-    # carrying the hostile `error=` rides along, so the emptiness asserted below is measured against
-    # the real collision rather than against a conveniently clean log.
+    # gate on run_ok, and why `run_ok` must keep deriving from the summary alone.
     mismatched = Census(
         replayed=0,
         reused=4,
@@ -368,10 +332,9 @@ def _bash_harness(tmp_path):
     """Return `run(docker_stub, seed) -> (rc, textfile)`: writes `seed` as the previous run's
     textfile, stubs `docker` with `docker_stub`, and executes the REAL rendered script under bash.
 
-    Executing the script beats re-implementing its logic in Python: the carry-forward, the run_ok
-    gate and the atomic publish are all shell, and only shell can prove them. The healthcheck URL is
-    rendered empty so the ping never attempts a real network call, and the textfile path is
-    redirected under `tmp_path` so a mis-render can never write to the live ops path."""
+    Executed rather than re-implemented in Python: the carry-forward, the run_ok gate and the atomic
+    publish are all shell. The healthcheck URL is rendered empty so the ping never attempts a real
+    network call."""
     bash = shutil.which("bash")
     if bash is None:  # pragma: no cover - bash is present on every image we run
         pytest.skip("bash not available")
@@ -399,22 +362,17 @@ def _bash_harness(tmp_path):
 
 
 def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
-    """Spec 00077's Verification promises exactly this: 'failed_hours carries forward when the run
-    breaks; run_ok is 0 exactly when the summary does not parse.' No committed test executed that
-    block -- both were one-time manual proofs (review round 2, finding 5). Simplifying
-    `failed_hours="${prev_failed:-0}"` to a literal `0` passes every OTHER test here and silently
-    re-arms the false-page defect D3 exists to prevent.
+    """failed_hours carries forward when the run breaks; run_ok is 0 exactly when the summary does
+    not parse (spec 00077 D3).
 
-    Ports archive-pull's executed-block idiom (`test_a_failed_run_still_writes_every_series`): stub
-    `docker` so the rendered script's OWN `docker run` call produces each shape, and run the real
-    script under bash against a pre-seeded textfile, rather than re-implementing its logic in
-    Python."""
+    Simplifying `failed_hours="${prev_failed:-0}"` to a literal `0` passes every OTHER test here and
+    silently re-arms the false-page defect D3 exists to prevent."""
     harness = _bash_harness(tmp_path)
 
     def _run(stub: str, seed: str) -> str:
         rc, written = harness(stub, seed)
-        # 0 admitted deliberately (review round 3, finding 1): the CLI's own no-canonical-hours path
-        # (case (c) below) is rc 0 with no summary -- not a shape to filter out here.
+        # 0 admitted deliberately: the CLI's own no-canonical-hours path (case (c) below) is rc 0
+        # with no summary -- not a shape to filter out here.
         assert rc in (0, 1, 137), f"unexpected script rc {rc}"
         return written
 
@@ -440,10 +398,9 @@ def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
         "last_success was not carried forward on a broken run"
     )
 
-    # (c) docker exits 0 with NO parseable summary -- the CLI's own real no-canonical-hours path
-    # (`typer.echo("no canonical book hours found"); return`, rc 0). Review round 3, finding 1: this
-    # is the exact case round 1's `last_success` gate exists for -- an unmounted or empty NAS bind
-    # reads as "no canonical hours", and dropping `&& [ "$run_ok" -eq 1 ]` from that gate (leaving
+    # (c) docker exits 0 with NO parseable summary -- the CLI's own no-canonical-hours path
+    # (`typer.echo("no canonical book hours found"); return`, rc 0). An unmounted or empty NAS bind
+    # reads the same, and dropping `&& [ "$run_ok" -eq 1 ]` from the last_success gate (leaving
     # `rc -eq 0` alone) advances last_success to now right beside the run_ok=0 CRITICAL page.
     written_c = _run("#!/usr/bin/env bash\necho 'no canonical book hours found'\nexit 0\n", written_b)
     assert _val(written_c, "ops_verify_replay_run_ok") == "0", "run_ok must be 0 on the no-canonical-hours case"
@@ -456,18 +413,11 @@ def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
 
 def test_the_census_series_carry_forward_on_the_run_ok_gate(tmp_path):
     """The census series are gated on the SUMMARY, exactly like `failed_hours` -- never on whether a
-    census line was found.
+    census line was found; `audit_mismatches` alone is taken FRESH whenever a census exists.
 
-    Measured across nine real CLI runs: a census is emitted on an audit mismatch (rc 2) while the
-    run is broken, and it reads entirely normally there (`replayed=0 reused=4 …`) because the
-    mismatch count is the only field that betrays it. So "a census was printed" is neither
-    necessary nor sufficient for "the sweep completed": publishing those numbers would render a
-    broken night as a small quiet one, and a sentinel 0 would make the next good night look like a
-    jump and fire the new-breakage rule falsely -- the same D3 reasoning `failed_hours` carries.
-
-    `audit_mismatches` is the deliberate exception and is asserted as such: it is taken FRESH
-    whenever a census exists, because the run it must be visible on is precisely the one where the
-    summary is withheld. Gating it on run_ok would carry a stale 0 over the only condition it
+    An audit mismatch prints a census while withholding the summary, and that census reads entirely
+    normally (`replayed=0 reused=4 ...`) -- so publishing it would render a broken night as a small
+    quiet one, while gating the mismatch count would carry a stale 0 over the only condition it
     exists to trace."""
     run = _bash_harness(tmp_path)
 

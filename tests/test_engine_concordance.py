@@ -1,9 +1,5 @@
-"""Tests for the concordance core (cli/engine/concordance.py): compare_targets, evaluate_gate, and
-replay_cycle. Everything here is synthetic. The single-pair replay_cycle tests use a stub
-snapshot_reader and a monkeypatched builder; the schema-straddle section at the bottom runs the REAL
-builder over a synthetic twelve-symbol fixture (fast -- hundreds of bars, not the dataset-backed
-~2min canonical build), because a stub keyed by whatever it is handed cannot tell the two schemas'
-key spaces apart."""
+"""Tests for the concordance core (cli/engine/concordance.py): compare_targets, evaluate_gate and
+replay_cycle, all synthetic."""
 
 import math
 import types
@@ -65,11 +61,11 @@ def test_compare_targets_empty_both_pass():
 
 def test_compare_targets_tolerance_bracketed_both_sides():
     """D3 (spec 00063): the pass/fail cases above sit at ~1e-7 and 1e-2 -- five orders of magnitude
-    away from tol's ratified default (1e-6, concordance.py:159), so a divergence 120x over budget
-    would still pass at tol=1e-3. Bracket both edges immediately around tol itself: the margins are
-    expressed as fractions of tol (not raw literals) so the test states the rule. tol itself has to
-    be a hardcoded anchor, not read back from the function -- reading the live default would just
-    track a drifted value and never fail (the same tautology PR #162 hit with the streak constant)."""
+    away from tol's ratified default (1e-6, `compare_targets`'s keyword), so a divergence 120x over
+    budget would still pass at tol=1e-3. Bracket both edges immediately around tol itself: the
+    margins are expressed as fractions of tol (not raw literals) so the test states the rule. tol
+    itself has to be a hardcoded anchor, not read back from the function -- reading the live default
+    would just track a drifted value and never fail."""
     tol = 1e-6  # today's ratified default (concordance.py:159) -- the external anchor this pins
 
     just_inside = tol - tol * 0.1
@@ -84,7 +80,7 @@ def test_compare_targets_tolerance_bracketed_both_sides():
 
 def test_compare_targets_structural_mismatch_equal_cardinality_different_keys():
     """Equal-cardinality dicts with different keys must still fail structurally, not just the
-    differing-cardinality case above. Weakening `set(a) != set(b)` (concordance.py:161) to a length
+    differing-cardinality case above. Weakening `compare_targets`' `set(a) != set(b)` to a length
     check would let this pair fall through to the per-asset comparison, which today is unreached:
     it would then KeyError on the first asset absent from the other side -- an unreached path, not
     a silent-corruption one, so its severity should not be over-read from this test alone."""
@@ -221,12 +217,11 @@ def test_day_cutoff_anchor_discriminates_alternate_boundaries():
 
 def test_day_cutoff_requires_the_freshness_window_not_just_the_hour():
     """The anchor test above uses now=20:35, which is past BOTH the true 20:30 cutoff and a
-    window-dropped 20:00 one, so it cannot tell them apart -- verified: deleting `+
-    _FRESHNESS_WINDOW` from the day cutoff left the whole suite green. Position `now` BETWEEN the
-    two: at 20:15 the correct cutoff (20:00 + 30m) has not passed, so the final day is still in
-    progress and must be excluded; drop the window and it is wrongly counted as complete, flipping
-    the gate 30 minutes early. The per-cycle freshness bound is separately pinned by
-    test_late_cycle_resets_streak -- this covers only the DAY cutoff, which was not."""
+    window-dropped 20:00 one, so it cannot tell them apart. Position `now` BETWEEN the two: at 20:15
+    the correct cutoff (20:00 + 30m) has not passed, so the final day is still in progress and must
+    be excluded; drop the window and it is wrongly counted as complete, flipping the gate 30 minutes
+    early. The per-cycle freshness bound is separately pinned by test_late_cycle_resets_streak --
+    this covers only the DAY cutoff."""
     days = _days(START, 5)
     entries = [e for d in days for e in _clean_day(d)]
     now = datetime(days[4].year, days[4].month, days[4].day, 20, 15)  # inside 20:00-20:30
@@ -489,10 +484,10 @@ def test_same_length_peek_is_still_rejected(monkeypatch):
     deleting either term alone still leaves the suite green. This one swaps the trailing settled
     bar for the in-progress candle at EQUAL length: n_bars and first_ts both still agree with the
     declared metadata, only last_ts differs. If the `ts[-1] != entry.last_ts` term were dropped
-    from line 118's disjunction, the builder would run on lookahead data and -- because n_bars and
-    first_ts still match -- nothing else here would catch it: the targets would simply come out
-    wrong, not loudly rejected. That silent-contamination failure mode is what makes this the
-    keystone, not just a third conjunct."""
+    from `replay_cycle`'s metadata disjunction, the builder would run on lookahead data and --
+    because n_bars and first_ts still match -- nothing else here would catch it: the targets would
+    simply come out wrong, not loudly rejected. That silent-contamination failure mode is what makes
+    this the keystone, not just a third conjunct."""
     in_progress_ts = datetime(2026, 7, 10, 0, 0)  # cycle's own midnight -- the in-progress candle
     swapped_daily_ts = [DAILY_TS[0], DAILY_TS[1], in_progress_ts]  # same length, trailing bar swapped
     swapped_daily_closes = [DAILY_CLOSES[0], DAILY_CLOSES[1], 53.0]
@@ -525,7 +520,7 @@ def test_same_length_peek_is_still_rejected(monkeypatch):
 def test_replay_cycle_n_bars_mismatch_alone_raises(monkeypatch):
     """n_bars alone (spec D1). An extra bar inserted mid-series changes the count while both
     endpoints -- ts[0] and ts[-1] -- still agree with the declared metadata. Isolates the
-    `len(ts) != entry.n_bars` conjunct: the other two terms in line 118's disjunction stay
+    `len(ts) != entry.n_bars` conjunct: the other two terms in `replay_cycle`'s disjunction stay
     satisfied, so only deleting this exact term can make this test pass again."""
     extra_ts = datetime(2026, 7, 7, 12, 0)  # inserted between DAILY_TS[0] and DAILY_TS[1]
     padded_daily_ts = [DAILY_TS[0], extra_ts, DAILY_TS[1], DAILY_TS[2]]
@@ -642,11 +637,11 @@ def test_replay_cycle_multi_pair_calendar_mismatch_raises(monkeypatch):
 #
 # Everything above replays a synthetic single-pair record against a STUBBED builder. These do not:
 # the journal below is built by the real ten-asset builder over a twelve-symbol fixture store, and
-# every outcome comes from `_replay_one`/`_evaluate_journal`. That is deliberate. `evaluate_gate` is
-# structurally blind to schema -- hand-built CycleOutcomes would exercise arithmetic that was never
-# at risk, and a builder keyed by whatever it is handed agrees with any grid, so neither could tell
-# a v2 record replayed through the contraction from one replayed straight into the builder (which is
-# a hard PortfolioError, i.e. the state this branch inherited).
+# every outcome comes from `_replay_one`/`_evaluate_journal`. `evaluate_gate` is structurally blind
+# to schema -- hand-built CycleOutcomes would exercise arithmetic that was never at risk, and a
+# builder keyed by whatever it is handed agrees with any grid, so neither could tell a v2 record
+# replayed through the contraction from one replayed straight into the builder (a hard
+# PortfolioError).
 
 STRADDLE_DAYS = (date(2026, 7, 8), date(2026, 7, 9), date(2026, 7, 10))
 STRADDLE_FLIP = datetime(2026, 7, 9, 12, tzinfo=timezone.utc)  # the first schema-2 boundary

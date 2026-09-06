@@ -1,13 +1,7 @@
-"""The fixture minter's pure core — the rails that decide what reaches a live account.
-
-`infra/scripts/kraken-fixture-mint.py` is a standalone script, not a package module, so it loads
-via `importlib.util.spec_from_file_location` (the precedent `test_order_semantics_probe.py` sets).
-
-What is pinned here is what fails SILENTLY and expensively. A leg minted on a two-way-spelled pair
-rests where the verdict this fixture exists to exercise cannot see it, so the run reads clean and
-proves nothing. A size taken from a remembered figure rather than the venue's own `ordermin` is
-rejected at submit or, worse, accepted at a notional nobody chose. Leverage reaching a leg that was
-meant to be spot is a position nobody planned. None of those announce themselves.
+"""The fixture minter's pure core — the rails that decide what reaches a live account: a leg minted
+on a two-way-spelled pair rests where the verdict it exists to exercise cannot see it, a size taken
+from a remembered figure rather than the venue's own `ordermin` is rejected at submit or accepted at
+a notional nobody chose, and leverage reaching a leg meant to be spot is a position nobody planned.
 """
 
 from __future__ import annotations
@@ -25,6 +19,8 @@ from nautilus_trader.model import AccountType, OrderSide, OrderType, TimeInForce
 
 _REPO = Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO / "infra" / "scripts" / "kraken-fixture-mint.py"
+# A standalone script, not a package module, so it loads by path (`test_order_semantics_probe.py`
+# sets the precedent).
 _spec = importlib.util.spec_from_file_location("kraken_fixture_mint", _SCRIPT)
 mint = importlib.util.module_from_spec(_spec)
 # Registered before execution: `@dataclass` resolves its own module out of `sys.modules`, and a
@@ -40,8 +36,6 @@ _LISTING = json.loads((_REPO / "tests" / "fixtures" / "kraken_assetpairs_mint.js
 # The same limits written out independently of the reader that parses them. They are a FIXTURE, not
 # a constant the script may read: every test that asserts a size derives it from these numbers, so a
 # script that hardcoded the same figures would pass here and drift silently at the venue.
-# `test_sizing_follows_the_listing_rather_than_a_remembered_figure` is what separates the two, and
-# `test_the_reader_and_the_hand_written_limits_agree` is what keeps this copy honest.
 _LIMITS = mint.PairLimits(ordermin=0.06, costmin=0.45, lot_step=0.00000001, price_step=0.01)
 _BEST_BID = 85.76
 
@@ -56,10 +50,9 @@ def _no_unintended_dialling(monkeypatch):
 
     `_run` takes both factories with no default, so a missed argument is already a TypeError there.
     This covers the rest: a test that reaches `main`, or any later caller that names a live door
-    directly. It is not hypothetical -- a test in this module bound `_live_client` as a default at
-    definition, built a real client and sent two real requests. Patching `socket` could not see it:
-    the client's I/O lives in a compiled extension and never passes through Python's socket layer,
-    so a raise on the door itself is the only evidence available from this side.
+    directly. Patching `socket` cannot see such a call -- the client's I/O lives in a compiled
+    extension and never passes through Python's socket layer -- so a raise on the door itself is the
+    only evidence available from this side.
     """
     if os.environ.get(_LIVE_OPT_IN) == "1":
         return
@@ -315,9 +308,9 @@ class TestTheRestingLegClearsBothFloorsAtItsOwnPrice:
     at submit -- an attended pass that gets two of its three ingredients and a rejection.
     """
 
-    # `ordermin` 0.06 clears at the bid on its own, so `costmin` 4.00 is what the resting price has
-    # to be sized against: at 85.76 the ordermin-sized 0.06 is worth 5.15 and clears, at the 47.16
-    # it will rest at it is worth 2.83 and does not. A costmin either leg clears would prove nothing.
+    # `ordermin` clears at the bid on its own, so `costmin` is what the resting price has to be
+    # sized against: the ordermin-sized quantity clears it at the bid and misses it at the resting
+    # price. A costmin either leg clears would prove nothing.
     _SPLIT = mint.PairLimits(ordermin=0.06, costmin=4.0, lot_step=0.00000001, price_step=0.01)
 
     def _resting(self, limits) -> object:
@@ -388,25 +381,20 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
 
     WRAPPERS = ("mint-with-vaulted-key.sh", "probe-with-vaulted-key.sh")
 
-    # Two rounds of review took this guard apart, and the lesson is that enumerating forbidden
-    # FORMS does not work: each round I pinned what the mutation I had imagined would touch, and
-    # each round a form I had not imagined walked through -- a selector on the argv line, one inside
-    # `os.execve`, one on `venv_python` (which is the program `execve` actually runs), a symmetric
-    # edit to BOTH files, and a shell function named `exec` declared ABOVE the anchor, which bash
-    # resolves before the builtin. So this pins the SURFACE instead of the forms: everything above
-    # the anchor must be comment, the executable body must match the sibling's byte for byte save
-    # one line, and the sibling's own body is pinned by digest -- which is what makes a two-file
-    # edit fail. A legitimate change to either wrapper is meant to break this and be re-verified.
+    # This pins the SURFACE, never an enumeration of forbidden forms: everything above the anchor
+    # must be comment, the executable body must match the sibling's byte for byte save one line, and
+    # the sibling's own body is pinned by digest -- which is what makes a two-file edit fail. A
+    # legitimate change to either wrapper is meant to break this and be re-verified.
     _ARGV_LINE = '\' "$repo" "$venv_python" "$harness" "$@"'
     _EXEC_LINE = 'os.execve(python, [python, "-I", harness, *sys.argv[4:]],'
     _PYTHON_LINE = 'venv_python="$repo/.venv/bin/python"'
     _SHEBANG = "#!/usr/bin/env bash"
     # sha256 of `probe-with-vaulted-key.sh` from its `set -euo pipefail` line down, over the RAW
-    # BYTES, read from the tree on 2026-09-04.
+    # BYTES.
     #
-    # This pin drops NOTHING, on purpose. There are two options and no third: a raw digest cannot be
-    # blind but reddens on a comment edit; a canonicalised one survives comment edits and is blind in
-    # exactly what it drops. The pressure this one will feel is deletion -- "it trips on a comment".
+    # This pin drops NOTHING, on purpose: a raw digest reddens on a comment edit, and a
+    # canonicalised one is blind in exactly what it drops. The pressure this one will feel is
+    # deletion -- "it trips on a comment".
     # If canonicalisation is ever added to relieve that, strip ONLY above the anchor and leave the
     # quoted interpreter payload byte for byte: in that region a `#` is data and an apostrophe ends
     # the string, so the dropping rule earns the same adversarial read as the guard it serves.
