@@ -1159,6 +1159,19 @@ def test_the_greps_the_runbooks_actually_run():
         assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
 
 
+def test_a_dereferencing_recursion_is_admitted_by_no_grep_shape():
+    """`-R` follows a symlink out of the root the path check spelled, so no grep shape admits it,
+    while the `-r` the runbooks spell reads the same operands AUTONOMOUS."""
+    safe = "'^Storage=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/"
+    for refused, passing in (
+        (f"grep -RE {safe}", f"grep -rE {safe}"),
+        ("grep -R Storage /var/log/", "grep -r Storage /var/log/"),
+        ("grep -sRah X /var/log/", "grep -srah X /var/log/"),
+    ):
+        assert ops_daily.classify_action(refused, host="ops") is ops_daily.Tier.PREPARED, refused
+        assert ops_daily.classify_action(passing, host="ops") is ops_daily.Tier.AUTONOMOUS, passing
+
+
 def test_a_recursive_grep_naming_no_file_is_refused_however_the_switch_is_spelled(monkeypatch):
     """The refusal reads grep's recursion switches, not the cluster the shapes happen to admit today:
     a shape widened to take `--recursive` is refused by the same rule that refuses `-r`."""
