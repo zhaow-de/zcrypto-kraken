@@ -452,6 +452,35 @@ def test_snapshot_venue_state_logs_and_returns_none_on_any_exception(tmp_path, m
     assert any(r.levelno == logging.ERROR for r in caplog.records)
 
 
+def test_an_engine_error_at_the_boundary_journals_the_error_venue_record(tmp_path, monkeypatch):
+    """The EngineError-to-None degrade leaves the boundary's venue-<HH>.json reading status "error"
+    with the reason, never nothing at all."""
+    config = _config(tmp_path)
+    strategy = ShadowStrategy(config)
+
+    def unreadable_cache(cache, *, clock):
+        raise EngineError("BTC/EUR is absent from the Cache")
+
+    def no_transport(pair_key, interval):
+        raise RuntimeError("transport is gone")
+
+    monkeypatch.setattr(node, "venue_state_from_cache", unreadable_cache)
+    # The real run_cycle over an empty store dies inside the settle-verify refresh, which is the
+    # point: the venue record is written before it and outlives a cycle that never finished. fetch_fn
+    # is a refusal rather than a transport -- the default one reaches the live venue.
+    on_alert_logic(
+        boundary=B08,
+        config=config,
+        schedule_alert=lambda boundary, alert_time: None,
+        run_cycle_fn=functools.partial(run_cycle, fetch_fn=no_transport, clock=lambda: B08 + timedelta(minutes=1)),
+        snapshot_fn=strategy._snapshot_venue_state,
+    )
+
+    doc = json.loads((config.journal_dir / "2026-07-10" / "venue-08.json").read_text())
+    assert doc["status"] == "error"
+    assert doc["error"] == "no venue snapshot available for this cycle"
+
+
 # --- the probe-executor wiring (spec 00090 Task 9) ----------------------------------------------
 
 
