@@ -158,13 +158,13 @@ cli/costs/calibrate.py:1: comment-block 15 > 4	"""The captured-spread calibratio
 cli/costs/calibrate.py:1: file-prose 32.8 > 20
 cli/costs/calibrate.py:49: comment-block 7 > 4	# A file's hour interval is [HH:00:00, HH+1:00:00); keep files that OVERLAP the window rather
 cli/costs/calibrate.py:71: comment-block 6 > 4	"""Scan every `<BASE>/<QUOTE>/panel-1s/**` pair under `panel_root` and compute the mean
-cli/data/manifest.py:1: comment-block 12 > 4	"""The manifest contract (spec 00099): one shape, so no consumer needs per-set knowledge.
-cli/data/manifest.py:1: file-prose 21.3 > 20
-cli/data/manifest.py:58: comment-block 7 > 4	"""sha256 over the member hashes, in ascending lexicographic order OF THE SERIES KEY.
-cli/data/manifest.py:122: comment-block 6 > 4	"""The digest that identifies this set. One accessor, so no caller carries a dataset name.
-cli/data/manifest.py:134: comment-block 5 > 4	"""The attested content hashes, read from `series` EXPLICITLY.
-cli/data/manifest.py:253: comment-block 13 > 4	"""Rewrite one dataset's legacy manifest into the contract, from the parquets on disk.
-cli/data/manifest.py:310: comment-block 5 > 4	# The WHOLE legacy document, `series` included. The per-series rows are where the evidence that
+cli/data/manifest.py:1: comment-block 11 > 4	"""The manifest contract (spec 00099): one shape, so no consumer needs per-set knowledge.
+cli/data/manifest.py:1: file-prose 21 > 20
+cli/data/manifest.py:57: comment-block 7 > 4	"""sha256 over the member hashes, in ascending lexicographic order OF THE SERIES KEY.
+cli/data/manifest.py:121: comment-block 6 > 4	"""The digest that identifies this set. One accessor, so no caller carries a dataset name.
+cli/data/manifest.py:133: comment-block 5 > 4	"""The attested content hashes, read from `series` EXPLICITLY.
+cli/data/manifest.py:252: comment-block 13 > 4	"""Rewrite one dataset's legacy manifest into the contract, from the parquets on disk.
+cli/data/manifest.py:309: comment-block 5 > 4	# The WHOLE legacy document, `series` included. The per-series rows are where the evidence that
 cli/data/sync.py:1: file-prose 26.3 > 20
 cli/data/sync.py:26: comment-block 12 > 4	"""The committed per-series attestations, keyed by dataset.
 cli/data/sync.py:68: comment-block 6 > 4	"""Committed attestations for `dataset` BOUND TO PATHS, or empty when it has none.
@@ -356,7 +356,7 @@ cli/features/derivatives.py:261: comment-block 8 > 4	"""Coverage of one column i
 cli/features/derivatives.py:277: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
 cli/features/volatility.py:1: file-prose 20.8 > 20
 cli/liquidations/coinalyze.py:1: comment-block 22 > 4	"""Coinalyze REST liquidation-history poller (`zcrypto liquidations-poll`, spec 00051 OPS-2): the
-cli/liquidations/coinalyze.py:1: file-prose 33.5 > 20
+cli/liquidations/coinalyze.py:1: file-prose 33.2 > 20
 cli/liquidations/coinalyze.py:58: comment-block 5 > 4	# Load-bearing (verified live 2026-07-15, stable over 150s): SegmentWriter's dedup keeps the FIRST
 cli/liquidations/coinalyze.py:64: comment-block 8 > 4	# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
 cli/liquidations/coinalyze.py:74: comment-block 11 > 4	# T0046: most of the funding basket's symbols liquidate rarely, so `SegmentWriter`'s event-driven
@@ -365,8 +365,8 @@ cli/liquidations/coinalyze.py:133: comment-block 10 > 4	"""GET Coinalyze's `/v1/
 cli/liquidations/coinalyze.py:167: comment-block 15 > 4	"""One poll cycle: fetch `coins`' batched Coinalyze symbols over the last 30h and append every
 cli/liquidations/coinalyze.py:241: comment-block 5 > 4	"""Isolation invariant (spec 00069 D5): by the time this runs, `_poll_once`'s real work --
 cli/liquidations/coinalyze.py:286: comment-block 5 > 4	# A malformed bucket (null l/s, missing t, non-dict entry) raises TypeError/KeyError/
-cli/liquidations/coinalyze.py:310: comment-block 7 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
-cli/liquidations/coinalyze.py:324: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
+cli/liquidations/coinalyze.py:310: comment-block 5 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
+cli/liquidations/coinalyze.py:322: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
 cli/ohlc/reach.py:1: comment-block 7 > 4	"""REST reach-round: carry the canonical OHLC basket forward from Kraken's public OHLC endpoint.
 cli/panel/materialize.py:1: comment-block 17 > 4	"""Hour materializer + watermarked sweep for the 1s L2 panel (spec 00052 D3/D4/D5/D6).
 cli/panel/materialize.py:1: file-prose 36.3 > 20
