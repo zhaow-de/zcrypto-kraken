@@ -6,15 +6,19 @@
 # Run it from MERGED develop, never a branch: summaries and panel descriptions cite repo paths, so a
 # branch push ships alert text naming files develop does not have.
 #
-# GRAFANA_SA_TOKEN is the one variable with no default. Obtain it through
-# `infra/scripts/grafana_auth.py`, which encapsulates the two decrypt footguns its own docstring
-# records -- do not hand-roll the extraction. For a PromQL read-back use `infra/scripts/grafana-
-# query.py` instead of this script's token at all.
+# GRAFANA_SA_TOKEN is the one variable with no default. Obtain it with `grafana_auth.py`'s
+# `vault_var("grafana_sa_token")`, loaded by path the way `grafana-query.py` loads it -- it
+# encapsulates the two decrypt footguns its own docstring records, so do not hand-roll the
+# extraction. Assign it by command substitution and nothing else: the value must never reach a
+# file, a log or argv. For a PromQL read-back use `infra/scripts/grafana-query.py`, which needs no
+# token from you at all.
 #
-# The alert-rules calls target Grafana's Alerting Provisioning HTTP API, one rule per call: the
+# The alert-rules calls target Grafana's Alerting Provisioning HTTP API, one rule per call.
+#
 # PATH note, which the PyYAML refusal below points at: this script calls bare `python3`, and PyYAML
-# lives in the project venv, so run it with that venv first on PATH rather than installing PyYAML
-# into the system python -- a second copy drifts unseen.
+# lives in the project venv, so run it with that venv first on PATH --
+# `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` from the repo root -- rather than
+# installing PyYAML into the system python, where a second copy drifts unseen.
 #
 # `apiVersion: 1` / `groups:` file-provisioning shape is a different mechanism and is not accepted
 # here, and file provisioning is not available on Grafana Cloud SaaS.

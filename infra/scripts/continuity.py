@@ -45,8 +45,8 @@ MIN_POOL = 5002
 # decade of quantiles.
 #
 # The cut is the per-decade quantile ratio of a Pareto tail at alpha = 1, the infinite-mean boundary
-# no physical spacing distribution crosses; contamination from same-scale repeat outages sits orders
-# of magnitude above it.
+# no physical spacing distribution crosses; contamination from same-scale repeat outages measures
+# well above it.
 TAIL_RATIO_CUT = 10.0
 # The ratios' denominator floor, and not a new magic number: it is 5.0 / 10, the spacing scale below
 # which the threshold floor above already declares steepness irrelevant. Needed because an

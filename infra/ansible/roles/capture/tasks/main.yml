@@ -266,8 +266,8 @@
 #
 # One-off timers publish a .prom here while long-lived services use /metrics (spec 00071 D1). World-
 # readable is what lets Alloy's textfile collector read what root writes, since Alloy runs as a non-
-# key-owning user with only the journal gid. Publishers must chmod their output: mktemp makes it
-# owner-only and `mv` preserves that, which silently hides the metric from the collector. Placed
+# key-owning user with only the journal gid. Publishers must chmod 0644 their output: mktemp makes
+# 0600 and `mv` preserves it, which silently hides the metric from the collector. Placed
 # OUTSIDE the Alloy-digest gate, or the .prom writers land with nowhere to write.
 - name: ensure the node-exporter textfile directory exists
   ansible.builtin.file:

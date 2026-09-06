@@ -50,10 +50,12 @@ if [ "$reply" != "$LIMIT" ]; then
   echo "converge.sh: aborted — confirmation did not match the --limit value; nothing executed" >&2
   exit 3
 fi
-# The real pass, RECORDED: fleet-pins.md is re-trued from the line this appends, never re-typed from
-# memory. The line is written by THIS process after the pass returns, so a wrapper killed mid-pass
-# leaves an orphaned ansible child converging with NO record -- the container's `.State.StartedAt`
-# is the evidence then, and the line is appended by hand from it.
+# The real pass, RECORDED into a git-tracked log: fleet-pins.md is re-trued from the line this
+# appends, never re-typed from memory, and that line carries every -e operand verbatim -- so no -e
+# operand is ever a secret, and none travels on the command line. The line is written by THIS process
+# after the pass returns, so a wrapper killed mid-pass leaves an orphaned ansible child converging
+# with NO record -- the container's `.State.StartedAt` is the evidence then, and the line is
+# appended by hand from it.
 set +e
 "$SD/run.sh" "$PLAYBOOK" "$@"
 rc=$?

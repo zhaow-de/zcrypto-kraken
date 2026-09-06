@@ -42,7 +42,8 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # `load_cache` returns rejected=False for an absent path, so read `cache_hits` instead. Gate metrics
 # describe the PREVIOUS image for about an hour after a roll -- check the textfile's mtime first.
 # ROLLBACK rolls the REPO STATE, not just this pin: `pull-entrypoint.sh` is a bind mount, so an
-# image roll leaves it in place passing `--hash-scope`, which older images reject, and flipping the
+# image roll leaves it in place passing `--hash-scope`, which no image before `a3a3837e` accepts, and
+# flipping the
 # scope to `full` does not help because the flag is still sent. Converge from a pre-spec-00102 state
 # WITH `-e nas_apply_compose=true`; without the flag the role is render-only and still reports
 # success. Delete the `archive-pull-*.prom` textfiles on the way out, or their gauges stay frozen
@@ -54,7 +55,7 @@ nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ee5ba1d92b461e74859ff
 nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
 
 # Spec 00102 D7: `full` re-hashes every segment each cycle, `incremental` hashes rsync's transfers
-# plus a rotating slice. Flipping it is a config-only converge on the running digest, and so is the
+# plus a rotating 1/24 slice. Flipping it is a config-only converge on the running digest, and so is the
 # rollback. The entrypoint that reads it needs an image that knows `--hash-scope`, so it lands with
 # that image pin in ONE applied converge, never render-only against an older image.
 nas_archive_pull_hash_scope: incremental

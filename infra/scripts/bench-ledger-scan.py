@@ -7,9 +7,10 @@ estimate under time pressure.
 MEMORY binds first. The returned list costs several times the file's size on disk, and a cycle the
 OOM reaper kills publishes nothing at all -- so it fails abruptly and the cycle-duration alert
 goes STALE rather than high, unable to warn about it. Peak resident against the ops host's
-MemAvailable, never MemFree, is the cliff. Time is far behind it: the cycle is half-hourly, so a
-scan approaching 1800 s collides with the next one, which on the measured fit needs an order of
-magnitude more records than memory does.
+MemAvailable (`node_memory_MemAvailable_bytes{host="ops"}`), never MemFree, is the cliff. Time is
+far behind it: the cycle is half-hourly, so a scan approaching 1800 s collides with the next one,
+which on the measured fit needs an order of magnitude more records than memory does; the backstops
+`zcrypto-reconcile-exporter-stale` and `zcrypto-reconcile-source-lag` page at 3 h.
 The KEY SPACE is the part of the synthetic data that has to be right: the writer emits each (pair,
 kind, hour) at most once, so a real ledger's `measured` dedup set grows with the file and is the
 one structure here that is not O(1) per record. Cycling pair and hour off `n % k` would saturate
@@ -20,7 +21,7 @@ Timing and memory are measured in a CHILD PROCESS PER SIZE because VmHWM is a pe
 water that never falls, so one process looping over sizes reports the largest so far for every row
 after the first. `ru_maxrss` must not be substituted: it is inherited verbatim across fork+exec,
 so a child allocating nothing reports its parent's peak.
-    Run: `uv run python infra/scripts/bench-ledger-scan.py [--sizes 1000,10000,...]`
+Run: `uv run python infra/scripts/bench-ledger-scan.py [--sizes 1000,10000,...]`
 """
 
 from __future__ import annotations

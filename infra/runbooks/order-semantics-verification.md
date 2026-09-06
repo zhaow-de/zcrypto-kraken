@@ -132,7 +132,7 @@ mkdir -p "$EVID"
 $PY -c 'import nautilus_trader; print(nautilus_trader.__version__)'   # must equal the version under test
 ```
 
-Run it from a CLEAN LOGIN SHELL. The wrappers pass `-I` to both interpreters, which isolates Python's environment and nothing else: `BASH_ENV`, `LD_PRELOAD` and `PATH` are the operator's own and no flag in those scripts reaches them.
+The wrappers pass `-I` to both interpreters, which isolates Python's environment and nothing else: `BASH_ENV`, `LD_PRELOAD` and `PATH` are the operator's own and no flag in those scripts reaches them.
 
 Run from the worktree root (both paths above are relative to it) and pass `--evidence-dir "$EVID"` on every invocation: the evidence default is the cwd, which inside the repo would drop JSONs into git.
 

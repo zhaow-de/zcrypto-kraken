@@ -132,7 +132,9 @@
     # break and the EXTRA indent of every more-indented line, so the mirror shifts each line 2
     # columns left to preserve its indent relative to its own block key -- that is what keeps the
     # two texts byte-identical. Under --check the probe is skipped, so `.stdout` is undefined and an
-    # unscoped `when:` would error rather than skip.
+    # unscoped `when:` would error rather than skip. Gated on that negated condition AND the override
+    # fragment, never on the override merely being PRESENT, which would print a why on runs that
+    # overrode nothing.
     - name: engine window override accepted — the reason, on the record
       ansible.builtin.debug:
         msg: "engine_window_override accepted: {{ engine_window_override }}"

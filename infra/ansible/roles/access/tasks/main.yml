@@ -182,6 +182,9 @@
 # gate then passes.
 #
 # It REPORTS drift and does not prevent it: by the time this can fail, every task above has applied.
+# Skipped under --check, where the template does not write, so the assert would judge the OLD file
+# and converge.sh -- which aborts the whole run on a failed preview -- would let one drifted relay
+# block every other host.
 # Read a failure as "the converge landed and the relay still needs a hand", never as "the converge
 # was refused". Asserted rather than restarted because a restart drops every SSH session traversing
 # the relay into the ops node, including the shell a remote operator may be driving this play from;

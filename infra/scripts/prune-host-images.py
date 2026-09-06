@@ -7,7 +7,8 @@ is updated is the moment a prune is correct: run this from the pins-update step,
 the new row is written, or the run takes the digest that row is about.
 Usage:  uv run python infra/scripts/prune-host-images.py <host> [--apply] [--keep D] [--pins PATH]
 Dry-run by default. `--apply` removes one explicit `repo@sha256:<digest>` at a time, never `docker
-image prune -a`, which would take the recorded rollback operands.
+image prune -a`, which would take the recorded rollback operands. The second authority is the host
+itself: a digest a resident container is running is kept whatever the file says.
 Neither authority sees a PRE-STAGED digest: an image pulled for a converge that has not happened
 is resident, unrecorded and attached to no container, so it is indistinguishable from a stale one.
 Prune only the host that just converged, and pass `--keep <digest12>` for anything staged for a
