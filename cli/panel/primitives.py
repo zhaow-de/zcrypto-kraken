@@ -18,7 +18,7 @@ NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
 # the same EUR value as the EUR rungs and `SPREAD_CALIBRATION`'s inner keys stay EUR notionals. It defines what every BTC
 # `fill_bps_*` in the tree MEANS: a recalibration moves `cli/costs/spread.py`'s `CALIBRATION_WINDOW`, never this one, and
 # a later measurement that disagrees means regenerate the tree or explain the divergence, never update this constant.
-BTC_EUR_REFERENCE: float = 55876.28413495087  # the Step 0 measurement, verbatim
+BTC_EUR_REFERENCE: float = 55876.28413495087  # the measurement, verbatim
 BTC_EUR_REFERENCE_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-06T06:00:00Z")
 
 NOTIONALS_BY_QUOTE: dict[str, tuple[float, float, float]] = {
