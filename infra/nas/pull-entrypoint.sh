@@ -1,28 +1,23 @@
 #!/usr/bin/env sh
-# In-container scheduler for the NAS archive-pull stack (spec 00048 Role A/B). Runs as the
-# container's ENTRYPOINT (infra/nas/compose.yaml) — no systemd, no DSM Task Scheduler, per the
-# NAS-runtime constraint. Every $ARCHIVE_PULL_INTERVAL seconds it pulls+verifies the capture
-# segments (own key: CAPTURE_SSH_KEY), and — only when JOURNAL_SOURCE is set (Role B) — pulls the
-# engine journal with its OWN least-privilege key (JOURNAL_SSH_KEY; --no-verify: no .sha256
-# sidecars, Role B verifies it via replay) and then runs `zcrypto engine gate-export` to score the
-# gate and emit it as a Prometheus textfile-collector metric. The loop itself is the availability
-# guarantee: a single failed pull or export is logged but never exits the loop; the pull-lag
-# figure `zcrypto archive pull` logs on each run is the dead-man signal that a stuck pull gets
-# noticed.
+# In-container scheduler for the NAS archive-pull stack (spec 00048 Role A/B). It is the container's
+# ENTRYPOINT rather than a systemd unit or a DSM task, per the NAS-runtime constraint. The loop
+# itself is the availability guarantee: a single failed pull or export is logged and never exits it,
+# and the pull-lag figure `zcrypto archive pull` logs each run is the dead-man signal that a stuck
+# pull gets noticed.
 set -eu
 umask 0002
 
-# Emit the SAME line shape `zcrypto`'s Python logging emits (`<asctime> <LEVEL> <logger> [<file>] -
-# <msg>`, UTC, comma before the milliseconds -- that comma is CPython's
-# `logging.Formatter.default_msec_format`, not a locale artifact). Alloy's ingest stage keys on
-# exactly this shape to attach the `level` label (infra/nas/config.alloy), and the alerting selects on
-# that label -- so a bare `echo` here is invisible to it. These lines are the ONLY record when the CLI
-# is killed before it can log for itself (OOM, signal), which is precisely when someone needs to know.
+# Emit the SAME line shape `zcrypto`'s Python logging emits, down to the comma before the
+# milliseconds -- that comma is CPython's `logging.Formatter.default_msec_format`, not a locale
+# artifact. Alloy's ingest stage keys on exactly this shape to attach the `level` label and the
+# alerting selects on that label, so a bare `echo` here is invisible to it. These lines are the ONLY
+# record when the CLI is killed before it can log for itself, which is precisely when someone needs
+# them.
 #
-# Milliseconds the portable way: GNU date's width modifier (`%3N`) is a GNU extension that uutils'
-# date -- the Rust coreutils some distros now ship -- silently ignores, emitting all 9 nanosecond
-# digits and producing a line Alloy's regex would NOT label. Both implementations agree on a
-# zero-padded 9-digit `%N`, so take that and drop the last 6 with POSIX parameter expansion.
+# Milliseconds the portable way: GNU date's `%3N` width modifier is an extension that uutils' date
+# silently ignores, emitting all nine nanosecond digits and producing a line Alloy's regex would NOT
+# label. Both implementations agree on a zero-padded nine-digit `%N`, so take that and drop the last
+# six with POSIX parameter expansion.
 log() {
 	_ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
 	printf '%s %s zcrypto.pull-entrypoint [pull-entrypoint.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
@@ -79,22 +74,18 @@ while true; do
 		fi
 	fi
 
-	# T0058: the reconcile gate's ground truth. The ops-node writer reads this file THROUGH the
-	# read-only NFS mount and skips its whole writer cycle (reconcile AND backfill) unless both
-	# flags are 1 AND ts_epoch is younger than 4h (and not future-stamped beyond a small skew
-	# tolerance) — fail closed: missing/unreadable/stale/skewed = skip.
-	# Writing it here restores the original gate semantics (the actual pull exit codes) that the
-	# OPS-5 cutover had silently reduced to "the NAS-to-ops rsync succeeded" (final-review
-	# finding, 2026-07-17) — that rsync succeeds even when this host's own VPS pulls are broken,
-	# so a frozen mirror would have ledgered permanent false verdicts. This also finally gives
-	# capture_ok/secondary_ok a READER again — an earlier review noted they had become
-	# write-only. tmp+mv so the ops reader never sees a partial file (the same atomic pattern the
-	# trade-backfill textfile used before OPS-5 moved that step to the ops node). If-guarded like
-	# every other step in this loop (review 2026-07-17): unguarded, a failed redirection or mv
-	# under `set -eu` (ENOSPC/EIO/read-only volume) killed the whole container mid-cycle — every
-	# channel after this block skipped, and `restart: unless-stopped` re-ran the capture pulls
-	# back-to-back with no interval pacing. A failed write just lets the existing status age,
-	# which is exactly the ops gate's designed fail-closed degraded mode.
+	# T0058: the reconcile gate's ground truth. The ops-node writer reads this file through the read-
+	# only NFS mount and skips its whole cycle unless both flags are 1 and the stamp is younger than
+	# 4h and not future-stamped beyond a small skew -- fail closed, so missing, unreadable, stale or
+	# skewed all mean skip.
+	#
+	# Writing it HERE is what makes it the actual pull exit codes rather than "the NAS-to-ops rsync
+	# succeeded": that rsync succeeds even when this host's own VPS pulls are broken, so a frozen
+	# mirror would ledger permanent false verdicts. tmp+mv so the ops reader never sees a partial
+	# file. If-guarded like every other step: unguarded, a failed redirection or mv under `set -eu`
+	# kills the container mid-cycle, every later channel is skipped, and `restart: unless-stopped` re-
+	# runs the capture pulls back-to-back with no interval pacing. A failed write instead lets the
+	# existing status age, which is the gate's designed fail-closed degraded mode.
 	if ! {
 		printf 'capture_ok=%s\n' "$capture_ok"
 		printf 'secondary_ok=%s\n' "$secondary_ok"
@@ -104,35 +95,29 @@ while true; do
 		log ERROR "pull-status write failed (dest=/archive/.pull-status), continuing"
 	fi
 
-	# The journal pull only runs once JOURNAL_SOURCE is set (Role B). It uses its OWN
-	# least-privilege key (JOURNAL_SSH_KEY) -- the capture and journal channels use distinct
-	# keys, so a single ARCHIVE_SSH_KEY cannot serve both; `zcrypto archive pull` reads whichever
-	# value ARCHIVE_SSH_KEY holds at call time (cli/archive/command.py's `_run_rsync`). In the
-	# Increment-1 capture-only deploy JOURNAL_SOURCE is unset, so this whole block is skipped.
+	# The journal pull runs only once JOURNAL_SOURCE is set (Role B), with its OWN least-privilege
+	# key: the capture and journal channels use distinct keys, so one ARCHIVE_SSH_KEY cannot serve
+	# both, and `zcrypto archive pull` reads whichever value it holds at call time.
 	if [ -n "${JOURNAL_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$JOURNAL_SSH_KEY" zcrypto archive pull --no-verify "$JOURNAL_SOURCE" "$JOURNAL_DEST"; then
 			log ERROR "journal pull failed (source=$JOURNAL_SOURCE dest=$JOURNAL_DEST), continuing"
 		fi
-		# Role B: score the gate on the freshly-pulled journal and emit it as a Prometheus
-		# textfile-collector metric (spec 00042/Task 1's `zcrypto engine gate-export`);
-		# best-effort, same as the pulls above -- a failure here is logged but never exits the
-		# loop.
-		# --cache bounds the per-run cost to the journal's NEW cycles instead of replaying all of
-		# them (spec 00060): ~10 min -> ~1 min on this Atom, and FLAT as the journal grows rather
-		# than climbing. It is safe to enable only because spec 00062 added rotating
-		# re-verification -- each run still force-replays a ~1/24 slice, so every parquet is
-		# re-hashed about daily. Without that, a cache hit would skip the ONLY re-read of the
-		# journal's bytes (this pull uses --no-verify and delegates verification to the replay).
-		# The path is deliberately INSIDE the container, never under /archive: that share is
-		# reachable by both hosts, which run different polars runtimes that replay_fingerprint
-		# does not digest, so a shared cache file would be mutually poisonable (00062 D9). Cost of
-		# ephemerality: one cold rebuild after each container recreate.
-		# --lag-fail-seconds is passed EXPLICITLY, not left to the CLI default: this script is
-		# bind-mounted and ansible-deployed, so the value reaches production with a converge
-		# instead of an image rebuild, and the deployed threshold is visible here rather than
-		# hidden in a default. 21600 (6h) is derived in infra/grafana/alerts.yaml's rule comment
-		# and archived T0069; it gates the hc.io dead-man ping, so it must equal that rule's
-		# evaluator -- change them together.
+		# Role B: score the gate on the freshly-pulled journal and emit it as a Prometheus textfile
+		# metric, best-effort like the pulls above.
+		#
+		# `--cache` bounds the per-run cost to the journal's NEW cycles instead of replaying all of them
+		# (spec 00060). It is safe to enable ONLY because spec 00062 added rotating re-verification, so
+		# each run still force-replays a slice and every parquet is re-hashed periodically -- without
+		# that, a cache hit would skip the only re-read of the journal's bytes, since this pull uses
+		# --no-verify and delegates verification to the replay. The path is deliberately INSIDE the
+		# container and never under /archive: that share is reachable by both hosts, which run different
+		# polars runtimes that `replay_fingerprint` does not digest, so a shared cache file would be
+		# mutually poisonable (00062 D9). The cost is one cold rebuild after each container recreate.
+		#
+		# `--lag-fail-seconds` is passed EXPLICITLY rather than left to the CLI default, so the value
+		# reaches production with a converge instead of an image rebuild and the deployed threshold is
+		# visible here. It gates the dead-man ping, so it must equal the evaluator in
+		# infra/grafana/alerts.yaml's rule, where it is derived -- change them together.
 		if ! zcrypto engine gate-export --journal-dir "$JOURNAL_DEST" --textfile "$GATE_TEXTFILE" \
 				--cache /tmp/gate-cache.json --lag-fail-seconds 21600 \
 				${GATE_HEALTHCHECK_URL:+--healthcheck-url "$GATE_HEALTHCHECK_URL"}; then
@@ -140,15 +125,12 @@ while true; do
 		fi
 	fi
 
-	# OPS-2 (spec 00051): the ops node's liquidations tree -- Binance force-orders are not
-	# backfillable (T0023-class), so the NAS mirrors them under no-sole-custody (D10) with the same
-	# hash-verified pull as the capture channels (the recorder's SegmentWriter writes .sha256
-	# manifests -- never --no-verify here). Own least-privilege key, and its own per-call SSH port:
-	# the ops node is a home-LAN box on port 22, not the VPS's 10022, and `zcrypto archive pull`
-	# reads ARCHIVE_SSH_PORT at call time exactly like ARCHIVE_SSH_KEY. Skipped entirely when
-	# LIQUIDATIONS_SOURCE is unset, so a NAS without the ops channel runs this script unchanged.
-	# Best-effort like every other pull -- and deliberately NOT an input to the reconcile gate
-	# below, which reasons only about the two capture mirrors.
+	# OPS-2 (spec 00051): the ops node's liquidations tree. Binance force-orders are not backfillable,
+	# so the NAS mirrors them under no-sole-custody (D10) with the same hash-verified pull as the
+	# capture channels -- never --no-verify here. Own least-privilege key and its own per-call SSH
+	# port, since the ops node is a home-LAN box rather than a VPS. Skipped entirely when
+	# LIQUIDATIONS_SOURCE is unset, and deliberately NOT an input to the reconcile gate below, which
+	# reasons only about the two capture mirrors.
 	if [ -n "${LIQUIDATIONS_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$LIQUIDATIONS_SSH_KEY" ARCHIVE_SSH_PORT="${LIQUIDATIONS_SSH_PORT:-22}" \
 				zcrypto archive pull \
@@ -159,13 +141,10 @@ while true; do
 		fi
 	fi
 
-	# OPS-4 (spec 00052 D7): the ops node's L2 primitive panel tree -- convenience-durability only
-	# (the panel is recomputable from raw, so this copy is not custody-critical, unlike the
-	# liquidations tree above). Own least-privilege key, and its own per-call SSH port -- the ops
-	# node is a home-LAN box on port 22, not the VPS's 10022, same as the liquidations pull. Skipped
-	# entirely when PANEL_SOURCE is unset, so a NAS without the panel channel runs this script
-	# unchanged. Best-effort like every other pull -- and deliberately NOT an input to the reconcile
-	# gate below, which reasons only about the two capture mirrors.
+	# OPS-4 (spec 00052 D7): the ops node's L2 primitive panel tree, convenience durability only --
+	# the panel is recomputable from raw, so unlike the liquidations tree above this copy is not
+	# custody-critical. Own least-privilege key and its own SSH port, skipped when PANEL_SOURCE is
+	# unset, and deliberately NOT a reconcile-gate input.
 	if [ -n "${PANEL_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$PANEL_SSH_KEY" ARCHIVE_SSH_PORT="${PANEL_SSH_PORT:-22}" \
 				zcrypto archive pull \
@@ -176,13 +155,10 @@ while true; do
 		fi
 	fi
 
-	# OPS-5 (spec 00054 D4): the healed overlay, now PRODUCED on the ops node and pulled here.
-	# Custody stays on the NAS (D3) -- only the computation moved. Own least-privilege key and its
-	# own per-call SSH port, exactly like the panel/liquidations channels above. Hash-verified: the
-	# overlay's minted hours carry .sha256 sidecars (verify_tree walks *.parquet only, so the
-	# unsidecar'd ledger rides along unchecked). Best-effort like every other pull -- a failure is
-	# logged and the loop continues; the overlay is recomputable on ops, so a missed cycle costs a
-	# delay, not data. Skipped entirely when RECONCILED_SOURCE is unset.
+	# OPS-5 (spec 00054 D4): the healed overlay, PRODUCED on the ops node and pulled here -- custody
+	# stays on the NAS (D3), only the computation moved. Hash-verified, though `verify_tree` walks
+	# parquet only, so the unsidecar'd ledger rides along unchecked. Best-effort: the overlay is
+	# recomputable on ops, so a missed cycle costs a delay rather than data.
 	if [ -n "${RECONCILED_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$RECONCILED_SSH_KEY" ARCHIVE_SSH_PORT="${RECONCILED_SSH_PORT:-22}" \
 				zcrypto archive pull \
@@ -197,30 +173,25 @@ while true; do
 		log WARNING "reconciled channel unwired (RECONCILED_SOURCE unset) — custody is not re-acquiring the overlay"
 	fi
 
-	# OPS-6 (spec 00056 D2/D4): the hot-cluster working set the ops node authors, pulled into the
-	# hot/ hub. A RAW rsync, NOT `zcrypto archive pull`: hot sets are append-only-at-file (D1c needs
-	# --ignore-existing, which the wrapper never passes) and carry manifest.json, not the .sha256
+	# OPS-6 (spec 00056 D2/D4): the hot-cluster working set the ops node authors, pulled into the hot/
+	# hub. A RAW rsync, NOT `zcrypto archive pull`: hot sets are append-only-at-file and need
+	# --ignore-existing, which the wrapper never passes, and they carry manifest.json rather than the
 	# sidecars verify_tree expects -- so this rebuilds the same pinned SSH options the wrapper uses.
-	# --archive --ignore-existing, never --delete: a content-changed file is simply untransmittable,
-	# so the append-only contract is enforced by the transport itself. Own least-privilege key +
-	# home-LAN port 22, like panel/reconciled. Best-effort; NOT a reconcile-gate input. Skipped
-	# entirely (silently, like PANEL -- deliberately NOT the reconciled channel's else-WARNING) when
-	# HOT_SOURCE is unset: hot is optional secondary durability for ops-AUTHORED artifacts and is
-	# legitimately unset until ops authors any, whereas an unwired reconciled overlay is anomalous
-	# (its writer moved to ops in OPS-5, so it is expected wired). A NAS not given the channel runs on.
-	# --chmod: the Synology share is plain POSIX with no ACL inheritance and this container is
-	# non-root (uid 1000, cannot chown), so without it pulled dirs keep the ops source's
-	# non-group-writable 0755 and the workstation push (zcrypto-deploy, group zcrypto) could not
-	# append into a shared subtree. hot/ is the fleet's only two-writer dir, so keeping the pulled
-	# tree group-writable is load-bearing.
+	# `--archive --ignore-existing`, never --delete: a content-changed file is simply untransmittable,
+	# so the append-only contract is enforced by the transport itself.
 	#
-	# D2775, NOT the D0775 every other channel uses -- the ONE place the fleet's channels diverge.
-	# The nas role sets /volume1/ZhaoCrypto/hot to 02775 precisely so both writers' children inherit
-	# group zcrypto (roles/nas/tasks/main.yml), but D0775 forces every directory rsync writes to
-	# exactly 0775 and STRIPS that setgid bit on each pull. The role restored it on converge, the
-	# next pull removed it again, and the drift was invisible until an --check --diff happened to
-	# run between the two. Siblings keep D0775 correctly: they are single-writer and their writer's
-	# egid is already zcrypto, so they need no setgid and the role declares them plain 0775.
+	# Skipped SILENTLY when HOT_SOURCE is unset, deliberately unlike the reconciled channel's warning:
+	# hot is optional secondary durability for ops-authored artifacts and is legitimately unset until
+	# ops authors any, whereas an unwired reconciled overlay is anomalous because its writer lives on
+	# ops.
+	#
+	# `--chmod` because the Synology share is plain POSIX with no ACL inheritance and this container
+	# is non-root, so without it pulled dirs keep the source's non-group-writable mode and the
+	# workstation push could not append into a shared subtree. It is D2775 here and D0775 on every
+	# other channel -- the one place the fleet's channels diverge -- because the role sets hot/ setgid
+	# so both writers' children inherit group zcrypto, and D0775 forces every directory rsync writes
+	# to exactly 0775, STRIPPING that bit on each pull. Siblings keep D0775 correctly: single-writer,
+	# egid already zcrypto.
 	if [ -n "${HOT_SOURCE:-}" ]; then
 		if ! rsync --archive --ignore-existing --chmod=D2775,F0664 \
 				-e "ssh -i $HOT_SSH_KEY -p ${HOT_SSH_PORT:-22} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
