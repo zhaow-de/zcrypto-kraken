@@ -80,10 +80,17 @@ def test_datasource_uids_are_templated_not_hardcoded():
 # The two families are told apart structurally, never by a list of uids: a hand-list would admit
 # the next dead-man added tomorrow, which is the mechanism this guard exists to close.
 #
-# The read is the THRESHOLD node's evaluator, so a comparison folded into a `math` node (`$B < 1`
-# thresholded `gt 0`) is invisible to it; a dead-man written that way on `logs` would pass. Widen
-# the classifier, never the receiver.
+# The comparison lives in the THRESHOLD node's evaluator or, when two halves are ANDed, in the `math`
+# node the threshold then reads `gt 0`. Widen the classifier, never the receiver.
 PUSH = REPO / "infra/scripts/grafana-push.sh"
+
+# Grafana's server-side expression operators, split by the direction each gives a rule. A `math` node
+# stating `==`, `!=` or a negating `!` reverses or hides that direction and is refused rather than
+# guessed. So is one stating no comparison at all: `1 - $A` under a threshold `gt 0.5` is a dead-man
+# the threshold's own operator reads as a burst, which is the answer the refusal exists to prevent.
+_ABSENCE_OPERATORS = {"lt", "lte", "<", "<="}
+_PRESENCE_OPERATORS = {"gt", "gte", ">", ">="}
+_MATH_OPERATOR = re.compile(r"[<>!=]=|[<>!]")
 
 
 def _receivers_suppressing_resolve() -> set[str]:
@@ -96,13 +103,40 @@ def _receivers_suppressing_resolve() -> set[str]:
 
 
 def _fires_on_absence(rule) -> bool:
-    """True when the rule pages because a measured value fell BELOW its threshold -- every dead-man
-    here, and every disk or staleness rule that says "too little of something"."""
-    return any(
-        cond.get("evaluator", {}).get("type") == "lt"
-        for node in rule["data"]
-        for cond in (node.get("model", {}).get("conditions") or [])
-    )
+    """True when the rule pages because a measured value fell BELOW its threshold -- a rule stating an
+    age ABOVE a limit reads as presence, however stale it means -- and raises, naming the rule, unless
+    it read a direction: `False` is an answer about what was read, never about a rule it could not."""
+    below, read = False, False
+    for node in rule["data"]:
+        if node.get("datasourceUid") != "__expr__":
+            continue  # a datasource query states no comparison; only the expression nodes do
+        model = node.get("model") or {}
+        kind, ref = model.get("type"), node.get("refId")
+        if kind == "reduce":
+            continue  # collapses a series to one number and compares nothing
+        if kind == "threshold":
+            found = [(cond.get("evaluator") or {}).get("type") for cond in model.get("conditions") or []]
+        elif kind == "math":
+            found = _MATH_OPERATOR.findall(model.get("expression") or "")
+        else:
+            raise AssertionError(
+                f"{rule['uid']}: expression node {ref!r} is a {kind!r} node, which this reader does not "
+                "classify -- teach it the node's direction rather than letting it score an unread rule as a burst"
+            )
+        unreadable = [op for op in found if op not in _ABSENCE_OPERATORS | _PRESENCE_OPERATORS]
+        if unreadable or not found:
+            raise AssertionError(
+                f"{rule['uid']}: {kind} node {ref!r} states no direction this reader can follow "
+                f"(operators {found or '[]'}) -- a dead-man read as a burst rule is one pinned to a silent clear"
+            )
+        below = below or any(op in _ABSENCE_OPERATORS for op in found)
+        read = True
+    if not read:
+        raise AssertionError(
+            f"{rule['uid']}: no expression node states a comparison this reader can follow -- the "
+            "condition sits on a query or a reduce, and `False` here would be a burst verdict on nothing read"
+        )
+    return below
 
 
 def test_a_rule_that_fires_on_absence_can_notify_its_clear():
@@ -135,6 +169,76 @@ def test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve():
         "no rule pins a resolve-suppressing receiver any more -- if that was deliberate, "
         "grafana-push.sh should stop minting one; T0047 put the ERROR-log rules there"
     )
+
+
+@pytest.mark.parametrize(
+    "uid,absence",
+    [
+        # One rule of each shape the file writes, so a classifier narrowed back to the threshold node
+        # -- or widened until direction stops mattering -- reds on the pair it got wrong.
+        ("zcrypto-capture-log-dead-primary", True),  # a dead-man stated as a threshold `lt`
+        ("zcrypto-engine-dark-with-exposure", True),  # the same question folded into `$B < 1`
+        ("zcrypto-ops-verify-replay-backlog-stuck", False),  # a math node stating `>` and `>=`, both presence
+        ("zcrypto-capture-error-logs", False),  # a burst rule stated as a threshold `gt`
+    ],
+)
+def test_the_absence_reader_gets_the_direction_right_in_both_shapes_the_file_writes(uid, absence):
+    rule = next((r for r in _rules() if r["uid"] == uid), None)
+    assert rule is not None, f"{uid} has left alerts.yaml -- repoint this case at a rule of the same shape"
+    assert _fires_on_absence(rule) is absence
+
+
+def test_the_absence_reader_refuses_a_direction_it_cannot_read():
+    """A node this reader cannot classify raises, naming the rule and the node, rather than answering
+    "not absence-firing" -- the answer under which a dead-man keeps a receiver that eats its clear."""
+    unreadable = {
+        "uid": "zcrypto-invented-dead-man",
+        "data": [
+            {"refId": "A", "datasourceUid": "${GRAFANA_PROM_DS_UID}", "model": {}},
+            {"refId": "B", "datasourceUid": "__expr__", "model": {"type": "math", "expression": "$A == 0"}},
+            {"refId": "C", "datasourceUid": "__expr__", "model": {"type": "threshold", "expression": "B"}},
+        ],
+    }
+    refused = r"zcrypto-invented-dead-man: %s node %s states no direction this reader can follow \(operators %s\)"
+    with pytest.raises(AssertionError, match=refused % ("math", "'B'", r"\['=='\]")):
+        _fires_on_absence(unreadable)
+
+    # Arithmetic under a threshold is the shape that used to be passed over, and it is where the
+    # silent wrong answer lived: `1 - $A` inverts the direction the threshold's own `gt` then reads.
+    unreadable["data"][1]["model"] = {"type": "math", "expression": "1 - $A"}
+    with pytest.raises(AssertionError, match=refused % ("math", "'B'", r"\[\]")):
+        _fires_on_absence(unreadable)
+
+    # The threshold arm, which nothing reached while B raised first: a node carrying no evaluator.
+    unreadable["data"][1]["model"] = {"type": "math", "expression": "$A < 1"}
+    with pytest.raises(AssertionError, match=refused % ("threshold", "'C'", r"\[\]")):
+        _fires_on_absence(unreadable)
+
+    unreadable["data"][1]["model"] = {"type": "sql", "expression": "SELECT 1"}
+    with pytest.raises(AssertionError, match=r"zcrypto-invented-dead-man: expression node 'B' is a 'sql' node"):
+        _fires_on_absence(unreadable)
+
+    # And the arm no node reaches: a rule whose condition sits on the query itself, or on a `reduce`.
+    # Every refusal above is per node, so a rule that offers none of them fell straight through to
+    # `return below` -- False, the burst verdict, on nothing read.
+    nothing_read = {"uid": "zcrypto-invented-dead-man", "data": [unreadable["data"][0]]}
+    with pytest.raises(AssertionError, match=r"zcrypto-invented-dead-man: no expression node states a comparison"):
+        _fires_on_absence(nothing_read)
+    nothing_read["data"].append({"refId": "B", "datasourceUid": "__expr__", "model": {"type": "reduce"}})
+    with pytest.raises(AssertionError, match=r"zcrypto-invented-dead-man: no expression node states a comparison"):
+        _fires_on_absence(nothing_read)
+
+
+def test_no_rule_in_the_file_trips_the_readers_refusal():
+    """The refusal earns its place only while it is silent here: a red from it names a shape the file
+    has just started using, never one it has carried all along."""
+    refused = []
+    for rule in _rules():
+        try:
+            _fires_on_absence(rule)
+        except AssertionError as exc:
+            refused.append(str(exc))
+    assert not refused, f"alerts.yaml states a comparison the dead-man classifier cannot read: {refused}"
 
 
 # --- notification_settings must survive the payload the push actually sends ----------------------

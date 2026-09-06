@@ -425,13 +425,36 @@ NOT_A_PUBLISHED_METRIC = {
 }
 
 
-def _tokens_in_tree() -> dict[str, set[str]]:
-    found: dict[str, set[str]] = {}
+# `[A-Za-z0-9_]`, not `[a-z0-9_]`: capitals are legal in a metric name (ACCESS_REQUIRED's
+# node_memory_MemAvailable_bytes), and against a `zcrypto_` name carrying one right after the prefix
+# the lowercase class matches nothing at all -- such a name never reaches the classification below.
+def _tokens_in_tree_raw() -> dict[str, set[str]]:
+    raw: dict[str, set[str]] = {}
     for glob in _SOURCE_GLOBS:
         for path in REPO.glob(glob):
-            for m in re.finditer(r"zcrypto_[a-z0-9_]{4,}", path.read_text()):
-                found.setdefault(m.group(0), set()).add(str(path.relative_to(REPO)))
+            for m in re.finditer(r"zcrypto_[A-Za-z0-9_]{4,}", path.read_text()):
+                raw.setdefault(m.group(0), set()).add(str(path.relative_to(REPO)))
+    return raw
+
+
+# Keyed by `.lower()`, so a capitalised spelling classifies as the name it canonicalises to. Derived
+# from the raw dict rather than walking again: one narrowing cannot blind the refusal while the sweep
+# keeps classifying.
+def _tokens_in_tree() -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for name, where in _tokens_in_tree_raw().items():
+        found.setdefault(name.lower(), set()).update(where)
     return found
+
+
+def test_no_zcrypto_metric_name_is_spelled_with_a_capital():
+    """A capitalised `zcrypto_` name is one the sweep below cannot answer for."""
+    capitalised = sorted((name, sorted(where)) for name, where in _tokens_in_tree_raw().items() if name != name.lower())
+    assert not capitalised, (
+        f"a zcrypto_ metric name carries a capital: {capitalised} -- Prometheus names are case-sensitive, "
+        "so this is a different series from its lowercase twin, and the sweep below keys on `.lower()` "
+        "and would classify it as that twin"
+    )
 
 
 # Deliberately a shape match over the whole source, not a scan of definition sites: scanning

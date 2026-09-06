@@ -1039,7 +1039,7 @@ def test_a_coherently_garbage_stream_can_never_be_written_to_the_archive(tmp_pat
     assert pl.read_parquet(_segment_path(tmp_path, 10))["checksum"].to_list() == list(range(20))
 
 
-def test_a_future_dated_final_can_never_brick_the_stream(tmp_path, clock):
+def test_a_future_dated_final_can_never_brick_the_stream(tmp_path, clock, caplog):
     # The poison pill. A far-future `<HH>.parquet` (what one accepted garbage stamp leaves behind)
     # seeds `_floor` on EVERY future restart — so every genuine event is dropped as "late", forever,
     # on every restart, until a human finds the file. An hour that has not happened yet cannot have
@@ -1049,7 +1049,10 @@ def test_a_future_dated_final_can_never_brick_the_stream(tmp_path, clock):
     future_dir.mkdir(parents=True)
     pl.DataFrame([_book_event(10, 0, checksum=1)], schema=BOOK_SCHEMA).write_parquet(future_dir / "01.parquet", compression="zstd")
 
-    w = _new_writer(tmp_path, flush_rows=5)
+    with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):  # a DOWNGRADE must read as a level, not silence
+        w = _new_writer(tmp_path, flush_rows=5)
+
+    assert _drop_levels(caplog, "ignoring a future-dated segment") == [logging.ERROR]
     assert w._floor is None  # the nonsense final is not "the newest closed hour"
     for i in range(20):
         w.append(_hour10_event(i, i))
