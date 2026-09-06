@@ -1199,10 +1199,10 @@ _FORBIDDEN = ("validated", "passed", "confirmed", "proven")
 # The three free-text columns are sized to the LONGEST label each can carry: a right-justified field gets its
 # gap only from its OWN leading padding, so a label reaching its column's width abuts its neighbour with no
 # separator at all.
-_VERDICT_COL_W = len("indeterminate (instrument-fragile)")  # 34; the reconciled column's longest label
+_VERDICT_COL_W = len("indeterminate (instrument-fragile)")  # the reconciled column's longest label
 # `primary`/`secondary` each hold a RAW single-null label (never the reconciled
 # "indeterminate (instrument-fragile)"), so both share this one width -- the longest of the four.
-_RAW_VERDICT_COL_W = len("weakly-consistent")  # 17
+_RAW_VERDICT_COL_W = len("weakly-consistent")
 # The fingerprint table's rows, and its name column sized to the longest of them rather than a hardcoded width:
 # adding a metric widens the column instead of shifting that row's numbers out of alignment.
 _METRIC_ROWS = ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach")
@@ -1494,7 +1494,7 @@ def _json_payload(
             "null_gov_rate": analysis.null_gov_rate,
             "null_cap_rate": analysis.null_cap_rate,
             "note": (
-                "null_gov_rate/null_cap_rate are the null's GLOBAL rates -- do not use them as the "  # D9
+                "null_gov_rate/null_cap_rate are the null's GLOBAL rates -- do not use them as the "  # spec 00059 D9
                 f"comparison reference; {_CONTEXT_NOTE_REFERENCE_BY_MODE[null_mode]}"
             ),
         }
