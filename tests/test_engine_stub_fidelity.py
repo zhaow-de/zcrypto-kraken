@@ -117,8 +117,8 @@ TABLE: dict[str, dict[str, Standin]] = {
         "_Run": Standin(NOT_A_STANDIN, "a value record for one CLI invocation's exit code, output and file mtimes", ()),
         "_Slice": Standin(NOT_A_STANDIN, "a value record naming a copied journal slice and its per-file minimums", ()),
     },
-    # The red button drives the venue's HTTP client directly rather than the node, so its doubles
-    # stand in for what the venue hands over. `typing.Any` is what the client's signatures promise,
+    # The red button drives the venue's HTTP client directly rather than the node, so all but one of
+    # its doubles stand in for what the venue hands over. `typing.Any` is what the client's signatures promise,
     # which is why the real answer classes are named per row rather than read off a signature -- the
     # offers guard keeps each name, and its KIND, honest against the real class: `_Book` once
     # restated OrderBook's `bids`/`asks` METHODS as plain lists and every name-only check agreed.

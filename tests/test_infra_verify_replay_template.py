@@ -363,7 +363,7 @@ def _bash_harness(tmp_path):
 
 def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
     """failed_hours carries forward when the run breaks; run_ok is 0 exactly when the summary does
-    not parse (spec 00077 D3).
+    not parse (spec 00077, Verification).
 
     Simplifying `failed_hours="${prev_failed:-0}"` to a literal `0` passes every OTHER test here and
     silently re-arms the false-page defect D3 exists to prevent."""

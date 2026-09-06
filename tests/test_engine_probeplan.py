@@ -230,7 +230,7 @@ def test_parse_plan_accepts_a_valid_margin_intent():
 
 def test_the_mode_vocabulary_is_pinned_so_a_new_mode_cannot_arrive_unnoticed():
     """Every mode name is a branch in the executor. A mode added here and nowhere else joins the
-    touch like `execute` -- `Executor._limit_price`'s fall-through -- so the vocabulary is pinned and
+    touch like `execute` -- `ProbeExecutor._limit_price`'s fall-through -- so the vocabulary is pinned and
     widening it is a deliberate, reviewed edit."""
     assert probeplan.MODES == frozenset({"execute", "rest-cancel", "rest-hold"})
 

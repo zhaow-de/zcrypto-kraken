@@ -212,9 +212,8 @@ def test_an_empty_series_map_is_refused_at_build():
 
 # --- the ordering pin, on fixtures that can actually bite -------------------------------------------
 #
-# Path-lexicographic re-anchors reach's committed digests -- deliberately, and only because
-# `convert_dataset` refuses a conversion in which any recomputed hash is absent from what the legacy
-# manifest attested.
+# Path-lexicographic re-anchors reach's committed digests -- safe only because `convert_dataset`
+# refuses any conversion whose recomputed hash SET is not exactly what the legacy manifest attested.
 
 from pathlib import Path as _Path
 

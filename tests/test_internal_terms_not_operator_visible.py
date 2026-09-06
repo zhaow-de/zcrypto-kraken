@@ -7,7 +7,9 @@ outright, enforced by the last test in this file.
 Every non-docstring string literal in the scanned packages is checked, not just the ones lexically
 inside a `raise`/`echo`: a message built into a variable and echoed later
 (`text = render_report(...); typer.echo(text)`) is invisible to any call-site walk, and chasing it
-statically is dataflow analysis.
+statically is dataflow analysis. That makes this scan STRICTER than
+`.claude/rules/operator-facing-text.md`'s log-line carve-out, `logger.*` literals included, and it
+stays so: narrowing it to spare a log line reopens the loophole the carve-out would otherwise be.
 """
 
 from __future__ import annotations
