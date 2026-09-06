@@ -945,6 +945,7 @@ def test_an_unreadable_merging_file_is_quarantined_and_the_hour_rebuilt_from_its
     assert not list(hour_dir.glob("10.part*.parquet"))  # consumed by the rebuild, not by the rot
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
 def test_an_unremovable_tmp_file_cannot_crash_loop_the_daemon(tmp_path):
     # A read-only remount — the aftermath of the very ENOSPC condition DiskWatermark exists for — makes
     # `_recover`'s `.tmp` unlink raise, and `__init__` runs for every stream before the daemon connects, so a
