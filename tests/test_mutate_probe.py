@@ -86,19 +86,28 @@ def test_sandbox_refuses_pytest(tmp_path):
 
 
 def test_seeding_failure_is_rc8_not_usage(tmp_path):
-    """A repo with no commits makes `git archive HEAD` fail — rc 8, the seeding refusal."""
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@example.invalid"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
-    target = tmp_path / "mod.py"
+    """A repo with no commits makes `git archive HEAD` fail — rc 8, the seeding refusal, and the
+    sandbox dir mktemp'd one line above it goes out with the refusal."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    target = repo / "mod.py"
     target.write_text("VALUE = 1\n")
+    # mktemp honours TMPDIR, so the sandbox dir is observable here; it is set for the subprocess alone
+    # (`env_extra`), never on this process, or every other test that shells out inherits it
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
     # no commit at all — HEAD is unborn
     r = run(
         ["--sandbox", "--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/", "--mutation", "s/1/3/", "--", "true"],
-        cwd=tmp_path,
+        cwd=repo,
+        env_extra={"TMPDIR": str(tmpdir)},
     )
     assert r.returncode == 8
     assert "seeding" in r.stderr.lower()
+    leaked = [p.name for p in tmpdir.iterdir()]
+    assert not leaked, f"the sandbox dir outlived the seeding refusal: {leaked}"
 
 
 def test_baseline_failure_refuses_before_anything_is_mutated(tmp_path):
