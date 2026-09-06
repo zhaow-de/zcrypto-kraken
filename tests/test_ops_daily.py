@@ -1810,35 +1810,44 @@ def test_the_reminders_field_of_the_report_carries_no_default():
     assert reminders.default_factory is dataclasses.MISSING, reminders.default_factory
 
 
-# Counted from the committed script, where the binding on its own line carries no `{...}` and the
-# three interpolations are the sites that build a URL.
+# Counted from the committed script as OCCURRENCES of the interpolation, never as lines carrying it:
+# two endpoints on one line is an ordinary edit, and the binding on its own line carries no `{...}`.
 _GRAFANA_URL_SITES = 3
 
 
 def test_every_site_that_builds_a_grafana_url_is_pinned():
-    """The instrument interpolates `GRAFANA_URL` at exactly `_GRAFANA_URL_SITES` places -- this catches
-    a site ADDED, never whether the endpoints the pins name are the right ones."""
-    sites = [line.strip() for line in _SCRIPT.read_text().splitlines() if "{GRAFANA_URL}" in line]
-    assert len(sites) == _GRAFANA_URL_SITES, (
-        f"{len(sites)} sites build a URL from GRAFANA_URL, pinned at {_GRAFANA_URL_SITES} -- pin the new one in "
-        "`test_every_endpoint_the_instrument_builds_is_pinned` and raise `_GRAFANA_URL_SITES`:\n" + "\n".join(sites)
+    """The instrument interpolates `GRAFANA_URL` at exactly `_GRAFANA_URL_SITES` places, so a site
+    added or dropped reds until it is pinned in `test_every_endpoint_the_instrument_builds_is_pinned`."""
+    lines = [line.strip() for line in _SCRIPT.read_text().splitlines() if "{GRAFANA_URL}" in line]
+    sites = sum(line.count("{GRAFANA_URL}") for line in lines)
+    assert sites == _GRAFANA_URL_SITES, (
+        f"{sites} sites build a URL from GRAFANA_URL, pinned at {_GRAFANA_URL_SITES} -- pin the new one in "
+        "`test_every_endpoint_the_instrument_builds_is_pinned` and raise `_GRAFANA_URL_SITES`:\n" + "\n".join(lines)
     )
 
 
-# `-e`/`--regexp` take the pattern as their own argument and `-f`/`--file` take a file of them, so any
-# of the four made value-taking moves the first FILE into the operand slot the path check skips.
-_PATTERN_CONSUMING_FLAGS = ("-e", "--regexp", "-f", "--file")
+# The whole set of value-taking flags the grep shapes carry, pinned as a set rather than as a list of
+# spellings to forbid. A flag that takes a value consumes grep's positional pattern; on the read shape
+# that moves the first FILE into operand 0, the slot `_reads_only_safe_paths` skips.
+_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--include"}
 
 
 def test_neither_grep_shape_carries_a_flag_that_consumes_the_pattern():
     """`_reads_only_safe_paths` skips grep's operand 0 as the pattern, which is sound only while no
-    flag can consume it."""
-    tables = ops_daily._READ_SHAPES + ops_daily._ZCRYPTO_SHAPES + ops_daily._FILTER_SHAPES + ops_daily._TELEMETRY_SHAPES
-    greps = [shape for shape in tables if shape.head == ("grep",)]
+    flag on any shape table the module defines can consume it."""
+    tables = [
+        value
+        for name, value in vars(ops_daily).items()
+        if name.endswith("_SHAPES") and isinstance(value, tuple) and all(isinstance(s, ops_daily._Shape) for s in value)
+    ]
+    greps = [shape for table in tables for shape in table if shape.head == ("grep",)]
     print([sorted(shape.flags) for shape in greps])
-    assert len(greps) == 2, f"expected the read and the filter grep shape, selected {greps}"
-    carried = sorted({flag for shape in greps for flag in _PATTERN_CONSUMING_FLAGS if flag in shape.flags})
-    assert not carried, f"a grep shape made {carried} value-taking, which shifts the first file into the skipped slot"
+    assert len(greps) == 2, f"expected the read and the filter grep shape, selected {greps} from {len(tables)} tables"
+    valued = {flag for shape in greps for flag, spec in shape.flags.items() if spec is not None}
+    assert valued == _GREP_VALUE_FLAGS, (
+        f"the grep shapes' value-taking flags are {sorted(valued)}, pinned at {sorted(_GREP_VALUE_FLAGS)} -- "
+        "one that takes a value consumes grep's positional pattern"
+    )
 
 
 _ALERTS = Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml"
@@ -1850,8 +1859,8 @@ def _rules_reading(metric: str, rules: list[dict]) -> list[dict]:
 
 
 def test_each_bounded_verdict_check_agrees_with_the_rule_it_mirrors():
-    """A bounded check passes exactly where its owning rule stays quiet, the threshold read out of
-    `alerts.yaml` on both sides rather than restated here."""
+    """A bounded check and its owning rule agree at every value probed from zero to just past the
+    threshold, which is read out of `alerts.yaml` on both sides rather than restated here."""
     rules = yaml.safe_load(_ALERTS.read_text())["rules"]
     # The checks that mirror a threshold rule: bounded AND naming one metric. The `up` pair is bounded
     # and names none, so a rule cannot be found for it and it is not one of these.
@@ -1869,7 +1878,10 @@ def test_each_bounded_verdict_check_agrees_with_the_rule_it_mirrors():
         # The complement below reads `gt` as "healthy at or below"; another evaluator would invert it.
         assert condition["evaluator"]["type"] == "gt", f"{name}: {rule['uid']} evaluates {condition['evaluator']}"
         (threshold,) = condition["evaluator"]["params"]
-        for probe in (float(threshold), float(threshold) + 1):
+        # Across the interval the rule leaves quiet, not at its edge alone: a bound narrowed from
+        # BELOW -- `1000 <= v <= 16500` -- agrees at the threshold and above it while failing every
+        # freshly completed cycle, which the pass would report as a FAIL on a healthy fleet.
+        for probe in sorted({float(threshold) * i / 8 for i in range(9)} | {float(threshold) + 1}):
             fires = probe > threshold
             if bound(probe) != (not fires):
                 disagreements.append(f"{name} vs {rule['uid']} at {probe}: check ok={bound(probe)}, rule fires={fires}")
