@@ -604,6 +604,17 @@ def ssh_read(command: tuple[str, ...]) -> str:
     return subprocess.run(command, capture_output=True, text=True, timeout=_TIMEOUT, check=True).stdout
 
 
+def ssh_resolve(host: str, operands: list[str]) -> list[str]:
+    """The live resolver: what each operand really names on `host`, links followed, one path a line.
+
+    `readlink -f`, so a chain of links answers its final target rather than the next hop. The remote
+    shell expands a glob before readlink sees it, so one operand can answer several paths. `check=True`
+    keeps a non-zero ssh an exception the caller refuses on, never an empty answer read as clean.
+    """
+    command = ("ssh", "-o", "BatchMode=yes", host, "readlink", "-f", "--", *operands)
+    return subprocess.run(command, capture_output=True, text=True, timeout=_TIMEOUT, check=True).stdout.splitlines()
+
+
 def read_unattended_upgrades(*, now: datetime, runner) -> Check:
     """Whether the trade-key host's last unattended upgrade succeeded and its timer is still firing.
 
@@ -813,7 +824,7 @@ def main(argv: list[str]) -> int:
         if not rest:
             print('usage: ops-daily.py classify --host <host> "<command>"')
             return 2
-        tier = classify_action(" ".join(rest), host=host)
+        tier = classify_action(" ".join(rest), host=host, resolve=ssh_resolve)
         print(tier.value)
         return 0 if tier is Tier.AUTONOMOUS else 3
     if not argv or argv[0] != "report":
@@ -1178,21 +1189,48 @@ _READ_SAFE_FILES = (
 )
 
 
-def _reads_only_safe_paths(tokens: list[str], operands: list[str], *, first_stage: bool) -> bool:
-    """Every path a content head names must sit under a read-safe root, absolute and traversal-free.
+def _path_is_read_safe(path: str) -> bool:
+    """One path sits under a read-safe root, absolutely and traversal-free: `*` cannot cross `/`, and
+    `..` can leave, so it is refused outright."""
+    return ".." not in path and (path.startswith(_READ_SAFE_DIRS) or path in _READ_SAFE_FILES)
 
-    `grep`'s operand 0 is its PATTERN, skipped however it is spelled, because no shape admits an
-    option that could put a file there -- `test_no_grep_shape_admits_a_pattern_source_option` holds
-    that for every table here. A `*` cannot cross `/`; `..` can leave, so it is refused outright. A
-    FIRST-stage content head naming no file is refused rather than asked which flag recursed it: an
+
+def _file_operands(tokens: list[str], operands: list[str]) -> list[str]:
+    """`grep`'s operand 0 is its PATTERN, never a file, skipped however it is spelled, because no
+    shape admits an option that could put a file there --
+    `test_no_grep_shape_admits_a_pattern_source_option` holds that for every table here."""
+    return operands[1:] if tokens[0] == "grep" else operands
+
+
+def _reads_only_safe_paths(tokens: list[str], operands: list[str], *, first_stage: bool) -> bool:
+    """Every path a content head SPELLS sits under a read-safe root -- a claim about the names it
+    gives, which `_resolves_only_safe_paths` then re-asks of what those names really reach.
+
+    A FIRST-stage content head naming no file is refused rather than asked which flag recursed it: an
     admitted filter flag's own ARGUMENT can turn grep recursive, so what is read is the file list --
     empty, it walks the working directory or reads a stdin the daily pass never supplies.
     """
-    head = tokens[0]
-    paths = operands[1:] if head == "grep" else operands
+    paths = _file_operands(tokens, operands)
     if first_stage and not paths:
         return False
-    return all(".." not in path and (path.startswith(_READ_SAFE_DIRS) or path in _READ_SAFE_FILES) for path in paths)
+    return all(_path_is_read_safe(path) for path in paths)
+
+
+def _resolves_only_safe_paths(tokens: list[str], operands: list[str], *, host: str | None, resolve) -> bool:
+    """Every path a content head's operands really NAME on the host is read-safe too.
+
+    The spelled check is lexical, and a symlink planted under a read-safe root is spelled safe while
+    reading whatever it points at, so the host is asked what each operand resolves to and the same
+    predicate is applied to the answer. No host, a resolver that raises, and an operand the host
+    resolves to nothing all refuse: none of them is the host saying the read stays inside a root.
+    """
+    if host is None:
+        return False
+    try:
+        resolved = resolve(host, _file_operands(tokens, operands))
+    except (*_UNREACHABLE, subprocess.SubprocessError):
+        return False
+    return bool(resolved) and all(_path_is_read_safe(path) for path in resolved)
 
 
 # Stripped before matching: they change who runs a command, never what it does. `ssh <host>` also
@@ -1335,9 +1373,13 @@ def _curl_is_read(tokens: list[str]) -> bool:
 _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
 
 
-def _matches(shapes, tokens: list[str], *, first_stage: bool) -> list[str] | None:
+def _matches(shapes, tokens: list[str], *, first_stage: bool, host: str | None, resolve) -> list[str] | None:
     """The operands of the shape admitting `tokens`, or None -- and a content head reading outside
-    the safe roots is admitted by no table, the veto sitting here because every table is read here."""
+    the safe roots is admitted by no table, the veto sitting here because every table is read here.
+
+    Only a FIRST-stage content head costs a resolution: a filter stage's grep takes no file operand,
+    and a head outside `_CONTENT_HEADS` prints no bytes for the safe-root model to be about.
+    """
     for shape in shapes:
         operands = _match_shape(shape, tokens)
         if operands is None:
@@ -1345,8 +1387,11 @@ def _matches(shapes, tokens: list[str], *, first_stage: bool) -> list[str] | Non
         check = _POSTCHECKS.get(shape.post) if shape.post else None
         if check and not check(tokens):
             continue
-        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens, operands, first_stage=first_stage):
-            return None
+        if tokens[0] in _CONTENT_HEADS:
+            if not _reads_only_safe_paths(tokens, operands, first_stage=first_stage):
+                return None
+            if first_stage and not _resolves_only_safe_paths(tokens, operands, host=host, resolve=resolve):
+                return None
         return operands
     return None
 
@@ -1385,34 +1430,39 @@ def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
     return tokens, target
 
 
-def classify_action(text: str, *, host: str | None = None) -> Tier:
+def classify_action(text: str, *, host: str | None = None, resolve) -> Tier:
     """Which tier a runbook step falls in. Default-deny: unrecognised is PREPARED, always.
 
     A command is AUTONOMOUS only when EVERY backtick span in the text matches an enumerated shape.
     There is no rule that reads a command's words and decides it looks harmless, and making any branch
-    here permissive is wrong however reasonable it looks.
+    here permissive is wrong however reasonable it looks. Keyword-only `resolve`, no default: an
+    injection default is a live call site, not a seam. Without a `host` there is no filesystem to
+    resolve on, so a content read naming a file is PREPARED -- the same default-deny direction.
     """
     commands = _commands(text)
     if not commands:
         return Tier.PREPARED
-    if all(_classify_one(command, host) is Tier.AUTONOMOUS for command in commands):
+    if all(_classify_one(command, host, resolve=resolve) is Tier.AUTONOMOUS for command in commands):
         return Tier.AUTONOMOUS
     return Tier.PREPARED
 
 
-def _classify_one(command: str, host: str | None) -> Tier:
+def _classify_one(command: str, host: str | None, *, resolve) -> Tier:
     stages = _scan(_strip_noise(command))
     if not stages or not all(stages):
         return Tier.PREPARED
     first, *filters = stages
-    if not all(_matches(_FILTER_SHAPES, stage, first_stage=False) is not None for stage in filters):
+    if not all(_matches(_FILTER_SHAPES, stage, first_stage=False, host=host, resolve=resolve) is not None for stage in filters):
         return Tier.PREPARED
     tokens, target = _strip_prefixes(first)
     if not tokens:
         return Tier.PREPARED
-    operands = _matches(_FIRST_STAGE_SHAPES, tokens, first_stage=True)
-    if operands is None and (target or host) in _TELEMETRY_HOSTS:
+    # `target or host` is where the command really runs, so it is also the filesystem its operands
+    # resolve on -- the same host the telemetry gate below reads.
+    lands_on = target or host
+    operands = _matches(_FIRST_STAGE_SHAPES, tokens, first_stage=True, host=lands_on, resolve=resolve)
+    if operands is None and lands_on in _TELEMETRY_HOSTS:
         lowered = command.lower()
         if not any(obj in lowered for obj in _PROTECTED_OBJECTS):
-            operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True)
+            operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True, host=lands_on, resolve=resolve)
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED

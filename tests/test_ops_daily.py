@@ -418,6 +418,13 @@ def test_the_cli_refuses_an_unknown_subcommand():
 
 # --- Task 15b (spec 00104): the tier classifier -------------------------------------------------------------
 
+
+def _identity(host, operands):
+    """The resolver mode under which the spelled path IS the resolved one, so every test taking it
+    measures the shape tables and the safe-root spelling alone."""
+    return list(operands)
+
+
 # infra/runbooks/observability.md, the alloy-dark section -- one body serving nas, ops AND both
 # capture hosts, which is why the host is an argument and not read out of the step.
 _ALLOY_RESTART = "Restart it — safe, and the usual fix: `sudo docker restart grafana-alloy`."
@@ -436,7 +443,7 @@ _ALLOY_RESTART = "Restart it — safe, and the usual fix: `sudo docker restart g
 def test_the_same_step_is_routine_on_ops_and_attended_on_the_capture_pair(host, expected):
     """Identical text; only the host differs. A classifier reading the text alone must get one of
     these wrong, and the wrong one restarts Alloy on the capture primary unattended."""
-    assert ops_daily.classify_action(_ALLOY_RESTART, host=host) is expected
+    assert ops_daily.classify_action(_ALLOY_RESTART, host=host, resolve=_identity) is expected
 
 
 @pytest.mark.parametrize(
@@ -454,7 +461,7 @@ def test_the_same_step_is_routine_on_ops_and_attended_on_the_capture_pair(host, 
 def test_a_read_only_step_is_autonomous_even_naming_a_protected_object(text):
     """A read-only step is AUTONOMOUS even when it names a protected object: a classifier keyed on
     the two commonest read verbs would prepare every other logs, grep and journalctl step."""
-    assert ops_daily.classify_action(text, host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(text, host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 @pytest.mark.parametrize(
@@ -478,17 +485,20 @@ def test_a_read_only_step_is_autonomous_even_naming_a_protected_object(text):
 def test_a_mutating_or_unscoped_step_is_prepared_on_any_host(text):
     """The dangerous half, pinned by name. The last case is an UNSCOPED inspect: it prints the
     container's environment, which on the engine host is the live trade key."""
-    assert ops_daily.classify_action(text, host="ops") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(text, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 def test_a_bare_command_with_no_backticks_is_judged_as_one_command():
     """The skill passes the command bare, so a text carrying no backtick span is judged as one
     command rather than refused for want of a span."""
-    assert ops_daily.classify_action("sudo docker logs zcrypto-capture --since 1h", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+    assert (
+        ops_daily.classify_action("sudo docker logs zcrypto-capture --since 1h", host="zcrypto", resolve=_identity)
+        is ops_daily.Tier.AUTONOMOUS
+    )
 
 
 def test_an_unrecognised_action_is_prepared_never_autonomous():
-    assert ops_daily.classify_action("Frobnicate the widget.", host="ops") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action("Frobnicate the widget.", host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 _RUNBOOKS = Path(__file__).resolve().parents[1] / "infra/runbooks"
@@ -569,7 +579,7 @@ def test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous():
         c
         for c in _runbook_commands()
         if any(tok in c for tok in _DESTRUCTIVE)
-        and ops_daily.classify_action(f"`{c}`", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+        and ops_daily.classify_action(f"`{c}`", host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     ]
     assert not offenders, f"destructive commands classified autonomous: {offenders}"
 
@@ -580,7 +590,9 @@ def test_most_read_only_diagnostics_are_autonomous_on_ops():
     corpus-justified read heads, never by narrowing the extraction -- that games a safety floor by
     shrinking its denominator."""
     reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
-    autonomous = [c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops") is ops_daily.Tier.AUTONOMOUS]
+    autonomous = [
+        c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    ]
     assert len(autonomous) / len(reads) >= 0.70, (
         f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous; "
         f"refused sample: {sorted(c for c in reads if c not in autonomous)[:12]}"
@@ -591,7 +603,7 @@ def test_the_red_button_is_never_autonomous():
     """The unattended daily pass reads these runbooks and classifies every command in them. This
     one closes the whole book at market; nothing may ever run it without a person."""
     for command in ("sudo zcrypto-flatten", "sudo zcrypto-flatten --execute"):
-        assert ops_daily.classify_action(f"`{command}`", host="zcrypto") is not ops_daily.Tier.AUTONOMOUS
+        assert ops_daily.classify_action(f"`{command}`", host="zcrypto", resolve=_identity) is not ops_daily.Tier.AUTONOMOUS
 
 
 # Every wrapping of the red button an operator or a runbook would really produce, each paired with a
@@ -614,8 +626,8 @@ _RED_BUTTON_WRAPPINGS = (
 def test_no_wrapping_of_the_red_button_reaches_autonomous(button, read):
     """The button is refused through every wrapper `_RED_BUTTON_WRAPPINGS` spells it with, and the
     read wearing the same wrapper stays AUTONOMOUS."""
-    assert ops_daily.classify_action(f"`{button}`", host="zcrypto") is ops_daily.Tier.PREPARED
-    assert ops_daily.classify_action(f"`{read}`", host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(f"`{button}`", host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(f"`{read}`", host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 def test_the_classify_subcommand_is_what_the_skill_calls(capsys):
@@ -659,7 +671,7 @@ def test_shell_composition_and_write_shaped_reads_are_never_autonomous(cmd):
     live venue executor, a GET to a ping URL marks a dead-man alive, and `{{json .Config}}` prints
     the engine's Kraken trade key -- no runbook contains such a command, so they are pinned here by
     construction rather than by the corpus."""
-    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 @pytest.mark.parametrize(
@@ -692,7 +704,7 @@ def test_the_round_three_escapes_are_refused(cmd):
     """Each string mutates in real bash and is refused on every host -- kept as fixtures because a
     guard is unproven until the defect it names is seen to trip it."""
     for host in ("zcrypto", "ops", "nas"):
-        assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.PREPARED, host
+        assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.PREPARED, host
 
 
 @pytest.mark.parametrize(
@@ -709,7 +721,7 @@ def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
     """The runbooks' own spellings stay AUTONOMOUS: the NAS's absolute `/usr/local/bin/docker`, a
     `--format` body or grep pattern holding spaces (so a stage must be tokenised quote-aware),
     `docker exec` fronting a genuine read, and PromQL full of braces and quotes."""
-    assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():
@@ -717,11 +729,11 @@ def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():
 
     Same container, same wrapper, opposite verdicts: only the payload separates them."""
     assert (
-        ops_daily.classify_action("sudo docker exec zcrypto-engine zcrypto engine exec-status", host="zcrypto")
+        ops_daily.classify_action("sudo docker exec zcrypto-engine zcrypto engine exec-status", host="zcrypto", resolve=_identity)
         is ops_daily.Tier.AUTONOMOUS
     )
     assert (
-        ops_daily.classify_action("sudo docker exec zcrypto-archive-pull rm -f /tmp/gate-cache.json", host="nas")
+        ops_daily.classify_action("sudo docker exec zcrypto-archive-pull rm -f /tmp/gate-cache.json", host="nas", resolve=_identity)
         is ops_daily.Tier.PREPARED
     )
 
@@ -738,7 +750,7 @@ def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():
 def test_the_true_positives_still_pass(cmd):
     """The other half of the bargain: a guard that refuses everything is not a guard, it is an
     outage. A quoted pipe is data, not composition."""
-    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 def test_an_alert_that_fired_and_resolved_overnight_reaches_the_report():
@@ -990,7 +1002,7 @@ def test_flag_syntax_interpreters_and_escapes_cannot_launder_a_mutation(cmd):
     """Flag syntax, an interpreter and an escape cannot launder a mutation -- the flag lists are
     ALLOWLISTS per command because a denylist misses the attached form, and the lexer is `shlex`
     because a hand-rolled scanner loses to a backslash."""
-    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 @pytest.mark.parametrize(
@@ -1005,7 +1017,7 @@ def test_flag_syntax_interpreters_and_escapes_cannot_launder_a_mutation(cmd):
 def test_the_real_reads_survive_the_allowlists(cmd, host):
     """The allowlists must still admit the runbooks' own GETs and finds -- a guard that refuses
     everything has moved the outage, not removed it."""
-    assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 @pytest.mark.parametrize(
@@ -1053,7 +1065,7 @@ def test_the_round_four_escapes_are_refused(cmd):
     directory or a bare recursion are PREPARED on every host -- the veto is an allowlist of WHERE a
     command may read, never a denylist of secret-looking names."""
     for host in ("zcrypto", "ops", "nas"):
-        assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.PREPARED, host
+        assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.PREPARED, host
 
 
 @pytest.mark.parametrize(
@@ -1083,7 +1095,7 @@ def test_the_round_four_fixes_kept_their_true_positives(cmd, host):
     """The narrow vetoes keep their true positives: `-o` admits `/dev/null` so the dead-man probe
     still runs, the format check grammars the ACTIONS rather than banning `json`, and the secret veto
     covers only heads that print file CONTENT, so `ls -la` still answers a permission check."""
-    assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 @pytest.mark.parametrize(
@@ -1099,13 +1111,18 @@ def test_the_round_four_fixes_kept_their_true_positives(cmd, host):
 def test_a_mutating_target_is_never_a_glob(cmd):
     """A glob in a mutating container or unit name turns one authorised restart into a mass one, and
     nothing downstream re-checks what it expanded to."""
-    assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 def test_the_read_patterns_the_exact_unit_class_must_not_break():
-    assert ops_daily.classify_action("systemctl list-timers 'zcrypto-*'", host="ops") is ops_daily.Tier.AUTONOMOUS
-    assert ops_daily.classify_action("systemctl list-units 'zcrypto-*.service' --all", host="ops") is ops_daily.Tier.AUTONOMOUS
-    assert ops_daily.classify_action("systemctl restart alloy", host="ops") is ops_daily.Tier.AUTONOMOUS
+    assert (
+        ops_daily.classify_action("systemctl list-timers 'zcrypto-*'", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    )
+    assert (
+        ops_daily.classify_action("systemctl list-units 'zcrypto-*.service' --all", host="ops", resolve=_identity)
+        is ops_daily.Tier.AUTONOMOUS
+    )
+    assert ops_daily.classify_action("systemctl restart alloy", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 @pytest.mark.parametrize(
@@ -1124,7 +1141,7 @@ def test_a_read_safe_root_holds_only_what_was_checked(cmd):
     live Kraken trade key, and a unit file can carry `Environment=` inline, so only journald's own
     config is listed -- and a root ending in `/` is not widened by a sibling that merely starts with
     its letters."""
-    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 @pytest.mark.parametrize(
@@ -1147,7 +1164,7 @@ def test_a_read_safe_root_holds_only_what_was_checked(cmd):
 def test_grep_e_does_not_turn_the_first_file_into_the_pattern(cmd):
     """`grep -e X /etc/shadow` must stay PREPARED: no grep shape admits an option that takes the
     pattern, so the operand the path check skips is never a file."""
-    assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 def test_the_greps_the_runbooks_actually_run():
@@ -1156,7 +1173,7 @@ def test_the_greps_the_runbooks_actually_run():
         "grep -A3 group_add /etc/zcrypto-ops/alloy/compose.yaml",
         "sudo docker logs grafana-alloy --since 1h 2>&1 | grep -iE 'collector|error'",
     ):
-        assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
+        assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS, cmd
 
 
 def test_the_R_spelling_of_a_recursion_classifies_prepared():
@@ -1169,8 +1186,8 @@ def test_the_R_spelling_of_a_recursion_classifies_prepared():
         ("grep -R Storage /var/log/", "grep -r Storage /var/log/"),
         ("grep -sRah X /var/log/", "grep -srah X /var/log/"),
     ):
-        assert ops_daily.classify_action(refused, host="ops") is ops_daily.Tier.PREPARED, refused
-        assert ops_daily.classify_action(passing, host="ops") is ops_daily.Tier.AUTONOMOUS, passing
+        assert ops_daily.classify_action(refused, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, refused
+        assert ops_daily.classify_action(passing, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS, passing
 
 
 @pytest.mark.parametrize(
@@ -1191,8 +1208,8 @@ def test_the_R_spelling_of_a_recursion_classifies_prepared():
 def test_a_first_stage_content_head_naming_no_file_is_refused(refused, passing):
     """A first-stage `cat` or `grep` with an empty file list is PREPARED, and the same command naming
     a read-safe file is AUTONOMOUS: what decides is the file list, never which flag was spelled."""
-    assert ops_daily.classify_action(refused, host="ops") is ops_daily.Tier.PREPARED, refused
-    assert ops_daily.classify_action(passing, host="ops") is ops_daily.Tier.AUTONOMOUS, passing
+    assert ops_daily.classify_action(refused, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, refused
+    assert ops_daily.classify_action(passing, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS, passing
 
 
 @pytest.mark.parametrize(
@@ -1207,14 +1224,16 @@ def test_the_refusal_reads_the_file_list_and_not_the_flag_table(monkeypatch, fla
     """A grep shape widened to admit a recursion flag no real shape takes still refuses the command
     when it names no file, and still passes it when it names a read-safe one."""
     for unwidened in (cmd, f"{cmd} /var/log/"):
-        assert ops_daily.classify_action(unwidened, host="ops") is ops_daily.Tier.PREPARED, f"unwidened: {unwidened}"
+        assert ops_daily.classify_action(unwidened, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, (
+            f"unwidened: {unwidened}"
+        )
     widened = tuple(
         dataclasses.replace(shape, flags={**shape.flags, flag: spec}) if shape.head == ("grep",) else shape
         for shape in ops_daily._FIRST_STAGE_SHAPES
     )
     monkeypatch.setattr(ops_daily, "_FIRST_STAGE_SHAPES", widened)
-    assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED, cmd
-    assert ops_daily.classify_action(f"{cmd} /var/log/", host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
+    assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, cmd
+    assert ops_daily.classify_action(f"{cmd} /var/log/", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS, cmd
 
 
 def test_no_shape_table_admits_a_content_head_reading_outside_the_safe_roots(monkeypatch):
@@ -1238,9 +1257,10 @@ def test_no_shape_table_admits_a_content_head_reading_outside_the_safe_roots(mon
         monkeypatch.setattr(ops_daily, name, getattr(ops_daily, name) + (injected,))
         for position in positions:
             cmd = position.format("/etc/shadow")
-            assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED, (name, cmd)
+            assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, (name, cmd)
         assert any(
-            ops_daily.classify_action(position.format("/var/log/syslog"), host="ops") is ops_daily.Tier.AUTONOMOUS
+            ops_daily.classify_action(position.format("/var/log/syslog"), host="ops", resolve=_identity)
+            is ops_daily.Tier.AUTONOMOUS
             for position in positions
         ), f"{name}: the injected shape matched no stage, so the refusals above prove nothing"
         monkeypatch.undo()
@@ -1259,7 +1279,7 @@ def test_a_single_file_root_does_not_admit_names_that_extend_it(cmd):
     """A file root matches EXACTLY: `/etc/zcrypto-ops/alloy/` holds alloy-secrets.env beside the
     compose file it lists, so a `compose.yaml.bak` admitted by prefix would be a door onto that
     directory."""
-    assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 def test_the_exact_file_roots_still_read():
@@ -1268,7 +1288,7 @@ def test_the_exact_file_roots_still_read():
         "grep -A3 group_add /etc/zcrypto-ops/alloy/compose.yaml",
         "cat /etc/machine-id",
     ):
-        assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
+        assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS, cmd
 
 
 def test_every_directory_read_root_ends_in_a_slash():
@@ -2245,3 +2265,173 @@ def test_the_upgrade_check_reaches_the_verdict_the_pass_prints(monkeypatch, caps
     monkeypatch.setattr(ops_daily, "ssh_read", fresh)
     assert ops_daily.main(["report"]) == 0
     assert f"- PASS {ops_daily.UPGRADE_CHECK}: Result=success" in capsys.readouterr().out
+
+
+# --- T0172: a content read's operands are resolved ON THE HOST before the answer is autonomous ---------------
+
+
+def _resolving(mapping=None, *, raises=None):
+    """A resolver answering what each operand really names on the host, and recording its calls.
+
+    Each mode answers differently: no mapping resolves every operand to itself; a mapped operand
+    answers the paths it is mapped to -- none of them, one, or the several a glob expands to; and
+    `raises` answers no path at all, the way an unreachable host does.
+    """
+    calls = []
+
+    def resolve(host, operands):
+        calls.append((host, list(operands)))
+        if raises is not None:
+            raise raises
+        return [path for operand in operands for path in (mapping or {}).get(operand, [operand])]
+
+    resolve.calls = calls
+    return resolve
+
+
+# `/var/log/filelink` stands for a planted link -- the shape no autonomous command can create and
+# every content head reads through, spelled safe and landing on a secret.
+_LINKED_READ = "cat /var/log/filelink"
+
+
+def test_an_operand_resolving_outside_every_safe_root_is_prepared():
+    """A spelled-safe operand the host resolves to `/etc/shadow` is PREPARED, and the same command
+    under the identity resolver is AUTONOMOUS -- so the refusal is the resolution's."""
+    shadow = _resolving({"/var/log/filelink": ["/etc/shadow"]})
+    assert ops_daily.classify_action(_LINKED_READ, host="ops", resolve=shadow) is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(_LINKED_READ, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+def test_the_resolution_is_asked_of_the_host_the_read_lands_on():
+    """An `ssh <host>` retargets the read, so the resolution follows it: asking the caller's host
+    would resolve the operand on a filesystem the read never touches."""
+    resolve = _resolving()
+    ops_daily.classify_action(f"ssh nas {_LINKED_READ}", host="ops", resolve=resolve)
+    assert resolve.calls == [("nas", ["/var/log/filelink"])], resolve.calls
+
+
+def test_an_operand_resolving_into_a_different_safe_root_stays_autonomous():
+    """What is checked is the resolved path against the same predicate, never that it equals the
+    spelled one: `/var/log/x` landing in `/var/lib/zcrypto-ops/` is still a read-safe read."""
+    resolve = _resolving({"/var/log/x": ["/var/lib/zcrypto-ops/x"]})
+    assert ops_daily.classify_action("cat /var/log/x", host="ops", resolve=resolve) is ops_daily.Tier.AUTONOMOUS
+
+
+def test_a_glob_expanding_onto_one_linked_out_file_is_prepared():
+    """A glob is expanded by the host, so one operand answers several paths and every one is checked
+    -- a safe expansion beside a linked-out one must not average out to safe."""
+    safe = _resolving({"/var/log/*": ["/var/log/syslog", "/var/log/daemon.log"]})
+    linked = _resolving({"/var/log/*": ["/var/log/syslog", "/etc/shadow"]})
+    assert ops_daily.classify_action("grep -r X /var/log/*", host="ops", resolve=safe) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action("grep -r X /var/log/*", host="ops", resolve=linked) is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize(
+    "raises",
+    [
+        subprocess.CalledProcessError(255, "ssh"),
+        subprocess.TimeoutExpired("ssh", 30),
+        OSError("no route to host"),
+    ],
+)
+def test_a_resolver_that_raises_is_prepared_never_an_exception_out_of_classify(raises):
+    """A host that could not be reached has not said the read is safe, and the classifier answers a
+    tier rather than raising -- the daily pass reads an unclassifiable step as prepared."""
+    resolve = _resolving(raises=raises)
+    assert ops_daily.classify_action(_LINKED_READ, host="ops", resolve=resolve) is ops_daily.Tier.PREPARED
+
+
+def test_an_operand_the_host_resolves_to_nothing_is_prepared():
+    """A safe-root check over an empty list is vacuously true, so a resolver answering no path for an
+    operand is refused rather than passed."""
+    resolve = _resolving({"/var/log/absent": []})
+    assert ops_daily.classify_action("cat /var/log/absent", host="ops", resolve=resolve) is ops_daily.Tier.PREPARED
+
+
+def test_without_a_host_a_content_read_naming_a_file_is_prepared():
+    """No host is no filesystem to resolve on, so the spelled path is all there is -- and the spelled
+    path is exactly the guarantee T0172 showed to be weaker than its name implies."""
+    assert ops_daily.classify_action("cat /var/log/syslog", resolve=_identity) is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action("cat /var/log/syslog", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        # The conscious drop T0172 records: `ls` lists NAMES, never bytes, and sits outside the
+        # content heads by design -- so nothing about it is resolved.
+        "ls -R /var/log/",
+        "stat -c %a /opt/zcrypto-capture/logship-secrets.env",
+        "systemctl show zcrypto-capture -p ActiveState",
+        # A filter stage's grep takes no file operand: what it reads is the stage before it.
+        "sudo docker logs grafana-alloy --since 1h 2>&1 | grep -iE 'collector|error'",
+    ],
+)
+def test_nothing_but_a_first_stage_content_head_costs_a_resolution(cmd):
+    """The resolver is an ssh per classify, so it is asked only where the safe-root model applies.
+    Each of these stays AUTONOMOUS, so the empty call list is the head's and not a refusal."""
+    resolve = _resolving()
+    assert ops_daily.classify_action(cmd, host="ops", resolve=resolve) is ops_daily.Tier.AUTONOMOUS, cmd
+    assert resolve.calls == [], resolve.calls
+
+
+def test_the_resolver_is_keyword_only_and_carries_no_live_default():
+    """No default a caller can take silently: one that forgets its resolver fails instead of reaching
+    the host -- the seam `read_unattended_upgrades` already takes its runner through."""
+    resolve = inspect.signature(ops_daily.classify_action).parameters["resolve"]
+    assert resolve.kind is inspect.Parameter.KEYWORD_ONLY, resolve.kind
+    assert resolve.default is inspect.Parameter.empty, resolve.default
+    with pytest.raises(TypeError):
+        ops_daily.classify_action("cat /var/log/syslog", host="ops")
+
+
+def test_the_live_resolver_follows_links_batched_and_fails_a_prompt_rather_than_waiting_on_one(monkeypatch):
+    """Spelt out rather than compared against a constant the resolver builds: without `-f` this reads
+    one link hop instead of the final target, and without the flag the ssh waits on a prompt."""
+    seen = {}
+
+    def run(command, **kwargs):
+        seen["command"], seen["kwargs"] = command, kwargs
+        return subprocess.CompletedProcess(command, 0, stdout="/etc/shadow\n/var/log/syslog\n", stderr="")
+
+    monkeypatch.setattr(ops_daily.subprocess, "run", run)
+    assert ops_daily.ssh_resolve("ops", ["/var/log/filelink", "/var/log/syslog"]) == ["/etc/shadow", "/var/log/syslog"]
+    assert seen["command"] == (
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "ops",
+        "readlink",
+        "-f",
+        "--",
+        "/var/log/filelink",
+        "/var/log/syslog",
+    ), seen["command"]
+    assert seen["kwargs"]["check"] is True and seen["kwargs"]["timeout"] == ops_daily._TIMEOUT, seen["kwargs"]
+
+
+def test_the_classify_subcommand_resolves_through_the_live_resolver(monkeypatch):
+    """The CLI is where the seam meets the host: a branch that forgot to pass it would answer
+    autonomous off the spelled path alone."""
+    resolve = _resolving({"/var/log/filelink": ["/etc/shadow"]})
+    monkeypatch.setattr(ops_daily, "ssh_resolve", resolve)
+    assert ops_daily.main(["classify", "--host", "ops", _LINKED_READ]) == 3
+    assert resolve.calls == [("ops", ["/var/log/filelink"])], resolve.calls
+
+
+def test_the_runbook_corpus_reads_identically_under_the_identity_resolver():
+    """The true positive for the whole change: with every operand resolving to itself, the reads the
+    runbooks really run are as autonomous as they were before any resolution existed."""
+    reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
+    print(f"read-only runbook commands classified: {len(reads)}")
+    autonomous = [
+        c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    ]
+    assert len(autonomous) / len(reads) >= 0.70, (
+        f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous under identity"
+    )
+    for cmd in (
+        "cat /var/lib/zcrypto-ops/.verified-replay-watermark",
+        "grep -A3 group_add /etc/zcrypto-ops/alloy/compose.yaml",
+    ):
+        assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS, cmd
