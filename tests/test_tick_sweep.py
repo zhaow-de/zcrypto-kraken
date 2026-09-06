@@ -164,6 +164,24 @@ def test_a_day_with_a_trade_id_hole_is_refused_then_published_once_healed(tmp_pa
     assert (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
 
 
+def test_a_permanently_holed_day_moves_from_unhealed_to_gap_when_the_window_passes_it(tmp_path):
+    """The division `days_gap` exists to make: the same settled, unpublished, permanently holed day counts as
+    `days_unhealed` while the re-scan window still reaches it and as `days_gap` -- never as both -- one day past it."""
+    src, out, overlay = tmp_path / "src", tmp_path / "out", tmp_path / "r"
+    for day in range(1, 7):
+        _holed_day(src, "BTC/EUR", date(2026, 8, day), drop_hour=7 if day == 2 else None)
+
+    now = _after(date(2026, 8, 5), hours=27)  # 08-06 is unsettled, so it is a successor for 08-05 and not swept itself
+    first = materialize(src, overlay, out, now=now)
+    assert first.days_written == 4 and first.days_unhealed == 1  # 08-02's hole is permanent; the watermark is now 08-05
+
+    inside = materialize(src, overlay, out, now=now, rescan_days=4)  # floor 08-01 -- the window still reaches 08-02
+    assert inside.days_unhealed >= 1 and inside.days_gap == 0
+
+    past = materialize(src, overlay, out, now=now, rescan_days=2)  # floor 08-03 -- 08-02 sits one day below it
+    assert past.days_gap == 1 and past.days_unhealed == 0
+
+
 def test_a_hole_on_the_day_boundary_is_caught_by_the_neighbour_extension(tmp_path):
     """`detect` treats the last observed id as an endpoint, never a gap -- so over one day a hole at
     the day's TAIL reads clean and a truncated day publishes short, permanently. The extension into
