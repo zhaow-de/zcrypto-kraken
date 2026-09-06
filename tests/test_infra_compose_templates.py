@@ -1,8 +1,5 @@
-"""spec 00069 D10 / plan Task 6 Step 1 (cold-review I5): both Jinja guard branches of every
-touched compose template must render valid YAML with the metrics port/env landing on the right
-service -- asserted by hand during the T6/T7 review but never pinned as a test. `trim_blocks=True,
-lstrip_blocks=False` mirrors Ansible's own Jinja defaults so a template edit relying on either
-setting fails here rather than only at a real converge."""
+"""Both Jinja guard branches of every compose template here must render valid YAML, with the metrics
+port and env landing on the right service (spec 00069 D10)."""
 
 from pathlib import Path
 
@@ -16,6 +13,8 @@ CAPTURE_TEMPLATE = REPO / "infra/ansible/roles/capture/templates/compose.yaml.j2
 ENGINE_TEMPLATE = REPO / "infra/ansible/roles/engine/templates/compose.yaml.j2"
 OPS_TEMPLATE = REPO / "infra/ansible/roles/ops/templates/compose.yaml.j2"
 
+# trim_blocks/lstrip_blocks mirror Ansible's own template defaults, so a template edit relying on
+# either setting fails here rather than only at a real converge.
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 # Dummy but complete contexts: every variable each template references (outside the
@@ -127,16 +126,8 @@ def test_engine_logship_guard_moves_environment_and_entrypoint_together():
     assert with_token["entrypoint"] == ["zcrypto", "--ship-logs", "engine", "run"]
 
 
-# ---------------------------------------------------------------------------
-# The Alloy config is bind-mounted as a DIRECTORY, never as a single file. A single-file bind mount
-# binds the inode, and Ansible's `copy` writes atomically (temp file + rename), so the inode is
-# replaced and a running container keeps reading a file that is no longer in the host tree --
-# indefinitely, while every converge reports `changed`. Measured in production 2026-07-28: host and
-# container sha256 and inode both differed after a clean converge.
-#
-# The NAS is included deliberately even though it is Container-Manager-managed rather than Ansible-
-# rendered: it shares the pattern, so a guard that skipped it would report all-clear on a fleet that
-# is two-thirds fixed.
+# The NAS compose is Container-Manager-managed rather than Ansible-rendered, and included anyway: it
+# shares the single-file bind-mount pattern the assertion below refuses.
 ALLOY_COMPOSE_FILES = (
     REPO / "infra/ansible/roles/capture/templates/alloy-compose.yaml.j2",
     REPO / "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2",

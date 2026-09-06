@@ -1,7 +1,6 @@
 """Guard: `infra/scripts/grafana-push.sh` pushes `infra/grafana/alerts.yaml` to Grafana Cloud's
 provisioning API, which rejects a malformed rule with a bare HTTP 400 whose body the script
-discards -- a failure only an attended push can reach, and one that names neither rule nor field.
-Every constraint pinned here is one that API enforces silently."""
+discards -- a failure only an attended push can reach, and one that names neither rule nor field."""
 
 import re
 from pathlib import Path
@@ -75,9 +74,8 @@ def test_datasource_uids_are_templated_not_hardcoded():
 # resolve is right for a burst rule -- a flurry of ERROR lines ages out of its own window (T0047) --
 # and wrong for a dead-man, where the clear IS the news.
 #
-# The two families are told apart structurally, never by a list of uids: a dead-man's threshold
-# evaluator is `lt`, a burst rule's is `gt`; a hand-list would admit the ninth dead-man added
-# tomorrow, which is the mechanism this guard exists to close.
+# The two families are told apart structurally, never by a list of uids: a hand-list would admit
+# the next dead-man added tomorrow, which is the mechanism this guard exists to close.
 #
 # The read is the THRESHOLD node's evaluator, so a comparison folded into a `math` node (`$B < 1`
 # thresholded `gt 0`) is invisible to it; a dead-man written that way on `logs` would pass. Widen
@@ -105,10 +103,7 @@ def _fires_on_absence(rule) -> bool:
 
 
 def test_a_rule_that_fires_on_absence_can_notify_its_clear():
-    """Drill N (2026-09-02) induced a capture log dead-man, watched it clear, and no resolved notice
-    ever arrived; `zcrypto-hcio-watchdog` -- the same unlabelled `or on() vector(N)` shape but on
-    `metrics` -- resolved to the same channel in about a minute. The receiver was the whole
-    difference, so the receiver is what this asserts."""
+    """The receiver is the whole difference, so the receiver is what this asserts."""
     suppressed = _receivers_suppressing_resolve()
     mute = [
         (r["uid"], (r.get("notification_settings") or {}).get("receiver"))
@@ -427,10 +422,7 @@ def test_the_backlog_stuck_window_sees_exactly_two_nightly_runs():
 
 
 def test_the_backlog_stuck_for_strictly_exceeds_a_healthy_drains_true_duration():
-    """`for` must STRICTLY exceed the `max(24h, window)` a HEALTHY drain holds this condition true,
-    or healthy and stuck fire identically.
-
-    `ops_verify_replay_pending_hours` is a PERSISTENT textfile gauge that holds its value between the
+    """`ops_verify_replay_pending_hours` is a PERSISTENT textfile gauge that holds its value between the
     daily runs, so the condition goes true at the bump night's publish `T1` and cannot go false until
     the window's left edge passes `T1`: until then the window still contains a pre-bump sample and
     `delta` stays positive even after night two's decrease has landed."""
@@ -1157,9 +1149,7 @@ def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
     """All three rules cover both capture daemons and the engine (primary only -- nothing listens on
     the engine port on the secondary, so a `zcrypto-red` engine selector would name a series that
     never exists). The leak and restart rules additionally cover the ops liquidations poller and
-    Alloy itself, under the `integrations/self` job its exporter.self metrics carry; the headroom
-    rule excludes both -- Alloy to its own bar below, the poller for want of a limit to measure
-    against."""
+    Alloy itself, under the `integrations/self` job its exporter.self metrics carry."""
     rule = _rule(uid)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
     if uid == _MEM_HEADROOM:  # the app daemons only: Alloy has its own bar, the poller has no limit
@@ -1284,13 +1274,7 @@ def _replay_dark_with_exposure(published, up_at, *, lookback, hold_for, span, a_
 
 def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not():
     """Replays `(position, scrape)` histories through the rule's OWN lookback and `for:` -- both read
-    out of `alerts.yaml`, never restated here, so this fails when the rule changes.
-
-    It pages on a position open at last report with the engine gone, and holds until the lookback
-    sheds that reading, so the page cannot self-resolve under a sleeping operator. It stays quiet on
-    a dark engine with nothing exposed (`zcrypto-engine-cycle-stale`'s page), on a scraping engine
-    holding a position, and on a position CLOSED before the engine went dark -- the one
-    `last_over_time` reads as 0 where `max_over_time` would page for the rest of the day."""
+    out of `alerts.yaml`, never restated here, so this fails when the rule changes."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 

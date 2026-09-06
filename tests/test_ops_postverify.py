@@ -1,8 +1,4 @@
-"""ops-postverify.sh: verify-by-outcome as one command (spec 00083 D3).
-
-The grafana query command is stubbed via ZCRYPTO_GRAFANA_QUERY; the stub replays canned
-output keyed by which query it receives, so each check's parse path is exercised for real.
-"""
+"""ops-postverify.sh: verify-by-outcome as one command (spec 00083 D3)."""
 
 import os
 import re
@@ -134,26 +130,16 @@ def test_a_never_published_tape_bars_fails_rather_than_reading_as_fresh(tmp_path
 
 
 def test_header_containing_comparison_cannot_mint_a_value(tmp_path):
-    """A header line containing `== ` must never be mistaken for a series value.
-
-    grafana-query.py echoes the PromQL as the header line at column 0; a future query
-    containing `== ` (e.g. `increase(x[2h]) == 0`) must not let the extraction pick up a
-    phantom value from that header when there is no indented series line beneath it — that
-    would turn a genuine `(no series)` into a false ALL PASS.
-    """
+    """A header line carrying `== ` -- grafana-query.py echoes the PromQL at column 0 -- must not mint
+    a value where no indented series line follows, turning `(no series)` into a false ALL PASS."""
     r = run_postverify(tmp_path, {"RESIDUAL_OUT": "query with increase(x[2h]) == 0\n  (no series)"})
     assert r.returncode == 1
     assert "no series" in r.stdout
 
 
 def test_counter_names_match_the_exporter():
-    """The two increase() queries must name series the reconcile exporter actually publishes.
-
-    The exporter is cli/archive/command.py's _write_textfile (it assembles zcrypto_reconcile_ +
-    leg); the Alloy keep-list at infra/ansible/roles/ops/files/config.alloy admits series via
-    regex alternations, not literal names (cold-review I4) — so each name must fullmatch one of
-    the keep regexes' alternatives, or it never reaches Cloud and the check reads (no series).
-    """
+    """The two increase() queries must name series the exporter publishes and the Alloy keep-list
+    admits by regex -- a name outside it never reaches Cloud and the check reads (no series)."""
     script = SCRIPT.read_text()
     repo = SCRIPT.parent.parent.parent
     exporter = (repo / "cli" / "archive" / "command.py").read_text()

@@ -1,7 +1,5 @@
 """Guard: a `keep` relabel drops every series it does not list (T0051), so a series missing from
-the keep-regex does not go undashboarded -- it does not exist. These tests pin the regexes against
-the series the stack actually publishes, so deleting one from the config fails here rather than
-silently going dark in production."""
+the keep-regex does not go undashboarded -- it does not exist."""
 
 import re
 from pathlib import Path
@@ -17,28 +15,16 @@ OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
 
-# The series each host must ship. NAS: Role A/B (gate) + its host metrics. OPS: the four timer
-# textfiles (written since OPS-3/OPS-4 but scraped by nothing until spec 00054 Task 1) plus the
-# overlay writer's series (moved to this host by spec 00054 Task 6/OPS-5).
-# T0048 defect 1: discovery.docker used to wedge permanently, and the ONLY positive signal was this
-# counter going flat. `discovery.docker` is retired fleet-wide now (00068 D6/D8: capture T5, ops
-# T6, NAS T8), so neither series exists on any host any more, and the alert that used to watch them
-# (zcrypto-alloy-docker-sd-wedged) is gone too. Kept as named constants only so the
-# excludes-the-retired-pair test below can reference them.
+# Named constants only so the retired-pair exclusion test below can reference them.
 _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
 _SD_FAILURES = "prometheus_sd_refresh_failures_total"
-# T0079: `up` is alert-bearing on EVERY host -- the four `Fleet · Alloy dark` rules fire on its
-# silence (`count(up{...}) or on() vector(0)` below 1). Dropping it from any keep-list would leave
-# that host's rule permanently unable to fire while still provisioned: green-when-blind, the same
-# failure class the log-dead canaries exist to close. So it is pinned for all three configs, not
-# just the two that happened to list it already.
+# T0079: `up` is alert-bearing on EVERY host -- the `Fleet · Alloy dark` rules fire on its silence
+# (`count(up{...}) or on() vector(0)` below 1). Dropping it from any keep-list would leave that
+# host's rule permanently unable to fire while still provisioned: green-when-blind.
 
-# 00069 T6/T7: the app daemons' own `/metrics` series, admitted per host below. The six
-# ProcessCollector families are shared by every app endpoint AND (per each config.alloy's own
-# `exporter.self "alloy"` comment) admitted uniformly for Alloy's own self-scrape too -- the plan's
-# earlier "shave Alloy down to a process pair" idea was dropped as machinery for nothing, so all
-# three hosts admit the same six names (spec 00069 D5, cold-review -- a keep-list admitting four
-# while the app publishes six is the T0051 admitted-but-unpublished trap in the other direction).
+# 00069 T6/T7: the six ProcessCollector families are shared by every app endpoint AND (per each
+# config.alloy's own `exporter.self "alloy"` comment) admitted uniformly for Alloy's own
+# self-scrape too, so all three hosts admit the same six names (spec 00069 D5).
 PROCESS_FAMILIES = [
     "process_cpu_seconds_total",
     "process_max_fds",
@@ -48,8 +34,7 @@ PROCESS_FAMILIES = [
     "process_virtual_memory_bytes",
 ]
 # The 00068 ship-handler internals, shared by every daemon that runs with `--ship-logs` (capture
-# x2, engine, the liquidations poller) -- NOT the NAS, which runs no `--ship-logs`/`/metrics`
-# daemon at all (its pull loop is shell).
+# x2, engine, the liquidations poller).
 LOGSHIP_SERIES = [
     "zcrypto_logship_dropped_lines_total",
     "zcrypto_logship_shipped_lines_total",
@@ -64,8 +49,6 @@ CAPTURE_APP_SERIES = [
     "zcrypto_capture_rows_held_total",
     "zcrypto_capture_rows_quarantined_total",
     "zcrypto_capture_gap_seconds_total",
-    # T0101: without these two here, dropping either from the producer or from the
-    # keep-regex leaves every test green while the series goes dark -- the T0051 trap.
     "zcrypto_capture_seconds_since_last_book_message",
     "zcrypto_capture_venue_status_total",
     "zcrypto_capture_book_desynced",
@@ -81,11 +64,10 @@ ENGINE_APP_SERIES = [
     "zcrypto_engine_cycle_success",
     "zcrypto_engine_cycle_completed_at_seconds",
     "zcrypto_engine_cycle_duration_seconds",
-    # T0124: the shadow book combines three sleeves at fixed 1/3 weights and two have been flat for
-    # months. `active_sleeves` is alert-bearing (zcrypto-engine-sleeve-count-changed), so
-    # dropping it from the keep-regex would leave that rule permanently NoData -- indistinguishable
-    # from a composition that never changes. `sleeve_gross` is the per-sleeve detail the page's
-    # responder reads to see WHICH sleeve moved.
+    # T0124: `active_sleeves` is alert-bearing (zcrypto-engine-sleeve-count-changed), so dropping it
+    # from the keep-regex would leave that rule permanently NoData -- indistinguishable from a
+    # composition that never changes. `sleeve_gross` is the per-sleeve detail the page's responder
+    # reads to see WHICH sleeve moved.
     "zcrypto_engine_sleeve_gross",
     "zcrypto_engine_active_sleeves",
     # The execution safety envelope's published state (cli/engine/command.py's `_ExecGauges`).
@@ -100,9 +82,7 @@ ENGINE_APP_SERIES = [
     "zcrypto_exec_restart_hold",
     # The attended-window execution instruments (cli/engine/command.py's `_ExecutionMetrics`), plus
     # the intent-side limit counter. None is alert-bearing by design, which is exactly why they are
-    # pinned HERE: nothing else would notice them being dropped from the keep-regex, and an
-    # execution board reading NoData through a live probe window is the failure this list exists to
-    # stop -- the T0051 trap in the direction a rule-shaped guard cannot see.
+    # pinned HERE: nothing else would notice them being dropped from the keep-regex.
     "zcrypto_exec_orders_total",
     "zcrypto_exec_fills_total",
     "zcrypto_exec_fees_eur_total",
@@ -114,9 +94,7 @@ ENGINE_APP_SERIES = [
     "zcrypto_exec_realized_pnl_eur",
     # The external-events counter is pinned on the same grounds and one more: it is the only
     # observable of a restart adoption doing anything at all, and its `unmatched` label is the
-    # forensic trace of an event belonging to no vouched-for order. Dropped from the keep-regex it
-    # would read as a restart during which no external event ever arrived -- indistinguishable from
-    # the adoption working, in the one window an operator opens the board to check it.
+    # forensic trace of an event belonging to no vouched-for order.
     "zcrypto_exec_external_events_total",
     # The weekly tracking-error verdict, pinned on the same grounds and one more: it is the ONLY
     # rendering of a trip that is meant to sit disarmed for months. Dropped from the keep-regex, a
@@ -126,9 +104,7 @@ ENGINE_APP_SERIES = [
     "zcrypto_engine_limit_bound_total",
     # 00089: venue truth -- the executor's ratified basket vs what Kraken's own instrument set and
     # constraints actually report. Two are alert-bearing (zcrypto-venue-concordance-failed,
-    # zcrypto-venue-snapshot-stale); dropping any of the four from the keep-regex leaves the alerted
-    # two unable to ever fire and all four invisible to the dashboard panel 00090's engine-board
-    # metrics pass owes them (NOT_CHARTED in tests/test_dashboards_cover_metrics.py).
+    # zcrypto-venue-snapshot-stale).
     "zcrypto_venue_snapshot_timestamp_seconds",
     "zcrypto_venue_instruments_loaded",
     "zcrypto_venue_instruments_expected",
@@ -149,31 +125,27 @@ NAS_REQUIRED = [
     "node_textfile_mtime_seconds",
     *PROCESS_FAMILIES,
 ]
-# ADMITTED by the NAS keep-regex but NOT published there any more: the overlay writer moved to the
-# ops node (spec 00054 D2) and the NAS's stale reconcile/trade-backfill textfiles were deleted at
-# the 2026-07-16 cutover, so these families publish from ops ONLY (the one-publisher invariant --
-# a resurrected NAS twin would freeze and page the host-unscoped exporter-stale rule forever).
-# They are listed separately so this guard never again claims the NAS "must ship" them: keeping
-# them in the NAS regex is today's standing admission (asserted here so a trim is a conscious act,
-# not silent drift), while trimming them -- so a hand-deploy regression (T0056) could never
-# resurrect the frozen twin -- is a deliberate hardening decision that would move these entries
-# out of this list, not a regression this test should block.
+# ADMITTED by the NAS keep-regex but NOT published there any more: these families publish from ops
+# ONLY (the one-publisher invariant -- a resurrected NAS twin would freeze and page the
+# host-unscoped exporter-stale rule forever). Listed separately so this guard never claims the NAS
+# "must ship" them: trimming them -- so a hand-deploy regression (T0056) could never resurrect the
+# frozen twin -- is a deliberate hardening decision that would move these entries out of this list,
+# not a regression this test should block.
 NAS_LEGACY_ADMITTED = [
     "zcrypto_reconcile_last_success_timestamp_seconds",
     "zcrypto_trade_backfill_exit_code",
 ]
 # Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
 # command.py builds every reconcile series as f"zcrypto_reconcile_{name}", which yields only the
-# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the thirteen
-# real names are absent from the candidate set entirely. They are fed to BOTH the union guard and the
+# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the real
+# names are absent from the candidate set entirely. They are fed to BOTH the union guard and the
 # per-host OPS list: the union bar alone would not catch the realistic drift, since narrowing the
 # wildcard on ops -- the host that actually publishes them -- still leaves NAS's copy satisfying the
-# union. A reviewer measured that: ops-only narrowing flagged 0 of 9.
+# union.
 INTERPOLATED_METRIC_NAMES = [
-    # Verified by counting `_emit` call sites in cli/archive/command.py, not by trusting the previous
-    # count: all thirteen. Includes last_success_timestamp_seconds, which the scan only ever picked up
-    # because an unrelated comment in archive-pull.sh.j2 happens to spell it out -- accidental
-    # coverage, not derivation.
+    # Includes last_success_timestamp_seconds, which the scan only ever picked up because an
+    # unrelated comment in archive-pull.sh.j2 happens to spell it out -- accidental coverage, not
+    # derivation.
     "zcrypto_reconcile_last_success_timestamp_seconds",
     # spec 00097: alert-bearing (the cycle-duration rule). Admitted today only by the same
     # `zcrypto_reconcile_.*` wildcard, so narrowing it must fail here rather than silently
@@ -182,13 +154,10 @@ INTERPOLATED_METRIC_NAMES = [
     # spec 00097: alert-ADJACENT -- the cycle-duration rule's runbook triage reads this gauge first,
     # to tell "the skip cache stopped engaging" from "the window's volume genuinely grew". It is the
     # only Prometheus-side observable of a cache that degrades silently (a pair dropped from capture
-    # makes every window hour incomplete, and nothing errors), so a narrowed wildcard would blank the
-    # discriminator during the page that sends the operator to it.
+    # makes every window hour incomplete, and nothing errors).
     "zcrypto_reconcile_hours_skipped",
-    # spec 00096: was missing from this list until 2026-08-21 and reached the bar by NO path -- the
-    # name appears nowhere under _SOURCE_GLOBS, so the scan cannot derive it either. It is where the
-    # residual-gap alert summary sends triage, so a narrowed wildcard would have blanked the metric
-    # the operator is told to open, during the page that tells them to.
+    # spec 00096: the name appears nowhere under _SOURCE_GLOBS, so the scan cannot derive it. It is
+    # where the residual-gap alert summary sends triage.
     "zcrypto_reconcile_dark_episode_seconds_total",
     "zcrypto_reconcile_source_lag_seconds",
     "zcrypto_reconcile_healed_gap_seconds_total",
@@ -231,9 +200,7 @@ OPS_REQUIRED = [
     "ops_verify_replay_audit_mismatches",
     "ops_verified_replay_exit_code",
     "ops_verified_replay_last_success_timestamp",
-    # The "did the timer RUN?" discriminator. Absent from the ops keep-regex until 2026-07-28 while
-    # capture carried it, so on the host running four timers it was published and dropped at
-    # remote-write -- found by a reviewer checking a coverage claim that turned out to be false.
+    # The "did the timer RUN?" discriminator.
     "node_textfile_mtime_seconds",
     "zcrypto_trade_backfill_exit_code",
     "zcrypto_trade_backfill_last_success_timestamp",
@@ -254,10 +221,9 @@ OPS_REQUIRED = [
     "zcrypto_tapebars_last_publish_timestamp_seconds",
     # T0083: the hc.io watchdog scrape's series. zcrypto-hcio-watchdog alerts on
     # hc_checks_down_total — dropping THAT silently disarms the Grafana half of the mutual
-    # watchdog (same failure class as `up` above); hc_check_up is the per-check triage detail
-    # the page's responder reads. Names read from the live hc.io Prometheus endpoint
-    # 2026-07-21 — the endpoint exposes hc_checks_down_total, NOT the bare hc_checks_down a
-    # reasonable guess produces.
+    # watchdog; hc_check_up is the per-check triage detail the page's responder reads. Names read
+    # from the live hc.io Prometheus endpoint 2026-07-21 — the endpoint exposes
+    # hc_checks_down_total, NOT the bare hc_checks_down a reasonable guess produces.
     "hc_check_up",
     "hc_checks_down_total",
     *LIQUIDATIONS_APP_SERIES,
@@ -268,18 +234,10 @@ OPS_REQUIRED = [
     "zaccess_wireguard_handshake_age_seconds",
     "zaccess_tls_not_after_seconds",
 ]
-# The capture host's own alert-bearing families (cold-review Important 2): `Capture · spool disk
-# low` (alerts.yaml:1442-1443) reads node_filesystem_avail_bytes/node_filesystem_size_bytes, and
-# `Capture · node load high` (alerts.yaml:1486-1488) reads node_load1/node_cpu_seconds_total --
-# all four already pass today's keep-regex, but the CAPTURE_REQUIRED list that used to carry only
-# `up` (with a comment admitting capture had no FULL required-list) read as authoritative once it
-# grew long, while these four alert-bearing names stayed unpinned. Pinned now so a future keep-list
-# edit that drops one fails here instead of silently disarming that alert.
 # One-off timers publish a .prom, not a /metrics endpoint (spec 00071 D1) -- a daily oneshot runs
 # for a second and has no process to scrape. The keep-regex is an ALLOW-list with no `node_.*`
 # wildcard (D2), so a published-but-unadmitted series is dropped at the remote-write boundary and
-# looks exactly like a producer that never ran. That is not hypothetical: it is how T0021's prune
-# came to be observable through nothing. Pinned here so the keep-list edit is TDD-gated.
+# looks exactly like a producer that never ran.
 ONEOFF_TEXTFILE_SERIES = [
     "node_reboot_required",
     # A MALFORMED .prom raises this; a STALE one does not (D3).
@@ -295,6 +253,9 @@ ONEOFF_TEXTFILE_SERIES = [
     "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
 ]
 
+# The capture host's own alert-bearing node families: `Capture · spool disk low` reads
+# node_filesystem_avail_bytes/node_filesystem_size_bytes, and `Capture · node load high` reads
+# node_load1/node_cpu_seconds_total.
 CAPTURE_REQUIRED = [
     "up",
     "node_load1",
@@ -319,11 +280,8 @@ ACCESS_APP_SERIES = [
 ]
 
 # Native Alloy (D11, apt package, no docker) -- no `prometheus.exporter.self "alloy"` component in
-# this config (mirror-the-ops-shape stops at unix exporter + textfile + scrape + keep +
-# remote_write), so unlike NAS/OPS/CAPTURE this host does NOT admit PROCESS_FAMILIES: nothing here
-# publishes them, and admitting an unpublished family is the T0051 trap in the other direction (see
-# the exclusion test below). Every name in this list is spelled out individually in the keep-regex
-# (files/config.alloy) -- no wildcards on this small a host -- so every one of them is pinned here.
+# this config, so unlike NAS/OPS/CAPTURE this host does NOT admit PROCESS_FAMILIES: nothing here
+# publishes them.
 ACCESS_REQUIRED = [
     "up",
     "node_load1",
@@ -338,9 +296,8 @@ ACCESS_REQUIRED = [
     # `min by (host) (node_scrape_collector_success)` with no host selector -- meant to cover
     # every host. Without this admitted here, zaccess is structurally invisible to that rule.
     "node_scrape_collector_success",
-    # The did-the-timer-RUN discriminators (the ops green-when-blind lesson, 2026-07-28): without
-    # them a dead probe timer serves its last gauges forever and the tunnel-stale/cert alerts can
-    # never fire.
+    # The did-the-timer-RUN discriminators: without them a dead probe timer serves its last gauges
+    # forever and the tunnel-stale/cert alerts can never fire.
     "node_textfile_mtime_seconds",
     "node_textfile_scrape_error",
     *ACCESS_APP_SERIES,
@@ -398,12 +355,8 @@ def test_keep_regex_admits_every_published_series(path, required):
     ids=["nas", "ops", "capture", "access"],
 )
 def test_drop_regex_does_not_shadow_the_keep_list(path, required):
-    """The D4 mechanism this task exists to implement (00069 T6/T7): the drop rule used to discard
-    `process_.*` fleet-wide before the keep stage ever saw it. `test_keep_regex_admits_every_
-    published_series` above only checks the keep-regex in isolation, so reverting the drop rule to
-    re-admit `process_.*` (undoing D4 entirely) left that test -- and the whole suite -- green: the
-    keep-regex still matches `process_cpu_seconds_total` on its own, it just never gets the chance
-    to see it. This test runs both stages in order, the way remote_write actually does."""
+    """The drop stage runs before the keep stage, so a required series the drop rule eats never
+    reaches the keep-regex at all."""
     drop = _drop_regex(path)
     shadowed = [s for s in required if drop.match(s)]
     assert not shadowed, f"{path}: the drop rule eats {shadowed} before the keep stage sees them"
@@ -425,9 +378,8 @@ def test_drop_regex_does_not_shadow_the_keep_list(path, required):
     ids=["nas", "ops", "capture", "access"],
 )
 def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded):
-    """T0051, the other direction (00069 T6/T7): admitting a family this host never publishes is
-    not merely wasted machinery -- it is silent go-ahead for a future daemon addition to ship
-    there unreviewed."""
+    """The keep-regex admits nothing this host does not publish -- an admitted family is silent
+    go-ahead for a future daemon to ship there unreviewed."""
     keep = _keep_regex(path)
     admitted = [s for s in excluded if keep.match(s)]
     assert not admitted, f"{path}: keep-regex admits {admitted}, which nothing on this host publishes"
@@ -435,15 +387,14 @@ def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded)
 
 @pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY], ids=["nas", "ops", "capture", "access"])
 def test_keep_regex_excludes_the_retired_sd_pair(path):
-    """00068 D6/D8: discovery.docker is gone fleet-wide (capture T5, ops T6, NAS T8), so admitting
-    its series anywhere is the T0051 admitted-but-unpublished trap."""
+    """discovery.docker is gone fleet-wide (00068 D6/D8), so no host's keep-regex may admit its
+    series."""
     keep = _keep_regex(path)
     assert not keep.match(_SD_SERIES) and not keep.match(_SD_FAILURES)
 
 
 @pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY], ids=["nas", "ops", "capture", "access"])
 def test_alloy_self_metrics_are_dropped_before_the_keep(path):
-    """Defence in depth, and the ordering matters: the drop must precede the keep."""
     text = path.read_text()
     drop_at = text.find('"drop"')
     keep_at = text.find('"keep"')
@@ -453,23 +404,11 @@ def test_alloy_self_metrics_are_dropped_before_the_keep(path):
 
 
 # ---------------------------------------------------------------------------
-# The lists above are hand-maintained, which bounds what they can catch: they prove the keep-regex
-# still admits the series someone remembered to list. They cannot see a metric added to the code and
-# to no list -- and since the keep is an allow-list, that metric is dropped at remote_write and any
-# rule watching it reads no data forever, which renders identically to healthy.
-#
-# This guard closes that gap by DERIVING its candidates from the source tree. Two things it must get
-# right, both learned by getting them wrong on 2026-07-28:
-#   1. Membership is MATCHED, not compared -- keep entries are regexes, and the NAS admits the whole
-#      gate family as `zcrypto_gate_.*`. A literal comparison called all ten unadmitted; all are live.
-#   2. The union of all three configs is the bar, since a metric may legitimately be admitted only on
-#      the host that publishes it.
-# It cannot see a host running an older config than the repo -- that is a converge concern, not CI.
-# Scope is `zcrypto_*` only: the ops_*, node_* and hc_* families this infra also publishes are out
-# of range, and an uppercase name would fall out of the token pattern rather than fail. Both are
-# fail-open gaps. The per-host lists above cover them only as far as someone remembered to list the
-# name -- `node_textfile_mtime_seconds` sat outside both this guard and the ops list while ops
-# published it, so do not read those lists as coverage.
+# This guard DERIVES its candidates from the source tree, where the hand-maintained lists above can
+# only prove the keep-regex still admits the names someone remembered to list. Membership is
+# MATCHED, not compared -- keep entries are regexes, and the NAS admits the whole gate family as
+# `zcrypto_gate_.*`. The union of the configs is the bar, since a metric may legitimately be
+# admitted only on the host that publishes it.
 _SOURCE_GLOBS = ("cli/**/*.py", "infra/**/*.j2", "infra/**/*.sh", "infra/**/*.py")
 
 # Name-shaped tokens that are not published metrics. Each states why: an unexamined exclusion is how
@@ -481,7 +420,7 @@ NOT_A_PUBLISHED_METRIC = {
     "zcrypto_reconcile_",  # the f-string STEM, not a series -- the real names are listed above
     # Named only in a cli/obs/metrics.py comment explaining why it is SUPPRESSED: prometheus_client
     # adds a `_created` series per Counter by default and `_use_created = False` disables them
-    # process-wide. Confirmed absent from Grafana Cloud, as intended.
+    # process-wide.
     "zcrypto_engine_orders_created",
 }
 
@@ -497,7 +436,7 @@ def _tokens_in_tree() -> dict[str, set[str]]:
 
 # Deliberately a shape match over the whole source, not a scan of definition sites: scanning
 # `MetricFamily(` and `# HELP` misses how cli/engine/command.py, cli/liquidations/coinalyze.py and
-# archive-pull.sh.j2 each publish, and a guard with blind spots is worse than none.
+# archive-pull.sh.j2 each publish.
 PUBLISHED_METRIC_NAMES = sorted({n for n in _tokens_in_tree() if n not in NOT_A_PUBLISHED_METRIC} | set(INTERPOLATED_METRIC_NAMES))
 
 # pytest SKIPS an empty parametrize by default, so a glob that stops matching (a cli/ reorg, a
@@ -510,8 +449,7 @@ assert len(PUBLISHED_METRIC_NAMES) >= 30, (
 
 
 def test_the_not_a_published_metric_list_has_not_gone_stale():
-    """An exclusion naming a token no longer in the tree excuses nothing while the name it was
-    renamed to goes unguarded."""
+    """Every exclusion still names a token in the tree -- a rename otherwise leaves the new name unguarded."""
     stale = NOT_A_PUBLISHED_METRIC - set(_tokens_in_tree())
     assert not stale, f"excluded but no longer in the tree (rename? removal?): {sorted(stale)}"
 
