@@ -111,6 +111,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0169 — cleanup residue outside a prose commit](T0169-cleanup-residue-outside-a-prose-commit.md) — two soak test names that contradict their assertions, the segment writer's disagreeing counts, a template's live-host claim, the archive-pull rename deferral (owner's decision), the tripwire's probe-source blind spot, three the infra batch surfaced (the logrotate task's deletion and the admin-account key removals on the capture hosts and the NAS, the NAS one coupled to the workstation's `nas-hot` alias repoint), and three from the docs batch: two code comments still calling the ops reconciler detect-only, a dead `T0020` pointer, and two adapter-verification records citing a runbook section spec 00104 moved.
 
+- [T0173 — the prose cleanup's closeout residue: operator instructions cut from the topology doc, and two phase-0 minors](T0173-the-prose-cleanups-closeout-residue.md) — the ten operator procedures `fleet.md` still carries move to the runbook pages that own them, `fetch_public` refuses a result-less body, the registry-append minor is dispositioned; ripe now.
+
 - [T0174 — T0168's tests-remainder tail: nine claims the prune never saw](T0174-t0168s-tests-remainder-tail-nine-claims-the-prune-never-saw.md) — the `tests/` prose-remainder batch appended eleven bullets to T0168 after the owner's prune list was built; two were asserted, and these nine name guards that are degenerate or blind today with nobody having ruled on them.
 
 ### Partially done<a name="partially-done-1"></a>
