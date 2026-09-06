@@ -155,7 +155,7 @@ def test_realized_series_forward_join_and_chain_ok(tmp_path):
     assert rs.chain_ok is True and rs.implausible is False
 
 
-def test_a_correct_join_satisfies_the_chain_identity_on_shift_detectable_closes(tmp_path):
+def test_the_chain_identity_holds_on_shift_detectable_closes(tmp_path):
     """Non-monotone, distinct closes joined correctly still satisfy the chain identity: chain_ok is
     True. `test_chain_consistent_detects_gap` pins the identity's False path."""
     d = datetime(2026, 7, 16, tzinfo=UTC)
