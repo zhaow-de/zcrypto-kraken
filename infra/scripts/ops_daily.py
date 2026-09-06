@@ -1231,9 +1231,10 @@ def _resolves_only_safe_paths(tokens: list[str], operands: list[str], *, host: s
         resolved = resolve(host, paths)
     except (*_UNREACHABLE, subprocess.SubprocessError):
         return False
-    # Every operand must be ANSWERED, not merely every answer be safe: a resolver replying about a
-    # strict subset would leave the rest unchecked. One path per operand is the floor, since a glob
-    # expands to more and never to fewer -- so a short answer is a refusal, an empty one included.
+    # At least one path per operand -- a FLOOR, since a glob expands to more; a short answer is a
+    # refusal, an empty one included. It does not compose into "every operand was answered": one
+    # operand's glob surplus can mask another's silence. What makes that unreachable through
+    # `ssh_resolve` is `readlink`'s all-or-nothing exit status under `check=True`, not this line.
     if not paths or len(resolved) < len(paths):
         return False
     return all(_path_is_read_safe(path) for path in resolved)
