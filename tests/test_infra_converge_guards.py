@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -1702,8 +1703,8 @@ def _asset_candidates(name: str) -> list[Path]:
 def _role_asset(name: str) -> Path | None:
     # Two candidates pass only as one file's content under both asset directories, one passes only as
     # a regular file inside the role, and anything else a candidate can be — a directory, a link
-    # leaving the role — is refused by name and by what it is. Absence is the one silent outcome, and
-    # it says no spelling of the name reached an existing path inside the role.
+    # leaving the role — is refused by name and by what it is. Absence stays silent here because a
+    # dangling link anywhere in the role reds the presence walk below, whatever this makes of a name.
     found = _asset_candidates(name)
     if not found:
         return None
@@ -1873,3 +1874,45 @@ def test_no_ops_role_asset_is_a_broken_link():
     )
     broken = [f"{p.relative_to(OPS_ROLE)} -> {p.readlink()}" for p in walked if os.path.lexists(p) and not os.path.exists(p)]
     assert not broken, f"{OPS_ROLE.name}/ carries a name whose target does not exist: {broken}"
+
+
+def _ops_role_copy(tmp_path: Path) -> Path:
+    # the walk above reads OPS_ROLE at call time, so a copy plus a rebound global runs its real assertions
+    role = tmp_path / OPS_ROLE.name
+    shutil.copytree(OPS_ROLE, role, symlinks=True)
+    return role
+
+
+def _plant_dangling_twin(role: Path) -> None:
+    (role / "files" / "zz_twin.j2").write_text("real\n")
+    (role / "templates" / "zz_twin.j2").symlink_to("nowhere")
+
+
+def _plant_dangling_alone(role: Path) -> None:
+    (role / "templates" / "zz_absent.j2").symlink_to("nowhere")
+
+
+# --- A7b: `_role_asset` sees only what ansible RESOLVES, so a dangling link reaches it as the real
+# twin alone or as nothing at all, and it refuses neither. The refusal is the walk above, by presence.
+# That division of labour is what lets absence stay silent up there, so it is constructed here rather
+# than argued: each shape the resolver cannot refuse must red the walk, on the walk's own assertion.
+@pytest.mark.parametrize(
+    ("what", "plant"),
+    [
+        ("a dangling twin beside a real asset, which the resolver reads as the real one", _plant_dangling_twin),
+        ("a dangling link alone, which the resolver reads as an absence", _plant_dangling_alone),
+    ],
+)
+def test_the_presence_walk_refuses_what_the_resolver_cannot(tmp_path, monkeypatch, what, plant):
+    """Each shape the resolver admits or passes over reds the broken-link assertion of the walk above."""
+    role = _ops_role_copy(tmp_path)
+    plant(role)
+    monkeypatch.setitem(globals(), "OPS_ROLE", role)
+    with pytest.raises(AssertionError, match=r"carries a name whose target does not exist"):
+        test_no_ops_role_asset_is_a_broken_link()
+
+
+def test_the_copied_role_alone_reds_nothing(tmp_path, monkeypatch):
+    """The true positive beside the two above: the copy passes until one of them plants something."""
+    monkeypatch.setitem(globals(), "OPS_ROLE", _ops_role_copy(tmp_path))
+    test_no_ops_role_asset_is_a_broken_link()
