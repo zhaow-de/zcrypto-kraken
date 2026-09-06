@@ -13,6 +13,7 @@ import inspect
 import io
 import json
 import re
+import string
 import subprocess
 import sys
 import urllib.error
@@ -1040,13 +1041,17 @@ def test_the_real_reads_survive_the_allowlists(cmd, host):
         "cat /home/deploy/.ssh/*",
         "grep -rF LOKI /etc/zcrypto-ops/",
         "grep -r . /home/deploy/.ssh/",
+        # A recursive grep naming no file walks the working directory, which over `ssh ops` is the
+        # deploy user's home, `.ssh/` included -- a read reaching it through no operand at all.
+        "grep -r .",
+        "grep -r zcrypto",
         "cat /var/log/../opt/zcrypto-capture/logship-secrets.env",
     ],
 )
 def test_the_round_four_escapes_are_refused(cmd):
-    """Curl's writes, a Go template reaching the whole object, and a secret read through a glob or a
-    directory are PREPARED on every host -- the veto is an allowlist of WHERE a command may read,
-    never a denylist of secret-looking names."""
+    """Curl's writes, a Go template reaching the whole object, and a secret read through a glob, a
+    directory or a bare recursion are PREPARED on every host -- the veto is an allowlist of WHERE a
+    command may read, never a denylist of secret-looking names."""
     for host in ("zcrypto", "ops", "nas"):
         assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.PREPARED, host
 
@@ -1134,11 +1139,14 @@ def test_a_read_safe_root_holds_only_what_was_checked(cmd):
         "grep -e X /etc/shadow /var/log/syslog",
         "grep --regexp=X /etc/shadow",
         "grep -ie X /etc/shadow",
+        # A second `-e` takes the first as its pattern, so real grep reads BOTH operands as files and
+        # the one the path check skips is the secret.
+        "grep -e -e /etc/shadow /var/log/syslog",
     ],
 )
 def test_grep_e_does_not_turn_the_first_file_into_the_pattern(cmd):
-    """`grep -e X /etc/shadow` must stay PREPARED: every operand a read grep names is checked as a
-    path except a non-absolute operand 0, which is its pattern."""
+    """`grep -e X /etc/shadow` must stay PREPARED: no grep shape admits an option that takes the
+    pattern, so the operand the path check skips is never a file."""
     assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
 
 
@@ -1151,25 +1159,45 @@ def test_the_greps_the_runbooks_actually_run():
         assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
 
 
+def test_a_recursive_grep_naming_no_file_is_refused_however_the_switch_is_spelled(monkeypatch):
+    """The refusal reads grep's recursion switches, not the cluster the shapes happen to admit today:
+    a shape widened to take `--recursive` is refused by the same rule that refuses `-r`."""
+    assert ops_daily.classify_action("grep -r zcrypto", host="ops") is ops_daily.Tier.PREPARED
+    widened = tuple(
+        dataclasses.replace(shape, flags={**shape.flags, "--recursive": None}) if shape.head == ("grep",) else shape
+        for shape in ops_daily._FIRST_STAGE_SHAPES
+    )
+    monkeypatch.setattr(ops_daily, "_FIRST_STAGE_SHAPES", widened)
+    assert ops_daily.classify_action("grep --recursive zcrypto", host="ops") is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action("grep --recursive zcrypto /var/log/", host="ops") is ops_daily.Tier.AUTONOMOUS
+
+
 def test_no_shape_table_admits_a_content_head_reading_outside_the_safe_roots(monkeypatch):
-    """A table is DISCOVERED off the module, never listed here, and each is given in turn a grep
-    whose `--regexp` consumes the pattern -- the read that reaches `/etc/shadow` stays PREPARED
-    wherever the stage it rides sits."""
+    """A table is DISCOVERED off the module, never listed here, and each is given in turn a grep shape
+    carrying a `-m` no real shape admits -- the read that reaches `/etc/shadow` stays PREPARED wherever
+    the stage it rides sits, and the same read under `/var/log/` passes, so the refusal is the veto's
+    and not the injection failing to match."""
     tables = sorted(name for name in vars(ops_daily) if name.endswith("_SHAPES"))
     print("shape tables discovered on ops_daily:", tables)
     assert tables, "no shape table discovered -- the sweep, not the classifier, is what failed"
-    displacing = ops_daily._Shape(
+    injected = ops_daily._Shape(
         ("grep",),
-        {"--regexp": ops_daily._PATTERN},
+        {"-m": ops_daily._INT},
         arity=(1, 2),
         classes=(ops_daily._PATTERN, ops_daily._FILEREF),
     )
     # The first stage and a pipeline stage are matched against different tables, so the same read is
     # put in both positions: whichever table a name turns out to hold, one of the two consults it.
+    positions = ("grep -m 5 X {}", "docker ps | grep -m 5 X {}")
     for name in tables:
-        monkeypatch.setattr(ops_daily, name, getattr(ops_daily, name) + (displacing,))
-        for cmd in ("grep --regexp=X /etc/shadow", "docker ps | grep --regexp=X /etc/shadow"):
+        monkeypatch.setattr(ops_daily, name, getattr(ops_daily, name) + (injected,))
+        for position in positions:
+            cmd = position.format("/etc/shadow")
             assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED, (name, cmd)
+        assert any(
+            ops_daily.classify_action(position.format("/var/log/syslog"), host="ops") is ops_daily.Tier.AUTONOMOUS
+            for position in positions
+        ), f"{name}: the injected shape matched no stage, so the refusals above prove nothing"
         monkeypatch.undo()
 
 
@@ -1849,41 +1877,37 @@ def test_every_site_that_builds_a_grafana_url_is_pinned():
     )
 
 
-# `_reads_only_safe_paths` skips operand 0 of a read-shape grep unless it is spelled absolute. A flag
-# that DISPLACES the pattern moves a FILE into that operand, and a RELATIVE one is still skipped there,
-# so each flag pinned here takes its own value and the pattern stays positional.
-_READ_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--include"}
-
-
-def test_the_read_grep_shape_takes_no_flag_that_displaces_its_pattern():
-    """A read-shape grep's operand 0 holds its pattern, which is what leaves a relative file name no
-    place to stand where the path check skips it."""
-    greps = [shape for shape in ops_daily._FIRST_STAGE_SHAPES if shape.head == ("grep",)]
-    assert len(greps) == 1, f"expected one grep shape in _FIRST_STAGE_SHAPES, selected {greps}"
-    valued = {flag for flag, spec in greps[0].flags.items() if spec is not None}
-    assert valued == _READ_GREP_VALUE_FLAGS, (
-        f"the read grep shape's value-taking flags are {sorted(valued)}, pinned at {sorted(_READ_GREP_VALUE_FLAGS)} -- "
-        "a flag that displaces the pattern, like `-e` or `-f`, leaves a FILE at the operand "
-        "`_reads_only_safe_paths` skips whenever it is not spelled absolute"
+# grep takes its pattern from somewhere other than operand 0 through these options and no others --
+# its own closed set, `-e`/`--regexp` naming the pattern and `-f`/`--file` a file holding it. Each is
+# probed alone, a long one with its value attached, and a short one inside a two-letter cluster.
+_GREP_PATTERN_SOURCES = ("-e", "--regexp", "-f", "--file")
+_GREP_PATTERN_SOURCE_TOKENS = [
+    token
+    for source in _GREP_PATTERN_SOURCES
+    for token in (
+        [source, f"{source}=X"]
+        if source.startswith("--")
+        else [source, *(f"-{source[1]}{c}" for c in string.ascii_letters), *(f"-{c}{source[1]}" for c in string.ascii_letters)]
     )
+]
 
 
-# `arity=(1, 1)` gives the filter-shape grep exactly one operand, which is its pattern. A flag that
-# DISPLACES the pattern leaves that single operand to the next token, and the arity still admits it --
-# so each flag pinned here takes its own value.
-_FILTER_GREP_VALUE_FLAGS = {"-A", "-B", "-C"}
+def _shape_admits_flag(shape, token: str) -> bool:
+    """Whether `_match_shape` would consume `token` as a flag of `shape` rather than as an operand."""
+    return token.partition("=")[0] in shape.flags or bool(shape.short and re.fullmatch(shape.short, token))
 
 
-def test_the_filter_grep_shape_takes_no_flag_that_displaces_its_pattern():
-    """`arity=(1, 1)` admits one operand for a filter-shape grep, and that operand is the pattern only
-    while no flag the shape carries can displace it."""
-    greps = [shape for shape in ops_daily._FILTER_SHAPES if shape.head == ("grep",)]
-    assert len(greps) == 1, f"expected one grep shape in _FILTER_SHAPES, selected {greps}"
-    assert greps[0].arity == (1, 1), greps[0].arity
-    valued = {flag for flag, spec in greps[0].flags.items() if spec is not None}
-    assert valued == _FILTER_GREP_VALUE_FLAGS, (
-        f"the filter grep shape's value-taking flags are {sorted(valued)}, pinned at {sorted(_FILTER_GREP_VALUE_FLAGS)} -- "
-        "a flag that displaces the pattern, like `-e` or `-f`, leaves the shape's one operand to a file it reads"
+def test_no_grep_shape_admits_a_pattern_source_option():
+    """`_reads_only_safe_paths` skips grep's operand 0 as its pattern: in every table discovered off
+    the module, no grep shape admits a probed spelling of grep's pattern-source options."""
+    tables = sorted(name for name in vars(ops_daily) if name.endswith("_SHAPES"))
+    assert tables, "no shape table discovered -- the sweep, not the classifier, is what failed"
+    greps = [(name, shape) for name in tables for shape in getattr(ops_daily, name) if shape.head == ("grep",)]
+    assert greps, f"no grep shape discovered in {tables} -- the sweep, not the classifier, is what failed"
+    admitted = [(name, token) for name, shape in greps for token in _GREP_PATTERN_SOURCE_TOKENS if _shape_admits_flag(shape, token)]
+    assert not admitted, (
+        f"grep shapes admitting a pattern-source option: {admitted} -- such an option takes the pattern, "
+        "leaving a FILE at the operand `_reads_only_safe_paths` skips"
     )
 
 

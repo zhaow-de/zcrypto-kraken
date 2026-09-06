@@ -1028,12 +1028,11 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("md5sum",), arity=(1, 3), classes=(_FILEREF,)),
     _Shape(
         ("grep",),
-        # `-e` is deliberately NOT value-taking, and must never become so: it would consume the
-        # pattern, leaving the first FILE at operand 0 -- which `_reads_only_safe_paths` skips
-        # whenever what stands there is not spelled absolute. Left as a valueless short flag the
-        # pattern stays positional and every file is checked.
+        # `-e`, `--regexp`, `-f` and `--file` are absent, valueless short letter included: each takes
+        # grep's pattern from somewhere other than operand 0, leaving a FILE standing where
+        # `_reads_only_safe_paths` skips the pattern. Their absence is what makes that skip sound.
         {"-A": _INT, "-B": _INT, "-C": _INT, "--include": _QUOTED},
-        short=r"-[iEvnocleqrRFwxsah]{1,8}|-[ABC]\d{1,3}",
+        short=r"-[iEvnoclqrRFwxsah]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 6),
         classes=(_PATTERN, _FILEREF),
     ),
@@ -1112,7 +1111,7 @@ _FILTER_SHAPES = (
     _Shape(
         ("grep",),
         {"-A": _INT, "-B": _INT, "-C": _INT},
-        short=r"-[iEvnocleqFwxa]{1,8}|-[ABC]\d{1,3}",
+        short=r"-[iEvnoclqFwxa]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 1),
         classes=(_PATTERN,),
     ),
@@ -1176,15 +1175,35 @@ _READ_SAFE_FILES = (
 )
 
 
-def _reads_only_safe_paths(head: str, operands: list[str]) -> bool:
+# grep's recursion switches, its own closed set. With one of them and no file operand grep walks the
+# working directory, which over `ssh` is the deploy user's home -- named by no read-safe root, and
+# reached through no operand a path check could read.
+_GREP_RECURSIVE = frozenset({"-r", "-R", "--recursive", "--dereference-recursive"})
+
+
+def _greps_a_directory_tree(tokens: list[str]) -> bool:
+    """Whether a flag among `tokens` turns grep recursive -- a long switch, or `r`/`R` in a cluster."""
+    for token in tokens[1:]:
+        if not token.startswith("-") or token == "-":
+            continue
+        name = token.partition("=")[0]
+        if name in _GREP_RECURSIVE or (not name.startswith("--") and {"r", "R"} & set(name[1:])):
+            return True
+    return False
+
+
+def _reads_only_safe_paths(tokens: list[str], operands: list[str]) -> bool:
     """Every path a content head names must sit under a read-safe root, absolute and traversal-free.
 
-    `grep`'s first operand is skipped as its pattern only while it is not itself spelled absolute --
-    a flag that consumed the real pattern leaves a FILE standing in that operand. A `*` cannot cross
-    `/`, so a glob under a safe root stays under it; `..` can leave, so it is refused outright.
+    `grep`'s operand 0 is its PATTERN, skipped however it is spelled, because no shape admits an
+    option that could put a file there -- `test_no_grep_shape_admits_a_pattern_source_option` holds
+    that for every table here. A `*` cannot cross `/`; `..` can leave, so it is refused outright. A
+    recursive grep naming no file reads a tree no operand names, and is refused rather than skipped.
     """
-    skip = 1 if head == "grep" and operands and not operands[0].startswith("/") else 0
-    paths = operands[skip:]
+    head = tokens[0]
+    paths = operands[1:] if head == "grep" else operands
+    if head == "grep" and not paths and _greps_a_directory_tree(tokens):
+        return False
     return all(".." not in path and (path.startswith(_READ_SAFE_DIRS) or path in _READ_SAFE_FILES) for path in paths)
 
 
@@ -1338,7 +1357,7 @@ def _matches(shapes, tokens: list[str]) -> list[str] | None:
         check = _POSTCHECKS.get(shape.post) if shape.post else None
         if check and not check(tokens):
             continue
-        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens[0], operands):
+        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens, operands):
             return None
         return operands
     return None
