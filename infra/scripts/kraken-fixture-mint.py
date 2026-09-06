@@ -7,8 +7,7 @@ This mints those and stops. It has no cancel path -- not for its own legs, not f
 EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and on those the
 adapter's order-report read returns success with the row dropped -- so a fixture resting there is
 invisible to the very verdict the attended pass reads, and the pass would report clean against an
-account it cannot see. `BLIND_ORDER_READ_LEGS` is imported rather than restated, so the two copies
-on the live trade path cannot drift.
+account it cannot see. `BLIND_ORDER_READ_LEGS` is imported rather than restated.
 EVERY SIZE COMES FROM THE VENUE'S OWN ROW AT RUN TIME, never from a remembered figure -- which is
 rejected at submit if it has fallen below a floor and silently accepted at a notional nobody chose
 if it has not -- and never from the adapter's instrument object, which is a TRANSLATION of that
@@ -418,13 +417,11 @@ def require_credentials() -> tuple[str, str]:
 
 async def read_pair(client, pair: str) -> tuple[float, object]:
     """The run's own best bid, and the instrument object -- for `cache_instrument` and nothing else.
-    The object is needed because `submit_order` documents a not-in-cache error and the cache's
-    only writer is `cache_instrument`. It is NOT where a size comes from, and the reason is
-    categorical rather than incidental: this adapter never maps the cost floor into its notional
-    field at all, so the object answers None for it on every pair. Measured on the pinned wheel by
-    serving this repo's own AssetPairs fixture over loopback, which also confirms on the current
-    version what `cli/engine/venuestate.py` recorded on the previous one. A floor that arrives as
-    None and is read as zero always clears, so `pair_limits` reads the row the venue enforces
+    The object is needed because `submit_order` documents `The instrument is not found in cache.`
+    among its errors and the cache's only writer is `cache_instrument`. It is NOT where a size comes
+    from, and the reason is categorical rather than incidental: this adapter never maps `costmin`
+    into `min_notional` at all, so the object answers None for it on every pair. A floor that arrives
+    as None and is read as 0.0 always clears, so `pair_limits` reads the row the venue enforces
     instead.
     """
     from nautilus_trader.model import InstrumentId
@@ -491,9 +488,9 @@ def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tup
     here.
     The floors belong to the mint pair and to no other row. Every OTHER non-EUR code is listed as
     held at any size above zero, because this line is also what the operator reads to see the
-    account, and judging one asset's balance by another's floor at another's bid would print an
-    empty account over a substantial one. Nothing is gated on those codes; only the mint pair's
-    base is.
+    account, and judging one asset's balance by another's floor at another's bid would print
+    `non-EUR: (none)` over an account holding a substantial amount of it. Nothing is gated on those
+    codes; only the mint pair's base is.
     """
     held = set()
     for row in balances:

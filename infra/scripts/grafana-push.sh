@@ -12,6 +12,10 @@
 # query.py` instead of this script's token at all.
 #
 # The alert-rules calls target Grafana's Alerting Provisioning HTTP API, one rule per call: the
+# PATH note, which the PyYAML refusal below points at: this script calls bare `python3`, and PyYAML
+# lives in the project venv, so run it with that venv first on PATH rather than installing PyYAML
+# into the system python -- a second copy drifts unseen.
+#
 # `apiVersion: 1` / `groups:` file-provisioning shape is a different mechanism and is not accepted
 # here, and file provisioning is not available on Grafana Cloud SaaS.
 #

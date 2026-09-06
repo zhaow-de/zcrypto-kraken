@@ -6,9 +6,9 @@
 #
 # Every pull channel below shares one shape, stated once here: its OWN least-privilege rrsync
 # channel; its own per-call SSH port where the source is the home-LAN ops node rather than a VPS;
-# and leaving that channel's `*_SOURCE` unset skips the pull entirely, so this file stays valid on a
-# NAS that has not been given the channel. Each block below says only what is particular to its
-# channel.
+# and, for every channel EXCEPT the primary capture pull, leaving its `*_SOURCE` unset skips that
+# pull entirely, so this file stays valid on a NAS that has not been given the channel. The primary
+# pull is unconditional. Each block below says only what is particular to its channel.
 services:
   archive-pull:
     # The digest pin arrives via the ansible-rendered .env: the same x86 image the VPS capture
