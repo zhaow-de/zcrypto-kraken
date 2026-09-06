@@ -344,11 +344,11 @@ def test_signal_during_probe_restores_the_target_before_cleaning(tmp_path):
     assert target.read_bytes() != before, "restore-on-signal removed but the file came back -- unproven"
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
 def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
     """Signal mid-mutation with the TARGET FILE read-only, so the cleanup cp fails: rc must be 9, the
     stderr must say KEPT, and the pristine copy must SURVIVE (it is the only way back). `chmod 0444`
-    goes on the FILE — overwriting needs write permission on the file, not its directory. Assumes a
-    non-root test run (root ignores file modes)."""
+    goes on the FILE — overwriting needs write permission on the file, not its directory."""
     # The repo is nested one level down so the marker and the captured stderr live OUTSIDE it: both
     # are created before the script starts, and an untracked file in the repo trips the dirty-worktree
     # refusal (rc 3) before anything is ever mutated.
