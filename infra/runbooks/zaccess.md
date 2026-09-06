@@ -8,17 +8,41 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 ## zaccess-converge — PROCEDURE: converging the bridgehead needs a single-identity SSH agent
 
+### What you are seeing
+
+Nothing fired. You are about to converge the bridgehead — `site.yml --limit zaccess --tags access` — or a converge of it died on `Too many authentication failures`.
+
+### What it means
+
 Every converge of this host needs an agent holding **only its own key**. `ssh_hardening` leaves `ssh_max_auth_retries` at its `devsec.hardening` default, so sshd here offers `MaxAuthTries 2`, and `infra/ansible/scripts/run.sh` loads all five vaulted fleet deploy keys into one agent with `files/deploy_zaccess_ed25519` **last** — both tries go to other hosts' keys before the right one is offered, and the run dies on `Too many authentication failures`. The other four hosts sit earlier in that load order, so only `zaccess` trips it.
 
+### What to do
+
 So converge it not through `run.sh` but from `infra/ansible/`, where `ansible.cfg` supplies the vault password independently: `eval "$(ssh-agent -s)"; uv run ansible-vault view --vault-password-file scripts/vault-pass.sh files/deploy_zaccess_ed25519 | ssh-add -; ANSIBLE_SSH_EXTRA_ARGS="-o IdentitiesOnly=yes -o IdentityFile=$PWD/files/deploy_zaccess_ed25519.pub" uv run ansible-playbook site.yml --limit zaccess --tags access`. That agent has no trap of its own the way `run.sh`'s does — `ssh-agent -k` when the play is done.
+
+### Retire when
+
+`infra/ansible/roles/hardening/` sets `ssh_max_auth_retries` explicitly above the number of keys `infra/ansible/scripts/run.sh` loads, or `run.sh` stops loading every fleet key into one agent — either one ends the collision this procedure exists for.
 
 <a name="zaccess-revoke-client-cert"></a>
 
 ## zaccess-revoke-client-cert — PROCEDURE: revoking a client cert
 
+### What you are seeing
+
+Nothing fired. A client certificate is to lose its access to the mTLS edge.
+
+### What it means
+
 Delete its PEM from `infra/ansible/roles/access/files/pinned-leaves/` and converge. `access_pinned_leaves` globs that directory and the Caddyfile template renders one `file /etc/caddy/pinned-leaves/<name>.pem` line per PEM inside its `verifier leaf` block, so the re-rendered Caddyfile drops the pin and the leaf is refused at the next handshake.
 
+### What to do
+
 The role ships that directory with `ansible.builtin.copy`, which has no `--delete`, so **also `sudo rm /etc/caddy/pinned-leaves/<name>.pem` on the bridgehead** for hygiene; the file is inert either way, because the Caddyfile no longer names it. Confirm by value: `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reads 0.
+
+### Retire when
+
+`infra/ansible/roles/access/templates/Caddyfile.j2` no longer renders one `file` line per PEM from `access_pinned_leaves` — the glob is what makes deleting the PEM the revocation.
 
 ______________________________________________________________________
 
@@ -41,6 +65,8 @@ The bridgehead runs Alloy **natively** (an apt package, no docker) — the only 
 3. `journalctl -u alloy --no-pager -n 100` — a config parse failure (a hand edit that didn't survive the next converge, or a credentials rotation that didn't reach `/etc/default/alloy`) is the usual cause on this host, since the config copy here is deliberately ungated (every converge ships it, so there is no separate drift-assert task to catch a bad render before it lands).
 4. `systemctl restart alloy` is the usual fix. If it will not stay up, check `/etc/default/alloy` for the six `GRAFANA_*` values and re-converge (`--limit zaccess --tags access`) to re-render them — that converge needs a single-identity SSH agent — [`zaccess-converge`](#zaccess-converge).
 5. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
+
+**This Alloy takes no digest operand and owes no bake** — unlike the capture and ops Alloys, which refuse an ordinary converge after a config edit. It is a native deb whose version is FOLLOWED from apt: the `access` role installs it `state: present` with no version and clears any `dpkg` hold, because a hold makes `apt upgrade` skip it silently and a forced version turns an upstream bump into a failed task that drops the host from the play. Its `config.alloy` is an ungated `copy`, so every converge ships it and a hand edit cannot outlive the next run. There is no `zaccess_alloy_digest` and no pins row — that is deliberate, not an oversight, so do not add one; read the installed version off the host with `dpkg-query -W alloy`. A keep-regex or `config.alloy` change under `infra/ansible/roles/access/files/` converges with a plain `site.yml --limit zaccess --tags access`, whose SSH-agent constraint is [`zaccess-converge`](#zaccess-converge).
 
 ### Retire when
 
