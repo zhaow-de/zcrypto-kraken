@@ -167,6 +167,7 @@ def test_notification_settings_survive_the_payload_the_push_sends():
     program = _RULE_PAYLOAD_JQ.search(PUSH.read_text())
     assert program, "grafana-push.sh no longer builds its rule payload with a jq program this test can run"
     jq_program = program.group(1)
+    # config-selector-ok: confirming the regex caught the right program, not selecting a value out of it
     assert "select(.uid == $uid)" in jq_program, f"the extracted program is not the per-rule payload builder: {jq_program!r}"
 
     rules = _rules()
