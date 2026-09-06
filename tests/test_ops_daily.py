@@ -1159,9 +1159,10 @@ def test_the_greps_the_runbooks_actually_run():
         assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
 
 
-def test_a_dereferencing_recursion_is_admitted_by_no_grep_shape():
-    """`-R` follows a symlink out of the root the path check spelled, so no grep shape admits it,
-    while the `-r` the runbooks spell reads the same operands AUTONOMOUS."""
+def test_the_R_spelling_of_a_recursion_is_admitted_by_no_grep_shape():
+    """No grep shape admits `-R`, while the `-r` the runbooks spell reads the same operands
+    AUTONOMOUS. The claim is about that one letter, not about dereferencing: a symlink under a
+    spelled-safe root is still read by shapes this says nothing about."""
     safe = "'^Storage=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/"
     for refused, passing in (
         (f"grep -RE {safe}", f"grep -rE {safe}"),
