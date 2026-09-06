@@ -121,7 +121,7 @@ Every channel above is a **pull** — the NAS reaches out and the fleet stays pu
 
 ## Reading the pull loop's logs
 
-`docker logs` on the container surfaces `zcrypto archive pull`'s own lines (`cli/archive/command.py`) and the entrypoint's wrapper lines. `infra/runbooks/nas.md` tables every one of them with its producer and its meaning, and is the triage path; the one figure it does not define:
+`docker logs` on the container surfaces `zcrypto archive pull`'s own lines (`cli/archive/command.py`) and the entrypoint's wrapper lines. `infra/runbooks/nas.md` tables every ERROR line with its producer and its meaning, and is the triage path; the one figure it does not define:
 
 - `pull complete source=… checked=N … failed=N lag_s=…` — one line per verified pull. `lag_s` is the pull-lag dead-man signal: the age in seconds of the newest segment the walk FOUND, verified or not — `verify_tree` takes `newest_ts` from the hour path during the traversal, not from the hash, so a narrowed `--hash-scope` never blanks it. A growing `lag_s` across cycles means the loop is stuck or the transport is failing.
 
