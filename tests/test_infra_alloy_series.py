@@ -438,6 +438,26 @@ def _tokens_in_tree() -> dict[str, set[str]]:
     return found
 
 
+def _tokens_in_tree_raw() -> dict[str, set[str]]:
+    raw: dict[str, set[str]] = {}
+    for glob in _SOURCE_GLOBS:
+        for path in REPO.glob(glob):
+            for m in re.finditer(r"zcrypto_[A-Za-z0-9_]{4,}", path.read_text()):
+                raw.setdefault(m.group(0), set()).add(str(path.relative_to(REPO)))
+    return raw
+
+
+def test_no_zcrypto_metric_name_is_spelled_with_a_capital():
+    """Prometheus names are case-sensitive and every keep-regex is lowercase, so a capitalised
+    `zcrypto_` name is dropped at remote_write however this file classifies it."""
+    capitalised = sorted((name, sorted(where)) for name, where in _tokens_in_tree_raw().items() if name != name.lower())
+    assert not capitalised, (
+        f"a zcrypto_ metric name carries a capital: {capitalised} -- the keep-regexes are lowercase and "
+        "Prometheus names are case-sensitive, so this series is dropped at remote_write whatever the "
+        "sweep below makes of it"
+    )
+
+
 # Deliberately a shape match over the whole source, not a scan of definition sites: scanning
 # `MetricFamily(` and `# HELP` misses how cli/engine/command.py, cli/liquidations/coinalyze.py and
 # archive-pull.sh.j2 each publish.
