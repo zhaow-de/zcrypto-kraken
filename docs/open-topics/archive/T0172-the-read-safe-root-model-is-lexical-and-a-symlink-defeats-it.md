@@ -6,7 +6,7 @@ status: resolved
 
 ## Context — what
 
-`_reads_only_safe_paths` in `infra/scripts/ops_daily.py` decides whether a content head — `cat`, `grep` — reads only paths under a read-safe root. The check **was** a string test over the spelled path alone: it asked whether the operand started with one of `_READ_SAFE_DIRS`, or was one of `_READ_SAFE_FILES`, and never resolved it — while a classifier running on the workstation cannot resolve a remote host's links by itself.
+`_reads_only_safe_paths` in `infra/scripts/ops_daily.py` **decided on its own** whether a content head — `cat`, `grep` — read only paths under a read-safe root; today it answers for the SPELLED paths and `_resolves_only_safe_paths` carries what those names reach. The check was a string test over the spelled path alone: it asked whether the operand started with one of `_READ_SAFE_DIRS`, or was one of `_READ_SAFE_FILES`, and never resolved it — while a classifier running on the workstation cannot resolve a remote host's links by itself.
 
 So any symlink under a read-safe root that pointed outside it was read as safe. Measured, with `/var/log/dirlink` and `/var/log/filelink` standing for a planted link, every one of these classified **AUTONOMOUS** on both `ops` and `zcrypto`, and every one reads a file outside the spelled root on GNU grep 3.11 and ugrep 7.8.4 alike:
 
@@ -22,7 +22,7 @@ grep -irn <pattern> /var/log/dirlink
 
 **The distinction that matters, and that the fix on `feat/t0168-unasserted-claims` does not close.** `-R` follows a symlink met while *descending* a spelled directory, where `-r` does not; that is why the letter was dropped from the grep shape — it widens what a safe root reaches. It is not why the class is open. An operand that is *itself* a link — spelled, or landed there by a glob — is read through by `-r`, `-R` and a bare `grep` alike, and no flag letter closes that. The corrected rationale is in `_FIRST_STAGE_SHAPES`' grep entry comment; the branch's test `test_the_R_spelling_of_a_recursion_classifies_prepared` asserts only the letter, and `test_no_grep_shape_admits_a_dereferencing_option` plus `test_the_grep_shapes_admit_exactly_the_pinned_surface` hold every probed short spelling and any `--der…` long form across every grep shape, and pin the admitted surface so a further spelling cannot be added silently — `--dereference-recursive`, GNU's long form, escaped a letters-only probe until a review measured it.
 
-### Why it is a topic and not a fix
+### Why it was a topic and not a fix
 
 It needs a **pre-planted link**, and no autonomous shape can create one: `ln -s /etc/shadow /var/log/x` classifies PREPARED. That is why it was parked here rather than fixed inside the branch that found it.
 
