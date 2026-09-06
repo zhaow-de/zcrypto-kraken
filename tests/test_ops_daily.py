@@ -1836,8 +1836,8 @@ _READ_GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--include"}
 def test_the_read_grep_shape_takes_no_flag_that_displaces_its_pattern():
     """`_reads_only_safe_paths` checks a read-shape grep's file operands, which is all of them only
     while the operand it skips holds the pattern."""
-    greps = [shape for shape in ops_daily._READ_SHAPES if shape.head == ("grep",)]
-    assert len(greps) == 1, f"expected one grep shape in _READ_SHAPES, selected {greps}"
+    greps = [shape for shape in ops_daily._READ_SHAPES + ops_daily._ZCRYPTO_SHAPES if shape.head == ("grep",)]
+    assert len(greps) == 1, f"expected one grep shape in _READ_SHAPES + _ZCRYPTO_SHAPES, selected {greps}"
     valued = {flag for flag, spec in greps[0].flags.items() if spec is not None}
     assert valued == _READ_GREP_VALUE_FLAGS, (
         f"the read grep shape's value-taking flags are {sorted(valued)}, pinned at {sorted(_READ_GREP_VALUE_FLAGS)} -- "
