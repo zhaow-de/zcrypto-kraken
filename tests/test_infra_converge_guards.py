@@ -4,6 +4,7 @@ The test boundary is the guard's REAL condition expression fed constructed probe
 never a re-implementation of the logic; `load_tasks` reads the committed YAML.
 """
 
+import hashlib
 import json
 import re
 import tomllib
@@ -1654,24 +1655,27 @@ def _expand_src(src: str, loop) -> list[str]:
     return [render(src, {"item": item}) for item in items]
 
 
-# Of the action plugins that resolve a `src:` (`grep -rn "_find_needle(" ansible/plugins/action`),
-# these four pass `files`; `template` passes `templates`.
-_FILES_SUBDIR_MODULES = frozenset({"copy", "unarchive", "assemble", "uri"})
-
-
-def _role_asset(name: str, module: str) -> Path | None:
-    # Ansible's own resolver: `x.j2` and `templates/x.j2` name the same file under either subdir, so
-    # the MODULE's subdir only decides which copy of a BARE colliding basename the task would render.
-    # `None` is off the role: unresolvable, or resolved by the resolver's last resort, the working
-    # directory.
+def _role_asset(name: str) -> Path | None:
+    # Both of the role's asset directories, without asking which one the module searches: a name that
+    # resolves to one file, or to the same content under both, is unambiguous whichever module renders
+    # it; a name that resolves to two DIFFERENT files is refused rather than guessed. `None` is off the
+    # role: unresolvable, or resolved by the resolver's last resort, the working directory.
     from ansible.errors import AnsibleError
 
-    subdir = "files" if module.rsplit(".", 1)[-1] in _FILES_SUBDIR_MODULES else "templates"
-    try:
-        found = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name))
-    except AnsibleError:
-        return None
-    return found if found.is_file() and OPS_ROLE.resolve() in found.resolve().parents else None
+    found: dict[Path, str] = {}
+    for subdir in ("files", "templates"):
+        try:
+            path = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name)).resolve()
+        except AnsibleError:
+            continue
+        if path.is_file() and OPS_ROLE.resolve() in path.parents:
+            found[path] = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert len(set(found.values())) < 2, (
+        f"{name!r} names a different file under each of {OPS_ROLE.name}/'s asset directories — "
+        f"{sorted(str(p) for p in found)}: which one a task renders is the module's to decide, so this "
+        "selection cannot read what that task consumes"
+    )
+    return next(iter(found), None)
 
 
 def _body_text(task: dict) -> str:
@@ -1685,12 +1689,12 @@ def _consumed_text(task: dict) -> str:
     # the role — skipped in silence where the `src:` is written as a path (the NFS mount source, the
     # controller-side copy), refused by name where it is a bare filename this role should own.
     text = _body_text(task)
-    for module, value in task.items():
+    for value in task.values():
         src = value.get("src") if isinstance(value, dict) else None
         if not isinstance(src, str):
             continue
         for name in _expand_src(src, task.get("loop")):
-            resolved = _role_asset(name, module) if isinstance(name, str) else None
+            resolved = _role_asset(name) if isinstance(name, str) else None
             if resolved is None:
                 assert "/" in src, (
                     f"{task['name']!r} renders {name!r}, which resolves to no file under {OPS_ROLE.name}/: this selection "
