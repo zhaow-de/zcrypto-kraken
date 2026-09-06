@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # Cleanup residue outside a prose commit
@@ -83,12 +83,15 @@ On `fix/t0169-cleanup-residue`, each bullet's landing commits are that branch's 
 - **`cli/engine/soak.py`** and **`cli/panel/primitives.py`**: `# D9` is `spec 00059 D9`; `# 34` and `# 17` were the `len()`s of the literals beside them and are gone; the panel constant cites `spec 00085 D1 Task 1 Step 0`, the form its own test already wrote.
 - **Topic ids carry no status annotation** in the files this branch touched — five annotations across `cli/panel/primitives.py`, the ops role's defaults and its archive-pull template. The same form elsewhere in the tree is the sweep registered under `## Suggested next steps` below.
 
+### The remainder, closed 2026-09-06
+
+- **The status annotations on topic ids** are gone from `cli/`, `infra/`, `docs/reference` and the README (PR #419, `cleanup/status-annotation-sweep`): each sentence re-tensed to its outcome or the bare id kept where a reader looks the history up; the two vault files carry theirs untouched; the one verb citation left.
+- **The tripwire's string-literal exclusion** rides T0164's closing PR (`feat/t0164-prose-tripwire-hook`, the commit `fix(scripts): a string literal is prose only in docstring position`): a triple-quoted string assigned or passed is a value, counted nowhere; its fixture trips on a real docstring and passes on a probe source.
+- **The logrotate task is deleted** (this PR): `/etc/logrotate.d/zcrypto-capture-docker` measured absent on zcrypto and zcrypto-red, the only hosts the task ever reached, so the `state: absent` guard had nothing left to remove.
+- **The admin accounts carry no old key**, measured rather than assumed: on zcrypto and zcrypto-red the deploy account's `authorized_keys` holds its own key alone, root's holds the bootstrap master key alone, and `zcrypto-data`'s holds only the role-managed forced-command pull keys (capture, and on the primary the engine journal's); on the NAS the deploy account holds its own key alone and `zcrypto-data` holds the hot-push key under its rrsync forced command. `T0068`'s repoint had already retired every old copy.
+- **The `nas-hot` path is verified and repointed**: the workstation alias resolves to `User zcrypto-data` with the hot-push identity, and a non-rsync command through it is refused by the forced command (`rrsync error: SSH_ORIGINAL_COMMAND does not run rsync`) — the jail is live, the write path goes nowhere else.
+- **The archive-pull → overlay-writer rename is not owed** (the owner's decision, 2026-09-06): the unit and metric names stay because the alert rules are provisioned against them, and a rename changes nothing an operator acts on. This line is the record.
+
 ## Suggested next steps
 
-- **A status annotation on a topic id, wherever it still stands.** The owner's rule is that a topic id is never annotated with its status — a reader looks the topic up and sees it, and the annotation goes stale on its own while the id does not. This branch applied it only where it edited; the rest is a mechanical sweep. Enumerate with `git grep -nE 'T0[0-9]{3}[^)]{0,30}(resolved|archived)' -- cli/ infra/ docs/reference README.md`, and re-tense each sentence to what is true rather than deleting the id, keeping it where a reader would look up the history. `infra/ansible/group_vars/observed/vault.yml` is never edited.
-
-- **Owner's decision**: the archive-pull → overlay-writer rename is either owed (then its own topic, a converge and a re-provision of every alert that names the metrics) or not (then the names stay, and this line is the record of that).
-- Tripwire: exclude a string literal assigned to a variable or passed as an argument from the docstring count, with a fixture that trips on a real docstring and passes on a probe source.
-- **Host-state-gated**: delete the logrotate task once `/etc/logrotate.d/zcrypto-capture-docker` is absent on every capture host and on the engine host. Nothing in `tests/` reads it (`git grep -ln logrotate -- tests/` is empty).
-- **Host action**: read the admin account's `~/.ssh/authorized_keys` on each capture host for the old capture key and remove it if present; `T0068`'s repoint, the precondition the comment names, is already recorded resolved.
-- **Host action, one change**: remove the old hot-push pubkey from `~zcrypto-deploy/.ssh/authorized_keys` on the NAS once the `zcrypto-data` path is verified, AND repoint the workstation's `nas-hot` alias to `zcrypto-data` in the same change.
+_(none — every item above is under `## Done so far`)_
