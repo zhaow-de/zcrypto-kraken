@@ -133,7 +133,7 @@ Four warning-severity rules over **one transport**. Which one fired names the fa
 | -- | -- | -- |
 | `zcrypto-capture-textfile-missing` | `count(node_reboot_required{host=~"zcrypto\|zcrypto-red"}) < 2`, held 20 m | **absent**, not stale; the value is how many hosts still publish — `1` or `0` |
 | `zcrypto-capture-textfile-unreadable` | `max by (host) (node_textfile_scrape_error) > 0`, held 15 m | the collector could not **open or parse** a `.prom` on the named host |
-| `zcrypto-reboot-probe-stale` | `time() - max by (host) (node_textfile_mtime_seconds{file=~".*/reboot.prom"}) > 3600`, held 10 m | the probe has not rewritten its file in an hour — four missed runs |
+| `zcrypto-reboot-probe-stale` | `time() - max by (host) (node_textfile_mtime_seconds{file=~".*/reboot.prom"}) > 3600`, held 10 m | the probe has not rewritten in over an hour — four missed runs |
 | `zcrypto-oneoff-textfile-stale` | the same shape for `.*/engine-journal-prune.prom`, `> 93600` (26 h), held 30 m | the daily engine-journal prune has not rewritten its file in over a day |
 
 Dashboards: `zcrypto-fleet` panels 501 *Textfile age — did the timer run (capture)*, 502 *Textfile collector parse errors*, 503 *Reboot pending & probe presence*.

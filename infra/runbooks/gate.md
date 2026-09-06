@@ -60,7 +60,7 @@ A **critical** Grafana alert, `Gate · mismatch in the last day`: `increase(zcry
 - **A repair can re-page you for the thing you just fixed.** The value can fall — re-fetch a corrupted parquet and the count drops — and PromQL treats any decrease in an `increase()` argument as a counter reset, adding the pre-reset value back. So a successful repair can synthesize a positive increase inside the window. **Confirm state by VALUE (`zcrypto_gate_mismatch_total`), never by whether the alert is firing.**
 - **A rise is not necessarily today's cycle.** The count spans every day the mirror retains; the journal pull is `rsync -a` with no `--delete`, so the NAS mirror never drops a day even though the engine host prunes at 60 days.
 
-Every one of them breaks the clean-day streak, so `zcrypto-gate-streak-reset` follows at the next day-close if it has not already fired, and the hc.io `zcrypto-gate-verify` check goes red on the same run.
+Every one of those four kinds breaks the clean-day streak, so `zcrypto-gate-streak-reset` follows at the next day-close if it has not already fired, and the hc.io `zcrypto-gate-verify` check goes red on the same run.
 
 ### What to do
 
