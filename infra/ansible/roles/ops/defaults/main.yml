@@ -100,8 +100,8 @@ ops_alloy_image: grafana/alloy
 # group_vars/observed/vault.yml, owned by zcrypto-alloy -- the same pattern the nas role uses.
 
 # OPS-5 (spec 00054 D2): the overlay writer's knobs. DETECT-ONLY is this role's default, and the
-# flip to --mint is a named host_vars setting rather than a default change -- T0039, resolved,
-# records the evidence that unlocked it. The gap default is deliberately about twice the measured single-host maximum natural
+# flip to --mint is a named host_vars setting rather than a default change; T0039 records the
+# cross-host evidence that unlocked it. The gap default is deliberately about twice the measured single-host maximum natural
 # quiescence, because one secondary update row is enough to witness a gap, so a per-connection
 # coalescing artifact could otherwise trip a phantom splice -- an unaudited data swap into an
 # archive that cannot be backfilled. The cost asymmetry is why it errs high: a missed gap is a

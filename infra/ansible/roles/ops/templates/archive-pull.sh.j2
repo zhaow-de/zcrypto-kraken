@@ -94,8 +94,8 @@ if [ -n "$skip_reason" ]; then
 else
     # Role C (spec 00050), on this host since OPS-5 (spec 00054 D2). The mode is whatever
     # `ops_reconcile_mint` selects; DETECT-ONLY is the role default, and it ledgers every
-    # `would_mint` and writes no parquet. T0039, resolved, pinned --min-gap-seconds and records
-    # the flip; this script renders the mode, it never chooses it.
+    # `would_mint` and writes no parquet. T0039 pinned --min-gap-seconds and records the flip;
+    # this script renders the mode, it never chooses it.
     #
     # T0060: every ephemeral `docker run --rm` here carries a stable `--name` -- unnamed runs got a
     # fresh engine-random name each time, and each name minted a brand-new Loki stream, forever, on
