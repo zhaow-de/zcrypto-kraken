@@ -690,8 +690,8 @@ def test_a_stray_file_in_the_tree_cannot_crash_loop_the_daemon(tmp_path, stray):
 
 def test_a_stray_oversized_year_directory_cannot_crash_loop_the_daemon(tmp_path):
     # A stray DIRECTORY, not a stray file. `__init__` walks the whole tree and hands every
-    # `<YYYY>/<MM>/<DD>` to `datetime(int(year), ...)`, which raises OverflowError — not the
-    # ValueError `_hour_of` catches — once the year exceeds a C int. Nothing this writer creates
+    # `<YYYY>/<MM>/<DD>` to `datetime(int(year), ...)`, which raises OverflowError once the year
+    # exceeds a C int — the type `_hour_of`'s `except` did not name until this test. Nothing it creates
     # looks like that; a restore, an rsync or a human's `mkdir` does, and the escape kills capture
     # for every pair and both kinds, on every restart.
     root = tmp_path / "BTC/EUR" / "book"
