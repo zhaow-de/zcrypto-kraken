@@ -8,8 +8,10 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _REPO = Path(__file__).resolve().parents[1]
+_BASELINE = "infra/scripts/prose-tripwire-baseline.txt"
 _SCRIPT = _REPO / "infra" / "scripts" / "prose-tripwire.py"
 _spec = importlib.util.spec_from_file_location("prose_tripwire", _SCRIPT)
 tw = importlib.util.module_from_spec(_spec)
@@ -555,3 +557,80 @@ class TestSince:
     def test_without_since_everything_is_shown(self, repo: Path, capsys) -> None:
         assert tw.main(["old.py"]) == 1
         assert capsys.readouterr().out.splitlines()[-1].endswith("(total 1)")
+
+
+class TestTheBaselineRatchet:
+    """The ratchet fails on a new offender or a file grown past its recorded count, never on a keep."""
+
+    N = 5
+
+    @pytest.fixture
+    def tree(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "kept.py").write_text(_py(["# kept"] * self.N, 6 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        return tmp_path
+
+    def test_the_baseline_is_one_line_per_offender_carrying_its_anchor(self, tree: Path) -> None:
+        expected = f"kept.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}\t# kept"
+        assert (tree / "base.txt").read_text().splitlines() == [expected]
+
+    def test_an_anchorless_offender_leaves_no_trailing_whitespace_for_a_hook_to_strip(self, tree: Path) -> None:
+        (tree / "kept.py").write_text("# a\n# b\n" + "".join(f"x{i} = {i}\n" for i in range(tw.FILE_PROSE_FLOOR)))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        written = (tree / "base.txt").read_text()
+        assert written.splitlines() == ["kept.py:1: file-prose 33.3 > 20"]
+        assert written == written.rstrip() + "\n"
+
+    def test_a_moved_offender_passes(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").write_text("y = 0\n" * 10 + _py(["# kept"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+
+    def test_a_block_that_grew_by_a_line_passes(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").write_text(_py(["# kept"] * (self.N + 1), 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+
+    def test_a_second_offender_in_a_recorded_file_fails_and_names_it(self, tree: Path, capsys) -> None:
+        block = _py(["# kept"] * self.N, 6 * self.N)
+        (tree / "kept.py").write_text(block + _py(["# other"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert "grown: kept.py comment-block 2 > 1 recorded" in out
+        assert out[-1] == "new: 1 grown: 1 retired: 0"
+
+    def test_a_duplicate_of_the_recorded_offender_fails_on_the_count_alone(self, tree: Path, capsys) -> None:
+        """The one case the anchor cannot see: a second block whose anchor the baseline already records."""
+        block = _py(["# kept"] * self.N, 6 * self.N)
+        (tree / "kept.py").write_text(block + block)
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert out == ["grown: kept.py comment-block 2 > 1 recorded", "new: 0 grown: 1 retired: 0"]
+
+    def test_an_offender_in_an_unrecorded_file_fails_and_is_printed(self, tree: Path, capsys) -> None:
+        (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py", "fresh.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"fresh.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[-1] == "new: 1 grown: 1 retired: 0"
+
+    def test_a_cleaned_offender_passes_and_is_reported_retired(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").write_text("y = 0\n")
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 1"]
+
+    def test_a_missing_baseline_exits_two_and_says_so(self, tree: Path, capsys) -> None:
+        assert tw.main(["--check-baseline", "no-such.txt", "kept.py"]) == 2
+        assert "no-such.txt" in capsys.readouterr().err
+
+
+def test_the_pre_commit_hook_runs_the_check_against_the_committed_baseline() -> None:
+    """The ratchet is inert unless .pre-commit-config.yaml wires it over the script's own scope."""
+    config = yaml.safe_load((_REPO / ".pre-commit-config.yaml").read_text())
+    hooks = [h for repo in config["repos"] if repo["repo"] == "local" for h in repo["hooks"]]
+    hook = next(h for h in hooks if h["id"] == "prose-tripwire")
+    assert "--check-baseline" in hook["entry"]
+    assert _BASELINE in hook["entry"]
+    assert hook["always_run"] is True and hook["pass_filenames"] is False
+    assert (_REPO / _BASELINE).is_file(), "the hook names a baseline that is not committed"

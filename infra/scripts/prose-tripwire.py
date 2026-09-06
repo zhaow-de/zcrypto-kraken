@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long sections, long changelog entries.
-Usage: prose-tripwire.py [--since REV] [PATH ...] — default scope cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/README.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/."""
+Usage: prose-tripwire.py [--since REV | --write-baseline PATH | --check-baseline PATH] [PATH ...] — default scope cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/README.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/.
+An offender's identity in the baseline is its path, its kind and its anchor — a block's first line, or a row's or heading's first cell, whitespace-normalised — never its line number, which every edit above it moves."""
 
 from __future__ import annotations
 
 import argparse
 import ast
+import collections
 import fnmatch
 import glob
 import io
@@ -111,6 +113,10 @@ def measure_python(src: str) -> tuple[int, int, int] | None:
     return src.count("\n"), len(prose), len(code - prose)
 
 
+def _anchor(text: str) -> str:
+    return " ".join(text.split())
+
+
 def _runs(lines: set[int]) -> list[tuple[int, int]]:
     out: list[tuple[int, int]] = []
     for n in sorted(lines):
@@ -129,13 +135,13 @@ def python_blocks(src: str) -> list[Block]:
     _, code, comments, docstrings = parsed
     text = src.splitlines()
     spans = _runs(comments - code) + docstrings
-    return [Block(s, e, text[s - 1].strip()) for s, e in sorted(spans)]
+    return [Block(s, e, _anchor(text[s - 1])) for s, e in sorted(spans)]
 
 
 def hash_blocks(src: str) -> list[Block]:
     text = src.splitlines()
     marked = {i for i, line in enumerate(text, 1) if line.lstrip().startswith("#") and not (i == 1 and line.startswith("#!"))}
-    return [Block(s, e, text[s - 1].strip()) for s, e in _runs(marked)]
+    return [Block(s, e, _anchor(text[s - 1])) for s, e in _runs(marked)]
 
 
 def _block_offenders(path: str, blocks: list[Block]) -> list[Offender]:
@@ -174,7 +180,7 @@ def markdown_offenders(path: str, src: str, changelog: bool) -> list[Offender]:
         if line.startswith("|"):
             width = len(line.rstrip())
             if width > TABLE_ROW_CHARS:
-                out.append(Offender(path, i, "table-row", width, TABLE_ROW_CHARS, line.split("|")[1].strip()))
+                out.append(Offender(path, i, "table-row", width, TABLE_ROW_CHARS, _anchor(line.split("|")[1])))
         m = _HEADING.match(line)
         if m:
             headings.append((i, len(m.group(1))))
@@ -183,14 +189,14 @@ def markdown_offenders(path: str, src: str, changelog: bool) -> list[Offender]:
         end = starts[n + 1] if n + 1 < len(starts) else len(text) + 1
         size = sum(len(line.encode()) + 1 for line in text[start - 1 : end - 1])
         if size > SECTION_BYTES:
-            out.append(Offender(path, start, "section", size, SECTION_BYTES, text[start - 1].strip()))
+            out.append(Offender(path, start, "section", size, SECTION_BYTES, _anchor(text[start - 1])))
     for n, (start, level) in enumerate(headings):
         if changelog and level == 2:
             end = next((s for s, lv in headings[n + 1 :] if lv <= 2), len(text) + 1)
             body = text[start - 1 : end - 1]
             bullets = sum(1 for k, line in enumerate(body, start) if line.startswith("- ") and not fenced[k - 1])
             if bullets > CHANGELOG_BULLETS:
-                out.append(Offender(path, start, "changelog-entry", bullets, CHANGELOG_BULLETS, text[start - 1].strip()))
+                out.append(Offender(path, start, "changelog-entry", bullets, CHANGELOG_BULLETS, _anchor(text[start - 1])))
     return out
 
 
@@ -290,8 +296,47 @@ def new_since(offenders: list[Offender], known: dict[tuple[str, str, str], list[
     return fresh
 
 
+def _line(o: Offender) -> str:
+    return f"{o.path}:{o.line}: {o.kind} {o.measured:.10g} > {o.threshold}"
+
+
+def baseline_text(offenders: list[Offender]) -> str:
+    """The report line plus a tab and the anchor, one per offender, sorted -- generated, never hand-edited.
+
+    An empty anchor leaves the tab off, so no line ends in whitespace a formatting hook would strip.
+    """
+    return "".join(_line(o) + (f"\t{o.anchor}" if o.anchor else "") + "\n" for o in sorted(offenders))
+
+
+def read_baseline(path: str) -> collections.Counter:
+    known: collections.Counter = collections.Counter()
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            row = raw.rstrip("\n")
+            if not row:
+                continue
+            head, _, anchor = row.partition("\t")
+            path_field, _, rest = head.partition(":")
+            known[(path_field, rest.split(":", 1)[1].split()[0], anchor)] += 1
+    return known
+
+
+def against_baseline(offenders: list[Offender], known: collections.Counter):
+    """New: a path+kind+anchor the baseline does not record. Grown: more of one kind in one file than it records."""
+    current = collections.Counter(o.key for o in offenders)
+    new = [o for o in sorted(offenders) if not known[o.key]]
+    grown = []
+    for path, kind in sorted({(p, k) for p, k, _ in current} | {(p, k) for p, k, _ in known}):
+        now = sum(n for (p, k, _), n in current.items() if (p, k) == (path, kind))
+        was = sum(n for (p, k, _), n in known.items() if (p, k) == (path, kind))
+        if now > was:
+            grown.append((path, kind, now, was))
+    retired = sum(max(0, n - current[key]) for key, n in known.items())
+    return new, grown, retired
+
+
 def render(offenders: list[Offender]) -> str:
-    lines = [f"{o.path}:{o.line}: {o.kind} {o.measured:.10g} > {o.threshold}" for o in offenders]
+    lines = [_line(o) for o in offenders]
     counts = " ".join(f"{kind}={sum(1 for o in offenders if o.kind == kind)}" for kind in KINDS)
     lines.append(f"offenders: {counts} (total {len(offenders)})")
     return "\n".join(lines)
@@ -312,9 +357,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0], epilog=f"thresholds: {thresholds}")
     parser.add_argument("paths", nargs="*", help="files or directories to scan; default: the repo's live prose")
     parser.add_argument("--since", metavar="REV", help="report only offenders absent at REV")
+    parser.add_argument("--write-baseline", metavar="PATH", help="write today's offenders to PATH as the ratchet's baseline")
+    parser.add_argument("--check-baseline", metavar="PATH", help="fail only on an offender PATH does not record")
     args = parser.parse_args(argv)
     paths = expand_paths(args.paths) if args.paths else default_paths()
     offenders = scan(paths)
+    if args.write_baseline:
+        with open(args.write_baseline, "w", encoding="utf-8") as fh:
+            fh.write(baseline_text(offenders))
+        return 0
+    if args.check_baseline:
+        if not os.path.isfile(args.check_baseline):
+            print(f"{args.check_baseline}: no such baseline -- write one with --write-baseline", file=sys.stderr)
+            return 2
+        new, grown, retired = against_baseline(offenders, read_baseline(args.check_baseline))
+        for o in new:
+            print(_line(o))
+        for path, kind, now, was in grown:
+            print(f"grown: {path} {kind} {now} > {was} recorded")
+        print(f"new: {len(new)} grown: {len(grown)} retired: {retired}")
+        return 1 if new or grown else 0
     if args.since:
         if subprocess.run(["git", "rev-parse", "--verify", "--quiet", args.since], capture_output=True).returncode != 0:
             print(f"{args.since}: not a revision this repository knows", file=sys.stderr)

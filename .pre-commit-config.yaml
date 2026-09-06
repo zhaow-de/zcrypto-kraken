@@ -81,6 +81,18 @@ repos:
         pass_filenames: false
         always_run: true
 
+  # A RATCHET, not a bar: the committed baseline holds today's offenders as conscious keeps and this
+  # fails only on one it does not record, or on a file grown past its recorded count for a kind. The
+  # baseline is generated (`--write-baseline`) and regenerated at every rebase — never hand-edited.
+  - repo: local
+    hooks:
+      - id: prose-tripwire
+        name: prose over the bars that the baseline does not record
+        entry: uv run python infra/scripts/prose-tripwire.py --check-baseline infra/scripts/prose-tripwire-baseline.txt
+        language: system
+        pass_filenames: false
+        always_run: true
+
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
     hooks:
