@@ -2,6 +2,7 @@ import dataclasses
 import json
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from nautilus_trader.model import Currency, CurrencyPair, InstrumentId, Money, P
 
 from cli.engine.errors import EngineError
 from cli.engine.instruments import COSTMIN, INSTRUMENT_IDS
+from cli.engine.store import PAIR_KEYS
 from cli.engine.venuestate import (
     ConcordanceVerdict,
     InstrumentConstraints,
@@ -29,9 +31,10 @@ _XBT_LEG_ATTRS = {
 
 
 def _decimals(step: float) -> int:
-    """The decimal precision one venue step implies. Kraken publishes `pair_decimals`/`lot_decimals`
-    alongside `tick_size` and the step is exactly `10 ** -decimals` across the basket, so deriving
-    one from the other keeps the fixture instrument self-consistent the way a Cache one is."""
+    """The decimal precision one venue step implies, so the fixture instrument stays self-consistent
+    the way a Cache one is. Inverting a step this way yields the venue's own published precision only
+    while the step is exactly `10 ** -decimals`, which
+    `test_every_basket_legs_tick_size_is_ten_to_the_minus_its_pair_decimals` pins."""
     return max(0, -Decimal(str(step)).as_tuple().exponent)
 
 
@@ -60,6 +63,32 @@ def _instrument(instrument_id: str, *, ordermin=0.01, lot_step=0.0001, tick_size
         ts_event=0,
         ts_init=0,
     )
+
+
+# The venue's own publication, read from the newest snapshot on this node. The snapshots are
+# gitignored, so this is a skip in CI, the way tests/test_costmin_drift.py gates on the same data;
+# the filename's UTC stamp orders them, which a copied file's mtime does not.
+_SNAPSHOTS = Path(__file__).resolve().parents[1] / "data" / "snapshots"
+
+
+def test_every_basket_legs_tick_size_is_ten_to_the_minus_its_pair_decimals():
+    """`_decimals` inverts a venue step into a precision; that yields Kraken's own `pair_decimals`
+    only while every basket leg's `tick_size` is exactly `10 ** -pair_decimals`."""
+    snapshots = sorted(_SNAPSHOTS.glob("kraken-refdata-*.json"))
+    if not snapshots:
+        pytest.skip("no refdata snapshot present (gitignored data root)")
+    assetpairs = json.loads(snapshots[-1].read_text())["raw"]["assetpairs"]
+
+    legs = {symbol: assetpairs[key] for symbol, key in PAIR_KEYS.items() if key in assetpairs}
+    print(f"\n{snapshots[-1].name}: {len(legs)} basket legs")
+    assert set(legs) == set(PAIR_KEYS), f"snapshot carries no entry for {sorted(set(PAIR_KEYS) - set(legs))}"
+
+    drifted = [
+        f"{symbol}: tick_size {entry['tick_size']} is not 10 ** -{entry['pair_decimals']}"
+        for symbol, entry in legs.items()
+        if Decimal(entry["tick_size"]) != Decimal(10) ** -entry["pair_decimals"]
+    ]
+    assert drifted == [], "; ".join(drifted)
 
 
 def _fake_position(signed_qty: float):
