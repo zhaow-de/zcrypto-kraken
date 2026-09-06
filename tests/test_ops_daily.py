@@ -2000,6 +2000,18 @@ def test_the_staleness_bound_is_two_days_on_both_of_its_sides(past_bound, ok):
     assert check.ok is ok, check.value
 
 
+# Spelt out rather than read from `UPGRADE_STAMP`, which a swap would carry with it -- the same
+# reason the bound above is the literal `timedelta(days=2)`.
+_UPGRADE_STAMP = "/var/lib/apt/periodic/unattended-upgrades-stamp"
+
+
+def test_the_staleness_arm_reads_the_stamp_the_upgrade_itself_writes():
+    """`update-stamp` in the same directory is touched by the download half on days no upgrade ran, so
+    an arm pointed there would read fresh on exactly the stopped-timer host it exists to catch."""
+    assert ops_daily.UPGRADE_STAMP == _UPGRADE_STAMP, ops_daily.UPGRADE_STAMP
+    assert f"stat -c %Y {_UPGRADE_STAMP} " in ops_daily.UPGRADE_COMMAND[-1], ops_daily.UPGRADE_COMMAND
+
+
 def test_a_unit_that_never_ran_is_unreadable_rather_than_the_pass_its_two_fields_alone_would_give():
     """`Result=success` and `ExecMainStatus=0` are what systemd reports for a unit that has NEVER run,
     with `ExecMainExitTimestamp` empty -- so the timestamp is parsed rather than merely printed, and
