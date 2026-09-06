@@ -54,7 +54,7 @@ def test_tape_bars_match_kraken_rest_ohlc() -> None:
 
     rows = fetch_ohlc(PAIR_KEY, BASE_INTERVAL_MINUTES)
     if not rows:
-        pytest.skip(f"Kraken REST returned no {PAIR_KEY} candles at {BASE_INTERVAL_MINUTES}m")
+        pytest.fail(f"Kraken REST returned no {PAIR_KEY} candles at {BASE_INTERVAL_MINUTES}m")
 
     stamps = sorted(datetime.fromtimestamp(int(row[_TIME]), UTC) for row in rows)
     # The newest row is the still-forming candle, so `day_end <= stamps[-1]` is exactly the condition
