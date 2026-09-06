@@ -17,14 +17,11 @@ _DATA_ROOT = _REPO_ROOT / "data"
 _CANONICAL = _DATA_ROOT / "ohlc-full"
 _REGISTRY = _REPO_ROOT / "docs" / "reference" / "trial-registry.jsonl"
 
+# Dataset dirs a record may legitimately cite that do not resolve on the canonical data host. EMPTY at birth, growing only
+# by a reviewed PR: an UNLISTED citation that does not resolve is a finding, so a fabricated citation either fails this
+# suite or is itself a visible commit. The list names DIRS, not hosts — which is why the pass is gated on the data root's
+# presence instead: adding a dataset here to appease a bare-checkout CI run would neuter the fence for that dataset forever.
 _ABSENT_OK: frozenset[str] = frozenset()
-"""Dataset dirs a record may legitimately cite that do not resolve on the canonical data host.
-
-EMPTY at birth; it grows only by a reviewed PR. An UNLISTED citation that does not resolve is a
-finding, so a fabricated citation either fails this suite or is itself a visible commit. The list
-names DIRS, not hosts — which is why the pass is gated on the data root's presence instead: adding a
-dataset here to appease a bare-checkout CI run would neuter the fence for that dataset forever.
-"""
 
 REDERIVED, ABSENT_HERE, FINDING = "rederived", "absent-here", "finding"
 
