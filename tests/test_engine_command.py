@@ -13,6 +13,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+import typer.main
 from typer.testing import CliRunner
 
 import cli.engine.command as command
@@ -30,6 +31,7 @@ from cli.ohlc.dataset import write_parquet
 
 runner = CliRunner()
 
+REPO = Path(__file__).resolve().parents[1]
 UTC = timezone.utc
 CYCLE_TS = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
 PAIRS = ("BTC", "ETH")
@@ -581,13 +583,38 @@ def test_execution_records_do_not_change_the_gate_report(tmp_path, monkeypatch):
 # --- the sub-app itself ----------------------------------------------------------------------------
 
 
-def test_engine_help_lists_all_six_subcommands():
+def _help_subcommands() -> set[str]:
+    """The names rich lays out in the Commands panel: a name sits one space after the frame, while a
+    wrapped description line is indented to the description column."""
     result = runner.invoke(app, ["engine", "--help"])
-
     assert result.exit_code == 0
-    out = _output(result)
-    for name in ("seed", "run", "cycle", "replay", "report", "gate-export"):
-        assert name in out, f"{name!r} missing from `zcrypto engine --help`"
+    return set(re.findall(r"^│ ([a-z][a-z0-9-]*) ", _output(result), re.M))
+
+
+def _readme_engine_subcommands() -> set[str]:
+    """The first code span of each row in README's engine table, up to the first space -- the row's
+    subcommand, before the options its cell goes on to spell out."""
+    section = (REPO / "README.md").read_text().split("### `zcrypto engine`", 1)[1]
+    names, seen_table = set(), False
+    for line in section.splitlines():
+        if not line.startswith("|"):
+            if seen_table:
+                break
+            continue
+        seen_table = True
+        m = re.match(r"^\|\s*`([a-z][a-z0-9-]*)[\s`]", line)
+        if m:
+            names.add(m.group(1))
+    return names
+
+
+def test_the_engine_subcommand_set_is_the_same_in_the_code_the_help_and_the_readme():
+    """`readme-usage.md` is a human remembering; this is the check. Every registered subcommand must
+    reach `--help` and README's table, and neither may name one the sub-app does not register."""
+    registered = set(typer.main.get_command(command.engine_app).commands)
+    assert registered, "no subcommands registered -- the introspection, not the sub-app, is broken"
+    assert _help_subcommands() == registered
+    assert _readme_engine_subcommands() == registered
 
 
 def test_help_does_not_import_nautilus():

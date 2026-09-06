@@ -155,6 +155,22 @@ def test_the_loop_is_registered_as_a_background_task():
     )
 
 
+def test_the_task_is_both_cancelled_and_awaited_at_shutdown():
+    """`_run` carries the recovery task in every shutdown tuple it walks."""
+    import inspect
+    import re
+
+    from cli.capture import command
+
+    # A task awaited but never cancelled hangs `_run` on its own `while True`: SIGTERM never completes, the
+    # container is SIGKILLed, and `writer.close()` never runs -- losing buffered rows on the unbackfillable
+    # path. Cancelled but never awaited leaks it instead.
+    tuples = re.findall(r"for task in \(([^)]*)\):", inspect.getsource(command._run))
+    assert len(tuples) >= 2, f"expected a cancel loop and an await loop in _run, found {len(tuples)}"
+    for i, members in enumerate(tuples):
+        assert "desync" in members, f"shutdown tuple #{i} omits the desync-recovery task ({members.strip()})"
+
+
 def test_the_drill_knob_is_inert_unless_explicitly_enabled():
     """The knob ships in the production image on purpose (spec 00072 D7) — the validated binary
     must BE the deployed binary. That is only acceptable if it cannot fire by accident: it reads a

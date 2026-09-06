@@ -194,9 +194,10 @@ class TestLogshipCollector:
         text = _render(registry)
         assert "zcrypto_logship_dropped_lines_total" not in text
         assert "zcrypto_logship_shipped_lines_total" not in text
+        assert "zcrypto_logship_last_cycle_timestamp_seconds" not in text
         assert "zcrypto_logship_last_success_timestamp_seconds" not in text
 
-    def test_renders_all_three_families_from_a_live_handler(self, fake_loki):
+    def test_renders_all_four_families_from_a_live_handler(self, fake_loki):
         url, _requests = fake_loki
         handler = _make_handler(url)
         try:
@@ -208,6 +209,7 @@ class TestLogshipCollector:
             text = _render(registry)
             assert "zcrypto_logship_dropped_lines_total 0.0" in text
             assert "zcrypto_logship_shipped_lines_total 1.0" in text
+            assert "zcrypto_logship_last_cycle_timestamp_seconds" in text
             assert "zcrypto_logship_last_success_timestamp_seconds" in text
         finally:
             handler.close()
@@ -247,6 +249,13 @@ class TestLogshipCollector:
                 assert not done.is_set()  # blocked behind the held lock
             t.join(timeout=1.0)
             assert done.is_set()
-            assert len(families) == 4  # dropped, shipped, last_cycle, last_success
+            # Named rather than counted -- a length check passes for any four. `Metric.name` drops a
+            # counter's `_total`; the series the registry publishes keep it.
+            assert [f.name for f in families] == [
+                "zcrypto_logship_dropped_lines",
+                "zcrypto_logship_shipped_lines",
+                "zcrypto_logship_last_cycle_timestamp_seconds",
+                "zcrypto_logship_last_success_timestamp_seconds",
+            ]
         finally:
             handler.close()

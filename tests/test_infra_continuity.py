@@ -287,7 +287,8 @@ def test_since_window_keeps_genesis_from_moving_and_books_a_late_leading_edge(tm
         sys.argv = old
     out = capsys.readouterr().out
     assert _column(out, "AAA/EUR", "trunc") == "1"
-    assert float(_column(out, "AAA/EUR", "gap_s")) == pytest.approx(400.0, rel=0.05)
+    # `abs`, not `rel`: a 5% tolerance spans 380-420, so a booked crossing or tail would pass unseen.
+    assert float(_column(out, "AAA/EUR", "gap_s")) == pytest.approx(400.0, abs=0.5)
     assert "genesis" not in out, "a --since window must not promote H1 into the genesis free pass"
 
 

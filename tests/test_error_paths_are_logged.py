@@ -17,9 +17,26 @@ import typer
 from cli.engine.command import _abort
 from cli.logging.formatters import PlainTextFormatter
 
-# The regex Alloy uses at ingest to lift `level` out of our Python log lines, kept in sync by hand
-# with infra/nas/config.alloy.
+_REPO = pathlib.Path(__file__).parent.parent
+# The regex Alloy uses at ingest to lift `level` out of our Python log lines, pinned to both
+# deployed pipelines by `test_the_ingest_regex_is_the_one_alloy_ships`.
 INGEST_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$")
+ALLOY_CONFIGS = (
+    _REPO / "infra" / "nas" / "config.alloy",
+    _REPO / "infra" / "ansible" / "roles" / "ops" / "files" / "config.alloy",
+)
+# The block form only: the ops copy also names `stage.regex` in a comment, which is not a pipeline.
+_STAGE_REGEX = re.compile(r'stage\.regex\s*\{\s*expression\s*=\s*"((?:[^"\\]|\\.)*)"', re.S)
+
+
+@pytest.mark.parametrize("config", ALLOY_CONFIGS, ids=lambda p: str(p.relative_to(_REPO)))
+def test_the_ingest_regex_is_the_one_alloy_ships(config: pathlib.Path) -> None:
+    """`INGEST_RE` must be the pattern the host compiles: a line the deployed stage misses carries no
+    `level`, and the rules selecting `level=~"ERROR|CRITICAL"` then read 0 as healthy."""
+    found = _STAGE_REGEX.findall(config.read_text())
+    assert len(found) == 1, f"expected exactly one stage.regex block in {config}, found {len(found)}"
+    assert "\\\\" in found[0], "the expression is not backslash-escaped, so Alloy would reject it at load"
+    assert found[0].replace("\\\\", "\\") == INGEST_RE.pattern
 
 
 def test_abort_logs_at_error_rather_than_printing(caplog: pytest.LogCaptureFixture) -> None:

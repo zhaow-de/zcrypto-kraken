@@ -182,6 +182,38 @@ def test_the_exec_prefix_would_be_swept_up_by_a_looser_glob(tmp_path, prefix, wr
     assert swept[0][0].hour == 12
 
 
+@_LEDGER_PREFIXES
+def test_evaluate_journal_globs_exactly_the_cycle_pair(tmp_path, monkeypatch, prefix, write_record):
+    """`test_exec_records_are_invisible_to_every_journal_glob` passes the cycle pair to
+    `_journal_artifacts` by hand; this one reads the pair off `_evaluate_journal` itself, so a third
+    glob added to the function is a decision rather than a silent widening of the gate's universe."""
+    from cli.engine import command
+
+    seen: list[str] = []
+    real = command._journal_artifacts
+
+    def recording(journal_dir, pattern, name_glob):
+        seen.append(name_glob)
+        return real(journal_dir, pattern, name_glob)
+
+    monkeypatch.setattr(command, "_journal_artifacts", recording)
+
+    day = tmp_path / "2026-08-11"
+    day.mkdir(parents=True)
+    for hh in (0, 4, 8, 12, 16, 20):
+        (day / f"cycle-{hh:02d}.json").write_text("{}")  # unparseable: classified, never crashed
+        write_record(tmp_path, CYCLE_TS.replace(hour=hh))
+    (day / "failed-cycle-00.json").write_text("{}")
+
+    entries, counts, _, _ = command._evaluate_journal(tmp_path, cache_path=None, now=CYCLE_TS)
+
+    assert seen == ["cycle-*.json", "failed-cycle-*.json"]
+    # The universe that reached the gate is the pair's alone: 6 records + 1 sidecar, no `prefix-*`.
+    assert len(entries) == 7
+    assert counts.sidecar_count == 1
+    assert len(list(day.glob(f"{prefix}-*.json"))) == 6  # non-vacuity: the excluded records exist
+
+
 # --- schema 2: write-ahead rows, merge-never-clobber, schema-aware validation -----------------------
 
 

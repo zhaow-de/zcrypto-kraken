@@ -43,6 +43,26 @@ def _write_daily(path: Path, *, vwap: float, volume: float, n: int = 30, last: d
     frame.write_parquet(path)
 
 
+def _write_daily_vwaps(path: Path, *, vwaps: list[float], close: float, last: date = date(2026, 7, 18)) -> None:
+    """`volume` is 1.0 on every row, so a row's quote volume IS its `vwap`; `close` stays flat so this
+    frame can double as the BTC/EUR fx leg without moving a BTC-quoted pair's conversion."""
+    n = len(vwaps)
+    frame = pl.DataFrame(
+        {
+            "ts": [datetime.combine(last - timedelta(days=n - 1 - i), time(), tzinfo=UTC) for i in range(n)],
+            "open": [close] * n,
+            "high": [close] * n,
+            "low": [close] * n,
+            "close": [close] * n,
+            "vwap": vwaps,
+            "volume": [1.0] * n,
+            "count": [1] * n,
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.write_parquet(path)
+
+
 def test_rebuild_mints_sibling_and_dispatches(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setitem(rebuild.REBUILDABLE, "ohlc-full", lambda ctx, out: calls.append(out) or (out / "ok").write_text("x"))
@@ -172,6 +192,53 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     # The STALEST bar (ETH/BTC's 07-14), not the basket's newest (BTC/EUR's 07-18): only the stalest
     # supports "every symbol's window ends at or after this". Publishing max would fail here.
     assert payload["provenance"]["ohlc_stalest_daily_bar"] == "2026-07-14"
+
+
+# 40 daily BTC/EUR rows, quote volume 10M on the first thirty and 20M on the last ten: the last-20
+# window sees ten of each and the last-30 window twenty against ten, so the two medians disagree.
+# `quote_volume_in_eur`'s own default window is 30 independently of `_UNIVERSE_VOLUME_WINDOW_DAYS`,
+# and a fixture whose windows agreed would pass with the call site's `window=` dropped.
+_TWO_WINDOW_VWAPS = [10_000_000.0] * 30 + [20_000_000.0] * 10
+_MEDIAN_OVER_30, _MEDIAN_OVER_20 = 10_000_000.0, 15_000_000.0
+
+
+def _btc_entry(payload: dict) -> dict:
+    rows = [entry for entry in payload["entries"] if entry["symbol"] == "BTC/EUR"]
+    assert len(rows) == 1, payload["entries"]
+    return rows[0]
+
+
+def _two_window_basket(tmp_path: Path) -> Path:
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily_vwaps(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwaps=_TWO_WINDOW_VWAPS, close=50_000.0)
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0, n=40)
+    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
+    return ohlc_root
+
+
+def _refresh_into(tmp_path: Path, name: str) -> dict:
+    out_root = tmp_path / name
+    out_root.mkdir()
+    rebuild._refresh_universe(rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718"), out_root)
+    return json.loads((out_root / "point-in-time-universe.json").read_text())
+
+
+def test_refresh_universe_medians_over_the_window_its_params_declare(tmp_path, monkeypatch):
+    """The published `median_quote_volume_window_days` and the window the medians were taken over are
+    two different values, and only the entry moving with the constant proves they are the same one."""
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+    _two_window_basket(tmp_path)
+
+    monkeypatch.setattr(rebuild, "_UNIVERSE_VOLUME_WINDOW_DAYS", 30)
+    payload = _refresh_into(tmp_path, "universe-30")
+    assert payload["params"]["median_quote_volume_window_days"] == 30
+    assert _btc_entry(payload)["median_quote_volume"] == _MEDIAN_OVER_30
+
+    monkeypatch.setattr(rebuild, "_UNIVERSE_VOLUME_WINDOW_DAYS", 20)
+    moved = _refresh_into(tmp_path, "universe-20")
+    assert moved["params"]["median_quote_volume_window_days"] == 20
+    assert _btc_entry(moved)["median_quote_volume"] == _MEDIAN_OVER_20
 
 
 def test_refresh_universe_refuses_a_basket_with_no_manifest(tmp_path, monkeypatch):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,6 +10,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.capture.segment_writer import TRADE_SCHEMA
+from cli.trades.backfill import BackfillResult
 
 runner = CliRunner()
 
@@ -81,3 +83,10 @@ def test_clean_sweep_echoes_every_counter_and_exits_zero(tmp_path):
     assert "duplicates_cross_hour=0" in out
     assert "hours_minted=0" in out
     assert "errors=0" in out
+
+    # The names above are the whole set, not merely fourteen of it: a field added to BackfillResult
+    # without an echo moves this arity. Arity, not names -- the echoed keys are deliberately shorter
+    # than the fields (`gaps=` for `gaps_found`), so only the count is mechanically comparable.
+    echoed = [line for line in map(_plain, r.stdout.splitlines()) if line.startswith("trade backfill complete")]
+    assert len(echoed) == 1, f"the command's own echo is not exactly one line: {echoed!r}"
+    assert len(re.findall(r"\b\w+=", echoed[0])) == len(dataclasses.fields(BackfillResult))

@@ -11,6 +11,7 @@ SCRIPT = Path(__file__).resolve().parent.parent / "infra" / "scripts" / "ops-pos
 STUB = """#!/usr/bin/env bash
 q="$1"
 case "$q" in
+  *archive_pull_last_success*) printf '%s\\n' "$ARCHIVE_FRESH_OUT" ;;
   *archive_pull*) printf '%s\\n' "$ARCHIVE_OUT" ;;
   *panel_exit*)   printf '%s\\n' "$PANEL_OUT" ;;
   *mtime*)        printf '%s\\n' "$MTIME_OUT" ;;
@@ -26,6 +27,8 @@ esac
 
 GOOD = {
     "ARCHIVE_OUT": "ops_archive_pull_exit_code\n  {host=zcrypto-ops} = 0",
+    # The writer's timer fires at :12 and :42, so a healthy age is under half an hour.
+    "ARCHIVE_FRESH_OUT": "query\n  {host=zcrypto-ops} = 1200",
     "PANEL_OUT": "ops_panel_exit_code\n  {host=zcrypto-ops} = 0",
     "MTIME_OUT": "query\n  {host=zcrypto-ops} = 1800",
     "RESIDUAL_OUT": "query\n  {host=zcrypto-ops} = 0",
@@ -53,13 +56,21 @@ def check_lines(out, kind):
 def test_all_green_passes(tmp_path):
     r = run_postverify(tmp_path, {})
     assert r.returncode == 0
-    assert check_lines(r.stdout, "PASS") == 9 and check_lines(r.stdout, "FAIL") == 0
+    assert check_lines(r.stdout, "PASS") == 10 and check_lines(r.stdout, "FAIL") == 0
 
 
 def test_nonzero_exit_code_fails(tmp_path):
     r = run_postverify(tmp_path, {"PANEL_OUT": "ops_panel_exit_code\n  {host=zcrypto-ops} = 1"})
     assert r.returncode == 1
     assert "FAIL" in r.stdout and "panel" in r.stdout.lower()
+
+
+def test_a_frozen_writer_fails_even_though_the_exit_code_still_reads_zero(tmp_path):
+    """THE case the exit code cannot see: one printf block writes both, so a stopped timer leaves it reading a clean zero."""
+    r = run_postverify(tmp_path, {"ARCHIVE_FRESH_OUT": "query\n  {host=zcrypto-ops} = 20000"})
+    assert r.returncode == 1
+    assert "FAIL archive-pull freshness" in r.stdout
+    assert "PASS archive-pull exit code (0)" in r.stdout, "the frozen exit code still reads clean; only freshness may fail"
 
 
 def test_no_series_is_a_fail_never_a_zero(tmp_path):
@@ -91,7 +102,7 @@ def test_query_error_is_a_fail(tmp_path):
     env = {**os.environ, "ZCRYPTO_GRAFANA_QUERY": str(stub)}
     r = subprocess.run([str(SCRIPT)], capture_output=True, text=True, env=env)
     assert r.returncode == 1
-    assert check_lines(r.stdout, "FAIL") == 9
+    assert check_lines(r.stdout, "FAIL") == 10
 
 
 def test_tape_bars_nonzero_exit_fails(tmp_path):

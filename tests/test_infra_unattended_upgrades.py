@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/base/templates/50unattended-upgrades.j2"
 BASE_DEFAULTS = REPO / "infra/ansible/roles/base/defaults/main.yml"
 CAPTURE_GROUP_VARS = REPO / "infra/ansible/group_vars/capture_host/vars.yml"
+INVENTORY = REPO / "infra/ansible/inventory/hosts.yml"
 
 VAR = "base_unattended_upgrades_automatic_reboot"
 
@@ -56,7 +57,11 @@ def test_the_role_default_preserves_todays_behaviour():
 
 
 def test_the_capture_group_flips_both_hosts_and_only_them():
+    """Membership carries the "and only them" half: a capture host outside this group reboots
+    unattended on an unbackfillable VPS, a non-capture host inside it loses T0027's patch reboots."""
     assert _yaml(CAPTURE_GROUP_VARS)[VAR] == "false"
+    hosts = _yaml(INVENTORY)["all"]["children"]["capture_host"]["hosts"]
+    assert set(hosts) == {"zcrypto", "zcrypto-red"}, f"capture_host membership drifted: {sorted(hosts)}"
 
 
 @pytest.mark.parametrize("path", [BASE_DEFAULTS, CAPTURE_GROUP_VARS], ids=["defaults", "capture"])

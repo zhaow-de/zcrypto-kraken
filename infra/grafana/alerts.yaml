@@ -850,6 +850,58 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-engine-journal-prune-dead
+    title: "Engine · journal prune has stopped completing"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Reads the value the prune writes on COMPLETION, not the .prom's mtime: an mtime is refreshed
+      # by any restore or rsync -- the reason the script dates day-dirs by name rather than by
+      # `-mtime` -- so `zcrypto-oneoff-textfile-stale` can read fresh over a prune that never ran.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - zcrypto_engine_journal_prune_last_run_timestamp_seconds{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 26 h = one missed daily run (01:23 UTC) plus margin, the bar the mtime rule already takes.
+            - evaluator: {type: gt, params: [93600]}
+    # Alerting IS this rule: a DELETED .prom takes the gauge away rather than ageing it, and the
+    # mtime rule's `noDataState: OK` swallows exactly that empty result. Only the engine host
+    # publishes this series, so an empty result is never a host that legitimately has none. Accepted
+    # cost: an Alloy-dark event on the primary double-pages, as it does for the cycle rule above.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: >-
+        The engine host's daily journal prune has not completed in over 26 hours, or the value it publishes on completion has vanished
+        entirely — a deleted metrics file alarms here rather than going quiet. Un-pruned journal days accumulate on the same disk that
+        holds the unbackfillable capture spool, and the disk-low alert is the only backstop after this one. Check
+        `systemctl list-timers zcrypto-engine-journal-prune.timer` on the capture primary and that unit's own journal.
+        Runbook: infra/runbooks/hosts.md#zcrypto-engine-journal-prune-dead
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "41"
+      unit: "seconds since the last completed journal prune"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-venue-concordance-failed
     title: "Engine · venue concordance failed"
     ruleGroup: zcrypto-gate
@@ -1500,7 +1552,7 @@ rules:
     execErrState: Alerting
     for: 30m
     annotations:
-      summary: "The primary needed more than 10 minutes of healing in the last 24h. Every gap was covered, so nothing else fires -- but a host that needs this much healing is degrading. Check the reconcile ledger's would_mint/minted records for the pattern. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-healable-gap-rate"
+      summary: "The primary needed more than 10 minutes of coverable silence in the last 24h. This counts the silence the secondary witnessed and COULD cover, not what a splice inserted -- whether anything was actually lost is the ledger's residual_seconds. A host that needs this much coverage is degrading. Check the reconcile ledger's would_mint/minted records for the pattern. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-healable-gap-rate"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "202"
       unit: "seconds of healable silence per live pair over the last day"
@@ -4135,9 +4187,10 @@ rules:
     for: 15m
     annotations:
       summary: >-
-        Grafana Alloy on a fleet host is using more than 90% of its container memory limit — 1 GiB on ops, 512 MiB elsewhere. Alloy runs
-        closer to its ceiling than the app daemons do by design, and the `host` label says which machine. If it is OOM-killed that
-        host's telemetry goes dark, which `Fleet · Alloy dark` reports separately; this is the warning before that.
+        Grafana Alloy on a fleet host is using more than 90% of its container memory limit — 1 GiB on Ops, 512 MiB on the Capture
+        primary, the Capture secondary and the NAS. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
+        label says which machine. If it is OOM-killed that host's telemetry goes dark, which `Fleet · Alloy dark` reports separately;
+        this is the warning before that.
         Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "601"

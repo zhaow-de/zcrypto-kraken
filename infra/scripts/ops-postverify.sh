@@ -29,6 +29,10 @@ check() {
 }
 
 check "archive-pull exit code" 'ops_archive_pull_exit_code' zero
+# One printf block in archive-pull.sh.j2 writes that exit code and this timestamp together, so a
+# stopped timer freezes BOTH and the exit code goes on reporting the last clean cycle's zero.
+# The dead-man rule this mirrors: alerts.yaml, uid zcrypto-ops-archive-pull-stalled.
+check "archive-pull freshness (s)" 'time() - ops_archive_pull_last_success_timestamp' under 10800
 check "panel exit code" 'ops_panel_exit_code' zero
 check "reconcile freshness (s)" 'time() - node_textfile_mtime_seconds{file=~".*reconcile.prom"}' under 4200
 check "residual-gap counter unbumped (2h)" 'increase(zcrypto_reconcile_residual_gap_seconds_total[2h])' zero

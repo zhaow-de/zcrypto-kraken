@@ -180,6 +180,20 @@ def test_missing_arguments_are_refused():
 # publishing is this residual's only detector.
 
 
+def _refuse_continuations(unit: str, name: str) -> None:
+    """A backslash-terminated line is half of one directive, so the readers below refuse it rather than take the halves
+    as two: systemd joins the pair, then fails to parse the single value it gets and DISCARDS the assignment."""
+    for lineno, raw in enumerate(unit.splitlines(), 1):
+        line = raw.strip()  # systemd strips before parsing, so an INDENTED directive is still live
+        # A comment ending in a backslash opens nothing — `systemd.syntax(7)` describes comments being ignored
+        # INSIDE a pending continuation, never starting one.
+        if line.startswith(("#", ";")):  # systemd.syntax(7): either character opens a comment
+            continue
+        assert not line.endswith("\\"), (
+            f"{name}:{lineno} ends in a backslash: systemd joins it with the next line, every reader below takes two"
+        )
+
+
 def _rendered_unit() -> str:
     unit = (ROLE / "templates/zcrypto-clock-offset.service.j2").read_text()
     defaults = (ROLE / "defaults/main.yml").read_text()
@@ -188,11 +202,27 @@ def _rendered_unit() -> str:
         assert m, f"{var} has no default in roles/capture/defaults/main.yml"
         unit = unit.replace("{{ " + var + " }}", m.group(1).strip('"'))
     assert "{{" not in unit, f"unsubstituted variable remains: {unit}"
+    _refuse_continuations(unit, "zcrypto-clock-offset.service.j2")
     return unit
 
 
 def _exec_start() -> list[str]:
     return next(line for line in _rendered_unit().splitlines() if line.startswith("ExecStart=")).removeprefix("ExecStart=").split()
+
+
+def test_the_unit_reader_refuses_a_line_systemd_would_join():
+    """A backslash-terminated line is half of one directive, so the reader refuses it rather than read the halves as two."""
+    # systemd joins the pair, then fails to parse the one value it gets and DISCARDS the assignment, leaving the
+    # default `Restart=no` — a unit that never restarts, not one that restarts on failure.
+    with pytest.raises(AssertionError, match=r"continued\.service:2 ends in a backslash"):
+        _refuse_continuations("[Service]\nRestart=no \\\nRestart=always\n", "continued.service")
+
+
+def test_the_unit_reader_reads_a_backslash_terminated_comment_as_a_comment():
+    """A comment ending in a backslash opens no continuation, so the reader passes it — as it passes the rendered unit."""
+    _refuse_continuations("# a comment ending in a backslash \\\n[Service]\nRestart=always\n", "commented.service")
+    # The production-shaped input: the template this role ships, rendered. An always-refusing guard fails here.
+    assert "ExecStart=" in _rendered_unit()
 
 
 def test_the_unit_runs_the_installed_script_with_the_expected_arguments():

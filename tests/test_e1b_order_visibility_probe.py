@@ -2,6 +2,7 @@
 the engine host, so before it is ever run there it must touch no method that writes to the venue and
 must refuse rather than build a client when the credentials are absent."""
 
+import ast
 import asyncio
 import importlib.util
 import os
@@ -194,3 +195,35 @@ def test_no_write_method_name_or_credential_accessor_appears_in_the_script_text(
         f"hand-rolled venue signing in the probe's source: {signing} -- or prose naming an endpoint "
         'path, in which case say what the calls do ("the eight order-status reads") instead'
     )
+
+
+# The locals `credentials()` binds, and the mapping it reads them out of. The scan above forbids the
+# ADAPTER's accessors; a print of the script's own local touches none of those names.
+CREDENTIAL_BINDINGS = frozenset({"key", "secret"})
+_PRINTERS = frozenset({"print", "echo"})  # `print`, and `typer.echo` if the probe ever grows one
+
+
+def _callee(func: ast.expr) -> str:
+    """`print` and `typer.echo` both reduce to the name being called."""
+    return func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+
+
+def test_no_print_in_the_probe_reaches_a_credential():
+    """`_main` binds `key, secret = credentials()` in the same scope as its prints, so a debugging
+    `print(key)` would put the live trade key on the engine host's terminal without naming an
+    accessor for `test_no_write_method_name_or_credential_accessor_appears_in_the_script_text`."""
+    tree = ast.parse(PROBE.read_text())
+    printers = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _callee(n.func) in _PRINTERS]
+    # The selection, before the check: an AST walk that finds no printer would pass on anything.
+    assert printers, f"no print/echo call found in {PROBE.name} -- the walk selects nothing, so it proves nothing"
+    print(f"printer calls selected: {len(printers)} at lines {[n.lineno for n in printers]}")
+
+    reached = [
+        f"line {n.lineno}: {sub.id if isinstance(sub, ast.Name) else 'os.environ'}"
+        for n in printers
+        for arg in (*n.args, *(kw.value for kw in n.keywords))
+        for sub in ast.walk(arg)
+        if (isinstance(sub, ast.Name) and sub.id in CREDENTIAL_BINDINGS)
+        or (isinstance(sub, ast.Attribute) and sub.attr == "environ")
+    ]
+    assert not reached, f"a print in the probe reaches a credential: {reached}"

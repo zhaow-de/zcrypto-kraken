@@ -39,8 +39,20 @@ CONTEXT = {
 }
 
 
-def _rendered() -> str:
-    return _ENV.from_string(TEMPLATE.read_text()).render(**CONTEXT)
+def _rendered(**overrides) -> str:
+    return _ENV.from_string(TEMPLATE.read_text()).render(**{**CONTEXT, **overrides})
+
+
+def _reconcile_mode_line(rendered: str) -> str:
+    """The mode flag as it sits in the reconcile chain, read POSITIONALLY: the footgun drops the line
+    without touching the text elsewhere, so a substring search still finds `--mint` in a script without it."""
+    anchor = "if ! docker run --rm --pull never"
+    assert rendered.count(anchor) == 1, "the reconcile chain is no longer the only one -- the slice below is ambiguous"
+    start = rendered.index(anchor)
+    chain = [ln.strip() for ln in rendered[start : rendered.index("--textfile /textfile/reconcile.prom", start)].splitlines()]
+    chain = [ln for ln in chain if ln]
+    assert chain[-2].startswith("--min-gap-seconds "), f"the chain's shape moved -- {chain[-2]!r} precedes the flag"
+    return chain[-1]
 
 
 def test_the_rendered_script_is_valid_bash():
@@ -49,6 +61,19 @@ def test_the_rendered_script_is_valid_bash():
         pytest.skip("bash not available")
     proc = subprocess.run([bash, "-n"], input=_rendered(), text=True, capture_output=True)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_the_reconcile_mode_flag_survives_the_continuation_chain():
+    """Dropped from the chain, the render stays valid bash whose if-condition has become `--mint: command not found`."""
+    assert _reconcile_mode_line(_rendered()) == "--detect-only \\"
+    assert _reconcile_mode_line(_rendered(ops_reconcile_mint=True)) == "--mint \\"
+
+
+def test_a_string_override_is_cast_before_it_selects_the_mode():
+    """`| bool` is LOAD-BEARING: `-e ops_reconcile_mint=false` arrives as the STRING "false", which is
+    truthy, so without the cast the override meant to DISABLE minting enables it into canonical custody."""
+    assert _reconcile_mode_line(_rendered(ops_reconcile_mint="false")) == "--detect-only \\"
+    assert _reconcile_mode_line(_rendered(ops_reconcile_mint="true")) == "--mint \\"
 
 
 def test_the_repair_count_is_exported_as_a_monotone_total():

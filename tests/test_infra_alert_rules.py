@@ -2,7 +2,10 @@
 provisioning API, which rejects a malformed rule with a bare HTTP 400 whose body the script
 discards -- a failure only an attended push can reach, and one that names neither rule nor field."""
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -134,6 +137,60 @@ def test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve():
     )
 
 
+# --- notification_settings must survive the payload the push actually sends ----------------------
+# The script's rule payload is built by one jq program; this runs THAT program rather than a copy of
+# it, so a projection or a `del` added there fails here instead of silently defaulting a field on the
+# next attended push. The datasource half is read back live by the script itself (T0034).
+_RULE_PAYLOAD_JQ = re.compile(r"rule_payload=\$\(jq\b.*?'(.*?)'\s*<<<\"\$\{rules_json\}\"", re.S)
+
+
+def _pushed_payload(program: str, rules_json: str, uid: str) -> dict:
+    """One rule's PUT body, produced by `grafana-push.sh`'s own jq program under placeholder values
+    that cannot collide with anything in the file."""
+    proc = subprocess.run(
+        ["jq", "--arg", "uid", uid, "--arg", "prom", "P", "--arg", "loki", "L", "--arg", "folder", "F", program],
+        input=rules_json,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"the push's jq program failed on {uid}: {proc.stderr}"
+    return json.loads(proc.stdout)
+
+
+def test_notification_settings_survive_the_payload_the_push_sends():
+    """`repeat_interval` is set by exactly one rule, so a payload step that dropped or defaulted it
+    would cost that rule its re-notify interval and leave every other rule's block intact -- nothing
+    on any surface would say so. The block is compared whole, and it carries no `${...}` placeholder,
+    so equality is exact rather than a re-implementation of the script's substitution."""
+    if shutil.which("jq") is None:  # pragma: no cover - jq is present wherever grafana-push.sh runs
+        pytest.skip("jq not available, so the push's own payload program cannot be run")
+    program = _RULE_PAYLOAD_JQ.search(PUSH.read_text())
+    assert program, "grafana-push.sh no longer builds its rule payload with a jq program this test can run"
+    jq_program = program.group(1)
+    # config-selector-ok: confirming the regex caught the right program, not selecting a value out of it
+    assert "select(.uid == $uid)" in jq_program, f"the extracted program is not the per-rule payload builder: {jq_program!r}"
+
+    rules = _rules()
+    rules_json = json.dumps(rules)
+    configured = {r["uid"]: r["notification_settings"] for r in rules if "notification_settings" in r}
+    assert configured, "no rule sets notification_settings -- this guard would pass vacuously"
+    repeating = sorted(uid for uid, ns in configured.items() if "repeat_interval" in ns)
+    assert repeating, (
+        "no rule sets a non-default repeat_interval, so this guard can no longer see the field it "
+        "exists for -- a payload dropping only repeat_interval would pass it"
+    )
+
+    dropped = {
+        uid: (_pushed_payload(jq_program, rules_json, uid).get("notification_settings"), settings)
+        for uid, settings in configured.items()
+    }
+    dropped = {uid: pair for uid, pair in dropped.items() if pair[0] != pair[1]}
+    assert not dropped, (
+        f"the payload grafana-push.sh sends does not carry the notification_settings the file "
+        f"declares (uid: sent, declared): {dropped}"
+    )
+
+
 # --- A shipped metric that nothing watches ------------------------------------------------------
 # `test_infra_alloy_series.py` proves a metric REACHES Grafana; this proves something looks at it
 # (T0008, T0100). The candidate set is DERIVED, never hand-listed, from the two sources that name
@@ -215,11 +272,12 @@ NOT_A_FAULT_SIGNAL = {
     "process_max_fds",
     "process_open_fds",
     "process_virtual_memory_bytes",
-    # Prune bookkeeping -- the fault is the timer STOPPING, which the staleness rules own.
+    # Prune bookkeeping -- LEVELS whose every value is legitimate. The fault is the run STOPPING, and
+    # `zcrypto-engine-journal-prune-dead` reads the one gauge that says whether it did, so these
+    # three are the detail read once it has paged.
     "zcrypto_engine_journal_prune_deleted_days",
     "zcrypto_engine_journal_prune_kept_days",
     "zcrypto_engine_journal_prune_oldest_day_age_seconds",
-    "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
     # The execution safety envelope's unwatched families; armed, kill_tripped and
     # last_evaluation_timestamp_seconds are watched, and this list is what keeps that true.
     #   gate_level is the SUMMARY its inputs (armed, kill switch, restart hold, venue) already reduce
@@ -358,6 +416,25 @@ def test_the_healable_gap_rate_is_denominated_in_the_unit_its_summary_claims():
     assert "count by (pair)" in expr, "the threshold must be per-stream, not a cross-stream sum"
     minutes = _threshold(rule) / 60.0
     assert f"{minutes:.0f} minutes" in summary, f"summary claims a different quantity than {_threshold(rule)}s implies"
+
+
+def test_the_healable_gap_summary_defers_the_loss_question_to_the_field_that_answers_it():
+    """`healable` counts the silence a gap was ADMITTED on, which is `claimed_seconds`; what a splice
+    inserted is `healed_seconds` and the permanent shortfall is `residual_seconds`. A summary that
+    settles the loss question itself -- "every gap was covered" -- is read on a phone as an all-clear
+    this counter cannot support, so it must name the ledger field that answers it instead."""
+    rule = _rule("zcrypto-reconcile-healable-gap-rate")
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+    assert "zcrypto_reconcile_healable_gap_seconds_total" in expr, f"not the healable counter: {expr!r}"
+    assert "zcrypto_reconcile_healed_gap_seconds_total" not in expr, (
+        f"reading MINTED repair would make the old wording true and destroy the detect-only signal: {expr!r}"
+    )
+    ledger = (REPO / "cli/archive/command.py").read_text()
+    assert '"residual_seconds"' in ledger, "the ledger key moved -- the summary would point a paged operator at nothing"
+    assert "residual_seconds" in rule["annotations"]["summary"], (
+        "the summary does not name the field that says whether anything was actually lost, so it either "
+        "leaves the question open or answers it from a counter that cannot"
+    )
 
 
 def test_the_permanent_loss_page_outlives_a_single_evaluation_hour():
@@ -560,6 +637,67 @@ def test_the_sleeve_composition_rule_stays_quiet_while_the_series_does_not_exist
     assert rule["noDataState"] == "OK", "an engine that has not yet published a composition would page"
     assert rule["execErrState"] == "Alerting", "a broken query would leave the composition silently unwatched"
     assert rule["labels"]["severity"] == "warning", "this announces a change in the book, not a fault"
+
+
+# --- the journal-prune liveness rule: the ABSENCE is the alarm ------------------------------------
+# A deleted `.prom` takes its mtime series away rather than ageing it, so the mtime rule's empty
+# result meets `noDataState: OK` and nothing fires. This rule reads the value the prune writes on
+# completion, under `noDataState: Alerting`, so the vanishing pages.
+
+_PRUNE_DEAD = "zcrypto-engine-journal-prune-dead"
+_PRUNE_STALE_MTIME = "zcrypto-oneoff-textfile-stale"
+
+
+def test_the_prune_liveness_rule_reads_the_completion_gauge_rather_than_the_files_mtime():
+    """The two reads are not interchangeable: a restore or an rsync refreshes an mtime over a prune
+    that never ran, and only a completed run writes the gauge. Reading mtime here would leave the
+    pair with two views of the same lie."""
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in _rule(_PRUNE_DEAD)["data"])
+    assert "zcrypto_engine_journal_prune_last_run_timestamp_seconds" in expr, f"not the completion gauge: {expr!r}"
+    assert "node_textfile_mtime_seconds" not in expr, f"this is the mtime rule's read, not this rule's: {expr!r}"
+    assert len(_PRUNE_DEAD) <= _UID_MAX, f"{len(_PRUNE_DEAD)} chars -- the create call will 400"
+
+
+def test_a_vanished_prune_gauge_pages_while_a_daily_run_stays_quiet():
+    """Replays gauge histories through the rule's OWN threshold, `for:` and `noDataState` (read from
+    `alerts.yaml`, never restated): a timer running daily, one stopped with its `.prom` left behind,
+    and a `.prom` deleted so the series never exists. Only `noDataState` decides the third, which the
+    closing assertion shows by re-running all three under the mtime rule's `OK` posture."""
+    rule, minute, day = _rule(_PRUNE_DEAD), 60, 24 * 3600
+    bar, hold_for = _threshold(rule), _duration_seconds(rule["for"])
+    first_run = 1 * 3600 + 23 * 60  # the timer's 01:23 UTC start
+
+    def fires(runs: list[int], no_data_state: str) -> bool:
+        """`runs` are the completion times; the series exists only while at least one precedes t."""
+        run = 0
+        for t in range(first_run, first_run + 10 * day, minute):
+            last = max((at for at in runs if at <= t), default=None)
+            firing = no_data_state == "Alerting" if last is None else (t - last) > bar
+            run = run + minute if firing else 0
+            if run >= hold_for:
+                return True
+        return False
+
+    daily = [first_run + n * day for n in range(10)]
+    stopped = daily[:3]  # the timer stops on the third day; the .prom stays, so the gauge freezes
+    deleted: list[int] = []  # the file is removed, so the series never exists at all
+
+    verdicts = {
+        name: fires(runs, rule["noDataState"]) for name, runs in (("daily", daily), ("stopped", stopped), ("deleted", deleted))
+    }
+    assert verdicts == {"daily": False, "stopped": True, "deleted": True}, (
+        f"the rule does not discriminate a live daily prune from a stopped or deleted one: {verdicts}"
+    )
+
+    # The defect this rule exists to close, constructed: under the mtime rule's posture the deleted
+    # arm alone flips to silence, so `noDataState` is doing the work and not the threshold.
+    under_ok = {name: fires(runs, "OK") for name, runs in (("daily", daily), ("stopped", stopped), ("deleted", deleted))}
+    assert under_ok == {"daily": False, "stopped": True, "deleted": False}, (
+        f"the simulation cannot reproduce the silence `noDataState: OK` causes -- it is proving nothing: {under_ok}"
+    )
+    assert _rule(_PRUNE_STALE_MTIME)["noDataState"] == "OK", (
+        "the mtime rule no longer swallows the empty result, so re-derive whether this rule's Alerting posture is still the only cover"
+    )
 
 
 # --- the runbook link an alert sends an operator to must actually exist ---------------------------
@@ -1105,6 +1243,34 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     )
     assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
+
+
+_SLACK_TEMPLATE = REPO / "infra/grafana/notification-templates/zcrypto-slack.tmpl"
+# The operator name for each host label, read from the template that renders it -- the vocabulary a
+# summary must use, since a phone shows that name and nothing else.
+_HOST_VOCABULARY = re.compile(r'eq \. "([^"]+)" \}\}([^\n{]+)')
+
+
+def test_the_headroom_summary_names_the_hosts_its_expression_actually_reads():
+    """A summary is read on a phone with nothing open, so "512 MiB elsewhere" promised every other
+    Alloy host while the expression selects four by name. The edge runs the apt Alloy under no
+    container and no cap, so this ratio has no denominator for it and `zcrypto-alloy-dark-zaccess`
+    owns its OOM; a CAPPED host is forced in by the memory-limited-job test above."""
+    vocabulary = dict(_HOST_VOCABULARY.findall(_SLACK_TEMPLATE.read_text()))
+    vocabulary = {label: name.strip() for label, name in vocabulary.items()}
+    assert len(vocabulary) >= 5, f"the host vocabulary parse found only {vocabulary} -- the template's shape moved"
+
+    rule = _rule(_ALLOY_HEADROOM)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
+    selected = {h for match in re.findall(r'host=~?"([^"]+)"', expr) for h in match.split("|")}
+    assert selected <= set(vocabulary), f"the expression selects a host the notification template cannot name: {selected}"
+
+    summary = rule["annotations"]["summary"]
+    named = {label for label, name in vocabulary.items() if re.search(rf"\b{re.escape(name)}\b", summary, re.I)}
+    assert named == selected, (
+        f"the summary names {sorted(named) or 'no host'} while the expression reads {sorted(selected)} -- a paged "
+        f"operator is told this rule watches hosts it does not, or is not told about ones it does"
+    )
 
 
 def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():

@@ -154,7 +154,7 @@ What is at stake: the **attended-reboot safety net** — `node_reboot_required`,
 
 **Blind spots this family does not close, so do not read its silence as coverage:**
 
-- A **deleted** `.prom` makes its mtime series vanish rather than go stale. `max by (host)` simply drops that dimension and `noDataState: OK` swallows the empty result, so neither staleness rule fires. For `reboot.prom` the deletion is still caught, because `node_reboot_required` disappears with it and the `count()` rule sees that. For `engine-journal-prune.prom` **nothing catches it** — its four `zcrypto_engine_journal_prune_*` gauges have no rule of their own.
+- A **deleted** `.prom` makes its mtime series vanish rather than go stale. `max by (host)` simply drops that dimension and `noDataState: OK` swallows the empty result, so neither staleness rule fires. For `reboot.prom` the deletion is still caught, because `node_reboot_required` disappears with it and the `count()` rule sees that. For `engine-journal-prune.prom` the section below catches it: `zcrypto-engine-journal-prune-dead` reads the prune's own completion gauge under `noDataState: Alerting`.
 - `zcrypto-capture-textfile-missing` has no `or vector(0)` fallback, so it catches **one** host going silent. If both stop publishing `node_reboot_required`, the query returns nothing and `noDataState: OK` keeps it green. If both hosts' telemetry is dark, the alloy-dark canaries page instead; if the whole textfile collector failed, `zcrypto-node-collector-failed` does.
 
 `zcrypto-capture-prune` publishes no `.prom` at all and is outside all four rules — its only liveness trace is its journald line in Loki (`{host="<host>", container="zcrypto-capture-prune"}`).
@@ -175,3 +175,31 @@ What is at stake: the **attended-reboot safety net** — `node_reboot_required`,
 ### Retire when
 
 All four uids — `zcrypto-capture-textfile-missing`, `zcrypto-capture-textfile-unreadable`, `zcrypto-reboot-probe-stale`, `zcrypto-oneoff-textfile-stale` — are absent from `infra/grafana/alerts.yaml`, or the `textfile { directory = … }` block leaves `infra/ansible/roles/capture/files/config.alloy` (the one-off timers then publish through something else and every command above names the wrong path).
+
+______________________________________________________________________
+
+<a name="zcrypto-engine-journal-prune-dead"></a>
+
+## zcrypto-engine-journal-prune-dead — ALERT
+
+### What you are seeing
+
+A **warning** alert on the capture primary: `zcrypto_engine_journal_prune_last_run_timestamp_seconds` is either more than 26 hours behind the clock, or gone from Grafana entirely. The daily prune runs at 01:23 UTC, so 26 h is one missed run plus margin. The gauge is written only at the end of a completed run, which is why this rule reads it instead of the `.prom` file's mtime — a restore or an rsync refreshes an mtime over a prune that never ran.
+
+### What it means
+
+Aged `engine-journal` day-directories are no longer being deleted on the host that also holds the live trade engine and the unbackfillable capture spool, on one disk. Nothing else reports it at this stage: the retention gauges beside it (`kept_days`, `oldest_day_age_seconds`) are re-served forever at their last values by the textfile collector, so they read healthy while the journal grows. `zcrypto-capture-disk-low` is the next thing that fires, and by then the spool is the thing at risk.
+
+**An empty result is a fire here, deliberately.** `noDataState: Alerting` is what makes a deleted `.prom`, a keep-regex that dropped the family, or a host that has never run the prune arrive as a page rather than as silence. A dark telemetry plane on the primary reaches this rule the same way, so read `Fleet · Alloy dark — Capture primary` first.
+
+### What to do
+
+1. **Rule out the telemetry plane.** If the alloy-dark canary for the capture primary is also firing, this is that incident — the prune is probably fine and unobservable.
+2. **Ask whether the timer ran**: `ssh zcrypto`, then `systemctl list-timers zcrypto-engine-journal-prune.timer` and `journalctl -u zcrypto-engine-journal-prune -n 5 --no-pager`. Its log line names `deleted=`, `kept=` and the cutoff.
+3. **Look for the file**: `ls -la /var/lib/zcrypto-node-textfile/engine-journal-prune.prom`. Absent or non-`0644` is the transport family above — follow `capture-textfile-transport` from there.
+4. **Check the disk before deciding it is only a metric**: `df -h /` and `du -sh /var/lib/zcrypto-engine/journal`.
+5. **Do not casually start the service to clear the alert** — it is a real delete of aged day-directories on the engine host. It is idempotent and floored at the newest `engine_journal_retention_days`, but read its journal first and know what you are running.
+
+### Retire when
+
+`zcrypto-engine-journal-prune-dead` is absent from `infra/grafana/alerts.yaml`, or the prune stops publishing `zcrypto_engine_journal_prune_last_run_timestamp_seconds` (`infra/ansible/roles/engine/files/zcrypto-engine-journal-prune.sh`) — the rule then evaluates over a series nothing writes and pages permanently.

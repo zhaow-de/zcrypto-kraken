@@ -573,26 +573,31 @@ def test_run_hands_the_SAME_maps_to_the_producer_and_the_consumer_of_each():
 
 
 def test_every_pair_is_seeded_so_a_never_delivered_stream_is_not_invisible():
-    """Without a seed, a subscribed pair that never delivers has no `last_seen`: the watchdog skips it
-    forever while its gauge reads 0.0, the healthiest value there is."""
+    """Every pair the seed produces carries a datetime: on a `None` the watchdog `continue`s forever while the
+    gauge reads 0.0, the healthiest value there is."""
     import ast
     import inspect
 
     from cli.capture import command
 
-    src = inspect.getsource(command._run)
-    assert "dict.fromkeys(pairs" in src or "for pair in pairs" in src.split("last_seen")[1][:120], (
-        "last_seen is not seeded from `pairs` at process start -- a stream that never delivers is invisible"
-    )
-    tree = ast.parse(src.lstrip())
-    seeded = any(
-        isinstance(n, ast.AnnAssign)
-        and isinstance(n.target, ast.Name)
-        and n.target.id == "last_seen"
-        and not (isinstance(n.value, ast.Dict) and not n.value.keys)
+    tree = ast.parse(inspect.getsource(command._run).lstrip())
+    seeds = [
+        n.value
         for n in ast.walk(tree)
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "last_seen"
+    ]
+    assert len(seeds) == 1, f"expected exactly one `last_seen` initialiser in _run, found {len(seeds)}"
+
+    # EVALUATE the initialiser rather than pattern-match its spelling: `{}`, `dict.fromkeys(pairs)` and
+    # `dict.fromkeys(pairs, None)` differ in text and are the same defect, and no list of banned spellings
+    # sees the next one. `_run`'s own globals resolve the names the expression uses.
+    seeded = eval(
+        compile(ast.Expression(seeds[0]), "<last_seen seed>", "eval"), dict(vars(command)), {"pairs": ["AAA/EUR", "BBB/EUR"]}
     )
-    assert seeded, "last_seen is initialised to an empty dict; seed it from `pairs`"
+    assert set(seeded) == {"AAA/EUR", "BBB/EUR"}, f"last_seen is not seeded from `pairs` at process start: {seeded}"
+    assert all(isinstance(v, datetime) for v in seeded.values()), (
+        f"a pair is seeded with no time, so the watchdog skips it forever and its gauge stays at 0.0: {seeded}"
+    )
 
 
 def test_one_pair_raising_does_not_starve_the_others():
