@@ -789,3 +789,11 @@ ______________________________________________________________________
 
 - `classify --host <host>` asks that host what a `cat`'s or a `grep`'s file operands really name and holds every path that comes back to the same safe-root predicate: a link pointing out of a read-safe root, a host the classifier could not reach, and a call with no `--host` all read `prepared`. A familiar log read answering `prepared` is that resolution, not a shape table that needs widening.
 - `.claude/skills/zcrypto-daily-ops/SKILL.md`'s classify step says so at the point the command is run, so the tier is read against what the operands reach rather than how they are spelled.
+
+## 2026-09-06 — T0168 resolved: the remaining claims asserted, the rest dropped with their reasons
+
+- A deleted or stalled `engine-journal-prune.prom` now alarms on its own absence: `zcrypto-engine-journal-prune-dead` carries `noDataState: Alerting`, so a vanished series pages instead of reading as silence on the host that holds the live trade engine and the capture spool. Panel 41's description follows it — both series it plots now carry a rule, where it used to say only the published-file series was alerted.
+- `zcrypto-fleet-alloy-memory-headroom`'s page names the four hosts its expression reads, so nobody takes it for coverage of zaccess — whose Alloy has no memory cap for the rule to divide by, and whose OOM detector is `zcrypto-alloy-dark-zaccess`.
+- `zcrypto-reconcile-healable-gap-rate`'s page says the counter measures the silence a gap was ADMITTED on, not what a splice inserted, and points at the ledger's `residual_seconds` for whether anything was lost.
+- `ops-postverify.sh` reads the archive-pull dead-man's own operand as its tenth check: the exit code and both timestamps are written by one `printf` block, so a stopped timer used to leave the report reading ALL PASS about a writer that had not run.
+- The push payload's `notification_settings` is compared whole against the file for every rule, so the single non-default `repeat_interval` cannot be dropped silently by a change to `grafana-push.sh`.
