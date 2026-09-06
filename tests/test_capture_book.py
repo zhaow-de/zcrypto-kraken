@@ -6,9 +6,8 @@ from cli.capture.book import OrderBook
 from cli.capture.errors import CaptureError
 
 # Kraken's own worked example from the WS v2 book-checksum guide
-# (https://docs.kraken.com/api/docs/guides/spot-ws-book-v2): top-10 bids/asks for a BTC/USD book,
-# whose documented checksum is 3310070434. Verified independently: CRC32 of the guide's
-# formatted+concatenated asks+bids string reproduces this exact value.
+# (https://docs.kraken.com/api/docs/guides/spot-ws-book-v2): top-10 bids/asks for a BTC/USD book
+# and its documented checksum.
 _KRAKEN_BIDS = [
     {"price": "45283.5", "qty": "0.10000000"},
     {"price": "45283.4", "qty": "1.54582015"},
@@ -132,15 +131,8 @@ def test_non_decimal_value_raises_capture_error():
 
 # --- T0008: the book must stay congruent with Kraken's depth window ---------------------------
 #
-# Kraken only sends deltas for levels INSIDE the subscribed depth-N window. A level we retain
-# beyond it is one Kraken has stopped telling us about: it goes stale (its qty changes, or it is
-# cancelled, and we never hear), and when the window later shifts back it re-enters our top-10 as
-# a PHANTOM -- and the checksum fails.
-#
-# Measured on three independent hosts (2026-07-13): the live book grew to 810 bids / 468 asks
-# against Kraken's 100, and replaying a real captured hour produced 482 checksum failures. Pruning
-# each side to the subscribed depth takes that to ZERO on every host. Those "desyncs" (~200/day,
-# tracked as T0008) were never network loss -- they were this bug.
+# Kraken only sends deltas for levels INSIDE the subscribed depth-N window: a level retained beyond
+# it goes stale, and re-enters our top-10 as a PHANTOM when the window shifts back -- checksum fails.
 
 
 def test_book_never_exceeds_its_subscribed_depth():
@@ -186,12 +178,9 @@ def test_a_level_pushed_out_of_the_window_cannot_re_enter_as_a_phantom():
     )
     # A better ask enters -> Kraken's window becomes {99.5, 100.0}; 101.0 drops out of it.
     book.ingest_update({"bids": [], "asks": [{"price": Decimal("99.5"), "qty": Decimal("1")}], "checksum": 0})
-    # While 101.0 sits OUTSIDE the window it is cancelled in the real book. Kraken never tells us,
-    # because it only reports levels inside the window.
-    #
-    # Now 99.5 is consumed: Kraken removes it and back-fills the window with 102.0. Kraken's book
-    # is {100.0, 102.0}. A book that kept stale 101.0 would report {100.0, 101.0} -- a phantom top
-    # of book, and a failed checksum.
+    # While 101.0 sits OUTSIDE the window it is cancelled in the real book, and Kraken never tells
+    # us. Now 99.5 is consumed and the window back-fills with 102.0: a book that kept stale 101.0
+    # would report {100.0, 101.0} -- a phantom top of book.
     book.ingest_update(
         {
             "bids": [],

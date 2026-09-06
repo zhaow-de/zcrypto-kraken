@@ -12,13 +12,9 @@ from cli.tick.materialize import build_day, segment_index
 
 
 def _seg(root: Path, pair: str, hour: datetime, rows: list[tuple[float, float, int]]) -> None:
-    """Write one canonical trades segment.
-
-    The canonical layout is <root>/<BASE>/<QUOTE>/<kind>/<Y>/<m>/<d>/<H>.parquet -- the pair spans
-    TWO path levels. `canonical_segments` globs `*/*/{kind}/*/*/*/*.parquet` and reads the pair from
-    parts[-7]/parts[-6], so a flattened `BTCEUR/` tree is INVISIBLE to it and every positive test
-    would fail against a correct implementation.
-    """
+    """Write one canonical trades segment: the pair spans TWO path levels, because `canonical_segments`
+    globs `*/*/{kind}/*/*/*/*.parquet` and reads it from `parts[-7]`/`parts[-6]` — a flattened
+    `BTCEUR/` tree is invisible to it."""
     d = root / pair.split("/")[0] / pair.split("/")[1] / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
     d.mkdir(parents=True, exist_ok=True)
     frame = pl.DataFrame(

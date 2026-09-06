@@ -71,17 +71,10 @@ def test_save_is_atomic_no_tmp_left_behind(tmp_path):
 
 
 def test_failed_write_never_corrupts_the_final_or_leaves_a_tmp_file(tmp_path, monkeypatch):
-    """`test_save_is_atomic_no_tmp_left_behind` (above) passes even against a save_checkpoint that
-    writes straight to `checkpoint.parquet` with no `.tmp` involved at all — two successful calls in a
-    row leave no `.tmp` litter either way, so it never actually exercises the tmp+replace idiom. This
-    test forces the SECOND save to fail after real bytes have already landed on disk (a torn write —
-    ENOSPC, EIO, a killed process) and checks the property that idiom actually buys: the previously
-    published checkpoint must survive a failed write untouched, and no `.tmp` may be left behind.
-
-    Against a direct-write implementation, `write_parquet` targets `checkpoint.parquet` itself, so the
-    injected failure overwrites the prior good content before raising — this test then fails on the
-    final-content assertion, where the un-strengthened version above would not have caught it.
-    """
+    """The published checkpoint survives a failed write untouched, with no `.tmp` left behind. The
+    failure is injected AFTER real bytes land because `test_save_is_atomic_no_tmp_left_behind`'s
+    clean path leaves no `.tmp` litter
+    against a direct write to `checkpoint.parquet` either -- only a torn write tells the two apart."""
     good = _row()
     save_checkpoint(tmp_path, [good])
 
@@ -113,10 +106,8 @@ def test_unwritable_dir_raises_checkpoint_write_error(tmp_path):
 
 
 def test_error_string_past_the_default_schema_inference_window_round_trips(tmp_path):
-    """`pl.DataFrame` infers a column's dtype from only its first 100 rows by default. `error` is the
-    only nullable field: >100 leading `error=None` rows followed by a real error string previously blew
-    up `pl.DataFrame([...])` with a `ComputeError` — the ~6,000-row snapshot rewritten whole on every
-    flush is always past that window, so this broke on precisely the nights an error was found."""
+    """>100 leading `error=None` rows then a real error string -- the shape every whole-snapshot flush
+    has past `pl.DataFrame`'s default inference window, and the one `_ROW_SCHEMA` exists to survive."""
     base = datetime(2026, 8, 1, tzinfo=UTC)
     healthy = [_row(pair="BTC/EUR", hour=base + timedelta(hours=i)) for i in range(150)]
     failing = _row(pair="ETH/EUR", error="EIO", replay_ok=False)
@@ -127,12 +118,9 @@ def test_error_string_past_the_default_schema_inference_window_round_trips(tmp_p
 
 
 def test_mkdir_failure_raises_checkpoint_write_error_not_the_raw_oserror(tmp_path):
-    """A distinct failure shape from `test_unwritable_dir_raises_checkpoint_write_error` above: there,
-    `state_dir` already exists (chmod 0o500 read+execute), so `mkdir(exist_ok=True)` succeeds and only
-    the write fails. Here `state_dir` does not exist yet and its parent is wholly inaccessible (chmod
-    000 — the ":rw mount present but inaccessible" shape) so `mkdir` itself fails. That failure must
-    still surface as `CheckpointWriteError`, not an unwrapped `PermissionError` escaping from the
-    cleanup path's own `tmp.unlink()` call (which cannot even stat under an inaccessible parent)."""
+    """`mkdir` itself fails -- the parent is chmod 000, the ":rw mount present but inaccessible"
+    shape -- and that must still surface as `CheckpointWriteError`, never as a `PermissionError`
+    escaping the cleanup path's own `tmp.unlink()`."""
     parent = tmp_path / "locked"
     parent.mkdir()
     parent.chmod(0o000)

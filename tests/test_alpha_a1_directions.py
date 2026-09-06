@@ -27,8 +27,8 @@ def test_asset_directions_known_answer_single_gate_short_off():
 
 
 def test_asset_directions_ensemble_differs_from_single_gate():
-    # At k=1 the gate is on (1) but ta[1]==0 (still warm-up) -> ensemble's AND-with-trend drops it
-    # to flat while single_gate stays long: the two regimes provably differ on this split.
+    # At k=1 the gate is on but ta[1]==0 (still warm-up), so ensemble's AND-with-trend drops it to flat
+    # while single_gate stays long.
     prices, btc, union_ts, asset_ts = _btc_only()
     single = _asset_directions(prices, btc, union_ts, asset_ts, config=_cfg(regime="single_gate", short="off"))
     ensemble = _asset_directions(prices, btc, union_ts, asset_ts, config=_cfg(regime="ensemble", short="off"))
@@ -39,8 +39,6 @@ def test_asset_directions_ensemble_differs_from_single_gate():
 
 def test_asset_directions_confirmed_bear_short_engages():
     # gate==0 & ta<0 at k=2 and k=4 -> confirmed_bear shorts there; short=off stays flat there.
-    # This also proves "short only on confirmed g_btc==0 AND ta<0": k=1 and k=3 have gate==1
-    # (long, never short) despite short="confirmed_bear" being enabled.
     prices, btc, union_ts, asset_ts = _btc_only()
     off = _asset_directions(prices, btc, union_ts, asset_ts, config=_cfg(regime="single_gate", short="off"))
     bear = _asset_directions(prices, btc, union_ts, asset_ts, config=_cfg(regime="single_gate", short="confirmed_bear"))
@@ -56,11 +54,10 @@ def test_asset_directions_ensemble_confirmed_bear_combo():
 
 
 def test_asset_directions_short_band_narrows_short_set():
-    # Uptrend, then a mild pullback (dips ~3.5% below the recent SMA each step -- inside a 10% band)
-    # before a sharp ~15%/step drawdown phase (well outside any 10% band). With short_band=0.0 the
-    # mild pullback already qualifies as confirmed-bear (price < SMA); with short_band=0.10 it does
-    # not (price stays above SMA*0.90), so the short set must be a strict, non-empty-difference
-    # subset -- fewer short-active periods overall. Regression guard for the "band" (finding-2).
+    # Uptrend, then a mild pullback (~3.5% below the recent SMA each step, inside a 10% band) before a
+    # ~15%/step drawdown (well outside it): at short_band=0.0 the pullback already qualifies as
+    # confirmed-bear (price < SMA), at 0.10 it does not (price stays above SMA*0.90), so the banded run
+    # shorts in fewer periods (spec 00031 finding 2).
     btc = [100.0]
     for _ in range(10):
         btc.append(btc[-1] * 1.02)
@@ -92,9 +89,8 @@ def test_asset_directions_short_band_narrows_short_set():
 
 
 def test_map_to_union_index_gap_and_adjacency():
-    # own calendar has an internal gap (day 13 missing); union has a superset of days (13 exists for
-    # some OTHER asset). Transitions touching day 13 must map to None; adjacent-in-own-terms
-    # transitions (which skip the gap) must NOT be mistaken for the union's single-day moves either.
+    # Day 13 is missing from own_ts but present in union_ts (some OTHER asset has it): transitions
+    # touching it map to None, and the own-adjacent 12->14 move must not be read as a union move either.
     own_ts = [10, 11, 12, 14, 15, 16]
     own_values = [1.0, 2.0, 3.0, 4.0, 5.0]
     union_ts = [10, 11, 12, 13, 14, 15, 16]
@@ -103,8 +99,6 @@ def test_map_to_union_index_gap_and_adjacency():
 
 
 def test_asset_directions_absent_asset_is_none():
-    # ALT is absent (None) only at union index 3 -> transitions k=2 (2->3) and k=3 (3->4) are None;
-    # all other transitions have a real (finite) direction.
     btc = [100.0, 105.0, 102.0, 108.0, 103.0, 110.0, 107.0, 115.0]
     alt = [50.0, 51.0, 52.0, None, 54.0, 55.0, 56.0, 57.0]
     union_ts = list(range(8))
@@ -124,9 +118,8 @@ def test_asset_directions_absent_asset_is_none():
 
 
 def test_asset_directions_no_lookahead():
-    # Prices identical through index 4 (5 elements); diverge from index 5 on. A direction at union
-    # period t reads prices[t] and prices[t+1] (presence) plus causal features of prices[<=t], so
-    # only t <= 3 is guaranteed invariant (t=4 already reads prices[5], the first divergent index).
+    # A direction at union period t reads prices[t+1] for presence plus causal features of prices[<=t],
+    # so only t <= 3 is invariant to a divergence starting at index 5 -- t=4 already reads prices[5].
     btc_base = [100.0, 108.0, 96.0, 121.0, 70.0]
     btc_1 = btc_base + [200.0, 90.0, 250.0]
     btc_2 = btc_base + [40.0, 500.0, 12.0]

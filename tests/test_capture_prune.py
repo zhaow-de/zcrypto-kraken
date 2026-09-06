@@ -1,18 +1,8 @@
 """Segment retention on the capture hosts (spec 00050 D8 — closes T0032's retention half).
 
-The unit under test is the **shell script the `capture` role installs**
-(`infra/ansible/roles/capture/files/zcrypto-capture-prune.sh`), driven with `bash` over a fixture
-segment tree — not a Python re-implementation of it. What deletes bytes on the host is that file;
-a second implementation would only be a second thing to get wrong.
-
-L2 book capture is unbackfillable and the capture host's disk is the only copy until the NAS pulls
-it, so the load-bearing assertions here are the NEGATIVE ones: at **any** age the prune must spare
-`<HH>.part####.parquet` (the live hour, not yet merged), `<HH>.held####.parquet` (rows the
-corroboration oracle never confirmed — quarantine), `*.corrupt[.N]` (forensic evidence of a read
-failure) and `<HH>.parquet.merging` (a merge interrupted before its atomic rename). Note the trap
-those names encode: part and held spills END in `.parquet`, so a `-name '*.parquet'` sweep would
-eat the live hour.
-"""
+L2 book capture is unbackfillable and a capture host's disk is the only copy until the NAS pulls it,
+so the load-bearing assertions here are the NEGATIVE ones. The unit under test is the shell script
+the `capture` role installs, driven with `bash`: what deletes bytes on the host is that file."""
 
 from __future__ import annotations
 
@@ -28,7 +18,7 @@ DAY = 86400.0
 
 
 def _seg(root: Path, name: str, *, age_days: float) -> Path:
-    """Plant one file in a realistic segment dir and age it: <root>/BTC/EUR/book/2026/07/01/<name>."""
+    """Plant one file in a realistic segment dir and age it."""
     path = root / "BTC" / "EUR" / "book" / "2026" / "07" / "01" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"segment")
@@ -69,8 +59,7 @@ def test_finals_inside_the_retention_window_are_spared(tmp_path):
 
 
 def test_the_live_hour_quarantine_and_evidence_are_never_touched_at_any_age(tmp_path):
-    # Every one of these is unrecoverable if deleted, so they are aged FAR past the retention window:
-    # surviving here is the whole safety property of the timer.
+    # Aged FAR past the retention window: every one of these is unrecoverable if deleted.
     survivors = [
         _seg(tmp_path, "09.part0003.parquet", age_days=400),  # live hour, not yet merged
         _seg(tmp_path, "09.held0000.parquet", age_days=400),  # never-confirmed rows (quarantine)

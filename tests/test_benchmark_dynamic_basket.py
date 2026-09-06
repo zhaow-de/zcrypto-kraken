@@ -4,9 +4,8 @@ from cli.benchmark.strategies import BenchmarkError, dynamic_inverse_vol_basket,
 
 
 def test_dynamic_basket_known_answer_two_assets_entry():
-    # A present throughout; B is None for union-index 0,1 then present from index 2.
-    # lookback=2. B's first return is retB[2] (needs B[2],B[3]); B only qualifies once
-    # its trailing window retB[t-2:t] is fully non-None, i.e. from t=4 (=E+lookback, E=2).
+    # B enters (first non-None price) at union-index E=2, so its first return is retB[2]; it only
+    # qualifies once its trailing window retB[t-2:t] is fully non-None, i.e. from t = E+lookback = 4.
     a = [100, 102, 99.96, 109.956, 112.15512, 109.9120176]  # retA = [.02,-.02,.10,.02,-.02]
     b = [None, None, 100, 118, 110.92, 116.466]  # retB = [None,None,.18,-.06,.05]
     out = dynamic_inverse_vol_basket({"A": a, "B": b}, lookback=2)
@@ -89,13 +88,10 @@ def test_dynamic_basket_no_look_ahead():
     out2 = dynamic_inverse_vol_basket({"A": a2, "B": b2}, lookback=2)
     assert out1[:6] == out2[:6]
 
-    # (2) Self-referential direction: the trailing window must be the OLDEST `lookback`
-    #     returns strictly before t, not accidentally shifted to admit ret_i[t] itself.
-    #     Perturbing the OLDEST price in period t=2's window (lookback=2 -> window is
-    #     returns[0:2], driven by prices[0]) must change output[2]. A "peeking" impl that
-    #     shifts the window to returns[t-lookback+1:t+1] (dropping index 0, admitting
-    #     ret_i[2] instead) would leave output[2] unaffected by this perturbation -- the
-    #     future-leak check above cannot see that kind of bug (it never reads past t+1).
+    # (2) Self-referential direction: the trailing window must be the OLDEST `lookback` returns
+    #     strictly before t, not shifted to admit ret_i[t] itself. Perturbing the OLDEST price in
+    #     period t=2's window (lookback=2 -> window is returns[0:2], driven by prices[0]) must
+    #     change output[2]; a shift to returns[t-lookback+1:t+1] would leave output[2] unchanged.
     a3 = [100, 101, 102, 101, 103, 104]
     b3 = [100, 99, 101, 100, 102, 101]
     base = dynamic_inverse_vol_basket({"A": a3, "B": b3}, lookback=2)

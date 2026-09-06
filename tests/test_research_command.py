@@ -1,9 +1,7 @@
 """`zcrypto research eval` — the committed door to the registry (spec 00086).
 
-Every register-path test monkeypatches BOTH `cli.research.command._DATA_ROOT` and
-`cli.research.command._REGISTRY`: the defaults are repo-anchored, so a test that patched only the
-data root would compute against a fixture and then append to the real committed registry.
-"""
+`_anchor` patches `cli.research.command._REGISTRY` as well as `_DATA_ROOT`: both defaults are
+repo-anchored, so a register run reaching the `_REGISTRY` default appends to the real registry."""
 
 from __future__ import annotations
 
@@ -55,9 +53,8 @@ def _daily_dataset(tmp_path: Path, n: int = 600, dataset: str = "ohlc-test") -> 
 
 
 def _stub_subject(monkeypatch):
-    """A subject whose build returns fixed metrics over whatever the reader hands it. It declares its
-    OWN assets — `required_relpaths` derives from assets x intervals, so the stub needs only the one
-    BTC file rather than the production config's ten."""
+    """A subject returning fixed metrics over whatever the reader hands it, declaring only BTC so
+    `required_relpaths` demands just the one file `_stub_dataset` writes."""
 
     def build(reader, dataset, window):
         reader.read_series(dataset, "BTC/EUR/1440.parquet", window=window)
@@ -125,8 +122,7 @@ def test_register_appends_one_schema_4_record_whose_hash_derives_from_the_observ
 
 
 def test_a_second_trial_in_a_family_needs_n_trials_above_the_recorded_count(tmp_path, monkeypatch):
-    """The registry refuses an append whose `n_trials_in_family` is below the family's prior count
-    plus one — so `--n-trials` must be a real flag: a hardcoded 1 forbids every second trial."""
+    """A hardcoded `--n-trials` of 1 would forbid every second trial in a family."""
     root = _stub_dataset(tmp_path)
     registry = tmp_path / "registry.jsonl"
     _stub_subject(monkeypatch)

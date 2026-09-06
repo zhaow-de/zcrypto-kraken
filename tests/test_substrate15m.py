@@ -43,9 +43,7 @@ def test_build_15m_substrate_writes_15m_parquet_and_manifest(tmp_path):
 
     assert (out_root / "BTC" / "EUR" / "15.parquet").exists()
     assert (out_root / "manifest.json").exists()
-    # Contract shape (spec 00099): `build_15m_substrate` delegates to `backfill_basket`, so it
-    # inherits the shape -- series keyed by the path relative to the dataset root, the wall clock
-    # quarantined in provenance, one digest name.
+    # Inherited contract shape (spec 00099): `build_15m_substrate` delegates to `backfill_basket`.
     assert manifest["written_at"] == FETCHED_AT
     assert manifest["provenance"]["fetched_at"] == FETCHED_AT
     entry = manifest["series"]["BTC/EUR/15.parquet"]
@@ -62,7 +60,7 @@ def _write_15m_parquet(out_root: Path, symbol: str, rows_15m: list[list]) -> Non
 
 def test_qa_15m_reports_rows_gaps_and_density(tmp_path):
     out_root = tmp_path / "ohlc-15m"
-    # Buckets 0, 1, 3 — bucket 2 missing: one gap of one candle, density 3/4.
+    # Bucket 2 missing: 3 rows over the 4 buckets the span covers.
     rows = [[BASE_TS + k * 900, 100.0, 101.0, 99.0, 100.5, 100.5, 1.0, 1] for k in (0, 1, 3)]
     _write_15m_parquet(out_root, "BTC/EUR", rows)
 
@@ -96,11 +94,11 @@ def _ticks_csv(rows: list[tuple]) -> str:
 def _make_tick_zip(root: Path) -> Path:
     tick_zip = root / "Kraken_Trading_History_Q1.zip"
     ticks = [
-        # Bucket BASE_TS: open=100, high=102, low=99, close=99, volume=4.
+        # Bucket BASE_TS — aggregates to `_canonical_15m_rows()[0]`.
         ("100.0", "1.0", BASE_TS + 10, "b"),
         ("102.0", "2.0", BASE_TS + 400, "s"),
         ("99.0", "1.0", BASE_TS + 800, "b"),
-        # Bucket BASE_TS+900: open=99.5, high=101, low=99.5, close=101, volume=2.
+        # Bucket BASE_TS+900 — aggregates to `_canonical_15m_rows()[1]`.
         ("99.5", "1.5", BASE_TS + 910, "s"),
         ("101.0", "0.5", BASE_TS + 1700, "b"),
         # Bucket BASE_TS+1800 — outside the reconcile window; would mismatch wildly if included.
@@ -149,11 +147,8 @@ def test_reconcile_15m_vs_ticks_planted_mismatch_caught(tmp_path):
 
 
 def _seam_fixture(out_root: Path, canonical_root: Path, *, n_minutes: int = 180) -> list[list]:
-    """Write a 15m parquet + canonical 60 parquet derived from the same synthetic minute rows.
-
-    Volumes are multiples of 0.25 (exactly representable), so float sums agree bit-for-bit
-    regardless of summation grouping and the seam's exact-volume check is deterministic.
-    """
+    """A 15m parquet and a canonical 60 parquet from the same synthetic minutes; volumes are
+    multiples of 0.25 (exactly representable), so the seam's bit-exact volume check is deterministic."""
     rows_1m = []
     for i in range(n_minutes):
         price = 100.0 + (i % 7) * 0.5
