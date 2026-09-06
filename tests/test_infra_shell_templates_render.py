@@ -57,6 +57,17 @@ def role_variables(template):
     return variables
 
 
+def welding_lines(source):
+    """Line numbers where a `{% … %}` tag closes a line that already carries content — trim_blocks
+    then eats the newline after the tag and welds the NEXT line onto that content."""
+    welded = []
+    for number, line in enumerate(source.splitlines(), 1):
+        stripped = line.rstrip()
+        if "{%" in stripped and stripped.endswith("%}") and stripped[: stripped.rfind("{%")].strip():
+            welded.append(number)
+    return welded
+
+
 def ansible_render(source, variables):
     from ansible.parsing.dataloader import DataLoader
     from ansible.template import Templar, trust_as_template
@@ -68,6 +79,25 @@ def test_every_shell_template_is_registered():
     found = {t.name for t in shell_templates()}
     assert found, "no shell templates found — the glob is wrong, not the tree"
     assert found == REGISTERED, f"unregistered: {sorted(found - REGISTERED)}; stale entries: {sorted(REGISTERED - found)}"
+
+
+WELDED = "rc=$?{% set n = 1 %}\nn=1\n"
+SAFE = "rc=$?\n{% set n = 1 %}\nn=1\n"
+
+
+def test_the_weld_is_real_and_bash_n_reads_it_as_valid():
+    """Why the lint below exists rather than leaning on `bash -n`: the welded line is still valid
+    shell, so the render test above stays green while `rc` has silently taken a different value."""
+    assert ansible_render(WELDED, {}) == "rc=$?n=1\n", "the weld did not happen — trim_blocks is not in play"
+    assert ansible_render(SAFE, {}) == "rc=$?\nn=1\n", "the tag on its own line must NOT weld"
+    assert subprocess.run(["bash", "-n"], input="rc=$?n=1\n", text=True, capture_output=True).returncode == 0
+    assert welding_lines(WELDED) == [1] and welding_lines(SAFE) == []
+
+
+@pytest.mark.parametrize("template", shell_templates(), ids=lambda t: t.name)
+def test_no_block_tag_closes_a_content_line(template):
+    welded = welding_lines(template.read_text())
+    assert not welded, f"{template.name}: line(s) {welded} end with a block tag that welds the next line onto them"
 
 
 @pytest.mark.parametrize("template", shell_templates(), ids=lambda t: t.name)
