@@ -1634,8 +1634,8 @@ def test_the_daemon_json_task_notifies_a_handler_that_restarts_dockerd():
 # ("this script consumes no image reference"), the script being the RENDERED template.
 OPS_DIGEST_GATE = "ops_image_digest is defined"
 OPS_ROLE = ANSIBLE / "roles" / "ops"
-# the two directories ansible resolves a bare `src:` against; one answer, read by the resolver below
-# and by the walk that refuses a broken link, so a renamed directory cannot be true in one and not the other
+# the two directories `_asset_candidates` searches by name; ansible's own search list is wider, which is
+# why the walk that refuses a broken link spans the role rather than these two
 OPS_ASSET_DIRS = ("files", "templates")
 
 
@@ -1854,8 +1854,8 @@ def test_the_pins_echo_negates_the_asserts_own_first_disjunct():
 
 # --- A7: the resolver above reads a `src:` naming a broken link as an ABSENT asset, and that stands —
 # ansible resolves it to nothing either, so such a task fails at deploy time on ansible's authority. Here
-# a broken link is refused by PRESENCE, needing no rule for how a `src:` is spelled; the walk covers the
-# whole role because ansible's search list reaches `<role>/tasks/<src>` and `<role>/<src>` as well.
+# a broken link is refused by PRESENCE, needing no rule for how a `src:` is spelled; the walk spans the
+# whole role because ansible searches `tasks/` and the role root too, and refuses what it cannot descend.
 def test_no_ops_role_asset_is_a_broken_link():
     """Every entry under the ops role that exists as a name resolves to an existing target."""
     walked = sorted(OPS_ROLE.rglob("*"))
@@ -1864,9 +1864,12 @@ def test_no_ops_role_asset_is_a_broken_link():
     assert walked, f"{OPS_ROLE.name}/ walked empty, so this selection read no entry of the role"
     for sub, entries in under.items():
         assert entries, f"{OPS_ROLE.name}/{sub}/ walked empty, so this selection read no asset of it"
-    broken = [
-        f"{p.relative_to(OPS_ROLE)} -> {p.readlink() if p.is_symlink() else '(not a link)'}"
-        for p in walked
-        if os.path.lexists(p) and not os.path.exists(p)
-    ]
+    # `rglob` does not descend a symlinked directory, and turning that on walks a parent-pointing link
+    # until PATH_MAX; so the shape is refused rather than traversed, and the claim above stays true.
+    undescended = [f"{p.relative_to(OPS_ROLE)} -> {p.readlink()}" for p in walked if p.is_symlink() and p.is_dir()]
+    assert not undescended, (
+        f"{OPS_ROLE.name}/ carries a linked directory this walk does not descend, so a broken asset "
+        f"behind it would be unseen: {undescended}"
+    )
+    broken = [f"{p.relative_to(OPS_ROLE)} -> {p.readlink()}" for p in walked if os.path.lexists(p) and not os.path.exists(p)]
     assert not broken, f"{OPS_ROLE.name}/ carries a name whose target does not exist: {broken}"
