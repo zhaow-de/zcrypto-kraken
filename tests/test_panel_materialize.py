@@ -274,21 +274,20 @@ def test_panel_watermark_ignores_state_sidecars(tmp_path: Path) -> None:
     assert panel_watermark(panel_root, "BTC/EUR") == H
 
 
-def test_panel_watermark_ignores_an_oversized_year_directory(tmp_path: Path) -> None:
-    # `int(year)` is arbitrary precision, but `datetime()` narrows the year to a C int -- so a
-    # `<YYYY>` directory above 2**31-1 raises OverflowError, not the ValueError the except catches,
-    # and escapes the "not ours, ignore it" promise on that very line, out of `panel_watermark` and
-    # out of every sweep that calls it. Nothing this writer creates looks like that: this tree is an
-    # rsync destination whose regeneration runbook has an operator deleting directories in it by hand.
+def test_panel_watermark_ignores_a_year_directory_that_is_not_a_date(tmp_path: Path) -> None:
+    # `int("nope")` raises ValueError; `int(year)` is arbitrary precision but `datetime()` narrows the
+    # year to a C int, so a `<YYYY>` above 2**31-1 raises OverflowError instead. Either escapes the
+    # "not ours, ignore it" promise, out of every sweep that calls `panel_watermark`, if the guard
+    # names only the other. `panel materialize`'s refusals tell the operator to delete here by hand.
     panel_root = tmp_path / "panel"
     write_hour(panel_root, "BTC/EUR", H, _materialize(tmp_path / "primary", "BTC/EUR", H))
-    # 2**31 exactly: one less is the ValueError the clause already caught, so this is the boundary.
-    oversized = panel_root / "BTC" / "EUR" / "panel-1s" / str(2**31) / "01" / "01" / "00.parquet"
-    oversized.parent.mkdir(parents=True)
-    oversized.write_bytes(b"garbage under a year directory no writer of ours can produce")
+    strays = [panel_root / "BTC" / "EUR" / "panel-1s" / y / "01" / "01" / "00.parquet" for y in (str(2**31), "nope")]
+    for stray in strays:
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes(b"garbage under a year directory no writer of ours can produce")
 
-    assert panel_watermark(panel_root, "BTC/EUR") == H  # the well-formed hour beside it still wins
-    assert oversized.exists()  # left alone, not deleted
+    assert panel_watermark(panel_root, "BTC/EUR") == H  # the well-formed hour beside them still wins
+    assert all(stray.exists() for stray in strays)  # left alone, not deleted
 
 
 # --- materialize: the watermarked sweep -----------------------------------------------------------------
