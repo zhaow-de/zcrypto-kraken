@@ -784,11 +784,14 @@ def test_a_failed_merge_leaves_no_tmp_behind(tmp_path, monkeypatch):
 CAPTURE_UNIT = Path(__file__).resolve().parents[1] / "infra/ansible/roles/capture/files/zcrypto-capture.service"
 
 
-def _unit_directives(unit: str) -> list[tuple[str, str, str]]:
+def _unit_directives(unit: Path) -> list[tuple[str, str, str]]:
     """One `(section, key, value)` per line, split on its first `=`, in file order; blank, comment and section lines dropped."""
     section, out = "", []
-    for raw in unit.splitlines():
+    for lineno, raw in enumerate(unit.read_text().splitlines(), 1):
         line = raw.strip()  # systemd strips before parsing, so an INDENTED directive is still live
+        assert not line.endswith("\\"), (
+            f"{unit.name}:{lineno} ends in a backslash: systemd joins it with the next line, this parser reads two"
+        )
         if not line or line.startswith(("#", ";")):  # systemd.syntax(7): either character opens a comment
             continue
         if line.startswith("[") and line.endswith("]"):
@@ -803,7 +806,7 @@ def test_the_capture_unit_orders_itself_against_no_clock_service():
     """Read from the unit file this repo installs: it orders itself after no clock service, and
     `Restart=always` keeps re-running construction until a start lands in that window — so a writer can be
     constructed while the host clock is still wrong."""
-    directives = _unit_directives(CAPTURE_UNIT.read_text())
+    directives = _unit_directives(CAPTURE_UNIT)
 
     # Read the ordering the unit ends up WITH, rather than searching for the spellings it must not carry.
     # `After=` only ever accumulates — `man 5 systemd.unit`: dependencies "cannot be reset to an empty list,
@@ -818,6 +821,15 @@ def test_the_capture_unit_orders_itself_against_no_clock_service():
     # `Restart=` is scalar, so systemd takes the LAST assignment: a second one further down would decide.
     restart = [value for section, key, value in directives if section == "[Service]" and key == "Restart"]
     assert restart[-1:] == ["always"], f"the restart that re-runs construction is gone: {restart or 'absent'}"
+
+
+def test_the_unit_parser_refuses_a_line_systemd_would_join(tmp_path):
+    """A backslash-terminated line is half of one directive, so the parser refuses it rather than read the halves as two."""
+    unit = tmp_path / "continued.service"
+    unit.write_text("[Service]\nRestart=no \\\nRestart=always\n")  # systemd reads `Restart=no always`, which is not `always`
+
+    with pytest.raises(AssertionError, match=r"continued\.service:2 ends in a backslash"):
+        _unit_directives(unit)
 
 
 def test_a_leading_clock_at_startup_cannot_drop_the_live_stream(tmp_path, clock):
