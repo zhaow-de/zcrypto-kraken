@@ -67,7 +67,7 @@ On `fix/t0169-cleanup-residue`, each bullet's landing commits are that branch's 
 
 ### Four Findings bullets taken with them, on the coordinator's ruling
 
-- **`tests/test_grafana_auth.py`** imports `pytest`. Its guard against reading the vault-password file called `pytest.fail` in a file that never imported it, so tripping it raised `NameError`; where that read sits inside an `except Exception:` the guard passed silently green, because `Failed` derives from `BaseException` and `NameError` does not.
+- **`tests/test_grafana_auth.py`** imports `pytest`. `test_the_password_helper_is_EXECUTED_never_read`'s guard against reading the vault-password file called `pytest.fail` in a file that never imported it, so tripping it raised `NameError`; where that read sits inside an `except Exception:` the guard passed silently green, because `Failed` derives from `BaseException` and `NameError` does not.
 - **`tests/test_archive_scan_cache.py`**'s two trailing comments credit the caller's refusal to cache a changed hour, which is what covers the blind case; `delete_cache` owes the ledger-only mutation.
 - **`tests/test_engine_concordance.py`** cites `compare_targets`' `tol` by symbol; the line it named was empty.
 - **`infra/ansible/scripts/vault-pass.sh`**'s header names `--host/--list/--vars`, matching its own case pattern, its refusal message and `fleet-deploys.md`.
@@ -75,9 +75,11 @@ On `fix/t0169-cleanup-residue`, each bullet's landing commits are that branch's 
 ### Two rulings applied while the branch was open
 
 - **`cli/engine/soak.py`** and **`cli/panel/primitives.py`**: `# D9` is `spec 00059 D9`; `# 34` and `# 17` were the `len()`s of the literals beside them and are gone; the panel constant cites `spec 00085 D1 Task 1 Step 0`, the form its own test already wrote.
-- **Topic ids carry no status annotation** in the files this branch touched. The same form on about forty-seven other lines across `cli/` and `infra/` is a convention sweep under T0164's remainder, not this PR.
+- **Topic ids carry no status annotation** in the files this branch touched — five annotations across `cli/panel/primitives.py`, the ops role's defaults and its archive-pull template. The same form elsewhere in the tree is the sweep registered under `## Suggested next steps` below.
 
 ## Suggested next steps
+
+- **A status annotation on a topic id, wherever it still stands.** The owner's rule is that a topic id is never annotated with its status — a reader looks the topic up and sees it, and the annotation goes stale on its own while the id does not. This branch applied it only where it edited; the rest is a mechanical sweep. Enumerate with `git grep -nE 'T0[0-9]{3}[^)]{0,30}(resolved|archived)' -- cli/ infra/ docs/reference README.md`, and re-tense each sentence to what is true rather than deleting the id, keeping it where a reader would look up the history. `infra/ansible/group_vars/observed/vault.yml` is never edited.
 
 - **Owner's decision**: the archive-pull → overlay-writer rename is either owed (then its own topic, a converge and a re-provision of every alert that names the metrics) or not (then the names stay, and this line is the record of that).
 - Tripwire: exclude a string literal assigned to a variable or passed as an argument from the docstring count, with a fixture that trips on a real docstring and passes on a probe source.
