@@ -1654,14 +1654,19 @@ def _expand_src(src: str, loop) -> list[str]:
     return [render(src, {"item": item}) for item in items]
 
 
+# Of the action plugins that resolve a `src:` (`grep -rn "_find_needle(" ansible/plugins/action`),
+# these four pass `files`; `template` passes `templates`.
+_FILES_SUBDIR_MODULES = frozenset({"copy", "unarchive", "assemble", "uri"})
+
+
 def _role_asset(name: str, module: str) -> Path | None:
-    # Ansible's own resolver, so a role asset is found however its `src:` is spelled — `x.j2` and
-    # `templates/x.j2` name the same file. The subdir is the one the MODULE searches, so a basename
-    # living in both is read from the copy the task would actually render. `None` is off the role:
-    # unresolvable, or resolved by the resolver's last resort, the working directory.
+    # Ansible's own resolver: `x.j2` and `templates/x.j2` name the same file under either subdir, so
+    # the MODULE's subdir only decides which copy of a BARE colliding basename the task would render.
+    # `None` is off the role: unresolvable, or resolved by the resolver's last resort, the working
+    # directory.
     from ansible.errors import AnsibleError
 
-    subdir = "files" if module.rsplit(".", 1)[-1] == "copy" else "templates"
+    subdir = "files" if module.rsplit(".", 1)[-1] in _FILES_SUBDIR_MODULES else "templates"
     try:
         found = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name))
     except AnsibleError:
