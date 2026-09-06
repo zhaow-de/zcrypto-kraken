@@ -1552,7 +1552,7 @@ rules:
     execErrState: Alerting
     for: 30m
     annotations:
-      summary: "The primary needed more than 10 minutes of healing in the last 24h. Every gap was covered, so nothing else fires -- but a host that needs this much healing is degrading. Check the reconcile ledger's would_mint/minted records for the pattern. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-healable-gap-rate"
+      summary: "The primary needed more than 10 minutes of coverable silence in the last 24h. This counts the silence the secondary witnessed and COULD cover, not what a splice inserted -- whether anything was actually lost is the ledger's residual_seconds. A host that needs this much coverage is degrading. Check the reconcile ledger's would_mint/minted records for the pattern. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-healable-gap-rate"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "202"
       unit: "seconds of healable silence per live pair over the last day"

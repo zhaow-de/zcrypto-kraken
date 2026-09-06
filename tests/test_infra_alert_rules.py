@@ -361,6 +361,25 @@ def test_the_healable_gap_rate_is_denominated_in_the_unit_its_summary_claims():
     assert f"{minutes:.0f} minutes" in summary, f"summary claims a different quantity than {_threshold(rule)}s implies"
 
 
+def test_the_healable_gap_summary_defers_the_loss_question_to_the_field_that_answers_it():
+    """`healable` counts the silence a gap was ADMITTED on, which is `claimed_seconds`; what a splice
+    inserted is `healed_seconds` and the permanent shortfall is `residual_seconds`. A summary that
+    settles the loss question itself -- "every gap was covered" -- is read on a phone as an all-clear
+    this counter cannot support, so it must name the ledger field that answers it instead."""
+    rule = _rule("zcrypto-reconcile-healable-gap-rate")
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+    assert "zcrypto_reconcile_healable_gap_seconds_total" in expr, f"not the healable counter: {expr!r}"
+    assert "zcrypto_reconcile_healed_gap_seconds_total" not in expr, (
+        f"reading MINTED repair would make the old wording true and destroy the detect-only signal: {expr!r}"
+    )
+    ledger = (REPO / "cli/archive/command.py").read_text()
+    assert '"residual_seconds"' in ledger, "the ledger key moved -- the summary would point a paged operator at nothing"
+    assert "residual_seconds" in rule["annotations"]["summary"], (
+        "the summary does not name the field that says whether anything was actually lost, so it either "
+        "leaves the question open or answers it from a counter that cannot"
+    )
+
+
 def test_the_permanent_loss_page_outlives_a_single_evaluation_hour():
     """It fires on `increase(...)` over a relative range, so the window IS how long the page stays
     up: at 1h a permanent, unbackfillable condition self-resolves to MissingSeries an hour after
