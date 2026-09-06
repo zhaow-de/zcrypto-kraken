@@ -785,3 +785,7 @@ ______________________________________________________________________
 - The two adapter-verification records send an arming operator to `infra/runbooks/engine-procedures.md`'s `engine-probe-window` — its pre-probe steps 3 and 4 and its arming section — rather than to `engine.md`, which has carried no pre-probe step since spec 00104 moved them.
 - `tests/test_grafana_auth.py`'s guard against reading the vault-password file now reports when it trips instead of raising `NameError`; a probe that put the read inside an `except Exception:` showed the old guard passing silently there, since `Failed` derives from `BaseException` and `NameError` does not.
 - Citations in code resolve from the repo alone: `spec 00059 D9`, `spec 00085 D1 Task 1 Step 0`, and `compare_targets`' `tol` by symbol rather than by a line that had moved.
+## 2026-09-06 — T0172 resolved: the daily pass resolves a content read's file operands on the host before answering autonomous
+
+- `classify --host <host>` asks that host what a `cat`'s or a `grep`'s file operands really name and holds every path that comes back to the same safe-root predicate: a link pointing out of a read-safe root, a host the classifier could not reach, and a call with no `--host` all read `prepared`. A familiar log read answering `prepared` is that resolution, not a shape table that needs widening.
+- `.claude/skills/zcrypto-daily-ops/SKILL.md`'s classify step says so at the point the command is run, so the tier is read against what the operands reach rather than how they are spelled.
