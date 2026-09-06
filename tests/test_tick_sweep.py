@@ -104,6 +104,7 @@ def test_a_corrupt_segment_is_isolated_and_the_sweep_continues(tmp_path):
     res = materialize(src, tmp_path / "r", out, now=_after(date(2026, 8, 3), hours=27))
     assert len(res.errors) == 1 and res.errors[0][0] == "BTC/EUR"
     assert res.days_written == 1  # 08-02; 08-01 errored, 08-03 is the live edge
+    assert res.days_unhealed == 1  # 08-03 alone: an unreadable segment buys an error, never an unhealed count
     assert not (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
     assert (out / "BTC" / "EUR" / "2026" / "08" / "02.parquet").exists()
 
