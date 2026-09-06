@@ -18,6 +18,7 @@
 - **Pruning has four dispositions**: cut (false or stale), condense (true but long — prefer it to cutting), keep (load-bearing, or unverifiable but valuable), relocate (true but about another symbol — check the target first; it is often already there). Ask *is this about this symbol?* before *is this true?* A preceding block describes what follows it; only a same-line trailing comment binds to its line. Findings agreed per file before editing, false-or-stale first; a config file's non-comment lines extracted before and after, byte-identical.
 - Internal tokens are fine in code prose except `WP<N>`, banned repo-wide (`operator-facing-text.md`).
 - **`infra/scripts/prose-tripwire.py` flags the block, file, row, section or entry over its threshold** — a flagged one passes the necessity gate at review or is cut; the thresholds are the script's, not this file's.
+- **The commit gate runs it as a ratchet against `infra/scripts/prose-tripwire-baseline.txt`**, which records today's offenders as conscious keeps and fails only on one it does not record at that size or larger: cut what the hook names, or — keeping it consciously — re-record the baseline with `--write-baseline` in the same commit.
 
 ## Docs (`docs/`, runbooks)
 
