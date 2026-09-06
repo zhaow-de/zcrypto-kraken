@@ -260,7 +260,7 @@ def _hour_of(hour_dir: Path, hh: str) -> datetime | None:
     day, month, year = hour_dir.name, hour_dir.parent.name, hour_dir.parent.parent.name
     try:
         return datetime(int(year), int(month), int(day), int(hh), tzinfo=UTC)
-    except ValueError:
+    except ValueError, OverflowError:
         return None
 
 

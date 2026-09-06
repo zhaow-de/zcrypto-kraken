@@ -688,6 +688,30 @@ def test_a_stray_file_in_the_tree_cannot_crash_loop_the_daemon(tmp_path, stray):
     assert (hour_dir / stray).exists()  # left alone, not swept into the segment, not deleted
 
 
+def test_a_stray_oversized_year_directory_cannot_crash_loop_the_daemon(tmp_path):
+    # A stray DIRECTORY, not a stray file. `__init__` walks the whole tree and hands every
+    # `<YYYY>/<MM>/<DD>` to `datetime(int(year), ...)`, which raises OverflowError — not the
+    # ValueError `_hour_of` catches — once the year exceeds a C int. Nothing this writer creates
+    # looks like that; a restore, an rsync or a human's `mkdir` does, and the escape kills capture
+    # for every pair and both kinds, on every restart.
+    root = tmp_path / "BTC/EUR" / "book"
+    oversized = root / "99999999999999" / "01" / "01" / "01.parquet"
+    oversized.parent.mkdir(parents=True)
+    pl.DataFrame([_book_event(9, checksum=1)], schema=BOOK_SCHEMA).write_parquet(oversized, compression="zstd")
+    _segment_path(tmp_path, 9).parent.mkdir(parents=True)
+    pl.DataFrame([_book_event(9, checksum=1)], schema=BOOK_SCHEMA).write_parquet(_segment_path(tmp_path, 9), compression="zstd")
+
+    w = _new_writer(tmp_path, flush_rows=5)  # must not raise
+
+    assert w._floor == _ts(10, 0)  # the well-formed final beside it still parses, and still seeds the floor
+    for i in range(20):
+        w.append(_hour10_event(i, i))  # nor may this
+    w.append(_book_event(11, 0))
+
+    assert pl.read_parquet(_segment_path(tmp_path, 10))["checksum"].to_list() == list(range(20))
+    assert oversized.exists()  # left alone, not deleted
+
+
 def test_a_failed_flush_never_takes_down_the_other_streams(tmp_path, monkeypatch):
     # The hottest write in the daemon (every `flush_rows` rows) and, unguarded, one OSError away from taking
     # down the single consumer task — i.e. capture for every pair and both kinds. This buffer is lost either
