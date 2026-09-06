@@ -814,3 +814,8 @@ ______________________________________________________________________
 - `.claude/rules/prose.md` names the ratchet and its remedy and says a closed citation re-tenses its sentence rather than annotating the id; `CLAUDE.md`'s commit gate lists the ratchet.
 - The `cli/`, `tests/`, `infra/` and reference files the cleanup reached carry prose that says only what the code cannot; the files the owner kept at their original prose are recorded keeps in the baseline, held from growing.
 - `.claude/skills/zcrypto-rollout-image/SKILL.md`'s NAS section says every rollout pins a `develop` build and that the digest extra var is silently unused, where the pins row used to.
+## 2026-09-06 — T0171 resolved: every date-directory parser guards both arms, and the two unguarded trees were decided rather than patterned
+
+- `zcrypto tick materialize` refuses when the newest published path under a pair is not a date, names that path and aborts the sweep, instead of crashing on it or publishing on against a tree `publish_day` alone should write; the operator deletes the named path and re-runs.
+- The NAS verify walk, the settlement scan, `replay_segment`, the canonical reader, the panel watermark and the spread calibration each skip a directory that is not a date and finish the sweep, where a year past a C int used to abort it — and the `pull complete … failed=0` line the NAS archive-pull dead-man matches on is emitted only after that walk returns.
+- T0171 is archived; the skip-or-refuse question it parked is answered per tree, on who writes it — a tree only our own writer populates refuses, a tree an operator hand-deletes from skips.
