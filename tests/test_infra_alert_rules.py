@@ -103,9 +103,9 @@ def _receivers_suppressing_resolve() -> set[str]:
 
 
 def _fires_on_absence(rule) -> bool:
-    """True when the rule pages because a measured value fell BELOW its threshold -- every dead-man
-    here, and every disk or staleness rule that says "too little of something" -- and raises, naming
-    the rule and the node, on an expression node that states no direction it can read."""
+    """True when the rule pages because a measured value fell BELOW its threshold -- a rule stating an
+    age ABOVE a limit reads as presence, however stale it means -- and raises, naming the rule and the
+    node, on an expression node that states no direction it can read."""
     below = False
     for node in rule["data"]:
         if node.get("datasourceUid") != "__expr__":
@@ -172,7 +172,7 @@ def test_a_burst_rule_keeps_the_receiver_that_suppresses_its_resolve():
         # -- or widened until direction stops mattering -- reds on the pair it got wrong.
         ("zcrypto-capture-log-dead-primary", True),  # a dead-man stated as a threshold `lt`
         ("zcrypto-engine-dark-with-exposure", True),  # the same question folded into `$B < 1`
-        ("zcrypto-ops-verify-replay-backlog-stuck", False),  # a math node whose halves both read `>`
+        ("zcrypto-ops-verify-replay-backlog-stuck", False),  # a math node stating `>` and `>=`, both presence
         ("zcrypto-capture-error-logs", False),  # a burst rule stated as a threshold `gt`
     ],
 )
