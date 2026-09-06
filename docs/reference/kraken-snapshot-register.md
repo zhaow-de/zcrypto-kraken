@@ -47,8 +47,7 @@ to be pulled from `AssetPairs` as ground truth" note.
 > log's #2 row — but no pair in it carries the in-force \$2.5k break. The schedule actually in force since 2026-07-09 is
 > **0.40 % maker / 0.80 % taker** at tier 1, with breaks at \$2.5k/\$10k/\$25k — account-confirmed on
 > the logged-in Fee tab and recorded in `kraken-fee-schedule.md`, which supersedes these columns for
-> every costing purpose. That file predicted exactly this: *"the public fee-schedule page still
-> showed the old schedule when this was captured."*
+> every costing purpose.
 >
 > **What these columns are for, then:** a **drift detector on the endpoint itself**. The day they
 > move is the day Kraken finally propagated a new schedule into the public API, and a sweep that
@@ -78,14 +77,12 @@ plus nine alts) and its only fiat figure is a worked example for a **USD** leg (
 long-leg rate is rendered here with no band in the schedule to sit inside, while the two /BTC rows' 0.01 quote does
 sit inside BTC's band. **Both sides are rendered because they price opposite trades**: a
 SHORT sells the borrowed base, so the base column prices it; a **LONG on margin buys with borrowed
-quote currency**, so the quote column is the one that prices the book's long leg — rendering only
-the base side left that leg unpriced while the table looked complete. That agreement is worth keeping, because the borrow rate is the term
-that makes alt shorts ~2× BTC shorts and drives the short-BTC-only thesis.
+quote currency**, so the quote column prices the book's long leg. That agreement is worth keeping,
+because the borrow rate is the term that makes alt shorts ~2× BTC shorts and drives the
+short-BTC-only thesis.
 
-Added at sweep #1 (2026-08-04) to close a gap the sweep's review found: the register re-confirmed
-status, margin, leverage and minimums while capturing none of the ⏱ cost facts. `margin_rate` lives
-on the *asset*, not the pair. Rendered as base tier plus ladder depth; the full 12-tier ladders live
-in the snapshot JSON so a future diff can name *which* tier moved.
+`margin_rate` lives on the *asset*, not the pair. Rendered as base tier plus ladder depth; the full
+12-tier ladders live in the snapshot JSON so a future diff can name *which* tier moved.
 
 **Account-gated, but not human-gated:** the account's realised fee **tier** depends on 30-day volume and needs the
 live account — served by authenticated `kraken volume`, so the sweep reads it **automatically** and records it in the log below;
@@ -128,16 +125,12 @@ changed** — otherwise the next reader cannot tell a re-confirmed register from
 
 The last column exists because the account's own tier is the one fact here the **public** endpoints cannot supply — authenticated `kraken volume` serves it, and `cli/costs/fees.py` encodes the ladder it selects from. A sweep that silently carried the previous row's tier forward would manufacture exactly the false confirmation this log was built to make impossible, so an unperformed read is recorded as *not re-read*, never as unchanged.
 
-**Sweep #1 note — the basket held while Kraken's universe did not.** The full response lost **80 pairs net** and gained
-**15 assets** between #0 and #1, so the endpoint is demonstrably live and churning; none of that churn touched the
-twelve §3 candidates. The raw hash differs for that reason alone, which is why the verdict is read from the rendered
-candidate table rather than from the hash — **a changed hash is not a changed fact**, and treating it as one would
-manufacture an alarm every month.
+**The verdict is read from the rendered candidate table, never from the raw hash.** Kraken's universe churns between
+sweeps while the twelve §3 candidates hold, so the hash differs on a sweep in which no candidate fact moved —
+**a changed hash is not a changed fact**, and treating it as one would manufacture an alarm every month.
 
-**Re-read at #2, and what stays parked:** the fee **tier** and **AoP** were read from the logged-in account on
-2026-09-04 and are recorded in the log above — Tier 1, unchanged since #0, and AoP \$115.25, below the \$20,000 rung
-that is the lowest the AoP ladder carries. The **observed margin/rollover bands** stay parked: no endpoint reports
-them and reading them takes a live margin position, which no sweep does.
+**What stays parked: the observed margin/rollover bands.** No endpoint reports them and reading them takes a live
+margin position, which no sweep does. The fee tier and AoP are read every sweep and recorded in the log above.
 
 ## Deferred: account-gated facts
 
