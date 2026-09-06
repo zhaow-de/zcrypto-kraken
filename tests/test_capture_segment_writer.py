@@ -757,9 +757,46 @@ def test_a_failed_merge_leaves_no_tmp_behind(tmp_path, monkeypatch):
 # --- no wall clock: the disk says which hours are closed, the stream says which are over ---------
 
 
+CAPTURE_UNIT = Path(__file__).resolve().parents[1] / "infra/ansible/roles/capture/files/zcrypto-capture.service"
+
+
+def _unit_directives(unit: str) -> list[tuple[str, str, str]]:
+    """Every `(section, key, value)` the unit assigns, in file order; comments and blank lines dropped."""
+    section, out = "", []
+    for raw in unit.splitlines():
+        line = raw.strip()  # systemd strips before parsing, so an INDENTED directive is still live
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+            continue
+        key, _, value = line.partition("=")
+        out.append((section, key.strip(), value.strip()))
+    return out
+
+
+def test_the_capture_unit_orders_itself_against_no_clock_service():
+    """The premise the two leading-clock tests below rest on: nothing holds this unit back until the clock is
+    stepped, and `Restart=always` keeps re-running construction until a start lands in that window."""
+    directives = _unit_directives(CAPTURE_UNIT.read_text())
+
+    # Read the ordering the unit ends up WITH, rather than searching for the spellings it must not carry:
+    # `After=` accumulates across lines and an empty value resets the list, so a clock service joining it
+    # under any name moves this set.
+    after: list[str] = []
+    for section, key, value in directives:
+        if section == "[Unit]" and key == "After":
+            after = after + value.split() if value else []
+    assert set(after) == {"docker.service", "network-online.target"}, f"an ordering dependency changed: {after}"
+
+    # `Restart=` is scalar, so systemd takes the LAST assignment: a second one further down would decide.
+    restart = [value for section, key, value in directives if section == "[Service]" and key == "Restart"]
+    assert restart[-1:] == ["always"], f"the restart that re-runs construction is gone: {restart or 'absent'}"
+
+
 def test_a_leading_clock_at_startup_cannot_drop_the_live_stream(tmp_path, clock):
-    # zcrypto-capture.service has no `After=time-sync.target` and `Restart=always`, so a writer can be
-    # constructed in the instant before chrony's first step, with the host clock reading an hour or more
+    # The unit permits precisely this (test_the_capture_unit_orders_itself_against_no_clock_service): a writer
+    # can be constructed in the instant before chrony's first step, with the host clock reading an hour or more
     # ahead. The writer must take its hour from the events, which carry the exchange's own clock — never
     # from a clock read once at construction and never re-derived.
     clock.now = _ts(11, 35)  # the RTC leads by 90 minutes at the instant of construction...
