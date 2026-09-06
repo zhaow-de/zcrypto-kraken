@@ -36,6 +36,26 @@ def test_render_markdown_contains_basket_rows_and_provenance_hash():
     assert "XBT" in md and "XDG" in md  # alias ledger
 
 
+def _fee_cell(md: str, symbol: str, column: str) -> str:
+    """One cell of the fee/borrow/margin table, addressed by header name so a reordered column takes
+    its value with it and only a `-` reaches the caller as one."""
+    section = md.split("## Fee schedule, borrow rate & margin bands", 1)[1].split("\n## ", 1)[0]
+    table = [[cell.strip() for cell in line.strip("|").split("|")] for line in section.splitlines() if line.startswith("|")]
+    rows = [row for row in table[2:] if row[0] == symbol]
+    assert len(rows) == 1, table
+    return rows[0][table[0].index(column)]
+
+
+def test_render_markdown_carries_the_fee_and_borrow_cells_the_sweep_verdict_is_read_from():
+    """`render_markdown`'s `_f` turns a renamed or dropped key into `-`, so the sweep's UNCHANGED
+    verdict over this table is only worth the cells that still hold values. `-` is legitimate where
+    the venue reports nothing (1INCH/EUR has no base margin rate), which is why this pins BTC/EUR."""
+    md = render_markdown(build_snapshot(ASSETPAIRS, ASSETS, SYMBOLS, FETCHED_AT))
+    assert "## Fee schedule, borrow rate & margin bands" in md
+    assert _fee_cell(md, "BTC/EUR", "Taker % (base)") == "0.4"
+    assert _fee_cell(md, "BTC/EUR", "Borrow: base (shorts)") == "0.01"
+
+
 # --- the sweep's verdict is a refusal, not a table a human diffs by eye ----------------------------
 
 from cli.snapshot.register import sweep_refusals  # noqa: E402 -- the file's own section header above
