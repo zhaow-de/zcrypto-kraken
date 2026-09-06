@@ -541,7 +541,7 @@ The proofs, and what each rests on:
 | O | timer death with no staleness rule | drilled 2026-08-31 — the dead-man alone catches it, so no rule is owed |
 | I | disk watermark breach to page | drilled 2026-08-31 — breach, withheld ping and page proven end to end on a throwaway check |
 | C | the ingest plane goes dark | drilled 2026-08-31, both halves — recovery per plane depends on the host's journal-writing workload |
-| N | NAS archive-pull stall | re-drilled 2026-08-31 on the post-`T0048` path — the dead-man catches it at ~2 h 31 m, with four collateral pages |
+| N | NAS archive-pull stall | re-drilled 2026-08-31 on the post-`T0048` path — the dead-man catches it at ~2 h 31 m; the section below enumerates the pages that must fire with it |
 | C′ | Grafana Cloud dark | both routes drilled — staleness 2026-08-31, `/fail` 2026-09-01, whose induction and restore are each a converge |
 | R | the capture secondary's daemon stopped | drilled 2026-08-31 — the dead-man is the SOLE detector; the silence rules returned nothing throughout |
 | P | the secondary's unit looping on a container that cannot be created | drilled 2026-09-04 — the same dead-man pages; its restore is a converge |
