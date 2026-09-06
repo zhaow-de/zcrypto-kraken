@@ -1865,8 +1865,9 @@ def test_no_ops_role_asset_is_a_broken_link():
     assert walked, f"{OPS_ROLE.name}/ walked empty, so this selection read no entry of the role"
     for sub, entries in under.items():
         assert entries, f"{OPS_ROLE.name}/{sub}/ walked empty, so this selection read no asset of it"
-    # `rglob` does not descend a symlinked directory, and turning that on walks a parent-pointing link
-    # until PATH_MAX; so the shape is refused rather than traversed, and the claim above stays true.
+    # `rglob` does not descend a symlinked directory, and turning that on walks the kernel's 40 symlink
+    # hops into whatever the link reaches — unbounded once that is outside the role; so the shape is
+    # refused rather than traversed, and the claim above stays true.
     undescended = [f"{p.relative_to(OPS_ROLE)} -> {p.readlink()}" for p in walked if p.is_symlink() and p.is_dir()]
     assert not undescended, (
         f"{OPS_ROLE.name}/ carries a linked directory this walk does not descend, so a broken asset "
