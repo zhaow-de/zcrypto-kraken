@@ -86,8 +86,8 @@ PUSH = REPO / "infra/scripts/grafana-push.sh"
 
 # Grafana's server-side expression operators, split by the direction each gives a rule. A `math` node
 # stating `==`, `!=` or a negating `!` reverses or hides that direction and is refused rather than
-# guessed; one stating no comparison at all is arithmetic feeding the threshold that does compare,
-# and is passed over.
+# guessed. So is one stating no comparison at all: `1 - $A` under a threshold `gt 0.5` is a dead-man
+# the threshold's own operator reads as a burst, which is the answer the refusal exists to prevent.
 _ABSENCE_OPERATORS = {"lt", "lte", "<", "<="}
 _PRESENCE_OPERATORS = {"gt", "gte", ">", ">="}
 _MATH_OPERATOR = re.compile(r"[<>!=]=|[<>!]")
@@ -105,7 +105,7 @@ def _receivers_suppressing_resolve() -> set[str]:
 def _fires_on_absence(rule) -> bool:
     """True when the rule pages because a measured value fell BELOW its threshold -- every dead-man
     here, and every disk or staleness rule that says "too little of something" -- and raises, naming
-    the rule and the node, on an expression node whose direction it cannot read."""
+    the rule and the node, on an expression node that states no direction it can read."""
     below = False
     for node in rule["data"]:
         if node.get("datasourceUid") != "__expr__":
@@ -124,10 +124,10 @@ def _fires_on_absence(rule) -> bool:
                 "classify -- teach it the node's direction rather than letting it score an unread rule as a burst"
             )
         unreadable = [op for op in found if op not in _ABSENCE_OPERATORS | _PRESENCE_OPERATORS]
-        if unreadable or (kind == "threshold" and not found):
+        if unreadable or not found:
             raise AssertionError(
-                f"{rule['uid']}: {kind} node {ref!r} states operators {unreadable or '[]'}, whose direction this "
-                "reader cannot follow -- a dead-man read as a burst rule is one pinned to a silent clear"
+                f"{rule['uid']}: {kind} node {ref!r} states no direction this reader can follow "
+                f"(operators {found or '[]'}) -- a dead-man read as a burst rule is one pinned to a silent clear"
             )
         below = below or any(op in _ABSENCE_OPERATORS for op in found)
     return below
@@ -193,7 +193,19 @@ def test_the_absence_reader_refuses_a_direction_it_cannot_read():
             {"refId": "C", "datasourceUid": "__expr__", "model": {"type": "threshold", "expression": "B"}},
         ],
     }
-    with pytest.raises(AssertionError, match=r"zcrypto-invented-dead-man: math node 'B' states operators \['=='\]"):
+    refused = r"zcrypto-invented-dead-man: %s node %s states no direction this reader can follow \(operators %s\)"
+    with pytest.raises(AssertionError, match=refused % ("math", "'B'", r"\['=='\]")):
+        _fires_on_absence(unreadable)
+
+    # Arithmetic under a threshold is the shape that used to be passed over, and it is where the
+    # silent wrong answer lived: `1 - $A` inverts the direction the threshold's own `gt` then reads.
+    unreadable["data"][1]["model"] = {"type": "math", "expression": "1 - $A"}
+    with pytest.raises(AssertionError, match=refused % ("math", "'B'", r"\[\]")):
+        _fires_on_absence(unreadable)
+
+    # The threshold arm, which nothing reached while B raised first: a node carrying no evaluator.
+    unreadable["data"][1]["model"] = {"type": "math", "expression": "$A < 1"}
+    with pytest.raises(AssertionError, match=refused % ("threshold", "'C'", r"\[\]")):
         _fires_on_absence(unreadable)
 
     unreadable["data"][1]["model"] = {"type": "sql", "expression": "SELECT 1"}
