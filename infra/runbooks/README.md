@@ -46,6 +46,8 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zaccess-disk-high`](zaccess.md#zaccess-disk-high) — ALERT: the bridgehead's root filesystem is under 15% free.
 - [`zaccess-tunnel-stale`](zaccess.md#zaccess-tunnel-stale) — ALERT: the WireGuard tunnel's handshake age is over 300 s at one end or both.
 - [`zaccess-cert-expiring`](zaccess.md#zaccess-cert-expiring) — ALERT: a tracked TLS certificate is under 14 days from expiry.
+- [`zaccess-converge`](zaccess.md#zaccess-converge) — PROCEDURE: converging the bridgehead needs an agent holding only its own key, and the command that builds one.
+- [`zaccess-revoke-client-cert`](zaccess.md#zaccess-revoke-client-cert) — PROCEDURE: dropping a client cert's pin, and the host copy the converge does not delete.
 
 ### [`ops.md`](ops.md) — the nightly archive sweep and the tape-bars dataset
 

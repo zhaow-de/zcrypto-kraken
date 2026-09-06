@@ -4,6 +4,22 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 `README.md` beside this file is the index, and states what belongs in a runbook at all.
 
+<a name="zaccess-converge"></a>
+
+## zaccess-converge — PROCEDURE: converging the bridgehead needs a single-identity SSH agent
+
+Every converge of this host needs an agent holding **only its own key**. `ssh_hardening` leaves `ssh_max_auth_retries` at its `devsec.hardening` default, so sshd here offers `MaxAuthTries 2`, and `infra/ansible/scripts/run.sh` loads all five vaulted fleet deploy keys into one agent with `files/deploy_zaccess_ed25519` **last** — both tries go to other hosts' keys before the right one is offered, and the run dies on `Too many authentication failures`. The other four hosts sit earlier in that load order, so only `zaccess` trips it.
+
+So converge it not through `run.sh` but from `infra/ansible/`, where `ansible.cfg` supplies the vault password independently: `eval "$(ssh-agent -s)"; uv run ansible-vault view --vault-password-file scripts/vault-pass.sh files/deploy_zaccess_ed25519 | ssh-add -; ANSIBLE_SSH_EXTRA_ARGS="-o IdentitiesOnly=yes -o IdentityFile=$PWD/files/deploy_zaccess_ed25519.pub" uv run ansible-playbook site.yml --limit zaccess --tags access`. That agent has no trap of its own the way `run.sh`'s does — `ssh-agent -k` when the play is done.
+
+<a name="zaccess-revoke-client-cert"></a>
+
+## zaccess-revoke-client-cert — PROCEDURE: revoking a client cert
+
+Delete its PEM from `infra/ansible/roles/access/files/pinned-leaves/` and converge. `access_pinned_leaves` globs that directory and the Caddyfile template renders one `file /etc/caddy/pinned-leaves/<name>.pem` line per PEM inside its `verifier leaf` block, so the re-rendered Caddyfile drops the pin and the leaf is refused at the next handshake.
+
+The role ships that directory with `ansible.builtin.copy`, which has no `--delete`, so **also `sudo rm /etc/caddy/pinned-leaves/<name>.pem` on the bridgehead** for hygiene; the file is inert either way, because the Caddyfile no longer names it. Confirm by value: `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reads 0.
+
 ______________________________________________________________________
 
 <a name="zaccess-bridgehead-dark"></a>
@@ -23,7 +39,7 @@ The bridgehead runs Alloy **natively** (an apt package, no docker) — the only 
 1. `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`.
 2. `systemctl status alloy` — is the unit running at all?
 3. `journalctl -u alloy --no-pager -n 100` — a config parse failure (a hand edit that didn't survive the next converge, or a credentials rotation that didn't reach `/etc/default/alloy`) is the usual cause on this host, since the config copy here is deliberately ungated (every converge ships it, so there is no separate drift-assert task to catch a bad render before it lands).
-4. `systemctl restart alloy` is the usual fix. If it will not stay up, check `/etc/default/alloy` for the six `GRAFANA_*` values and re-converge (`--limit zaccess --tags access`) to re-render them.
+4. `systemctl restart alloy` is the usual fix. If it will not stay up, check `/etc/default/alloy` for the six `GRAFANA_*` values and re-converge (`--limit zaccess --tags access`) to re-render them — that converge needs a single-identity SSH agent — [`zaccess-converge`](#zaccess-converge).
 5. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
 
 ### Retire when
