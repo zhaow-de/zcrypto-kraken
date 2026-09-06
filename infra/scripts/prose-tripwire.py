@@ -308,8 +308,9 @@ def baseline_text(offenders: list[Offender]) -> str:
     return "".join(_line(o) + (f"\t{o.anchor}" if o.anchor else "") + "\n" for o in sorted(offenders))
 
 
-def read_baseline(path: str) -> collections.Counter:
-    known: collections.Counter = collections.Counter()
+def read_baseline(path: str) -> dict[tuple[str, str, str], list[float]]:
+    """Every recorded offender's measured value, pooled under its key -- the same shape `baseline()` builds for `--since`."""
+    known: dict[tuple[str, str, str], list[float]] = {}
     with open(path, encoding="utf-8") as fh:
         for raw in fh:
             row = raw.rstrip("\n")
@@ -317,22 +318,24 @@ def read_baseline(path: str) -> collections.Counter:
                 continue
             head, _, anchor = row.partition("\t")
             path_field, _, rest = head.partition(":")
-            known[(path_field, rest.split(":", 1)[1].split()[0], anchor)] += 1
+            kind, measured = rest.split(":", 1)[1].split()[:2]
+            known.setdefault((path_field, kind, anchor), []).append(float(measured))
     return known
 
 
-def against_baseline(offenders: list[Offender], known: collections.Counter):
-    """New: a path+kind+anchor the baseline does not record. Grown: more of one kind in one file than it records."""
+def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]):
+    """New: no recorded value for its key at least as large -- `new_since`'s rule, so a keep may shrink but never grow.
+    Grown: more offenders of one kind in one file than the baseline records. Retired: recorded values nothing matched."""
     current = collections.Counter(o.key for o in offenders)
-    new = [o for o in sorted(offenders) if not known[o.key]]
+    recorded = collections.Counter({key: len(pool) for key, pool in known.items()})
+    new = new_since(offenders, known)
     grown = []
-    for path, kind in sorted({(p, k) for p, k, _ in current} | {(p, k) for p, k, _ in known}):
+    for path, kind in sorted({(p, k) for p, k, _ in current} | {(p, k) for p, k, _ in recorded}):
         now = sum(n for (p, k, _), n in current.items() if (p, k) == (path, kind))
-        was = sum(n for (p, k, _), n in known.items() if (p, k) == (path, kind))
+        was = sum(n for (p, k, _), n in recorded.items() if (p, k) == (path, kind))
         if now > was:
             grown.append((path, kind, now, was))
-    retired = sum(max(0, n - current[key]) for key, n in known.items())
-    return new, grown, retired
+    return new, grown, sum(len(pool) for pool in known.values())
 
 
 def render(offenders: list[Offender]) -> str:

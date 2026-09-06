@@ -560,7 +560,7 @@ class TestSince:
 
 
 class TestTheBaselineRatchet:
-    """The ratchet fails on a new offender or a file grown past its recorded count, never on a keep."""
+    """The ratchet fails on an offender the baseline does not record at that size or larger, never on a keep."""
 
     N = 5
 
@@ -587,8 +587,23 @@ class TestTheBaselineRatchet:
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
 
-    def test_a_block_that_grew_by_a_line_passes(self, tree: Path, capsys) -> None:
+    def test_a_block_that_grew_by_a_line_fails_and_is_printed(self, tree: Path, capsys) -> None:
         (tree / "kept.py").write_text(_py(["# kept"] * (self.N + 1), 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"kept.py:1: comment-block {self.N + 1} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[-1] == "new: 1 grown: 0 retired: 1"
+
+    def test_the_recorded_block_unchanged_passes(self, tree: Path, capsys) -> None:
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+
+    def test_a_block_that_shrank_but_is_still_over_the_bar_passes(self, tree: Path, capsys) -> None:
+        """The arm is directional: a keep getting shorter is the improvement the ratchet exists to allow."""
+        big = tw.COMMENT_BLOCK_LINES + 3
+        (tree / "kept.py").write_text(_py(["# kept"] * big, 6 * big))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        (tree / "kept.py").write_text(_py(["# kept"] * (big - 1), 6 * big))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
 
@@ -600,13 +615,14 @@ class TestTheBaselineRatchet:
         assert "grown: kept.py comment-block 2 > 1 recorded" in out
         assert out[-1] == "new: 1 grown: 1 retired: 0"
 
-    def test_a_duplicate_of_the_recorded_offender_fails_on_the_count_alone(self, tree: Path, capsys) -> None:
-        """The one case the anchor cannot see: a second block whose anchor the baseline already records."""
+    def test_a_duplicate_of_the_recorded_offender_fails_and_the_count_arm_names_the_file(self, tree: Path, capsys) -> None:
+        """A second block whose anchor is already recorded: the size arm reports it, the count arm names its file."""
         block = _py(["# kept"] * self.N, 6 * self.N)
         (tree / "kept.py").write_text(block + block)
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         out = capsys.readouterr().out.splitlines()
-        assert out == ["grown: kept.py comment-block 2 > 1 recorded", "new: 0 grown: 1 retired: 0"]
+        assert "grown: kept.py comment-block 2 > 1 recorded" in out
+        assert out[-1] == "new: 1 grown: 1 retired: 0"
 
     def test_an_offender_in_an_unrecorded_file_fails_and_is_printed(self, tree: Path, capsys) -> None:
         (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
