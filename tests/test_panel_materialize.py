@@ -276,9 +276,9 @@ def test_panel_watermark_ignores_state_sidecars(tmp_path: Path) -> None:
 
 def test_panel_watermark_ignores_a_year_directory_that_is_not_a_date(tmp_path: Path) -> None:
     # `int("nope")` raises ValueError; `datetime()` narrows the year to a C int, so a `<YYYY>` above
-    # 2**31-1 raises OverflowError instead -- either escapes the "not ours, ignore it" promise, out of
-    # every sweep calling `panel_watermark`, if the guard names only the other. Skipped and not
-    # refused: unlike the tick tree, this one is not our writer's alone; `materialize` sends an operator in.
+    # 2**31-1 raises OverflowError instead -- either escapes the "not ours, ignore it" promise if the
+    # guard names only the other. Skipped, not refused as the tick tree's is: this one is not our
+    # writer's alone, and `panel materialize`'s refusals send an operator in.
     panel_root = tmp_path / "panel"
     write_hour(panel_root, "BTC/EUR", H, _materialize(tmp_path / "primary", "BTC/EUR", H))
     strays = [panel_root / "BTC" / "EUR" / "panel-1s" / y / "01" / "01" / "00.parquet" for y in (str(2**31), "nope")]

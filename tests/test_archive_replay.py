@@ -152,9 +152,8 @@ def test_a_year_directory_that_is_not_a_date_loses_its_hour_not_the_run(tmp_path
     """Both arms: an hour under a non-numeric year and under one past the C-int ceiling replay with `hour=None`."""
     # `int()` is arbitrary-precision, so the two throws come from different calls: `int("nope")` raises
     # ValueError, while `datetime(2**31, ...)` raises OverflowError from its C-int year conversion.
-    # `_hour_from_path` is typed `datetime | None` and `replay_segment` reads its result BEFORE the
-    # try that isolates every other failure, so the narrower except broke the never-raises contract
-    # `_sidecar_digest` and `_replay_and_checkpoint` both name and neither of them guards against.
+    # `replay_segment` reads `_hour_from_path` before the try that isolates every other failure, so a
+    # throw here escapes its never-raises contract.
     frame = _explode("BTC/EUR", H, _coherent_messages())
     well_formed = _book(tmp_path, "BTC/EUR", H, frame)
     oversized = tmp_path / "BTC" / "EUR" / "book" / str(2**31) / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.parquet"
