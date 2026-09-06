@@ -291,8 +291,28 @@ def _rendered_unit() -> str:
     return unit
 
 
+def _directive(unit: str, prefix: str) -> str:
+    """The first line assigning `prefix`, taken from a unit no line of which systemd would join with the next."""
+    matches = []
+    for lineno, raw in enumerate(unit.splitlines(), 1):
+        line = raw.strip()  # systemd strips before parsing, so an INDENTED directive is still live
+        if not line or line.startswith(("#", ";")):  # systemd.syntax(7): either character opens a comment
+            continue
+        # Below the comment skip: every continuation systemd joins OPENS on a directive line, and a
+        # comment ending in a backslash opens nothing. A wrapped directive read as its first half
+        # passes checks the whole would fail — half of ReadWritePaths= is half of this unit's only
+        # structural bound on a script that deletes bytes on the trade-key host.
+        assert not line.endswith("\\"), (
+            f"the unit's line {lineno} ends in a backslash: systemd joins it with the next, this reads two"
+        )
+        if line.startswith(prefix):
+            matches.append(line)
+    assert matches, f"the unit assigns no {prefix} directive"
+    return matches[0]
+
+
 def test_the_unit_invokes_the_script_the_role_installs_with_the_argument_order_it_expects():
-    exec_start = next(line for line in _rendered_unit().splitlines() if line.startswith("ExecStart="))
+    exec_start = _directive(_rendered_unit(), "ExecStart=")
     binary, journal_dir, days, *rest = exec_start.removeprefix("ExecStart=").split()
 
     install_dest = next(
@@ -319,7 +339,7 @@ def test_protectsystem_strict_still_permits_writing_the_journal_dir():
     unit = _rendered_unit()
     assert any(l.strip() == "ProtectSystem=strict" for l in unit.splitlines())
     journal = f"{_role_vars()['engine_state_dir']}/journal"
-    rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
+    rw = _directive(unit, "ReadWritePaths=")
     assert journal in _rw_paths(rw), f"{journal} is not writable under ProtectSystem=strict: {rw}"
 
 
@@ -332,7 +352,7 @@ def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
     and the container path Alloy's collector globs.
     """
     unit = _rendered_unit()
-    exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    exec_start = _directive(unit, "ExecStart=")
     # config-selector-ok: exact token membership in the split argv, not a substring of the line
     assert "--textfile" in exec_start.split(), "the prune must publish a .prom — a oneshot has no /metrics endpoint to scrape"
     out = exec_start.split("--textfile", 1)[1].strip().split()[0]
@@ -346,8 +366,21 @@ def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
     directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
     assert directory == f"/host/root{host_dir}", f"prune writes {host_dir}, Alloy reads {directory} — a .prom nobody scrapes"
 
-    rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
+    rw = _directive(unit, "ReadWritePaths=")
     assert host_dir in _rw_paths(rw), f"ProtectSystem=strict would block the write: {rw}"
+
+
+def test_the_unit_reader_refuses_a_line_systemd_would_join():
+    """A backslash-terminated line is half of one directive, so the reader refuses it rather than take that half."""
+    # systemd joins the pair, then fails to parse the one value it gets and DISCARDS the assignment,
+    # leaving the default `Restart=no` — a unit that never restarts, not one that restarts on failure.
+    with pytest.raises(AssertionError, match=r"line 2 ends in a backslash"):
+        _directive("[Service]\nRestart=no \\\nRestart=always\n", "Restart=")
+
+
+def test_the_unit_reader_reads_a_backslash_terminated_comment_as_a_comment():
+    """A comment ending in a backslash opens no continuation, so the reader drops it and takes the line below."""
+    assert _directive("# a comment ending in a backslash \\\n[Service]\nRestart=always\n", "Restart=") == "Restart=always"
 
 
 def test_the_deployed_retention_matches_the_spec():
