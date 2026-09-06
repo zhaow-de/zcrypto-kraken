@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long sections, long changelog entries.
 Usage: prose-tripwire.py [--since REV | --write-baseline PATH | --check-baseline PATH] [PATH ...] — default scope the TRACKED cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/**/README.md infra/external-systems.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/.
-An offender's identity in the baseline is its path, its kind and its anchor — a block's first line, or a row's or heading's first cell, whitespace-normalised — never its line number, which every edit above it moves — a path change re-keys every offender in the file, so a rename is re-recorded, not edited."""
+An offender's identity in the baseline is its path, its kind and its anchor — a block's first line, or a row's or heading's first cell, whitespace-normalised — never its line number, which every edit above it moves — a path change re-keys every offender in the file and an edit to a block's first line re-keys that block, so a rename or a retouched opening line is re-recorded, not edited."""
 
 from __future__ import annotations
 
 import argparse
 import ast
-import collections
 import fnmatch
 import io
 import os
@@ -334,17 +333,17 @@ def read_baseline(path: str) -> dict[tuple[str, str, str], list[float]]:
 
 
 def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]):
-    """New: no recorded value for its key at least as large -- `new_since`'s rule, so a keep may shrink but never grow.
-    Grown: more offenders of one kind in one file than the baseline records. Retired: recorded values nothing matched."""
-    current = collections.Counter(o.key for o in offenders)
-    recorded = collections.Counter({key: len(pool) for key, pool in known.items()})
-    new = new_since(offenders, known)
-    grown = []
-    for path, kind in sorted({(p, k) for p, k, _ in current} | {(p, k) for p, k, _ in recorded}):
-        now = sum(n for (p, k, _), n in current.items() if (p, k) == (path, kind))
-        was = sum(n for (p, k, _), n in recorded.items() if (p, k) == (path, kind))
-        if now > was:
-            grown.append((path, kind, now, was))
+    """New: nothing recorded under its key that it could have grown from -- `new_since`'s rule, so a keep may shrink but never grow.
+    Grown: a smaller recorded value under the same key, which it consumes. Retired: recorded values nothing matched."""
+    new, grown = [], []
+    for o in new_since(offenders, known):
+        pool = known.get(o.key, [])
+        smaller = [m for m in pool if m < o.measured]
+        if smaller:
+            pool.remove(max(smaller))
+            grown.append((o, max(smaller)))
+        else:
+            new.append(o)
     return new, grown, sum(len(pool) for pool in known.values())
 
 
@@ -386,8 +385,8 @@ def main(argv: list[str] | None = None) -> int:
         new, grown, retired = against_baseline(offenders, read_baseline(args.check_baseline))
         for o in new:
             print(_line(o))
-        for path, kind, now, was in grown:
-            print(f"grown: {path} {kind} {now} > {was} recorded")
+        for o, was in grown:
+            print(f"grown: {_line(o)} recorded {was:.10g}")
         print(f"new: {len(new)} grown: {len(grown)} retired: {retired}")
         if new or grown:
             print(f"cut what is listed above, or record it as a keep with --write-baseline {args.check_baseline}", file=sys.stderr)

@@ -82,8 +82,8 @@ repos:
         always_run: true
 
   # A RATCHET, not a bar: the committed baseline holds today's offenders as conscious keeps and this
-  # fails only on one it does not record, or on a file grown past its recorded count for a kind. The
-  # baseline is generated (`--write-baseline`) and regenerated at every rebase — never hand-edited.
+  # fails only on one it does not record, or on a recorded keep that grew. The baseline is generated
+  # (`--write-baseline`) and regenerated at every rebase — never hand-edited.
   - repo: local
     hooks:
       - id: prose-tripwire
