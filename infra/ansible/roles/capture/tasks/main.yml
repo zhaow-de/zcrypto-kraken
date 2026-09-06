@@ -1,10 +1,9 @@
 ---
-# Deploys the capture daemon: renders compose.yaml + the systemd unit, and lets the unit's own
-# ExecStartPre/ExecStart/ExecStop ("docker compose pull" / "up" / "down") own the actual
-# pull+run — that's also what resumes capture on boot. Ansible only starts/enables/restarts it.
-# Fleet users/groups (spec 00057): zcrypto-data (renamed from kraken-capture, uid kept) SERVES the
-# NAS capture pull via an rrsync forced-command key, so it needs a login-capable shell. DSM rejects a
-# custom shell, but these hosts are Debian, so the same rrsync-only wrapper the ops node uses works.
+# Deploys the capture daemon: renders the compose file and the systemd unit, and lets the unit's own
+# ExecStartPre/ExecStart/ExecStop own the actual pull and run, which is also what resumes capture on
+# boot. Ansible only starts, enables and restarts it. zcrypto-data SERVES the NAS capture pull via
+# an rrsync forced-command key, so it needs a login-capable shell: these hosts are Debian, so the
+# rrsync-only wrapper works here where DSM rejects it (spec 00057).
 - name: install the rrsync-only login shell for zcrypto-data
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/files/rrsync-shell"
@@ -197,18 +196,14 @@
     group: root
     mode: "0755"
 
-# The zcrypto CLI's own Loki push creds for the CAPTURE container (spec 00068 D5) -- distinct
-# from the alloy secrets rendered further below, and NOT gated on `capture_alloy_digest`: this
-# render is unrelated to whether Alloy is deployed at all. Root-owned (unlike alloy-secrets.env,
-# which the dedicated zcrypto-alloy user must own to read): `docker compose up` for this service
-# runs as root (the zcrypto-capture.service systemd unit, ExecStart), never as a key-owning user.
-# `logship_loki_token is defined` is the structural safety net -- the vault already carries it
-# fleet-wide (2026-07-22), so this renders on every `observed` host from the next converge; a
-# converge landing before that vault change existed would simply skip this task, matching the same
-# guard on the compose file's env_file/environment additions below that reference this file.
-# Deliberately does NOT `notify: restart capture service` (Minor-3, 00068 T4/T5 review): a
-# credential rotation must never restart live capture -- a token rotation takes effect at the next
-# attended recreate, not by this render alone.
+# The CLI's own Loki push credentials for the CAPTURE container (spec 00068 D5), distinct from the
+# alloy secrets below and NOT gated on the Alloy digest, since this render is unrelated to whether
+# Alloy is deployed. Root-owned, unlike alloy-secrets.env: `docker compose up` for this service runs
+# as root, never as a key-owning user.
+#
+# Deliberately does NOT notify a capture restart: a credential rotation must never restart live
+# capture, and a new token takes effect at the next attended recreate. The `is defined` guard is the
+# structural safety net, matching the same guard on the compose additions that reference this file.
 - name: render the logship secrets env file
   ansible.builtin.template:
     src: logship-secrets.env.j2
@@ -253,13 +248,11 @@
     name: rsync
     state: present
 
-# rrsync lives at /usr/bin/rrsync on Debian 13 (trixie) — the rsync package installs it there
-# since bookworm (rsync 3.2.4 promoted it out of /usr/share/doc/rsync/scripts/). The absolute
-# path keeps the forced command independent of the login shell's PATH.
-# The capture data export the NAS pulls now lands on zcrypto-data (the m2m data user, spec 00057),
-# not the admin `deploy`. exclusive:false ADDS it; deploy's old copy is dropped by a one-time step
-# AFTER the NAS repoints (the cutover's dual-authorization window) so the pull never drops. zcrypto-data OWNS
-# the 0750 capture dir now, so the old `deploy`-in-kraken-capture-group traversal hack is gone.
+# The absolute path to rrsync keeps the forced command independent of the login shell's PATH.
+#
+# The capture data export the NAS pulls lands on zcrypto-data, the m2m data user, not the admin
+# account (spec 00057). `exclusive: false` ADDS it; removing the admin's old copy is registered in
+# T0169 and happens after the NAS repoints, so the pull never drops.
 - name: install the sync_capture pubkey as a forced-command entry on zcrypto-data (segments read-only)
   ansible.posix.authorized_key:
     user: zcrypto-data
@@ -267,17 +260,15 @@
     key: "{{ sync_capture_authorized_key }}"
     key_options: 'command="/usr/bin/rrsync -ro {{ capture_data_dir }}",restrict'
 
-# --- Segment retention (spec 00050 D8, closes T0032's retention half): a daily timer bounds the
-# host's local spool at `capture_retention_days` of committed hours. The NAS mirror is the durable
-# archive; this disk is not. The script is the load-bearing part — it deletes finals + sidecars and
-# nothing else (never .part / .held / .corrupt) — and is tested directly by tests/test_capture_prune.py.
-# --- One-off timer metrics -------------------------------------------------------------------
-# One-off timers publish a .prom here; long-lived services use /metrics (spec 00071 D1). 0755
-# root:root: Alloy runs as a non-key-owning user with only the journal gid, so world-readable is
-# what lets its textfile collector read what root writes. Publishers must chmod 0644 their output --
-# mktemp makes 0600 and `mv` preserves it, which silently hides the metric from the collector.
-# Placed OUTSIDE the Alloy-digest gate below: the directory and its producers must exist whether or
-# not this converge carries a digest, or the .prom writers land with nowhere to write.
+# Segment retention (spec 00050 D8, T0032): a daily timer bounds the host's local spool. The NAS
+# mirror is the durable archive and this disk is not. The script is the load-bearing part and
+# tests/test_capture_prune.py drives it.
+#
+# One-off timers publish a .prom here while long-lived services use /metrics (spec 00071 D1). World-
+# readable is what lets Alloy's textfile collector read what root writes, since Alloy runs as a non-
+# key-owning user with only the journal gid. Publishers must chmod their output: mktemp makes it
+# owner-only and `mv` preserves that, which silently hides the metric from the collector. Placed
+# OUTSIDE the Alloy-digest gate, or the .prom writers land with nowhere to write.
 - name: ensure the node-exporter textfile directory exists
   ansible.builtin.file:
     path: "{{ capture_textfile_dir }}"
@@ -348,13 +339,11 @@
     daemon_reload: true
     enabled: true
     state: started
-  # The three tasks above CREATE this unit, and under --check they write nothing, so systemd cannot
-  # find it and the preview fails -- on exactly the first-install hosts a preview matters most for.
-  # converge.sh exits 4 on a failed preview and never reaches the confirm, so without this guard the
-  # documented converge path is unusable for both capture hosts (measured 2026-09-01: neither had the
-  # unit, `de9025f2` added it on 2026-08-29, and the last capture converge was 2026-08-28 -- so no
-  # preview had ever included it). `check_mode: false` is the WRONG fix here: it would start a timer
-  # on a live host during a read-only pass.
+  # The three tasks above CREATE this unit and write nothing under --check, so systemd cannot find
+  # it and the preview fails -- on exactly the first-install hosts a preview matters most for.
+  # converge.sh exits on a failed preview and never reaches the confirm, so without this guard the
+  # documented converge path is unusable there. `check_mode: false` is the WRONG fix: it would start
+  # a timer on a live host during a read-only pass.
   when: not ansible_check_mode
 
 - name: install the segment-prune script
@@ -390,20 +379,16 @@
     enabled: true
     state: started
 
-# --- The capture host's telemetry stack — Grafana Alloy (spec 00057; T0020's first-time telemetry
-# stand-up on the capture VPSes). Gated on the pinned Alloy digest: a converge without it skips the
-# whole block, so this stays inert until the attended first-start step (plan Tasks 5/7) passes a
-# digest. This RENDERS the stack only — it never starts Alloy (no systemd unit, no `docker compose
-# up`, no restart handler), mirroring the ops role's render-only Alloy block: the first start is an
+# The capture host's telemetry stack (spec 00057, T0020), gated on the pinned Alloy digest so a
+# converge without one skips the whole block. This RENDERS the stack only and never starts Alloy --
+# no unit, no `compose up`, no restart handler -- mirroring the ops role: the first start is an
 # attended step, not a converge side effect.
 
 # The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
-# it -- the container binds `conf/`, not its parent -- so it is inert, but it is NOT harmless: a
-# stale file at the path an operator would guess returns plausible DATA instead of an error, and
-# on 2026-09-01 that produced a confidently-wrong "three metric families are dark" report against
-# a host whose config was in fact current. Removing it fleet-wide so the guess cannot be answered.
-# Ungated for the same reason the drift check below is: inside the Alloy block it would be
-# skipped by every converge that does not carry a digest, which is every ordinary one.
+# it, so it is inert but NOT harmless: a stale file at the path an operator would guess returns
+# plausible DATA instead of an error, which is how a confidently-wrong dark-metrics report was
+# produced against a host whose config was current. Removed fleet-wide so the guess cannot be
+# answered, and ungated for the same reason as the drift check below.
 - name: remove the pre-conf layout's stale alloy config
   ansible.builtin.file:
     path: "{{ capture_alloy_dir }}/config.alloy"
@@ -411,10 +396,10 @@
 
 # T0110: the gate above skips the config copy on any converge that omits the digest -- by design,
 # and the reason both capture hosts silently ran a month-old keep-regex while the repo was correct.
-# Every automated check in this repo compares the repo to ITSELF; nothing compared a host to it.
-# This is that check, and it lives OUTSIDE the gate on purpose: inside, it would be skipped by
-# exactly the converge that caused the drift. It asserts only when a config is already deployed, so
-# a host that has never had Alloy (nothing to drift) passes, and the first real deploy creates it.
+# Every other automated check here compares the repo to ITSELF; nothing compared a host to it. This
+# lives OUTSIDE the gate on purpose, because inside it would be skipped by exactly the converge that
+# causes the drift. It asserts only when a config is already deployed, so a host that never had
+# Alloy passes.
 - name: read the deployed alloy config's checksum (drift check — never gated on the digest)
   ansible.builtin.stat:
     path: "{{ capture_alloy_dir }}/conf/config.alloy"
@@ -446,11 +431,10 @@
       `-e capture_alloy_digest=<currently-running>`, then recreate the container so the new file is
       read. Runbook context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
     success_msg: "deployed Alloy config matches the repo"
-  # Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
-  # copy the file, so asserting first would fail the host, drop it from every later task, and
-  # leave the copy unreached -- making a legitimate config change unconvergeable and looping the
-  # fail_msg's own remedy back into this assert. The drift-CAUSING converge is the one that omits
-  # the digest, and that is exactly the case still checked.
+  # Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to copy
+  # the file, so asserting first would fail the host, drop it from every later task and leave the
+  # copy unreached -- making a legitimate config change unconvergeable and looping the message's own
+  # remedy back into this assert.
   when:
     - capture_alloy_digest is not defined
     - capture_deployed_alloy_config.stat.exists
@@ -458,14 +442,12 @@
 - name: install the capture telemetry stack — Grafana Alloy (needs the pinned Alloy digest)
   when: capture_alloy_digest is defined
   block:
-    # Alloy mounts /:/host/root:ro (alloy-compose.yaml.j2) for free-disk-space metrics, so a
-    # key-owning user's ~/.ssh would be readable straight through that mount, no escalation needed —
-    # the exact protection the NAS replicates with its dedicated uid-1031 (T0030). The capture hosts
-    # hold no private key today, but running Alloy as a key-owning user would still be the wrong
-    # default, so `zcrypto-alloy` is a dedicated, non-login system user that owns nothing key-adjacent
-    # — the direct-read path stays closed by construction. (The docker-socket residual this used to
-    # sit alongside is gone — the socket mount and its group_add retired with `discovery.docker`,
-    # spec 00068 D6.)
+    # Alloy mounts the host root read-only for free-disk metrics, so a key-owning user's ~/.ssh
+    # would be readable straight through that mount with no escalation -- the protection the NAS
+    # replicates with its own dedicated uid (T0030). These hosts hold no private key today, but
+    # running Alloy as a key-owning user would still be the wrong default, so it runs as a dedicated
+    # non-login system user owning nothing key-adjacent and the direct-read path stays closed by
+    # construction.
     - name: create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)
       ansible.builtin.user:
         name: zcrypto-alloy
@@ -484,12 +466,11 @@
         capture_alloy_uid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][1] }}"
         capture_alloy_gid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][2] }}"
 
-    # The host's persistent journal files are root:systemd-journal 0640, and Alloy (running as the
-    # non-root zcrypto-alloy user) reads them through the /var/log/journal:/host/journal:ro mount
-    # for the capture-prune unit's host-side lines AND its own journald-driver stream (D6) — neither
-    # exists in any container json.log. NUMERIC gid, derived here (never hardcoded — it is a
-    # per-host accident). The `systemd-journal` group is created by the systemd package itself, so
-    # it exists on any Debian host.
+    # The host's persistent journal files are group-readable only, and Alloy reads them through its
+    # read-only mount for the prune unit's host-side lines and its own journald stream -- neither
+    # exists in any container json.log. The gid is NUMERIC and derived here, never hardcoded,
+    # because it is a per-host accident; the group is created by the systemd package, so it exists
+    # on any Debian host.
     - name: look up the systemd-journal group (Alloy's journal-read group_add needs its numeric gid)
       ansible.builtin.getent:
         database: group
@@ -499,12 +480,10 @@
       ansible.builtin.set_fact:
         capture_journal_gid: "{{ ansible_facts['getent_group']['systemd-journal'][1] }}"
 
-    # Admin-plane files (this dir, config.alloy, compose.yaml) are owned root:root — NOT a per-user
-    # owner like the admin zcrypto-deploy: root:root matches the capture role's own /opt/zcrypto-capture
-    # + compose convention and keeps the render decoupled from any admin account's existence/uid (it
-    # rendered before zcrypto-deploy existed, during the D1 rename). ONLY alloy-data and the rendered
-    # secrets file are owned by the dedicated Alloy user (it must WRITE the WAL, and READ the 0600
-    # secrets it does not own by default).
+    # Admin-plane files are owned root:root rather than by a per-user admin account: that matches
+    # the role's own convention and keeps the render decoupled from any admin account's existence or
+    # uid. ONLY alloy-data and the rendered secrets file are owned by the dedicated Alloy user,
+    # which must WRITE the WAL and READ a 0600 file it does not own by default.
     - name: ensure the alloy project directory exists
       ansible.builtin.file:
         path: "{{ capture_alloy_dir }}"
@@ -525,13 +504,11 @@
         group: zcrypto-alloy
         mode: "0755"
 
-    # Plain `copy`, not `template` — this file is 100% static (the host label is read at runtime from
-    # constants.hostname, not templated); see the file's own header for why `template:` would be wrong.
-    # In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
-    # binds the inode, and this `copy` writes atomically (temp file + rename), so the inode is
-    # replaced and a running container keeps reading the old one -- forever, silently, however many
-    # times the converge reports `changed`. Mounting the directory makes the new file visible
-    # through the path instead. The directory holds ONLY the config: the project dir also carries
+    # Plain `copy`, not `template`: this file is entirely static, and its own header says why
+    # templating would be wrong. In its OWN directory, which is what the compose file bind-mounts --
+    # a single-file bind mount binds the INODE, and this copy writes atomically, so the inode is
+    # replaced and a running container keeps reading the old one, silently, however many times the
+    # converge reports changed. The directory holds ONLY the config; the project dir also carries
     # alloy-secrets.env, which must not appear inside the container at a second path.
     - name: ensure the alloy config directory exists
       ansible.builtin.file:
@@ -550,11 +527,10 @@
         mode: "0644"
       notify: reload alloy
 
-    # Renders straight from the vault (group_vars/observed/vault.yml) — capture_host is in the
-    # `observed` group, so the six GRAFANA_* creds resolve. no_log + diff: false: without both, a
-    # converge prints the six Grafana Cloud credentials to the terminal and any log capturing the run.
-    # Owned by zcrypto-alloy (the container's `user:`), so it can read a 0600 file it does not own by
-    # default.
+    # Renders straight from the vault, which resolves because capture_host is in the `observed`
+    # group. no_log with diff false: without both, a converge prints the Grafana Cloud credentials
+    # to the terminal and to any log capturing the run. Owned by the Alloy user so it can read a
+    # 0600 file it does not own by default.
     - name: render the alloy secrets env file
       ansible.builtin.template:
         src: alloy-secrets.env.j2
