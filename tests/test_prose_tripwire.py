@@ -111,8 +111,13 @@ class TestTheTokenizer:
         total, prose, code = tw.measure_python(src)
         assert (total, prose, code) == (2, 0, 2)
 
-    def test_a_triple_quoted_string_is_prose(self) -> None:
+    def test_a_triple_quoted_string_outside_a_docstring_position_is_code(self) -> None:
         src = 'x = """\nnot code\n"""\ny = 1\n'
+        total, prose, code = tw.measure_python(src)
+        assert (total, prose, code) == (4, 0, 4)
+
+    def test_a_triple_quoted_string_in_a_docstring_position_is_prose(self) -> None:
+        src = '"""d\nd\n"""\ny = 1\n'
         total, prose, code = tw.measure_python(src)
         assert (total, prose, code) == (4, 3, 1)
 
@@ -156,6 +161,35 @@ class TestTheFileProseFloor:
 
     def test_a_one_class_module_with_its_one_sentence_docstring_is_not_reported(self) -> None:
         assert tw.offenders_for("cli/x/errors.py", 'class E(Exception):\n    """One sentence."""\n') == []
+
+
+class TestStringLiterals:
+    """A triple-quoted literal counts as prose only where the AST puts a docstring."""
+
+    N = 5
+
+    def _lines(self, opener: str, closer: str) -> list[str]:
+        return [opener] + ["d"] * (self.N - 2) + [closer]
+
+    def test_a_module_docstring_over_the_bar_is_a_block(self) -> None:
+        offs = tw.offenders_for("a.py", _py(self._lines('"""d', '"""'), 6 * self.N))
+        assert [(o.kind, o.measured) for o in offs] == [("comment-block", self.N)]
+
+    def test_an_assigned_literal_of_the_same_size_is_code(self) -> None:
+        assert tw.offenders_for("a.py", _py(self._lines('SQL = """', '"""'), 6 * self.N)) == []
+
+    def test_an_argument_literal_of_the_same_size_is_code(self) -> None:
+        assert tw.offenders_for("a.py", _py(self._lines('f("""', '""")'), 6 * self.N)) == []
+
+    def test_a_function_docstring_is_a_block_and_a_literal_in_its_body_is_not(self) -> None:
+        body = "\n".join("    " + line for line in self._lines('BODY = """', '"""'))
+        doc = "\n".join("    " + line for line in self._lines('"""d', '"""'))
+        offs = tw.offenders_for("a.py", f"def g():\n{doc}\n{body}\n    return 1\n" + "z = 0\n" * (12 * self.N))
+        assert [(o.line, o.kind, o.measured) for o in offs] == [(2, "comment-block", self.N)]
+
+    def test_a_literal_does_not_push_a_file_over_the_prose_percentage(self) -> None:
+        src = 'BLOB = """\n' + "d\n" * 60 + '"""\n' + "x = 1\n" * 20
+        assert tw.offenders_for("a.py", src) == []
 
 
 class TestTableRow:

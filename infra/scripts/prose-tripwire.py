@@ -5,6 +5,7 @@ Usage: prose-tripwire.py [--since REV] [PATH ...] — default scope cli/ tests/ 
 from __future__ import annotations
 
 import argparse
+import ast
 import glob
 import io
 import os
@@ -58,7 +59,26 @@ class Block:
     anchor: str
 
 
+def _docstring_starts(src: str) -> set[int] | None:
+    """The line of every AST docstring: the first statement of a module, class or function, and nowhere else."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError, ValueError:
+        return None
+    starts = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        first = node.body[0] if node.body else None
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+            starts.add(first.value.lineno)
+    return starts
+
+
 def _tokenize(src: str):
+    starts = _docstring_starts(src)
+    if starts is None:
+        return None
     prose, code, comments, docstrings = set(), set(), set(), []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(src).readline):
@@ -66,8 +86,12 @@ def _tokenize(src: str):
                 prose.add(tok.start[0])
                 comments.add(tok.start[0])
             elif tok.type == tokenize.STRING and tok.string.lstrip("rbuRBU").startswith(('"""', "'''")):
-                prose.update(range(tok.start[0], tok.end[0] + 1))
-                docstrings.append((tok.start[0], tok.end[0]))
+                span = range(tok.start[0], tok.end[0] + 1)
+                if tok.start[0] in starts:
+                    prose.update(span)
+                    docstrings.append((tok.start[0], tok.end[0]))
+                else:
+                    code.update(span)
             elif tok.type not in _SKIP_TOKENS:
                 code.add(tok.start[0])
     except tokenize.TokenError, SyntaxError:
