@@ -1052,7 +1052,7 @@ def test_a_future_dated_final_can_never_brick_the_stream(tmp_path, clock, caplog
     with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):  # a DOWNGRADE must read as a level, not silence
         w = _new_writer(tmp_path, flush_rows=5)
 
-    assert _drop_levels(caplog, "ignoring a future-dated segment") == [logging.ERROR]  # the comment's "loudly", asserted
+    assert _drop_levels(caplog, "ignoring a future-dated segment") == [logging.ERROR]
     assert w._floor is None  # the nonsense final is not "the newest closed hour"
     for i in range(20):
         w.append(_hour10_event(i, i))

@@ -379,4 +379,4 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0164 — the global prose cleanup under `prose.md`](archive/T0164-global-prose-cleanup-under-prose-md.md) — resolved 2026-09-06: every directory group prose-only under `prose.md`, the residual offenders held by the tripwire ratchet's committed baseline, the 33 `cli/` REVISE files kept at their original prose by the owner's decision, every registration the batches collected landed in its own home.
 
-- [T0174 — T0168's tests-remainder tail: nine claims the prune never saw](archive/T0174-t0168s-tests-remainder-tail-nine-claims-the-prune-never-saw.md) — **resolved 2026-09-06**: the owner pruned the nine to six keeps and three drops; each keep is now a guard with a constructed defect that trips it, and each drop carries its reason.
+- [T0174 — T0168's tests-remainder tail: nine claims the prune never saw](archive/T0174-t0168s-tests-remainder-tail-nine-claims-the-prune-never-saw.md) — **resolved 2026-09-06**: the owner pruned the tail to keeps and drops; each keep is now a guard with a constructed defect that trips it, and each drop carries its reason.

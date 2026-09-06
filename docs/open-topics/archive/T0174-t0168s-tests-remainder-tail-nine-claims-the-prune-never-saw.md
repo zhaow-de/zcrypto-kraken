@@ -32,9 +32,9 @@ Verbatim from T0168's `### From the tests/ remainder` section at `7be03116`, eac
 
 ## Resolution
 
-The owner pruned the nine on 2026-09-06, agreeing in full to the coordinator's recommendations: six keeps, three drops. All of it landed on branch `fix/t0174-tests-remainder-tail`.
+The owner pruned the tail on 2026-09-06, agreeing in full to the coordinator's recommendations. All of it landed on branch `fix/t0174-tests-remainder-tail`.
 
-### The six keeps
+### The keeps
 
 Each a guard with a constructed defect that trips it and a production-shaped true positive beside it.
 
@@ -45,7 +45,7 @@ Each a guard with a constructed defect that trips it and a production-shaped tru
 - The future-dated final's "loudly" is a level assertion separating silence from a downgrade — `test(capture): the word "loudly" over a log line nothing read`.
 - The alloy token sweep reads a capitalised name and keys on `.lower()` — `test(obs): the metric sweep reads a name spelled with a capital` — and rather than leave the canonicalisation's blind spot enumerated in prose, refuses any capitalised `zcrypto_` name outright, in `test(obs): a capitalised metric name refused, so the case the sweep canonicalises cannot arise`.
 
-### The three drops
+### The drops
 
 With the reasons the owner agreed to.
 

@@ -14,8 +14,7 @@ ENGINE_TEMPLATE = REPO / "infra/ansible/roles/engine/templates/compose.yaml.j2"
 OPS_TEMPLATE = REPO / "infra/ansible/roles/ops/templates/compose.yaml.j2"
 OPS_DEFAULTS = REPO / "infra/ansible/roles/ops/defaults/main.yml"
 
-# StrictUndefined is the load-bearing setting: a variable the role sets and a test omits must raise
-# here, never render empty into a pin that then looks fine
+# StrictUndefined is the load-bearing setting: a variable the role sets and a test omits raises here instead of rendering empty into a pin
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 # Dummy but complete contexts: every variable each template references (outside the
