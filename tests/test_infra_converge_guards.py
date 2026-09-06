@@ -6,6 +6,7 @@ never a re-implementation of the logic; `load_tasks` reads the committed YAML.
 
 import hashlib
 import json
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -1635,9 +1636,10 @@ OPS_DIGEST_GATE = "ops_image_digest is defined"
 OPS_ROLE = ANSIBLE / "roles" / "ops"
 
 
-def _expand_src(src: str, loop) -> list[str]:
-    # `{{ item }}` against a literal `loop:` — a list, or a Jinja expression over literals. A src the
-    # templar cannot expand comes back as it stands, for the caller to refuse by name.
+def _expand_src(src: str, task: dict) -> list[str]:
+    # `{{ item }}` against a literal `loop:` — a list, or a Jinja expression over literals; a `loop:`
+    # the templar cannot expand is refused by task name, because the names it would have expanded to
+    # are exactly the assets that would otherwise go unread.
     from ansible.errors import AnsibleError
     from ansible.template import trust_as_template
 
@@ -1647,35 +1649,69 @@ def _expand_src(src: str, loop) -> list[str]:
         except AnsibleError:
             return text
 
-    if "{{" not in src:
+    loop = task.get("loop")
+    if "{{" not in src or loop is None:
         return [src]
     items = loop if isinstance(loop, list) else render(loop, {}) if isinstance(loop, str) else None
-    if not isinstance(items, list) or not items:
-        return [src]
+    assert isinstance(items, list) and items, (
+        f"{task['name']!r} renders {src!r} over a `loop:` this selection cannot expand ({loop!r}): the "
+        "assets it expands to go unread"
+    )
     return [render(src, {"item": item}) for item in items]
 
 
-def _role_asset(name: str) -> Path | None:
-    # Both of the role's asset directories, without asking which one the module searches: a name that
-    # resolves to one file, or to the same content under both, is unambiguous whichever module renders
-    # it; a name that resolves to two DIFFERENT files is refused rather than guessed. `None` is off the
-    # role: unresolvable, or resolved by the resolver's last resort, the working directory.
+def _shape(path: Path) -> str:
+    if path.is_symlink():
+        return f"symlink -> {path.readlink()}"
+    return "directory" if path.is_dir() else "file" if path.is_file() else "neither a file nor a directory"
+
+
+def _asset_candidates(name: str) -> list[Path]:
+    # Under each asset directory: the name as spelled, present by `lexists` so a link counts whatever
+    # it points at, else Ansible's own resolver for the equivalent spellings that reach the same asset
+    # through the role root, kept to what lands inside the role.
     from ansible.errors import AnsibleError
 
-    found: dict[Path, str] = {}
+    found: list[Path] = []
     for subdir in ("files", "templates"):
-        try:
-            path = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name)).resolve()
-        except AnsibleError:
-            continue
-        if path.is_file() and OPS_ROLE.resolve() in path.parents:
-            found[path] = hashlib.sha256(path.read_bytes()).hexdigest()
-    assert len(set(found.values())) < 2, (
-        f"{name!r} names a different file under each of {OPS_ROLE.name}/'s asset directories — "
-        f"{sorted(str(p) for p in found)}: which one a task renders is the module's to decide, so this "
-        "selection cannot read what that task consumes"
-    )
-    return next(iter(found), None)
+        base = OPS_ROLE / subdir
+        direct = Path(os.path.normpath(base / name))
+        if direct.is_relative_to(base) and os.path.lexists(direct):
+            path = direct
+        else:
+            try:
+                path = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name))
+            except AnsibleError:
+                continue
+            if not path.is_relative_to(OPS_ROLE):
+                continue
+        if path not in found:
+            found.append(path)
+    return found
+
+
+def _role_asset(name: str) -> Path | None:
+    # Candidacy is decided on existence before anything is filtered, so the only silent outcome is
+    # absence: two candidates pass only as one file's content under both directories, one passes only
+    # as a regular file inside the role, and every other shape — a directory, a link leaving the role,
+    # a broken link — is refused by name and by what it is.
+    found = _asset_candidates(name)
+    if not found:
+        return None
+    usable = [p for p in found if p.is_file() and OPS_ROLE.resolve() in p.resolve().parents]
+    shapes = ", ".join(f"{p} ({_shape(p)})" for p in found)
+    if len(found) > 1:
+        assert len(usable) == len(found) and len({hashlib.sha256(p.read_bytes()).hexdigest() for p in usable}) == 1, (
+            f"{name!r} names something under both of {OPS_ROLE.name}/'s asset directories other than one "
+            f"file's content — {shapes}: which one a task renders is the module's to decide, so this "
+            "selection cannot read what that task consumes"
+        )
+    else:
+        assert usable, (
+            f"{name!r} names something under {OPS_ROLE.name}/ that is not a regular file inside the role "
+            f"— {shapes}: this selection cannot read what that task consumes"
+        )
+    return usable[0]
 
 
 def _body_text(task: dict) -> str:
@@ -1693,7 +1729,7 @@ def _consumed_text(task: dict) -> str:
         src = value.get("src") if isinstance(value, dict) else None
         if not isinstance(src, str):
             continue
-        for name in _expand_src(src, task.get("loop")):
+        for name in _expand_src(src, task):
             resolved = _role_asset(name) if isinstance(name, str) else None
             if resolved is None:
                 assert "/" in src, (
