@@ -1,5 +1,5 @@
-"""Both Jinja guard branches of every compose template here must render valid YAML, with the metrics
-port and env landing on the right service (spec 00069 D10)."""
+"""Both Jinja guard branches of every compose template RENDERED here must render valid YAML, with
+the metrics port and env landing on the right service (spec 00069 D10)."""
 
 from pathlib import Path
 
