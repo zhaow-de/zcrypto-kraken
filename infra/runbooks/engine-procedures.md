@@ -538,3 +538,45 @@ That row is the operand \[[T0160]\]'s bump sub-item evaluates — it is the oper
 ### Retire when
 
 `flatten` is no longer a subcommand of `zcrypto engine` in `cli/engine/command.py`, or `/usr/local/sbin/zcrypto-flatten` is no longer rendered by the engine role.
+
+______________________________________________________________________
+
+<a name="engine-adhoc-key-read"></a>
+
+## engine-adhoc-key-read — PROCEDURE
+
+### What you are seeing
+
+**Nothing fired.** You need a one-off read that only the live trade key can answer — an account read, a short script against the venue — on the host that holds it. No order is sent, but the key is shared with a running engine, so the read is not consequence-free.
+
+### What it means
+
+The trade key material lives only in `/opt/zcrypto-engine/engine.env` (0600, root-only), which the rendered compose pulls into the engine container as `env_file`. So **an ad-hoc read that needs the trade key runs inside the engine image**, with `--env-file /opt/zcrypto-engine/engine.env` — the shape `/usr/local/sbin/zcrypto-flatten` already uses, in `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2`.
+
+**The `--entrypoint` override is load-bearing, not decoration.** The image's own ENTRYPOINT (`infra/docker/Dockerfile`) is a launcher that builds its own argument list and execs `zcrypto capture`; it never reads what follows the image name, so without an override the read does not run — a capture daemon starts on the engine host instead. Its VALUE is whatever you are running, not a copy of flatten's `zcrypto`: a `zcrypto` subcommand takes `--entrypoint zcrypto`, a plain script takes `--entrypoint python`.
+
+The two controller-side vaulted-key wrappers, `infra/scripts/probe-with-vaulted-key.sh` and `infra/scripts/mint-with-vaulted-key.sh`, each exec ONE fixed harness that places orders. Neither is a credential path for a read.
+
+### What to do
+
+1. **Take the image from the RUNNING container, never from a pins row.**
+
+```
+ssh zcrypto sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine
+```
+
+It returns `repo@sha256:<full>`. A rollback re-pins a host without re-truing any row in `docs/reference/fleet-pins.md`, so a row can name an image the host is not running. `.Config.Image` is one of the narrow fields CLAUDE.md `## Secrets` allows here — never widen the format to the whole object.
+
+2. **Drive it from the workstation, not on the host**, with `IMAGE` set to what step 1 returned:
+
+```
+ssh zcrypto sudo docker run --rm -i --env-file /opt/zcrypto-engine/engine.env --entrypoint python "$IMAGE" - < script.py
+```
+
+ssh forwards local stdin into the container, so the script never lands on the engine host and nothing is left to delete. A mount, or a redirect typed inside an ssh session, means copying it there first.
+
+3. **Run it inside the engine play's own window.** The read shares the trade key with the still-running engine, so one engine order or cancel may be rejected around it; the engine reconciles that at its next 4-hourly boundary. The window is the one `site.yml`'s `engine window — refuse a converge outside the inter-cycle gap` asserts: start at least 30 min after a boundary (00/04/08/12/16/20 UTC) and finish at least 10 min before the next. The 30 min is the conservative floor — once the boundary's cycle has journaled `completed_at` into `/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/cycle-<HH>.json`, the floor is 5 min past that completion instead, which is earlier.
+
+### Retire when
+
+The engine no longer takes the trade key as container environment — i.e. the engine role no longer renders `engine.env` to `/opt/zcrypto-engine/engine.env`.

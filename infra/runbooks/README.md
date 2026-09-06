@@ -85,6 +85,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`engine-flatten`](engine-procedures.md#engine-flatten) — PROCEDURE: the emergency halt — one command that stops the engine and closes the whole account at market, at whatever price the market gives.
   - [`flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs) — the third limit: the five legs the flat verdict cannot see, so exit 0 can be a false all-clear.
   - [`flatten-read-only-dry-run`](engine-procedures.md#flatten-read-only-dry-run) — beside the press: who runs the read-only dry run that proves the five account reads, and the adapter-verification row it discharges into.
+- [`engine-adhoc-key-read`](engine-procedures.md#engine-adhoc-key-read) — PROCEDURE: the one-off read that needs the live trade key — inside the engine image, driven from the workstation, inside the engine play's own window.
 
 ### [`order-semantics-verification.md`](order-semantics-verification.md) — the adapter's order semantics on a new nautilus version
 
