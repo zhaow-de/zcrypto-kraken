@@ -241,7 +241,7 @@ def panel_watermark(panel_root: Path, pair: str) -> datetime | None:
         parts = p.parts
         try:
             hours.append(datetime(int(parts[-4]), int(parts[-3]), int(parts[-2]), int(match.group(1)), tzinfo=UTC))
-        except ValueError:  # a hand-made directory that is not a date -- not ours, ignore it
+        except ValueError, OverflowError:  # a hand-made directory that is not a date -- not ours, ignore it
             continue
     return max(hours) if hours else None
 
