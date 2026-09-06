@@ -1,33 +1,25 @@
 #!/usr/bin/env python3
 """Mint the three account ingredients an attended flatten pass needs, on a live Kraken account.
-
-`zcrypto engine flatten` has three halves to exercise and no fixture mints them: a RESTING ORDER its
-own client did not place, a MARGIN POSITION (the leg `margin_legs`, the reduce-only close and the
-`position_side` read all run on), and a NON-EUR SPOT BALANCE for the sell path. This script mints
-those three and stops. It has no cancel path -- not for its own legs, not for anything else -- so it
-cannot unmake a fixture, its own or a hand-placed one.
-
-Two properties are load-bearing and neither announces itself when broken:
-
-EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways -- `BLIND_ORDER_READ_LEGS`,
-imported rather than restated -- and on those the adapter's order-report read returns success with the
-row dropped. A fixture resting there is invisible to the very verdict the attended pass reads, so the
-pass would report clean against an account it cannot see. `assert_same_key` refuses at plan time,
-before anything is sized or printed.
-
-EVERY SIZE COMES FROM THE VENUE'S OWN ROW AT RUN TIME. `ordermin`, `costmin` and both steps come
-from the raw AssetPairs row on the run that uses them -- never from a remembered figure, which is
-rejected at submit if it has fallen below a floor and silently accepted at a notional nobody chose if
-it has not; and never from the adapter's instrument object, which is a TRANSLATION of that row and
-can hand back None for a field it did not populate. A floor this script cannot read is a refusal:
-defaulted to zero it would size a leg at nothing and report it clear of a minimum the venue still
-enforces. The resting leg is sized at the price it will REST at, not at the bid -- `costmin` binds on
-what an order is worth, and this one is worth a stated fraction of the market.
-
-The client is the bare `KrakenSpotHttpClient` -- the same construction `flatten` reads with, so the
-legs land on the surface that will be asked about them. It is deliberately not the order-semantics
-harness's node: that harness cancels its outstanding orders when it stops, which is correct for a
-probe and fatal for a fixture.
+`zcrypto engine flatten` has three halves to exercise and no fixture mints them: a RESTING ORDER
+its own client did not place, a MARGIN POSITION, and a NON-EUR SPOT BALANCE for the sell path.
+This mints those and stops. It has no cancel path -- not for its own legs, not for anything else
+-- so it cannot unmake a fixture, its own or a hand-placed one.
+EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and on those the
+adapter's order-report read returns success with the row dropped -- so a fixture resting there is
+invisible to the very verdict the attended pass reads, and the pass would report clean against an
+account it cannot see. `BLIND_ORDER_READ_LEGS` is imported rather than restated, so the two copies
+on the live trade path cannot drift.
+EVERY SIZE COMES FROM THE VENUE'S OWN ROW AT RUN TIME, never from a remembered figure -- which is
+rejected at submit if it has fallen below a floor and silently accepted at a notional nobody chose
+if it has not -- and never from the adapter's instrument object, which is a TRANSLATION of that
+row and can hand back None for a field it did not populate. A floor this script cannot read is a
+refusal: defaulted to zero it would size a leg at nothing and report it clear of a minimum the
+venue still enforces. The resting leg is sized at the price it will REST at, not at the bid,
+because the cost floor binds on what an order is worth.
+The client is the bare `KrakenSpotHttpClient`, the same construction flatten reads with, so the
+legs land on the surface that will be asked about them. Deliberately NOT the order-semantics
+harness's node: that cancels its outstanding orders when it stops, which is correct for a probe
+and fatal for a fixture.
 """
 
 from __future__ import annotations
@@ -426,15 +418,14 @@ def require_credentials() -> tuple[str, str]:
 
 async def read_pair(client, pair: str) -> tuple[float, object]:
     """The run's own best bid, and the instrument object -- for `cache_instrument` and nothing else.
-
-    The object is needed because `submit_order` documents `The instrument is not found in cache.`
-    among its errors and the cache's only writer is `cache_instrument`. It is NOT where a size comes
-    from, and the reason is categorical rather than incidental: this adapter never maps `costmin`
-    into `min_notional` at all, so the object cannot supply one of the two floors -- it answers None,
-    always, for every pair. (`min_quantity` IS filled correctly; measured on the pinned wheel by
-    serving this repo's own AssetPairs fixture over loopback, which also confirms on 2.0.0rc4 what
-    `cli/engine/venuestate.py` recorded on 1.230.0.) A floor that arrives as None and is read as 0.0
-    always clears. `pair_limits` reads the row the venue enforces instead.
+    The object is needed because `submit_order` documents a not-in-cache error and the cache's
+    only writer is `cache_instrument`. It is NOT where a size comes from, and the reason is
+    categorical rather than incidental: this adapter never maps the cost floor into its notional
+    field at all, so the object answers None for it on every pair. Measured on the pinned wheel by
+    serving this repo's own AssetPairs fixture over loopback, which also confirms on the current
+    version what `cli/engine/venuestate.py` recorded on the previous one. A floor that arrives as
+    None and is read as zero always clears, so `pair_limits` reads the row the venue enforces
+    instead.
     """
     from nautilus_trader.model import InstrumentId
 
@@ -491,20 +482,18 @@ async def read_account(client, pair: str, limits: PairLimits, best_bid: float) -
 
 def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tuple[str, ...]:
     """Every non-EUR base the account holds, with the MINT pair's own base judged against its floors.
-
-    Two things a bare currency-code set gets wrong about THIS pair's base, both in the direction of
-    SKIPPING the spot leg and leaving the attended pass with nothing to sell. A code with a dust
-    balance still satisfies a presence test: `flatten` drops a leg whose free amount is not positive
-    and the venue refuses one under `ordermin`, so a residual left by a partial fill would satisfy
-    this forever. And the venue spells assets its own way -- `XXDG` for DOGE -- so a raw code never
-    equals the common base it stands for; the mapping is `flatten`'s `resolve_base` rather than a
-    second copy of it here.
-
+    Two things a bare currency-code set gets wrong about THIS pair's base, both in the direction
+    of SKIPPING the spot leg and leaving the attended pass with nothing to sell. A code with a
+    dust balance still satisfies a presence test, while `flatten` drops a leg whose free amount is
+    not positive and the venue refuses one under its floor -- so a residual left by a partial fill
+    would satisfy this forever. And the venue spells assets its own way, so a raw code never
+    equals the common base it stands for; the mapping is `flatten`'s own rather than a second copy
+    here.
     The floors belong to the mint pair and to no other row. Every OTHER non-EUR code is listed as
     held at any size above zero, because this line is also what the operator reads to see the
-    account, and judging a BTC balance by SOL's `ordermin` at SOL's bid would print
-    `non-EUR: (none)` over an account holding a thousand euros of it. A zero row is still not a
-    holding. Nothing is gated on those codes -- only `base` is.
+    account, and judging one asset's balance by another's floor at another's bid would print an
+    empty account over a substantial one. Nothing is gated on those codes; only the mint pair's
+    base is.
     """
     held = set()
     for row in balances:
@@ -596,12 +585,11 @@ async def _run(
     prompt=input,
 ) -> int:
     """Injected the way `run_flatten` injects its readers, so a test can drive the whole path with a
-    recording client and assert on what was NOT sent -- which is the property that matters here.
-
+    recording client and assert on what was NOT sent, which is the property that matters here.
     Both factories are REQUIRED, with no default between them: a default binds the live one at
     definition, so a test that patches the module attribute instead of passing the argument gets a
-    real client built and a real request sent, silently and successfully. That has happened here.
-    `main` is the only caller that names the live pair.
+    real client built and a real request sent, silently and successfully -- which has happened
+    here. `main` is the only caller that names the live pair.
     """
     assert_same_key(args.pair)
     require_eur_quote(args.pair)
