@@ -11,6 +11,7 @@ import http.client
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import traceback
 import urllib.error
@@ -560,6 +561,90 @@ def read_verdict(token: str, *, opener=urllib.request.urlopen) -> list[Check]:
     return checks
 
 
+# The security patching of the host that holds the live trade key: `/var/log/unattended-upgrades/`
+# is empty there, so the unit's own fields are the whole record, and `Result` and `ExecMainStatus`
+# describe the LAST run for as long as the timer stays stopped -- which is why the stamp's age is
+# read beside them.
+UPGRADE_HOST = "zcrypto"
+UPGRADE_UNIT = "apt-daily-upgrade.service"
+UPGRADE_STAMP = "/var/lib/apt/periodic/unattended-upgrades-stamp"
+# The stamp the upgrade itself writes, not `update-stamp`, which the download half touches on days no
+# upgrade runs. Two days rather than one because the stamps under that directory were observed about
+# a day apart, so a one-day bound would report normal spread as a stopped timer.
+UPGRADE_STALE_AFTER = timedelta(days=2)
+REBOOT_FLAG = "/var/run/reboot-required"
+REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
+UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
+
+# One ssh for every value, and every key printed unconditionally: an absent file then reads as an
+# empty VALUE, where a conditional `echo` would leave a missing key indistinguishable from a command
+# that never ran. Read-only by construction -- `systemctl show`, `stat`, `test`, `tr` -- because this
+# instrument never acts on a host.
+UPGRADE_COMMAND = (
+    "ssh",
+    # Stdin is inherited, so a password prompt or a first-contact host-key confirmation -- the two
+    # this flag disables -- would hold this read until the timeout rather than failing it, a silent
+    # daily stall on the check for a host gone quiet. A CHANGED host key needs no flag: the client's
+    # default refuses that connection outright.
+    "-o",
+    "BatchMode=yes",
+    UPGRADE_HOST,
+    f"systemctl show {UPGRADE_UNIT} -p Result -p ExecMainStatus -p ExecMainExitTimestamp; "
+    f'echo "StampEpoch=$(stat -c %Y {UPGRADE_STAMP} 2>/dev/null)"; '
+    f'echo "RebootRequired=$(test -e {REBOOT_FLAG} && echo yes)"; '
+    # `cat … | tr`, never `tr < …`: a redirect from a missing file is the SHELL's error, so the
+    # command's own `2>/dev/null` cannot suppress it and the absent-packages case would print a
+    # diagnostic on every run that reads it.
+    f"echo \"RebootPkgs=$(cat {REBOOT_PACKAGES} 2>/dev/null | tr '\\n' ' ')\"",
+)
+
+
+def ssh_read(command: tuple[str, ...]) -> str:
+    """The live runner: one read-only remote command's stdout, timeout-guarded, non-zero raising."""
+    return subprocess.run(command, capture_output=True, text=True, timeout=_TIMEOUT, check=True).stdout
+
+
+def read_unattended_upgrades(*, now: datetime, runner) -> Check:
+    """Whether the trade-key host's last unattended upgrade succeeded and its timer is still firing.
+
+    Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
+    """
+    try:
+        fields = dict(line.split("=", 1) for line in runner(UPGRADE_COMMAND).splitlines() if "=" in line)
+        result = fields["Result"]
+        status = fields["ExecMainStatus"]
+        # systemd's human form, not ISO. The weekday is dropped rather than matched with `%a`, whose
+        # abbreviations follow the RUNNER's locale and would make this parse fail off an English one.
+        # A field systemd leaves empty raises here, and a record this cannot read is the same finding
+        # as a host it cannot reach -- the convention `read_verdict` already follows.
+        ran = datetime.strptime(fields["ExecMainExitTimestamp"].split(" ", 1)[-1], "%Y-%m-%d %H:%M:%S %Z").replace(
+            tzinfo=timezone.utc
+        )
+        age = now - datetime.fromtimestamp(int(fields["StampEpoch"]), timezone.utc)
+    # An unreachable host, a timeout and a non-zero ssh are all `unreadable`, never a FAIL: a FAIL
+    # here says the host's patching is broken, which is not what a dropped connection shows.
+    except (*_UNREACHABLE, subprocess.SubprocessError) as exc:
+        return Check(UPGRADE_CHECK, " ".join(UPGRADE_COMMAND), ok=False, value=f"unreadable: {exc}")
+    value = (
+        f"Result={result}, ExecMainStatus={status}, "
+        f"last run {ran:%Y-%m-%dT%H:%M:%SZ}, stamp {int(age.total_seconds() // 3600)} h old"
+    )
+    # Informational, and deliberately not a Check of its own: a row that can never read FAIL is a
+    # guard that cannot fail. The operator choosing an attended reboot window wants WHICH packages
+    # `node_reboot_required` is already flagging.
+    if fields.get("RebootRequired"):
+        value += f"; reboot pending: {fields.get('RebootPkgs', '').strip() or 'flag set, packages unknown'}"
+    # A pending reboot is the normal state between a kernel patch and its attended window, so it is
+    # absent from `ok` by design: conflating it with a failed upgrade would report attention on every
+    # one of those days and bury the failed patch this check exists to surface.
+    return Check(
+        UPGRADE_CHECK,
+        " ".join(UPGRADE_COMMAND),
+        ok=result == "success" and status == "0" and age <= UPGRADE_STALE_AFTER,
+        value=value,
+    )
+
+
 def read_deploys(window: timedelta, *, now: datetime, path: Path | None = None) -> list[dict]:
     log = path or DEPLOY_LOG
     if not log.exists():
@@ -754,11 +839,13 @@ def main(argv: list[str]) -> int:
             f"# Daily pass\n\n**Verdict: attention** (exit 2)\n\n## Sources that could not be read\n- the vault could not be read, so no source was queried: {type(exc).__name__}: {exc}"
         )
         return 2
+    verdict = read_verdict(token)
+    verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),
         deadmen=read_deadmen(token),
-        verdict=read_verdict(token),
+        verdict=verdict,
         deploys=read_deploys(window, now=now),
         reminders=read_reminders(token, now=now, window=window),
         now=now,
@@ -864,8 +951,9 @@ def _match_shape(shape: _Shape, tokens: list[str]) -> list[str] | None:
     return operands
 
 
-# Reads. Host-independent: none of them writes anywhere, so none needs a host to be safe.
-_READ_SHAPES = (
+# Reads. Host-independent: none of them writes anywhere, so none needs a host to be safe. One table,
+# not a union assembled at the call site, so nothing can consult a first-stage shape this name misses.
+_FIRST_STAGE_SHAPES = (
     _Shape(
         ("docker", "logs"),
         {"--since": _SINCE, "--until": _SINCE, "--tail": _INT, "-n": _INT, "--timestamps": None, "-t": None},
@@ -940,12 +1028,14 @@ _READ_SHAPES = (
     _Shape(("md5sum",), arity=(1, 3), classes=(_FILEREF,)),
     _Shape(
         ("grep",),
-        # `-e` is deliberately NOT value-taking, and must never become so: it would consume the
-        # pattern, leaving the first FILE at operand 0 -- which `_reads_only_safe_paths` skips as
-        # the pattern. That pair read `/etc/shadow` under an AUTONOMOUS verdict. Left as a valueless
-        # short flag the pattern stays positional and every file is checked.
+        # `-e`, `--regexp`, `-f` and `--file` are absent, valueless short letter included: each takes
+        # grep's pattern from somewhere other than operand 0, leaving a FILE standing where
+        # `_reads_only_safe_paths` skips the pattern. Their absence is what makes that skip sound.
+        # `R` is absent where `r` stays: `-R` follows a symlink met while DESCENDING a spelled directory
+        # and `-r` does not, so the letter widens what a safe root reaches. It does not open the operand
+        # hole — `-r`, `-R` and a bare grep read through an operand that is itself a link. Runbooks spell `-r`.
         {"-A": _INT, "-B": _INT, "-C": _INT, "--include": _QUOTED},
-        short=r"-[iEvnocleqrRFwxsah]{1,8}|-[ABC]\d{1,3}",
+        short=r"-[iEvnoclqrFwxsah]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 6),
         classes=(_PATTERN, _FILEREF),
     ),
@@ -993,7 +1083,7 @@ _READ_SHAPES = (
 # `zcrypto engine <sub>`: `exec-status` reads, `cycle --replace` deletes a boundary's record, and
 # `gate-export` writes a textfile. The read subcommands are named one by one for the same reason.
 _ZCRYPTO_READ_SUBS = ("exec-status", "report", "tracking-report", "decompose", "accum-replay", "soak-check")
-_ZCRYPTO_SHAPES = tuple(
+_FIRST_STAGE_SHAPES += tuple(
     _Shape(
         ("zcrypto", "engine", sub),
         {
@@ -1024,7 +1114,7 @@ _FILTER_SHAPES = (
     _Shape(
         ("grep",),
         {"-A": _INT, "-B": _INT, "-C": _INT},
-        short=r"-[iEvnocleqFwxa]{1,8}|-[ABC]\d{1,3}",
+        short=r"-[iEvnoclqFwxa]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 1),
         classes=(_PATTERN,),
     ),
@@ -1088,14 +1178,20 @@ _READ_SAFE_FILES = (
 )
 
 
-def _reads_only_safe_paths(head: str, operands: list[str]) -> bool:
+def _reads_only_safe_paths(tokens: list[str], operands: list[str], *, first_stage: bool) -> bool:
     """Every path a content head names must sit under a read-safe root, absolute and traversal-free.
 
-    `grep`'s first operand is skipped as its pattern, which holds only because no shape lets a flag
-    consume that pattern. A `*` cannot cross `/`, so a glob under a safe root stays under it; `..`
-    can leave, so it is refused outright.
+    `grep`'s operand 0 is its PATTERN, skipped however it is spelled, because no shape admits an
+    option that could put a file there -- `test_no_grep_shape_admits_a_pattern_source_option` holds
+    that for every table here. A `*` cannot cross `/`; `..` can leave, so it is refused outright. A
+    FIRST-stage content head naming no file is refused rather than asked which flag recursed it: an
+    admitted filter flag's own ARGUMENT can turn grep recursive, so what is read is the file list --
+    empty, it walks the working directory or reads a stdin the daily pass never supplies.
     """
+    head = tokens[0]
     paths = operands[1:] if head == "grep" else operands
+    if first_stage and not paths:
+        return False
     return all(".." not in path and (path.startswith(_READ_SAFE_DIRS) or path in _READ_SAFE_FILES) for path in paths)
 
 
@@ -1239,7 +1335,9 @@ def _curl_is_read(tokens: list[str]) -> bool:
 _POSTCHECKS = {"inspect": _inspect_format_is_scoped, "curl": _curl_is_read}
 
 
-def _matches(shapes, tokens: list[str]) -> list[str] | None:
+def _matches(shapes, tokens: list[str], *, first_stage: bool) -> list[str] | None:
+    """The operands of the shape admitting `tokens`, or None -- and a content head reading outside
+    the safe roots is admitted by no table, the veto sitting here because every table is read here."""
     for shape in shapes:
         operands = _match_shape(shape, tokens)
         if operands is None:
@@ -1247,6 +1345,8 @@ def _matches(shapes, tokens: list[str]) -> list[str] | None:
         check = _POSTCHECKS.get(shape.post) if shape.post else None
         if check and not check(tokens):
             continue
+        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens, operands, first_stage=first_stage):
+            return None
         return operands
     return None
 
@@ -1305,21 +1405,14 @@ def _classify_one(command: str, host: str | None) -> Tier:
     if not stages or not all(stages):
         return Tier.PREPARED
     first, *filters = stages
-    if not all(_matches(_FILTER_SHAPES, stage) is not None for stage in filters):
+    if not all(_matches(_FILTER_SHAPES, stage, first_stage=False) is not None for stage in filters):
         return Tier.PREPARED
     tokens, target = _strip_prefixes(first)
     if not tokens:
         return Tier.PREPARED
-    operands = _matches(_READ_SHAPES + _ZCRYPTO_SHAPES, tokens)
-    if operands is not None:
-        if tokens[0] in _CONTENT_HEADS and not _reads_only_safe_paths(tokens[0], operands):
-            return Tier.PREPARED
-        return Tier.AUTONOMOUS
-    lowered = command.lower()
-    if (
-        (target or host) in _TELEMETRY_HOSTS
-        and not any(obj in lowered for obj in _PROTECTED_OBJECTS)
-        and _matches(_TELEMETRY_SHAPES, tokens)
-    ):
-        return Tier.AUTONOMOUS
-    return Tier.PREPARED
+    operands = _matches(_FIRST_STAGE_SHAPES, tokens, first_stage=True)
+    if operands is None and (target or host) in _TELEMETRY_HOSTS:
+        lowered = command.lower()
+        if not any(obj in lowered for obj in _PROTECTED_OBJECTS):
+            operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True)
+    return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED

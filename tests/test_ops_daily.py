@@ -6,11 +6,14 @@ here is shaped to what the live Grafana API returns, never to what the parser ex
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import http.client
 import importlib.util
+import inspect
 import io
 import json
 import re
+import string
 import subprocess
 import sys
 import urllib.error
@@ -19,6 +22,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "ops_daily.py"
 _spec = importlib.util.spec_from_file_location("ops_daily", _SCRIPT)
@@ -1037,13 +1041,17 @@ def test_the_real_reads_survive_the_allowlists(cmd, host):
         "cat /home/deploy/.ssh/*",
         "grep -rF LOKI /etc/zcrypto-ops/",
         "grep -r . /home/deploy/.ssh/",
+        # A first-stage grep naming no file walks the working directory, which over `ssh ops` is the
+        # deploy user's home, `.ssh/` included -- a read reaching it through no operand at all.
+        "grep -r .",
+        "grep -r zcrypto",
         "cat /var/log/../opt/zcrypto-capture/logship-secrets.env",
     ],
 )
 def test_the_round_four_escapes_are_refused(cmd):
-    """Curl's writes, a Go template reaching the whole object, and a secret read through a glob or a
-    directory are PREPARED on every host -- the veto is an allowlist of WHERE a command may read,
-    never a denylist of secret-looking names."""
+    """Curl's writes, a Go template reaching the whole object, and a secret read through a glob, a
+    directory or a bare recursion are PREPARED on every host -- the veto is an allowlist of WHERE a
+    command may read, never a denylist of secret-looking names."""
     for host in ("zcrypto", "ops", "nas"):
         assert ops_daily.classify_action(cmd, host=host) is ops_daily.Tier.PREPARED, host
 
@@ -1131,11 +1139,14 @@ def test_a_read_safe_root_holds_only_what_was_checked(cmd):
         "grep -e X /etc/shadow /var/log/syslog",
         "grep --regexp=X /etc/shadow",
         "grep -ie X /etc/shadow",
+        # A second `-e` takes the first as its pattern, so real grep reads BOTH operands as files and
+        # the one the path check skips is the secret.
+        "grep -e -e /etc/shadow /var/log/syslog",
     ],
 )
 def test_grep_e_does_not_turn_the_first_file_into_the_pattern(cmd):
-    """`grep -e X /etc/shadow` must stay PREPARED: the path check skips operand 0 as grep's pattern,
-    which is sound only while no flag can consume that pattern."""
+    """`grep -e X /etc/shadow` must stay PREPARED: no grep shape admits an option that takes the
+    pattern, so the operand the path check skips is never a file."""
     assert ops_daily.classify_action(cmd, host="zcrypto") is ops_daily.Tier.PREPARED
 
 
@@ -1146,6 +1157,93 @@ def test_the_greps_the_runbooks_actually_run():
         "sudo docker logs grafana-alloy --since 1h 2>&1 | grep -iE 'collector|error'",
     ):
         assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
+
+
+def test_the_R_spelling_of_a_recursion_classifies_prepared():
+    """Three commands carrying `-R` classify PREPARED while their `-r` twins stay AUTONOMOUS. The
+    universal behind these three is the shape sweep below; neither says anything about an operand
+    that is itself a symlink, which `-r` and a bare `grep` read through just as `-R` does."""
+    safe = "'^Storage=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/"
+    for refused, passing in (
+        (f"grep -RE {safe}", f"grep -rE {safe}"),
+        ("grep -R Storage /var/log/", "grep -r Storage /var/log/"),
+        ("grep -sRah X /var/log/", "grep -srah X /var/log/"),
+    ):
+        assert ops_daily.classify_action(refused, host="ops") is ops_daily.Tier.PREPARED, refused
+        assert ops_daily.classify_action(passing, host="ops") is ops_daily.Tier.AUTONOMOUS, passing
+
+
+@pytest.mark.parametrize(
+    ("refused", "passing"),
+    [
+        # A recursion switch reads a tree no operand names.
+        ("grep -r SECRET", "grep -r SECRET /var/log/"),
+        # ugrep recurses on an `--include` whose glob holds a `/`, so an admitted FILTER flag reaches
+        # that same tree with no recursion switch anywhere in the command.
+        ("grep --include='sub/' SECRET", "grep --include='sub/' SECRET /var/log/"),
+        ("grep --include='**/*.conf' SECRET", "grep --include='**/*.conf' SECRET /var/log/"),
+        # No switch at all: with no file and no stage before it, grep reads a stdin the pass never
+        # supplies.
+        ("grep SECRET", "grep SECRET /var/log/syslog"),
+        ("cat", "cat /var/log/syslog"),
+    ],
+)
+def test_a_first_stage_content_head_naming_no_file_is_refused(refused, passing):
+    """A first-stage `cat` or `grep` with an empty file list is PREPARED, and the same command naming
+    a read-safe file is AUTONOMOUS: what decides is the file list, never which flag was spelled."""
+    assert ops_daily.classify_action(refused, host="ops") is ops_daily.Tier.PREPARED, refused
+    assert ops_daily.classify_action(passing, host="ops") is ops_daily.Tier.AUTONOMOUS, passing
+
+
+@pytest.mark.parametrize(
+    ("flag", "spec", "cmd"),
+    [
+        ("--recursive", None, "grep --recursive SECRET"),
+        # `-d recurse` recurses where GNU grep reads it, and takes its mode as a separate word.
+        ("-d", ops_daily._NAME, "grep -d recurse SECRET"),
+    ],
+)
+def test_the_refusal_reads_the_file_list_and_not_the_flag_table(monkeypatch, flag, spec, cmd):
+    """A grep shape widened to admit a recursion flag no real shape takes still refuses the command
+    when it names no file, and still passes it when it names a read-safe one."""
+    for unwidened in (cmd, f"{cmd} /var/log/"):
+        assert ops_daily.classify_action(unwidened, host="ops") is ops_daily.Tier.PREPARED, f"unwidened: {unwidened}"
+    widened = tuple(
+        dataclasses.replace(shape, flags={**shape.flags, flag: spec}) if shape.head == ("grep",) else shape
+        for shape in ops_daily._FIRST_STAGE_SHAPES
+    )
+    monkeypatch.setattr(ops_daily, "_FIRST_STAGE_SHAPES", widened)
+    assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED, cmd
+    assert ops_daily.classify_action(f"{cmd} /var/log/", host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
+
+
+def test_no_shape_table_admits_a_content_head_reading_outside_the_safe_roots(monkeypatch):
+    """A table is DISCOVERED off the module, never listed here, and each is given in turn a grep shape
+    carrying a `-m` no real shape admits -- the read that reaches `/etc/shadow` stays PREPARED wherever
+    the stage it rides sits, and the same read under `/var/log/` passes, so the refusal is the veto's
+    and not the injection failing to match."""
+    tables = sorted(name for name in vars(ops_daily) if name.endswith("_SHAPES"))
+    print("shape tables discovered on ops_daily:", tables)
+    assert tables, "no shape table discovered -- the sweep, not the classifier, is what failed"
+    injected = ops_daily._Shape(
+        ("grep",),
+        {"-m": ops_daily._INT},
+        arity=(1, 2),
+        classes=(ops_daily._PATTERN, ops_daily._FILEREF),
+    )
+    # The first stage and a pipeline stage are matched against different tables, so the same read is
+    # put in both positions: whichever table a name turns out to hold, one of the two consults it.
+    positions = ("grep -m 5 X {}", "docker ps | grep -m 5 X {}")
+    for name in tables:
+        monkeypatch.setattr(ops_daily, name, getattr(ops_daily, name) + (injected,))
+        for position in positions:
+            cmd = position.format("/etc/shadow")
+            assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.PREPARED, (name, cmd)
+        assert any(
+            ops_daily.classify_action(position.format("/var/log/syslog"), host="ops") is ops_daily.Tier.AUTONOMOUS
+            for position in positions
+        ), f"{name}: the injected shape matched no stage, so the refusals above prove nothing"
+        monkeypatch.undo()
 
 
 @pytest.mark.parametrize(
@@ -1757,3 +1855,393 @@ def test_todays_ten_real_descriptions_all_pass():
     checks = json.loads((Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json").read_text())
     assert len(checks) == 10, len(checks)
     assert ops_daily.check_descriptions(checks) == []
+
+
+# --- T0168: the claims the pass rests on that nothing asserted -------------------------------------------------
+
+
+def _dies_mid_read():
+    """An opener whose 200 fails while its BODY is read, rather than at open like every other fixture."""
+
+    class _TruncatedBody:
+        def read(self, *args):
+            raise http.client.IncompleteRead(b"")
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        yield _TruncatedBody()
+
+    return opener
+
+
+@pytest.mark.parametrize(
+    ("reader", "source"),
+    [
+        ("read_alerts", "the rules API"),
+        ("read_logs", "the log plane"),
+        ("read_deadmen", "the dead-man count"),
+        ("read_reminders", "the healable counter"),
+    ],
+)
+def test_a_body_that_dies_mid_read_is_an_unreadable_source_on_every_reader(reader, source, tmp_path, monkeypatch):
+    """Each reader reports a truncated body as ITS OWN unreadable source instead of raising -- the read
+    side of `_UNREACHABLE`, which every fixture that fails at open leaves unexercised."""
+    monkeypatch.setattr(ops_daily, "_readonly_key", lambda: "k")
+    extra = {
+        "read_alerts": {"now": NOW, "window": DAY},
+        "read_logs": {"window": DAY},
+        "read_deadmen": {},
+        "read_reminders": {"now": NOW, "window": DAY, "register": _register(tmp_path, *_TWO_SWEEPS)},
+    }[reader]
+    read = getattr(ops_daily, reader)("tok", opener=_dies_mid_read(), **extra)
+    assert read.unreadable is not None, f"{reader} read a body that died mid-read as a clean source"
+    assert source in read.unreadable, read.unreadable
+
+
+def test_the_reminders_field_of_the_report_carries_no_default():
+    """`Report.reminders` carries neither default, so no caller can build a Report whose reminders
+    source was never read and which reports nothing due."""
+    (reminders,) = [f for f in dataclasses.fields(ops_daily.Report) if f.name == "reminders"]
+    assert reminders.default is dataclasses.MISSING, reminders.default
+    assert reminders.default_factory is dataclasses.MISSING, reminders.default_factory
+
+
+# Counted from the committed script as OCCURRENCES of the interpolation, never as lines carrying it:
+# two endpoints on one line is an ordinary edit, and the binding on its own line carries no `{...}`.
+_GRAFANA_URL_SITES = 3
+
+
+def test_every_site_that_builds_a_grafana_url_is_pinned():
+    """The instrument's source carries the literal `{GRAFANA_URL}` exactly `_GRAFANA_URL_SITES` times,
+    so an endpoint added or dropped reds."""
+    lines = [line.strip() for line in _SCRIPT.read_text().splitlines() if line.count("{GRAFANA_URL}")]
+    sites = sum(line.count("{GRAFANA_URL}") for line in lines)
+    assert sites == _GRAFANA_URL_SITES, (
+        f"{sites} sites build a URL from GRAFANA_URL, pinned at {_GRAFANA_URL_SITES} -- pin the new one in "
+        "`test_every_endpoint_the_instrument_builds_is_pinned` and raise `_GRAFANA_URL_SITES`:\n" + "\n".join(lines)
+    )
+
+
+# grep takes its pattern from somewhere other than operand 0 through these options and no others --
+# its own closed set, `-e`/`--regexp` naming the pattern and `-f`/`--file` a file holding it. Each is
+# probed alone, a long one with its value attached, and a short one inside a two-letter cluster.
+_GREP_PATTERN_SOURCES = ("-e", "--regexp", "-f", "--file")
+_GREP_PATTERN_SOURCE_TOKENS = [
+    token
+    for source in _GREP_PATTERN_SOURCES
+    for token in (
+        [source, f"{source}=X"]
+        if source.startswith("--")
+        else [source, *(f"-{source[1]}{c}" for c in string.ascii_letters), *(f"-{c}{source[1]}" for c in string.ascii_letters)]
+    )
+]
+
+
+def _shape_admits_flag(shape, token: str) -> bool:
+    """Whether `_match_shape` would consume `token` as a flag of `shape` rather than as an operand."""
+    return token.partition("=")[0] in shape.flags or bool(shape.short and re.fullmatch(shape.short, token))
+
+
+def test_no_grep_shape_admits_a_pattern_source_option():
+    """`_reads_only_safe_paths` skips grep's operand 0 as its pattern: in every table discovered off
+    the module, no grep shape admits a probed spelling of grep's pattern-source options."""
+    tables = sorted(name for name in vars(ops_daily) if name.endswith("_SHAPES"))
+    assert tables, "no shape table discovered -- the sweep, not the classifier, is what failed"
+    greps = [(name, shape) for name in tables for shape in getattr(ops_daily, name) if shape.head == ("grep",)]
+    assert greps, f"no grep shape discovered in {tables} -- the sweep, not the classifier, is what failed"
+    admitted = [(name, token) for name, shape in greps for token in _GREP_PATTERN_SOURCE_TOKENS if _shape_admits_flag(shape, token)]
+    assert not admitted, (
+        f"grep shapes admitting a pattern-source option: {admitted} -- such an option takes the pattern, "
+        "leaving a FILE at the operand `_reads_only_safe_paths` skips"
+    )
+
+
+# `-R` on both binaries and `-S` on ugrep follow a symlink met while descending a spelled directory,
+# where `-r` does not, so the letter reads a file no operand names. Three commands are not the claim,
+# and neither is one spelling: the sweep runs over every grep shape the module discovers, and the
+# two-character forms catch a cluster that gains the letter only in company.
+_GREP_DEREFERENCING_TOKENS = [
+    *(f"-{d}" for d in "RS"),
+    *(f"-{d}{c}" for d in "RS" for c in string.ascii_letters),
+    *(f"-{c}{d}" for d in "RS" for c in string.ascii_letters),
+]
+# Long forms are read as a PREFIX, not as a list: GNU accepts every unambiguous abbreviation of
+# `--dereference-recursive`, and ugrep spells the same hazard `--dereference` and
+# `--dereference-files`, so no enumeration of them can be complete and one prefix holds them all.
+_GREP_DEREFERENCING_PREFIX = "--der"
+
+
+def _grep_shapes():
+    tables = sorted(name for name in vars(ops_daily) if name.endswith("_SHAPES"))
+    assert tables, "no shape table discovered -- the sweep, not the classifier, is what failed"
+    found = [(name, i, shape) for name in tables for i, shape in enumerate(getattr(ops_daily, name)) if shape.head == ("grep",)]
+    assert found, f"no grep shape discovered in {tables} -- the sweep, not the classifier, is what failed"
+    return found
+
+
+def test_no_grep_shape_admits_a_dereferencing_option():
+    """No grep shape the module exposes admits a probed short spelling, or any `--der...` long one."""
+    admitted = [
+        (name, i, token)
+        for name, i, shape in _grep_shapes()
+        for token in _GREP_DEREFERENCING_TOKENS
+        if _shape_admits_flag(shape, token)
+    ]
+    admitted += [
+        (name, i, flag) for name, i, shape in _grep_shapes() for flag in shape.flags if flag.startswith(_GREP_DEREFERENCING_PREFIX)
+    ]
+    assert not admitted, (
+        f"grep shapes admitting a dereferencing option: {admitted} -- such a flag follows a symlink "
+        "met below the operand, reading a file the spelled-path check never sees"
+    )
+
+
+# The surface itself is pinned, so a flag or cluster added to a grep shape reds here and is justified
+# where it is read rather than merely typed into the table. Keyed by POSITION, not by table name:
+# `_matches` returns the FIRST shape that matches, so a second grep shape inserted ahead of the
+# pinned one decides, and a name-keyed pin would keep only the last.
+_GREP_SHAPE_SURFACE = [
+    ("_FILTER_SHAPES", 6, ("-A", "-B", "-C"), r"-[iEvnoclqFwxa]{1,8}|-[ABC]\d{1,3}"),
+    ("_FIRST_STAGE_SHAPES", 22, ("--include", "-A", "-B", "-C"), r"-[iEvnoclqrFwxsah]{1,8}|-[ABC]\d{1,3}"),
+]
+
+
+def test_the_grep_shapes_admit_exactly_the_pinned_surface():
+    """Every grep shape the module exposes, in its own table position, admits exactly what is pinned."""
+    surface = [(name, i, tuple(sorted(shape.flags)), shape.short) for name, i, shape in _grep_shapes()]
+    assert surface == _GREP_SHAPE_SURFACE, (
+        f"the grep shapes' admitted surface moved:\n  found:  {surface}\n  pinned: {_GREP_SHAPE_SURFACE}\n"
+        "a widened surface is a new class of command the daily pass may run unattended"
+    )
+
+
+_ALERTS = Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml"
+_METRIC = re.compile(r"zcrypto_[a-z_]+")
+
+
+def _rules_reading(metric: str, rules: list[dict]) -> list[dict]:
+    return [r for r in rules if any(metric in (q.get("model") or {}).get("expr", "") for q in r.get("data", []))]
+
+
+def test_each_bounded_verdict_check_agrees_with_the_rule_it_mirrors():
+    """A bounded check and its owning rule agree at every value probed from zero to just past the
+    threshold, which is read out of `alerts.yaml` on both sides rather than restated here."""
+    rules = yaml.safe_load(_ALERTS.read_text())["rules"]
+    # The checks that mirror a threshold rule: bounded AND naming one metric. The `up` pair is bounded
+    # and names none, so a rule cannot be found for it and it is not one of these.
+    mirrored = [(n, e, b) for n, e, b in ops_daily.VERDICT_CHECKS if b is not None and len(set(_METRIC.findall(e))) == 1]
+    assert [n for n, _, _ in mirrored] == ["engine cycle age", "reconcile source lag", "logship drops"], mirrored
+
+    disagreements = []
+    for name, expr, bound in mirrored:
+        (metric,) = set(_METRIC.findall(expr))
+        owning = _rules_reading(metric, rules)
+        assert len(owning) == 1, f"{name}: {metric} is read by {[r['uid'] for r in owning]}, so no single rule owns it"
+        (rule,) = owning
+        (node,) = [d for d in rule["data"] if d["refId"] == rule["condition"]]
+        (condition,) = node["model"]["conditions"]
+        # The complement below reads `gt` as "healthy at or below"; another evaluator would invert it.
+        assert condition["evaluator"]["type"] == "gt", f"{name}: {rule['uid']} evaluates {condition['evaluator']}"
+        (threshold,) = condition["evaluator"]["params"]
+        # Across the interval the rule leaves quiet, not at its edge alone: a bound narrowed from
+        # BELOW -- `1000 <= v <= 16500` -- agrees at the threshold and above it while failing every
+        # freshly completed cycle, which the pass would report as a FAIL on a healthy fleet.
+        for probe in sorted({float(threshold) * i / 8 for i in range(9)} | {float(threshold) + 1}):
+            fires = probe > threshold
+            if bound(probe) != (not fires):
+                disagreements.append(f"{name} vs {rule['uid']} at {probe}: check ok={bound(probe)}, rule fires={fires}")
+    assert not disagreements, disagreements
+
+
+def test_the_healthchecks_fixture_carries_no_key_the_read_only_fetch_never_returns():
+    """The fixture's keys stay inside the trio the read-only key returns, so it cannot vouch for a
+    payload shape production never sends."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json"
+    extra = sorted({key for check in json.loads(fixture.read_text()) for key in check} - {"name", "tags", "desc"})
+    assert not extra, f"the fixture grew {extra}, which the read-only fetch does not return"
+
+
+# --- T0168 item F: a failed unattended upgrade on the host holding the live trade key -------------------------
+
+
+# What `zcrypto-main` measured on host `zcrypto` on 2026-09-06, transcribed rather than invented --
+# systemd's human timestamp form included, which is the form the parser has to read. The values drift
+# with the next patch, so what is pinned here is their SHAPE, and the clock is the measurement's own
+# rather than the real one.
+_MEASURED_RAN = "Sun 2026-09-06 06:38:58 UTC"
+_MEASURED_STAMP = datetime(2026, 9, 6, 6, 38, 58, tzinfo=timezone.utc)
+_UPGRADE_NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+
+
+def _host_answering(**overrides):
+    """A runner answering ONE command with the host's `key=value` lines.
+
+    Each mode overrides a different field, so no two modes get the same reply.
+    """
+    answer = {
+        "Result": "success",
+        "ExecMainStatus": "0",
+        "ExecMainExitTimestamp": _MEASURED_RAN,
+        "StampEpoch": str(int(_MEASURED_STAMP.timestamp())),
+        "RebootRequired": "",
+        "RebootPkgs": "",
+        **overrides,
+    }
+    calls = []
+
+    def runner(command):
+        calls.append(command)
+        return "".join(f"{key}={value}\n" for key, value in answer.items())
+
+    runner.calls = calls
+    return runner
+
+
+def _upgrade(runner):
+    return ops_daily.read_unattended_upgrades(now=_UPGRADE_NOW, runner=runner)
+
+
+def test_the_measured_host_reading_passes_and_costs_exactly_one_ssh():
+    """The true positive: the reading main took off `zcrypto` passes, names when the upgrade ran, and
+    reaches the host once -- the four upgrade values and the reboot read travel in the same command."""
+    runner = _host_answering()
+    check = _upgrade(runner)
+    assert check.ok is True, check.value
+    assert _report(verdict=[check]).exit_code == 0
+    assert "last run 2026-09-06T06:38:58Z" in check.value, check.value
+    assert "reboot" not in check.value, check.value
+    assert runner.calls == [ops_daily.UPGRADE_COMMAND], runner.calls
+
+
+def test_the_ssh_the_check_runs_fails_a_prompt_rather_than_waiting_on_one():
+    """Spelt out rather than compared against `UPGRADE_COMMAND`, which a dropped flag would carry with
+    it: without the flag this ssh waits on inherited stdin for a prompt until the pass times out."""
+    runner = _host_answering()
+    _upgrade(runner)
+    (argv,) = runner.calls
+    assert argv[:3] == ("ssh", "-o", "BatchMode=yes"), argv
+
+
+@pytest.mark.parametrize("result", ["exit-code", "timeout", "signal"])
+def test_a_result_other_than_success_is_attention(result):
+    """`Result` is read as a value, not as a presence: any non-`success` word systemd records fails."""
+    check = _upgrade(_host_answering(Result=result))
+    assert check.ok is False, check.value
+    assert _report(verdict=[check]).exit_code == 1
+
+
+def test_a_non_zero_exec_status_fails_even_beside_a_result_that_reads_success():
+    """Both fields are read, never one: a check resting on `Result` alone passes a run whose recorded
+    exit status is non-zero."""
+    check = _upgrade(_host_answering(ExecMainStatus="1"))
+    assert check.ok is False, check.value
+    assert "Result=success" in check.value, check.value
+    assert _report(verdict=[check]).exit_code == 1
+
+
+def test_a_stamp_older_than_the_bound_fails_where_the_unit_fields_still_read_healthy():
+    """A timer that stopped firing leaves `Result` and `ExecMainStatus` frozen at their last healthy
+    values, so the stamp's age is the only reading that catches it -- and it is the one that reads."""
+    stale = _UPGRADE_NOW - (ops_daily.UPGRADE_STALE_AFTER + timedelta(hours=1))
+    check = _upgrade(_host_answering(StampEpoch=str(int(stale.timestamp()))))
+    assert check.ok is False, check.value
+    assert "Result=success, ExecMainStatus=0" in check.value, check.value
+    assert _report(verdict=[check]).exit_code == 1
+
+
+@pytest.mark.parametrize(("past_bound", "ok"), [(-timedelta(minutes=1), True), (timedelta(minutes=1), False)])
+def test_the_staleness_bound_is_two_days_on_both_of_its_sides(past_bound, ok):
+    """A minute inside two days passes and a minute outside fails. Two days is the decided value, not
+    a value read back out of the code: the stamps under `/var/lib/apt/periodic/` were measured about
+    a day apart, so a bound narrowed to one would report that normal spread as a stopped timer."""
+    stamp = _UPGRADE_NOW - (timedelta(days=2) + past_bound)
+    check = _upgrade(_host_answering(StampEpoch=str(int(stamp.timestamp()))))
+    assert check.ok is ok, check.value
+
+
+# Spelt out rather than read from `UPGRADE_STAMP`, which a swap would carry with it -- the same
+# reason the bound above is the literal `timedelta(days=2)`.
+_UPGRADE_STAMP = "/var/lib/apt/periodic/unattended-upgrades-stamp"
+
+
+def test_the_staleness_arm_reads_the_stamp_the_upgrade_itself_writes():
+    """`update-stamp` in the same directory is touched by the download half on days no upgrade ran, so
+    an arm pointed there would read fresh on exactly the stopped-timer host it exists to catch."""
+    assert ops_daily.UPGRADE_STAMP == _UPGRADE_STAMP, ops_daily.UPGRADE_STAMP
+    assert f"stat -c %Y {_UPGRADE_STAMP} " in ops_daily.UPGRADE_COMMAND[-1], ops_daily.UPGRADE_COMMAND
+
+
+def test_a_unit_that_never_ran_is_unreadable_rather_than_the_pass_its_two_fields_alone_would_give():
+    """`Result=success` and `ExecMainStatus=0` are what systemd reports for a unit that has NEVER run,
+    with `ExecMainExitTimestamp` empty -- so the timestamp is parsed rather than merely printed, and
+    those two fields alone cannot pass a host whose upgrade has never happened."""
+    check = _upgrade(_host_answering(ExecMainExitTimestamp=""))
+    assert check.value.startswith("unreadable: "), check.value
+    assert _report(verdict=[check]).exit_code == 2
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [subprocess.CalledProcessError(255, "ssh"), subprocess.TimeoutExpired("ssh", 30), OSError("ssh: no route to host")],
+    ids=["non-zero ssh", "timeout", "unreachable"],
+)
+def test_a_host_the_pass_could_not_reach_is_unreadable_never_a_failed_patch(failure):
+    """Every way the live runner can fail is exit 2, the code for a source that could not be read: a
+    FAIL here would blame the host's patching for a dropped connection."""
+
+    def runner(command):
+        raise failure
+
+    check = ops_daily.read_unattended_upgrades(now=_UPGRADE_NOW, runner=runner)
+    assert check.value.startswith("unreadable: "), check.value
+    assert _report(verdict=[check]).exit_code == 2
+
+
+def test_a_pending_reboot_names_its_packages_and_moves_no_verdict():
+    """`node_reboot_required` already carries the flag; this line carries the WHY an operator picking
+    an attended window wants. A pending reboot is not a failed upgrade, so `ok` and the exit code are
+    the ones a host with no flag gets -- conflated, the check would read attention every day between a
+    kernel patch and its window and bury the failed patch it exists to surface."""
+    check = _upgrade(_host_answering(RebootRequired="yes", RebootPkgs="linux-image-6.1.0-40-amd64 linux-base "))
+    assert "reboot pending: linux-image-6.1.0-40-amd64 linux-base" in check.value, check.value
+    # The exit code first, because it is the surface the conflation would move: a pass reading
+    # attention is what an operator sees, and `ok` is only how it got there.
+    assert _report(verdict=[check]).exit_code == 0, check.value
+    assert check.ok is True, check.value
+
+
+def test_a_flag_without_its_package_list_is_a_reported_state_never_an_error():
+    """A missing `.pkgs` beside a set flag is reported as the state it is, not as an unreadable source
+    and not as a failure."""
+    check = _upgrade(_host_answering(RebootRequired="yes"))
+    assert "reboot pending: flag set, packages unknown" in check.value, check.value
+    assert not check.value.startswith("unreadable: "), check.value
+    assert _report(verdict=[check]).exit_code == 0, check.value
+    assert check.ok is True, check.value
+
+
+def test_the_runner_is_keyword_only_and_carries_no_live_default():
+    """No default a test can take silently: one that forgets its runner fails instead of reaching the
+    live host."""
+    runner = inspect.signature(ops_daily.read_unattended_upgrades).parameters["runner"]
+    assert runner.kind is inspect.Parameter.KEYWORD_ONLY, runner.kind
+    assert runner.default is inspect.Parameter.empty, runner.default
+    with pytest.raises(TypeError):
+        ops_daily.read_unattended_upgrades(now=_UPGRADE_NOW)
+
+
+def test_the_upgrade_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
+    """The reader is wired into the report `main` prints: a check nothing appends reports nothing."""
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    # `main` reads the real clock, so the stamp is answered against it: pinned to the measurement's
+    # date this assertion would flip from PASS to FAIL two days after that date and stay there.
+    fresh = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())))
+    monkeypatch.setattr(ops_daily, "ssh_read", fresh)
+    assert ops_daily.main(["report"]) == 0
+    assert f"- PASS {ops_daily.UPGRADE_CHECK}: Result=success" in capsys.readouterr().out

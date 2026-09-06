@@ -688,6 +688,30 @@ def test_a_stray_file_in_the_tree_cannot_crash_loop_the_daemon(tmp_path, stray):
     assert (hour_dir / stray).exists()  # left alone, not swept into the segment, not deleted
 
 
+def test_a_stray_oversized_year_directory_cannot_crash_loop_the_daemon(tmp_path):
+    # A stray DIRECTORY, not a stray file. `__init__` walks the whole tree and hands every
+    # `<YYYY>/<MM>/<DD>` to `datetime(int(year), ...)`, which raises OverflowError once the year
+    # exceeds a C int — the type `_hour_of`'s `except` did not name until this test. Nothing it creates
+    # looks like that; a restore, an rsync or a human's `mkdir` does, and the escape kills capture
+    # for every pair and both kinds, on every restart.
+    root = tmp_path / "BTC/EUR" / "book"
+    oversized = root / "99999999999999" / "01" / "01" / "01.parquet"
+    oversized.parent.mkdir(parents=True)
+    pl.DataFrame([_book_event(9, checksum=1)], schema=BOOK_SCHEMA).write_parquet(oversized, compression="zstd")
+    _segment_path(tmp_path, 9).parent.mkdir(parents=True)
+    pl.DataFrame([_book_event(9, checksum=1)], schema=BOOK_SCHEMA).write_parquet(_segment_path(tmp_path, 9), compression="zstd")
+
+    w = _new_writer(tmp_path, flush_rows=5)  # must not raise
+
+    assert w._floor == _ts(10, 0)  # the well-formed final beside it still parses, and still seeds the floor
+    for i in range(20):
+        w.append(_hour10_event(i, i))  # nor may this
+    w.append(_book_event(11, 0))
+
+    assert pl.read_parquet(_segment_path(tmp_path, 10))["checksum"].to_list() == list(range(20))
+    assert oversized.exists()  # left alone, not deleted
+
+
 def test_a_failed_flush_never_takes_down_the_other_streams(tmp_path, monkeypatch):
     # The hottest write in the daemon (every `flush_rows` rows) and, unguarded, one OSError away from taking
     # down the single consumer task — i.e. capture for every pair and both kinds. This buffer is lost either
@@ -757,9 +781,73 @@ def test_a_failed_merge_leaves_no_tmp_behind(tmp_path, monkeypatch):
 # --- no wall clock: the disk says which hours are closed, the stream says which are over ---------
 
 
+CAPTURE_UNIT = Path(__file__).resolve().parents[1] / "infra/ansible/roles/capture/files/zcrypto-capture.service"
+
+
+def _unit_directives(unit: Path) -> list[tuple[str, str, str]]:
+    """One `(section, key, value)` per line, split on its first `=`, in file order; blank, comment and section lines dropped."""
+    section, out = "", []
+    for lineno, raw in enumerate(unit.read_text().splitlines(), 1):
+        line = raw.strip()  # systemd strips before parsing, so an INDENTED directive is still live
+        if not line or line.startswith(("#", ";")):  # systemd.syntax(7): either character opens a comment
+            continue
+        # Below the comment skip: every continuation systemd joins OPENS on a directive line, and a
+        # comment ending in a backslash opens nothing — `systemd.syntax(7)` describes comments being
+        # ignored INSIDE a pending continuation, never starting one.
+        assert not line.endswith("\\"), (
+            f"{unit.name}:{lineno} ends in a backslash: systemd joins it with the next line, this parser reads two"
+        )
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+            continue
+        key, _, value = line.partition("=")
+        out.append((section, key.strip(), value.strip()))
+    return out
+
+
+def test_the_capture_unit_orders_itself_against_no_clock_service():
+    """Read from the unit file this repo installs: it orders itself after no clock service, and
+    `Restart=always` keeps re-running construction until a start lands in that window — so a writer can be
+    constructed while the host clock is still wrong."""
+    directives = _unit_directives(CAPTURE_UNIT)
+
+    # Read the ordering the unit ends up WITH, rather than searching for the spellings it must not carry.
+    # `After=` only ever accumulates — `man 5 systemd.unit`: dependencies "cannot be reset to an empty list,
+    # so dependencies can only be added in drop-ins" — so an empty `After=` clears nothing, and a clock
+    # service joining the unit under any name moves this set.
+    after: list[str] = []
+    for section, key, value in directives:
+        if section == "[Unit]" and key == "After":
+            after += value.split()
+    assert set(after) == {"docker.service", "network-online.target"}, f"an ordering dependency changed: {after}"
+
+    # `Restart=` is scalar, so systemd takes the LAST assignment: a second one further down would decide.
+    restart = [value for section, key, value in directives if section == "[Service]" and key == "Restart"]
+    assert restart[-1:] == ["always"], f"the restart that re-runs construction is gone: {restart or 'absent'}"
+
+
+def test_the_unit_parser_refuses_a_line_systemd_would_join(tmp_path):
+    """A backslash-terminated line is half of one directive, so the parser refuses it rather than read the halves as two."""
+    unit = tmp_path / "continued.service"
+    # systemd joins the pair, then fails to parse the one value it gets and DISCARDS the assignment,
+    # leaving the default `Restart=no` — a unit that never restarts, not one that restarts on failure.
+    unit.write_text("[Service]\nRestart=no \\\nRestart=always\n")
+
+    with pytest.raises(AssertionError, match=r"continued\.service:2 ends in a backslash"):
+        _unit_directives(unit)
+
+
+def test_the_unit_parser_reads_a_backslash_terminated_comment_as_a_comment(tmp_path):
+    """A comment ending in a backslash opens no continuation, so the parser drops it and reads the line below as its own directive."""
+    unit = tmp_path / "commented.service"
+    unit.write_text("# a comment ending in a backslash \\\n[Service]\nRestart=always\n")
+
+    assert _unit_directives(unit) == [("[Service]", "Restart", "always")]
+
+
 def test_a_leading_clock_at_startup_cannot_drop_the_live_stream(tmp_path, clock):
-    # zcrypto-capture.service has no `After=time-sync.target` and `Restart=always`, so a writer can be
-    # constructed in the instant before chrony's first step, with the host clock reading an hour or more
+    # The unit permits precisely this (test_the_capture_unit_orders_itself_against_no_clock_service): a writer
+    # can be constructed in the instant before chrony's first step, with the host clock reading an hour or more
     # ahead. The writer must take its hour from the events, which carry the exchange's own clock — never
     # from a clock read once at construction and never re-derived.
     clock.now = _ts(11, 35)  # the RTC leads by 90 minutes at the instant of construction...
@@ -882,6 +970,7 @@ def test_an_unreadable_merging_file_is_quarantined_and_the_hour_rebuilt_from_its
     assert not list(hour_dir.glob("10.part*.parquet"))  # consumed by the rebuild, not by the rot
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
 def test_an_unremovable_tmp_file_cannot_crash_loop_the_daemon(tmp_path):
     # A read-only remount — the aftermath of the very ENOSPC condition DiskWatermark exists for — makes
     # `_recover`'s `.tmp` unlink raise, and `__init__` runs for every stream before the daemon connects, so a

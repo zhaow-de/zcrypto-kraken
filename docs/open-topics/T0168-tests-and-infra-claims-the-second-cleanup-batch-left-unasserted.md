@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ---
 
 # Tests and infra claims the second cleanup batch left unasserted
@@ -30,14 +30,30 @@ Dropped from the prose, unasserted:
 - `infra/ansible/roles/access/tasks/main.yml`: the bridgehead relay's socket half is applied by neither its restart handler nor its end-of-role drift assert, so a changed `ListenStream` is written and never applied. The fact itself is stated in archived T0156; what had no live home is its TRIGGER — widen the gate if that value ever changes — and an archived topic is never re-read. `git grep -n ListenStream -- tests/` is empty.
 - `infra/ansible/roles/access/tasks/main.yml`: no alert fires on a caddy-only outage. The cert-expiry rule that probes the edge carries `noDataState: OK` because it treats `zcrypto-alloy-dark-zaccess` as owning "the host is dark", and that rule stays green while Alloy is healthy; spec 00075 D11's rule list — bridgehead dark, WG stale, cert expiry, disk — has no member covering it.
 
+## Done so far
+
+### Wave 1 — the topic's own list
+
+On `feat/t0168-unasserted-claims`, whose merge commit names it: each bullet's landing commits are that
+branch's, and every one of them names its own test file or command in its subject. Each item's claim now has an assertion, each guard's constructed defect was seen to trip it, and a production-shaped true positive stands beside it.
+
+- **Ops role**, `tests/test_infra_converge_guards.py`: the six guards landed — a changed-but-not-new unit template under check mode, a walk asserting `failed_when: false` over the role's probes, the `daemon.json` task's notify, the digest gate over every image-consuming ops task, the `env.j2` render on the empty scope, and the echo/assert text equality. The digest gate's asset selection was rebuilt until it delegates resolution to ansible's own `DataLoader().path_dwim_relative` rather than modelling the search rules, and a dangling link anywhere in the role is refused by a presence walk rather than by any rule about how a `src:` is spelled.
+- **Engine node**, `tests/test_engine_node.py`: the venue-sourced join is a recorded drop naming T0152 (the key is IP-bound, so the join cannot run from CI or a workstation); five execution knobs are asserted through a rebound stand-in, with `use_ws_trade` named as the contrast because it belongs to a different config class. The cache-entry case is dropped: no in-process node runs reconciliation, so the stand-in pins the config the builder receives instead.
+- **Daily pass**, `tests/test_ops_daily.py`: the six claims landed, and two defects surfaced while landing them — a content-head veto that ran one branch too late, and a grep read by the spelling of its operand. The recursion grammar the guard could not own is gone: a first-stage `cat` or `grep` that names no file is refused, whatever its flags say, and the grep shapes' admitted surface is pinned by content so a further spelling cannot be added silently.
+
+### Wave 1, continued
+
+- **Capture writer**, `tests/test_capture_segment_writer.py`: the `zcrypto-capture.service` unit read beside the other unit-file guards, and the `.tmp` unlink asserted as the one unguarded operation. The unit parser refuses a backslash-continued line rather than reading past it, because systemd joins such a pair, fails to parse the joined value and discards the assignment.
+- **Continuity**, `tests/test_infra_continuity.py`: `test_legitimate_heavy_tails_stay_measured` runs the range its docstring named.
+- **Unattended upgrades**: decided — not a page. A failed security patch surfaces as a daily-pass check with no metric, no rule and no converge, and the reboot-packages line rides with it.
+
+### Found on the way, off the topic's own list
+
+- `cli/capture/segment_writer.py`'s `_hour_of` raised `OverflowError` past an `except ValueError` that promised to skip a foreign directory. Widened; it ships with the next capture rollout and is not live until then. The same defect at seven other sites is T0171.
+- The classifier's read-safe-root model is lexical and a symlink defeats it for `cat`, `grep` and `grep -r` alike — T0172. Dropping `-R` narrowed what a safe root reaches during traversal; it did not close the class.
+
 ## Suggested next steps
 
-- Ops role, in `tests/test_infra_converge_guards.py`: a case on a changed-but-not-new unit template under check mode against the existing `ops_unit_install` fixture; a walk over the role's probes asserting `failed_when: false`; a read of `docker/tasks/main.yml` asserting the `daemon.json` task's notify; the `ops_image_digest is defined` gate asserted over every image-consuming ops task; a render of `env.j2` with the empty scope asserting the empty assignment and the `full` substitution; the echo/assert text equality.
-- Engine node, in `tests/test_engine_node.py`: decide the venue-sourced join (an opt-in live test gated on `ZCRYPTO_LIVE_VENUE_TESTS`, or a recorded drop naming T0152 as the proof); a reconciliation-level case that flips the upstream default and asserts the adopted order enters the cache.
-- Daily pass, in `tests/test_ops_daily.py`: a fake opener whose `read` raises `IncompleteRead`, asserting `.unreadable` on each of the four reads; `Report.reminders` has no default; the endpoint-building call-site count equals the pinned count; `'-e' not in shape.flags` for both grep shapes; `VERDICT_CHECKS` bounds parsed from `alerts.yaml`'s three rules; the healthchecks fixture's key set.
-- Capture writer, in `tests/test_capture_segment_writer.py`: a read of `zcrypto-capture.service` beside the other unit-file guards; the `.tmp` unlink as the one unguarded operation.
-- Continuity: run `test_legitimate_heavy_tails_stay_measured` over the range its old docstring named, or leave the loop at ten and record that seed-independence is not asserted.
-- Unattended upgrades: decide whether a failed security patch on the host holding the live trade key should page. If it should, the signal does not exist and the work is a metric plus a rule in `alerts.yaml`; if it should not, this line is the record of that decision.
 - zaccess relay: the trigger is `ListenStream` in `infra/ansible/roles/access/templates/zaccess-ssh-proxy.socket.j2` no longer reading `0.0.0.0:20022` and `[::]:20022`. False today; when it fires, widen the end-of-role drift assert to the socket half, or add the per-half restart handler pair `roles/access_ops` already carries.
 - Caddy edge: page on a caddy-only outage, or record the acceptance and its reason — this tier carries interactive access only, no trading and no data path.
 - Reference compose, in `tests/test_infra_compose_templates.py`: render the capture role's `compose.yaml.j2` and assert every `ZCRYPTO_LOKI_*`/`ZCRYPTO_LOG_*` key it defines appears in `infra/docker/compose.yaml`, and that the reference file's metrics-port default matches the template's literal. Two comments in that reference file claim the lock-step and nothing asserts it — `git grep -n 'docker/compose.yaml' -- tests/` hits only `test_infra_alert_rules.py`'s `_LIMITED_JOBS`, which lists the file with an empty tuple as nobody's host.
@@ -49,6 +65,8 @@ Dropped from the prose, unasserted:
 - **PAGED SURFACE** — `infra/grafana/alerts.yaml`'s `zcrypto-reconcile-healable-gap-rate` summary says "Every gap was covered, so nothing else fires". The counter is fed by `claimed_seconds` (`cli/archive/command.py:422`), which `:319` defines as the silence a gap was ADMITTED on; what a splice inserted is `healed_seconds` (`:343`) and the shortfall is `residual_seconds` (`:346`) — permanent loss. The metric's own HELP text and the rule's own comment are both already correct, so only the paged surface overstates. Proposed: "The primary needed more than 10 minutes of coverable silence in the last 24h. This counts the silence the secondary witnessed and COULD cover, not what a splice inserted — whether anything was actually lost is the ledger's `residual_seconds`. A host that needs this much coverage is degrading. Check the reconcile ledger's would_mint/minted records for the pattern."
 
 - **THIRD-PARTY SURFACE** — the live healthchecks.io description of `zcrypto-archive-pull`, snapshotted at `tests/fixtures/healthchecks_descriptions.json`, still reads "pinging only on a clean cycle. Withheld when the fail-closed gate skipped the cycle". That is the inversion this cleanup corrected on `infra/ops/README.md`, `infra/runbooks/ops-node.md` and `infra/runbooks/observability.md`: `roles/ops/templates/archive-pull.sh.j2` pings on rc 0 with gate-skips deliberately included, so the dead-man measures the writer cycle's own liveness. The fix is a rewrite of the description in healthchecks.io — a third-party dashboard edit, the owner's word — followed by a re-fetch of the fixture through the read-only key. It is the surface an operator reads on the hc.io page itself, and it is the last copy of the belief.
+
+- Unit-file readers, in `tests/test_clock_offset.py` and `tests/test_engine_journal_prune.py`: both take a directive by `next(line for line in unit.splitlines() if line.startswith(...))` — `_rendered_unit`'s `ExecStart=` at `test_clock_offset.py:195` and `test_engine_journal_prune.py:295`, and the `ReadWritePaths=` reads at `:239` and `:322` — so a backslash-continued line is read as two directives where systemd joins it, rejects the joined value and discards the assignment. Wanted: the same one-clause continuation refusal the capture writer's parser now carries, red on a constructed `Restart=no \` + `Restart=always` case.
 
 ### From the `tests/` prose pass (T0164, branch `cleanup/prose-tests`)
 

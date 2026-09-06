@@ -49,7 +49,7 @@ Exit **0** autonomous · **3** prepared. **`prepared` means prepare the action a
 
 ## 4. Read the dashboards numerically
 
-The verdict tiles' own PromQL is what the report's fleet checks already ran. Read those; no pixels.
+The verdict tiles' own PromQL is among what the report's fleet checks already ran. Read those; no pixels.
 
 ## 5. Evaluate the due reminders
 

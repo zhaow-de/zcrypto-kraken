@@ -4,8 +4,11 @@ The test boundary is the guard's REAL condition expression fed constructed probe
 never a re-implementation of the logic; `load_tasks` reads the committed YAML.
 """
 
+import hashlib
 import json
+import os
 import re
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -1521,3 +1524,417 @@ NAS = ANSIBLE / "roles" / "nas" / "tasks" / "main.yml"
 def test_nas_hash_scope_guard_refuses_what_the_cli_would(value, expected):
     task = find_task(load_tasks(NAS), "refuse an archive-pull hash scope the CLI would reject")
     assert all(truthy(c, {"nas_archive_pull_hash_scope": value}) for c in assert_that(task)) is expected
+
+
+def iter_tasks(tasks: list[dict], inherited: tuple[str, ...] = ()) -> list[tuple[dict, tuple[str, ...]]]:
+    # Leaves only, each carrying the `when:` its enclosing blocks impose — Ansible's own inheritance,
+    # so a task gated by its block reads as gated and a block never reads as a task in its own right.
+    out: list[tuple[dict, tuple[str, ...]]] = []
+    for t in tasks:
+        gates = inherited + tuple(str(c) for c in when_conditions(t))
+        children = [t[k] for k in ("block", "rescue", "always") if k in t]
+        if children:
+            for child in children:
+                out.extend(iter_tasks(child, gates))
+        else:
+            out.append((t, gates))
+    return out
+
+
+# --- A1: the check-mode timer guard reads only `ops_unit_install`'s AGGREGATE changed flag, so it
+# cannot separate a first install from an edit to a unit that already exists. The role's comment
+# says so; these fixtures are the assertion of it.
+def _unit_install(changed: list[bool]) -> dict:
+    # The 8-item loop register the template module produces: the aggregate the guard reads, beside the
+    # per-item `results` a narrowed guard would read.
+    return {"changed": any(changed), "results": [{"changed": c} for c in changed], "skipped": False}
+
+
+FIRST_INSTALL = _unit_install([True] * 8)
+ONE_EDITED = _unit_install([True] + [False] * 7)
+NOTHING_CHANGED = _unit_install([False] * 8)
+
+
+@pytest.mark.parametrize(
+    ("check_mode", "register", "expected", "why"),
+    [
+        (True, FIRST_INSTALL, False, "first install under --check: no unit was written, so skip"),
+        (True, ONE_EDITED, False, "one PRE-EXISTING unit edited: the guard skips all four previews anyway"),
+        (True, NOTHING_CHANGED, True, "nothing changed under --check: every unit exists, so preview the enable"),
+        (False, ONE_EDITED, True, "REAL run: the render already wrote the units — never skip"),
+    ],
+    ids=["check-first-install", "check-one-edited", "check-nothing-changed", "real-run-one-edited"],
+)
+def test_the_timer_guard_suppresses_the_preview_for_a_changed_unit_that_already_existed(check_mode, register, expected, why):
+    task = find_task(load_tasks(OPS), OPS_TIMER_ENABLE)
+    variables = {"ansible_check_mode": check_mode, "ops_unit_install": register}
+    assert truthy(when_conditions(task), variables) is expected, why
+
+
+def test_the_timer_guard_cannot_tell_a_first_install_from_an_edit_to_an_existing_unit():
+    """Pins the blind spot the role's comment documents — the guard reads the aggregate `changed` alone — so a
+    deliberate narrowing updates this test and that comment together instead of one drifting off the other."""
+    when = when_conditions(find_task(load_tasks(OPS), OPS_TIMER_ENABLE))
+    fresh = truthy(when, {"ansible_check_mode": True, "ops_unit_install": FIRST_INSTALL})
+    edited = truthy(when, {"ansible_check_mode": True, "ops_unit_install": ONE_EDITED})
+    assert fresh == edited, (
+        f"the guard now separates the shapes (first-install={fresh}, edited={edited}): if that narrowing is "
+        "deliberate, retire this pin and the role's comment in the same change"
+    )
+    assert edited is not truthy(when, {"ansible_check_mode": True, "ops_unit_install": NOTHING_CHANGED}), (
+        "the guard must still evaluate differently when nothing changed, or it gates nothing"
+    )
+
+
+# --- A2: a probe without `failed_when: false` aborts the play on a non-zero rc, so the guard that
+# reads its rc never evaluates at all.
+def test_every_ops_probe_never_fails_the_play():
+    probes = [t for t, _ in iter_tasks(load_tasks(OPS)) if str(t.get("name", "")).startswith("probe")]
+    assert probes, "no probe selected in the ops role — the name convention the selection reads has moved"
+    print(f"ops-role probes selected: {len(probes)} — {[t['name'] for t in probes]}")
+    for probe in probes:
+        assert probe.get("failed_when") is False, (
+            f"{probe['name']!r} carries failed_when={probe.get('failed_when')!r}: a non-zero rc aborts the play "
+            "before the guard that reads it can run"
+        )
+
+
+# --- A3: the ack apparatus above the daemon.json template task exists only because that task
+# notifies a handler that bounces dockerd. Ordering stays green when the notify is deleted.
+DOCKER_HANDLERS = ANSIBLE / "roles" / "docker" / "handlers" / "main.yml"
+DAEMON_JSON_TEMPLATE = "configure the docker daemon (bounded json-file log driver)"
+
+
+def test_the_daemon_json_task_notifies_a_handler_that_restarts_dockerd():
+    task = find_task(load_tasks(DOCKER), DAEMON_JSON_TEMPLATE)
+    notify = task.get("notify", [])
+    notify = [notify] if isinstance(notify, str) else list(notify)
+    assert notify, f"{DAEMON_JSON_TEMPLATE!r} notifies nothing, so the ack guarding it guards no restart"
+
+    handlers = {h["name"]: h for h in load_tasks(DOCKER_HANDLERS)}
+    missing = [n for n in notify if n not in handlers]
+    assert not missing, (
+        f"{missing} is notified but not defined in {DOCKER_HANDLERS.name}: {sorted(handlers)} — resolved by handler "
+        "NAME, so a handler that answers through `listen:` instead reds this while the claim stays true"
+    )
+    # by the handler's ACTION, not its name: a renamed-to-no-op handler keeps every name check green
+    bouncers = [
+        n
+        for n in notify
+        if any(
+            isinstance(v, dict) and v.get("name") == "docker" and v.get("state") == "restarted"
+            for k, v in handlers[n].items()
+            if k != "name"
+        )
+    ]
+    assert bouncers, f"no notified handler restarts dockerd, so the ack above this task is decoration: {notify}"
+
+
+# --- A4: the role states the digest gate as its own convention. A task consumes an image reference
+# when one appears in its own body OR in a file it renders — where the role's own comment locates it
+# ("this script consumes no image reference"), the script being the RENDERED template.
+OPS_DIGEST_GATE = "ops_image_digest is defined"
+OPS_ROLE = ANSIBLE / "roles" / "ops"
+# the two directories `_asset_candidates` searches by name; ansible's own search list is wider, which is
+# why the walk that refuses a broken link spans the role rather than these two
+OPS_ASSET_DIRS = ("files", "templates")
+
+
+def _expand_src(src: str, task: dict) -> list[str]:
+    # The names one `src:` stands for. `loop:` is the only repetition expanded here, so a task that
+    # repeats through a `with_*` key is refused, by name, rather than read at its unexpanded spelling.
+    # The templar is given `playbook_dir` and nothing else; a name it leaves carrying Jinja, or leaves
+    # as something other than a string, is refused the same way.
+    from ansible.errors import AnsibleError
+    from ansible.template import trust_as_template
+
+    def render(text: str, **extra):
+        try:
+            variables = {"playbook_dir": str(ANSIBLE)} | extra
+            return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+        except AnsibleError:
+            return text
+
+    repeats = sorted(k for k in task if k.startswith("with_"))
+    assert not repeats, (
+        f"{task['name']!r} repeats {src!r} over {repeats}, which this selection does not expand: the assets "
+        "that repetition names go unread"
+    )
+    loop = task.get("loop")
+    if loop is None:
+        names = [render(src)]
+    else:
+        items = loop if isinstance(loop, list) else render(loop) if isinstance(loop, str) else None
+        assert isinstance(items, list) and items, (
+            f"{task['name']!r} renders {src!r} over a `loop:` this selection cannot expand ({loop!r}): the "
+            "assets it expands to go unread"
+        )
+        names = [render(src, item=item) for item in items]
+    for name in names:
+        assert isinstance(name, str), (
+            f"{task['name']!r} expands {src!r} to {name!r}, which is not a name this selection can resolve: "
+            "the asset it stands for goes unread"
+        )
+        assert "{{" not in name and "{%" not in name, (
+            f"{task['name']!r} expands {src!r} to {name!r}, which the templar left unrendered: the asset it stands for goes unread"
+        )
+    return names
+
+
+def _shape(path: Path) -> str:
+    if path.is_symlink():
+        return f"symlink -> {path.readlink()}"
+    return "directory" if path.is_dir() else "file" if path.is_file() else "neither a file nor a directory"
+
+
+def _asset_candidates(name: str) -> list[Path]:
+    # Ansible's own resolver decides what the name reaches under each asset directory. This selection
+    # adds the two conditions it needs, both on the NORMALIZED result: it exists, and it lies inside
+    # the role. So two spellings that reach one file are one candidate, and a name that reaches
+    # anywhere else — an absolute path, one climbing out through `../` — reaches nothing here.
+    found: list[Path] = []
+    for subdir in OPS_ASSET_DIRS:
+        path = Path(os.path.normpath(DataLoader().path_dwim_relative(str(OPS_ROLE), subdir, name)))
+        if path.is_relative_to(OPS_ROLE) and os.path.lexists(path) and path not in found:
+            found.append(path)
+    return found
+
+
+def _role_asset(name: str) -> Path | None:
+    # Two candidates pass only as one file's content under both asset directories, one passes only as
+    # a regular file inside the role, and anything else a candidate can be — a directory, a link
+    # leaving the role — is refused by name and by what it is. Absence stays silent here because a
+    # dangling link anywhere in the role reds the presence walk below, whatever this makes of a name.
+    found = _asset_candidates(name)
+    if not found:
+        return None
+    usable = [p for p in found if p.is_file() and OPS_ROLE.resolve() in p.resolve().parents]
+    shapes = ", ".join(f"{p} ({_shape(p)})" for p in found)
+    if len(found) > 1:
+        assert len(usable) == len(found) and len({hashlib.sha256(p.read_bytes()).hexdigest() for p in usable}) == 1, (
+            f"{name!r} names something under both of {OPS_ROLE.name}/'s asset directories other than one "
+            f"file's content — {shapes}: which one a task renders is the module's to decide, so this "
+            "selection cannot read what that task consumes"
+        )
+    else:
+        assert usable, (
+            f"{name!r} names something under {OPS_ROLE.name}/ that is not a regular file inside the role "
+            f"— {shapes}: this selection cannot read what that task consumes"
+        )
+    return usable[0]
+
+
+def _body_text(task: dict) -> str:
+    # WITHOUT the `when:`, which is what keeps the selection from reading the gate back to itself.
+    return yaml.safe_dump({k: v for k, v in task.items() if k != "when"}, allow_unicode=True)
+
+
+def _consumed_text(task: dict) -> str:
+    # The task's body plus the text of every file its `src:` names. Nothing here reads how a `src:` is
+    # written: each is expanded to names, each name resolved, and a file the resolution places inside
+    # the role is read — the NFS export and the controller-side copy resolve elsewhere and add nothing.
+    text = _body_text(task)
+    for value in task.values():
+        if not isinstance(value, dict) or "src" not in value:
+            continue
+        src = value["src"]
+        assert isinstance(src, str), (
+            f"{task['name']!r} names a `src:` that is not a string ({src!r}): this selection cannot resolve it"
+        )
+        for name in _expand_src(src, task):
+            resolved = _role_asset(name)
+            if resolved is not None:
+                text += resolved.read_text()
+    return text
+
+
+def test_every_image_consuming_ops_task_is_gated_on_the_digest():
+    selected, rest = [], []
+    for task, gates in iter_tasks(load_tasks(OPS)):
+        (selected if "ops_image" in _consumed_text(task) else rest).append((task, gates))
+    assert selected, "no image-consuming ops task selected — the selection rule stopped matching"
+    print(f"image-consuming ops tasks: {len(selected)} of {len(selected) + len(rest)} — {[t['name'] for t, _ in selected]}")
+
+    def self_gated(task: dict) -> bool:
+        return any(OPS_DIGEST_GATE in str(c) for c in when_conditions(task))
+
+    # Two degeneracies the loop below would survive, each excluded by the shape it would take: were
+    # the `when:` dumped too, every self-gated task would select itself and none would be left here,
+    assert [t["name"] for t, _ in rest if self_gated(t)], (
+        "every task naming the digest gate in its own `when:` is selected — the selection is reading the gate back to itself"
+    )
+    # and were the body read alone, no task consuming the image only through a template would appear.
+    # The operand is that template-derived set itself: a body-consuming task added inside a digest-gated
+    # block would hold a "selected and block-gated only" operand non-empty while templates went unread.
+    assert [t["name"] for t, _ in selected if "ops_image" not in _body_text(t)], (
+        "no selected task consumes the image only through a rendered template — template text is no longer reaching the selection"
+    )
+    for task, gates in selected:
+        assert any(OPS_DIGEST_GATE in g for g in gates), f"{task['name']!r} consumes an image reference ungated: {list(gates)}"
+
+
+# --- A5: an empty hash scope renders a bare assignment, which both consumers read as `full`.
+NAS_ENV_TEMPLATE = ANSIBLE / "roles" / "nas" / "templates" / "env.j2"
+NAS_COMPOSE = REPO / "infra" / "nas" / "compose.yaml"
+NAS_PULL_ENTRYPOINT = REPO / "infra" / "nas" / "pull-entrypoint.sh"
+HASH_SCOPE_ENV = "ARCHIVE_PULL_HASH_SCOPE"
+_HASH_SCOPE_EXPANSION = re.compile(r"\$\{" + HASH_SCOPE_ENV + r"[^}]*\}")
+
+
+def _render_nas_env(hash_scope: str) -> str:
+    from ansible.template import trust_as_template
+
+    text = NAS_ENV_TEMPLATE.read_text()
+    # A placeholder for every name the template reads as a BARE variable, not just the `nas_*` ones: a
+    # new line naming anything else would otherwise raise undefined, a red that says nothing about the
+    # claim below. A name that is CALLED is Jinja's own (`lookup`, `now`, `q`) — shadowing it with a
+    # string is its own false red, so the lookahead leaves it to the environment.
+    variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(\w+)\b(?!\s*\()", text))}
+    variables["nas_archive_pull_hash_scope"] = hash_scope
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+
+
+@pytest.mark.parametrize(("scope", "expected"), [("", f"{HASH_SCOPE_ENV}="), ("incremental", f"{HASH_SCOPE_ENV}=incremental")])
+def test_nas_env_renders_an_empty_hash_scope_as_a_bare_assignment(scope, expected):
+    """An empty value must render `NAME=`, not `NAME=""` — a quoted empty defeats the consumers' `:-` default."""
+    rendered = [line for line in _render_nas_env(scope).splitlines() if line.startswith(HASH_SCOPE_ENV)]
+    assert rendered == [expected]
+
+
+@pytest.mark.parametrize(("value", "expected"), [("", "full"), ("incremental", "incremental")])
+@pytest.mark.parametrize("path", [NAS_COMPOSE, NAS_PULL_ENTRYPOINT], ids=lambda p: p.name)
+def test_both_hash_scope_consumers_substitute_full_for_an_empty_assignment(path, value, expected):
+    """Evaluated, not spelled: `:-` substitutes on empty as well as unset, and `-` would not — bash is a proxy for
+    Compose's own interpolation in compose.yaml, sound because the two agree on `:-` against `-`."""
+    import os
+    import subprocess
+
+    expansions = sorted(set(_HASH_SCOPE_EXPANSION.findall(path.read_text())))
+    assert expansions, f"{path.name} no longer expands {HASH_SCOPE_ENV}"
+    for expansion in expansions:
+        out = subprocess.run(
+            ["bash", "-c", f'echo "{expansion}"'],
+            capture_output=True,
+            text=True,
+            env={HASH_SCOPE_ENV: value, "PATH": os.environ["PATH"]},
+        ).stdout.strip()
+        assert out == expected, f"{path.name}'s {expansion} yields {out!r} for {value!r}, not {expected!r}"
+
+
+# --- A6: the echo's negated clause and the assert's first disjunct must stay the same expression;
+# both are extracted from the committed YAML, because retyping either here would only move the drift.
+OPS_PINS_ECHO = "pins override accepted — the reason, on the record"
+
+
+def _first_balanced_group(expr: str, start: int = 0) -> str:
+    open_at = expr.index("(", start)
+    depth = 0
+    for i in range(open_at, len(expr)):
+        depth += {"(": 1, ")": -1}.get(expr[i], 0)
+        if depth == 0:
+            return expr[open_at : i + 1]
+    raise AssertionError(f"unbalanced parentheses from {open_at} in {expr!r}")
+
+
+def test_the_pins_echo_negates_the_asserts_own_first_disjunct():
+    tasks = load_tasks(OPS)
+    disjunct = _first_balanced_group(" ".join(assert_that(find_task(tasks, OPS_PINS))))
+    echo = " ".join(when_conditions(find_task(tasks, OPS_PINS_ECHO)))
+    marker = "and not "
+    assert echo.count(marker) == 1, f"the echo's negation is no longer unambiguous: {echo!r}"
+    negated = _first_balanced_group(echo, echo.index(marker) + len(marker))
+
+    # a vacuous "" == "" pass is the failure mode of extraction, so pin what the disjunct must contain
+    assert "regex_search" in disjunct and "ops_fleet_pins_text" in disjunct, (
+        f"extraction missed the recorded-digest test: {disjunct!r}"
+    )
+    assert " ".join(negated.split()) == " ".join(disjunct.split()), (
+        f"the echo records an override on other cases:\n echo:   {negated}\n assert: {disjunct}"
+    )
+
+
+# --- A7: the resolver above reads a `src:` naming a broken link as an ABSENT asset, and that stands —
+# ansible resolves it to nothing either, so such a task fails at deploy time on ansible's authority. Here
+# a broken link is refused by PRESENCE, needing no rule for how a `src:` is spelled; the walk spans the
+# whole role because ansible searches `tasks/` and the role root too, and refuses what it cannot descend.
+def test_no_ops_role_asset_is_a_broken_link():
+    """Every entry under the ops role that exists as a name resolves to an existing target."""
+    walked = sorted(OPS_ROLE.rglob("*"))
+    under = {sub: [p for p in walked if (OPS_ROLE / sub) in p.parents] for sub in OPS_ASSET_DIRS}
+    print(f"ops role entries walked: {len(walked)} — " + ", ".join(f"{sub}/: {len(e)}" for sub, e in under.items()))
+    assert walked, f"{OPS_ROLE.name}/ walked empty, so this selection read no entry of the role"
+    for sub, entries in under.items():
+        assert entries, f"{OPS_ROLE.name}/{sub}/ walked empty, so this selection read no asset of it"
+    # `rglob` does not descend a symlinked directory, and turning that on walks the kernel's 40 symlink
+    # hops into whatever the link reaches — unbounded once that is outside the role; so the shape is
+    # refused rather than traversed, and the claim above stays true.
+    undescended = [f"{p.relative_to(OPS_ROLE)} -> {p.readlink()}" for p in walked if p.is_symlink() and p.is_dir()]
+    assert not undescended, (
+        f"{OPS_ROLE.name}/ carries a linked directory this walk does not descend, so a broken asset "
+        f"behind it would be unseen: {undescended}"
+    )
+    broken = [f"{p.relative_to(OPS_ROLE)} -> {p.readlink()}" for p in walked if os.path.lexists(p) and not os.path.exists(p)]
+    assert not broken, f"{OPS_ROLE.name}/ carries a name whose target does not exist: {broken}"
+
+
+def _ops_role_copy(tmp_path: Path) -> Path:
+    # the walk above reads OPS_ROLE at call time, so a copy plus a rebound global runs its real assertions
+    role = tmp_path / OPS_ROLE.name
+    shutil.copytree(OPS_ROLE, role, symlinks=True)
+    return role
+
+
+def _plant_dangling_twin(role: Path) -> None:
+    (role / "files" / "zz_twin.j2").write_text("real\n")
+    (role / "templates" / "zz_twin.j2").symlink_to("nowhere")
+
+
+def _plant_dangling_alone(role: Path) -> None:
+    (role / "templates" / "zz_absent.j2").symlink_to("nowhere")
+
+
+def _plant_dangling_behind_a_linked_dir(role: Path) -> None:
+    outside = role.parent / "zz_outside"
+    outside.mkdir(exist_ok=True)
+    (outside / "zz_behind.j2").symlink_to("nowhere")
+    (role / "templates" / "zz_link").symlink_to(outside)
+
+
+# --- A7b: `_role_asset` sees only what ansible RESOLVES, so a dangling link reaches it as the real
+# twin alone or as nothing at all, and it refuses neither. The refusal is the walk above, by presence.
+# That division of labour is what lets absence stay silent up there, so it is constructed here rather
+# than argued: each shape the resolver cannot refuse must red the walk, on the walk's own assertion.
+@pytest.mark.parametrize(
+    ("what", "plant", "name", "resolver_reads"),
+    [
+        ("a dangling twin beside a real asset", _plant_dangling_twin, "zz_twin.j2", "files/zz_twin.j2"),
+        ("a dangling link alone", _plant_dangling_alone, "zz_absent.j2", None),
+    ],
+)
+def test_the_presence_walk_refuses_what_the_resolver_cannot(tmp_path, monkeypatch, what, plant, name, resolver_reads):
+    """Each shape reds the broken-link assertion of the walk above, with the resolver's own reading of
+    the same name pinned beside it — the real twin, or nothing — since the division is the claim."""
+    role = _ops_role_copy(tmp_path)
+    plant(role)
+    monkeypatch.setitem(globals(), "OPS_ROLE", role)
+    read = _role_asset(name)
+    assert (str(read.relative_to(role)) if read else None) == resolver_reads, (
+        f"{name!r} reads as {read!r}: the resolver's reading is what leaves this case to the walk"
+    )
+    with pytest.raises(AssertionError, match=r"carries a name whose target does not exist"):
+        test_no_ops_role_asset_is_a_broken_link()
+
+
+def test_the_presence_walk_refuses_a_directory_it_cannot_descend(tmp_path, monkeypatch):
+    """A dangling asset behind a symlinked directory is invisible to the walk, so the link is refused."""
+    role = _ops_role_copy(tmp_path)
+    _plant_dangling_behind_a_linked_dir(role)
+    monkeypatch.setitem(globals(), "OPS_ROLE", role)
+    with pytest.raises(AssertionError, match=r"carries a linked directory this walk does not descend"):
+        test_no_ops_role_asset_is_a_broken_link()
+
+
+def test_the_copied_role_alone_reds_nothing(tmp_path, monkeypatch):
+    """The true positive beside the two above: the copy passes until one of them plants something."""
+    monkeypatch.setitem(globals(), "OPS_ROLE", _ops_role_copy(tmp_path))
+    test_no_ops_role_asset_is_a_broken_link()
