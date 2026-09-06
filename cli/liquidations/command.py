@@ -29,7 +29,7 @@ async def _healthcheck_loop(url: str | None, client: BinanceLiquidationClient, i
         await asyncio.sleep(interval)
         # Dead-man's-switch: no book or checksum here, so `client.connected` is the only gap term; a
         # breach (writes stop) and an unmeasurable probe ("cannot measure" is not "healthy") each
-        # withhold the ping so the disk failure pages (T0032, resolved, records why).
+        # withhold the ping so the disk failure pages.
         if client.connected and not watermark.breached and watermark.measurable:
             ping_healthcheck(url)
 

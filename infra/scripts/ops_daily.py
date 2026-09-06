@@ -339,8 +339,8 @@ def read_reminders(
     if reset:
         # A counter summed from an append-only ledger CAN DECREASE when a record is corrected or the
         # ledger is rebuilt -- a correction that raises the total resets nothing -- and `increase()`
-        # then reports the whole post-reset value as movement (`T0044`, resolved, records the
-        # correction it was opened on). This mirrors `zcrypto-reconcile-healable-gap-rate`'s `resets()`.
+        # then reports the whole post-reset value as movement (`T0044` records the correction it
+        # was opened on). This mirrors `zcrypto-reconcile-healable-gap-rate`'s `resets()`.
         owed = True
         status = f"counter reset in {hours} h (a ledger correction or rebuild), so its movement says nothing -- recount the qualifying days from the ledger"
     else:

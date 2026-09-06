@@ -1,7 +1,7 @@
 """Continuity-replay of the canonical book archive (spec 00051 OPS-3) — its payoff over the manifests
 and `infra/scripts/continuity.py` is confirming that the reconciler's spliced output stays anchored and
 coherent across splice boundaries. The stored `checksum` is capture-time ground truth and never re-derived:
-`price`/`qty` are Float64, so Kraken's CRC32 would mismatch on every zero-trailing level (T0045, resolved)."""
+`price`/`qty` are Float64, so Kraken's CRC32 would mismatch on every zero-trailing level (T0045)."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def replay_segment(path: Path, symbol: str, depth: int) -> ReplayResult:
     replay_ok, error = True, None
     try:
         for message in messages:
-            # The CRC-based return value is deliberately ignored (T0045, resolved): only a structural throw fails the replay.
+            # The CRC-based return value is deliberately ignored: only a structural throw fails the replay.
             if message["type"] == "snapshot":
                 book.ingest_snapshot(message)
             else:

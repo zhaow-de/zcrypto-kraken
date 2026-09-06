@@ -1,5 +1,5 @@
 """Pin `--min-gap-seconds` from real cross-host data (spec 00050 Task 12, T0039).
-T0039 is resolved and the deployed 30 s validated by a soak this harness ran; it stays reusable
+The deployed 30 s is validated by a soak this harness ran; the harness stays reusable
 for re-pinning. Kraken coalesces book updates per WebSocket connection, so the two hosts record
 different message sequences for the same pair and a coalescing artifact can make the primary
 appear silent while the secondary shows activity inside that silence. A threshold below that

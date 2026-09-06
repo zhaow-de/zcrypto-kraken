@@ -63,7 +63,7 @@ def detect(frame: pl.DataFrame) -> Detection:
     for i, (a, b) in enumerate(zip(uids, uids[1:], strict=False)):
         if b > a + 1:
             ts_lo, ts_hi = tss[i], tss[i + 1]
-            # `ts` non-monotone in `trade_id` (the reconnect-overwrite signature of T0026, resolved)
+            # `ts` non-monotone in `trade_id` (the reconnect-overwrite signature of T0026)
             # would otherwise hand REST an inverted `since`/`until` window that silently yields nothing.
             if ts_lo > ts_hi:
                 logger.warning(

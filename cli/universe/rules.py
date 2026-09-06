@@ -11,8 +11,8 @@ DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 150_000.0
 # round trip crossing twice at the cap costs a quarter of the tier-1 maker round trip (2 x 0.40%,
 # `docs/reference/kraken-fee-schedule.md`) -- a chosen convention, not a derivation: the point where
 # spread stops being a rounding error on the fee stack. Absolute, never re-derived from the live
-# tier: maker -> 0% at the top tiers would cap at zero and reject everything. T0014 (spec 00066,
-# resolved) holds the calibration, T0024 (spec 00067, resolved) the cap's convention.
+# tier: maker -> 0% at the top tiers would cap at zero and reject everything. T0014 (spec 00066)
+# holds the calibration, T0024 (spec 00067) the cap's convention.
 DEFAULT_MAX_SPREAD_BPS = 10.0
 # The max-size position the volume floor and the spread cap are both priced at: ~$10k account, ≤1.5x
 # gross, ~12 names.
@@ -56,7 +56,7 @@ def finalize_universe(
     A symbol absent from the opt-in `spreads` map (effective-spread bps per side at
     `SPREAD_REFERENCE_NOTIONAL_EUR`) is recorded `spread_bps: None`, never rejected: absence of
     evidence is not evidence of a wide spread, and the null keeps an unscreened symbol visible in
-    the artifact (T0024, spec 00067, resolved)."""
+    the artifact (spec 00067)."""
     entries = []
     for pair in pairs:
         max_leverage = max(pair.leverage_buy) if pair.leverage_buy else 0

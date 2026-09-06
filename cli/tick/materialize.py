@@ -177,7 +177,7 @@ def materialize(
 ) -> MaterializeResult:
     """Sweep every archived pair, publishing each settled day that has no final yet. A day is settled once
     `now - day_end >= settle` -- `now` is injected so the boundary is testable -- and an unsettled day is counted and left
-    alone so a later sweep takes it once heal-complete (D3; T0066, resolved, chose the same shape for the panel)."""
+    alone so a later sweep takes it once heal-complete (D3)."""
     written = skipped = unsettled = unhealed = gap = rows = 0
     errors: list[tuple[str, date, str]] = []
     index = segment_index(primary_root, reconciled_root)

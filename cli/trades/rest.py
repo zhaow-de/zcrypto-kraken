@@ -20,7 +20,7 @@ _BASE_URL = "https://api.kraken.com/0/public/Trades"
 _TIMEOUT_SECONDS = 30
 _PAGE_ROWS = 1000  # Kraken's page size; a SHORT page means the series is exhausted
 _MIN_INTERVAL_SECONDS = 3.0  # 1.5s was DEMONSTRABLY refused (EGeneral:Too many requests) on the
-# live bulk run (T0053, resolved) -- do not "optimise" this back down without new measurement
+# live bulk run (T0053) -- do not "optimise" this back down without new measurement
 
 _SIDE = {"b": "buy", "s": "sell"}
 _ORD_TYPE = {"m": "market", "l": "limit"}
@@ -69,7 +69,7 @@ def fetch_trades(
     and so can return rows past `until`. A REST row matches a WS-captured one on every field but `ts` (spec 00053 D6/D6a; see
     `_row_ts`), so the merge keys on `trade_id` ALONE and the WS row wins -- only a RECOVERED trade carries this estimate."""
     # The altname is derived (`dump_pair_name`) rather than mapped per pair, so a NEW capture pair
-    # heals with no code change (T0055, resolved, records the residual per-aliased-asset drift).
+    # heals with no code change (T0055 records the residual per-aliased-asset drift).
     # Kraken answers under its OWN key (XBTEUR -> XXBTZEUR), so the series key below is positional.
     try:
         altname = dump_pair_name(pair)

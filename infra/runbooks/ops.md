@@ -231,7 +231,7 @@ The daily pass's report names this reminder under `## Reminders`: **OWED** when 
 
 ### What it means
 
-The `gt [600]` threshold above is **provisional**: it was set before enough steady-state history existed to fit it, and the fit is still owed. Both post-fix events measured under a tenth of it per pair (\[[T0103]\], resolved), so the fit starts from a threshold real events have come nowhere near.
+The `gt [600]` threshold above is **provisional**: it was set before enough steady-state history existed to fit it, and the fit is still owed. Both post-fix events measured under a tenth of it per pair (\[[T0103]\]), so the fit starts from a threshold real events have come nowhere near.
 
 ### What to do
 

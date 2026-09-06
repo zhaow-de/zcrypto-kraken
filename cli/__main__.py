@@ -107,7 +107,7 @@ def main(
 
 def run() -> None:
     """Console-script entry point (`zcrypto`): an unhandled fault is LOGGED before the process dies -- Typer's own `sys.excepthook`
-    would otherwise render it to stderr, never through `logging`, unlabelled for the level-based alerting (T0041, resolved).
+    would otherwise render it to stderr, never through `logging`, unlabelled for the level-based alerting.
     `tests/test_error_paths_are_logged.py` pins the `BaseException` width -- a Rust panic from the engine's compiled core escapes
     `except Exception` -- and that both control-flow exits leave unlogged with their exit codes intact."""
     try:
