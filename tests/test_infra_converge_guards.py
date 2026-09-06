@@ -1541,29 +1541,16 @@ def iter_tasks(tasks: list[dict], inherited: tuple[str, ...] = ()) -> list[tuple
 # --- A1: the check-mode timer guard reads only `ops_unit_install`'s AGGREGATE changed flag, so it
 # cannot separate a first install from an edit to a unit that already exists. The role's comment
 # says so; these fixtures are the assertion of it.
-OPS_UNITS = [
-    f"zcrypto-{n}.{k}" for n in ("verify-replay", "verified-replay", "panel-materialize", "tape-bars") for k in ("service", "timer")
-]
+def _unit_install(changed: list[bool]) -> dict:
+    # The 8-item loop register the template module produces: the aggregate the guard reads, over the
+    # per-item `results` a narrowed guard would read — present so a narrowing fails on the claim
+    # rather than on a missing key.
+    return {"changed": any(changed), "results": [{"changed": c} for c in changed], "skipped": False}
 
 
-def _unit_install(changed: list[bool], preexisting: bool) -> dict:
-    # The template module's per-item result, aggregated as a loop register: `diff.before` is empty
-    # for a file it created and carries the old bytes for one it edited.
-    results = [
-        {
-            "changed": c,
-            "dest": f"/etc/systemd/system/{unit}",
-            "state": "file",
-            "diff": {"before": "[Unit]\nDescription=old\n" if preexisting else "", "after": "[Unit]\nDescription=new\n"},
-        }
-        for unit, c in zip(OPS_UNITS, changed, strict=True)
-    ]
-    return {"changed": any(changed), "results": results, "skipped": False}
-
-
-FIRST_INSTALL = _unit_install([True] * 8, preexisting=False)
-ONE_EDITED = _unit_install([True] + [False] * 7, preexisting=True)
-NOTHING_CHANGED = _unit_install([False] * 8, preexisting=True)
+FIRST_INSTALL = _unit_install([True] * 8)
+ONE_EDITED = _unit_install([True] + [False] * 7)
+NOTHING_CHANGED = _unit_install([False] * 8)
 
 
 @pytest.mark.parametrize(
@@ -1574,6 +1561,7 @@ NOTHING_CHANGED = _unit_install([False] * 8, preexisting=True)
         (True, NOTHING_CHANGED, True, "nothing changed under --check: every unit exists, so preview the enable"),
         (False, ONE_EDITED, True, "REAL run: the render already wrote the units — never skip"),
     ],
+    ids=["check-first-install", "check-one-edited", "check-nothing-changed", "real-run-one-edited"],
 )
 def test_the_timer_guard_suppresses_the_preview_for_a_changed_unit_that_already_existed(check_mode, register, expected, why):
     task = find_task(load_tasks(OPS), OPS_TIMER_ENABLE)
@@ -1582,11 +1570,15 @@ def test_the_timer_guard_suppresses_the_preview_for_a_changed_unit_that_already_
 
 
 def test_the_timer_guard_cannot_tell_a_first_install_from_an_edit_to_an_existing_unit():
-    """The guard reads the aggregate `changed` alone, so the two 8-item shapes evaluate identically."""
+    """Pins the blind spot the role's comment documents — the guard reads the aggregate `changed` alone — so a
+    deliberate narrowing updates this test and that comment together instead of one drifting off the other."""
     when = when_conditions(find_task(load_tasks(OPS), OPS_TIMER_ENABLE))
     fresh = truthy(when, {"ansible_check_mode": True, "ops_unit_install": FIRST_INSTALL})
     edited = truthy(when, {"ansible_check_mode": True, "ops_unit_install": ONE_EDITED})
-    assert fresh == edited, f"the guard now separates the shapes (first-install={fresh}, edited={edited}); re-read its comment"
+    assert fresh == edited, (
+        f"the guard now separates the shapes (first-install={fresh}, edited={edited}): if that narrowing is "
+        "deliberate, retire this pin and the role's comment in the same change"
+    )
     assert edited is not truthy(when, {"ansible_check_mode": True, "ops_unit_install": NOTHING_CHANGED}), (
         "the guard must still evaluate differently when nothing changed, or it gates nothing"
     )
@@ -1619,7 +1611,10 @@ def test_the_daemon_json_task_notifies_a_handler_that_restarts_dockerd():
 
     handlers = {h["name"]: h for h in load_tasks(DOCKER_HANDLERS)}
     missing = [n for n in notify if n not in handlers]
-    assert not missing, f"{missing} is notified but not defined in {DOCKER_HANDLERS.name}: {sorted(handlers)}"
+    assert not missing, (
+        f"{missing} is notified but not defined in {DOCKER_HANDLERS.name}: {sorted(handlers)} — resolved by handler "
+        "NAME, so a handler that answers through `listen:` instead reds this while the claim stays true"
+    )
     # by the handler's ACTION, not its name: a renamed-to-no-op handler keeps every name check green
     bouncers = [
         n
@@ -1633,23 +1628,71 @@ def test_the_daemon_json_task_notifies_a_handler_that_restarts_dockerd():
     assert bouncers, f"no notified handler restarts dockerd, so the ack above this task is decoration: {notify}"
 
 
-# --- A4: the role states the digest gate as its own convention. The two documented exclusions
-# (panel-regenerate, the stale-alloy removal and drift check) consume no image reference, which is
-# the property this selection reads — never their names.
+# --- A4: the role states the digest gate as its own convention. A task consumes an image reference
+# when one appears in its own body OR in a file it renders — where the role's own comment locates it
+# ("this script consumes no image reference"), the script being the RENDERED template.
 OPS_DIGEST_GATE = "ops_image_digest is defined"
+OPS_ROLE = ANSIBLE / "roles" / "ops"
+
+
+def _expand_src(src: str, loop) -> list[str]:
+    # `{{ item }}` against a literal `loop:` — a list, or a Jinja expression over literals. A src the
+    # templar cannot expand comes back as it stands, for the caller to refuse by name.
+    from ansible.errors import AnsibleError
+    from ansible.template import trust_as_template
+
+    def render(text: str, variables: dict):
+        try:
+            return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+        except AnsibleError:
+            return text
+
+    if "{{" not in src:
+        return [src]
+    items = loop if isinstance(loop, list) else render(loop, {}) if isinstance(loop, str) else None
+    if not isinstance(items, list) or not items:
+        return [src]
+    return [render(src, {"item": item}) for item in items]
+
+
+def _consumed_text(task: dict) -> str:
+    # The task's body — WITHOUT its `when:`, which is what keeps the selection from reading the gate
+    # back to itself — plus the text of every file it renders. A `src:` carrying a `/` is a path off
+    # the role (a mount source, a controller-side copy), not a file this role owns; one that resolves
+    # to no file is refused by name, never dropped from the selection in silence.
+    text = yaml.safe_dump({k: v for k, v in task.items() if k != "when"}, allow_unicode=True)
+    for value in task.values():
+        src = value.get("src") if isinstance(value, dict) else None
+        if not isinstance(src, str) or "/" in src:
+            continue
+        for name in _expand_src(src, task.get("loop")):
+            resolved = next((OPS_ROLE / d / name for d in ("templates", "files") if (OPS_ROLE / d / name).is_file()), None)
+            assert resolved is not None, (
+                f"{task['name']!r} renders {name!r}, which resolves to no file under {OPS_ROLE.name}/: this selection "
+                "cannot read what that task consumes"
+            )
+            text += resolved.read_text()
+    return text
 
 
 def test_every_image_consuming_ops_task_is_gated_on_the_digest():
     selected, rest = [], []
     for task, gates in iter_tasks(load_tasks(OPS)):
-        body = yaml.safe_dump({k: v for k, v in task.items() if k != "when"}, allow_unicode=True)
-        (selected if "ops_image" in body else rest).append((task, gates))
+        (selected if "ops_image" in _consumed_text(task) else rest).append((task, gates))
     assert selected, "no image-consuming ops task selected — the selection rule stopped matching"
     print(f"image-consuming ops tasks: {len(selected)} of {len(selected) + len(rest)} — {[t['name'] for t, _ in selected]}")
 
-    # without this the selection could be 'every digest-gated task' and the loop below a tautology
-    assert any(not any(OPS_DIGEST_GATE in g for g in gates) for _, gates in rest), (
-        "every unselected task is digest-gated too, so this selection proves nothing about the gate"
+    def self_gated(task: dict) -> bool:
+        return any(OPS_DIGEST_GATE in str(c) for c in when_conditions(task))
+
+    # Two degeneracies the loop below would survive, each excluded by the shape it would take: were
+    # the `when:` dumped too, every self-gated task would select itself and none would be left here,
+    assert [t["name"] for t, _ in rest if self_gated(t)], (
+        "every task naming the digest gate in its own `when:` is selected — the selection is reading the gate back to itself"
+    )
+    # and were the body read alone, no task consuming the image only through a template would appear.
+    assert [t["name"] for t, gates in selected if any(OPS_DIGEST_GATE in g for g in gates) and not self_gated(t)], (
+        "no selected task is gated by an enclosing block alone — rendered-template text is no longer reaching the selection"
     )
     for task, gates in selected:
         assert any(OPS_DIGEST_GATE in g for g in gates), f"{task['name']!r} consumes an image reference ungated: {list(gates)}"
@@ -1667,7 +1710,9 @@ def _render_nas_env(hash_scope: str) -> str:
     from ansible.template import trust_as_template
 
     text = NAS_ENV_TEMPLATE.read_text()
-    variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(nas_\w+)", text))}
+    # A placeholder for EVERY name the template reads, not just the `nas_*` ones: a new line naming
+    # anything else would otherwise raise undefined, a red that says nothing about the claim below.
+    variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(\w+)", text))}
     variables["nas_archive_pull_hash_scope"] = hash_scope
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
 
@@ -1682,7 +1727,8 @@ def test_nas_env_renders_an_empty_hash_scope_as_a_bare_assignment(scope, expecte
 @pytest.mark.parametrize(("value", "expected"), [("", "full"), ("incremental", "incremental")])
 @pytest.mark.parametrize("path", [NAS_COMPOSE, NAS_PULL_ENTRYPOINT], ids=lambda p: p.name)
 def test_both_hash_scope_consumers_substitute_full_for_an_empty_assignment(path, value, expected):
-    """Evaluated, not spelled: `:-` substitutes on empty as well as unset, and `-` would not."""
+    """Evaluated, not spelled: `:-` substitutes on empty as well as unset, and `-` would not — bash is a proxy for
+    Compose's own interpolation in compose.yaml, sound because the two agree on `:-` against `-`."""
     import os
     import subprocess
 
