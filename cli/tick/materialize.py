@@ -157,7 +157,7 @@ def _archive_calendar(index: SegmentIndex) -> dict[str, list[date]]:
 
 
 def _watermark(out_root: Path, pair: str) -> date | None:
-    """The newest published day for `pair`, None on a first run, a refusal when that newest path is not one of ours."""
+    """The newest published day for `pair`, None on a first run, a refusal when that path is not a date -- `publish_day` writes here alone."""
     base, quote = pair.split("/")
     finals = sorted((out_root / base / quote).rglob("*.parquet"))
     if not finals:
