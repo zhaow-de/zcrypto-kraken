@@ -29,7 +29,7 @@ Effective notice is ~15 minutes: Prometheus staleness (~5 min) plus the rule's `
 
 **Telemetry-only.** No capture, no engine cycle and no archive work stops because of this. What stops is your ability to see any of it.
 
-**Every other Grafana rule scoped to that host is blind while this fires, and their silence means nothing.** Read no green as reassurance until `up` is back.
+**Every other Grafana rule scoped to that host is blind while this fires** — read no green as reassurance until `up` is back.
 
 What accumulates unseen differs by host:
 
@@ -37,14 +37,14 @@ What accumulates unseen differs by host:
 | -- | -- |
 | **capture primary** (`zcrypto`) | the unbackfillable L2 capture signals, on the host that also runs the engine and holds the live Kraken trade key |
 | **capture secondary** (`zcrypto-red`) | the redundant L2 capture signals |
-| **ops** | the panel/verify timer series, the liquidations poller signals, the reconcile and trade-backfill exporter families — expect their exporter-stale rules to double-page — and the healthchecks.io scrape, which makes `zcrypto-hcio-watchdog` read 999 |
+| **ops** | the panel/verify timer series, the liquidations poller signals, the reconcile/trade-backfill exporter families — their exporter-stale rules double-page — and the healthchecks.io scrape |
 | **NAS** | the gate metrics the soak verdict is read from, and the NAS archive-pull log stream |
 
 **The direct-shipped daemon logs do NOT pass through Alloy.** The capture daemon, the engine and the liquidations poller push to Loki themselves (`--ship-logs`), so `zcrypto-capture-log-dead-*` and `zcrypto-ops-poller-log-dead` staying green while this fires is consistent, not contradictory. If they fire *too*, the host's egress or the host itself is down, not just Alloy.
 
 **On ops the tighter clock is `zcrypto-hcio-watchdog`, not this rule** — `hc_checks_down_total` goes stale ~5 min after Alloy stops shipping, then the `vector(999)` fallback plus `for: 5m` pages at roughly 10 minutes total.
 
-**This family sees "not shipping" and nothing else.** The alive-but-wedged state — Alloy up, its `up` series flowing, and its discovery frozen so a whole class of target silently stops being scraped — was the actual 2026-07-15/16 incident (recorded in the archived `T0048`). The rule that detected it, `zcrypto-alloy-docker-sd-wedged`, is **absent from `infra/grafana/alerts.yaml`**; it was retired with the docker-discovery path (spec 00068 D6/D8). **Nothing in the rule set re-detects that shape.** So when a specific family is missing while this rule reads Normal, do not conclude the transport is fine — prove the family by value with `grafana-query.py`, because `(no series)` is a FAIL and never a zero.
+**This family sees "not shipping" and nothing else.** The alive-but-wedged state — Alloy up, its `up` series flowing, and its discovery frozen so a whole class of target silently stops being scraped — is read by nothing since `zcrypto-alloy-docker-sd-wedged` retired with the docker-discovery path it watched. So when a specific family is missing while this rule reads Normal, do not conclude the transport is fine — prove the family by value with `grafana-query.py`, because `(no series)` is a FAIL and never a zero.
 
 ### What to do
 
@@ -235,7 +235,7 @@ One of four **critical** Grafana alerts on the ops node's log plane. All four ar
 
 Each is `count_over_time(...) or on() vector(0)` below 1. The `by (host)` / `by (host, container)` groupings are inert at fire time — the unlabelled fallback is what crosses the threshold — so each summary names its subject literally.
 
-**One correction to the rule text, and one scope note, so you do not mis-size the problem.** `zcrypto-ops-journal-transport-dead`'s summary is correct — it already says **half-hourly** — but its inline comment in `alerts.yaml` still calls `zcrypto-archive-pull` "the hourly unit". The timer is `OnCalendar=*-*-* *:12,42:00`, half-hourly since T0058 doubled it. The 26 h threshold is unaffected and still correct. And `zcrypto-ops-unit-parse-dead`'s scope is the journal keep-regex in `roles/ops/files/config.alloy`, which keeps **five** units — `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize`, `tape-bars`.
+`zcrypto-ops-unit-parse-dead`'s scope is the journal keep-regex in `roles/ops/files/config.alloy`, which keeps `archive-pull`, `verify-replay`, `verified-replay`, `panel-materialize` and `tape-bars`.
 
 ### What it means
 
@@ -253,7 +253,7 @@ The ops node carries **two independent log paths**, and these four rules exist b
 - **All four** ⇒ the host or its egress, not any one component.
 - **The staleness rules firing alongside** (`zcrypto-ops-archive-pull-stalled`, `zcrypto-ops-verified-replay-stale`, …) ⇒ the units are genuinely not running, and the log plane is reporting that correctly.
 
-**What goes blind while any of these fire.** `zcrypto-ops-error-logs` is the only error channel for these streams — including the load-bearing `writer cycle SKIPPED (fail-closed gate)` warning, which exists in no container log at all because the orchestration script echoes it host-side. For the liquidations poller it is the *only* failure signal of any kind: the poller flips no exit-code metric.
+**What goes blind while any of these fire.** `zcrypto-ops-error-logs` reads exactly these streams, so it is blind with them. For the liquidations poller it is the *only* failure signal of any kind: the poller flips no exit-code metric.
 
 **The margin on `log-pipeline-dead` is thin by design.** A healthy 6 h window measured 7 to 9 lines over 14 days — roughly 1.5 an hour. Read a low count on that stream as a reason to look, not as headroom.
 
@@ -332,7 +332,7 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 
 ### The dead-man map
 
-**Ten checks exist.** The repo records their node and application **tags** (from the archived `T0083`, where all nine app checks were retagged, plus the watchdog check added in the same window); it records display names for only some of them, and the hc.io dashboard is the authority on names. Use the tags to identify a row, then the runbook column for the daemon that owns it.
+**Ten checks exist**, and `tests/fixtures/healthchecks_descriptions.json` records each one by name and tags (the archived `T0083`'s scheme) — a snapshot fetched through the read-only key, so a rename does not reach it until it is re-fetched. Use the tags to identify a row, then the runbook column for the daemon that owns it. Its `description` field is healthchecks.io's own text and is not authoritative here: `zcrypto-archive-pull`'s says the ping is withheld on a gate skip, which the row below corrects.
 
 | node tag | application tag | what pings it | ping is withheld when | section owning the daemon |
 | -- | -- | -- | -- | -- |
@@ -340,12 +340,12 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 | `capture-redundant` | `capture-daemon` | the same daemon on `zcrypto-red` | as above | `capture.md#zcrypto-capture-all-streams-silent` and `capture.md#zcrypto-capture-stream-silent` |
 | `engine` | `engine-shadow` (check `zcrypto-engine-shadow`) | the engine cycle on `zcrypto` — pings on a completed cycle, pings `/fail` on a failed one | a cycle raised before either ping, so the check goes stale with **no** preceding `/fail` — read that as "the node is up but a cycle raised" | `engine.md#zcrypto-engine-cycle-stale` |
 | `nas` | `gate-verify` (check `zcrypto-gate-verify`) | `gate-export` on the NAS — GET on a clean gate, GET `<url>/fail` otherwise | the gate is unclean or the export did not run | `gate.md#zcrypto-gate-exporter-stale` |
-| `ops` | `archive-pull` | the half-hourly overlay-writer unit, on a clean cycle only | the fail-closed gate skipped the cycle, or the run failed | `ops-node.md#zcrypto-ops-archive-pull-stalled` |
+| `ops` | `archive-pull` | the half-hourly overlay-writer unit, on rc 0 — **gate skips ping too**, so it reads this unit's liveness | the run failed | `ops-node.md#zcrypto-ops-archive-pull-stalled` |
 | `ops` | `panel` | the panel-materialize unit | the run did not complete cleanly | `ops-node.md#zcrypto-ops-panel-exit-nonzero` |
 | `ops` | `verify-replay` | the nightly canonical-archive sweep | the run produced no summary — **withheld independently of both Grafana rules for that timer** | `ops.md#zcrypto-ops-verify-replay-run-broken` |
 | `ops` | `verified-replay` | the verified-replay unit | the run did not reach its clean-exit ping | `ops-node.md#zcrypto-ops-verified-replay-stale` |
 | `ops` | `liquidations` | the liquidations poller (`LIQUIDATIONS_HEALTHCHECK_URL`) | the poller is not cycling, or its disk watermark is breached | `observability.md#zcrypto-ops-poller-log-dead` |
-| `ops` | — (check `zcrypto-grafana-watchdog`) | the ops timer probing Grafana every 5 min; pings on success, `/fail` on probe failure; 600 s timeout / 600 s grace | Grafana is unreachable from ops, **or** the pinger itself died (then it pages by staleness) | this section |
+| `ops` | `grafana-watchdog` | the ops timer probing Grafana every 5 min; pings on success, `/fail` on probe failure; 600 s timeout / 600 s grace | Grafana is unreachable from ops, **or** the pinger itself died (then it pages by staleness) | this section |
 
 **There is no dead-man check for the NAS archive-pull loop.** Nothing in the repo pings one — the NAS's only hc.io check is the gate one above. That pull loop's liveness is Grafana-only, through `nas.md#zcrypto-nas-archive-pull-stalled`, so a Grafana outage leaves it unwatched. Treat that as a known asymmetry, not as a check you have failed to find.
 
@@ -381,9 +381,9 @@ Grafana Cloud itself is unreadable — the boards, the alert rules, and `infra/s
 - **A `/fail` on the check** ⇒ the ops timer ran and its probe of `https://zcrypto2026.grafana.net/api/health` (`ops_grafana_watchdog_probe_url`, `infra/ansible/roles/ops/defaults/main.yml`) failed. healthchecks.io moves a check down on receipt of a `/fail`, so no `timeout` + `grace` term applies. The pinger is alive and Grafana is not reachable from ops — this page.
 - **Silence** ⇒ nothing pinged at all, and the check went down on staleness at its own `timeout` 600 s + `grace` 600 s = 20 min from its last ping. The timer fires `OnCalendar=*:0/5:41`, so silence is the ops host or the timer, **not** Grafana: work [`observability.md#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog) instead and leave this page.
 
-Those two check settings were read from the healthchecks.io management API on 2026-08-31. **Re-read them** — they are settings on a third party's dashboard and this file does not change when one does.
+**Re-read those two check settings from healthchecks.io** — they are settings on a third party's dashboard and this file does not change when one does.
 
-**Time from the outage to the phone**, measured by drill C′ on 2026-08-31, whose readings live in `docs/reference/drill-log.md`'s C′ entry and whose procedure is [`drills-telemetry.md#drill-c-prime`](drills-telemetry.md#drill-c-prime) — **and only for one of the two routes**. **Staleness route (the prober dies), and it pages twice on different clocks — quote the one you mean.** The `zcrypto-grafana-watchdog` check pages **natively 20 min after its last clean ping** — that is its `timeout 600 + grace 600`, and the ping is the anchor the check itself uses — which on this run landed **~18 min 52 s** after the induction. **The two anchors differ by the 1 min 08 s between them, so quote the anchor with the number**; 20 min and 18 min 52 s are the same instant counted from different places, not two measurements. The tilde is a 30 s poll of check state, not a hedge. That notice travels healthchecks.io's own integration, **measured at 2 s to Slack at drill J′** — the failure domain that survives Grafana being dark. The Grafana rule `zcrypto-hcio-watchdog` follows separately at **25 min 38 s** (`Pending` 17:22:40Z, `Alerting` 17:27:40Z), and *its* delivery is the 31–40 s Grafana leg measured across six drill records — fourteen samples in all. **On this route that leg is available** — the prober died, Grafana did not — which is exactly why the route below, where Grafana itself is unreachable, cannot borrow either page time. **The device leg is unmeasured on both and is drill Q's.** **`/fail` route (Grafana itself unreachable): unmeasured.** Inducing it is a converge, so it stays attended and no number here covers it — read the DERIVED paragraph above for what that case loses, and do not read the staleness figure as bounding it.
+**Time from the outage to the phone**, measured by drill C′ on both its routes, whose readings live in `docs/reference/drill-log.md`'s `C′` and `C′-fail` entries and whose procedure is [`drills-telemetry.md#drill-c-prime`](drills-telemetry.md#drill-c-prime). **Staleness route (the prober dies), and it pages twice on different clocks — quote the one you mean.** The `zcrypto-grafana-watchdog` check pages **natively 20 min after its last clean ping** — that is its `timeout 600 + grace 600`, and the ping is the anchor the check itself uses — which on this run landed **~18 min 52 s** after the induction. **The two anchors differ by the 1 min 08 s between them, so quote the anchor with the number**; 20 min and 18 min 52 s are the same instant counted from different places, not two measurements. The tilde is a 30 s poll of check state, not a hedge. That notice travels healthchecks.io's own integration, **measured at 2 s to Slack at drill J′** — the failure domain that survives Grafana being dark. The Grafana rule `zcrypto-hcio-watchdog` follows separately at **25 min 38 s** (`Pending` 17:22:40Z, `Alerting` 17:27:40Z), and *its* delivery is the 31–40 s Grafana leg measured across six drill records — fourteen samples in all. **The device leg is unmeasured on this route and is drill Q's.** **`/fail` route (Grafana unreachable from ops): 11 s from the failing probe to the operator's device.** A `/fail` is an immediate down transition, so there is no `timeout` + `grace` term and that number is notification latency alone; the probe runs `OnCalendar=*:0/5:41`, so add up to one 5 min period from the outage itself. **`hc_check_up` moved 62 s AFTER the phone** — the healthchecks.io → Alloy scrape lag — so a responder watching Grafana reads green for a full minute after the page has fired: on this route, time it from the device and never from the metric. The Grafana leg is unmeasured here — the induction was reverted inside `zcrypto-hcio-watchdog`'s `for: 5m`, so that rule never reached `Alerting`. Neither route bounds what a Cloud outage LOSES — that is the DERIVED paragraph below.
 
 ### What it means
 

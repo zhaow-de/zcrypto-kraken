@@ -165,8 +165,8 @@ services:
     deploy:
       resources:
         limits:
-          # No `cpus:`/`cpu_shares:` -- the Synology DSM kernel has no CPU cgroup (see the
-          # socket-proxy service); `GOMEMLIMIT` above bounds Alloy's Go heap regardless.
+          # No `cpus:`/`cpu_shares:` -- the Synology DSM kernel has no CPU cgroup; `GOMEMLIMIT`
+          # above bounds Alloy's Go heap regardless.
           memory: 512m
     # journald, not json-file (00068 D6/T8): Alloy's own logs now reach Grafana Cloud through the
     # same journal + `loki.source.journal` pipeline (config.alloy) that carries archive-pull's

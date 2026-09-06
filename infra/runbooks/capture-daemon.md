@@ -28,13 +28,13 @@ What actually runs, driven by `_desync_recovery_loop` in `cli/capture/command.py
 
 Time to terminal is **20 + 5 + 10 + 20 = 55 s** from the desync.
 
-**So a pair still desynced at 15 minutes is POST-ladder.** It has already spent rung 1, three retries and a full reconnect with a fresh snapshot, and has been sitting in the hour-long cooldown for about fourteen minutes. That is a pair a reconnect did not fix — a materially more serious thing than "one attempt did not take".
+**So a pair still desynced at 15 minutes is POST-ladder.** It has already spent rung 1, three retries and a full reconnect with a fresh snapshot, and has been in the hour-long cooldown for about fourteen minutes — a pair a reconnect did not fix.
 
-The cooldown is not permanent. When it expires the ladder re-arms, and because `desynced_at` is deliberately not reset the pair retries on the very next tick — three more retries, then one more reconnect. The daemon will therefore try again roughly an hour after the escalation with no help from you. A pair that heals and re-desyncs *inside* that hour keeps the escalation record (`note_recovered` deliberately does not clear it), so `due()` returns `Action.NONE` for the rest of the cooldown: it gets the transition resubscribe and **nothing else** — no retries, no second reconnect — until the cooldown expires and the full ladder re-arms.
+The cooldown is not permanent: when it expires the ladder re-arms and, because `desynced_at` is deliberately not reset, the pair retries on the very next tick — so the daemon tries again roughly an hour after the escalation with no help from you. A pair that heals and re-desyncs *inside* that hour keeps the escalation record (`note_recovered` deliberately does not clear it), so it gets the transition resubscribe and **nothing else** — no retries, no second reconnect — until the cooldown expires.
 
-**The blast radius is the whole host, not the pair.** `GapMonitor.is_healthy()` is False while any pair has an open gap, and the healthchecks.io ping (`HEALTHCHECK_INTERVAL_SECONDS = 60`) is gated on it — so this one pair withholds the host's dead-man for all 12. That check (`zcrypto-capture` or `zcrypto-capture-red`) has already gone down and stays down, and **nothing worse on this host will produce a new dead-man page while it is saturated.** This rule is what names the pair; the dead-man only says the host went quiet.
+**The blast radius is the whole host, not the pair.** `GapMonitor.is_healthy()` is False while any pair has an open gap, and the healthchecks.io ping (`HEALTHCHECK_INTERVAL_SECONDS = 60`) is gated on it — so this one pair withholds the host's dead-man for all 12. That check (`zcrypto-capture` or `zcrypto-capture-red`) has already gone down and stays down, and **nothing worse on this host will produce a new dead-man page while it is saturated.**
 
-**The rows keep being written; what the desync costs is certification.** In `_handle_book_message` only a watermark breach skips the writer, so a desynced pair keeps appending every update row — which is why the summary says the pair is uncertified rather than uncaptured. What the desync costs is *certification*, not rows: the transition opens a `checksum_resync` gap in `GapMonitor`, so the window is booked into `zcrypto_capture_gap_seconds_total{pair=…}`, and the book replayed across it no longer reconciles against Kraken's checksum. Treat the window as **unverified** L2 on that pair, not as an empty one.
+**The rows keep being written; what the desync costs is certification.** In `_handle_book_message` only a watermark breach skips the writer, so a desynced pair keeps appending every update row. The transition opens a `checksum_resync` gap in `GapMonitor`, so the window is booked into `zcrypto_capture_gap_seconds_total{pair=…}`, and the book replayed across it no longer reconciles against Kraken's checksum. Treat the window as **unverified** L2 on that pair, not as an empty one.
 
 ### What to do
 
@@ -74,7 +74,7 @@ Neither counter carries a `pair` label. The threshold is 1.5 rather than 1 becau
 
 Both counters live in `cli/capture/ws_client.py` and describe the resubscribe leg the desync ladder depends on.
 
-**Rate.** `resubscribes_total` increments in `resubscribe_book()` on every unsubscribe frame sent — rung 1 and each rung-2 retry alike. **The baseline is zero.** The old ~200/day desync rate was our own bug (an unpruned book resurfacing phantom levels), fixed 2026-07-13 — replaying a real hour went 482/117/398 CRC failures to zero. So any post-fix resubscribe is a genuine venue or network event, and more than one a day means the rate is re-elevating or a pair is flapping desync/heal. A fast flapper is invisible to the stuck-pair gauge at a 60 s scrape; this rule sees it through the counter instead.
+**Rate.** `resubscribes_total` increments in `resubscribe_book()` on every unsubscribe frame sent — rung 1 and each rung-2 retry alike. **The baseline is zero**: the desync rate this rule was written against was our own bug (an unpruned book resurfacing phantom levels), fixed 2026-07-13 — the date the page's summary says "post-". So any resubscribe since is a genuine venue or network event, and more than one a day means the rate is re-elevating or a pair is flapping desync/heal. A fast flapper is invisible to the stuck-pair gauge at a 60 s scrape; this rule sees it through the counter instead.
 
 **Failing.** Two distinct faults, summed because the response is the same:
 
@@ -123,9 +123,9 @@ The spool is `/var/lib/zcrypto-capture`, on the root filesystem on both hosts. T
 
 ### What to do
 
-1. **Look before deleting anything.** `ssh <host>`, then `df -h /` and `sudo du -xsh /var/lib/docker /var/log /var/lib/zcrypto-capture /tmp 2>/dev/null | sort -h`.
+1. **Look before deleting anything.** `ssh <host>`, then `df -h /` and `sudo du -xsh "$(sudo docker info --format '{{.DockerRootDir}}')" /var/log /var/lib/zcrypto-capture /tmp 2>/dev/null | sort -h`.
 2. **Free space from the safe pools, in this order.**
-   - **Docker image layers first** — usually the entire answer, since every converge pulls a ~3.25 GB image and nothing removed the old ones for months. From your workstation: `uv run python infra/scripts/prune-host-images.py <host>` to see the plan, then the same command with `--apply`. It removes one explicit `repo@sha256:<digest>` at a time and keeps every digest `docs/reference/fleet-pins.md` records for that host plus whatever the running containers use. **Never `docker image prune -a`** — it takes the recorded rollback operands. Pass `--keep <digest12>` for anything staged for a converge that has not happened yet, since a pre-staged image is indistinguishable from a stale one.
+   - **Docker image layers first** — usually the entire answer, since every converge pulls a ~3.25 GB image. From your workstation: `uv run python infra/scripts/prune-host-images.py <host>`, then the same command with `--apply`; its `--help` states the keep-set and when to pass `--keep`. **Never `docker image prune -a`** — it takes the recorded rollback operands.
    - **The systemd journal**: `sudo journalctl --vacuum-size=200M`.
    - **On the primary only**, the engine's own journal ring: `sudo systemctl start zcrypto-engine-journal-prune.service` (idempotent; its daily timer exists on the engine host alone).
 3. **Never hand-delete inside `/var/lib/zcrypto-capture`.** The live hour's parts (`<HH>.part####.parquet`), quarantined spills (`<HH>.held####.parquet`), an interrupted merge (`<HH>.parquet.merging`) and `*.corrupt*` forensics all end in names a careless `*.parquet` sweep eats, and every one of them is unbackfillable. If the spool genuinely is the consumer, run the sanctioned prune instead: `sudo systemctl start zcrypto-capture-prune.service` — it deletes only committed finals (`<HH>.parquet`) and their `.sha256` sidecars older than 14 days, and refuses to sweep a system root. Its own timer runs daily at 03:17 UTC.
@@ -154,24 +154,24 @@ This is a Loki rule on the `level` **label**, set at the source by the daemon's 
 
 ### What it means
 
-The daemon said something is wrong, and **the message is the routing**. Every line below was read from the code in this repo; anything not on this list means read the surrounding lines.
+The daemon said something is wrong, and **the message is the routing**. Anything not on this list means read the surrounding lines.
 
 | line (prefix) | where it comes from | what it means, and who owns it |
 | -- | -- | -- |
-| `disk watermark breached path=… free=… min_free_bytes=…` | `cli/capture/gap_monitor.py` | Capture is discarding every message. The critical watermark alert should be firing beside this — go to that section above. |
-| `disk watermark UNMEASURABLE path=… -- treating as not-healthy (probe failing)` | `cli/capture/gap_monitor.py` | The disk probe itself is raising (a flaky mount). The dead-man ping is withheld but the watermark gauge is **not** set, so the critical alert stays silent — **this line is the only in-band signal.** `ssh <host>`, `df -h /`, check the mount. |
+| `disk watermark breached path=… free=… min_free_bytes=…` | `cli/capture/gap_monitor.py` | Capture is discarding every message; the critical watermark alert fires beside this and owns the response. |
+| `disk watermark UNMEASURABLE path=… -- treating as not-healthy (probe failing)` | `cli/capture/gap_monitor.py` | Probe raised: gauge not set, so this is the only in-band signal. Check the mount. |
 | `resubscribe reply rejected: <venue message>` | `cli/capture/ws_client.py` | The venue refused a resubscribe frame; its own answer is in the line. Resubscribe section above. |
-| `desync recovery: pair=… still desynced after bounded retries -- forcing a full reconnect` | `cli/capture/command.py` | Rung 3 fired: the socket and all 12 pairs were just dropped and resnapshotted, and this pair is now in the 1 h cooldown. Desync section above. |
-| `desync recovery failed for pair=… -- continuing with the rest` | `cli/capture/command.py` | An exception inside one pair's ladder tick. The other pairs are unaffected and this one is retried on the next 5 s tick; a persistent one is a defect to file as work. |
+| `desync recovery: pair=… still desynced after bounded retries -- forcing a full reconnect` | `cli/capture/command.py` | Rung 3: all 12 pairs resnapshotted, this pair in a 1 h cooldown. Desync section above. |
+| `desync recovery failed for pair=… -- continuing with the rest` | `cli/capture/command.py` | One pair's ladder tick raised; the rest run on and it retries in 5 s. If it persists, file a defect. |
 | `resubscribe: sending subscribe failed for pair=…` | `cli/capture/ws_client.py` | The subscribe half never went out, so that pair has no fresh snapshot coming. Expect the stuck-pair alert. |
 | `subscribe error: …` / `unsubscribe error: …` | `cli/capture/command.py` | The venue refused a subscription frame outright. Read the message, then the venue rules. |
-| `WS reconnect still failing after N consecutive attempts` | `cli/capture/ws_client.py` | Emitted every tenth consecutive failed attempt. Venue or network, not the book — read `capture.md#zcrypto-capture-venue-not-online` and Kraken's status page. The client backs off with a cap and rides it out; **do not restart on this alone.** |
+| `WS reconnect still failing after N consecutive attempts` | `cli/capture/ws_client.py` | Venue or network, not the book — `capture.md#zcrypto-capture-venue-not-online`; it backs off, **do not restart**. |
 | `flush failed — buffer dropped pair=… kind=… hour=…` | `cli/capture/segment_writer.py` | Buffered rows for that hour were lost. Compare the hour against the peer host. |
-| `an uncommitted merge is in the way …` / `an interrupted merge beside a committed final — left untouched …` / `parts beside a readable final — ambiguous, left untouched …` / `merge failed …` | `cli/capture/segment_writer.py` | The writer refused an ambiguous recovery on purpose: every byte is still on disk and guessing destroys rows. **Do not hand-edit the tree — it is hash-certified and a hand edit reports as permanent breakage thereafter.** Compare the hour against the peer host; treat it as attended work. |
-| `quarantined unreadable file pair=… path=… dest=…` | `cli/capture/segment_writer.py` | A file failed to read and was renamed to `.corrupt*`, never deleted; the parts it came from are untouched. Attended. |
-| `ignoring a future-dated segment pair=… path=…` | `cli/capture/segment_writer.py` | Read the host's clock — `capture.md#zcrypto-capture-clock-skew` and `capture.md#bogus-timestamp-hour-rotation` own this. |
+| `an uncommitted merge is in the way …` / `an interrupted merge beside a committed final — left untouched …` / `parts beside a readable final — ambiguous, left untouched …` / `merge failed …` | `cli/capture/segment_writer.py` | Every byte is on disk; the writer refused an ambiguous recovery rather than guess. **Do not hand-edit — the tree is hash-certified and an edit reports as permanent breakage.** Compare the hour against the peer host; attended. |
+| `quarantined unreadable file pair=… path=… dest=…` | `cli/capture/segment_writer.py` | Renamed to `.corrupt*`, never deleted; the parts it came from are untouched. Attended. |
+| `ignoring a future-dated segment pair=… path=…` | `cli/capture/segment_writer.py` | Read the host's clock — `capture.md#zcrypto-capture-clock-skew` and `capture.md#bogus-timestamp-hour-rotation`. |
 | `could not take the single-instance lock — running UNLOCKED path=…` | `cli/capture/command.py` | Two capture processes could now be writing the same spool. Attended, immediately. |
-| `default pairs dropped N non-EUR-quoted universe symbol(s): …` | `cli/capture/command.py` | The daemon started **without** explicit `--pairs` and is capturing fewer streams than the universe selects — silent under-collection that looks exactly like success. The deploy path always passes `capture_pairs`, so this means the daemon was started by hand. |
+| `default pairs dropped N non-EUR-quoted universe symbol(s): …` | `cli/capture/command.py` | The deploy path always passes `--pairs`: a hand start, under-collecting against the universe. |
 
 ### What to do
 
