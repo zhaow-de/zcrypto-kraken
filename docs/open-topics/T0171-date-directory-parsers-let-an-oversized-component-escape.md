@@ -30,14 +30,10 @@ None of the seven is under `cli/capture/`, so nothing unbackfillable is at risk 
 
 ## Findings so far
 
-The same defect was fixed on the capture path by the commit `fix(capture): a stray year directory raises past the except that promised to skip it` (cited by subject; it is unpushed at the time of writing). Its review swept `_hour_of` over 200,360 malformed components — empty, signs, C-int and C-long edges, NAME\_MAX digit runs, PEP 515 underscores, unicode digit scripts, 5,000-digit strings past the int-str conversion limit, embedded NUL — and reported `ESCAPING TYPES: NONE`, so `ValueError` and `OverflowError` are the whole set `datetime()` raises on those axes. The fix there was to widen the `except` and leave the docstring standing, because the code then makes the sentence true.
+The same defect was fixed on the capture path by the commit `fix(capture): a stray year directory raises past the except that promised to skip it`. Its review swept `_hour_of` over malformed components — empty, signs, C-int and C-long edges, NAME\_MAX digit runs, PEP 515 underscores, unicode digit scripts, strings past the int-str conversion limit, embedded NUL — and reported `ESCAPING TYPES: NONE`, so `ValueError` and `OverflowError` are the whole set `datetime()` raises on those axes. The fix there was to widen the `except` and leave the docstring standing, because the code then makes the sentence true.
 
 ## Suggested next steps
 
 - One `fix(cli)` PR. Widen the five guarded sites to also catch `OverflowError`; the three comments then state what the code does.
 - **A decision at pick time, not a task**: `cli/costs/calibrate.py` and `cli/tick/materialize.py` parse with no guard at all. Whether a foreign directory in the tree each owns should be skipped like the others or refused loudly is a judgement about those two commands, and it should be made deliberately rather than by copying the pattern.
 - One constructed test per site, built the way the capture one was: an oversized-year directory planted beside a well-formed one, red before the widening and green after, with the well-formed final still parsing as the true positive.
-
-<!-- INDEX BULLET, for docs/open-topics/README.md, appended to ## Research and development -> ### Open:
-- [T0171 — date-directory parsers let an oversized component escape](T0171-date-directory-parsers-let-an-oversized-component-escape.md) — seven walkers turn path components into a date and only the capture one catches `OverflowError`; three promise in a comment to skip what they raise on.
--->

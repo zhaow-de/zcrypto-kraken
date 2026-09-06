@@ -20,7 +20,7 @@ grep -irn <pattern> /var/log/dirlink
 
 ### What the letter fix closes, and what it does not
 
-**The distinction that matters, and that the fix on `feat/t0168-unasserted-claims` does not close.** `-R` follows a symlink met while *descending* a spelled directory, where `-r` does not; that is why the letter was dropped from the grep shape — it widens what a safe root reaches. It is not why the class is open. An operand that is *itself* a link — spelled, or landed there by a glob — is read through by `-r`, `-R` and a bare `grep` alike, and no flag letter closes that. The corrected rationale is in `_FIRST_STAGE_SHAPES`' grep entry comment; the branch's test `test_the_R_spelling_of_a_recursion_classifies_prepared` asserts only the letter, and `test_no_grep_shape_admits_the_dereferencing_recursion_letter` plus `test_the_grep_shapes_admit_exactly_the_pinned_surface` hold the letter's absence across every grep shape and pin the admitted surface so a further spelling cannot be added silently — `--dereference-recursive`, GNU's long form, escaped a letters-only probe until a review measured it.
+**The distinction that matters, and that the fix on `feat/t0168-unasserted-claims` does not close.** `-R` follows a symlink met while *descending* a spelled directory, where `-r` does not; that is why the letter was dropped from the grep shape — it widens what a safe root reaches. It is not why the class is open. An operand that is *itself* a link — spelled, or landed there by a glob — is read through by `-r`, `-R` and a bare `grep` alike, and no flag letter closes that. The corrected rationale is in `_FIRST_STAGE_SHAPES`' grep entry comment; the branch's test `test_the_R_spelling_of_a_recursion_classifies_prepared` asserts only the letter, and `test_no_grep_shape_admits_a_dereferencing_option` plus `test_the_grep_shapes_admit_exactly_the_pinned_surface` hold every probed short spelling and any `--der…` long form across every grep shape, and pin the admitted surface so a further spelling cannot be added silently — `--dereference-recursive`, GNU's long form, escaped a letters-only probe until a review measured it.
 
 ### Why it is a topic and not a fix
 
@@ -28,7 +28,7 @@ It needs a **pre-planted link**, and no autonomous shape can create one: `ln -s 
 
 ### A second instance, one head further out
 
- `ls` carries `-R` too, and both `ls -R /var/log` and `ls -R /var/log/dirlink` classify AUTONOMOUS. The exposure differs in kind — through a planted link it lists NAMES outside a safe root rather than contents — and `ls` sits outside `_CONTENT_HEADS` by design, because the runbooks' own permission check on `logship-secrets.env` reads `ls`/`stat` without printing bytes. So the safe-root check never applies to it at all, and any answer chosen below has to say whether it should.
+`ls` carries `-R` too, and both `ls -R /var/log` and `ls -R /var/log/dirlink` classify AUTONOMOUS. The exposure differs in kind — through a planted link it lists NAMES outside a safe root rather than contents — and `ls` sits outside `_CONTENT_HEADS` by design, because the runbooks' own permission check on `logship-secrets.env` reads `ls`/`stat` without printing bytes. So the safe-root check never applies to it at all, and any answer chosen below has to say whether it should.
 
 ## Why this matters
 
