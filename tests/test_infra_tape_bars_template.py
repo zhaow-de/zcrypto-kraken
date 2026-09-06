@@ -1,8 +1,5 @@
 """Guard: `tape-bars.sh.j2` renders to the ops materializer's shell script, pinned against the real
-CLI and the real shell rather than by reading the template.
-
-`trim_blocks=True, lstrip_blocks=False` mirrors Ansible's own Jinja defaults, matching
-`test_infra_archive_pull_template.py`."""
+CLI and the real shell rather than by reading the template."""
 
 import re
 import shlex
@@ -19,6 +16,7 @@ from cli.__main__ import app
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/ops/templates/tape-bars.sh.j2"
 
+# the settings every golden pin below was rendered with -- a change re-renders every pin
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 CONTEXT = {

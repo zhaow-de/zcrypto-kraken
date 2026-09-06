@@ -1,7 +1,6 @@
 """Guard for `archive-pull.sh.j2`: the assertions read the RENDERED text, never the template — a
 Jinja comment inside a backslash-continuation chain renders valid bash whose `if` condition has
-silently become "--mint: command not found", which `bash -n` cannot catch. `trim_blocks=True,
-lstrip_blocks=False` mirrors Ansible's own Jinja defaults, matching `test_infra_compose_templates.py`."""
+silently become "--mint: command not found", which `bash -n` cannot catch."""
 
 import re
 import shutil
@@ -14,6 +13,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/ops/templates/archive-pull.sh.j2"
 
+# the settings every golden pin below was rendered with -- a change re-renders every pin
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 # `bool` is an Ansible filter, absent from plain Jinja -- the template's own comment calls the cast
