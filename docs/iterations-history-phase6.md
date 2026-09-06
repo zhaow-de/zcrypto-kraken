@@ -827,6 +827,6 @@ ______________________________________________________________________
 - T0174 is archived; the empty `_HEADROOM_DELIBERATELY_ABSENT` exemption list, the ansible-defaults parity claim and the derived guard's `zcrypto_*`-only scope are dropped with their reasons recorded there.
 ## 2026-09-06 — T0169 resolved: the cleanup residue's host side, measured and closed
 
-- The base role no longer carries the logrotate-removal task; the file it removed is absent on both capture hosts, and a converge changes nothing there.
+- The base role no longer carries the logrotate-removal task; a converge changes nothing there.
 - The old capture and hot-push keys are gone from every admin account on the capture hosts and the NAS, and the workstation's `nas-hot` alias reaches the data user under its rrsync jail — an operator repointing or cleaning keys by hand finds nothing left to do.
 - The `zcrypto-archive-pull` unit and the `ops_archive_pull_*` metrics keep their names by decision; nothing renames them and no alert is re-provisioned.
