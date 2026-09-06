@@ -1159,10 +1159,10 @@ def test_the_greps_the_runbooks_actually_run():
         assert ops_daily.classify_action(cmd, host="ops") is ops_daily.Tier.AUTONOMOUS, cmd
 
 
-def test_the_R_spelling_of_a_recursion_is_admitted_by_no_grep_shape():
-    """No grep shape admits `-R`, while the `-r` the runbooks spell reads the same operands
-    AUTONOMOUS. The claim is about that one letter, not about dereferencing: a symlink under a
-    spelled-safe root is still read by shapes this says nothing about."""
+def test_the_R_spelling_of_a_recursion_classifies_prepared():
+    """Three commands carrying `-R` classify PREPARED while their `-r` twins stay AUTONOMOUS. The
+    universal behind these three is the shape sweep below; neither says anything about an operand
+    that is itself a symlink, which `-r` and a bare `grep` read through just as `-R` does."""
     safe = "'^Storage=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/"
     for refused, passing in (
         (f"grep -RE {safe}", f"grep -rE {safe}"),
@@ -1953,6 +1953,25 @@ def test_no_grep_shape_admits_a_pattern_source_option():
     assert not admitted, (
         f"grep shapes admitting a pattern-source option: {admitted} -- such an option takes the pattern, "
         "leaving a FILE at the operand `_reads_only_safe_paths` skips"
+    )
+
+
+# `-R` follows a symlink met while descending a spelled directory, where `-r` does not, so the letter
+# reads a file no operand names. Three commands are not the claim: a table gaining the letter would
+# leave them green, so the sweep is over every grep shape the module discovers.
+_GREP_DEREFERENCING_TOKENS = ["-R", *(f"-R{c}" for c in string.ascii_letters), *(f"-{c}R" for c in string.ascii_letters)]
+
+
+def test_no_grep_shape_admits_the_dereferencing_recursion_letter():
+    """In every table discovered off the module, no grep shape admits a probed spelling of `-R`."""
+    tables = sorted(name for name in vars(ops_daily) if name.endswith("_SHAPES"))
+    assert tables, "no shape table discovered -- the sweep, not the classifier, is what failed"
+    greps = [(name, shape) for name in tables for shape in getattr(ops_daily, name) if shape.head == ("grep",)]
+    assert greps, f"no grep shape discovered in {tables} -- the sweep, not the classifier, is what failed"
+    admitted = [(name, token) for name, shape in greps for token in _GREP_DEREFERENCING_TOKENS if _shape_admits_flag(shape, token)]
+    assert not admitted, (
+        f"grep shapes admitting the dereferencing recursion letter: {admitted} -- `-R` follows a symlink "
+        "met below the operand, reading a file the spelled-path check never sees"
     )
 
 
