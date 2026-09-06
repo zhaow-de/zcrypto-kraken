@@ -789,11 +789,14 @@ def _unit_directives(unit: Path) -> list[tuple[str, str, str]]:
     section, out = "", []
     for lineno, raw in enumerate(unit.read_text().splitlines(), 1):
         line = raw.strip()  # systemd strips before parsing, so an INDENTED directive is still live
+        if not line or line.startswith(("#", ";")):  # systemd.syntax(7): either character opens a comment
+            continue
+        # Below the comment skip: every continuation systemd joins OPENS on a directive line, and a
+        # comment ending in a backslash opens nothing — `systemd.syntax(7)` describes comments being
+        # ignored INSIDE a pending continuation, never starting one.
         assert not line.endswith("\\"), (
             f"{unit.name}:{lineno} ends in a backslash: systemd joins it with the next line, this parser reads two"
         )
-        if not line or line.startswith(("#", ";")):  # systemd.syntax(7): either character opens a comment
-            continue
         if line.startswith("[") and line.endswith("]"):
             section = line
             continue
@@ -826,10 +829,20 @@ def test_the_capture_unit_orders_itself_against_no_clock_service():
 def test_the_unit_parser_refuses_a_line_systemd_would_join(tmp_path):
     """A backslash-terminated line is half of one directive, so the parser refuses it rather than read the halves as two."""
     unit = tmp_path / "continued.service"
-    unit.write_text("[Service]\nRestart=no \\\nRestart=always\n")  # systemd reads `Restart=no always`, which is not `always`
+    # systemd joins the pair, then fails to parse the one value it gets and DISCARDS the assignment,
+    # leaving the default `Restart=no` — a unit that never restarts, not one that restarts on failure.
+    unit.write_text("[Service]\nRestart=no \\\nRestart=always\n")
 
     with pytest.raises(AssertionError, match=r"continued\.service:2 ends in a backslash"):
         _unit_directives(unit)
+
+
+def test_the_unit_parser_reads_a_backslash_terminated_comment_as_a_comment(tmp_path):
+    """A comment ending in a backslash opens no continuation, so the parser drops it and reads the line below as its own directive."""
+    unit = tmp_path / "commented.service"
+    unit.write_text("# a comment ending in a backslash \\\n[Service]\nRestart=always\n")
+
+    assert _unit_directives(unit) == [("[Service]", "Restart", "always")]
 
 
 def test_a_leading_clock_at_startup_cannot_drop_the_live_stream(tmp_path, clock):
