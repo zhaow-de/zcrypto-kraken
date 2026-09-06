@@ -12,9 +12,9 @@ REPO = Path(__file__).resolve().parents[1]
 CAPTURE_TEMPLATE = REPO / "infra/ansible/roles/capture/templates/compose.yaml.j2"
 ENGINE_TEMPLATE = REPO / "infra/ansible/roles/engine/templates/compose.yaml.j2"
 OPS_TEMPLATE = REPO / "infra/ansible/roles/ops/templates/compose.yaml.j2"
+OPS_DEFAULTS = REPO / "infra/ansible/roles/ops/defaults/main.yml"
 
-# trim_blocks/lstrip_blocks mirror Ansible's own template defaults, so a template edit relying on
-# either setting fails here rather than only at a real converge.
+# StrictUndefined is the load-bearing setting: a variable the role sets and a test omits raises here instead of rendering empty into a pin
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 # Dummy but complete contexts: every variable each template references (outside the
@@ -52,9 +52,9 @@ ENGINE_CONTEXT = {
 OPS_CONTEXT = {
     "ops_image": "ghcr.io/zhaow-de/zcrypto-capture",
     "ops_image_digest": "sha256:" + "c" * 64,
-    # the container name is a role default, not a literal, so the pins probe and this template
-    # read the same value -- see test_infra_converge_guards.py for the invariant that pins it
-    "ops_liquidations_container": "zcrypto-ops-liquidations",
+    # read from the role default the template interpolates, never re-typed: a changed default must
+    # reach this render too -- test_infra_converge_guards.py pins the probe to the same variable
+    "ops_liquidations_container": yaml.safe_load(OPS_DEFAULTS.read_text())["ops_liquidations_container"],
     "ops_uid": 998,
     "ops_gid": 998,
     "ops_liquidations_healthcheck_url": "",

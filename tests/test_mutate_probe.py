@@ -86,19 +86,28 @@ def test_sandbox_refuses_pytest(tmp_path):
 
 
 def test_seeding_failure_is_rc8_not_usage(tmp_path):
-    """A repo with no commits makes `git archive HEAD` fail — rc 8, the seeding refusal."""
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@example.invalid"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
-    target = tmp_path / "mod.py"
+    """A repo with no commits makes `git archive HEAD` fail — rc 8, the seeding refusal, and the
+    sandbox dir mktemp'd one line above it goes out with the refusal."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    target = repo / "mod.py"
     target.write_text("VALUE = 1\n")
+    # mktemp honours TMPDIR, so the sandbox dir is observable here; it is set for the subprocess alone
+    # (`env_extra`), never on this process, or every other test that shells out inherits it
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
     # no commit at all — HEAD is unborn
     r = run(
         ["--sandbox", "--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/", "--mutation", "s/1/3/", "--", "true"],
-        cwd=tmp_path,
+        cwd=repo,
+        env_extra={"TMPDIR": str(tmpdir)},
     )
     assert r.returncode == 8
     assert "seeding" in r.stderr.lower()
+    leaked = [p.name for p in tmpdir.iterdir()]
+    assert not leaked, f"the sandbox dir outlived the seeding refusal: {leaked}"
 
 
 def test_baseline_failure_refuses_before_anything_is_mutated(tmp_path):
@@ -344,11 +353,11 @@ def test_signal_during_probe_restores_the_target_before_cleaning(tmp_path):
     assert target.read_bytes() != before, "restore-on-signal removed but the file came back -- unproven"
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
 def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
     """Signal mid-mutation with the TARGET FILE read-only, so the cleanup cp fails: rc must be 9, the
     stderr must say KEPT, and the pristine copy must SURVIVE (it is the only way back). `chmod 0444`
-    goes on the FILE — overwriting needs write permission on the file, not its directory. Assumes a
-    non-root test run (root ignores file modes)."""
+    goes on the FILE — overwriting needs write permission on the file, not its directory."""
     # The repo is nested one level down so the marker and the captured stderr live OUTSIDE it: both
     # are created before the script starts, and an untracked file in the repo trips the dirty-worktree
     # refusal (rc 3) before anything is ever mutated.

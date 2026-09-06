@@ -376,9 +376,9 @@ def test_template_renders_to_valid_shell_through_ansible():
 def test_every_ansible_template_is_parseable_jinja():
     """Repo-wide: a template that cannot parse never installs, whatever its tests say."""
     jinja2 = pytest.importorskip("jinja2")
-    # Settings mirror Ansible's, though for PARSING they are inert: trim_blocks changes rendered
-    # whitespace, not what parses. This sweep therefore catches the comment-tag class only — the
-    # weld class needs a render, which tests/test_infra_shell_templates_render.py provides.
+    # For PARSING these settings are inert: trim_blocks changes rendered whitespace, not what parses.
+    # This sweep therefore catches the comment-tag class only — the weld class needs a render, which
+    # tests/test_infra_shell_templates_render.py provides.
     env = jinja2.Environment(trim_blocks=True, lstrip_blocks=False)
     root = TEMPLATE.resolve().parent.parent.parent.parent  # infra/ansible
     templates = sorted(root.rglob("*.j2"))

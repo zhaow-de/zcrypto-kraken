@@ -1,7 +1,5 @@
 """Guard: the ops verify-replay runner must publish the counts its alerting now reads, and must
-ping the dead-man on RUN success rather than on exit code (spec 00077 D5).
-
-`trim_blocks=True, lstrip_blocks=False` mirrors Ansible's own Jinja defaults."""
+ping the dead-man on RUN success rather than on exit code (spec 00077 D5)."""
 
 import logging
 import os
@@ -22,6 +20,7 @@ from cli.archive.replay import Census, ReplayResult
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/ops/templates/verify-replay.sh.j2"
 
+# StrictUndefined is the load-bearing setting: a variable the role sets and a test omits raises here instead of rendering empty into a pin
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 CONTEXT = {
