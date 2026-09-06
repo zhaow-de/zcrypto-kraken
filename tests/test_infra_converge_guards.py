@@ -1634,6 +1634,9 @@ def test_the_daemon_json_task_notifies_a_handler_that_restarts_dockerd():
 # ("this script consumes no image reference"), the script being the RENDERED template.
 OPS_DIGEST_GATE = "ops_image_digest is defined"
 OPS_ROLE = ANSIBLE / "roles" / "ops"
+# the two directories ansible resolves a bare `src:` against; one answer, read by the resolver below
+# and by the walk that refuses a broken link, so a renamed directory cannot be true in one and not the other
+OPS_ASSET_DIRS = ("files", "templates")
 
 
 def _expand_src(src: str, task: dict) -> list[str]:
@@ -1689,7 +1692,7 @@ def _asset_candidates(name: str) -> list[Path]:
     # the role. So two spellings that reach one file are one candidate, and a name that reaches
     # anywhere else — an absolute path, one climbing out through `../` — reaches nothing here.
     found: list[Path] = []
-    for subdir in ("files", "templates"):
+    for subdir in OPS_ASSET_DIRS:
         path = Path(os.path.normpath(DataLoader().path_dwim_relative(str(OPS_ROLE), subdir, name)))
         if path.is_relative_to(OPS_ROLE) and os.path.lexists(path) and path not in found:
             found.append(path)
@@ -1849,23 +1852,21 @@ def test_the_pins_echo_negates_the_asserts_own_first_disjunct():
     )
 
 
-# --- A7: the resolver above reads a `src:` naming a broken link as an ABSENT asset rather than a
-# refusal, and that stands — ansible's own resolution finds no target either, so such a task fails at
-# deploy time on ansible's authority. A broken link is refused here by PRESENCE instead of by
-# reference: a walk of the role's asset trees needs no rule for how a `src:` is spelled.
+# --- A7: the resolver above reads a `src:` naming a broken link as an ABSENT asset, and that stands —
+# ansible resolves it to nothing either, so such a task fails at deploy time on ansible's authority. Here
+# a broken link is refused by PRESENCE, needing no rule for how a `src:` is spelled; the walk covers the
+# whole role because ansible's search list reaches `<role>/tasks/<src>` and `<role>/<src>` as well.
 def test_no_ops_role_asset_is_a_broken_link():
-    """Every entry under the ops role's asset directories that exists as a name resolves to an existing target."""
-    walked = {sub: sorted((OPS_ROLE / sub).rglob("*")) for sub in ("files", "templates")}
-    print(
-        f"ops role asset entries walked: {sum(len(e) for e in walked.values())} — "
-        + ", ".join(f"{sub}/: {len(e)}" for sub, e in walked.items())
-    )
-    for sub, entries in walked.items():
-        assert entries, f"{OPS_ROLE.name}/{sub}/ walked empty, so this selection read no entry of it"
+    """Every entry under the ops role that exists as a name resolves to an existing target."""
+    walked = sorted(OPS_ROLE.rglob("*"))
+    under = {sub: [p for p in walked if (OPS_ROLE / sub) in p.parents] for sub in OPS_ASSET_DIRS}
+    print(f"ops role entries walked: {len(walked)} — " + ", ".join(f"{sub}/: {len(e)}" for sub, e in under.items()))
+    assert walked, f"{OPS_ROLE.name}/ walked empty, so this selection read no entry of the role"
+    for sub, entries in under.items():
+        assert entries, f"{OPS_ROLE.name}/{sub}/ walked empty, so this selection read no asset of it"
     broken = [
-        f"{p.relative_to(OPS_ROLE)} -> {p.readlink()}"
-        for entries in walked.values()
-        for p in entries
+        f"{p.relative_to(OPS_ROLE)} -> {p.readlink() if p.is_symlink() else '(not a link)'}"
+        for p in walked
         if os.path.lexists(p) and not os.path.exists(p)
     ]
-    assert not broken, f"{OPS_ROLE.name}/ carries a link whose target does not exist: {broken}"
+    assert not broken, f"{OPS_ROLE.name}/ carries a name whose target does not exist: {broken}"
