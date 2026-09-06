@@ -1893,6 +1893,13 @@ def _plant_dangling_alone(role: Path) -> None:
     (role / "templates" / "zz_absent.j2").symlink_to("nowhere")
 
 
+def _plant_dangling_behind_a_linked_dir(role: Path) -> None:
+    outside = role.parent / "zz_outside"
+    outside.mkdir(exist_ok=True)
+    (outside / "zz_behind.j2").symlink_to("nowhere")
+    (role / "templates" / "zz_link").symlink_to(outside)
+
+
 # --- A7b: `_role_asset` sees only what ansible RESOLVES, so a dangling link reaches it as the real
 # twin alone or as nothing at all, and it refuses neither. The refusal is the walk above, by presence.
 # That division of labour is what lets absence stay silent up there, so it is constructed here rather
@@ -1915,6 +1922,15 @@ def test_the_presence_walk_refuses_what_the_resolver_cannot(tmp_path, monkeypatc
         f"{name!r} reads as {read!r}: the resolver's reading is what leaves this case to the walk"
     )
     with pytest.raises(AssertionError, match=r"carries a name whose target does not exist"):
+        test_no_ops_role_asset_is_a_broken_link()
+
+
+def test_the_presence_walk_refuses_a_directory_it_cannot_descend(tmp_path, monkeypatch):
+    """A dangling asset behind a symlinked directory is invisible to the walk, so the link is refused."""
+    role = _ops_role_copy(tmp_path)
+    _plant_dangling_behind_a_linked_dir(role)
+    monkeypatch.setitem(globals(), "OPS_ROLE", role)
+    with pytest.raises(AssertionError, match=r"carries a linked directory this walk does not descend"):
         test_no_ops_role_asset_is_a_broken_link()
 
 
