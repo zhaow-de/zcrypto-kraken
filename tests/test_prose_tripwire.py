@@ -365,6 +365,9 @@ class TestScope:
             "docs/plans/00001-z.md",
             "docs/research/r.md",
             "README.md",
+            "infra/README.md",
+            "infra/runbooks/README.md",
+            "docs/open-topics/README.md",
             ".claude/rules/k.md",
             "cli/n.json",
         ):
@@ -379,14 +382,21 @@ class TestScope:
             "README.md",
             "cli/a.py",
             "docs/iterations-history-phase1.md",
+            "docs/open-topics/README.md",
             "docs/open-topics/T0001-x.md",
             "docs/reference/f.md",
             "docs/universe/h.md",
+            "infra/README.md",
             "infra/c.sh",
             "infra/d.yml",
+            "infra/runbooks/README.md",
             "infra/runbooks/e.md",
             "tests/b.py",
         ]
+
+    def test_a_research_report_stays_out(self, repo: Path) -> None:
+        """Point-in-time reports are out of the default scope, as `docs/specs` and `docs/plans` are."""
+        assert "docs/research/r.md" not in tw.default_paths()
 
     def test_an_explicit_directory_still_honours_the_exclusions(self, repo: Path) -> None:
         got = sorted(tw.expand_paths(["docs"]))

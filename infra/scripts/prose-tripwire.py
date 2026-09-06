@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long sections, long changelog entries.
-Usage: prose-tripwire.py [--since REV] [PATH ...] — default scope cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/."""
+Usage: prose-tripwire.py [--since REV] [PATH ...] — default scope cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/README.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ KINDS = ("comment-block", "file-prose", "table-row", "section", "changelog-entry
 CODE_ROOTS = ("cli", "tests", "infra")
 CODE_SUFFIXES = (".py", ".sh", ".yml", ".yaml")
 DOC_ROOTS = ("docs/reference", "docs/universe", "infra/runbooks")
-DOC_GLOBS = ("docs/iterations-history*.md", "docs/open-topics/*.md", "README.md")
+DOC_GLOBS = ("docs/iterations-history*.md", "docs/open-topics/*.md", "infra/README.md", "README.md")
 EXCLUDED = ("docs/specs/", "docs/plans/", "docs/research/", "docs/open-topics/archive/", "docs/reference/ops-journal/", ".claude/")
 # A topic file and its index gain a registry section per registration, so only the section bar is dropped.
 EXEMPT = {"docs/open-topics/*.md": ("section",)}
