@@ -437,7 +437,7 @@ class TestScope:
 
 
 class TestTheIndexIsTheDefaultScope:
-    """The commit's content is what the ratchet reads, so an untracked file cannot refuse a commit that leaves it out."""
+    """The index supplies the path set, so an untracked file cannot refuse a commit that leaves it out."""
 
     @pytest.fixture
     def repo(self, tmp_path: Path, monkeypatch) -> Path:
@@ -457,6 +457,17 @@ class TestTheIndexIsTheDefaultScope:
         subprocess.run([*_GIT, "add", "-f", "cli/fresh.py"], check=True)
         assert tw.main(["--check-baseline", "base.txt"]) == 1
         assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
+
+    def test_a_tracked_file_deleted_from_disk_is_reported_not_opened(self, repo: Path, capsys) -> None:
+        """The bytes come from the worktree, so a deletion the index still lists is a keep retired, never a read."""
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (repo / "cli" / "gone.py").write_text(_py(["# gone"] * n, 6 * n))
+        subprocess.run([*_GIT, "add", "-f", "cli/gone.py"], check=True)
+        assert tw.main(["--write-baseline", "base.txt"]) == 0
+        assert (repo / "base.txt").read_text().startswith("cli/gone.py:1: comment-block")
+        (repo / "cli" / "gone.py").unlink()
+        assert tw.main(["--check-baseline", "base.txt"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 1"]
 
     def test_a_named_path_is_scanned_tracked_or_not(self, repo: Path, capsys) -> None:
         """An explicit argument is the caller's word, not the index's."""

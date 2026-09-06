@@ -255,7 +255,8 @@ def default_paths() -> list[str]:
     found = [p for p in tracked if p.startswith(tuple(f"{root}/" for root in CODE_ROOTS)) and p.endswith(CODE_SUFFIXES)]
     found += [p for p in tracked if p.startswith(tuple(f"{root}/" for root in DOC_ROOTS)) and p.endswith(".md")]
     found += [p for p in tracked if any(PurePosixPath(p).full_match(pattern) for pattern in DOC_GLOBS)]
-    return sorted({p for p in found if not _excluded(p)})
+    # The index names the paths and the worktree holds the bytes: one it no longer holds is a deletion, and carries no prose.
+    return sorted({p for p in found if not _excluded(p) and os.path.isfile(p)})
 
 
 def expand_paths(args: list[str]) -> list[str]:
