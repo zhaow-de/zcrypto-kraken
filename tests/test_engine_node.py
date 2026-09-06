@@ -790,7 +790,8 @@ def test_the_observers_identity_is_the_one_the_library_reserves_for_orders_we_di
     here rather than leaving an observer that silently receives nothing.
 
     The venue-sourced join -- a genuine external order reaching this observer through live
-    reconciliation -- is beyond this suite; it was proven by hand against the venue in T0152."""
+    reconciliation -- stays beyond this suite: it was proven by hand against the venue in T0152, and
+    re-proving it needs the trade key, which is IP-bound to the engine host."""
     from nautilus_trader.model import StrategyId
 
     reserved = str(node.ExternalOrderObserver(lambda event: None).strategy_id)
@@ -1060,6 +1061,26 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     # `_on_rejected`'s three-way verdict in cli/engine/executor.py are derived against REST
     # rejections, so this must be set explicitly rather than inherited.
     assert exec_config.use_ws_trade is False
+
+
+def test_the_engine_config_states_the_external_order_filter_rather_than_inheriting_it(monkeypatch):
+    """Against a library whose default for `filter_unclaimed_external_orders` reads True,
+    `_exec_engine_config` still produces a config reading False."""
+    real_config = node.LiveExecutionEngineConfig
+
+    def default_flipped(**kwargs):
+        # `None` is how the library itself spells an unnamed field, so the stand-in resolves it the
+        # way a flipped release would and hands every other field to the real constructor.
+        if kwargs.get("filter_unclaimed_external_orders") is None:
+            kwargs["filter_unclaimed_external_orders"] = True
+        return real_config(**kwargs)
+
+    # Without this the stand-in is free to be inert, and the assertion below would hold under a
+    # `_exec_engine_config` that names nothing at all.
+    assert default_flipped().filter_unclaimed_external_orders is True
+
+    monkeypatch.setattr(node, "LiveExecutionEngineConfig", default_flipped)
+    assert node._exec_engine_config().filter_unclaimed_external_orders is False
 
 
 def test_the_builder_is_given_no_exec_client_by_default(tmp_path, monkeypatch):
