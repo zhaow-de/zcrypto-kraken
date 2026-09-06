@@ -2348,6 +2348,15 @@ def test_an_operand_the_host_resolves_to_nothing_is_prepared():
     assert ops_daily.classify_action("cat /var/log/absent", host="ops", resolve=resolve) is ops_daily.Tier.PREPARED
 
 
+@pytest.mark.parametrize("cmd", ["cat /var/log/a /var/log/b", "grep -r X /var/log/a /var/log/b"])
+def test_a_resolver_answering_a_strict_subset_of_the_operands_is_prepared(cmd):
+    """Every operand must be ANSWERED, not merely every answer be read-safe: a resolver replying about
+    a subset leaves the rest unchecked, and both spelled operands here are safe either way."""
+    subset = _resolving({"/var/log/b": []})
+    assert ops_daily.classify_action(cmd, host="ops", resolve=subset) is ops_daily.Tier.PREPARED, cmd
+    assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS, cmd
+
+
 def test_without_a_host_a_content_read_naming_a_file_is_prepared():
     """No host is no filesystem to resolve on, so the spelled path is all there is -- and the spelled
     path is exactly the guarantee T0172 showed to be weaker than its name implies."""

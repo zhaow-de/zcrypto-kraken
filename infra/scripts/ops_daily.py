@@ -1221,16 +1221,22 @@ def _resolves_only_safe_paths(tokens: list[str], operands: list[str], *, host: s
 
     The spelled check is lexical, and a symlink planted under a read-safe root is spelled safe while
     reading whatever it points at, so the host is asked what each operand resolves to and the same
-    predicate is applied to the answer. No host, a resolver that raises, and an operand the host
-    resolves to nothing all refuse: none of them is the host saying the read stays inside a root.
+    predicate is applied to the answer. No host, and a resolver that raises, both refuse: neither is
+    the host saying the read stays inside a root.
     """
     if host is None:
         return False
+    paths = _file_operands(tokens, operands)
     try:
-        resolved = resolve(host, _file_operands(tokens, operands))
+        resolved = resolve(host, paths)
     except (*_UNREACHABLE, subprocess.SubprocessError):
         return False
-    return bool(resolved) and all(_path_is_read_safe(path) for path in resolved)
+    # Every operand must be ANSWERED, not merely every answer be safe: a resolver replying about a
+    # strict subset would leave the rest unchecked. One path per operand is the floor, since a glob
+    # expands to more and never to fewer -- so a short answer is a refusal, an empty one included.
+    if not paths or len(resolved) < len(paths):
+        return False
+    return all(_path_is_read_safe(path) for path in resolved)
 
 
 # Stripped before matching: they change who runs a command, never what it does. `ssh <host>` also
