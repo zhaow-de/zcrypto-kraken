@@ -21,7 +21,7 @@ The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_com
 
 ### Deploy
 
-1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_image_digest=sha256:<...>` (from `infra/ansible/`; read the **default AVX** digest from the capture-image workflow's job summary, and confirm `zcrypto liquidations-poll --help` exists in that image before pinning).
+1. Converge with the digest: `./scripts/converge.sh site.yml --limit zcrypto-ops -e ops_image_digest=sha256:<...>` — the documented converge path (spec 00083 D1), and what appends the `deploy-log.jsonl` line; `run.sh` deploys but records nothing (from `infra/ansible/`; read the **default AVX** digest from the capture-image workflow's job summary, and confirm `zcrypto liquidations-poll --help` exists in that image before pinning).
 2. Secrets, both vaulted in `host_vars/zcrypto-ops/vault.yml` and wired via `vars.yml`: `coinalyze_api_key` (free key from coinalyze.net → account → API key) and `liquidations_healthcheck_url` (a healthchecks.io check, e.g. `zcrypto-liquidations`; the dead-man alerts by **missed** pings, so an attached notification channel is what pages). The rendered compose is mode `0600` because it carries the API key.
 3. Start it (attended): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/compose.yaml up -d`.
 4. Verify by outcome within a minute: the first cycle back-fills the ~30 h catch-up window, so hour finals appear immediately at `/var/lib/zcrypto-ops/liquidations/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet` with valid `.sha256` sidecars, for all 10 coins. The dead-man pings after each fully-successful cycle. Sparse hours (no liquidation for a coin) simply have no bucket; the open hour lingers as `.part` files until a later bucket closes it ([T0046]).
@@ -53,7 +53,7 @@ Pull-only transport, mirroring the capture channels (`infra/nas/README.md`): the
 
 3. **NAS** — drop the private key at `/volume1/docker/zcrypto-archive/keys/sync_liquidations`, mode `0600` (matches the fixed `LIQUIDATIONS_SSH_KEY=/keys/sync_liquidations` in `infra/nas/compose.yaml`).
 4. **NAS** — pin the ops host key: from a machine with `ssh-keyscan`, run `ssh-keyscan -p 22 <ops-host>` and **append** its output to `/volume1/docker/zcrypto-archive/keys/known_hosts` (the shared pinned file; host-key checking is strict). Verify the key against the ops node's own `/etc/ssh/ssh_host_ed25519_key.pub` — never trust-on-first-use.
-5. **NAS** — set `LIQUIDATIONS_SOURCE=zcrypto-data@<ops-host>:` in the `.env` next to `compose.yaml` (the rrsync forced command pins the actual remote subtree) and `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely. The pull is deliberately **not** an input to the NAS reconcile gate — the reconciler reasons only about the two capture mirrors.
+5. **NAS** — set `nas_liquidations_source: "zcrypto-data@<ops-host>:"` in `host_vars/nas` and converge the nas role; `env.j2` renders it into the stack's `.env`, which is not hand-edited — the next converge overwrites one. The rrsync forced command pins the actual remote subtree. Leave it unset and the pull cycle is skipped entirely. The pull is deliberately **not** an input to the NAS reconcile gate — the reconciler reasons only about the two capture mirrors.
 
 ## Replay timers (OPS-3)
 
@@ -139,7 +139,7 @@ custody-critical.
 4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
    `sync_liquidations` setup above (step 4 there); no re-pin needed for a second channel to the
    same host.
-5. **NAS** — set `PANEL_SOURCE=zcrypto-data@<ops-host>:` in the `.env` next to `compose.yaml` and
+5. **NAS** — set `nas_panel_source` in `host_vars/nas` and converge the nas role (`env.j2` renders it; a hand edit on the NAS is overwritten at the next converge), then
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
 
 ### The `sync_reconciled` replication channel (the NAS pulls this node)
@@ -161,7 +161,7 @@ like the panel/liquidations channels (every minted hour carries a `.sha256` side
 4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
    `sync_liquidations` setup above (step 4 there); no re-pin needed for a third channel to the
    same host.
-5. **NAS** — set `RECONCILED_SOURCE=zcrypto-data@<ops-host>:` in the `.env` next to `compose.yaml` and
+5. **NAS** — set `nas_reconciled_source` in `host_vars/nas` and converge the nas role (`env.j2` renders it; a hand edit on the NAS is overwritten at the next converge), then
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
 
 ### The `sync_hot` replication channel (the NAS pulls this node)
@@ -188,7 +188,7 @@ file is simply untransmittable).
 4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
    `sync_liquidations` setup above (step 4 there); no re-pin needed for a fourth channel to the
    same host.
-5. **NAS** — set `HOT_SOURCE=zcrypto-data@<ops-host>:` in the `.env` next to `compose.yaml` and
+5. **NAS** — set `nas_hot_source` in `host_vars/nas` and converge the nas role (`env.j2` renders it; a hand edit on the NAS is overwritten at the next converge), then
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
 
 ## Alloy telemetry stack (Task 1, spec 00054 D1/D7)
@@ -201,6 +201,6 @@ Ops log streams reach Grafana Cloud two ways (00068 D3/D6): the liquidations pol
 
 ### Deploy
 
-1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` (from `infra/ansible/`). No secrets file on this host is hand-placed: the `ops` role renders both, mode `0600` — this Alloy one, and `{{ ops_compose_dir }}/logship-secrets.env` for the liquidations poller's own direct-ship Loki creds (spec 00068 D3/T6). For Alloy: the role renders `{{ ops_alloy_dir }}/alloy-secrets.env` (default `/etc/zcrypto-ops/alloy/alloy-secrets.env`) straight from the vault, owned by `zcrypto-alloy` (the container runs as that user and must be able to read a 0600 file it does not own by default), with `no_log: true` + `diff: false` so the converge never prints the values. Its vars — the six `GRAFANA_PROM_*`/`GRAFANA_LOKI_*` credentials and `hc_prometheus_metrics_path` — live in `group_vars/observed/vault.yml`; rotate them there. `config.alloy` reads the rendered file via the River `sys.env(...)` stdlib function; `compose.yaml` itself stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name).
+1. Converge with the digest: `./scripts/converge.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` — the documented converge path (spec 00083 D1), and what appends the `deploy-log.jsonl` line; `run.sh` deploys but records nothing (from `infra/ansible/`). No secrets file on this host is hand-placed: the `ops` role renders both, mode `0600` — this Alloy one, and `{{ ops_compose_dir }}/logship-secrets.env` for the liquidations poller's own direct-ship Loki creds (spec 00068 D3/T6). For Alloy: the role renders `{{ ops_alloy_dir }}/alloy-secrets.env` (default `/etc/zcrypto-ops/alloy/alloy-secrets.env`) straight from the vault, owned by `zcrypto-alloy` (the container runs as that user and must be able to read a 0600 file it does not own by default), with `no_log: true` + `diff: false` so the converge never prints the values. Its vars — the six `GRAFANA_PROM_*`/`GRAFANA_LOKI_*` credentials and `hc_prometheus_metrics_path` — live in `group_vars/observed/vault.yml`; rotate them there. `config.alloy` reads the rendered file via the River `sys.env(...)` stdlib function; `compose.yaml` itself stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name).
 2. Start it (attended): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d`.
 3. Verify by outcome: the timers' textfile series (`ops_archive_pull_*`, `ops_panel_*`, `ops_verify_replay_*`, `ops_verified_replay_*`, `zcrypto_tapebars_*`) and host metrics appear in Grafana Cloud within a scrape interval; `tests/test_infra_alloy_series.py` pins the keep-regex against the series this stack publishes.

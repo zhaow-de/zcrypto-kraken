@@ -332,7 +332,7 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 
 ### The dead-man map
 
-**Ten checks exist**, and `tests/fixtures/healthchecks_descriptions.json` records each one by name, tags (the archived `T0083`'s scheme) and description — a snapshot fetched through the read-only key, so a rename or rewrite in healthchecks.io does not reach it until it is re-fetched. Use the tags to identify a row, then the runbook column for the daemon that owns it.
+**Ten checks exist**, and `tests/fixtures/healthchecks_descriptions.json` records each one by name and tags (the archived `T0083`'s scheme) — a snapshot fetched through the read-only key, so a rename does not reach it until it is re-fetched. Use the tags to identify a row, then the runbook column for the daemon that owns it. Its `description` field is healthchecks.io's own text and is not authoritative here: `zcrypto-archive-pull`'s says the ping is withheld on a gate skip, which the row below corrects.
 
 | node tag | application tag | what pings it | ping is withheld when | section owning the daemon |
 | -- | -- | -- | -- | -- |

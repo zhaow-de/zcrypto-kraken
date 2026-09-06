@@ -101,7 +101,7 @@ Every pull channel shares one shape, so each row below says only what is particu
 | `RECONCILED_SSH_KEY` | The reconciled-overlay channel's key. | fixed to `/keys/sync_reconciled` in `compose.yaml` |
 | `RECONCILED_SSH_PORT` | The ops node's port for this pull. | defaults to `22` in `compose.yaml` |
 | `RECONCILED_DEST` | Where the healed-overlay mirror lands — only **healed** hours, plus the append-only ledger. | defaults to `/archive/capture-reconciled` in `compose.yaml` |
-| `HOT_SOURCE` | The **ops node's** hot-out outbox (spec 00056 D4), pulled by a raw `rsync --archive --ignore-existing` rather than `zcrypto archive pull`: hot sets carry `manifest.json`, not sidecars. | deploy-time `.env` |
+| `HOT_SOURCE` | The **ops node's** hot-out outbox (spec 00056 D2/D4), pulled by a raw `rsync --archive --ignore-existing` rather than `zcrypto archive pull`: hot sets carry `manifest.json`, not sidecars. | deploy-time `.env` |
 | `HOT_DEST` | Where the hot-cluster working set lands — the `hot/` hub itself (`/archive` == `/volume1/ZhaoCrypto`). | defaults to `/archive/hot` in `compose.yaml` |
 | `HOT_SSH_KEY` | Private key for the hot-out pull — a **separate** least-privilege keypair (`sync_hot`), never the other channels' keys. | fixed to `/keys/sync_hot` in `compose.yaml` |
 | `HOT_SSH_PORT` | The ops node's SSH port, scoped to this pull only. Home-LAN port **22**, like the panel/reconciled channels. | defaults to `22` in `compose.yaml` |
