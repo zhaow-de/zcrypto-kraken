@@ -163,8 +163,8 @@
 
 # The inbound hot-push forced command lands on zcrypto-data, the m2m data user, NOT the admin
 # account (spec 00057 keeps the admin out of the data path). `exclusive: false` so it ADDS without
-# disturbing that user's other keys. The admin account carries no copy of it — the old copy went
-# with T0169 once the cutover proved out — and the role never enforces that absence.
+# disturbing that user's other keys. The admin account carries no copy of it (T0169), and the role
+# never enforces that absence.
 - name: install the hot-push pubkey as a write-capable rrsync forced command jailed to hot/ (on zcrypto-data)
   ansible.posix.authorized_key:
     user: "{{ nas_data_user }}"
