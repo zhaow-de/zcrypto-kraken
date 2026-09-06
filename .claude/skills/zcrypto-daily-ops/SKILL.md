@@ -37,6 +37,8 @@ Every rule carries `Runbook: infra/runbooks/<file>#<uid>` and the report prints 
 uv run python infra/scripts/ops-daily.py classify --host <one host the alert names, from the report> "<the command>"
 ```
 
+**`--host` is also where a read is resolved**: before answering `autonomous` for a `cat` or a `grep`, the classifier asks that host what the command's file operands really name, so a link under a read-safe root pointing outside it — and a host it could not reach — read `prepared`.
+
 Exit **0** autonomous · **3** prepared. **`prepared` means prepare the action and stop.** If the classifier itself errors, treat that as prepared too: an unclassifiable step and an unrunnable classifier both mean nobody has judged this action.
 
 **The classifier is default-deny over an enumerated table of command shapes, so `prepared` also means *not yet enumerated*** — a diagnostic a runbook gained after the table was written is refused exactly like a destructive one. That is the safe direction and never a reason to widen the table in the moment: prepare the step, then add the shape and its fixture through the normal fix branch.
