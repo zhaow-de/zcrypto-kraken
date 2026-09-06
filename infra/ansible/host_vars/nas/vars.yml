@@ -49,8 +49,8 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # and keep feeding the dashboard. What a rollout cost belongs in that rollout's fleet-pins row,
 # never here.
 nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470
-# Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the trap the
-# committed pin kills. Alloy v1.18.0 (2026-07-20); previous pin 4f6ddc56ffdc (v1.17.1).
+# Was running as an UNPINNED `:latest` that merely happened to resolve to this digest -- the trap
+# the committed pin kills.
 nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
 
 # Spec 00102 D7: `full` re-hashes every segment each cycle, `incremental` hashes rsync's transfers

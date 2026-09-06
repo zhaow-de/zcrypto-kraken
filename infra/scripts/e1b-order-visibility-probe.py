@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """E1b -- which open-orders call shapes return the resting rows, on the wheel we actually run.
-It names WHICH shapes return the rows while the two-order fixture stands, so a later reader knows
-what `zcrypto engine flatten` and the startup pass can and cannot see. The empty-cache arm is
-byte-for-byte what flatten gets, which is why that shape is the subject and the others are the
-context that makes it interpretable.
+It names WHICH shapes return the rows, so a later reader knows what `zcrypto engine flatten` and
+the startup pass can and cannot see. The empty-cache arm is byte-for-byte what flatten gets, which
+is why that shape is the subject and the others are the context that makes it interpretable.
 `KrakenEnvironment` is deliberately absent: `KrakenSpotHttpClient.__init__` takes no such
 parameter, and adding any argument flatten does not pass would end the like-for-like comparison
 this run exists to make. Credentials come from the environment and are never stored, echoed or

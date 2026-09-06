@@ -1,80 +1,31 @@
 #!/usr/bin/env bash
-# Pushes the committed-as-code Grafana dashboards, notification templates + alert rules (infra/grafana/) to the
-# already-provisioned Grafana Cloud instance (spec 00049, Role B / Task 4). Idempotent: each
-# dashboard overwrites by its own uid (every *-dashboard.json ships); each alert rule upserts by
-# its own stable `uid` (GET to check whether it already exists, then POST to create or PUT to
-# update) -- safe to re-run after any commit to infra/grafana/.
+# Pushes the committed dashboards, notification templates and alert rules under infra/grafana/ to
+# the provisioned Grafana Cloud stack (spec 00049, Role B). Idempotent: each dashboard overwrites by
+# its own uid, each alert rule upserts by its own stable uid.
 #
-# Sequencing: when summaries or panel descriptions cite repo paths, push AFTER the PR merges,
-# never from the unmerged branch -- a branch push ships alert summaries naming files develop
-# does not have (degraded between merge and push, wrong the other way around).
+# Run it from MERGED develop, never a branch: summaries and panel descriptions cite repo paths, so a
+# branch push ships alert text naming files develop does not have.
 #
-# Env. Only GRAFANA_SA_TOKEN has no default (it is the secret); the rest default to THIS project's
-# real, verified values so nobody has to guess them again -- guessing them wrong is not a harmless
-# error, it is T0034: "first datasource of each type" once silently repointed all 7 rules at the
-# wrong data while still reporting health=ok. Override only to target a different stack.
-#   GRAFANA_SA_TOKEN           (REQUIRED) service-account token: dashboards + alerting-provisioning write
-#                              Obtain it from the vault -- the value only ever lives in this env var,
-#                              never echoed, never written to a file:
-#                                export GRAFANA_SA_TOKEN=$(cd infra/ansible && uv run python -c "
-#                                import subprocess
-#                                from ansible.parsing.dataloader import DataLoader
-#                                from ansible.parsing.vault import VaultSecret, VaultSecretsContext
-#                                pw=subprocess.run(['scripts/vault-pass.sh'],capture_output=True,text=True).stdout.strip()
-#                                s=[('default',VaultSecret(pw.encode()))]; VaultSecretsContext.initialize(VaultSecretsContext(s))
-#                                l=DataLoader(); l.set_vault_secrets(s); print(str(l.load_from_file('group_vars/all/vault.yml')['grafana_sa_token']))
-#                                " 2>/dev/null)
-#                                [ -n "$GRAFANA_SA_TOKEN" ] || { echo 'no token'; exit 1; }
-#                              Three parts are load-bearing and have each cost a failed attempt:
-#                              `cd infra/ansible` (vault-pass.sh is resolved relative to ansible.cfg);
-#                              vault_password_file names an EXECUTABLE to RUN, not a password to read;
-#                              and a !vault scalar needs VaultSecretsContext.initialize before str().
-#                              The 2>/dev/null and the emptiness guard are a PAIR -- silencing vault
-#                              stderr is what makes a silent failure possible.
-#                              For a PromQL read-back do not use this at all: infra/scripts/grafana-query.py
-#                              encapsulates both footguns and never prints the token.
+# GRAFANA_SA_TOKEN is the one variable with no default. Obtain it through
+# `infra/scripts/grafana_auth.py`, which encapsulates the two decrypt footguns its own docstring
+# records -- do not hand-roll the extraction. For a PromQL read-back use `infra/scripts/grafana-
+# query.py` instead of this script's token at all.
 #
-# PATH. This script calls bare `python3`, and the check below refuses one without PyYAML.
-# A plain shell in this repo has exactly that python3, so the script aborts before pushing
-# anything. PyYAML lives in the project venv (ansible, pre-commit and yamllint all pull it), so
-# run it with that venv first on
-# PATH -- `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` from the repo root.
-# Do NOT `pip install pyyaml` into the system python to work around it: the venv is the
-# environment every other tool here already uses, and a second copy drifts unseen.
+# The alert-rules calls target Grafana's Alerting Provisioning HTTP API, one rule per call: the
+# `apiVersion: 1` / `groups:` file-provisioning shape is a different mechanism and is not accepted
+# here, and file provisioning is not available on Grafana Cloud SaaS.
 #
-#   GRAFANA_URL                default https://zcrypto2026.grafana.net
-#   GRAFANA_PROM_DS_UID        default grafanacloud-prom   (NOT grafanacloud-usage / -alert-state-history)
-#   GRAFANA_LOKI_DS_UID        default grafanacloud-logs
-#   GRAFANA_ALERT_FOLDER_UID   default bfrxdfoybx98gb      (the `zcrypto` folder)
-#   GRAFANA_SLACK_WEBHOOK_URL  (REQUIRED for the Slack section) Slack incoming-webhook URL, vaulted
-#                              as slack_webhook_url in infra/ansible/group_vars/all/vault.yml.
-#                              Unset/empty SKIPS the upserts only when the metrics/logs receivers
-#                              already exist on the stack (steady state -- they persist once minted);
-#                              on a from-scratch stack the script ABORTS before the rules push rather
-#                              than let the rules reference nonexistent receivers (T0047).
-#   (receivers `metrics`/`logs` are as-code constants minted by this script -- no receiver env)
-#   GRAFANA_SLACK_RECEIVER     REMOVED 2026-07-16 (receiver names are as-code constants now).
+# After ANY push, read the rules back and check each rule's datasourceUid -- the API accepts a wrong
+# one happily and reports health=ok (T0034). Verify a DASHBOARD by RENDERING it, never by reading
+# its JSON back: a read-back proves what was stored, not what a panel DISPLAYS, and a unit that
+# reaches a string column renders every cell `NaN` while the stored JSON looks perfect.
 #
-# The alert-rules call targets Grafana's **Alerting Provisioning HTTP API**
-# (POST/PUT/GET /api/v1/provisioning/alert-rules[/:uid]), which is JSON-only and one rule per
-# call -- the `apiVersion: 1` / `groups:` file-provisioning shape is a different mechanism and is
-# not accepted here (and file provisioning isn't usable on Grafana Cloud SaaS at all). See
-# https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/
-#
-# The defaults above were read back from the LIVE stack on 2026-07-14 (7 rules, folder bfrxdfoybx98gb,
-# datasources grafanacloud-prom / grafanacloud-logs) and confirmed to match infra/grafana/alerts.yaml.
-# After ANY push, read the rules back and check the datasourceUid of each -- the API accepts a wrong
-# UID happily and reports health=ok (T0034).
-#
-# Verify a DASHBOARD by rendering it, not by reading its JSON back. A read-back proves what was
-# stored, never what a panel DISPLAYS: a unit that reaches a string column renders every cell `NaN`
-# while the stored JSON looks perfect, and a rename keyed on the wrong field name is invisible the
-# same way. The server-side renderer is available on this stack and returns a PNG:
 #   curl -fsS -H "Authorization: Bearer $GRAFANA_SA_TOKEN" -o panel.png \
 #     "$GRAFANA_URL/render/d-solo/<dashboard-uid>/x?panelId=<id>&width=1100&height=420&from=now-6h&to=now"
-# Append &var-<name>=<value> per template variable. Render the NARROWED case too, not just the
-# default: a query returning a single series yields one frame, whose value field is named `Value`
-# rather than `Value #<refId>`, so name-matched renames and overrides can miss there and only there.
+#
+# Append &var-<name>=<value> per template variable, and render the NARROWED case too: a query
+# returning a single series yields one frame whose value field is named `Value` rather than `Value
+# #<refId>`, so name-matched renames and overrides miss there and only there.
 set -euo pipefail
 
 : "${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}"
@@ -108,19 +59,17 @@ print(json.dumps({"dashboard": d, "folderUid": os.environ["GRAFANA_ALERT_FOLDER_
     "${auth[@]}" -H "Content-Type: application/json" -d "${dashboard_payload}" >/dev/null
 done
 
-# --- Notification templates -----------------------------------------------------------------------
 # One provisioned template object per infra/grafana/notification-templates/*.tmpl, named after the
-# basename (the name is what the contact points' `{{ template "..." . }}` references resolve
-# against, so renaming a file is visible in the provisioning API). Deliberately OUTSIDE the
-# webhook-gated branch below, so a steady-state run with no webhook still ships template edits.
+# basename -- the name is what a contact point's `{{ template "..." . }}` resolves against, so
+# renaming a file is visible in the provisioning API. Deliberately OUTSIDE the webhook-gated branch
+# below, so a steady-state run with no webhook still ships template edits.
 #
-# ORDERING IS LOAD-BEARING: this runs BEFORE the contact points. A contact point whose
-# `{{ template }}` target does not exist renders an EMPTY body, Grafana accepts that without
-# complaint, and Slack then rejects the message.
-#
-# The read-back is the point: the API stores whatever it is given and never parses the Go template,
-# so a truncated or mis-escaped push is invisible until an alert renders blank on someone's phone.
-# Both $( ) substitutions strip trailing newlines, so the file's final newline is not a difference.
+# ORDERING IS LOAD-BEARING: this runs BEFORE the contact points, because a contact point whose `{{
+# template }}` target does not exist renders an EMPTY body, Grafana accepts that without complaint,
+# and Slack then rejects the message. The read-back is the point for the same reason: the API stores
+# whatever it is given and never parses the Go template, so a truncated or mis-escaped push is
+# invisible until an alert renders blank on someone's phone. Both `$( )` substitutions strip
+# trailing newlines, so a file's final newline is not a difference.
 for tmpl in "${root}"/infra/grafana/notification-templates/*.tmpl; do
   [ -e "${tmpl}" ] || continue
   tname="$(basename "${tmpl}" .tmpl)"
@@ -135,13 +84,11 @@ for tmpl in "${root}"/infra/grafana/notification-templates/*.tmpl; do
   echo "grafana-push: notification template ${tname} pushed and verified byte-identical" >&2
 done
 
-# --- Slack contact points: `metrics` + `logs` receivers (T0047; generalized 2026-07-16) -----------
-# Two receivers, both delivering to the SAME Slack webhook: `metrics` (resolve messages ON) is the
-# default + what every metrics rule pins via notification_settings; `logs` (resolve messages OFF --
-# Loki alerts resolve by aging, a resolve ping is noise) is pinned by the Loki-sourced rules. Both
-# are minted here as-code by stable uid, so there is no receiver-name guessing (the T0034 guard
-# moved from "must pre-exist" to "we are the source of truth"). This section runs BEFORE the rules
-# push: Grafana validates a rule's notification_settings.receiver against existing receivers.
+# Slack contact points, the `metrics` and `logs` receivers (T0047). Both deliver to the same
+# webhook: `metrics` has resolve messages ON and is what every metrics rule pins, `logs` has them
+# OFF because Loki alerts resolve by aging and a resolve ping is noise. Both are minted here as-code
+# by stable uid, so no receiver name is guessed. This runs BEFORE the rules push, because Grafana
+# validates a rule's notification_settings.receiver against existing receivers.
 if [ -z "${GRAFANA_SLACK_WEBHOOK_URL:-}" ]; then
   # Steady-state escape hatch: the receivers persist once minted, so a webhook-less run is fine
   # THEN. On a from-scratch stack they do not exist yet, and the rules push below would reference
@@ -153,12 +100,10 @@ if [ -z "${GRAFANA_SLACK_WEBHOOK_URL:-}" ]; then
       exit 1
     fi
     # The template-reference half of the read-back verify below, repeated HERE deliberately: that
-    # one lives inside the webhook branch, so a contact point reverted to the stock template in the
-    # UI would survive every webhook-less steady-state run undetected -- the exact "the messages
-    # look like they used to, nobody knows since when" failure the check exists to catch. The
-    # predicate needs no webhook: it compares against the template names, not the url. Restoring the
-    # reference DOES need one (the upsert rewrites the whole integration), hence an instruction
-    # rather than a repair.
+    # one lives inside the webhook branch, so a contact point reverted in the UI would survive every
+    # webhook-less steady-state run undetected. This predicate needs no webhook because it compares
+    # template names rather than the url; RESTORING the reference does need one, since the upsert
+    # rewrites the whole integration -- hence an instruction rather than a repair.
     if ! jq -e --arg name "${name}" \
         'any(.[]; .name == $name
              and ((.settings.title // "") | test("zcrypto\\.slack\\.title"))
@@ -206,12 +151,12 @@ else
   # "email"). Deleted only AFTER the rules push below has repointed every rule, so it can never
   # strand a referenced receiver -- see the post-rules block.
 
-  # Read-back verify (T0034): both integrations present with the right name/type, and each still
-  # POINTING AT THE TEMPLATE. Grafana redacts settings.url on read-back, so the url itself cannot be
-  # checked -- but title/text are not secure fields and do read back, which is what catches a contact
-  # point reverted to the stock template. Without this the revert resurfaces weeks later as "the
-  # messages look like they used to" with nobody sure when. If a future Grafana starts redacting
-  # title/text too, drop to a presence-only assertion here rather than deleting the guard.
+  # Read-back verify (T0034): both integrations present with the right name and type, and each still
+  # POINTING AT THE TEMPLATE. Grafana redacts settings.url on read-back so the url cannot be
+  # checked, but title and text are not secure fields and do read back, which is what catches a
+  # contact point reverted to the stock template -- otherwise that resurfaces weeks later as "the
+  # messages look like they used to" with nobody sure when. If a future Grafana redacts title/text
+  # too, drop to a presence-only assertion rather than deleting the guard.
   live_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
   for pair in "zcrypto-slack-metrics metrics" "zcrypto-slack-logs logs"; do
     uid="${pair%% *}"; name="${pair##* }"
@@ -265,11 +210,9 @@ while IFS= read -r uid; do
   fi
 done <<<"${rule_uids}"
 
-# --- Read the rules back and assert each datasource (T0034) ---------------------------------------
-# The provisioning API accepts a wrong datasourceUid happily and reports health=ok, so a typo or a
-# drifted default silently repoints a rule at grafanacloud-usage / -alert-state-history and it never
-# fires on the data it should. Read every rule we just pushed back and fail if any query node points
-# at a datasource that is neither the prom nor the loki UID we intended.
+# Read the rules back and assert each datasource (T0034): the provisioning API accepts a wrong
+# datasourceUid happily and reports health=ok, so a typo or a drifted default silently repoints a
+# rule at the usage or alert-state-history source and it never fires on the data it should.
 echo "grafana-push: verifying datasources on the pushed rules" >&2
 ds_bad=0
 while IFS= read -r uid; do
@@ -287,12 +230,10 @@ done <<<"${rule_uids}"
 # T0034: "first datasource of each type" silently repointed every rule at the wrong data once.
 [ "${ds_bad}" = "0" ] || { echo "grafana-push: datasource check FAILED — a rule is pointing at the wrong data" >&2; exit 1; }
 
-# --- Prune orphaned rules (T0034) ----------------------------------------------------------------
-# The push upserts but never deletes: a rule removed from alerts.yaml keeps evaluating and emailing
-# forever, and a rule that changed uid leaves the old one live beside the new. List every rule live in
-# OUR folder whose uid is absent from alerts.yaml. Deleting an alert rule is NOT reversible from the
-# repo, so this is DRY-RUN by default: it only reports the orphans. Re-run with GRAFANA_PRUNE=1 to
-# actually delete them (scoped to GRAFANA_ALERT_FOLDER_UID so a rule in another folder is never touched).
+# Prune orphaned rules (T0034). The push upserts and never deletes, so a rule removed from
+# alerts.yaml keeps evaluating forever and a rule that changed uid leaves the old one live beside
+# the new. Deleting a rule is NOT reversible from the repo, so this is DRY-RUN by default and
+# reports only; GRAFANA_PRUNE=1 deletes, scoped to our folder so a rule elsewhere is never touched.
 echo "grafana-push: checking for orphaned rules in folder ${GRAFANA_ALERT_FOLDER_UID}" >&2
 all_live=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/alert-rules")
 orphans=$(jq -r --arg folder "${GRAFANA_ALERT_FOLDER_UID}" --argjson keep "$(jq '[.[].uid]' <<<"${rules_json}")" '
