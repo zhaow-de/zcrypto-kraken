@@ -81,6 +81,7 @@ Do these **on the bump branch, before merging it** — each one names what to ru
 - **Re-measure `OrderBook.bids` / `.asks` kind.** `getattr(OrderBook, "bids")` must still be callable; `read_book_price` calls `book.bids()`. If they became properties, that call inverts.
 - **Re-run the flatten contract pin** added with the async correction (the env-gated one) and say in the PR what it proved and what it did not.
 - **Read the Kraken correlation fix's own tests** to learn what "unknown outcome" the adapter now reports, and check whether `cli/engine/flatten.py`'s `post_write_failure` / exit-2 path should record it distinctly rather than as a generic transport failure.
+- **Measure the in-flight REST query on an affected leg** — iter-168 left it unmeasured (T0164's closeout carried the deferral); the bump's attended pass is where the number is taken, on the same account read as the side-enum check above.
 - **Scan the remaining ~150 commit headers for adapter- and model-level changes** not covered above (`gh api "repos/nautechsystems/nautilus_trader/commits?since=<pinned nightly date>T00:00:00Z&per_page=100" --paginate --jq '.[] | .commit.message | split("\n")[0]'`), and record any new intersection in this file before closing it.
 
 ### The kill switch's cancel sweep and the startup adopt pass are blind on five legs — only their repair is left here
