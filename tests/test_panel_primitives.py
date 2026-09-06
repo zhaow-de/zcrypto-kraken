@@ -231,9 +231,12 @@ def test_sample_row_fills_a_btc_quoted_book_that_eur_rungs_could_never_fill():
     assert row_btc["fill_bps_ask_100"] is not None
     assert row_btc["fill_bps_bid_100"] is not None
 
-    # The same book read with the EUR ladder asks for 100 BTC and cannot fill.
+    # The same book read with the EUR ladder asks for 100 BTC at its smallest rung -- nothing fills, either side.
     row_eur = sample_row(bids, asks, quote="EUR", updates=1)
-    assert row_eur["fill_bps_ask_100"] is None
+    fills = sorted(c for c in row_eur if c.startswith("fill_bps_"))
+    assert len(fills) == 6, fills
+    for col in fills:
+        assert row_eur[col] is None, col
 
 
 def test_sample_row_requires_the_quote_explicitly():
