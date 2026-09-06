@@ -683,8 +683,8 @@ def _run_env(monkeypatch, tmp_path, *, symbols=BASKET) -> None:
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node())
     # Stubbed for EVERY `run` test: the real re-arm re-points this pytest process's own faulthandler
-    # at fd 2 (pytest's plugin aims it at its capture), removing native-crash dumps from every later
-    # test in the process.
+    # at fd 2, away from the capture pytest's plugin aimed it at, removing native-crash dumps from
+    # every later test in the process.
     monkeypatch.setattr(command, "faulthandler", types.SimpleNamespace(disable=lambda: None, enable=lambda **_: None))
 
 

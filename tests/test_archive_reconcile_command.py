@@ -127,8 +127,8 @@ def _series(textfile: Path) -> dict[str, float]:
 
 
 def test_detect_only_is_the_default_and_mints_nothing(tmp_path, monkeypatch):
-    """The load-bearing default: a splice is an unaudited data swap into an unbackfillable archive, so
-    it takes an explicit `--mint`. Detect-only ledgers what it WOULD do and writes no parquet."""
+    """Detect-only by default so an ad-hoc run ledgers what it WOULD splice and writes no parquet;
+    the deployed reconciler passes `--mint`, which is the option's own help."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     _plant_primary_gap(pri, sec, H)

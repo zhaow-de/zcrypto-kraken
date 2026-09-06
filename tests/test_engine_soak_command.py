@@ -590,8 +590,7 @@ def test_soak_check_spans_the_schema_boundary(tmp_path, monkeypatch):
 
     SCOPE: the canonical is absent here, so this exercises the journal read and `realized_series` --
     the two things that previously raised, `SoakError` on the changing asset set and the store
-    path's `ValueError` on a base key. The null build and the internals rebuild are never reached on
-    this path."""
+    path's `ValueError` on a base key."""
     _patch_config(monkeypatch, tmp_path)
     journal_dir, store_dir = _mk_straddling_journal_and_store(tmp_path)
     json_out = tmp_path / "report.json"

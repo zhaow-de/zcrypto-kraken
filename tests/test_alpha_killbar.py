@@ -80,9 +80,9 @@ def test_a1_kill_bar_planted_edge_passes():
 
 def test_a1_kill_bar_null_rarely_passes():
     # Over 20 seeds, a beta=0 (no real edge) book should almost never clear all four kill-bar
-    # conditions at once. The DSR leg is the strictest: `deflated_sharpe_ratio` returns a normal CDF,
-    # so it underflows toward 0 but never reaches it and a `dsr > 0` gate cannot fail a null at all;
-    # the ratified 0.95 bar (T0009) is what makes this leg discriminate.
+    # conditions at once. The DSR leg is the strictest: `deflated_sharpe_ratio` is a probability, and
+    # on these nulls it lands anywhere in (0, 1), so a `dsr > 0` gate cannot fail one; the ratified
+    # 0.95 bar (T0009) is what makes this leg discriminate.
     passed = 0
     dsr_leg_passed = 0
     for seed in range(20):

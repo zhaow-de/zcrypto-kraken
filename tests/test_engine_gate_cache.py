@@ -377,7 +377,7 @@ def test_replay_roots_is_pinned_as_the_full_ordered_tuple():
 
 
 def test_replay_code_paths_contains_every_previously_enumerated_module():
-    # The paths `_REPLAY_CODE_PATHS` enumerated by hand before 00065 must all still be covered --
+    # The paths the pre-00065 hand list named must all still be covered --
     # the closure REPLACES that list, it must not shrink it. A walk that collapsed (e.g. an
     # edge-resolution bug returning nothing) fails here rather than silently under-invalidating the
     # cache.

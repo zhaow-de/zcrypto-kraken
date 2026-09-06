@@ -73,7 +73,9 @@ PUBLISHER_HOSTS = (
 # Families deliberately drawn by no panel. Each entry is a REVIEWED decision and the reason IS the
 # entry: a bare name here is drift wearing a test's clothes. The bar: charting the family would
 # actively mislead, or it is a duplicate view of one already charted -- "we ran out of room" is not
-# a reason, densify the layout instead.
+# a reason, densify the layout instead. A filesystem entry takes `node_filesystem_avail_bytes`, never
+# `_free_bytes`: `free` counts the root-reserved blocks `avail` excludes, so a `free` series plotted
+# beside the avail-based lines the three filesystem rules page on disagrees with them by the reserve.
 NOT_CHARTED: dict[str, str] = {}
 
 

@@ -52,7 +52,7 @@ MODULES = tuple(sorted(p.name for p in Path(__file__).parent.glob("test_engine_*
 # single floor is only ever as strong as the smallest inventory. Each sits below its module's real
 # count where the inventory is big enough for slack to mean anything -- a floor tracking the count
 # exactly goes red on every legitimate stub removal; the small inventories sit AT their count,
-# where one below would tolerate losing a third of them. Keyed only by the modules that HAVE
+# where one below would tolerate losing a third or more of them. Keyed only by the modules that HAVE
 # doubles: a module absent from both this and the table is one the walk found nothing in, where any
 # floor above zero would be a claim rather than a check.
 _WALK_FLOOR = {

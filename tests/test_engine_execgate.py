@@ -300,10 +300,10 @@ def test_the_reported_snapshot_age_is_not_clamped_when_negative(tmp_path):
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
 def test_a_chmod_000_directory_reads_the_kill_file_as_present(tmp_path):
-    # A broken symlink does not reach the `except OSError` branch -- `lexists` swallows it. A
-    # chmod-000 exec dir does: `os.lstat` on the kill file raises PermissionError. The same denied
-    # directory also makes `armed` read absent, so `level == NONE` alone would not say whether the
-    # kill-specific fail-open logic engaged -- assert the reason.
+    # A broken symlink misses the `except OSError` branch (`os.lstat` stats the link and returns);
+    # a chmod-000 exec dir does not -- `os.lstat` on the kill file raises PermissionError. That
+    # denied directory also makes `armed` read absent, so `level == NONE` alone would not say
+    # whether the kill-specific fail-open logic engaged -- assert the reason.
     gate = _all_clear(tmp_path)
     (exec_dir(tmp_path) / KILL_FILE).touch()
     exec_dir(tmp_path).chmod(0o000)

@@ -986,8 +986,8 @@ def test_venue_gauges_exist_after_seeding():
     _VenueGauges(reg)
     assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == 0.0
     assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 0.0
-    # DERIVED from len(INSTRUMENT_IDS), never a literal -- a future basket re-ratification moves one
-    # committed place.
+    # DERIVED from len(INSTRUMENT_IDS), never a literal; the `== 12` pins the current basket size and
+    # moves with it.
     assert reg.get_sample_value("zcrypto_venue_instruments_expected") == len(INSTRUMENT_IDS) == 12
     assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 0.0
 

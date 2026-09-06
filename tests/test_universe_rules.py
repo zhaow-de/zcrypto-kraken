@@ -122,8 +122,8 @@ def test_omitting_spreads_screens_nothing_but_still_records_the_gap():
 
 
 def test_the_shipped_cap_and_reference_notional_are_pinned():
-    """Both constants are load-bearing and every other test passes them explicitly, so nothing
-    else would notice an edit to them."""
+    """The tests that exercise the cap pass `max_spread_bps` explicitly and nothing here reads the
+    notional, so nothing else in this file would notice an edit to either constant."""
     assert DEFAULT_MAX_SPREAD_BPS == 10.0
     assert SPREAD_REFERENCE_NOTIONAL_EUR == 1_400.0
 

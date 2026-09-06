@@ -134,9 +134,9 @@ def clean_journal(tmp_path, monkeypatch) -> Path:
 @pytest.fixture
 def mismatch_journal(tmp_path, monkeypatch) -> Path:
     """A full DAY0 (6 cycles) whose 00:00 record's schema_version is tampered with post-write, so
-    `_evaluate_journal` counts a validation failure. A whole day, not a lone mid-day cycle:
-    `evaluate_gate` scores only days whose freshness window has elapsed, so nothing shorter moves
-    streak or last_failure."""
+    `_evaluate_journal` counts a validation failure. A whole day rather than the lone mid-day record
+    `clean_journal` uses: a mid-day-start first day is `evaluate_gate`'s `excluded_day`, so it moves
+    neither streak nor last_failure."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     _write_clean_day(journal, DAY0)

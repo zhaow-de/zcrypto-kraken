@@ -89,9 +89,9 @@ def test_calibrate_refuses_when_the_only_btc_eur_rows_fall_outside_the_window(tm
 
 
 def test_the_committed_script_reproduces_the_table_it_replaces():
-    """The committed script over the SUPERSEDED window must still reproduce the SUPERSEDED table and
-    provenance: the standing control that attributes a restamp's move to the WINDOW rather than to
-    the calibration path (spec 00085 D5). Window, provenance and table are LITERALS, not imports --
+    """The committed script (spec 00085 D5) over the SUPERSEDED window must still reproduce the
+    SUPERSEDED table and provenance: the standing control that attributes a restamp's move to the
+    WINDOW rather than to the calibration path. Window, provenance and table are LITERALS, not imports --
     importing the module's now-current constants would make the control follow the restamp it checks."""
     superseded_window = ("2026-07-08T13:47:33Z", "2026-07-23T05:59:59Z")
     superseded_hours = 353
