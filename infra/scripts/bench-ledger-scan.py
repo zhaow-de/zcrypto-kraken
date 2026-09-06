@@ -97,10 +97,7 @@ def _vmhwm() -> float:
 
 
 def _child(root: Path, repeats: int) -> None:
-    """Time and measure one ledger in a process that has held no other.
-    Everything happens HERE rather than in the parent: VmHWM never falls, so a single process
-    walking the sizes would report its largest ledger so far for every row after the first.
-    """
+    """Time and measure one ledger in a process that has held no other."""
     best_load = best_totals = float("inf")
     for _ in range(repeats):
         t0 = time.perf_counter()
