@@ -130,6 +130,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-ops-panel-exit-nonzero`](ops-node.md#zcrypto-ops-panel-exit-nonzero) — ALERT: the last hourly L2 panel materialize errored.
 - [`zcrypto-ops-load-high`](ops-node.md#zcrypto-ops-load-high) — ALERT: the ops node's 1-minute load average is above 20.
 - [`zcrypto-ops-error-logs`](ops-node.md#zcrypto-ops-error-logs) — ALERT: an ERROR or CRITICAL line from the ops node.
+- [`agentboard-node-upgrade`](ops-node.md#agentboard-node-upgrade) — PROCEDURE: moving the ops node's web terminal onto a new node or `@gbasin/agentboard` pin, and why that restart is only safe with `KillMode=process`.
 
 ### [`nas.md`](nas.md) — the durable archive and its pull loop
 
@@ -137,6 +138,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-nas-load-high`](nas.md#zcrypto-nas-load-high) — ALERT: the NAS's 1-minute load average is above 4.
 - [`zcrypto-nas-archive-pull-errors`](nas.md#zcrypto-nas-archive-pull-errors) — ALERT: at least one ERROR or CRITICAL line from the NAS's archive-pull container in the last 15 minutes.
 - [`zcrypto-nas-archive-pull-stalled`](nas.md#zcrypto-nas-archive-pull-stalled) — ALERT: the NAS's archive-pull has logged no successful completion in the last 3 hours.
+- [`nas-file-transfer`](nas.md#nas-file-transfer) — PROCEDURE: the `/volume1` sftp chroot, and the `nas-hot:` rrsync endpoint whose overwrites are skipped in silence.
 
 ### [`gate.md`](gate.md) — the shadow-concordance export on the NAS
 

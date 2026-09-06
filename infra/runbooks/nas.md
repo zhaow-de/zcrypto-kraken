@@ -212,3 +212,30 @@ Downstream, if the stall persists: the `.pull-status` file this loop writes ages
 ### Retire when
 
 `zcrypto-nas-archive-pull-stalled` is absent from `infra/grafana/alerts.yaml`, or the `pull` command in `cli/archive/command.py` no longer logs the `pull complete … failed=%d` line the selector matches.
+
+______________________________________________________________________
+
+<a name="nas-file-transfer"></a>
+
+## NAS file transfer — PROCEDURE
+
+### What you are seeing
+
+Nothing fired. You are putting a file onto the NAS (`ssh nas`) — or a copy that reported success left nothing at the path you expected.
+
+### What it means
+
+**`scp`/`sftp` through the `nas` alias is chrooted at `/volume1`.** DSM chroots sftp to the shared folders (`infra/nas/README.md`), so a transfer path and a shell path for the same file differ by that prefix, and the wrong one fails as `No such file or directory` — which reads as a missing directory rather than as the chroot it is.
+
+**`nas-hot:` is not a shell.** It is an ssh alias onto a forced-command `rrsync`, pinned at `/volume1/ZhaoCrypto/hot` with `-munge -no-del -no-overwrite` (`infra/ansible/roles/nas/tasks/main.yml`) — the only write channel into custody. `-no-overwrite` forces `--ignore-existing`, so re-sending a file that is already there is **skipped in silence**: an overwrite through this channel is a no-op, never an error.
+
+### What to do
+
+1. **Transfer without the prefix**: `scp <file> nas:/ZhaoCrypto/...`, never `nas:/volume1/ZhaoCrypto/...`. Commands you then run inside an `ssh nas` session keep it — the same file is `/volume1/ZhaoCrypto/...` there.
+2. **Into `hot/`, use the sanctioned program**: `uv run zcrypto data push` from the workstation, which sends that node's authored sets to the configured `push_dest`. Never write through the NFS mount, where a soft-mounted write can corrupt on a timeout.
+3. **A published file is replaced by minting a sibling, never by pushing over it** — a second push of the same name is one of the silent skips above.
+4. **Confirm by listing the destination, not by the copy's exit status**: `ssh nas ls -l /volume1/ZhaoCrypto/<path>` — over the shell, so with the prefix.
+
+### Retire when
+
+`infra/ansible/roles/nas/tasks/main.yml` no longer installs the hot-push key with `-no-overwrite` pinned at `/volume1/ZhaoCrypto/hot`, or `nas` is no longer the DSM box whose sftp chroot `infra/nas/README.md` records — either one removes the asymmetry every step above exists for.

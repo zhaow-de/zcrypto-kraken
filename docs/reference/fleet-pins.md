@@ -24,7 +24,7 @@ Reading rules:
 
 | package | host | version | since (UTC) | notes |
 | --- | --- | --- | --- | --- |
-| agentboard | zcrypto-ops | `0.4.23` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-08-26 | **a pin here is not a pin in the runtime** — no role task restarts agentboard (a restart drops whoever is on the terminal), though a tunnel-conf converge does through `Requires=wg-quick@zaccess0`; re-pins are attended, no bake — the mTLS edge is its only auth; the running-version read-back and the upgrade recipe are the agentboard bullet in `fleet.md` |
+| agentboard | zcrypto-ops | `0.4.23` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-08-26 | **a pin here is not a pin in the runtime** — no role task restarts agentboard (a restart drops whoever is on the terminal), though a tunnel-conf converge does through `Requires=wg-quick@zaccess0`; re-pins are attended, no bake — the mTLS edge is its only auth; the running-version read-back and the upgrade recipe are `infra/runbooks/ops-node.md`'s `agentboard-node-upgrade` |
 
 ## Standing constraints — they outlive any single converge
 
