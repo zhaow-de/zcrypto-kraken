@@ -14,8 +14,6 @@ ENGINE_TEMPLATE = REPO / "infra/ansible/roles/engine/templates/compose.yaml.j2"
 OPS_TEMPLATE = REPO / "infra/ansible/roles/ops/templates/compose.yaml.j2"
 OPS_DEFAULTS = REPO / "infra/ansible/roles/ops/defaults/main.yml"
 
-# trim_blocks/lstrip_blocks mirror Ansible's own template defaults, so a template edit relying on
-# either setting fails here rather than only at a real converge.
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
 
 # Dummy but complete contexts: every variable each template references (outside the
