@@ -9,6 +9,7 @@ import contextlib
 import dataclasses
 import http.client
 import importlib.util
+import inspect
 import io
 import json
 import re
@@ -1907,3 +1908,168 @@ def test_the_healthchecks_fixture_carries_no_key_the_read_only_fetch_never_retur
     fixture = Path(__file__).resolve().parent / "fixtures" / "healthchecks_descriptions.json"
     extra = sorted({key for check in json.loads(fixture.read_text()) for key in check} - {"name", "tags", "desc"})
     assert not extra, f"the fixture grew {extra}, which the read-only fetch does not return"
+
+
+# --- T0168 item F: a failed unattended upgrade on the host holding the live trade key -------------------------
+
+
+# What `zcrypto-main` measured on host `zcrypto` on 2026-09-06, transcribed rather than invented --
+# systemd's human timestamp form included, which is the form the parser has to read. The values drift
+# with the next patch, so what is pinned here is their SHAPE, and the clock is the measurement's own
+# rather than the real one.
+_MEASURED_RAN = "Sun 2026-09-06 06:38:58 UTC"
+_MEASURED_STAMP = datetime(2026, 9, 6, 6, 38, 58, tzinfo=timezone.utc)
+_UPGRADE_NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+
+
+def _host_answering(**overrides):
+    """A runner answering ONE command with the host's `key=value` lines.
+
+    Each mode overrides a different field, so no two modes get the same reply.
+    """
+    answer = {
+        "Result": "success",
+        "ExecMainStatus": "0",
+        "ExecMainExitTimestamp": _MEASURED_RAN,
+        "StampEpoch": str(int(_MEASURED_STAMP.timestamp())),
+        "RebootRequired": "",
+        "RebootPkgs": "",
+        **overrides,
+    }
+    calls = []
+
+    def runner(command):
+        calls.append(command)
+        return "".join(f"{key}={value}\n" for key, value in answer.items())
+
+    runner.calls = calls
+    return runner
+
+
+def _upgrade(runner):
+    return ops_daily.read_unattended_upgrades(now=_UPGRADE_NOW, runner=runner)
+
+
+def test_the_measured_host_reading_passes_and_costs_exactly_one_ssh():
+    """The true positive: the reading main took off `zcrypto` passes, names when the upgrade ran, and
+    reaches the host once -- the four upgrade values and the reboot read travel in the same command."""
+    runner = _host_answering()
+    check = _upgrade(runner)
+    assert check.ok is True, check.value
+    assert _report(verdict=[check]).exit_code == 0
+    assert "last run 2026-09-06T06:38:58Z" in check.value, check.value
+    assert "reboot" not in check.value, check.value
+    assert runner.calls == [ops_daily.UPGRADE_COMMAND], runner.calls
+
+
+@pytest.mark.parametrize("result", ["exit-code", "timeout", "signal"])
+def test_a_result_other_than_success_is_attention(result):
+    """`Result` is read as a value, not as a presence: any non-`success` word systemd records fails."""
+    check = _upgrade(_host_answering(Result=result))
+    assert check.ok is False, check.value
+    assert _report(verdict=[check]).exit_code == 1
+
+
+def test_a_non_zero_exec_status_fails_even_beside_a_result_that_reads_success():
+    """Both fields are read, never one: a check resting on `Result` alone passes a run whose recorded
+    exit status is non-zero."""
+    check = _upgrade(_host_answering(ExecMainStatus="1"))
+    assert check.ok is False, check.value
+    assert "Result=success" in check.value, check.value
+    assert _report(verdict=[check]).exit_code == 1
+
+
+def test_a_stamp_older_than_the_bound_fails_where_the_unit_fields_still_read_healthy():
+    """A timer that stopped firing leaves `Result` and `ExecMainStatus` frozen at their last healthy
+    values, so the stamp's age is the only reading that catches it -- and it is the one that reads."""
+    stale = _UPGRADE_NOW - (ops_daily.UPGRADE_STALE_AFTER + timedelta(hours=1))
+    check = _upgrade(_host_answering(StampEpoch=str(int(stale.timestamp()))))
+    assert check.ok is False, check.value
+    assert "Result=success, ExecMainStatus=0" in check.value, check.value
+    assert _report(verdict=[check]).exit_code == 1
+
+
+@pytest.mark.parametrize(("past_bound", "ok"), [(-timedelta(minutes=1), True), (timedelta(minutes=1), False)])
+def test_the_staleness_bound_is_two_days_on_both_of_its_sides(past_bound, ok):
+    """A minute inside two days passes and a minute outside fails. Two days is the decided value, not
+    a value read back out of the code: the stamps under `/var/lib/apt/periodic/` were measured about
+    a day apart, so a bound narrowed to one would report that normal spread as a stopped timer."""
+    stamp = _UPGRADE_NOW - (timedelta(days=2) + past_bound)
+    check = _upgrade(_host_answering(StampEpoch=str(int(stamp.timestamp()))))
+    assert check.ok is ok, check.value
+
+
+def test_a_unit_that_never_ran_is_unreadable_rather_than_the_pass_its_two_fields_alone_would_give():
+    """`Result=success` and `ExecMainStatus=0` are what systemd reports for a unit that has NEVER run,
+    with `ExecMainExitTimestamp` empty -- so the timestamp is parsed rather than merely printed, and
+    those two fields alone cannot pass a host whose upgrade has never happened."""
+    check = _upgrade(_host_answering(ExecMainExitTimestamp=""))
+    assert check.value.startswith("unreadable: "), check.value
+    assert _report(verdict=[check]).exit_code == 2
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [subprocess.CalledProcessError(255, "ssh"), subprocess.TimeoutExpired("ssh", 30), OSError("ssh: no route to host")],
+    ids=["non-zero ssh", "timeout", "unreachable"],
+)
+def test_a_host_the_pass_could_not_reach_is_unreadable_never_a_failed_patch(failure):
+    """Every way the live runner can fail is exit 2, the code for a source that could not be read: a
+    FAIL here would blame the host's patching for a dropped connection."""
+
+    def runner(command):
+        raise failure
+
+    check = ops_daily.read_unattended_upgrades(now=_UPGRADE_NOW, runner=runner)
+    assert check.value.startswith("unreadable: "), check.value
+    assert _report(verdict=[check]).exit_code == 2
+
+
+def test_a_pending_reboot_names_its_packages_and_moves_no_verdict():
+    """`node_reboot_required` already carries the flag; this line carries the WHY an operator picking
+    an attended window wants. A pending reboot is not a failed upgrade, so `ok` and the exit code are
+    the ones a host with no flag gets -- conflated, the check would read attention every day between a
+    kernel patch and its window and bury the failed patch it exists to surface."""
+    check = _upgrade(_host_answering(RebootRequired="yes", RebootPkgs="linux-image-6.1.0-40-amd64 linux-base "))
+    assert "reboot pending: linux-image-6.1.0-40-amd64 linux-base" in check.value, check.value
+    # The exit code first, because it is the surface the conflation would move: a pass reading
+    # attention is what an operator sees, and `ok` is only how it got there.
+    assert _report(verdict=[check]).exit_code == 0, check.value
+    assert check.ok is True, check.value
+
+
+def test_a_flag_without_its_package_list_is_a_reported_state_never_an_error():
+    """A missing `.pkgs` beside a set flag is reported as the state it is, not as an unreadable source
+    and not as a failure."""
+    check = _upgrade(_host_answering(RebootRequired="yes"))
+    assert "reboot pending: flag set, packages unknown" in check.value, check.value
+    assert not check.value.startswith("unreadable: "), check.value
+    assert _report(verdict=[check]).exit_code == 0, check.value
+    assert check.ok is True, check.value
+
+
+def test_the_runner_is_keyword_only_and_carries_no_live_default():
+    """No default a test can take silently: one that forgets its runner fails instead of reaching the
+    live host."""
+    runner = inspect.signature(ops_daily.read_unattended_upgrades).parameters["runner"]
+    assert runner.kind is inspect.Parameter.KEYWORD_ONLY, runner.kind
+    assert runner.default is inspect.Parameter.empty, runner.default
+    with pytest.raises(TypeError):
+        ops_daily.read_unattended_upgrades(now=_UPGRADE_NOW)
+
+
+def test_the_upgrade_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
+    """The reader is wired into the report `main` prints: a check nothing appends reports nothing."""
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    # `main` reads the real clock, so the stamp is answered against it: pinned to the measurement's
+    # date this assertion would flip from PASS to FAIL two days after that date and stay there.
+    fresh = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())))
+    monkeypatch.setattr(ops_daily, "ssh_read", fresh)
+    assert ops_daily.main(["report"]) == 0
+    assert f"- PASS {ops_daily.UPGRADE_CHECK}: Result=success" in capsys.readouterr().out
