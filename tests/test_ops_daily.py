@@ -1816,8 +1816,8 @@ _GRAFANA_URL_SITES = 3
 
 
 def test_every_site_that_builds_a_grafana_url_is_pinned():
-    """The instrument interpolates `GRAFANA_URL` at exactly `_GRAFANA_URL_SITES` places, so a site
-    added or dropped reds until it is pinned in `test_every_endpoint_the_instrument_builds_is_pinned`."""
+    """The instrument's source carries the literal `{GRAFANA_URL}` exactly `_GRAFANA_URL_SITES` times,
+    so an endpoint added or dropped reds."""
     lines = [line.strip() for line in _SCRIPT.read_text().splitlines() if "{GRAFANA_URL}" in line]
     sites = sum(line.count("{GRAFANA_URL}") for line in lines)
     assert sites == _GRAFANA_URL_SITES, (
@@ -1827,8 +1827,9 @@ def test_every_site_that_builds_a_grafana_url_is_pinned():
 
 
 # The whole set of value-taking flags the grep shapes carry, pinned as a set rather than as a list of
-# spellings to forbid. A flag that takes a value consumes grep's positional pattern; on the read shape
-# that moves the first FILE into operand 0, the slot `_reads_only_safe_paths` skips.
+# spellings to forbid, so every addition is re-read: a flag whose VALUE supplies grep's pattern -- `-e`,
+# `-f` -- leaves the first FILE at operand 0, which `_reads_only_safe_paths` skips as the pattern. The
+# four pinned here take their OWN value, so the pattern stays positional and every file is checked.
 _GREP_VALUE_FLAGS = {"-A", "-B", "-C", "--include"}
 
 
@@ -1838,7 +1839,7 @@ def test_neither_grep_shape_carries_a_flag_that_consumes_the_pattern():
     tables = [
         value
         for name, value in vars(ops_daily).items()
-        if name.endswith("_SHAPES") and isinstance(value, tuple) and all(isinstance(s, ops_daily._Shape) for s in value)
+        if name.endswith("_SHAPES") and isinstance(value, (tuple, list)) and all(isinstance(s, ops_daily._Shape) for s in value)
     ]
     greps = [shape for table in tables for shape in table if shape.head == ("grep",)]
     print([sorted(shape.flags) for shape in greps])
@@ -1846,7 +1847,8 @@ def test_neither_grep_shape_carries_a_flag_that_consumes_the_pattern():
     valued = {flag for shape in greps for flag, spec in shape.flags.items() if spec is not None}
     assert valued == _GREP_VALUE_FLAGS, (
         f"the grep shapes' value-taking flags are {sorted(valued)}, pinned at {sorted(_GREP_VALUE_FLAGS)} -- "
-        "one that takes a value consumes grep's positional pattern"
+        "re-read the change against `_reads_only_safe_paths`: a flag whose value supplies the pattern, like `-e`, "
+        "leaves the first FILE at operand 0"
     )
 
 
