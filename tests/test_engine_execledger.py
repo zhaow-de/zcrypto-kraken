@@ -118,9 +118,8 @@ def _write_venue_record(journal_dir, cycle_ts):
     )
 
 
-# Both journaled-outcome ledgers (exec: spec 00088, venue: spec 00089) share the same
-# gate-invisibility property and the same reason it holds -- parametrized here rather than
-# duplicated in a second fixture.
+# Both journaled-outcome ledgers (exec: spec 00088, venue: spec 00089) share the gate-invisibility
+# property and the same reason it holds.
 _LEDGER_PREFIXES = pytest.mark.parametrize("prefix,write_record", [("exec", _write_exec_record), ("venue", _write_venue_record)])
 
 
@@ -147,20 +146,10 @@ def test_round_trips(tmp_path):
 
 @_LEDGER_PREFIXES
 def test_exec_records_are_invisible_to_every_journal_glob(tmp_path, prefix, write_record):
-    """The load-bearing invariant of this whole spec, tested where it actually lives.
-
-    `evaluate_gate` takes a list of CycleOutcome objects, NOT a directory -- it never globs at all,
-    so testing it directly would prove nothing. The globbing is `cli/engine/command.py`'s
-    `_journal_artifacts`, and it derives the hour from `path.stem.rsplit("-", 1)[-1]`: `exec-12`
-    yields "12", a perfectly valid boundary. The ONLY thing keeping an exec/venue record out of the
-    concordance universe is that every call site globs `cycle-*.json` / `failed-cycle-*.json` and
-    neither prefix is that. This test is what keeps that true, for both ledgers (spec 00088's exec,
-    spec 00089's venue).
-
-    (There are eight `_journal_artifacts` call sites -- seven in `cli/engine/command.py`, one in
-    `cli/engine/soak.py` -- plus `cli/engine/cycle.py`'s own direct `*/cycle-*.json` back-search.
-    Verify by grep rather than trusting this count, which rots.)
-    """
+    """`_journal_artifacts` derives the hour from `path.stem.rsplit("-", 1)[-1]`, so `exec-12` yields
+    "12", a perfectly valid boundary: the ONLY thing keeping an exec/venue record out of the
+    concordance universe is that `_evaluate_journal` globs `cycle-*.json` / `failed-cycle-*.json`,
+    and neither prefix is that."""
     from cli.engine.command import _journal_artifacts
 
     day = tmp_path / "2026-08-11"
@@ -181,9 +170,8 @@ def test_exec_records_are_invisible_to_every_journal_glob(tmp_path, prefix, writ
 
 @_LEDGER_PREFIXES
 def test_the_exec_prefix_would_be_swept_up_by_a_looser_glob(tmp_path, prefix, write_record):
-    """Guards the reason the test above passes, so a future `*.json` glob fails loudly here
-    rather than silently resetting the streak. If this test ever needs changing, the change is a
-    decision about the concordance universe -- not a test fix."""
+    """A loose `*.json` glob DOES sweep the record up, so this test failing is a decision about the
+    concordance universe, never a test fix."""
     from cli.engine.command import _journal_artifacts
 
     day = tmp_path / "2026-08-11"
@@ -198,8 +186,8 @@ def test_the_exec_prefix_would_be_swept_up_by_a_looser_glob(tmp_path, prefix, wr
 
 
 def test_the_sink_merge_never_clobbers_submitted_rows(tmp_path):
-    """D5's merge-never-clobber, byte-for-byte: a per-cycle verdict write over a record already
-    carrying submitted rows and plan entries preserves both lists exactly."""
+    """D5's merge-never-clobber: a per-cycle verdict write over a record already carrying submitted
+    rows and plan entries preserves both lists."""
     write_exec_record(tmp_path, CYCLE_TS, _verdict(), evaluated_at=CYCLE_TS)
     row = _row()  # helper: one submitting-state row with the exact key set
     append_submitted_row(tmp_path, CYCLE_TS, row, verdict=_verdict(), evaluated_at=CYCLE_TS)
@@ -334,8 +322,8 @@ def test_update_submitted_row_raises_when_the_record_is_absent(tmp_path):
 
 
 def test_update_submitted_row_refuses_a_bogus_state_and_leaves_the_record_untouched(tmp_path):
-    """A typo'd state (construct the defect) must be REFUSED, not persisted -- an accepted-looking
-    typo would otherwise vanish from `open_submitted_rows`' re-attach set with no raise anywhere."""
+    """A typo'd state must be REFUSED, not persisted -- an accepted-looking typo would otherwise
+    vanish from `open_submitted_rows`' re-attach set with no raise anywhere."""
     row = _row()
     append_submitted_row(tmp_path, CYCLE_TS, row, verdict=_verdict(), evaluated_at=CYCLE_TS)
     path = exec_record_path(tmp_path, CYCLE_TS)
@@ -426,10 +414,9 @@ def test_ledger_scans_include_yesterday_and_exclude_the_day_before(tmp_path):
 
 
 def test_the_re_attach_set_is_every_state_a_possibly_live_order_can_wear(tmp_path):
-    """`open_submitted_rows` is D10's re-attach input, so the invariant is: it returns every state a
-    possibly-live order can wear, and nothing else. `ambiguous` is one of them -- it is the honest
-    state for a submission whose venue outcome is unknown, and the order may be resting right now.
-    Asserted as an exact partition: an omission and an over-inclusion both fail here."""
+    """`open_submitted_rows` is D10's re-attach input: it returns every state a possibly-live order
+    can wear and nothing else, `ambiguous` included -- the honest state for a submission whose venue
+    outcome is unknown, whose order may be resting right now."""
     states = ("submitting", "accepted", "ambiguous", "filled", "canceled", "venue_canceled", "rejected")
     for state in states:
         append_submitted_row(
@@ -439,9 +426,8 @@ def test_the_re_attach_set_is_every_state_a_possibly_live_order_can_wear(tmp_pat
     open_coids = {row["client_order_id"] for _, row in open_submitted_rows(tmp_path, CYCLE_TS)}
     assert open_coids == {"coid-submitting", "coid-accepted", "coid-ambiguous"}
 
-    # The two readers PARTITION the window, which is the property the startup sweeps rest on: a row
-    # in neither set is one nothing ever compares against venue truth. `_ROW_STATES` supplies the
-    # domain, so a state added to the ledger and forgotten here fails on the first assert.
+    # The two readers PARTITION the window -- a row in neither is one nothing ever compares against
+    # venue truth -- and `_ROW_STATES` supplies the domain, so a forgotten state fails the first assert.
     closed_coids = {row["client_order_id"] for _, row in closed_submitted_rows(tmp_path, CYCLE_TS)}
     assert set(states) == execledger_module._ROW_STATES
     assert closed_coids == {f"coid-{state}" for state in states} - open_coids
@@ -457,9 +443,8 @@ def test_a_corrupt_exec_record_makes_the_ledger_scan_raise(tmp_path):
 
 
 def test_populated_exec_records_leave_the_report_byte_identical(tmp_path, monkeypatch):
-    """A synthetic day of cycle records scores IDENTICALLY with and without exec records that
-    carry submitted rows, plan entries and refusals -- through cli.engine.command's real
-    _evaluate_journal/report path, never a hand-called evaluate_gate."""
+    """A synthetic day of cycle records scores IDENTICALLY with and without exec records carrying
+    submitted rows and refused plan entries, through the real `engine report` path."""
     from typer.testing import CliRunner
 
     import cli.engine.command as command
@@ -495,8 +480,9 @@ def _write_week(journal_dir, *, start, n=42):
 
 
 def test_exec_records_through_returns_the_whole_week_and_ignores_its_neighbours(tmp_path):
-    """`_exec_records_in_window` is two UTC days -- 2/7 of a week. `held` is cumulative from the
-    first fill ever, so a week-scoped read understates it and reads as drift the book never had."""
+    """`exec_records_through` is deliberately unbounded below, unlike `_exec_records_in_window`'s two
+    UTC days: `held` is cumulative from the first fill ever, so a windowed read understates it and
+    reads as drift the book never had."""
     _write_week(tmp_path, start=_MONDAY - timedelta(days=7))  # the week before
     _write_week(tmp_path, start=_MONDAY)  # the week under test
     _write_week(tmp_path, start=_MONDAY + timedelta(days=7))  # the week after
@@ -507,14 +493,13 @@ def test_exec_records_through_returns_the_whole_week_and_ignores_its_neighbours(
     assert len(week) == 42, "seven days x six boundaries -- a two-day window would return 12"
     assert len(docs) == 84, "everything at or before `until`, so the previous week is in and the next is out"
     assert max(docs) == _MONDAY + timedelta(days=6, hours=20)
-    # Keyed by boundary, and each value is that boundary's own record.
+
     assert datetime.fromisoformat(docs[_MONDAY + timedelta(hours=8)]["cycle_ts"]) == _MONDAY + timedelta(hours=8)
 
 
 def test_exec_records_through_refuses_the_whole_scan_on_one_corrupt_record(tmp_path):
-    """The scan's own precedent (`_exec_records_in_window`): a record this reader cannot vouch for
-    makes the whole read refuse, never a silent skip -- a skipped record's fills are a position the
-    drift arithmetic would then attribute to nobody."""
+    """A record this reader cannot vouch for makes the whole read refuse, never a silent skip -- a
+    skipped record's fills are a position the drift arithmetic would attribute to nobody."""
     _write_week(tmp_path, start=_MONDAY)
     (tmp_path / f"{_MONDAY:%Y-%m-%d}" / "exec-08.json").write_text('{"schema_version": 9}')
 

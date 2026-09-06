@@ -86,12 +86,9 @@ def test_proxy_env_is_ignored(fake_loki, monkeypatch):
 
 @pytest.mark.parametrize("code", [302, 303, 307, 308])
 def test_redirects_are_refused(code, handler_factory):
-    """302/303 are the credential-leaking codes: the stdlib's stock HTTPRedirectHandler
-    FOLLOWS them, rewrites POST->GET, and forwards every header except Content-Length/
-    Content-Type -- including Authorization. 307/308 are already refused by the stdlib
-    itself for POST (no hardening needed). All four must come out the same way through
-    our opener: HTTPError raised with the original code, and the redirect target --
-    a second, independently live FakeLoki -- receives nothing at all."""
+    """Every code raises `HTTPError` with the original code and leaves the redirect target -- a
+    second, independently live FakeLoki -- with no request. The stdlib's stock handler follows
+    302/303 on a POST, forwarding Authorization with them; 307/308 it already refuses."""
     target_cls = handler_factory()
     with FakeLoki(target_cls) as target_url:
         redirecting_cls = handler_factory(status_code=code, location=f"{target_url}/loki/api/v1/push")

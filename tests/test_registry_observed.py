@@ -92,11 +92,7 @@ def test_an_unusable_window_is_refused_typed(tmp_path, bad, match):
     with pytest.raises(RegistryError, match=match) as excinfo:
         ObservedReader(root).read_series("ohlc-test", "BTC/EUR/1440.parquet", window=bad)
 
-    # Advice that does not work is worse than none: every quoted example in the refusal must itself
-    # parse to a tz-aware datetime. The first version of this message suggested appending an offset
-    # to the caller's own bound, which yields '2020-01-03+00:00' -- read as NAIVE, because
-    # fromisoformat takes the '+' as the date/time separator -- looping the caller through the same
-    # refusal with a longer string each time.
+    # Advice that does not work is worse than none: every quoted example must itself parse tz-aware.
     for example in re.findall(r"e\.g\. '([^']+)'", str(excinfo.value)):
         assert datetime.fromisoformat(example).tzinfo is not None, f"the refusal suggests {example!r}, which is still naive"
 
@@ -119,10 +115,9 @@ def test_vouched_check_true_positive_mismatch_and_absence(tmp_path):
     reader = ObservedReader(root)
     reader.read_series("ohlc-test", "BTC/EUR/1440.parquet")
     assert reader.vouched_status()["ohlc-test"] == "inert (0 vouched hashes)"
-    # TRUE POSITIVE — the round-1 blocker's regression test. The frozen manifests vouch FRAME-CONTENT
-    # hashes (dataset_hash = sha256 of canonical CSV), not file-byte hashes; a manifest vouching the
-    # correct content hash MUST pass, or the loader refuses every healthy read of ohlc-full/ohlc-15m
-    # while CI stays green. A mismatch-only suite cannot catch a wrong-grade comparison.
+    # TRUE POSITIVE: the frozen manifests vouch FRAME-CONTENT hashes, not file-byte ones, so a
+    # manifest naming the correct content hash MUST pass -- a mismatch-only suite would ship a guard
+    # that refuses every healthy read of ohlc-full/ohlc-15m while CI stays green.
     good = content_hash(read_parquet(root / "ohlc-test" / "BTC/EUR/1440.parquet"))
     (root / "ohlc-test" / "manifest.json").write_text(json.dumps({"series": {"BTC": {"sha256": good}}}))
     reader2 = ObservedReader(root)
@@ -144,8 +139,8 @@ _FULL_SET_EXPECTATIONS = {  # measured 2026-08-08; spans in the loader's own sta
 
 @pytest.mark.parametrize("dataset", sorted(_FULL_SET_EXPECTATIONS))
 def test_loader_reproduces_the_frozen_full_set_extents(dataset):
-    # Workstation-gated: the loader over every frozen set reproduces the frozen figures. Same
-    # "canonical dataset drifted -- STOP" contract as tests/test_crossfreq_system.py.
+    # A figure that stops reproducing means the canonical dataset drifted — STOP, the same contract
+    # as tests/test_crossfreq_system.py.
     root = Path(__file__).resolve().parents[1] / "data"
     if not (root / dataset).is_dir():
         pytest.skip(f"{dataset} not on this host — data-bearing workstation only")

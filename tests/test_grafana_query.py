@@ -1,11 +1,4 @@
-"""TDD for `infra/scripts/grafana-query.py` — the vaulted Cloud read-back the rollout gate needs.
-
-`continuity.py`'s test file sets the precedent: these are standalone scripts, not package modules,
-so they load via `importlib.util.spec_from_file_location`.
-
-Every test here pins something that actually went wrong during the 2026-07-28 capture rollout, when
-the decrypt was improvised from prose and took two failed attempts before it worked.
-"""
+"""`infra/scripts/grafana-query.py` — the vaulted Cloud read-back the rollout gate needs."""
 
 from __future__ import annotations
 
@@ -24,9 +17,8 @@ TOKEN = "glsa_TOTALLY_NOT_A_REAL_TOKEN_0123456789"
 
 
 def test_a_result_shape_without_metric_and_value_does_not_drop_the_later_expressions(monkeypatch, capsys):
-    """A scalar (`1`) or a range selector (`up[1m]`) returns a shape with no `metric`/`value`. When
-    the render sat outside the try, that raised past the handler and every later expression was
-    silently never queried -- while the commit claimed the opposite."""
+    """A shape with no `metric`/`value` -- a scalar, a range selector -- fails the run without
+    dropping the expressions after it."""
     monkeypatch.setattr(gq, "vault_var", lambda name: TOKEN)
 
     def shapes(expr, token):
@@ -45,8 +37,7 @@ def test_a_result_shape_without_metric_and_value_does_not_drop_the_later_express
 
 
 def test_the_token_never_reaches_stdout(monkeypatch, capsys):
-    """It is a live credential. It may live in a local and in a request header, and nowhere else --
-    not stdout, not argv (where `ps` would show it), not a file."""
+    """A live credential: it reaches neither stdout nor stderr, while the query still renders."""
     monkeypatch.setattr(gq, "vault_var", lambda name: TOKEN)
     monkeypatch.setattr(gq, "query", lambda expr, token, **kw: [{"metric": {"host": "zcrypto"}, "value": [0, "1"]}])
 
@@ -59,9 +50,8 @@ def test_the_token_never_reaches_stdout(monkeypatch, capsys):
 
 
 def test_an_empty_result_is_reported_as_absent_never_as_a_zero(monkeypatch, capsys):
-    """A gate reading `up == 1` must be able to tell "the series says 0" from "there is no series".
-    They fail differently: one is a down host, the other is a scrape or keep-list that never
-    admitted the metric at all."""
+    """A gate reading `up == 1` must tell "the series says 0" -- a down host -- from "there is no
+    series", a scrape or keep-list that never admitted the metric."""
     monkeypatch.setattr(gq, "vault_var", lambda name: TOKEN)
     monkeypatch.setattr(gq, "query", lambda expr, token, **kw: [])
 

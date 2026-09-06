@@ -10,8 +10,8 @@ from cli.ohlc.dataset import read_parquet, write_parquet
 from cli.ohlc.errors import OHLCError
 from cli.ohlc.reach import MIN_SEAM_OVERLAP, reach_round
 
-# One hour in seconds; the tests use the 60-minute grid because that is the interval whose REST
-# window is the first to stop reaching the canonical tail (the case this module exists for).
+# The tests use the 60-minute grid because that is the interval whose REST window is the first to
+# stop reaching the canonical tail (the case this module exists for).
 _HOUR = 3600
 _BASE = datetime(2026, 3, 1, tzinfo=UTC)
 
@@ -75,9 +75,8 @@ def test_overlapping_rest_tail_merges_into_one_continuous_series(tmp_path):
     assert merged["ts"].n_unique() == merged.height
     assert not (out / "BTC" / "EUR" / "60.detached.parquet").exists()
 
-    # An all-continuous set must report NO detached hash. The old writer said so with an empty
-    # STRING; the contract says so by not declaring the subset at all, because sha256("") is a
-    # sentinel two unrelated empty sets would share.
+    # An all-continuous set declares no detached subset at all: sha256("") is a sentinel two
+    # unrelated empty sets would share.
     manifest = json.loads((out / "manifest.json").read_text())
     assert manifest["subset_sha256"]["continuous"]
     assert "detached" not in manifest["subset_sha256"]
@@ -85,11 +84,8 @@ def test_overlapping_rest_tail_merges_into_one_continuous_series(tmp_path):
 
 
 def test_detached_tail_is_kept_but_under_a_name_canonical_readers_do_not_glob(tmp_path):
-    """The REST window no longer reaches the canonical tail.
-
-    The bars must still be written -- they expire from the endpoint as the window recedes -- but they
-    must NOT land where an ohlc-full reader would splice them across the gap.
-    """
+    """A REST window that no longer reaches the canonical tail is still written, but under a name
+    no `ohlc-full` reader globs -- so nothing is spliced across the gap."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
     _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)  # tail at _BASE + 19h
     # REST starts 100 h after the canonical tail: a real gap, no shared stamp
@@ -106,11 +102,10 @@ def test_detached_tail_is_kept_but_under_a_name_canonical_readers_do_not_glob(tm
 
     detached = read_parquet(out / "BTC" / "EUR" / "60.detached.parquet")
     assert detached.height == 30
-    # The continuous filename must be absent -- this is the structural guard, not a doc note.
+
     assert not (out / "BTC" / "EUR" / "60.parquet").exists()
 
-    # Nothing was joinable, so there is no CONTINUOUS subset to declare -- the writer must not
-    # quietly hash the detached segment into one, which is the failure this split exists to prevent.
+    # Nothing was joinable: the detached segment must not be quietly hashed into a continuous subset.
     manifest = json.loads((out / "manifest.json").read_text())
     assert "continuous" not in manifest["subset_sha256"]
     assert manifest["subset_sha256"]["detached"]
@@ -176,14 +171,13 @@ def test_manifest_records_per_series_status_so_a_mixed_set_cannot_be_read_as_uni
     report = reach_round(canonical, out, fetch_fn=_fetch, clock=lambda: now, sleep_fn=_no_sleep)
 
     manifest = json.loads((out / "manifest.json").read_text())
-    # The continuous subset must NOT absorb the detached segment -- that split is the point, and
-    # it is now the set's declared identity rather than an unwritten convention.
+    # The continuous subset must NOT absorb the detached segment, and that split is the declared identity.
     assert manifest["subset_sha256"]["continuous"]
     assert manifest["subset_sha256"]["detached"]
     assert manifest["subset_sha256"]["continuous"] != manifest["subset_sha256"]["detached"]
     assert manifest["identity"] == "subset:continuous"
     assert all(e["sha256"] and e["rows"] for e in manifest["series"].values())
-    # The status now lives in the FILENAME, which is the series key -- readers glob on it already.
+    # The status lives in the FILENAME, which is the series key -- readers glob on it already.
     assert "BTC/EUR/240.parquet" in manifest["series"]
     assert "BTC/EUR/60.detached.parquet" in manifest["series"]
     assert manifest["provenance"]["series"]["BTC/EUR/240.parquet"]["status"] == "continuous"
@@ -234,8 +228,7 @@ def test_manifest_entries_are_keyed_by_full_symbol(tmp_path):
     claiming "ETH"."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
     # Both legs get SEAM-CONSISTENT closes: one fetcher payload serves both pair keys, and a
-    # canonical whose overlap closes disagree with it would raise OHLCError at the seam check
-    # before the manifest exists -- this test is about manifest keys, not seam integrity.
+    # canonical whose overlap closes disagreed would raise OHLCError before the manifest exists.
     _write_canonical(canonical, "ETH/EUR", 60, _BASE, 20, close=100.0)
     _write_canonical(canonical, "ETH/BTC", 60, _BASE, 20, close=100.0)
     rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
@@ -250,6 +243,5 @@ def test_manifest_entries_are_keyed_by_full_symbol(tmp_path):
     )
 
     manifest = json.loads((out / "manifest.json").read_text())
-    # Keyed by path relative to the dataset root, so the quote is unambiguous in the key itself --
-    # which is exactly what a base-only key could not express.
+    # Keyed by path relative to the dataset root, so the quote is unambiguous in the key itself.
     assert set(manifest["series"]) == {"ETH/EUR/60.parquet", "ETH/BTC/60.parquet"}

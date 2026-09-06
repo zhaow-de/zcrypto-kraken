@@ -61,10 +61,7 @@ def _wait_until(predicate, timeout: float = 1.0, interval: float = 0.005) -> boo
 
 
 def _free_port() -> int:
-    """Ask the OS for an unused port: bind ephemeral (port 0), read back the assigned number,
-    release it immediately -- the same "let the OS pick" technique tests/fake_loki.py uses,
-    adapted for a function (start_metrics_server) that takes a port NUMBER rather than binding
-    for us."""
+    """An unused port for `start_metrics_server`, which takes a port NUMBER rather than binding for us."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
@@ -95,11 +92,8 @@ class TestBuildRegistry:
         }
 
     def test_registers_the_live_ship_handler_so_its_families_appear(self, fake_loki):
-        # Important 1 (spec 00069 D5's "all four daemons"): build_registry() is the one call site
-        # every daemon shares, so registering LogshipCollector against the live --ship-logs handler
-        # here -- rather than per daemon -- is what makes the logship tap actually appear wherever
-        # --ship-logs runs. Without a handler attached, test_contains_process_families_and_nothing_else
-        # above already proves the families stay absent.
+        # Asserted through build_registry(), the one call site every daemon shares: that is what
+        # puts the logship tap wherever --ship-logs runs, rather than a registration per daemon.
         url, _requests = fake_loki
         handler = _make_handler(url)
         handler._zcrypto_owned = True
@@ -114,8 +108,6 @@ class TestBuildRegistry:
             handler.close()
 
     def test_disables_created_metrics_for_every_counter(self):
-        # Important 2: a published-but-unadmitted `_created` series is a trap in as many words
-        # (spec 00069 D2) -- Task 6's keep-list assertions must never have to exclude one.
         registry = build_registry()
         Counter("zcrypto_test_probe_total", "test probe", registry=registry).inc()
         text = _render(registry)
@@ -176,9 +168,9 @@ class TestStartMetricsServer:
             blocker.close()
 
     def test_binds_all_interfaces_inside_the_container(self, monkeypatch):
-        """0.0.0.0 is REQUIRED (cold-review C1): bridge-network published-port traffic arrives at
-        the container's eth0, never its loopback -- a 'hardening' edit back to 127.0.0.1 would
-        silently return up=0 fleet-wide. Pin the argument so the edit cannot land silently."""
+        """`addr` is pinned at 0.0.0.0: bridge-network published-port traffic arrives at the
+        container's eth0, never its loopback, so a 'hardening' edit to 127.0.0.1 would silently
+        return up=0 fleet-wide."""
         seen = {}
 
         def fake(port, addr=None, registry=None):
@@ -195,8 +187,8 @@ class TestStartMetricsServer:
 
 class TestLogshipCollector:
     def test_absent_families_when_no_handler_is_configured(self):
-        """absence is honest, zero is a claim: with ship_handler=None (no --ship-logs on this
-        daemon), the collector must publish NOTHING for these families, not zeros."""
+        """absence is honest, zero is a claim: with no handler (no --ship-logs on this daemon),
+        the collector must publish NOTHING for these families, not zeros."""
         registry = CollectorRegistry()
         registry.register(LogshipCollector(None))
         text = _render(registry)
@@ -237,10 +229,8 @@ class TestLogshipCollector:
                 handler.close()
 
     def test_collect_snapshots_under_the_same_lock_the_worker_mutates_under(self, fake_loki):
-        """The 'tolerates a handler mid-mutation' property, exercised directly: while the test
-        thread holds `_ring_lock` (standing in for the worker mid-update), a concurrent
-        collect() must block rather than read a partial snapshot -- proving it takes the same
-        lock, not merely a copy made without one."""
+        """While the test thread holds `_ring_lock`, a concurrent `collect()` blocks -- so it takes
+        the worker's own lock, not a copy made without one."""
         url, _requests = fake_loki
         handler = _make_handler(url)
         try:

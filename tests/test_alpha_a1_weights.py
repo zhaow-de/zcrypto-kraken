@@ -3,8 +3,7 @@ import pytest
 from cli.alpha.a1 import _inverse_vol_weights
 from cli.benchmark.strategies import dynamic_inverse_vol_basket
 
-# Same fixture as test_dynamic_basket_known_answer_two_assets_entry (tests/test_benchmark_dynamic_basket.py)
-# -- reusing its already hand-verified basket values as an independent cross-check.
+# The hand-verified fixture of test_dynamic_basket_known_answer_two_assets_entry (tests/test_benchmark_dynamic_basket.py).
 A = [100, 102, 99.96, 109.956, 112.15512, 109.9120176]  # retA = [.02,-.02,.10,.02,-.02]
 B = [None, None, 100, 118, 110.92, 116.466]  # retB = [None,None,.18,-.06,.05]
 
@@ -18,7 +17,6 @@ def test_inverse_vol_weights_known_answer():
 
 
 def test_inverse_vol_weights_reduces_to_basket():
-    # Sigma_i weights[k][i] * ret_i[k] must be bit-identical to dynamic_inverse_vol_basket's own output.
     prices = {"A": A, "B": B}
     lookback = 2
     weights = _inverse_vol_weights(prices, lookback=lookback)
