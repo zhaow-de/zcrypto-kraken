@@ -1956,52 +1956,59 @@ def test_no_grep_shape_admits_a_pattern_source_option():
     )
 
 
-# `-R` follows a symlink met while descending a spelled directory, where `-r` does not, so the letter
-# reads a file no operand names. Three commands are not the claim: a table gaining the letter would
-# leave them green, so the sweep is over every grep shape the module discovers.
+# `-R` on both binaries and `-S` on ugrep follow a symlink met while descending a spelled directory,
+# where `-r` does not, so the letter reads a file no operand names. Three commands are not the claim,
+# and neither is one spelling: the sweep runs over every grep shape the module discovers, and the
+# two-character forms catch a cluster that gains the letter only in company.
 _GREP_DEREFERENCING_TOKENS = [
-    "-R",
-    *(f"-R{c}" for c in string.ascii_letters),
-    *(f"-{c}R" for c in string.ascii_letters),
-    # the letter is not the spelling: GNU's long form does the same thing, and escaped the probe above
-    # until a review measured it reading through a link on both binaries here
-    "--dereference-recursive",
-    "--dereference-recursive=X",
+    *(f"-{d}" for d in "RS"),
+    *(f"-{d}{c}" for d in "RS" for c in string.ascii_letters),
+    *(f"-{c}{d}" for d in "RS" for c in string.ascii_letters),
 ]
+# Long forms are read as a PREFIX, not as a list: GNU accepts every unambiguous abbreviation of
+# `--dereference-recursive`, and ugrep spells the same hazard `--dereference` and
+# `--dereference-files`, so no enumeration of them can be complete and one prefix holds them all.
+_GREP_DEREFERENCING_PREFIX = "--der"
 
 
-def test_no_grep_shape_admits_the_dereferencing_recursion_letter():
-    """In every table discovered off the module, no grep shape admits a probed spelling of `-R`."""
+def _grep_shapes():
     tables = sorted(name for name in vars(ops_daily) if name.endswith("_SHAPES"))
     assert tables, "no shape table discovered -- the sweep, not the classifier, is what failed"
-    greps = [(name, shape) for name in tables for shape in getattr(ops_daily, name) if shape.head == ("grep",)]
-    assert greps, f"no grep shape discovered in {tables} -- the sweep, not the classifier, is what failed"
-    admitted = [(name, token) for name, shape in greps for token in _GREP_DEREFERENCING_TOKENS if _shape_admits_flag(shape, token)]
+    found = [(name, i, shape) for name in tables for i, shape in enumerate(getattr(ops_daily, name)) if shape.head == ("grep",)]
+    assert found, f"no grep shape discovered in {tables} -- the sweep, not the classifier, is what failed"
+    return found
+
+
+def test_no_grep_shape_admits_a_dereferencing_option():
+    """No grep shape the module exposes admits a probed short spelling, or any `--der...` long one."""
+    admitted = [
+        (name, i, token)
+        for name, i, shape in _grep_shapes()
+        for token in _GREP_DEREFERENCING_TOKENS
+        if _shape_admits_flag(shape, token)
+    ]
+    admitted += [
+        (name, i, flag) for name, i, shape in _grep_shapes() for flag in shape.flags if flag.startswith(_GREP_DEREFERENCING_PREFIX)
+    ]
     assert not admitted, (
-        f"grep shapes admitting the dereferencing recursion letter: {admitted} -- `-R` follows a symlink "
+        f"grep shapes admitting a dereferencing option: {admitted} -- such a flag follows a symlink "
         "met below the operand, reading a file the spelled-path check never sees"
     )
 
 
-# A list of forbidden spellings cannot be complete -- the long form above escaped the letter probe
-# until a review found it. So the surface itself is pinned: a flag or cluster added to a grep shape
-# reds here, and is justified where it is read rather than merely typed into the table.
-_GREP_SHAPE_SURFACE = {
-    "_FILTER_SHAPES": (("-A", "-B", "-C"), r"-[iEvnoclqFwxa]{1,8}|-[ABC]\d{1,3}"),
-    "_FIRST_STAGE_SHAPES": (("--include", "-A", "-B", "-C"), r"-[iEvnoclqrFwxsah]{1,8}|-[ABC]\d{1,3}"),
-}
+# The surface itself is pinned, so a flag or cluster added to a grep shape reds here and is justified
+# where it is read rather than merely typed into the table. Keyed by POSITION, not by table name:
+# `_matches` returns the FIRST shape that matches, so a second grep shape inserted ahead of the
+# pinned one decides, and a name-keyed pin would keep only the last.
+_GREP_SHAPE_SURFACE = [
+    ("_FILTER_SHAPES", 6, ("-A", "-B", "-C"), r"-[iEvnoclqFwxa]{1,8}|-[ABC]\d{1,3}"),
+    ("_FIRST_STAGE_SHAPES", 22, ("--include", "-A", "-B", "-C"), r"-[iEvnoclqrFwxsah]{1,8}|-[ABC]\d{1,3}"),
+]
 
 
 def test_the_grep_shapes_admit_exactly_the_pinned_surface():
-    """Every grep shape the module exposes admits exactly the flags and cluster pinned here."""
-    surface = {
-        name: (tuple(sorted(shape.flags)), shape.short)
-        for name in sorted(vars(ops_daily))
-        if name.endswith("_SHAPES")
-        for shape in getattr(ops_daily, name)
-        if shape.head == ("grep",)
-    }
-    assert surface, "no grep shape discovered -- the pin, not the classifier, is what failed"
+    """Every grep shape the module exposes, in its own table position, admits exactly what is pinned."""
+    surface = [(name, i, tuple(sorted(shape.flags)), shape.short) for name, i, shape in _grep_shapes()]
     assert surface == _GREP_SHAPE_SURFACE, (
         f"the grep shapes' admitted surface moved:\n  found:  {surface}\n  pinned: {_GREP_SHAPE_SURFACE}\n"
         "a widened surface is a new class of command the daily pass may run unattended"
