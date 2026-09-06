@@ -1,39 +1,8 @@
 #!/usr/bin/env bash
-# Compute review-before-push compliance for a commit range, because nothing else does.
-#
-# `.claude/rules/commit-messages.md` makes subagent review before push mandatory and requires the
-# reviewing model's `Reviewed-by:` trailer on each reviewed commit. Until this script that rule was
-# enforced only by whoever remembered it, and memory is the wrong instrument: a single orchestrator
-# that believed 4 commits were unreviewed was measuring 44. Nothing read the trailers.
-#
-# Usage:  infra/scripts/review-trailer-audit.sh [<base>]     # default base: develop
-#         infra/scripts/review-trailer-audit.sh origin/develop
-#
-# Audits <base>..HEAD. Exit 0 iff no CODE commit lacks a `Reviewed-by:` trailer; 1 if any does;
-# 2 on a refusal (not a git repo, unresolvable base).
-#
-# WHY CODE AND DOC KINDS ARE SPLIT, AND WHY ONLY CODE FAILS THE EXIT
-#
-# The rule grants exactly four exemptions, and one of them cannot be computed here: "spec/plan/
-# closeout-docs commits whose content the session's authority explicitly approved in the producing
-# flow." Whether
-# that approval happened lives in a conversation, not in the repo — no trailer records it and no
-# query can recover it. A script that failed on every `docs`/`claude` commit would therefore be
-# wrong a large fraction of the time and would be routed around within a week; one that passed them
-# silently would hide the un-approved ones. So doc-kind commits are REPORTED, in full, for a human
-# to decide against — never silently passed, and never counted toward the exit.
-#
-# Code kinds carry no such exemption, so they are the exit's business.
-#
-# The other three exemptions are handled where they can be: merge commits (`gh` writes them with no
-# trailers) are excluded by `--no-merges`; the `ops-journal` branch's entry commits are doc-kind and
-# so reported, never failed; the one-liner-folded-into-an-open-PR exemption is a judgement about a
-# single commit and shows up here as a reported failure to waive deliberately.
-#
-# Anything whose Conventional-Commits type does not parse, or parses to a type in neither list, is
-# UNCLASSIFIED and counts toward the failing exit. An unreadable type is not evidence of compliance,
-# and fail-closed is the only safe posture for an audit: a commit this script cannot categorise must
-# be looked at, not waved through.
+# Compute review-before-push compliance for <base>..HEAD (default develop) against
+# .claude/rules/commit-messages.md: exit 0 iff no CODE commit lacks `Reviewed-by:`, 1 if any does, 2
+# on a refusal. Doc-kind commits are REPORTED, never failed, since their exemption turns on an
+# approval no query recovers; an unreadable or unlisted type is UNCLASSIFIED and fails closed.
 set -uo pipefail
 
 CODE_KINDS='feat|fix|test|refactor|perf|chore|build|ci'

@@ -1,17 +1,8 @@
 #!/usr/bin/env bash
-# Extract the vaulted zaccess mTLS client bundle (.p12 + passphrase) to local files, for import into
-# a browser / macOS Keychain so the device can present the client certificate the Caddy edge pins
-# (spec 00075 D2/D16). The bundle and its passphrase live as !vault scalars in
-# infra/ansible/group_vars/all/vault.yml -- this reads them the sanctioned in-process way (the vault
-# uses per-variable !vault scalars, so `ansible-vault view <file>` cannot yield one key; and
-# vault_password_file names an EXECUTABLE to RUN, not a password to read).
-#
-#   infra/scripts/zaccess-extract-client-cert.sh [--out-dir DIR] [--name NAME]
-#
-# Defaults: DIR=$HOME/Downloads, NAME=macbook (the one enrolled bundle). Writes
-# zaccess-<NAME>.p12 and zaccess-<NAME>.p12.pass, both 0600. The passphrase is NEVER echoed to the
-# terminal -- it goes only into the 0600 file. Import both, then DELETE them: the vault is the
-# durable copy.
+# Extract the vaulted zaccess mTLS client bundle for import into a browser or macOS Keychain, so the
+# device can present the certificate the Caddy edge pins (spec 00075 D2/D16). It is a pair of per-
+# variable `!vault` scalars, so this loads the file and reads the two in process. The passphrase is
+# never printed, only written to its 0600 file; import both, then delete them.
 set -euo pipefail
 umask 077
 

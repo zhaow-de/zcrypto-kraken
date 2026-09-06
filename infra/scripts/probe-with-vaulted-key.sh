@@ -1,41 +1,16 @@
 #!/usr/bin/env bash
-# Runs the order-semantics probe harness with the vaulted Kraken trade credential in its
-# environment, and nothing else.
-#
-# It exists so the operation can be whitelisted NARROWLY. The program executed is hardcoded, so no
-# argument can turn this into a print-me-a-secret tool: whitelisting this script grants exactly
-# "run the probe harness with the trade key present", which is the one thing the attended pass needs.
-#
-# Properties, each load-bearing:
-#   * the target is FIXED. Arguments are forwarded to the harness; none of them selects a program.
-#   * BOTH interpreters run `-I` (isolated), and the flag is load-bearing rather than tidy.
-#     Without it the cwd leads `sys.path` and PYTHON's environment is honoured, so a file in the
-#     operator's cwd shadows an import, `PYTHONPATH` redirects one, and `PYTHONINSPECT=1`
-#     drops to an interactive prompt after the program exits with the credential still in
-#     `os.environ` -- the "shell you keep" the refusal text promises this is not. Measured
-#     under a pty: without `-I` the prompt appears, with it there is none. What `-I` does NOT
-#     close is bash's and the loader's environment -- `BASH_ENV`, `LD_PRELOAD`, `PATH` are
-#     the operator's own and no flag in this file reaches them.
-#   * the decrypted values go straight into the exec'd child's environment. They are never echoed,
-#     never written to a file, and never placed on a command line -- `ps` shows the harness's flags
-#     and nothing else. One process throughout, so they never cross a pipe either.
-#   * refuses outside the repo root, so neither the harness nor the vault path can be shadowed.
-#   * the vault password comes from `infra/ansible/scripts/vault-pass.sh`, which keeps its own
-#     ancestry refusals (it declines to hand the password to `ansible-inventory --host/--list/--vars`,
-#     all three of which print every vault secret in cleartext).
-#   * `group_vars/engine_host/vault.yml` is plain YAML carrying inline `!vault` scalars, NOT a
-#     wholly-encrypted file -- `ansible-vault view` refuses it. The loader below resolves the tagged
-#     values, which is what reaches them without decrypting the file to stdout.
-#   * the harness reads both VALUES out of the environment and passes them into
-#     `KrakenExecutionClientConfig(api_key=..., api_secret=...)`, which requires them -- so this
-#     wrapper's job is to put them there and nothing more. What bounds the exposure is what the
-#     harness then does with them: they are never stored on a harness object, logged, printed,
-#     interpolated into a message, or written to the evidence file, and its refusals name the two
-#     VARIABLES, never their contents.
-#
-# The credential is IP-bound. Running this from a workstation needs that workstation's public IP
-# temporarily allowlisted on the key, and removing it again is a numbered step of the procedure,
-# not an afterthought: infra/runbooks/order-semantics-verification.md.
+# Runs the order-semantics probe harness with the vaulted Kraken trade credential in its environment
+# and nothing else, so the operation can be whitelisted NARROWLY: the target is a literal, and
+# arguments reach the harness only, so none of them selects a program. `-I` on both interpreters is
+# load-bearing, not tidy -- without it the cwd leads `sys.path`, `PYTHONPATH` redirects an import, and
+# `PYTHONINSPECT=1` drops to an interactive prompt after the program exits with the credential still
+# in `os.environ`. The decrypted values reach the child through `execve`'s environment only: never
+# echoed, never written, never on a command line, and one process throughout. It refuses outside the
+# repo root, so neither the harness nor the vault path can be shadowed.
+# `group_vars/engine_host/vault.yml` carries inline `!vault` scalars, so the loader below resolves
+# the two values in-process rather than decrypting a file to stdout. The credential is IP-bound:
+# infra/runbooks/order-semantics-verification.md adds the workstation's public IP at section 1.3 and
+# closes the exception at section 7.3.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

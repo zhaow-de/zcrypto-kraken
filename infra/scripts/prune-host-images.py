@@ -1,34 +1,17 @@
 """Remove the Docker images a fleet host no longer needs, keeping every digest the pins file records.
-
-Nothing in the fleet pruned images: every converge pulls a ~3.25 GB capture image and none was ever
-removed. On 2026-08-23 zcrypto-red held 13 images (35.73 GB, 88% reclaimable) on a 49 GB disk
-against 7.2 GB of actual capture data, at <10% free. That is not tidiness -- the capture daemon
-STOPS APPENDING below `DEFAULT_MIN_FREE_BYTES` (1 GiB) in `cli/capture/gap_monitor.py`, and L2
-capture is unbackfillable, so red was one image pull away from permanent data loss.
-
-`docs/reference/fleet-pins.md` already records exactly which digests must survive on each host --
-the current pin and its rollback operand, per service -- and the ansible roles refuse a converge
-whose digest that file does not record. The file is therefore the authority, and the moment it is
-updated is the moment a prune is correct. Run this from the pins-update step, strictly AFTER the new
-row is written: a run before it takes the digest that row is about.
-
+The capture daemon STOPS APPENDING below `DEFAULT_MIN_FREE_BYTES` in `cli/capture/gap_monitor.py`,
+and L2 capture is unbackfillable, so a host that never prunes is one image pull away from
+permanent data loss.
+`docs/reference/fleet-pins.md` is the authority for which digests must survive, and the moment it
+is updated is the moment a prune is correct: run this from the pins-update step, strictly AFTER
+the new row is written, or the run takes the digest that row is about.
 Usage:  uv run python infra/scripts/prune-host-images.py <host> [--apply] [--keep D] [--pins PATH]
-
-Dry-run by default. `--apply` removes one explicit `repo@sha256:<digest>` at a time -- never
-`docker image prune -a`, which would take the recorded rollback operands.
-
-THE load-bearing property: the keep-set is a UNION across every row naming the host, never a
-per-repo "keep the last two". Capture and the engine are independent rows on the SAME host sharing
-ONE image repo, and mid-rollout they hold different digests -- so `ghcr.io/zhaow-de/zcrypto-capture`
-legitimately needs FOUR resident digests at once (two currents, two operands). Anything narrower
-deletes a live rollback path. `tests/test_prune_host_images.py` constructs that case.
-
-The second authority is the host itself: a CONTAINER's digest is kept whatever the file says, and
-its absence from the file is reported as a wrong pins file -- "a pin recorded only on a host is one
-`docker system prune` from unrecoverable" is that file's own warning.
-
-Neither authority sees a PRE-STAGED digest: an image pulled for a converge that has not happened is
-resident, unrecorded, and attached to no container, so it is indistinguishable from a stale one.
+Dry-run by default. `--apply` removes one explicit `repo@sha256:<digest>` at a time, never `docker
+image prune -a`, which would take the recorded rollback operands. The second authority is the host
+itself: a resident container's digest is kept whatever the file says, and a STOPPED container counts
+-- it holds its image against removal just as a running one does.
+Neither authority sees a PRE-STAGED digest: an image pulled for a converge that has not happened
+is resident, unrecorded and attached to no container, so it is indistinguishable from a stale one.
 Prune only the host that just converged, and pass `--keep <digest12>` for anything staged for a
 converge still to come.
 """

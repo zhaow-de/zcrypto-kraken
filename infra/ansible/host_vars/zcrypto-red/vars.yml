@@ -1,8 +1,5 @@
-# host_vars/zcrypto-red — the REDUNDANT (secondary) capture host: Linode 2 GB, 1 vCPU, 50 GB,
-# Amsterdam (spec 00050). Capture only — deliberately NOT in `engine_host`, so the live Kraken trade
-# key is never rendered onto it.
-#
-# Everything else — the pair universe, depth, image, data dir, deploy/sync keys — comes from
+# The REDUNDANT (secondary) capture host (spec 00050). Capture only, deliberately NOT in
+# `engine_host`, so the live Kraken trade key is never rendered onto it. Everything else comes from
 # group_vars/capture_host, so a universe change converges both hosts identically.
 
 # The base role defaults to "zcrypto"; without this the secondary would converge to the primary's

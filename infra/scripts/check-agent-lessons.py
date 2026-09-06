@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Shape check for an agent-lessons inbox (`.local/agent-lessons/<session>.jsonl`), run at harvest.
-
-Every line is one JSON object with exactly the required keys, `kind` from the enum, `cites`
-a list of strings, every other value a non-empty string. Refuses prose, blank lines and extra
-keys: an inbox is a harvest input for the refine-rules round, not a story board.
+Refuses prose, blank lines and extra keys: an inbox is a harvest input for the refine-rules round,
+not a story board.
 """
 
 import json

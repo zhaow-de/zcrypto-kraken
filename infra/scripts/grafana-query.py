@@ -1,22 +1,11 @@
 #!/usr/bin/env python3
-"""Read PromQL from Grafana Cloud, using the vaulted service-account token.
-
-The capture-rollout gate needs a Cloud read-back (`up{job="capture_app"} == 1`, `hc_check_up`)
-that no repo tooling provided: `grafana-push.sh` REQUIRES `GRAFANA_SA_TOKEN` already in the
-environment and never obtains it, so every caller improvised the decrypt. This is that operand.
-
+"""Read PromQL from Grafana Cloud with the vaulted service-account token.
     uv run python infra/scripts/grafana-query.py 'up{job="capture_app"}' hc_check_up
-
-NOT for alert states: `ALERTS{alertstate="firing"}` is a Prometheus-native metric and is
-structurally EMPTY for Grafana-managed rules (which is all of ours), so its `(no series)` reads
-as "nothing firing" regardless of reality. Read rule states from the API instead:
-`GET /api/prometheus/grafana/api/v1/rules` with the same bearer token.
-
-The vaulted service-account token is resolved by `grafana_auth.py`, the sibling both Grafana
-scripts share.
-
-The token is resolved into a local and used only as a request header: never printed, never written,
-never placed in argv where `ps` would show it.
+NOT for alert states: `ALERTS{alertstate="firing"}` is Prometheus-native and structurally EMPTY
+for Grafana-managed rules, which is all of ours, so its `(no series)` reads as "nothing firing"
+whatever is true -- read rule states from `GET /api/prometheus/grafana/api/v1/rules` with the same
+bearer token. The token is only ever a request header: never printed, never written, never in
+argv.
 """
 
 from __future__ import annotations

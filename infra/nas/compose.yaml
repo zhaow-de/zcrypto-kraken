@@ -1,17 +1,21 @@
-# The NAS archive-pull stack (spec 00048 Role A) — always-on pull + hash-verify of the VPS
-# capture segments + engine journal into /volume1/ZhaoCrypto. Runs under Synology Container
-# Manager, DEPLOYED BY the `nas` Ansible role (T0056): the role copies this file verbatim to the
-# NAS and renders the adjacent .env that fills the ${...:?} image placeholders below — the digest
-# pins live in infra/ansible/host_vars/nas/vars.yml, and hand-copying files to the NAS is dead.
-# See infra/nas/README.md for the deploy command and the env-var contract.
+# The NAS archive-pull stack (spec 00048 Role A): always-on pull and hash-verify of the VPS capture
+# segments and engine journal into custody. Runs under Synology Container Manager, DEPLOYED BY the
+# `nas` Ansible role, which copies this file verbatim and renders the adjacent .env filling the
+# `${...:?}` placeholders below. See infra/nas/README.md for the deploy command and the env
+# contract.
+#
+# Every pull channel below shares one shape, stated once here: its OWN least-privilege rrsync
+# channel; its own per-call SSH port where the source is the home-LAN ops node rather than a VPS;
+# and, for every channel EXCEPT the primary capture pull, leaving its `*_SOURCE` unset skips that
+# pull entirely, so this file stays valid on a NAS that has not been given the channel. The primary
+# pull is unconditional. Each block below says only what is particular to its channel.
 services:
   archive-pull:
-    # The digest pin arrives via the ansible-rendered .env (CAPTURE_IMAGE — nas_capture_image in
-    # host_vars/nas/vars.yml): the same x86 image the VPS capture daemon runs (it already contains
-    # the `zcrypto` CLI, so no separate NAS build), but ALWAYS the `-compat` (no-AVX) build — the
+    # The digest pin arrives via the ansible-rendered .env: the same x86 image the VPS capture
+    # daemon runs, so no separate NAS build, but ALWAYS the `-compat` (no-AVX) build, because the
     # NAS Atom has no AVX and the default build dies instantly with `Illegal instruction` (T0029).
-    # The `:?` makes compose REFUSE to start without the pin: the committed `:latest` placeholder
-    # this replaces was deployed verbatim once and killed the pull loop for ~90 s on 2026-07-16.
+    # The `:?` makes compose REFUSE to start without the pin, which a committed `:latest`
+    # placeholder did not.
     image: ${CAPTURE_IMAGE:?set by the ansible-rendered .env — the -compat digest pin}
     container_name: zcrypto-archive-pull
     entrypoint: ["/opt/pull-entrypoint.sh"]
@@ -20,57 +24,38 @@ services:
     environment:
       CAPTURE_SOURCE: ${CAPTURE_SOURCE}
       CAPTURE_DEST: ${CAPTURE_DEST:-/archive/capture-segments}
-      # Role C (spec 00050): the redundant secondary's mirror, pulled over its OWN least-privilege
-      # rrsync channel (`sync_capture_red`) into its OWN root -- the two raw mirrors are never mixed,
-      # because the reconciler needs both as independent witnesses. Leave CAPTURE_RED_SOURCE unset and
-      # both the secondary pull and the reconcile step are skipped entirely (pull-entrypoint.sh), so
-      # this compose file stays valid on a NAS that has not been given the red channel yet.
+      # Role C (spec 00050): the redundant secondary's mirror, pulled into its OWN root -- the two
+      # raw mirrors are never mixed, because the reconciler needs both as independent witnesses.
       CAPTURE_RED_SOURCE: ${CAPTURE_RED_SOURCE:-}
       CAPTURE_RED_DEST: ${CAPTURE_RED_DEST:-/archive/capture-segments-red}
       CAPTURE_RED_SSH_KEY: /keys/sync_capture_red
-      # The healed overlay. OPS-5 (spec 00054 D4) inverted who writes it: the ops node is now the
-      # producer (the reconciler + trade-backfill moved there), so this is a PULL DESTINATION, not
-      # the reconciler's output path -- the RECONCILED_SOURCE channel below fills it. Primary stays
-      # canonical-by-default; only HEALED hours land here, plus the append-only ledger. Readers
-      # resolve reconciled-first, primary-final otherwise (cli/archive/reader.py). Kept off both raw
-      # mirrors on purpose: the raw primary is the T0003 exit bar's only input, and the overlay
-      # heals gaps by design, so mixing them would launder the very gaps the exit bar exists to
-      # measure.
+      # The healed overlay. OPS-5 (spec 00054 D4) inverted who writes it: the ops node is the
+      # producer now, so this is a PULL DESTINATION rather than the reconciler's output path. Only
+      # HEALED hours land here, plus the append-only ledger, and readers resolve reconciled-first
+      # with primary-final otherwise. Kept off both raw mirrors on purpose: the raw primary is the
+      # T0003 exit bar's only input and the overlay heals gaps by design, so mixing them would
+      # launder the very gaps the bar exists to measure.
       RECONCILED_DEST: ${RECONCILED_DEST:-/archive/capture-reconciled}
       JOURNAL_SOURCE: ${JOURNAL_SOURCE}
       JOURNAL_DEST: ${JOURNAL_DEST:-/archive/engine-journal}
-      # OPS-2 (spec 00051): the ops node's liquidations tree, pulled over its OWN least-privilege
-      # rrsync channel (`sync_liquidations`, see infra/ops/README.md). Leave LIQUIDATIONS_SOURCE
-      # unset and the pull is skipped entirely (pull-entrypoint.sh), so this compose file stays
-      # valid on a NAS that has not been given the ops channel yet. The ops node is a home-LAN box
-      # on SSH port 22 (not the VPS's 10022), so the channel carries its own port var, scoped per
-      # call like its key.
+      # OPS-2 (spec 00051): the ops node's liquidations tree.
       LIQUIDATIONS_SOURCE: ${LIQUIDATIONS_SOURCE:-}
       LIQUIDATIONS_DEST: ${LIQUIDATIONS_DEST:-/archive/liquidations}
       LIQUIDATIONS_SSH_KEY: /keys/sync_liquidations
       LIQUIDATIONS_SSH_PORT: ${LIQUIDATIONS_SSH_PORT:-22}
-      # OPS-4 (spec 00052 D7): the ops node's L2 primitive panel tree, pulled over its OWN
-      # least-privilege rrsync channel (`sync_panel`, see infra/ops/README.md) -- the exact
-      # LIQUIDATIONS_* pattern above, convenience-durability only (the panel is recomputable from
-      # raw, so this copy is not custody-critical). Leave PANEL_SOURCE unset and the pull is
-      # skipped entirely, so this compose file stays valid on a NAS that has not been given the
-      # panel channel yet. Same home-LAN port-22 caveat as the liquidations channel.
+      # OPS-4 (spec 00052 D7): the ops node's L2 primitive panel tree, convenience durability only
+      # -- the panel is recomputable from raw, so this copy is not custody-critical.
       PANEL_SOURCE: ${PANEL_SOURCE:-}
       PANEL_DEST: ${PANEL_DEST:-/archive/l2-panel}
       PANEL_SSH_KEY: /keys/sync_panel
       PANEL_SSH_PORT: ${PANEL_SSH_PORT:-22}
-      # OPS-5 (spec 00054 D4): the overlay's flow INVERTS here. The ops node is now the
-      # capture-reconciled tree's producer (the reconciler + trade-backfill moved there), so the NAS
-      # stops writing it and acquires it instead. The NAS PULLS -- it never receives a push: that is
-      # the established shape (PANEL_* above) and it preserves spec 00051 D10's pull-only transport,
-      # so a compromised ops node still cannot write into custody.
+      # OPS-5 (spec 00054 D4): the NAS PULLS the overlay and never receives a push, which preserves
+      # spec 00051 D10's pull-only transport -- a compromised ops node still cannot write into
+      # custody.
       #
-      # Hash-verified (NOT --no-verify, unlike the journal): every minted hour carries a .sha256
-      # sidecar, and verify_tree only walks *.parquet -- so the unsidecar'd reconcile-ledger.jsonl
-      # rides along unchecked rather than failing the pull. Same home-LAN port-22 caveat as the
-      # panel/liquidations channels. Unset RECONCILED_SOURCE and the pull is skipped entirely, so
-      # this compose file stays valid on a NAS that has not been given the channel yet -- which is
-      # also the rollback: unset it and the NAS is simply a NAS without the overlay.
+      # Hash-verified, unlike the journal: every minted hour carries a sidecar, and `verify_tree`
+      # walks parquet only, so the unsidecar'd ledger rides along unchecked rather than failing the
+      # pull.
       RECONCILED_SOURCE: ${RECONCILED_SOURCE:-}
       RECONCILED_SSH_KEY: /keys/sync_reconciled
       RECONCILED_SSH_PORT: ${RECONCILED_SSH_PORT:-22}
@@ -109,55 +94,31 @@ services:
     logging:
       driver: journald
 
-  # NAS telemetry stack (spec 00049 Role B, Task 3) — Grafana Alloy ships host metrics and both
-  # containers' logs to the already-provisioned Grafana Cloud instance. Adapted from
-  # docs/specs/00043-observability-design.md (the VPS counterpart) for plain `docker compose` under
-  # Container Manager -- no ansible/systemd here. See infra/nas/config.alloy for the Alloy pipeline
-  # and infra/nas/README.md for the deploy steps + secrets file + resource-budget rationale.
-  #
-  # A GET-only docker-socket-proxy (tecnativa) used to sit between Alloy and the socket, with POST=0
-  # as the boundary. It was REMOVED on 2026-07-14 (owner's decision) because it corrupted the logs it
-  # existed to carry: its HAProxy `timeout client/server 10m` cut Docker's long-lived
-  # /containers/<id>/logs?follow=1 stream whenever a container went quiet, Alloy reconnected with an
-  # inclusive `since=<second>`, and Docker re-sent the last line -- so on a quiet container the SAME
-  # line was re-ingested every 10 minutes forever (measured: 2 lines in Docker, 5 entries in Loki).
-  # Upstream had already special-cased /events with `timeout server 0` and simply missed the logs
-  # endpoint. The direct-socket fix that replaced the proxy is ITSELF now retired (00068 D6/T8):
-  # `discovery.docker`/`loki.source.docker` are gone, the socket mount below is deleted, and both
-  # containers' logs instead reach Alloy via the host journal (journald logging driver on both
-  # services + `loki.source.journal` in config.alloy) -- so the socket-proxy's re-ingest failure
-  # mode is moot either way now, and T0042's docker-socket residual on the NAS CLOSES: nothing here
-  # holds Docker API access any more.
+  # NAS telemetry stack (spec 00049 Role B): Grafana Alloy ships host metrics and both containers'
+  # logs to Grafana Cloud, under plain `docker compose` with no ansible or systemd here. Both
+  # containers log through the journald driver and Alloy reads the host journal, so nothing in this
+  # stack holds Docker API access -- which is what keeps T0042's docker-socket residual closed. See
+  # infra/nas/config.alloy and infra/nas/README.md.
   alloy:
-    # The digest pin arrives via the ansible-rendered .env (ALLOY_IMAGE — nas_alloy_image in
-    # host_vars/nas/vars.yml). Same `:?` refuse-to-start trap as CAPTURE_IMAGE above: the previous
-    # committed `:latest` only HAPPENED to resolve to the deployed digest — the same trap class
-    # the pin kills (T0056).
+    # The Alloy digest pin arrives the same way, with the same `:?` refuse-to-start trap: a
+    # committed `:latest` only HAPPENED to resolve to the deployed digest (T0056).
     image: ${ALLOY_IMAGE:?set by the ansible-rendered .env — the alloy digest pin}
     container_name: grafana-alloy
     restart: unless-stopped
-    # Run as the dedicated non-root, non-secret-owning user `zcrypto-dummy` (uid 1031, gid 1000 -- the
-    # `zcrypto` group -- created on the NAS at deploy). §8 posture + T0030: WITHOUT a `user:` override
-    # the upstream grafana/alloy image runs as ROOT, and the /host/root:ro mount below would expose
-    # every 0600 host secret. The image's built-in uid-473 user can't be used -- 473 is not a
-    # Synology-recognized user, so the DSM ACL denies it write to the persistent alloy-data mount
-    # (Alloy crash-loops on `mkdir /var/lib/alloy/...: permission denied`). uid 1031 is a real DSM
-    # user, so it writes alloy-data (chmod 0775 + chown 1031:1000 at deploy), and -- crucially -- it
-    # is NOT the owner of the 0600 rrsync pull keys (owner is uid 1000), so a compromised Alloy cannot
-    # read them through /host/root (this closes T0030). Note gid 1000 IS the key-owning group, so the
-    # protection rests on the keys being 0600 -- owner-only, group has no read (verified live) -- not
-    # on group isolation; keep the keys 0600. See infra/nas/README.md.
+    # Run as the dedicated non-root, non-secret-owning user created on the NAS at deploy. §8 posture
+    # and T0030: WITHOUT a `user:` override the upstream image runs as ROOT and the /host/root:ro
+    # mount below would expose every 0600 host secret. The image's built-in uid cannot be used,
+    # because it is not a Synology-recognised user and the DSM ACL then denies it write to the
+    # persistent alloy-data mount, so Alloy crash-loops. This uid is a real DSM user and is NOT the
+    # owner of the 0600 rrsync pull keys, so a compromised Alloy cannot read them through
+    # /host/root. Its gid IS the key-owning group, so that protection rests on the keys being 0600
+    # rather than on group isolation -- keep the keys 0600.
     user: "1031:1000"
-    # gid 19 = DSM's `log` group (measured live, 2026-07-22: `getent group log` -> `log:x:19:root`).
-    # NOT the retired docker-socket grant this replaces (gid 0, `["0"]`, deleted with the socket
-    # mount above) -- and could not have been, since DSM's group model has no `systemd-journal` at
-    # all: the persistent journal path (/var/log/journal) is EMPTY here, and the volatile one this
-    # stack actually reads (/run/log/journal below) is owned root:log, not root:systemd-journal.
-    # Without this, uid 1031's only group is `users` (100) -- a fresh read probe as that uid against
-    # the live files returned "Permission denied" -- so the journal pipeline below would silently
-    # ship nothing at all (review finding, 00068 T6/T7/T8 review Important 4). gid 19 grants ONLY
-    # journal read: no Docker API access, so T0042's docker-socket residual on this host stays
-    # closed (the mount is gone; this grant cannot reopen it).
+    # The supplementary gid is DSM's `log` group, which owns the volatile journal this stack reads:
+    # DSM's group model has no systemd-journal at all, and the persistent journal path is empty
+    # here. Without it, the container's only group cannot read those files and the journal pipeline
+    # would silently ship nothing. It grants journal read ONLY -- no Docker API access, so T0042's
+    # residual stays closed.
     group_add: ["19"]
     network_mode: host
     environment:
@@ -180,30 +141,23 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
-      # No `/var/lib/docker` mount: on Synology DSM the Docker root is /volume1/@docker (root-only),
-      # unreadable by the non-root Alloy -- and cadvisor (the only component that would use it) is not
-      # run here at all (see config.alloy: it SIGSEGVs on DSM's cgroup-less kernel). Host metrics (the
-      # requested load / netdev / disk-free) come from the unix exporter's /host mounts, not here.
-      # Same shared textfile dir archive-pull mounts RW and writes gate.prom into.
+      # No `/var/lib/docker` mount: on DSM the Docker root is root-only and unreadable by the non-
+      # root Alloy, and cadvisor -- the only component that would use it -- is not run here at all,
+      # because it SIGSEGVs on DSM's cgroup-less kernel. Host metrics come from the unix exporter's
+      # /host mounts. This is the same shared textfile dir archive-pull mounts read-write.
       - /volume1/docker/zcrypto-archive/textfile:/textfile:ro
-      # The DIRECTORY, not the file. A single-file bind mount binds the inode, so any later
-      # rewrite of config.alloy (atomic write = new inode) leaves this container reading a file no
-      # longer in the host tree, silently, for its whole lifetime. Mounting the dir makes each edit
-      # visible through the path. Its own dir, not the project dir: the latter holds the rendered
-      # .env with the digest pins. The `nas` role writes conf/config.alloy and its
-      # apply tasks run `compose up -d`, which recreates alloy because the volume spec is part of the
-      # service-config hash -- so this is Ansible-converged like the other tiers, contrary to an
-      # earlier note here.
+      # The DIRECTORY, not the file. A single-file bind mount binds the inode, so a later atomic
+      # rewrite of config.alloy leaves this container reading a file no longer in the host tree --
+      # silently, for its whole lifetime. Its own dir rather than the project dir, which holds the
+      # rendered .env with the digest pins. The role's apply tasks run `compose up -d`, which
+      # recreates Alloy because the volume spec is part of the service-config hash.
       - ./conf:/etc/alloy:ro
       # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
       # redeploy re-ships the retained log backlog into the ingest quota (00043).
       - ./alloy-data:/var/lib/alloy
-      # The host's VOLATILE journal (00068 D6/T8) -- measured: /var/log/journal (the persistent
-      # path capture/ops read) is EMPTY on DSM, so /run/log/journal is the only path that actually
-      # carries entries here. First-time journal pipeline on this host (config.alloy's
-      # loki.source.journal): both containers' logs -- archive-pull's own lines and Alloy's own,
-      # via the journald logging driver on both services above -- arrive through this mount now
-      # that the docker socket is gone.
+      # The host's VOLATILE journal: the persistent path other hosts read is empty on DSM, so this
+      # is the only path carrying entries here. Both containers' logs arrive through it, via the
+      # journald driver on both services above.
       - /run/log/journal:/host/journal:ro
       # Journal readers resolve the CURRENT boot's files via the host's machine id
       # (/run/log/journal/<machine-id>/...) -- without this mount the reader sees an empty journal.

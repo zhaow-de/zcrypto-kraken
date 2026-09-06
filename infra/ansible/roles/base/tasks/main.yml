@@ -1,13 +1,11 @@
-# Fleet policy, pinned in config (spec 00050; spec 00051; .claude/rules/fleet-deploys.md): no two
-# hosts in the capture + ops fleet may ever share an unattended-upgrades reboot slot — a same-night
-# kernel reboot would take multiple hosts down at once, and a book gap with no surviving witness is
-# permanent.
-#
-# It reads the slots from `hostvars`, so every capture/ops host must declare its own in host_vars:
-# `hostvars` resolves inventory/group/host vars and facts but NOT role defaults, so a host relying
-# on this role's default is `UNDECLARED` here — checked explicitly rather than silently skipped.
-# Declared in inventory (not set_fact'd), the check also survives `--limit`, which is exactly when
-# a single-host converge could otherwise collide the fleet unseen.
+# Fleet policy, pinned in config (spec 00050, spec 00051, .claude/rules/fleet-deploys.md): no two
+# hosts in the capture and ops fleet may share an unattended-upgrades slot, because a same-night
+# kernel reboot would take several down at once and a book gap with no surviving witness is
+# permanent. The slots come from `hostvars`, which resolves inventory, group and host vars but NOT
+# role defaults, so a host relying on this role's default reads `UNDECLARED` and is checked
+# explicitly rather than skipped -- and reading inventory rather than a set_fact is what makes the
+# check survive `--limit`, exactly when a single-host converge could otherwise collide the fleet
+# unseen.
 - name: assert the fleet's maintenance windows do not collide
   ansible.builtin.assert:
     that:
@@ -88,11 +86,10 @@
     home: "{{ base_capture_data_dir }}"
     create_home: false
     state: present
-  # Capture hosts ONLY. The ops node also runs `base`, but it owns its OWN `zcrypto-data` (the ops
-  # role — home /home/zcrypto-data, holding its four rrsync pull-channel keys). Without this guard,
-  # base would `usermod -d` that same-named m2m user's home to the capture state dir on the next ops
-  # converge — no `-m`, so its authorized_keys is orphaned and all four NAS->ops pulls are denied
-  # (spec 00057; the rename kraken-capture->zcrypto-data introduced the name collision).
+  # Capture hosts ONLY: the ops node also runs `base` and owns its own same-named `zcrypto-data`
+  # (the ops role). Without this guard, base would `usermod -d` that user's home to the capture
+  # state dir on the next ops converge -- no `-m`, so its authorized_keys is orphaned and every NAS-
+  # to-ops pull is denied (spec 00057).
   when: inventory_hostname in groups['capture_host']
 
 - name: ensure the capture state dir exists and is owned by zcrypto-data
@@ -104,26 +101,12 @@
     mode: "0750"
   when: inventory_hostname in groups['capture_host']  # capture-only, same reason as the user above
 
-# T0089: the `/var/log/zcrypto-capture` directory task that stood here existed solely as the
-# removed policy's `olddir` and had no other consumer, so it goes with it. The archives already
-# written there are deliberately left in place (spec 00043: historical data; cleaning them, if
-# ever, is an attended call) — `state: directory` only ensured existence, so dropping the task
-# touches nothing on disk.
-#
-# T0089: this used to install a daily `copytruncate` logrotate policy over
-# /var/lib/docker/containers/*/*-json.log. `copytruncate` truncates a file dockerd holds open,
-# which leaves its json-file reader unable to serve that container's logs -- the container then
-# ships nothing to Loki and `docker logs` hangs. Measured 2026-07-21: six long-lived containers
-# wedged across all three base-role hosts. Docker already rotates these itself, by RENAME, which
-# readers follow safely, and every long-lived container sets its own caps (50m/5 capture + engine,
-# 10m/3 the Alloys and the liquidations poller; 50m/3 daemon-wide for anything else) -- so the
-# policy was redundant as well as harmful. Spec 00043 §Logs called for exactly this removal and
-# named this exact risk; it never landed because it was assigned to an `obs` role that was never
-# built. Never logrotate a live docker json log.
-#
-# `state: absent` rather than a plain deletion: the file persists on every host that already has
-# it, and a deleted task would leave it there rotating forever. Drop this task once every host has
-# converged past it (check: /etc/logrotate.d/zcrypto-capture-docker absent fleet-wide).
+# Never logrotate a live docker json log: `copytruncate` truncates a file dockerd holds open,
+# leaving its json-file reader unable to serve that container's logs, so the container ships nothing
+# to Loki and `docker logs` hangs. Docker rotates these itself by RENAME, which readers follow
+# safely. `state: absent` rather than a deleted task: the file persists on every host that already
+# has it, and a deleted task would leave it rotating forever. Dropping the task is T0169's, once
+# `/etc/logrotate.d/zcrypto-capture-docker` is absent fleet-wide.
 - name: remove the docker json-log logrotate policy (copytruncate wedges dockerd's readers)
   ansible.builtin.file:
     path: /etc/logrotate.d/zcrypto-capture-docker

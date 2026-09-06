@@ -1,19 +1,9 @@
 ---
 - name: reload alloy
-  # The config is bind-mounted as a DIRECTORY (see the compose template), so the container already
-  # sees the new file the moment Ansible writes it -- but Alloy does not watch the file and will
-  # keep serving the previously parsed config until told otherwise. This reload is what makes the
-  # edit take effect. Deliberately a reload and NOT `docker compose up --force-recreate`: this role
-  # renders the Alloy stack and has never owned its lifecycle, and a directory mount makes the
-  # heavier option unnecessary.
-  #
-  # Tolerant of Alloy being DOWN, and only that: `-1` is what fetch_url reports on a connection
-  # failure, so a host where Alloy is not yet running passes (it is started attended, and the next
-  # `docker compose up -d` reads the config fresh anyway). A 4xx/5xx from a RUNNING Alloy means the
-  # config just shipped does not parse, and that MUST fail the converge -- swallowing it leaves the
-  # host serving the old config, green, and the next run does not re-notify because `copy` reports
-  # `ok`. Note a reload does NOT re-read alloy-secrets.env: env is process-level, so a rotated
-  # credential still needs a container recreate.
+  # A reload, never `--force-recreate`: the DIRECTORY mount lands the new file in place and this role
+  # never owned the stack's lifecycle. It does not re-read alloy-secrets.env (process-level), so a
+  # rotated credential needs a recreate. `-1` is fetch_url's connection failure, so Alloy DOWN passes;
+  # a 4xx/5xx from a RUNNING one must fail, or `copy` reports `ok` and nothing re-notifies.
   ansible.builtin.uri:
     url: http://127.0.0.1:12345/-/reload
     method: POST

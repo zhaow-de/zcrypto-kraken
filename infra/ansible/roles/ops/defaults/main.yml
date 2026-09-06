@@ -1,19 +1,16 @@
 ops_data_dir: /var/lib/zcrypto-ops
 ops_compose_dir: /etc/zcrypto-ops
 
-# The pinned image the ops-node containers run: always the DEFAULT (AVX) build — never `-compat`,
-# never `:latest` (spec 00051). `ops_image_digest` deliberately has NO default: pass it per-run
-# (-e ops_image_digest=sha256:<...>); every task that renders an image reference is guarded with
-# `when: ops_image_digest is defined`, so a converge without it skips those installs rather than
-# rendering units that point at a broken image reference.
+# The pinned image the ops-node containers run: always the DEFAULT (AVX) build, never `-compat` and
+# never `:latest` (spec 00051). `ops_image_digest` deliberately has NO default and is passed per
+# run, so a converge without it skips the image-rendering installs rather than pointing units at a
+# broken reference.
 ops_image: ghcr.io/zhaow-de/zcrypto-capture
 
-# The liquidations poller's container name. A VARIABLE rather than two literals because the pins
-# guard inspects this container while the compose template names it, and when those were written
-# independently they disagreed: the guard probed `liquidations-poll` (the entrypoint COMMAND) while
-# the template rendered `zcrypto-ops-liquidations`. The probe's `failed_when: false` + `rc == 0`
-# gate then skipped the assert on every converge -- a fail-OPEN guard on the only rollback operand
-# this host has. Found 2026-08-20 on a live converge. Both sites read this one value now.
+# The liquidations poller's container name, a VARIABLE rather than two literals: the pins guard
+# inspects this container while the compose template names it, and written independently they
+# disagreed. The probe's `failed_when: false` plus `rc == 0` gate then skipped the assert on every
+# converge -- a fail-OPEN guard on the only rollback operand this host has.
 ops_liquidations_container: zcrypto-ops-liquidations
 
 # Canonical tree names, mirroring the NAS layout. Since T0058 the capture/journal trees are read
@@ -37,12 +34,11 @@ ops_hot_out_subdir: hot-out
 # The liquidations tree (OPS-2), under ops_data_dir; the sync_liquidations pull pins this root.
 ops_liquidations_subdir: liquidations
 
-# Fleet users/groups (spec 00057): the machine-to-machine data user. Runs the data containers
-# (--user), owns the data trees, serves the NAS pulls via rrsync -ro forced-command keys. No sudo,
-# no password; its shell is the rrsync-only wrapper (ops_rrsync_shell) -- a nologin shell would block
-# the forced commands (sshd runs them via the login shell), and a general shell (bash) would grant
-# more than needed, so the wrapper permits ONLY rrsync and refuses everything else -- deploy leaves
-# the data path.
+# Fleet users and groups (spec 00057): the machine-to-machine data user runs the data containers,
+# owns the data trees and serves the NAS pulls via rrsync forced-command keys, with no sudo and no
+# password. Its shell is the rrsync-only wrapper because a nologin shell would block the forced
+# commands, which sshd runs through the login shell, while a general shell would grant more than
+# needed.
 ops_data_user: zcrypto-data
 # The rrsync-only login shell for zcrypto-data (infra/ansible/files/rrsync-shell): serves the
 # forced-command pulls, refuses interactive shells + any non-rrsync command. Defense-in-depth over
@@ -58,11 +54,11 @@ ops_research_user: zhaow
 # .prom files into.
 ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 
-# The nightly verify-replay checkpoint (spec 00078 D9), under ops_data_dir: the per-hour raw facts
-# that let the sweep re-replay only what changed. Bind-mounted at /state, the only writable mount the
-# nightly run gets. Deliberately a sibling under ops_data_dir and NOT under any NAS rrsync pin (those are
-# exact-subtree, T0057), so it is never replicated -- a stale replica would certify hours nobody
-# verified. Deleting it is safe and costs one full re-verification.
+# The nightly verify-replay checkpoint (spec 00078 D9): the per-hour raw facts that let the sweep
+# re-replay only what changed, bind-mounted at /state as the only writable mount the nightly run
+# gets. Deliberately a sibling under ops_data_dir and NOT under any NAS rrsync pin, which are exact-
+# subtree (T0057), so it is never replicated -- a stale replica would certify hours nobody verified.
+# Deleting it costs one full re-verification.
 ops_verify_replay_state_subdir: verify-replay-state
 
 # healthchecks.io dead-man ping URLs, one per timer. Empty means the ping is simply skipped
@@ -79,11 +75,9 @@ ops_grafana_watchdog_probe_url: "https://zcrypto2026.grafana.net/api/health"
 # compose). Empty means the recorder simply skips liveness pings, same as the capture daemon.
 ops_liquidations_healthcheck_url: ""
 
-# T0058: where the NAS's read-only NFS export (192.168.100.5:/volume1/ZhaoCrypto) is mounted. The
-# canonical trees (capture-segments, capture-segments-red, engine-journal) are READ through this
-# mount; it replaced the retired hourly NAS->ops rsync mirror (ops_nas_pull_source, now gone, and
-# with it the pull's dead-man plumbing). The write-back direction is unchanged: overlay + panel
-# still return via the NAS-initiated rrsync pulls.
+# T0058: where the NAS's read-only NFS export is mounted. The canonical trees are READ through this
+# mount; the write-back direction is unchanged, with overlay and panel returning via the NAS-
+# initiated rrsync pulls.
 ops_nas_mount: /mnt/zhao-crypto
 
 ops_panel_healthcheck_url: ""
@@ -101,44 +95,30 @@ ops_alloy_memory_limit: 1g
 # rule's 0.9 bar means the runtime lost its soft limit. The two move together; a test pins the ratio.
 ops_alloy_gomemlimit: 920MiB
 ops_alloy_image: grafana/alloy
-# The secrets file (GRAFANA_PROM_URL/USERNAME/PASSWORD + GRAFANA_LOKI_URL/USERNAME/PASSWORD) has no
-# role var: alloy-compose.yaml.j2 hardcodes its relative `env_file: ./alloy-secrets.env` (nothing
-# else references the path, so a var would be dead config -- review finding 3). It is rendered by
-# this role from group_vars/observed/vault.yml (tasks/main.yml), owned by zcrypto-alloy -- the same
-# pattern the nas role uses for the NAS's copy since T0056 -- see infra/ops/README.md.
+# The secrets file has no role var: alloy-compose.yaml.j2 hardcodes its relative `env_file`, nothing
+# else references the path, and a var would be dead config. This role renders it from
+# group_vars/observed/vault.yml, owned by zcrypto-alloy -- the same pattern the nas role uses.
 
-# --- OPS-5 (spec 00054 D2): the overlay writer's knobs, moved here with the writer from the NAS's
-# compose (RECONCILE_MIN_GAP_SECONDS / RECONCILE_WINDOW_HOURS). DETECT-ONLY still applies -- the
-# reconciler ledgers `would_mint` and writes no parquet until T0039's soak pins the gap threshold
-# from real cross-host data. The default is deliberately 2x the measured 14.78 s single-host maximum
-# natural quiescence: one secondary update row is enough to witness a gap, so a per-connection
+# OPS-5 (spec 00054 D2): the overlay writer's knobs. DETECT-ONLY still applies -- the reconciler
+# ledgers `would_mint` and writes no parquet, and flipping to --mint is T0039's call rather than
+# this role's. The gap default is deliberately about twice the measured single-host maximum natural
+# quiescence, because one secondary update row is enough to witness a gap, so a per-connection
 # coalescing artifact could otherwise trip a phantom splice -- an unaudited data swap into an
-# archive that cannot be backfilled. Flipping to --mint is T0039's call, not this role's.
-# PINNED from data 2026-07-17, not asserted (spec 00050 Task 12 / T0039): 66 h of two-host soak,
-# 217 primary-silence windows the secondary witnessed, max 12.08 s — every one of them natural
-# (the primary never rebooted during the soak, so there were no real outages to exclude). 30 s is
-# 2.03x the 14.78 s single-host max quiescence and 2.48x the measured cross-host max, and stays 2.8x
-# below the smallest real outage on record (83 s), so it costs no detection power. The harness
-# suggested 25 s (2x the cross-host max); 30 s is kept because the cost asymmetry errs high — a
-# missed 20 s gap is a recorded residual, a phantom splice is an unaudited data swap into an archive
-# that cannot be backfilled. The risk is not hypothetical: the soak's own max was a CLASSIFIED
-# coalescing artifact (AVAX/EUR 06:36:45–57, 12.08 s of primary silence with 59 secondary rows
-# inside, while 9 sibling pairs kept flowing on the same healthy host) — at a 10 s threshold the
-# reconciler would have spliced it. Derivation: T0039.
+# archive that cannot be backfilled. The cost asymmetry is why it errs high: a missed gap is a
+# recorded residual, a phantom splice is not. Derivation, the soak and its classified artifact:
+# T0039, and infra/scripts/gap_distribution.py re-runs it.
 ops_reconcile_min_gap_seconds: 30
 ops_reconcile_window_hours: 48
 
 # The --mint flip (spec 00050 Task 12's last step). DEFAULT FALSE: minting writes healed hours into
 # custody and the ledger's dedupe means a wrong verdict is never revisited, so enabling it is a
-# deliberate act with a name, never a silent default. Unlocked only once --min-gap-seconds is pinned
-# from real cross-host data (above). false => --detect-only: the reconciler ledgers every would_mint
-# and writes no parquet. The two correlated-loss detectors (both_streams_silent / total_loss) run
-# regardless and are never minted from.
+# deliberate act with a name, unlocked only once --min-gap-seconds is pinned from real cross-host
+# data. False means --detect-only: every would_mint is ledgered and no parquet is written. The two
+# correlated-loss detectors run regardless and are never minted from.
 ops_reconcile_mint: false
 
-# The writer cycle's dead-man ping (healthchecks.io — deliberately a SEPARATE failure domain from
-# the Grafana observability stack, per CLAUDE.md). Restored 2026-07-17: the T0058 rewrite dropped it
-# along with the retired pull concept, silently halving the writer's failure domains — the check
-# starved from the last old-script cycle (11:21Z) and went DOWN at ~14:21Z while Grafana read
-# healthy metrics the whole time. Empty = ping skipped (the CLI's optional semantics).
+# The writer cycle's dead-man ping (healthchecks.io), deliberately a SEPARATE failure domain from
+# the Grafana stack per CLAUDE.md: losing it halves the writer's failure domains silently, with
+# Grafana still reading healthy metrics throughout. Empty skips the ping, per the CLI's optional
+# semantics.
 ops_archive_pull_healthcheck_url: ""

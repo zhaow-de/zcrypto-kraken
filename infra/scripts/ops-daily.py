@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-"""CLI for the daily operations pass. The module beside it carries the reads and the classifier.
-
-    uv run python infra/scripts/ops-daily.py report --since 24h [--journal-entry]
-    uv run python infra/scripts/ops-daily.py classify --host <host> "<command>"
-
-report exits 0 all-clear, 1 attention, 2 a source could not be read (the report names which).
-classify exits 0 autonomous, 3 prepared.
-"""
+"""CLI for the daily operations pass; the `/zcrypto-daily-ops` skill is the procedure and carries
+both invocations with their exit codes."""
 
 from __future__ import annotations
 

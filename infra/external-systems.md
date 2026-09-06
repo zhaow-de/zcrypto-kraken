@@ -126,7 +126,7 @@ IP: home network `<nas-ip>`
 ### Initial setup<a name="initial-setup"></a>
 
 - From DSM web, install `Container Manager` from Package Center
-- DSM web -> Control Panel -> Regional Options -> Time Zone: **(GMT) Greenwich Mean Time** — the NAS clock must stay UTC: `docker logs --since` parses its argument in the host's **local** time. The `nas` Ansible role's first act is a fail-closed TZ guard (`date +%z` must print `+0000`), so a rebuilt NAS left on local time fails every converge until this is set (see `infra/nas/README.md`).
+- DSM web -> Control Panel -> Regional Options -> Time Zone: **(GMT) Greenwich Mean Time** — the clock must stay UTC: `docker logs --since` parses its argument in the host's **local** time, and the `nas` role's first act is a fail-closed TZ guard (`date +%z` must print `+0000`), so a NAS left on local time fails every converge (`infra/nas/README.md`).
 - DSM web -> Control Panel -> Terminal & SNMP, "Enable Telnet service" + "Enable SSH service"
 - DSM web -> Control Panel -> File Services -> FTP, "Enable SFTP service" (otherwise, `scp` command from the modern OpenSSH client will not work)
 - From the local workstation, `telnet <nas-ip>`, login with the Synology DSM admin (the one to login http://<nas-ip>:5000 for administration). `sudo -i`, then:
@@ -140,7 +140,7 @@ IP: home network `<nas-ip>`
   - Name: `ZhaoCrypto`
   - Permissions: group `zcrypto` can "Read/Write"
   - Advanced Permissions: uncheck "Enabled advances share permissions"
-  - NFS Permissions: create a new one (Both the ops node and the workstation read the canonical trees through this export, automounted read-only at `/mnt/zhao-crypto`; the export-side **Read-Only** privilege is the server half of spec `00051` D10's "no write path toward custody" boundary — without this rule the boundary rests solely on the client-side `ro` mount flag):
+  - NFS Permissions: create a new one (the ops node and the workstation read the canonical trees through this export, automounted read-only at `/mnt/zhao-crypto`; the export-side **Read-Only** privilege is the server half of spec `00051` D10's "no write path toward custody" boundary, which otherwise rests solely on the client-side `ro` mount flag):
     - Hostname or IP: `<home-lan>/24`
     - Privilege: `Read only`
     - Squash: `No mapping` (\<-- this is the root cause why we align the UID and GID between `zhaow`@local-workstation and `zcrypto-data`@nas)
@@ -171,9 +171,9 @@ IP: home network `<nas-ip>`
   - `vim /etc/passwd` to:
     - change the UID of user `zcrypto-data` to `1000` (or the same as user `zhaow`@local-workstation)
     - change the home dir of user `zcrypto-alloy` to `/nonexist`
-    - change the home dir of user `zcrypto-data` to `/var/services/homes/zcrypto-data` — unlike `zcrypto-alloy`, `zcrypto-data` **receives the inbound hot-push over SSH** (spec 00057), so it needs a real home for `~/.ssh/authorized_keys` (the DSM symlink path — resilient to a `/volume1`→`/volume2` layout change; matches `zcrypto-deploy`'s home)
+    - change the home dir of user `zcrypto-data` to `/var/services/homes/zcrypto-data` — it **receives the inbound hot-push over SSH** (spec 00057), so it needs a real home for `~/.ssh/authorized_keys`; that DSM symlink path survives a `/volume1`→`/volume2` layout change
     - change the shell of user `zcrypto-alloy` to `/usr/bin/nologin`
-    - change the shell of user `zcrypto-data` to `/bin/sh` (same as `zcrypto-deploy`) — `zcrypto-data` **serves the inbound hot-push**, which runs an rrsync forced command via the account's login shell, so it needs a real shell (`/usr/bin/nologin` would swallow the forced command). DSM accepts **only its own built-in shells** as an SSH login shell: a custom rrsync-only wrapper (like the one the ops host uses) is refused — DSM authenticates the key but then denies the session *before* exec'ing the shell, at any path, script or binary, and regardless of `/etc/shells` (verified 2026-07-19). So the rrsync-only restriction here is enforced **solely by the key's `command="…rrsync…",restrict` forced command** (installed by the `nas` role; it fully jails the key — no shell, no arbitrary command), not by the login shell as on ops.
+    - change the shell of user `zcrypto-data` to `/bin/sh` (same as `zcrypto-deploy`) — it **serves the inbound hot-push**, whose rrsync forced command runs through the login shell, so `/usr/bin/nologin` would swallow it. DSM accepts **only its own built-in shells**, refusing a custom rrsync-only wrapper at any path and regardless of `/etc/shells`, so here the rrsync-only restriction rests **solely on the key's `command="…rrsync…",restrict` forced command** (installed by the `nas` role), not on the login shell as it does on ops.
     - double check the home dir of user `zcrypto-deploy` is `/var/services/homes/zcrypto-deploy`, and its shell is `/bin/sh`
   - `synouser --rebuild all` (NOTE: after this step, the user `zcrypto-data` will disappear from DSM web Control Panel -> User & Group)
   - `synogroup --rebuild all` (NOTE: after this step, the group `zcrypto` will disappear from DSM web Control Panel -> User & Group)

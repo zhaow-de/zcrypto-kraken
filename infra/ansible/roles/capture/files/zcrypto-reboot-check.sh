@@ -1,20 +1,7 @@
 #!/usr/bin/env bash
-# Installed by the `capture` Ansible role at /usr/local/sbin/zcrypto-reboot-check -- do not hand-edit
-# on the host, it is overwritten on the next converge. Edit this file (and re-run
-# tests/test_reboot_check.py, which drives THIS script) instead.
-#
-# Attended-reboot detector (spec 00071, T0027). The capture VPSes run unattended-upgrades with
-# Automatic-Reboot "false": patches install, the reboot is a human act. That closes one risk (an
-# unwatched reboot of unbackfillable L2 capture and the live trade engine) and opens another -- a
-# kernel flag nobody notices -- so this publishes the flag as a metric and an alert makes it loud.
-#
-# It emits 0 EXPLICITLY when no reboot is pending, never "no output". An absent series is
-# indistinguishable from a dead exporter, so the healthy state has to be a value rather than a
-# silence -- otherwise the alert cannot tell "fine" from "this host stopped reporting".
-#
-# Staleness is NOT this script's job: the textfile collector stamps node_textfile_mtime_seconds for
-# every .prom it reads, which is what detects the timer having stopped (spec 00071 D3). A stale file
-# is not a node_textfile_scrape_error -- that fires only on malformed input.
+# Installed by the `capture` role at /usr/local/sbin/zcrypto-reboot-check, so a hand-edit there is
+# lost on the next converge; tests/test_reboot_check.py drives this file. The reboot is a human act
+# (spec 00071, T0027), so this publishes the pending-reboot flag as a metric.
 set -euo pipefail
 
 usage="usage: zcrypto-reboot-check <flag-path> <output.prom>"
@@ -29,7 +16,9 @@ pending=0
 [ -e "$flag" ] && pending=1
 
 # Atomic publish: the collector globs this directory continuously and must never read a half-written
-# file. mktemp as a SIBLING so the mv is a same-filesystem rename, never a copy.
+# file, and mktemp as a SIBLING makes the mv a same-filesystem rename. 0 is emitted EXPLICITLY: an
+# absent series is indistinguishable from a dead exporter, and staleness is
+# node_textfile_mtime_seconds (spec 00071 D3).
 tmp=$(mktemp "${out}.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
 {

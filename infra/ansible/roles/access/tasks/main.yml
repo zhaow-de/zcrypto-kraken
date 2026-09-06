@@ -10,28 +10,20 @@
     suites: [stable]
     components: [main]
     signed_by: https://apt.grafana.com/gpg.key
-# Alloy and Caddy here are apt packages from THIRD-PARTY repos we do not control, not images whose
-# digest we choose. So the repo FOLLOWS what apt installs; it does not drive it. Both the version
-# force and the hold are deliberately gone, and the hold is actively CLEARED rather than merely
-# unset, so a host provisioned under the old model converges back to the followed state.
+# Alloy and Caddy are apt packages from THIRD-PARTY repos, so this role FOLLOWS what apt installs
+# rather than driving it. Both the version force and the hold are gone, and the hold is actively
+# CLEARED rather than merely unset, so a host provisioned under the old model converges back.
 #
-# The hold was the worse half: `apt-mark hold` makes `apt upgrade` skip a package SILENTLY, and
-# nothing in that output says which entries are third-party or held — so the burden of remembering
-# lands on whoever is reading a long upgradeable list, which is exactly when it is hardest.
+# `apt-mark hold` makes `apt upgrade` skip a package SILENTLY, and nothing in that output says which
+# entries are held. A version force was worse: with ansible's default `allow_downgrade: false` a
+# repo that ships a newer build turns this task into a refused downgrade, and a failure here --
+# third in the role -- drops the host from the play and takes the pinned-leaves and Caddyfile tasks
+# with it, which ARE the client-cert revocation path.
 #
-# The version force cost more than toil, and this is not hypothetical. Grafana shipped 1.18.1-1;
-# `apt: name=alloy=<older>` with ansible's default `allow_downgrade: false` then asks apt for a
-# downgrade, apt refuses, and this task — the THIRD in the role — fails and drops the host from the
-# play. Everything below became unreachable, including the pinned-leaves + Caddyfile tasks that ARE
-# the client-cert revocation path (spec 00075 D16: delete the PEM, converge, reload). A pin meant to
-# protect the mTLS edge had disabled its one emergency operation. Found live, 2026-08-20.
-#
-# Deliberately NOT recorded in docs/reference/fleet-pins.md: a version there would have no producer
-# and no consumer -- nothing asserts it and nothing updates it -- so it would drift into a
-# confidently-wrong number. Read the installed version off the host instead: `dpkg-query -W alloy`.
-#
-# ORDERING, easy to break later: ansible's dpkg_selections hard-fails on a package dpkg has never
-# seen, so the selections task must stay AFTER the apt install, never hoisted above it.
+# Deliberately NOT recorded in fleet-pins.md: a version there would have no producer and no
+# consumer, so it would drift into a confidently-wrong number. Read it off the host with `dpkg-query
+# -W alloy`. Ordering: `dpkg_selections` hard-fails on a package dpkg has never seen, so the
+# selections task stays AFTER the apt install.
 - name: alloy present — version FOLLOWED from apt, never forced (see the note above)
   ansible.builtin.apt:
     name: alloy
@@ -110,18 +102,11 @@
     suites: [any-version]
     components: [main]
     signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-# Caddy follows apt too, and its stakes ARE higher — this is the mTLS edge, the bridgehead's only
-# auth control. The version pin was never what protected it: the Caddyfile task below carries
-# `validate: caddy validate ...`, which runs the INSTALLED binary against the NEW config before
-# writing it, so a version whose client-auth syntax moved fails the converge loudly and
-# version-independently. And a Caddy that cannot parse its config does not start, so the failure
-# direction is CLOSED — the edge goes dark, it never serves without mTLS.
-#
-# Accepted limitation, recorded rather than fixed: no alert fires on a caddy-only outage — the
-# cert-expiry rule that probes the edge carries `noDataState: OK` because it treats
-# `zcrypto-alloy-dark-zaccess` as owning "the host is dark", and that rule stays green while alloy
-# is healthy. A dead edge is found by a human failing to reach it, which is tolerable here: this
-# tier carries interactive access only, no trading and no data path.
+# Caddy follows apt too, and the version pin was never what protected the mTLS edge: the Caddyfile
+# task below runs `validate: caddy validate` -- the INSTALLED binary against the NEW config, before
+# writing it -- so a version whose client-auth syntax moved fails the converge loudly and version-
+# independently. A Caddy that cannot parse its config does not start, so the failure direction is
+# CLOSED: the edge goes dark, never serving without mTLS.
 - name: caddy present — version FOLLOWED from apt, never forced (the Caddyfile validate is the guard)
   ansible.builtin.apt:
     name: caddy
@@ -182,46 +167,30 @@
 - name: caddy enabled + started
   ansible.builtin.systemd: {name: caddy, enabled: true, state: started}
 
-# --- LAST IN THE ROLE ON PURPOSE, and SKIPPED under --check. An assert that fails takes the rest of
-# the play with it, and below it would be the pinned-leaves + Caddyfile tasks that ARE the
-# client-cert revocation path -- the blast radius the alloy version pin caused live on 2026-08-20,
-# recorded at the top of this file.
+# LAST IN THE ROLE, and skipped under `--check`, because an assert that fails takes the rest of the
+# play with it and below it are the pinned-leaves and Caddyfile tasks that ARE the client-cert
+# revocation path. `flush_handlers` runs before it for the same reason: force_handlers defaults to
+# False, so a failure here would strand `reload caddy`, the handler that makes a deleted pinned leaf
+# take effect.
 #
-# Two things make that protection real rather than nominal, and both were missing from the first cut:
+# The relay is Accept=no with no --exit-idle-time, so one long-lived systemd-socket-proxyd holds the
+# listener. Rewriting the unit does not replace its target -- no ExecReload, the target is a
+# command-line argument rather than config, `daemon-reload` refreshes only systemd's view of the
+# FILE, and `state: started` is a no-op on a running unit -- so a converge that rewrites this unit
+# reports `changed` and reaches nothing. What DOES restart it is `restart wg-quick@zaccess0`, which
+# both relay halves inherit through `Requires=`, so a tunnel-conf change bounces the relay and the
+# gate then passes.
 #
-#   * `when: not ansible_check_mode`. converge.sh runs `--check --diff` FIRST and exits without
-#     converging if the preview fails. An assert that trips in check mode therefore blocks the WHOLE
-#     run -- revocation included -- more completely than a mid-play failure would. It would also be
-#     judging the OLD file, since the template does not write under --check.
-#   * `flush_handlers` before the gate. force_handlers defaults to False, so a failure here strands
-#     every pending handler; `reload caddy` is the one that makes a deleted pinned leaf take effect.
-#     Applying them first stops a drifted relay from silently withholding a cert revocation.
-#
-# The relay is Accept=no with no --exit-idle-time, so ONE long-lived systemd-socket-proxyd holds the
-# listener for as long as it runs. Rewriting the unit does not replace its target: `reload` is not
-# applicable (no ExecReload, and the target is a command-line argument rather than config),
-# `daemon-reload` only refreshes systemd's view of the FILE, and `state: started` is a no-op on a
-# running unit. So a converge that rewrites this unit reports `changed` and reaches nothing.
-#
-# ONE thing above does restart it, and the flush below is what makes that so: `restart
-# wg-quick@zaccess0` is notified by the wireguard conf template, and BOTH relay halves declare
-# `Requires=wg-quick@zaccess0.service`, which systemd propagates as a restart. So a converge that
-# changes the tunnel conf DOES bounce the relay -- dropping the sessions this gate exists to avoid
-# dropping -- and the relay then re-execs from the new file, so the gate below passes. That is a
-# reason to keep the gate honest about what it observes, not a reason to move the flush: without it
-# a tripped gate strands `reload caddy`.
-#
-# It REPORTS drift; it does not prevent it. `converge.sh` previews with --check --diff and aborts on a
-# failed preview, so skipping check mode is what stops a drifted relay from blocking the whole run --
-# and the cost is that by the time this can fail, every task above it has applied. Read a failure as
-# "the converge landed and the relay still needs a hand", never as "the converge was refused".
-#
-# Asserted rather than restarted: a restart drops every SSH session traversing the relay INTO the ops
-# node -- including the shell a remote operator may be driving this play from. (It cannot cut the
-# play's own transport: this converge reaches zaccess's own sshd directly on :10022, per fleet.md.)
-# The sibling zaccess-nas-proxy relay in roles/access_ops gets restart handlers instead -- it carries
-# DSM traffic, not an operator's session. NOTE the socket half is covered by neither here: a changed
-# ListenStream is still written and never applied. It has never changed; widen this gate if it does.
+# It REPORTS drift and does not prevent it: by the time this can fail, every task above has applied.
+# Skipped under --check, where the template does not write, so the assert would judge the OLD file
+# and converge.sh -- which aborts the whole run on a failed preview -- would let one drifted relay
+# block every other host.
+# Read a failure as "the converge landed and the relay still needs a hand", never as "the converge
+# was refused". Asserted rather than restarted because a restart drops every SSH session traversing
+# the relay into the ops node, including the shell a remote operator may be driving this play from;
+# this converge reaches zaccess's own sshd directly on :10022, so it cannot cut its own transport.
+# The sibling relay in roles/access_ops takes restart handlers instead: it carries DSM traffic, not
+# an operator's session.
 - name: apply pending handlers before the relay drift gate
   ansible.builtin.meta: flush_handlers
 
@@ -250,17 +219,12 @@
   changed_when: false
   when: not ansible_check_mode
 - name: the ssh relay is running the target this play renders
-  # __not_running__ PASSES: the socket is Accept=no and the service has no [Install], so it is
-  # inactive from boot until the first connection on :20022 and MainPID reads 0. An inactive unit
-  # execs from the rendered file at its next activation, so it cannot be drifted -- failing there
-  # would fail a healthy converge on any host that rebooted without a remote session since.
-  # The length test closes the both-empty hole: no ExecStart line found AND a defunct proxyd whose
-  # /proc/<pid>/cmdline is empty would otherwise compare equal and pass.
-  #
-  # NO override, deliberately. spec 00082 D1 reserves overrides for exactly canary_override,
-  # pins_override and engine_window_override and says every other guard has none; and an override
-  # would buy nothing here, because this reports after the converge has already applied -- there is
-  # no refusal left to bypass. The remedy is the hand restart the message names, not a flag.
+  # __not_running__ PASSES: an inactive unit execs from the rendered file at its next activation, so
+  # it cannot be drifted, and failing there would fail a healthy converge on any host that rebooted
+  # without a remote session since. The length test closes the both-empty hole, where no ExecStart
+  # line and a defunct proxyd's empty cmdline would compare equal. No override, because this reports
+  # after the converge has applied -- there is no refusal left to bypass, and the remedy is the hand
+  # restart the message names.
   when: not ansible_check_mode
   ansible.builtin.assert:
     that: >-

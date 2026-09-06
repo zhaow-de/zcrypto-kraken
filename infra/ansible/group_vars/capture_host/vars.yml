@@ -7,11 +7,10 @@ capture_image: ghcr.io/zhaow-de/zcrypto-capture
 healthchecks_project_id: "32eaee6f-cb82-4773-9471-4b802136adc1"
 sync_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_ed25519.pub') }}"
 sync_capture_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_capture_ed25519.pub') }}"
-# Exempt zcrypto-data from devsec.os_hardening's "Remove shell for linux system accounts" task
-# (tasks/user_accounts.yml): it is a uid-999 SYSTEM account, so that task would reset its rrsync-only
-# login shell to nologin and swallow the NAS pull's forced command. zcrypto-engine stays nologin (it
-# serves no pull) and is deliberately NOT exempted; vagrant/kitchen are the devsec defaults, kept for
-# parity.
+# zcrypto-data is a uid-999 SYSTEM account, so devsec.os_hardening's "Remove shell for linux system
+# accounts" task would reset its rrsync-only shell to nologin and swallow the NAS pull's forced
+# command. zcrypto-engine serves no pull and is deliberately NOT exempted; vagrant and kitchen are
+# devsec defaults.
 os_ignore_users: [zcrypto-data, vagrant, kitchen]
 # Both capture hosts converge as zcrypto-deploy (spec 00057 D1). bootstrap.yml still overrides with
 # `ansible_user: root` at play scope — a virgin host has no zcrypto-deploy yet, and play vars beat

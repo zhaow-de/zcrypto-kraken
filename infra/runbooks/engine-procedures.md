@@ -104,7 +104,7 @@ PY
 
    Neither subsumes the other. Arming takes two keys, and the arm file is placed by hand long after any converge — so a host that converged armed on a verified version and later took a newer image would pass the converge assert and still be arming an unverified adapter; the gate catches exactly that. Conversely the gate cannot stop a converge from *rendering* an armed config. If either fires it is telling you what this step says; do not override it to get a probe window started.
 
-   **For `2.0.0rc4.dev20260825` — the version the engine now deploys on — the re-run HAS happened**: attended 2026-08-26, PASS on all six probes, recorded in `docs/reference/adapter-verification/2.0.0rc4.dev20260825.md`, and the version is in the record — so both guards clear it and the engine may be armed on it. The cost was EUR 0.16 in commissions and the account's own balance moved 99.6772 → 99.5173 across the money leg — a drop of 0.1599 against an expected 0.16001, consistent but not exact; the record carries the residual. (`1.230.0` and `1.231.0` remain in the record as the passes that really ran; neither is deployable now.)
+   **Whether the running version has a record is `cli/engine/order-semantics-verified.json` — the file both arming guards read — and the record itself is `docs/reference/adapter-verification/<version>.md`. Read them; a copy of their verdict here drifts behind them.**
 
    **A PASS is not the whole gate — read that record's `## Owed checks not discharged by this pass` section and discharge every open item before arming.** A pass records what the run could measure; anything it could not lands there, and a version whose record still carries an open item is not cleared to arm however green the verdict above it reads. The passes deliberately run at B+35 or later, so the checks that land there are typically the ones a later clock has to answer — take the reading and write it back into that same section as its outcome, so the record settles rather than accumulating. The record is the inventory; a copy of it here drifts behind it.
 
@@ -433,7 +433,7 @@ Four things about it are worth knowing before you touch anything:
 Three standing conditions once it IS armed, each of which silently changes what a scored week means:
 
 - **A verdict needs 42 CONSECUTIVE boundaries at `full` — seven unbroken armed days.** No attended probe window is anywhere near that long, and `zcrypto-engine-exec-armed-too-long` pages after six unbroken hours armed. So an operator who satisfies all three preconditions above and arms during ordinary attended windows gets `NOT SCORED` forever, correctly. **Verdicts only ever arrive in continuous-trading mode**, and that alert's threshold is the thing to revisit first when that mode arrives — before the band, not after.
-- **Disarm the band across any `shadow_nav_eur` change, and re-arm a week later.** NAV sets both halves of the comparison and is read live rather than journaled per cycle, so a NAV converge re-scores weeks that closed under the old value against the new one — halving NAV roughly doubles every reading of a week nobody traded differently, straight into a latched kill file. Journalling NAV on the cycle record is the durable fix and belongs with the next schema widening.
+- **Disarm the band across a `shadow_nav_eur` change only while a cycle record predating the journal's `nav` key is still inside the scoring window.** Each cycle is now scored under the NAV journaled with it (`cli/engine/tracking.py`'s `cycle_nav`, T0150); older records fall back to the live scalar, and for those a converge still re-prices a week that closed under the old value — halving NAV roughly doubles every reading of a week nobody traded differently, straight into a latched kill file.
 - **Disarm the band across a basket widening.** The trip demands every model leg's target in every record it reads, so the first record written under a wider basket makes every earlier one un-scoreable. The refusal is the safe direction, but it lasts until the whole scored span post-dates the widening — a full week — and reads as a broken trip if nobody expects it.
 
 **To disarm it** — remove the key and converge. Nothing else clears it; the disarmed state is the absent key.
@@ -494,8 +494,8 @@ The kill file is written, the engine is stopped, the plan is printed again from 
 
 | code | what it means | what to do |
 | -- | -- | -- |
-| **0** | the final read shows no resting order, no open position and nothing sellable left — and that read is blind to an order resting on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC ([the third limit](#flat-verdict-blind-legs)) | go to step 4, which is what catches that |
-| **1** | refused with nothing sent — no kill file, no terminal, the word did not match, the plan could not be shown, or no credentials in the container | nothing was sent; fix what it named and run it again |
+| **0** | no resting order, no open position, nothing sellable left — and blind to the five pairs [the third limit](#flat-verdict-blind-legs) names | go to step 4, which is what catches that |
+| **1** | refused with nothing sent, the refusal naming which gate stopped it | nothing was sent; fix what it named and run it again |
 | **2** | something is still open, or the account-wide cancel failed, or a read after the cancel failed | go to step 5 |
 | **3** | the venue could not be reached or read **before anything was sent** | nothing was sent; the account is as it was |
 

@@ -1,8 +1,6 @@
-# The whole managed fleet runs its admin/deploy account as zcrypto-deploy (spec 00057 D1): ops + both
-# capture hosts renamed `deploy` -> zcrypto-deploy, and a virgin host is bootstrapped straight to it.
-# So this default is correct fleet-wide and needs no per-host override. It must NOT be `deploy`: the
-# consumer (tasks/main.yml, ansible.builtin.user) CREATES the user if absent, so a stale `deploy` here
-# would silently resurrect the dead admin account (in the docker group) on any host lacking `deploy`.
+# Fleet-wide, the admin account is zcrypto-deploy (spec 00057 D1). It must NOT be `deploy`:
+# tasks/main.yml CREATES this user if absent, so a stale `deploy` would silently resurrect the dead
+# admin account, in the docker group, on any host lacking it.
 docker_deploy_user: zcrypto-deploy
 
 # Verified against download.docker.com/linux/debian/dists/ at build time: trixie is
