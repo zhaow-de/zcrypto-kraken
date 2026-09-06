@@ -192,6 +192,7 @@ TABLE: dict[str, dict[str, Standin]] = {
         ),
         "RecordingExecutor": Standin(OURS, "cli.engine.executor.ProbeExecutor", ()),
         "_exec_stub": Standin(OURS, "cli.engine.node.ShadowStrategy", ()),
+        "_CacheReadableStrategy": Standin(OURS, "cli.engine.node.ShadowStrategy", ()),
     },
     "test_engine_metrics.py": {
         # The names `run()` READS off a node are walked once, over the one production module, in
