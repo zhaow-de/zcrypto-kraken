@@ -1,6 +1,11 @@
 """The manifest contract (spec 00099) — one shape, so no consumer needs per-set knowledge."""
 
+import hashlib
+import io
 import json
+import urllib.error
+import zipfile
+from datetime import UTC, datetime
 
 import pytest
 
@@ -283,18 +288,48 @@ def test_one_span_bound_null_and_the_other_set_is_refused():
 
 
 # --- every writer, one contract --------------------------------------------------------------------
+#
+# One driver per module of `cli/` that names `build_manifest`. Each reaches its remote through an
+# injected seam, so every producer runs offline against a tmp tree.
 
 
-def test_every_writer_emits_a_manifest_the_reader_accepts(tmp_path, monkeypatch):
-    """Asserted through `read_manifest` rather than by comparing dicts, because the reader is what a
-    consumer actually uses -- a shape that only a bespoke assertion accepts is the zoo again."""
+class _Resp(io.BytesIO):
+    """What `urlopen` hands back: a context manager over the body."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        self.close()
+        return False
+
+
+def _zipped(member: str, text: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, text)
+    return buf.getvalue()
+
+
+def _binance_opener(zips: dict[str, bytes]):
+    """A `urlopen` stand-in over a {url: zip-bytes} map, deriving each `.CHECKSUM` from its zip's real
+    sha256 so the producers' verify path runs rather than passes; an absent url 404s, which both
+    Binance producers read as an unpublished period."""
+    files = dict(zips)
+    for url, body in zips.items():
+        files[f"{url}.CHECKSUM"] = f"{hashlib.sha256(body).hexdigest()}  {url.rsplit('/', 1)[-1]}\n".encode()
+
+    def _open(url, timeout=None):
+        if url not in files:
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        return _Resp(files[url])
+
+    return _open
+
+
+def _drive_backfill(tmp_path):
+    """The OHLCVT dump reader: previously nested symbol -> interval, two levels deep."""
     from cli.backfill.backfill import backfill_basket
-    from cli.ohlc.ingest import ingest_basket
-
-    written = []
-
-    # backfill: previously nested symbol -> interval, two levels deep
-    import zipfile
 
     src = tmp_path / "src"
     src.mkdir()
@@ -303,22 +338,122 @@ def test_every_writer_emits_a_manifest_the_reader_accepts(tmp_path, monkeypatch)
         zf.writestr("master_q4/XBTEUR_1.csv", minute)
     out = tmp_path / "full"
     backfill_basket(src, ["BTC/EUR"], ["60"], out, WRITTEN_AT)
-    written.append(out / "manifest.json")
+    return out / "manifest.json"
 
-    # v0 ingest: previously a LIST of rows, hashing under the key `dataset_hash`
-    out_v0 = tmp_path / "v0"
+
+def _drive_ingest(tmp_path):
+    """v0 ingest: previously a LIST of rows, hashing under the key `dataset_hash`."""
+    from cli.ohlc.ingest import ingest_basket
+
+    out = tmp_path / "v0"
     ingest_basket(
         {"BTC/EUR": "XXBTZEUR"},
         [1440],
-        out_v0,
+        out,
         WRITTEN_AT,
         fetch_fn=lambda *_: [[1577836800, "1", "2", "0.5", "1.5", "1.2", "10", 3]],
     )
-    written.append(out_v0 / "manifest.json")
+    return out / "manifest.json"
 
-    for path in written:
-        m = read_manifest(path)
-        assert m.schema_version == SCHEMA_VERSION
-        assert m.identity_digest, path
-        assert m.vouched, path
-        assert all(k.endswith(".parquet") for k in m.series), path
+
+def _drive_reach(tmp_path):
+    """The REST reach round: the one producer whose identity is a declared subset, not the set digest.
+
+    The REST rows overlap the canonical tail by ten stamps, so the leg lands continuous -- a detached
+    one would leave the continuous subset empty, which the contract refuses rather than digests."""
+    from cli.ohlc.dataset import write_parquet
+    from cli.ohlc.reach import reach_round
+
+    canonical, out = tmp_path / "canon", tmp_path / "reach"
+    write_parquet(to_frame(_rows(20)), canonical / "BTC" / "EUR" / "1440.parquet")
+    rest = _rows(15, start=1577836800 + 10 * 86400)
+    reach_round(
+        canonical,
+        out,
+        intervals=(1440,),
+        fetch_fn=lambda *_: rest,
+        clock=lambda: datetime(2020, 3, 1, tzinfo=UTC),
+        sleep_fn=lambda _seconds: None,
+    )
+    return out / "manifest.json"
+
+
+def _drive_funding(tmp_path):
+    """The funding substrate: one perp, one published month; the earlier months 404 as a pre-listing run."""
+    from cli.derivatives.funding import build_funding_substrate
+
+    url = "https://data.binance.vision/data/futures/um/monthly/fundingRate/BTCUSDT/BTCUSDT-fundingRate-2020-01.zip"
+    csv = "calc_time,funding_interval_hours,last_funding_rate\n1577836800000,8,0.0001\n"
+    out = tmp_path / "funding"
+    build_funding_substrate(
+        out,
+        perps={"BTC": "BTCUSDT"},
+        clock=lambda: datetime(2020, 2, 15, tzinfo=UTC),
+        opener=_binance_opener({url: _zipped("BTCUSDT-fundingRate-2020-01.csv", csv)}),
+    )
+    return out / "manifest.json"
+
+
+def _drive_oi(tmp_path):
+    """The open-interest substrate: one perp, one published day."""
+    from cli.derivatives.oi import build_oi_substrate
+
+    url = "https://data.binance.vision/data/futures/um/daily/metrics/BTCUSDT/BTCUSDT-metrics-2020-01-01.zip"
+    header = (
+        "create_time,symbol,sum_open_interest,sum_open_interest_value,"
+        "count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,"
+        "count_long_short_ratio,sum_taker_long_short_vol_ratio"
+    )
+    row = "2020-01-01 00:00:00,BTCUSDT,100.5,100000.0,2.1,1.2,2.0,0.94"
+    out = tmp_path / "oi"
+    build_oi_substrate(
+        out,
+        perps={"BTC": "BTCUSDT"},
+        start=datetime(2020, 1, 1, tzinfo=UTC),
+        clock=lambda: datetime(2020, 1, 2, tzinfo=UTC),
+        opener=_binance_opener({url: _zipped("BTCUSDT-metrics-2020-01-01.csv", f"{header}\n{row}\n")}),
+    )
+    return out / "manifest.json"
+
+
+def _drive_convert(tmp_path):
+    """The converter: rebuilds one legacy set's manifest from the parquets on disk."""
+    from cli.data.manifest import convert_dataset
+    from cli.ohlc.dataset import dataset_hash, write_parquet
+
+    root = tmp_path / "legacy"
+    frames = {"ADA/EUR/1440.parquet": to_frame(_rows(5)), "BTC/EUR/1440.parquet": to_frame(_rows(7))}
+    for relpath, frame in frames.items():
+        write_parquet(frame, root / relpath)
+    legacy = {relpath: {"rows": frame.height, "sha256": dataset_hash(frame)} for relpath, frame in frames.items()}
+    (root / "manifest.json").write_text(json.dumps({"fetched_at": WRITTEN_AT, "series": legacy}))
+    convert_dataset(root, apply=True)
+    return root / "manifest.json"
+
+
+_PRODUCERS = {
+    "cli/backfill/backfill.py": _drive_backfill,
+    "cli/data/manifest.py": _drive_convert,
+    "cli/derivatives/funding.py": _drive_funding,
+    "cli/derivatives/oi.py": _drive_oi,
+    "cli/ohlc/ingest.py": _drive_ingest,
+    "cli/ohlc/reach.py": _drive_reach,
+}
+
+
+@pytest.mark.parametrize("module", sorted(_PRODUCERS))
+def test_every_writer_emits_a_manifest_the_reader_accepts(module, tmp_path):
+    """Asserted through `read_manifest` rather than by comparing dicts, because the reader is what a
+    consumer actually uses -- a shape that only a bespoke assertion accepts is the zoo again."""
+    m = read_manifest(_PRODUCERS[module](tmp_path))
+    assert m.schema_version == SCHEMA_VERSION, module
+    assert m.identity_digest, module
+    assert m.vouched, module
+    assert all(k.endswith(".parquet") for k in m.series), module
+
+
+def test_the_driver_table_names_every_module_that_builds_a_manifest():
+    """A producer added without a driver reds here rather than shipping undriven."""
+    root = _Path(__file__).resolve().parents[1]
+    naming = {p.relative_to(root).as_posix() for p in (root / "cli").rglob("*.py") if "build_manifest" in p.read_text()}
+    assert naming == set(_PRODUCERS)
