@@ -66,7 +66,7 @@ def test_compare_targets_tolerance_bracketed_both_sides():
     margins are expressed as fractions of tol (not raw literals) so the test states the rule. tol
     itself has to be a hardcoded anchor, not read back from the function -- reading the live default
     would just track a drifted value and never fail."""
-    tol = 1e-6  # today's ratified default (concordance.py:159) -- the external anchor this pins
+    tol = 1e-6  # today's ratified default (`compare_targets`' `tol`) -- the external anchor this pins
 
     just_inside = tol - tol * 0.1
     just_outside = tol + tol * 0.1

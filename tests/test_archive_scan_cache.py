@@ -476,7 +476,7 @@ def test_the_overlay_backstop_is_blind_for_the_minting_cycle_itself(tmp_path):
     _write(sec, PAIR, "book", H)
 
     pre_mint, _ = _fp(pri, sec, rec)  # the minting cycle's pre-pass ...
-    stored = _entry(fingerprint=pre_mint)  # ... and therefore the entry it stores
+    stored = _entry(fingerprint=pre_mint)  # ... and the entry this test builds; the cycle stores none
     minted_file = _write(rec, PAIR, "book", H)  # the cycle mints
     post_mint, _ = _fp(pri, sec, rec)
     assert post_mint != pre_mint
@@ -484,7 +484,7 @@ def test_the_overlay_backstop_is_blind_for_the_minting_cycle_itself(tmp_path):
     minted_file.unlink()  # a hand-repair lands before the NEXT pre-pass
     repaired, repaired_complete = _fp(pri, sec, rec)
     assert repaired == pre_mint  # exactly the state the stored entry recorded
-    assert is_skippable(stored, repaired, repaired_complete) is True  # BLIND — `delete_cache` covers this
+    assert is_skippable(stored, repaired, repaired_complete) is True  # BLIND — the caller never caches a changed hour
 
     # For contrast, the case the backstop does cover: any later cycle stored the post-mint fingerprint.
     assert is_skippable(_entry(fingerprint=post_mint), repaired, repaired_complete) is False
