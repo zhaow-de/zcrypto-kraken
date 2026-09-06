@@ -359,8 +359,8 @@ def _drive_ingest(tmp_path):
 def _drive_reach(tmp_path):
     """The REST reach round: the one producer whose identity is a declared subset, not the set digest.
 
-    The REST rows overlap the canonical tail by ten stamps, so the leg lands continuous -- a detached
-    one would leave the continuous subset empty, which the contract refuses rather than digests."""
+    The REST rows overlap the canonical tail by ten stamps, so the leg lands continuous and this is the
+    one driver whose manifest carries `identity == "subset:continuous"` rather than the set digest."""
     from cli.ohlc.dataset import write_parquet
     from cli.ohlc.reach import reach_round
 
@@ -453,7 +453,7 @@ def test_every_writer_emits_a_manifest_the_reader_accepts(module, tmp_path):
 
 
 def test_the_driver_table_names_every_module_that_builds_a_manifest():
-    """A producer added without a driver reds here rather than shipping undriven."""
+    """A module that names `build_manifest` and is absent from the driver table reds here."""
     root = _Path(__file__).resolve().parents[1]
     naming = {p.relative_to(root).as_posix() for p in (root / "cli").rglob("*.py") if "build_manifest" in p.read_text()}
     assert naming == set(_PRODUCERS)

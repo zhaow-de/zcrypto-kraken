@@ -33,8 +33,9 @@ _XBT_LEG_ATTRS = {
 def _decimals(step: float) -> int:
     """The decimal precision one venue step implies, so the fixture instrument stays self-consistent
     the way a Cache one is. Inverting a step this way yields the venue's own published precision only
-    while the step is exactly `10 ** -decimals`, which
-    `test_every_basket_legs_tick_size_is_ten_to_the_minus_its_pair_decimals` pins."""
+    while the step is exactly `10 ** -decimals`; for the price step
+    `test_every_basket_legs_tick_size_is_ten_to_the_minus_its_pair_decimals` pins that, and the size
+    step has no published counterpart to pin it against."""
     return max(0, -Decimal(str(step)).as_tuple().exponent)
 
 
