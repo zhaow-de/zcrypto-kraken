@@ -74,7 +74,7 @@ def _hour_from_path(path: Path) -> datetime | None:
     parts = path.parts
     try:
         return datetime(int(parts[-4]), int(parts[-3]), int(parts[-2]), int(path.name[:2]), tzinfo=UTC)
-    except ValueError, IndexError:
+    except ValueError, IndexError, OverflowError:
         return None
 
 
