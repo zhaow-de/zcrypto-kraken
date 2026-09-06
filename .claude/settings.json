@@ -26,6 +26,8 @@
       "Bash(kraken pairs:*)",
       "Bash(kraken assets:*)",
       "Bash(kraken balance:*)",
+      "Bash(kraken extended-balance:*)",
+      "Bash(kraken trade-balance:*)",
       "Bash(kraken volume:*)",
       "Bash(kraken ledgers:*)",
       "Bash(kraken trades-history:*)",
