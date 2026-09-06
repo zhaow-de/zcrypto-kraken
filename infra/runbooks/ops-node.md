@@ -260,3 +260,32 @@ The scope is the journal keep-regex in `infra/ansible/roles/ops/files/config.all
 ### Retire when
 
 `zcrypto-ops-error-logs` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="agentboard-node-upgrade"></a>
+
+## agentboard node upgrade — PROCEDURE
+
+### What you are seeing
+
+Nothing fired. You are moving the ops node's web terminal onto a new node, or onto a new `@gbasin/agentboard` pin — the `zaccess-agentboard` unit on `zcrypto-ops` (`ssh hp`), which runs as the `zhaow` user and fronts that user's tmux server.
+
+### What it means
+
+**The upgrade needs no converge.** The unit's `ExecStart` runs the rendered `/usr/local/sbin/zaccess-agentboard-start`, which sources nvm and execs the platform binary at **start** time, so a plain restart picks up whatever node and package are installed by then.
+
+**The restart is safe only because the unit sets `KillMode=process`** (`infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2`). agentboard boots the operator's tmux server as a child, and a forked process keeps its unit's cgroup for life — `ppid 1` does not mean out of the unit, so read `/proc/<pid>/cgroup` and never the ppid. Under systemd's default `control-group`, this restart SIGKILLs that tmux server and every session on it.
+
+### What to do
+
+1. **Read `echo $TMUX` first.** A Claude Code session may itself be running inside the tmux that agentboard fronts, and a server-killing action taken from there is self-termination — the session dies mid-command with no report.
+2. **Upgrade, then restart** — the nvm and npm halves run as `zhaow`, the unit's `User=`, whose nvm the start script sources (`access_ops_agentboard_nvm_sh`): `nvm install <new> && nvm alias default <new> && npm i -g @gbasin/agentboard@<pin> && sudo systemctl restart zaccess-agentboard`.
+3. **`<pin>` is `access_ops_agentboard_version`** (`infra/ansible/roles/access_ops/defaults/main.yml`). The role reinstalls that exact version whenever it is absent under nvm's current node, so a hand install of any other version is put back to the pin by the next converge of this host — changing the version is a repo edit first.
+4. **Never a second or test agentboard on the ops default tmux socket** — it collides with the live one and with the durable session. Isolate any test with `TMUX_TMPDIR`.
+5. **Never blanket-`pkill agentboard`** — that kills the live systemd unit.
+6. **Confirm which binary is running, by value**: `/proc/$(systemctl show -p MainPID --value zaccess-agentboard.service)/exe`, hashed against the binary inside the pinned `@gbasin/agentboard-linux-x64` tarball. The start script execs the server itself, so MainPID is the server; `npm ls -g @gbasin/agentboard --depth=0` reads the **installed** package and never the running one.
+
+### Retire when
+
+`infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2` no longer sets `KillMode=process` — every safety clause above is about that setting — or `access_ops_agentboard_live` is no longer true in `infra/ansible/host_vars/zcrypto-ops/vars.yml`, which converges the unit disabled and stopped and leaves nothing running to upgrade.

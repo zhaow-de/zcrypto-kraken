@@ -42,6 +42,9 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 ### [`zaccess.md`](zaccess.md) — the internet access host
 
+- [`zaccess-converge`](zaccess.md#zaccess-converge) — PROCEDURE: converging the bridgehead needs an agent holding only its own key, and the command that builds one.
+- [`zaccess-revoke-client-cert`](zaccess.md#zaccess-revoke-client-cert) — PROCEDURE: dropping a client cert's pin, and the host copy the converge does not delete.
+- [`zaccess-alloy-converge`](zaccess.md#zaccess-alloy-converge) — PROCEDURE: the bridgehead's Alloy is the fleet's one native-deb Alloy — no digest operand, no bake, an ungated config copy.
 - [`zaccess-bridgehead-dark`](zaccess.md#zaccess-bridgehead-dark) — ALERT: the bridgehead's Alloy stopped shipping.
 - [`zaccess-disk-high`](zaccess.md#zaccess-disk-high) — ALERT: the bridgehead's root filesystem is under 15% free.
 - [`zaccess-tunnel-stale`](zaccess.md#zaccess-tunnel-stale) — ALERT: the WireGuard tunnel's handshake age is over 300 s at one end or both.
@@ -85,6 +88,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`engine-flatten`](engine-procedures.md#engine-flatten) — PROCEDURE: the emergency halt — one command that stops the engine and closes the whole account at market, at whatever price the market gives.
   - [`flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs) — the third limit: the five legs the flat verdict cannot see, so exit 0 can be a false all-clear.
   - [`flatten-read-only-dry-run`](engine-procedures.md#flatten-read-only-dry-run) — beside the press: who runs the read-only dry run that proves the five account reads, and the adapter-verification row it discharges into.
+- [`engine-adhoc-key-read`](engine-procedures.md#engine-adhoc-key-read) — PROCEDURE: the one-off read that needs the live trade key — inside the engine image, driven from the workstation, inside the engine play's own window.
 
 ### [`order-semantics-verification.md`](order-semantics-verification.md) — the adapter's order semantics on a new nautilus version
 
@@ -127,6 +131,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-ops-panel-exit-nonzero`](ops-node.md#zcrypto-ops-panel-exit-nonzero) — ALERT: the last hourly L2 panel materialize errored.
 - [`zcrypto-ops-load-high`](ops-node.md#zcrypto-ops-load-high) — ALERT: the ops node's 1-minute load average is above 20.
 - [`zcrypto-ops-error-logs`](ops-node.md#zcrypto-ops-error-logs) — ALERT: an ERROR or CRITICAL line from the ops node.
+- [`agentboard-node-upgrade`](ops-node.md#agentboard-node-upgrade) — PROCEDURE: moving the ops node's web terminal onto a new node or `@gbasin/agentboard` pin, and why that restart is only safe with `KillMode=process`.
 
 ### [`nas.md`](nas.md) — the durable archive and its pull loop
 
@@ -134,6 +139,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-nas-load-high`](nas.md#zcrypto-nas-load-high) — ALERT: the NAS's 1-minute load average is above 4.
 - [`zcrypto-nas-archive-pull-errors`](nas.md#zcrypto-nas-archive-pull-errors) — ALERT: at least one ERROR or CRITICAL line from the NAS's archive-pull container in the last 15 minutes.
 - [`zcrypto-nas-archive-pull-stalled`](nas.md#zcrypto-nas-archive-pull-stalled) — ALERT: the NAS's archive-pull has logged no successful completion in the last 3 hours.
+- [`nas-file-transfer`](nas.md#nas-file-transfer) — PROCEDURE: the `/volume1` sftp chroot, and the `nas-hot:` rrsync endpoint whose overwrites are skipped in silence.
 
 ### [`gate.md`](gate.md) — the shadow-concordance export on the NAS
 

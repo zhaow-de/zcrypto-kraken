@@ -10,7 +10,7 @@ Public halves (`*.pub`) are the plaintext record of what is authorized where; a 
 | `deploy_zcrypto-red_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-red` |
 | `deploy_zcrypto-ops_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-ops` |
 | `deploy_nas_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`. `ssh nas` uses the operator's local copy — rotate **both** halves together or the next converge loads a stale key. |
-| `deploy_zaccess_ed25519{,.pub}` | vaulted here | `run.sh` (loaded **last** — the bridgehead's `MaxAuthTries 2`, `docs/reference/fleet.md`); `host_vars/zaccess` |
+| `deploy_zaccess_ed25519{,.pub}` | vaulted here | `run.sh` (loaded **last** — the bridgehead's `MaxAuthTries 2`, `infra/runbooks/zaccess.md`); `host_vars/zaccess` |
 | `zaccess_ca.crt`, `zaccess_ca.key.vault` | the `.key` vaulted here | the mTLS CA: `infra/scripts/zaccess-client-cert.sh` signs leaves; the access role installs the `.crt` at `/etc/caddy/` |
 | `sync_ed25519.pub` | NAS (`/volume1/docker/zcrypto-archive/keys/`) + vaulted here | engine-journal pull channel (`group_vars/capture_host`) |
 | `sync_capture_ed25519.pub` | NAS + vaulted here | primary capture pull channel |
