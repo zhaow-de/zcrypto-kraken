@@ -251,6 +251,17 @@ def test_a_stray_year_directory_in_the_output_tree_is_refused_by_name(tmp_path):
         materialize(src, tmp_path / "r", out, now=now)
 
     stray.unlink()
+
+    # The other arm, and it leaves a different call: `int("nope")` raises ValueError before `date()` is
+    # ever reached, so a guard naming only OverflowError lets a non-numeric year through uncaught.
+    stray = out / "BTC" / "EUR" / "nope" / "08" / "02.parquet"
+    stray.parent.mkdir(parents=True)
+    stray.write_bytes(published.read_bytes())
+    assert sorted((out / "BTC" / "EUR").rglob("*.parquet"))[-1] == stray, "the stray must sort newest, or nothing reads it"
+    with pytest.raises(TickError, match=re.escape(str(stray))):
+        _watermark(out, "BTC/EUR")
+
+    stray.unlink()
     assert _watermark(out, "BTC/EUR") == date(2026, 8, 2)  # the true positive, after
 
 
