@@ -93,8 +93,8 @@ def test_verify_tree_walks_past_a_year_directory_that_is_not_a_date(tmp_path):
     """Both arms: a non-numeric year and one past the C-int ceiling are hashed like any other final, losing only their hour."""
     # `int()` is arbitrary-precision, so the two throws come from different calls: `int("nope")` raises
     # ValueError, while `datetime(2**31, ...)` raises OverflowError from its C-int year conversion.
-    # `_hour_ts` runs at the top of the walk, outside every try, so the narrower except aborted the
-    # whole NAS sweep -- and `lag_s`, the pull dead-man signal, comes out of that walk.
+    # `_hour_ts` runs at the top of the walk, outside every try, so the narrower except aborted the whole
+    # NAS sweep -- and the `pull complete ... failed=0` line the dead-man matches comes only after it.
     _seg(tmp_path, "BTC/EUR", "book", "10")
     for year in (str(2**31), "nope"):
         d = tmp_path / "BTC" / "EUR" / "book" / year / "07" / "12"

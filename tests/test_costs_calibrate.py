@@ -104,7 +104,7 @@ def test_calibrate_ignores_a_year_directory_that_is_not_a_date(tmp_path: Path) -
 
     result = calibrate(panel_root, W_START, W_END)
 
-    # The two well-formed hours and ONLY those -- a guard that swallowed every hour would report 0.
+    # Exactly the two well-formed hours: neither stray contributes one, and neither takes one with it.
     assert result.hours == 2
     assert result.min_rows == result.max_rows == 7_200
     assert result.table["BTC/EUR"][100] == pytest.approx(1.5)
