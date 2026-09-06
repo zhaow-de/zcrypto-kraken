@@ -85,6 +85,19 @@ def test_held_and_corrupt_files_are_never_yielded(tmp_path):
     assert len(list(canonical_segments(pri, None))) == 1
 
 
+def test_a_year_directory_too_large_for_a_c_int_is_skipped_beside_a_real_hour(tmp_path):
+    """A `2147483648` year directory is skipped, and the well-formed hour beside it still yields."""
+    # `int()` is arbitrary-precision, so the throw is `datetime`'s C-int year conversion:
+    # `datetime(2**31 - 1, ...)` raises ValueError but `datetime(2**31, ...)` raises OverflowError,
+    # which an `except ValueError` does not catch — the walk dies instead of ignoring the directory.
+    pri = tmp_path / "raw"
+    _final(pri, "BTC/EUR", "book", H)
+    oversized = pri / "BTC" / "EUR" / "book" / str(2**31) / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.parquet"
+    oversized.parent.mkdir(parents=True)
+    oversized.touch()
+    assert [(pair, hour) for pair, hour, _ in canonical_segments(pri, None)] == [("BTC/EUR", H)]
+
+
 def test_two_quote_dirs_under_one_base_stay_independent_streams(tmp_path):
     """`ETH/EUR` and `ETH/BTC` resolve as two separate pairs, never merged by base (T0092)."""
     primary = tmp_path / "primary"
