@@ -532,7 +532,7 @@ The proofs, and what each rests on:
 | F | WS loss, capture side | drilled 2026-07-27, and seen since in real incidents; runbooked at [`capture.md#zcrypto-capture-all-streams-silent`](capture.md#zcrypto-capture-all-streams-silent) |
 | H | capture daemon stopped, host down | drilled 2026-07-17 on the primary, and the 2026-07-11 reboot |
 | J | engine cycle failure, engine dead | the 2026-07-11 incident in shadow. **Its `/fail` route was never covered** — that is drill J′ above, and it is not this row |
-| L | healthchecks.io dark, or a check down | drilled 2026-07-21; the mutual watchdog is [`observability.md#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog) |
+| L | healthchecks.io dark, or a check down | drilled 2026-07-21, both directions, before the drill log existed — the record is archived `T0083`; the mutual watchdog is [`observability.md#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog) |
 | M | Kraken maintenance collides with a converge | four real episodes; the standing rule lives in the fleet-deploy rules, not in a drill |
 | N | NAS archive-pull stall | the 2026-07-15/16 incident — and **its path has since changed. See below.** |
 | T | an alert fires for something already over | the 2026-07-27 reconstruction |

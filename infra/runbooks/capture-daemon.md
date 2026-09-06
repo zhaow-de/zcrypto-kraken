@@ -28,7 +28,7 @@ What actually runs, driven by `_desync_recovery_loop` in `cli/capture/command.py
 
 Time to terminal is **20 + 5 + 10 + 20 = 55 s** from the desync.
 
-**So a pair still desynced at 15 minutes is POST-ladder.** It has already spent rung 1, three retries and a full reconnect with a fresh snapshot, and is most of the way through the hour-long cooldown — a pair a reconnect did not fix.
+**So a pair still desynced at 15 minutes is POST-ladder.** It has already spent rung 1, three retries and a full reconnect with a fresh snapshot, and has been in the hour-long cooldown for about fourteen minutes — a pair a reconnect did not fix.
 
 The cooldown is not permanent: when it expires the ladder re-arms and, because `desynced_at` is deliberately not reset, the pair retries on the very next tick — so the daemon tries again roughly an hour after the escalation with no help from you. A pair that heals and re-desyncs *inside* that hour keeps the escalation record (`note_recovered` deliberately does not clear it), so it gets the transition resubscribe and **nothing else** — no retries, no second reconnect — until the cooldown expires.
 
