@@ -1,7 +1,7 @@
 """`zcrypto research eval` — the committed door to the registry (spec 00086).
 
-`_anchor` patches `cli.research.command._REGISTRY` as well as `_DATA_ROOT`: both defaults are
-repo-anchored, so a register run reaching the `_REGISTRY` default appends to the real registry."""
+`cli.research.command._REGISTRY` defaults to the committed ledger, so a register run reaching that
+default appends a fabricated row to it; `_registry_default_off_the_committed_ledger` is the guard."""
 
 from __future__ import annotations
 
@@ -16,12 +16,14 @@ from cli.__main__ import app
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 from cli.registry.record import compute_hash
+from cli.research import command as research_command
 from cli.research import subjects
 
 runner = CliRunner()
 
 _DAY = 86400
 _EPOCH_2020 = 1577836800  # 2020-01-01T00:00:00Z
+_COMMITTED_REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
 
 
 def _rows(n: int, *, phase: float = 0.0, start: int = _EPOCH_2020, step: int = _DAY):
@@ -66,6 +68,17 @@ def _stub_subject(monkeypatch):
 def _anchor(monkeypatch, data_root: Path, registry: Path | None = None):
     monkeypatch.setattr("cli.research.command._DATA_ROOT", data_root)
     monkeypatch.setattr("cli.research.command._REGISTRY", registry if registry is not None else data_root / "never.jsonl")
+
+
+@pytest.fixture(autouse=True)
+def _registry_default_off_the_committed_ledger(tmp_path, monkeypatch):
+    """`TrialRegistry(registry or _REGISTRY).append` writes wherever `_REGISTRY` points, so no test
+    in this module may start or end with it on the committed ledger."""
+    monkeypatch.setattr("cli.research.command._REGISTRY", tmp_path / "unanchored-registry.jsonl")
+    yield
+    assert research_command._REGISTRY != _COMMITTED_REGISTRY, (
+        "this test left cli.research.command._REGISTRY on the committed trial registry"
+    )
 
 
 def _register_args(registry: Path, *, n_trials: int, family: str = "STUB") -> list[str]:
@@ -119,6 +132,28 @@ def test_register_appends_one_schema_4_record_whose_hash_derives_from_the_observ
     assert record["dataset_hash"] == compute_hash(record["datasets"])
     assert list(record["datasets"]["ohlc-test"]["files"]) == ["BTC/EUR/1440.parquet"]
     assert record["run_ref"].startswith("cli/research/command.py")
+
+
+def test_a_register_run_that_forgets_to_anchor_lands_off_the_committed_ledger(tmp_path, monkeypatch):
+    """The case the autouse fixture exists for: no `_anchor` and no `--registry`, so the append
+    resolves the module default, and the row must land on the fixture's file with the committed
+    ledger byte-identical. The pre-invoke assertion is what keeps this test from being the hazard
+    itself if the fixture ever goes."""
+    root = _stub_dataset(tmp_path)
+    _stub_subject(monkeypatch)
+    monkeypatch.setattr("cli.research.command._DATA_ROOT", root)
+    assert research_command._REGISTRY != _COMMITTED_REGISTRY
+    before = _COMMITTED_REGISTRY.read_bytes()
+
+    result = runner.invoke(
+        app,
+        ["research", "eval", "--subject", "stub", "--dataset", "ohlc-test", "--register"]
+        + ["--iteration", "iter-001", "--family", "STUB", "--spec-hash", "s", "--verdict", "adopt", "--n-trials", "1"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(research_command._REGISTRY.read_text().splitlines()) == 1
+    assert _COMMITTED_REGISTRY.read_bytes() == before
 
 
 def test_a_second_trial_in_a_family_needs_n_trials_above_the_recorded_count(tmp_path, monkeypatch):
