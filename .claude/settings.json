@@ -16,7 +16,21 @@
       "Bash(gh pr merge:*)",
       "Bash(gh pr list:*)",
       "Bash(git fetch:*)",
-      "Bash(git ls-remote:*)"
+      "Bash(git ls-remote:*)",
+      "Bash(kraken ticker:*)",
+      "Bash(kraken ohlc:*)",
+      "Bash(kraken orderbook:*)",
+      "Bash(kraken orderbook-l3:*)",
+      "Bash(kraken trades:*)",
+      "Bash(kraken spreads:*)",
+      "Bash(kraken pairs:*)",
+      "Bash(kraken assets:*)",
+      "Bash(kraken balance:*)",
+      "Bash(kraken volume:*)",
+      "Bash(kraken ledgers:*)",
+      "Bash(kraken trades-history:*)",
+      "Bash(kraken positions:*)",
+      "Bash(kraken open-orders:*)"
     ]
   },
   "hooks": {
