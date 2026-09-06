@@ -764,7 +764,8 @@ ______________________________________________________________________
 
 ## 2026-09-06 — T0170 resolved: the Kraken CLI's reads reach the harness, the arming checklist gets its second producer, the spread calibration is spot-checked
 
-- `.claude/settings.json` grants the CLI's fourteen read-only prefixes; `kraken order`, `withdraw`, `wallet-transfer` and `subaccount` still take the per-call prompt, and the MCP registration is gone from every session started after 2026-09-06.
-- `infra/runbooks/engine-procedures.md`'s pre-probe step 8 reads the account through the CLI from the workstation and compares it with the boot's reconciliation line before arming — an order the CLI lists that the engine did not count is a row the engine cannot see, and `extended-balance`'s `hold_trade` is the EUR the engine reads as free.
+- `.claude/settings.json` grants the CLI's sixteen read-only prefixes; `kraken order`, `withdraw`, `wallet-transfer` and `subaccount` still take the per-call prompt.
+- The `kraken` MCP server is no longer registered; the CLI is reached through those prefixes.
+- `infra/runbooks/engine-procedures.md`'s pre-probe step 8 reads the account through the CLI from the workstation and compares it with the boot's reconciliation line before arming — an order the CLI lists that neither the boot line counted nor the engine's own log names is a row the engine cannot see.
 - `docs/reference/captured-spread-calibration.md`'s Recalibrating section names the live spot-check that precedes a full recalibration; a snapshot flags an order-of-magnitude break and never restamps the table.
-- T0170 is archived; the account and microstructure cross-checks recur through those two surfaces rather than as parked items.
+- T0170 is archived; the account cross-check recurs at arming and the calibration spot-check before a recalibration; the `orderbook-l3` queue-realism read is dropped for want of a consumer.
