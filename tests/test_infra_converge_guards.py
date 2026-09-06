@@ -1847,3 +1847,25 @@ def test_the_pins_echo_negates_the_asserts_own_first_disjunct():
     assert " ".join(negated.split()) == " ".join(disjunct.split()), (
         f"the echo records an override on other cases:\n echo:   {negated}\n assert: {disjunct}"
     )
+
+
+# --- A7: the resolver above reads a `src:` naming a broken link as an ABSENT asset rather than a
+# refusal, and that stands — ansible's own resolution finds no target either, so such a task fails at
+# deploy time on ansible's authority. A broken link is refused here by PRESENCE instead of by
+# reference: a walk of the role's asset trees needs no rule for how a `src:` is spelled.
+def test_no_ops_role_asset_is_a_broken_link():
+    """Every entry under the ops role's asset directories that exists as a name resolves to an existing target."""
+    walked = {sub: sorted((OPS_ROLE / sub).rglob("*")) for sub in ("files", "templates")}
+    print(
+        f"ops role asset entries walked: {sum(len(e) for e in walked.values())} — "
+        + ", ".join(f"{sub}/: {len(e)}" for sub, e in walked.items())
+    )
+    for sub, entries in walked.items():
+        assert entries, f"{OPS_ROLE.name}/{sub}/ walked empty, so this selection read no entry of it"
+    broken = [
+        f"{p.relative_to(OPS_ROLE)} -> {p.readlink()}"
+        for entries in walked.values()
+        for p in entries
+        if os.path.lexists(p) and not os.path.exists(p)
+    ]
+    assert not broken, f"{OPS_ROLE.name}/ carries a link whose target does not exist: {broken}"
