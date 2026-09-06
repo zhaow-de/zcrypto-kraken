@@ -800,9 +800,9 @@ def _unit_directives(unit: str) -> list[tuple[str, str, str]]:
 
 
 def test_the_capture_unit_orders_itself_against_no_clock_service():
-    """The premise the leading-clock tests below rest on, read from the unit file this repo installs: it
-    orders itself after no clock service, and `Restart=always` keeps re-running construction until a start
-    lands in that window."""
+    """Read from the unit file this repo installs: it orders itself after no clock service, and
+    `Restart=always` keeps re-running construction until a start lands in that window — so a writer can be
+    constructed while the host clock is still wrong."""
     directives = _unit_directives(CAPTURE_UNIT.read_text())
 
     # Read the ordering the unit ends up WITH, rather than searching for the spellings it must not carry.
