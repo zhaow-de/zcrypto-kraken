@@ -18,13 +18,13 @@ cat /var/log/filelink
 grep -irn <pattern> /var/log/dirlink
 ```
 
-### What the letter fix closes, and what it does not
+### What the letter fix closed, and what it did not
 
-**The distinction that matters, and that the fix on `feat/t0168-unasserted-claims` does not close.** `-R` follows a symlink met while *descending* a spelled directory, where `-r` does not; that is why the letter was dropped from the grep shape — it widens what a safe root reaches. It is not why the class is open. An operand that is *itself* a link — spelled, or landed there by a glob — is read through by `-r`, `-R` and a bare `grep` alike, and no flag letter closes that. The corrected rationale is in `_FIRST_STAGE_SHAPES`' grep entry comment; the branch's test `test_the_R_spelling_of_a_recursion_classifies_prepared` asserts only the letter, and `test_no_grep_shape_admits_a_dereferencing_option` plus `test_the_grep_shapes_admit_exactly_the_pinned_surface` hold every probed short spelling and any `--der…` long form across every grep shape, and pin the admitted surface so a further spelling cannot be added silently — `--dereference-recursive`, GNU's long form, escaped a letters-only probe until a review measured it.
+**The distinction that matters, and that the fix on `feat/t0168-unasserted-claims` did not close.** `-R` follows a symlink met while *descending* a spelled directory, where `-r` does not; that is why the letter was dropped from the grep shape — it widens what a safe root reaches. It was not why the class was open. An operand that is *itself* a link — spelled, or landed there by a glob — is read through by `-r`, `-R` and a bare `grep` alike, and no flag letter closes that. The corrected rationale is in `_FIRST_STAGE_SHAPES`' grep entry comment; the branch's test `test_the_R_spelling_of_a_recursion_classifies_prepared` asserts only the letter, and `test_no_grep_shape_admits_a_dereferencing_option` plus `test_the_grep_shapes_admit_exactly_the_pinned_surface` hold every probed short spelling and any `--der…` long form across every grep shape, and pin the admitted surface so a further spelling cannot be added silently — `--dereference-recursive`, GNU's long form, escaped a letters-only probe until a review measured it.
 
 ### Why it was a topic and not a fix
 
-It needs a **pre-planted link**, and no autonomous shape can create one: `ln -s /etc/shadow /var/log/x` classifies PREPARED. That is why it was parked here rather than fixed inside the branch that found it.
+It needed a **pre-planted link**, and no autonomous shape can create one: `ln -s /etc/shadow /var/log/x` classifies PREPARED. That is why it was parked here rather than fixed inside the branch that found it.
 
 ### A second instance, one head further out
 
@@ -32,7 +32,7 @@ It needs a **pre-planted link**, and no autonomous shape can create one: `ln -s 
 
 ## Why this matters
 
-The daily pass reads those roots autonomously on ops, the NAS and zaccess. A planted link is a one-time write by anyone holding the deploy user — so the model's guarantee was "no operand NAMES a path outside a safe root", which is weaker than the guarantee its name implies and weaker than a reader will assume.
+The daily pass reads those roots autonomously on ops, the NAS and zaccess. A planted link is a one-time write by anyone holding the deploy user — so the model's guarantee was "no operand NAMES a path outside a safe root", which was weaker than the guarantee its name implied and weaker than a reader would assume.
 
 ## Findings so far
 
