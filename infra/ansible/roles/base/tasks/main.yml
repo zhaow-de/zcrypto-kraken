@@ -105,8 +105,7 @@
 # leaving its json-file reader unable to serve that container's logs, so the container ships nothing
 # to Loki and `docker logs` hangs. Docker rotates these itself by RENAME, which readers follow
 # safely. `state: absent` rather than a deleted task: the file persists on every host that already
-# has it, and a deleted task would leave it rotating forever. Drop this task once every host has
-# converged past it -- check `/etc/logrotate.d/zcrypto-capture-docker` absent fleet-wide.
+# has it, and a deleted task would leave it rotating forever. Dropping the task is T0169's.
 - name: remove the docker json-log logrotate policy (copytruncate wedges dockerd's readers)
   ansible.builtin.file:
     path: /etc/logrotate.d/zcrypto-capture-docker
