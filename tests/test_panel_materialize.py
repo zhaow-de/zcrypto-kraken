@@ -275,10 +275,9 @@ def test_panel_watermark_ignores_state_sidecars(tmp_path: Path) -> None:
 
 
 def test_panel_watermark_ignores_a_year_directory_that_is_not_a_date(tmp_path: Path) -> None:
-    # `int("nope")` raises ValueError; `datetime()` narrows the year to a C int, so a `<YYYY>` above
-    # 2**31-1 raises OverflowError instead -- either escapes the "not ours, ignore it" promise if the
-    # guard names only the other. Skipped, not refused as the tick tree's is: this one is not our
-    # writer's alone, and `panel materialize`'s refusals send an operator in.
+    # Two different throws, `int("nope")` and `datetime()`'s C-int year, so a guard naming one lets the
+    # other escape the "not ours, ignore it" promise. Skipped, not refused as the tick tree's is: this
+    # one is not our writer's alone -- `panel materialize`'s refusals send an operator in.
     panel_root = tmp_path / "panel"
     write_hour(panel_root, "BTC/EUR", H, _materialize(tmp_path / "primary", "BTC/EUR", H))
     strays = [panel_root / "BTC" / "EUR" / "panel-1s" / y / "01" / "01" / "00.parquet" for y in (str(2**31), "nope")]
@@ -286,8 +285,8 @@ def test_panel_watermark_ignores_a_year_directory_that_is_not_a_date(tmp_path: P
         stray.parent.mkdir(parents=True)
         stray.write_bytes(b"garbage under a year directory no writer of ours can produce")
 
-    assert panel_watermark(panel_root, "BTC/EUR") == H  # the well-formed hour beside them still wins
-    assert all(stray.exists() for stray in strays)  # left alone, not deleted
+    assert panel_watermark(panel_root, "BTC/EUR") == H
+    assert all(stray.exists() for stray in strays)
 
 
 # --- materialize: the watermarked sweep -----------------------------------------------------------------
