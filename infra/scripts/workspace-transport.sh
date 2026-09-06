@@ -1,39 +1,27 @@
 #!/usr/bin/env zsh
-# Transports the full working environment between the workstation (ZhaoPrecision.fritz.box) and
-# the ops node (z-home-zcrypto.zhaow.pro) so work continues on the other machine exactly where it
-# left off (T0086). Run it ON THE SOURCE machine; the destination is inferred (or named as $1).
+# Transports the full working environment between the workstation and the ops node so work continues
+# where it left off (T0086). Run it ON THE SOURCE; the destination is inferred, or named as $1.
 #
-#   usage: workspace-transport.sh [destination-fqdn] [-y|--yes]
-#          -y skips the interactive confirmation (required when there is no terminal)
+#   usage: workspace-transport.sh [destination-fqdn] [-y|--yes]   -- -y skips the confirmation,
+# which is required when there is no terminal
 #
-# What moves: the repo's git state including UNPUSHED branches and tags (via git bundle -- this repo
-# keeps branches local until PR-open, so origin cannot align them), .local/ (gitignored and kept:
-# the memo -- hand-edited, unrecoverable if lost -- the coordination table, the lesson inboxes,
-# retro artefacts), ~/.claude/ session state (transcripts, memory, plugins set
-# AND versions), ~/.claude.json (MCP servers, project trust), the /tmp scratchpad, and the repo's
-# .superpowers/ SDD ledgers. What deliberately does NOT move: auth material
-# (~/.claude/.credentials.json, ssh/sops/gh/vault -- already aligned on both machines, owner's
-# ruling 2026-07-21), machine-local caches, IDE lock files and daemon runtime, and the data/ root
-# (regenerable -- the post-steps printed at the end re-derive it).
+# Git state moves as a bundle because this repo keeps branches local until PR-open, so origin cannot
+# align them. `.local/` moves because it is gitignored and kept, and its memo is hand-edited and
+# unrecoverable. Auth material deliberately does NOT move (owner's ruling, 2026-07-21): it is
+# already aligned on both machines. Neither does `data/`, which the post-steps re-derive.
 #
-# The destination is made to MIRROR the source. Two classes of destruction, deliberately unequal:
-#   - git refs: a destination-only branch is deleted only when its commits are contained in one of
-#     the SOURCE's OWN LOCAL branches (never a remote-tracking ref -- that is a local cache, not
-#     evidence the remote still has it). Anything else aborts the run before a byte moves.
-#   - non-git state (.local/, ~/.claude/): there is no equivalent proof available, so the plan
-#     shows what would be destroyed (a memo digest comparison, an rsync --delete dry run) and the
-#     destination's .local/ is backed up outside the repo before it is overwritten.
+# The destination is made to MIRROR the source, with two deliberately unequal classes of
+# destruction. A destination-only git ref is deleted only when its commits are contained in one of
+# the SOURCE's own LOCAL branches -- never a remote-tracking ref, which is a local cache rather than
+# evidence the remote still has it -- and anything else aborts before a byte moves. Non-git state
+# has no equivalent proof, so the plan shows what would be destroyed and the destination's `.local/`
+# is backed up outside the repo first.
 #
-# QUIET-POINT DISCIPLINE (run this only at a quiet point, immediately before switching):
-#   - no Claude session, background agent, or workflow mid-flight on EITHER machine -- running
-#     processes do not transfer, and a live session mutates state mid-rsync;
-#   - the /tmp scratchpad copy is only as durable as the destination's uptime (/tmp does not
-#     survive a reboot) -- transfer right before you switch, not hours ahead;
-#   - the two machines are never used simultaneously: everything here assumes the destination is
-#     idle and its state is an older copy of the source's. Both repos must be clean (no uncommitted
-#     changes, no stashes, no linked worktrees) or the script aborts before touching anything. A
-#     destination branch AHEAD of the source's same-named branch is force-rewound (the reflog
-#     retains it) -- committed work must always transfer back before switching.
+# QUIET POINT, immediately before switching: no session, agent or workflow mid-flight on EITHER
+# machine, since running processes do not transfer and a live one mutates state mid-rsync; the /tmp
+# scratchpad copy lasts only as long as the destination's uptime; both repos must be clean or the
+# script aborts; and a destination branch AHEAD of the source's is force-rewound, so committed work
+# must transfer back before switching.
 
 set -euo pipefail
 
@@ -84,12 +72,10 @@ case "$SRC_HOST" in
      [[ -n "$DEST" ]] || die "unknown source host '$SRC_HOST': pass the destination FQDN as \$1" ;;
 esac
 
-# --- preflight: reachability, BEFORE any state question ----------------------------------------
-# Load-bearing separation. ssh exits 255 when it cannot connect or verify a host key, so folding
-# reachability into a state check ("ssh ... || die 'repo is dirty'") reports a dirty repo it never
-# managed to query -- the exact false diagnosis this script emitted on 2026-07-21 when the
-# destination was missing from known_hosts. Connectivity is proven first, and every later remote
-# call distinguishes "the command failed" from "the answer was non-empty".
+# Reachability is proven BEFORE any state question, and the separation is load-bearing: ssh exits
+# 255 when it cannot connect or verify a host key, so folding the two together reports a dirty repo
+# it never managed to query. Every later remote call distinguishes "the command failed" from "the
+# answer was non-empty".
 if ! probe_err="$("${SSH[@]}" "$DEST" true 2>&1)"; then
   die "cannot reach '$DEST' over ssh -- nothing was touched.
   ssh said: ${probe_err:-(no output)}
@@ -120,11 +106,9 @@ dest_stashes="$(remote "git -C ${(q)REPO_DIR} stash list")" \
   || die "could not read the destination repo's stash list -- nothing was touched"
 [[ -z "$dest_stashes" ]] || die "DESTINATION repo has stashes -- resolve there first"
 
-# `status --porcelain` reports the MAIN worktree only. A linked worktree holding one of the branches
-# we are about to force-update makes `fetch --force refs/heads/*` abort wholesale (git refuses to
-# fetch into a checked-out branch) -- and it would abort AFTER the detach, leaving the destination
-# detached and every re-run reproducing it. This repo's own rules hand subagents worktrees, so it is
-# a live possibility, and the mirror model has no story for them: refuse up front.
+# `status --porcelain` reports the MAIN worktree only, and a linked worktree holding a branch we are
+# about to force-update makes `fetch --force refs/heads/*` abort wholesale -- AFTER the detach,
+# leaving the destination detached and every re-run reproducing it. Refuse up front.
 dest_worktrees="$(remote "git -C ${(q)REPO_DIR} worktree list --porcelain")" \
   || die "could not list the destination's worktrees -- nothing was touched"
 dest_wt_count="$(grep -c '^worktree ' <<< "$dest_worktrees" || true)"
@@ -155,10 +139,8 @@ while IFS=' ' read -r dname dsha; do
   if (( ${+SRC_SET[$dname]} )); then continue; fi
   # Recoverable iff one of the SOURCE's own local branches contains the commit. Deliberately not
   # `--all`: a remote-tracking ref is a local cache, and a force-push or a closed-unmerged PR leaves
-  # it naming a commit the remote no longer has -- deleting the destination's only copy on that
-  # evidence is exactly the loss this gate exists to prevent. Every source local branch ships in the
-  # bundle, so the surviving invariant is checkable: anything deleted here still exists on BOTH
-  # machines under a named branch.
+  # it naming a commit the remote no longer has. Every source local branch ships in the bundle, so
+  # anything deleted here still exists on BOTH machines under a named branch.
   if git -C "$REPO_DIR" cat-file -e "${dsha}^{commit}" 2>/dev/null \
      && [[ -n "$(git -C "$REPO_DIR" branch --contains "$dsha" 2>/dev/null)" ]]; then
     DELETABLE+=("$dname $dsha")
@@ -275,13 +257,11 @@ rm -f "$BUNDLE"
 remote "rm -rf ~/.zcrypto-local.pre-transport && cp -pr ${(q)REPO_DIR}/.local ~/.zcrypto-local.pre-transport 2>/dev/null || true"
 "${RSYNC[@]}" --delete "$REPO_DIR/.local/" "$DEST:$REPO_DIR/.local/"
 
-# --- session state -----------------------------------------------------------------------------
-# ~/.claude/: everything except machine-local runtime/caches and auth material.
-# Excludes are ANCHORED (leading /) to the ~/.claude top level: an unanchored 'cache/' would also
-# match plugins/cache/ -- which is not a cache but the pinned plugin payloads (installed_plugins.json
-# points installPath into it), exactly the "plugin silently absent on the other machine" failure this
-# transfer exists to prevent. .credentials.json stays unanchored deliberately (defensive, both ends).
-# /ide/ is excluded because it holds lock files keyed to this machine's ports and PIDs.
+# ~/.claude/ moves except machine-local runtime, caches and auth material. Excludes are ANCHORED to
+# the top level: an unanchored `cache/` would also match plugins/cache/, which holds the pinned
+# plugin payloads rather than a cache, and losing those is the silently-absent-plugin failure this
+# transfer exists to prevent. `.credentials.json` stays unanchored deliberately, and /ide/ is
+# excluded because its lock files are keyed to this machine's ports and PIDs.
 "${RSYNC[@]}" --delete "${CLAUDE_EXCLUDES[@]}" "$HOME/.claude/" "$DEST:.claude/"
 # MCP servers + project trust/allowlists -- without this the destination session has different tools.
 # NOTE: this file also carries machineID/userID/installMethod; same account both ends, so benign

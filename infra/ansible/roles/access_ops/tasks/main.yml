@@ -1,12 +1,11 @@
 # The access_ops role (spec 00075): the ops-node end of the zaccess WireGuard link -- WG client,
 # the NAS relay, the managed tmux conf (D15), and the ops-side tunnel/cert probe (D11/D12).
 
-# The G1 relay (zaccess:20022 -> 10.99.0.2:22) makes THIS host's sshd internet-reachable, and D6's
-# byte-copy relay rewrites the client source to 10.99.0.1 -- so per-IP throttling is impossible on
-# this path and fail2ban cannot see the real attacker. Password auth here would be unthrottled,
-# source-anonymized internet guessing against the box holding the live session. Force key-only. (The
-# ops node otherwise runs no sshd hardening role by owner choice -- this is the minimum the internet
-# exposure demands, not the full CIS baseline.)
+# The G1 relay makes THIS host's sshd internet-reachable, and D6's byte-copy relay rewrites the
+# client source, so per-IP throttling is impossible on this path and fail2ban cannot see the real
+# attacker. Password auth here would be unthrottled, source-anonymized internet guessing against the
+# box holding the live session, so key-only is forced. The ops node otherwise runs no sshd hardening
+# role by owner choice: this is the minimum the internet exposure demands, not the full baseline.
 - name: ops sshd -- key-only, no password auth (the G1 relay exposes :22 to the internet)
   ansible.builtin.copy:
     dest: /etc/ssh/sshd_config.d/10-zaccess-ops.conf
@@ -34,8 +33,7 @@
 # Two tasks, not one `loop: [socket, service]`: a loop assigns its whole notify list to EVERY item
 # and gates notification on the AGGREGATE changed result, so a service-only edit would also fire the
 # socket handler -- and the service's `Requires=` propagates that restart, bouncing the live relay
-# twice per converge. Split, each half notifies only what it can apply.
-# spec 00075 D6.
+# twice per converge. spec 00075 D6.
 - name: nas relay socket unit (systemd-socket-proxyd, no NAT/forwarding)
   ansible.builtin.template:
     src: zaccess-nas-proxy.socket.j2
@@ -77,11 +75,10 @@
   ansible.builtin.systemd: {name: zaccess-probe-ops.timer, enabled: true, state: started, daemon_reload: true}
 
 # Idempotency is keyed on the pinned version being present under nvm's CURRENT node, not on a
-# hardcoded path (`creates:` would pin the node version into the check). `npm ls` exits non-zero when
-# the exact version is absent -- e.g. after a node upgrade moved the global bin -- which re-triggers
-# the install for the new node. community.general.npm was considered but a user-scope global install
-# needs nvm's node prefix on PATH and the module has no "source nvm.sh first" hook.
-# spec 00075 D13, gate G2.
+# hardcoded path, which `creates:` would pin. `npm ls` exits non-zero when the exact version is
+# absent -- after a node upgrade moved the global bin, say -- which re-triggers the install for the
+# new node. community.general.npm cannot be used: a user-scope global install needs nvm's node
+# prefix on PATH and the module has no hook to source nvm.sh first. spec 00075 D13, gate G2.
 - name: agentboard -- is the pinned version present under nvm's current node?
   ansible.builtin.command:
     cmd: >-
@@ -103,19 +100,16 @@
   become: true
   become_user: zhaow
 
-# Rendered ahead of the unit that ExecStarts it, and notifying nothing on purpose: a changed script
+# Rendered ahead of the unit that ExecStarts it and notifying nothing on purpose: a changed script
 # takes effect at the next restart the operator chooses.
 #
-# That is NOT the same as "a converge cannot restart agentboard", and the difference is the whole
-# reason KillMode=process matters here. No task and no handler in this role restarts the unit -- but
-# `zaccess-agentboard.service` declares `Requires=wg-quick@zaccess0.service`, and the wireguard conf
-# template above notifies `restart wg-quick@zaccess0`; systemd propagates an explicit restart across
-# `Requires=`. So a converge that changes the tunnel conf DOES restart agentboard, and the notifying
+# That is NOT "a converge cannot restart agentboard", and the difference is why KillMode=process
+# matters. No task or handler here restarts the unit, but `zaccess-agentboard.service` declares
+# `Requires=wg-quick@zaccess0.service` and the wireguard template above notifies a restart of it,
+# which systemd propagates. So a tunnel-conf change DOES restart agentboard -- and the notifying
 # task is `no_log: true`, so it shows as `changed` with no diff to warn you. Under the unit's old
-# default KillMode that path reached the operator's tmux server -- the 2026-08-27 destruction is
-# reachable from an ordinary `--limit zcrypto-ops --tags access` run, not only from a hand restart.
-# KillMode=process is what makes the propagated restart survivable, which is why it ships here rather
-# than waiting for a quieter change.
+# default KillMode that path reached the operator's tmux server, from an ordinary tag-scoped
+# converge rather than only from a hand restart.
 - name: agentboard start script (execs the server as MainPID so KillMode=process is correct)
   ansible.builtin.template:
     src: zaccess-agentboard-start.sh.j2
@@ -128,11 +122,10 @@
     dest: /etc/systemd/system/zaccess-agentboard.service
     mode: '0644'
   notify: reload systemd
-# Gated on access_ops_agentboard_live (D13), not hardcoded: a converge must never bring the web
-# terminal live on its own, but a fixed enabled:true/false would fight whichever state the owner
-# set by hand. Idempotent both ways -- default (false) converges to disabled+stopped every time
-# (so a reboot before the spike passes cannot auto-start it via WantedBy=), and once the owner
-# flips the flag true (after the spike passes), converges keep it enabled+started.
+# Gated on `access_ops_agentboard_live` (D13) rather than hardcoded: a converge must never bring the
+# web terminal live on its own, and a fixed enabled state would fight whatever the owner set by
+# hand. False converges to disabled and stopped every time, so a reboot cannot auto-start it via
+# `WantedBy=`.
 - name: agentboard unit state — gated on the spike (access_ops_agentboard_live)
   ansible.builtin.systemd:
     name: zaccess-agentboard.service
