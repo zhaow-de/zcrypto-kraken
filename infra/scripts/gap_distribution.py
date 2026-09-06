@@ -1,31 +1,21 @@
-"""Pin `--min-gap-seconds` from real cross-host data (spec 00050, Task 12 / T0039).
-
-[Pinned 2026-07-17: this soak ran (66 h, 217 windows) and validated the deployed 30 s -- 2.48x the
-worst coalescing artifact (12.08 s), 2.03x the single-host maximum (14.78 s); T0039 resolved, the
-deployed reconciler runs --mint. The harness remains reusable for re-pinning.]
-
-The measurement problem it answers: Kraken coalesces book updates per WebSocket connection, so the
-two hosts record different message sequences for the same pair, and a coalescing artifact can make
-the primary *appear* silent while the secondary shows activity inside the silence. If
-`--min-gap-seconds` sits below that apparent-silence tail, the reconciler would splice a secondary
-block into an hour the primary never actually lost -- an unaudited data swap into an archive that
-cannot be backfilled. The threshold must sit ABOVE the measured tail.
-
-This measures the thing that must be pinned above: over the soaked RAW mirrors (never the overlay),
-the distribution of primary book-silence windows the secondary witnessed -- exactly the `find_book_gaps`
-detector the reconciler uses, run at a 1 s probe floor: below the ~15 s region that pins the threshold,
-so it sees the whole approach to and beyond the tail, while excluding the sub-second coalescing jitter
-that is both irrelevant to the threshold and quadratic to enumerate on a busy pair.
-
+"""Pin `--min-gap-seconds` from real cross-host data (spec 00050 Task 12, T0039).
+T0039 is resolved and the deployed 30 s validated by a soak this harness ran; it stays reusable
+for re-pinning. Kraken coalesces book updates per WebSocket connection, so the two hosts record
+different message sequences for the same pair and a coalescing artifact can make the primary
+appear silent while the secondary shows activity inside that silence. A threshold below that
+apparent-silence tail would let the reconciler splice a secondary block into an hour the primary
+never lost -- an unaudited swap into an archive that cannot be backfilled -- so it must sit ABOVE
+the measured tail.
+Measured over the soaked RAW mirrors, never the overlay, with the reconciler's own
+`find_book_gaps` at a 1 s probe floor: below the region that pins the threshold, so the whole
+approach to the tail is visible, while excluding sub-second coalescing jitter that is irrelevant
+and quadratic to enumerate.
     uv run python infra/scripts/gap_distribution.py <primary-root> <secondary-root>
         [--since YYYY-MM-DD] [--probe-seconds 1.0] [--review-ceiling 120] [--top 20]
-
-Run it against PULLED copies of the two mirrors, never the live dirs. The suggested threshold is
-decision-support, not a verdict: the largest windows must be classified by hand (a real primary
-outage vs. a coalescing artifact) before the number is trusted, because a real outage wrongly counted
-as quiescence would push the threshold too high and blind the detector, and a coalescing artifact
-wrongly excluded would push it too low and license a phantom splice. Record the derivation in T0039
-the way the single-host figure is recorded.
+Run it against PULLED copies, never the live dirs. The suggested threshold is decision-support:
+the largest windows must be classified by hand first, because a real outage counted as quiescence
+pushes the threshold too high and blinds the detector, and a coalescing artifact excluded pushes
+it too low and licenses a phantom splice.
 """
 
 from __future__ import annotations
@@ -57,17 +47,13 @@ def observe_gaps(
     probe_seconds: float = 1.0,
 ) -> tuple[list[GapObs], list[tuple[str, datetime, str]]]:
     """Every primary book-silence window the secondary witnessed, across hours BOTH mirrors hold.
-
-    Returns `(observations, skipped)`. Only the intersection of the two mirrors' hours is used: a
-    pre-secondary hour (bring-up, or any window the secondary simply never captured) would otherwise
-    register as one hour-long primary-only "gap" and poison the quiescence distribution with data that
-    is about coverage, not coalescing.
-
-    A per-hour failure is ISOLATED, not fatal. `find_book_gaps` raises on a non-monotonic stream, and a
-    read can raise on a corrupt or truncated final -- and this sweep runs over 48 h x 10 pairs, so
-    letting one anomalous hour abort the whole analysis would throw away the entire soak. Each such hour
-    is recorded in `skipped` with its `(pair, hour, error)` and the run continues; `skipped` is surfaced
-    prominently in the report (a silently-dropped hour would read as "clean" when it was not).
+    Only the intersection of the two mirrors' hours is used: a pre-secondary hour would otherwise
+    register as one hour-long primary-only gap and poison the distribution with data about
+    coverage rather than coalescing.
+    A per-hour failure is ISOLATED. `find_book_gaps` raises on a non-monotonic stream and a read
+    can raise on a truncated final, so letting one anomalous hour abort would throw away the whole
+    soak; each is recorded in `skipped` with its (pair, hour, error) and surfaced, because a
+    silently dropped hour would read as clean.
     """
     pri_hours = scan_hours(primary_root, "book")
     sec_hours = scan_hours(secondary_root, "book")
@@ -105,12 +91,10 @@ def _percentile(sorted_seconds: list[float], p: float) -> float:
 
 def summarize(seconds: list[float]) -> dict:
     """Distribution stats + a suggested `--min-gap-seconds`.
-
-    The suggestion is `ceil(2 * max)` -- the same 2x-margin rule that produced the current default
-    (30 = 2x 14.78), now from measured data. It is a STARTING point: the report flags the largest
-    windows for manual classification first, because the whole risk T0039 exists for is that one of
-    them is a coalescing artifact (which the threshold must cover) rather than a real outage (which it
-    must not be dragged up by).
+    The suggestion is `ceil(2 * max)`, the same 2x-margin rule that produced the current default,
+    now from measured data. It is a STARTING point: the largest windows are flagged for manual
+    classification first, because the risk T0039 exists for is that one of them is a coalescing
+    artifact the threshold must cover rather than a real outage it must not be dragged up by.
     """
     if not seconds:
         return {

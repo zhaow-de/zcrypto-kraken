@@ -29,43 +29,34 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 
 # ALWAYS the `-compat` (no-AVX) build: this Atom dies instantly on the default build with `Illegal
 # instruction` (T0029). Prove it by RUNNING polars in the pulled image, never by reading the label.
-# Verify a re-pin off the CONTAINER, never off this file — the .env task is no_log/diff:false, so
-# `--check --diff` reports .env changed with the digest invisible.
+# Verify a re-pin off the CONTAINER, never off this file -- the .env task is no_log with diff false,
+# so `--check --diff` reports .env changed with the digest invisible.
 # The NAS converges BEFORE the engine: gate-export scores the ratified streak here, and a reader
-# meeting a record it cannot parse zeroes that streak with the engine deploy fully correct.
-# Any converge that RECREATES the container replays the whole journal cold -- not only a
-# fingerprint-invalidating re-pin (the cache is ephemeral; see the pin comment below). A cold
-# replay takes the better part of an hour and grows with the journal; see
-# docs/reference/fleet-pins.md's standing constraint for the current figure.
-# `cache_invalidated` reads 0 across such a re-pin and that is CORRECT: /tmp is unmounted, so a
-# recreate leaves NO cache file, and `load_cache` returns rejected=False for an absent path (True
-# only when a file existed and was discarded). zcrypto_gate_cache_invalidated (spec 00060 D8)
-# publishes cache.rejected, so 0 is what an
-# absent cache must read -- it is not a missed invalidation. Read `cache_hits` instead.
-# Gate metrics describe the PREVIOUS image for ~1 h after a roll — check the textfile's mtime first.
-# Previous pin: 9f814848fce1 (revision eb6a503a), verified resident at the re-pin.
-# ROLLBACK: roll the REPO STATE, not just this pin. `pull-entrypoint.sh` is a bind mount, so an
-# image roll leaves it in place passing `--hash-scope`, which no image before a3a3837e accepts
-# (flipping `nas_archive_pull_hash_scope` to `full` does not help -- the flag is still sent).
-# Converge from a pre-spec-00102 state WITH `-e nas_apply_compose=true`; without the flag the role
-# is render-only and still reports success. Delete the `archive-pull-*.prom` textfiles on the way
-# out, or their gauges stay frozen and keep feeding the dashboard.
-# Moving this pin replays the whole gate export COLD -- budget the better part of an hour, not a
-# restart. Every converge that RECREATES the container does it: the cache is `/tmp/gate-cache.json`
-# and `/tmp` is on no mount. Compare fingerprints across two images with:
+# meeting a record it cannot parse zeroes that streak with the engine deploy fully correct. Moving
+# this pin replays the whole gate export COLD -- budget the better part of an hour, not a restart --
+# and every converge that RECREATES the container does it, because the cache is /tmp/gate-cache.json
+# and /tmp is on no mount. Compare fingerprints across two images with:
 #   docker run --rm --entrypoint python <image> -c \
 #     'from cli.engine.gate_cache import replay_fingerprint; print(replay_fingerprint())'
-# What it cost on a given rollout belongs in that rollout's fleet-pins row, never here.
+# `cache_invalidated` reads 0 across such a re-pin and that is CORRECT: no cache file exists and
+# `load_cache` returns rejected=False for an absent path, so read `cache_hits` instead. Gate metrics
+# describe the PREVIOUS image for about an hour after a roll -- check the textfile's mtime first.
+# ROLLBACK rolls the REPO STATE, not just this pin: `pull-entrypoint.sh` is a bind mount, so an
+# image roll leaves it in place passing `--hash-scope`, which older images reject, and flipping the
+# scope to `full` does not help because the flag is still sent. Converge from a pre-spec-00102 state
+# WITH `-e nas_apply_compose=true`; without the flag the role is render-only and still reports
+# success. Delete the `archive-pull-*.prom` textfiles on the way out, or their gauges stay frozen
+# and keep feeding the dashboard. What a rollout cost belongs in that rollout's fleet-pins row,
+# never here.
 nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the trap the
 # committed pin kills. Alloy v1.18.0 (2026-07-20); previous pin 4f6ddc56ffdc (v1.17.1).
 nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
 
-# Spec 00102 D7: `full` re-hashes every segment each cycle; `incremental` hashes rsync's transfers plus
-# a rotating 1/24 slice. Flipping this is a config-only converge on the running digest (under
-# -e nas_apply_compose=true), and so is the rollback. The entrypoint that reads this needs an image
-# that knows --hash-scope: it lands with that image pin in one applied converge, never render-only
-# against an older image.
+# Spec 00102 D7: `full` re-hashes every segment each cycle, `incremental` hashes rsync's transfers
+# plus a rotating slice. Flipping it is a config-only converge on the running digest, and so is the
+# rollback. The entrypoint that reads it needs an image that knows `--hash-scope`, so it lands with
+# that image pin in ONE applied converge, never render-only against an older image.
 nas_archive_pull_hash_scope: incremental
 
 # Pull sources + per-channel SSH ports, rendered into {{ nas_stack_dir }}/.env by the nas role
@@ -75,11 +66,11 @@ nas_capture_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
 nas_journal_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_capture_red_source: "zcrypto-data@zcrypto-red.zhaow.me:"
-# The four ops channels below address the host by FQDN (swapped 2026-08-26). The pull loop runs
-# StrictHostKeyChecking=yes with CheckHostIP=no against a pre-seeded keys/known_hosts, so it matches
-# on the HOSTNAME STRING alone — an unseeded name fails the pull CLOSED. Both names are pinned there,
-# with key material copied from the trusted IP lines rather than re-scanned, so either spelling works
-# and a revert needs no host-key change.
+# The four ops channels below address the host by FQDN. The pull loop runs StrictHostKeyChecking=yes
+# with CheckHostIP=no against a pre-seeded known_hosts, so it matches on the HOSTNAME STRING alone
+# and an unseeded name fails the pull CLOSED. Both names are pinned there, with key material copied
+# from the trusted IP lines rather than re-scanned, so either spelling works and a revert needs no
+# host-key change.
 nas_liquidations_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"
 nas_liquidations_ssh_port: 22
 nas_panel_source: "zcrypto-data@z-home-zcrypto.zhaow.pro:"

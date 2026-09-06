@@ -1,58 +1,30 @@
 #!/usr/bin/env python3
-"""E1b — which open-orders call shapes return the resting rows, on the wheel we actually run.
-
-E1 proved the mechanism: the adapter's open-orders read drops rows whose raw venue symbol misses an
-unpopulated instrument cache — 0 rows before `cache_instrument`, 2 after, same client, one variable.
-This does not re-prove that. It names WHICH of the call shapes return the rows, while the two-order
-fixture still stands, so a later reader knows what `zcrypto engine flatten` and the startup pass can
-and cannot see rather than inferring it from one data point.
-
-READ-ONLY, and the claim is guarded rather than asserted: `tests/test_e1b_order_visibility_probe.py`
-runs this sweep against a stub that raises on every write method, so the property is checked without
-money on the line. Nothing here places, cancels, amends or edits anything.
-
-The empty-cache arm is byte-for-byte what `cli/engine/flatten.py` gets: `KrakenSpotHttpClient(key,
-secret)` with no other argument, reading with `open_only=True` and no `instrument_id`, under the
-engine's own account id. That shape is marked in the table — it is the row that answers "what does
-flatten see", and the other seven are the context that makes it interpretable.
-
-`KrakenEnvironment` is deliberately absent: `KrakenSpotHttpClient.__init__` takes no such parameter
-at all. The environment selector belongs to `KrakenExecutionClientConfig`, which the order-semantics
-probe builds and this one does not — and adding any argument flatten does not pass would end the
-like-for-like comparison this run exists to make.
-
-Credentials come from the environment and are never stored, echoed or logged; the refusal names the
-VARIABLES. Run it FROM the workstation, not on the engine host: ssh forwards local stdin into the
-container, so the source never lands on the host and nothing is left behind to delete. This script
-registers no arguments, so `-` needs no argv after it.
-
+"""E1b -- which open-orders call shapes return the resting rows, on the wheel we actually run.
+It names WHICH shapes return the rows while the two-order fixture stands, so a later reader knows
+what `zcrypto engine flatten` and the startup pass can and cannot see. The empty-cache arm is
+byte-for-byte what flatten gets, which is why that shape is the subject and the others are the
+context that makes it interpretable.
+`KrakenEnvironment` is deliberately absent: `KrakenSpotHttpClient.__init__` takes no such
+parameter, and adding any argument flatten does not pass would end the like-for-like comparison
+this run exists to make. Credentials come from the environment and are never stored, echoed or
+logged; the refusal names the VARIABLES.
+Run it FROM the workstation, never on the engine host: ssh forwards local stdin into the
+container, so the source never lands on the host and nothing is left behind to delete.
     IMAGE=$(ssh zcrypto sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine)
-    ssh zcrypto sudo docker run --rm -i --env-file /opt/zcrypto-engine/engine.env --entrypoint python "$IMAGE" - < infra/scripts/e1b-order-visibility-probe.py
-
-The image comes from the RUNNING container, never from a pins file. A rollback re-pins a host without
-re-truing any row, so a file can name a wheel the engine is not on — and which wheel it is on is this
-probe's entire subject. `.Config.Image` is one of the narrow fields CLAUDE.md `## Secrets` allows on
-that host; the whole-object inspect forms print the trade key.
-
-`--entrypoint python` is NOT flatten's value: flatten overrides to `zcrypto` because it runs a
-subcommand, this is a plain script, and bare `python` is the image's venv interpreter
-(`infra/docker/Dockerfile` puts `/app/.venv/bin` first on PATH). Having an override at all is the
-load-bearing part, for the reason the flatten template also states: the image's ENTRYPOINT is a
-`sh -c` launcher that builds its own argument list and execs `zcrypto capture` with the trade key in
-its environment, never reading what follows the image — omit the override and this does not run.
-This script is never run through `infra/scripts/probe-with-vaulted-key.sh`, whose target is the
-order-placing harness.
-
-Its eight order-status reads share the trade key with the still-running engine, so one engine order
-or cancel may be rejected around them; the engine reconciles that at its next 4-hourly boundary. Run
-it in the window an engine converge takes, which is narrower than "between boundaries": start at
-least 30 minutes after a boundary (00/04/08/12/16/20 UTC) — those belong to the boundary cycle — and
-finish at least 10 minutes before the next one. That is the conservative FLOOR of the guard in
-`infra/ansible/site.yml`, which releases earlier when the boundary cycle has journaled its
-completion; this probe runs in seconds, so the floor costs nothing to honour.
-
-Nine venue calls: eight order-status reads, plus the one `request_instruments` the populated arm
-needs to obtain an instrument to cache.
+    ssh zcrypto sudo docker run --rm -i --env-file /opt/zcrypto-engine/engine.env \
+      --entrypoint python "$IMAGE" - < infra/scripts/e1b-order-visibility-probe.py
+The image comes from the RUNNING container, never a pins file: a rollback re-pins a host without
+re-truing any row, and which wheel it is on is this probe's entire subject. `--entrypoint python`
+is not flatten's value, and having an override AT ALL is the load-bearing part -- the image's
+ENTRYPOINT is a `sh -c` launcher that builds its own argument list and never reads what follows
+the image, so without an override this does not run. Never through `probe-with-vaulted-key.sh`,
+whose target is the order-placing harness.
+Its order-status reads share the trade key with the still-running engine, so one engine order or
+cancel may be rejected around them and the engine reconciles at its next 4-hourly boundary. Run it
+at least 30 minutes after a boundary (00/04/08/12/16/20 UTC) and finish at least 10 minutes before
+the next -- the conservative floor of the guard in `infra/ansible/site.yml`, which releases
+earlier once the boundary cycle has journaled; this probe runs in seconds, so the floor costs
+nothing.
 """
 
 from __future__ import annotations

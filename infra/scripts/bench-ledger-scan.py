@@ -1,40 +1,26 @@
 #!/usr/bin/env python3
 """How long does the reconcile ledger take to scan, at sizes the live one has not reached?
-
-`_load_ledger` reads the whole append-only JSONL and `_totals` sums it, on EVERY cycle -- so both
-are O(ledger). T0044 registered that as a risk against a record-count trigger nobody could check.
-This measures the curve instead, so the question is answered by running a command rather than by
-re-deriving an estimate under time pressure.
-
-What the numbers are judged against, in the order they bind:
-  * MEMORY FIRST. The returned list costs several times the file's size on disk, and a cycle the OOM
-    reaper kills publishes nothing at all -- so this fails abruptly, and the cycle-duration alert goes
-    STALE rather than high and cannot warn about it. Peak resident against the ops host's
-    MemAvailable (`docs/reference/fleet.md`'s ops row; live as
-    `node_memory_MemAvailable_bytes{host="ops"}`, never MemFree) is the cliff.
-  * Time second, and it is far away. The cycle runs half-hourly, so a scan approaching 1800 s
-    collides with the next one -- but on the measured fit that needs an order of magnitude more
-    records than memory does.
-  * `zcrypto-reconcile-exporter-stale` and `zcrypto-reconcile-source-lag` page at 3 h. Both are
-    backstops: a scan cannot reach them without having blown cadence, and cadence trails memory.
-
-Synthetic records mirror what `_totals` actually reads, and the KEY SPACE is the part that has to be
-right: the writer emits each (pair, kind, hour) at most once, so a real ledger's `measured` dedup set
-grows with the file and is the one structure in the pass that is not O(1) per record. Cycling pair
-and hour off `n % k` saturates that set at a few hundred entries however large the file gets, which
-short-circuits nearly every mint-family record at `if key in measured: continue` and understates both
-the time and the memory. Hours therefore advance monotonically here, with pair x kind cycling inside
-each hour, exactly as the writer does.
-
-Timing AND memory are measured in a CHILD PROCESS PER SIZE, and the reason is VmHWM: it is a
-per-process high-water that never falls, so one process looping over several sizes reports the
-largest so far for every size after the first. One child per size is what makes each row its own
-measurement. (`ru_maxrss` is not read here, and must not be: it is inherited verbatim across
-fork+exec, so a child of a heavy parent reports the PARENT's peak -- measured, a child allocating
-nothing reports 1215 MiB from a 1215 MiB parent while its own VmHWM is 15 MiB. Two figures published
-from this branch were wrong that way before the metric was changed.)
-
-Run: `uv run python infra/scripts/bench-ledger-scan.py [--sizes 1000,10000,...]`
+`_load_ledger` reads the whole append-only JSONL and `_totals` sums it on EVERY cycle, so both are
+O(ledger). T0044 registered that against a record-count trigger nobody could check; this measures
+the curve instead, so the question is answered by running a command rather than re-deriving an
+estimate under time pressure.
+MEMORY binds first. The returned list costs several times the file's size on disk, and a cycle the
+OOM reaper kills publishes nothing at all -- so it fails abruptly and the cycle-duration alert
+goes STALE rather than high, unable to warn about it. Peak resident against the ops host's
+MemAvailable, never MemFree, is the cliff. Time is far behind it: the cycle is half-hourly, so a
+scan approaching 1800 s collides with the next one, which on the measured fit needs an order of
+magnitude more records than memory does.
+The KEY SPACE is the part of the synthetic data that has to be right: the writer emits each (pair,
+kind, hour) at most once, so a real ledger's `measured` dedup set grows with the file and is the
+one structure here that is not O(1) per record. Cycling pair and hour off `n % k` would saturate
+that set at a few hundred entries however large the file gets, short-circuiting nearly every mint-
+family record and understating both time and memory. Hours advance monotonically, with pair x kind
+cycling inside each hour, exactly as the writer does.
+Timing and memory are measured in a CHILD PROCESS PER SIZE because VmHWM is a per-process high-
+water that never falls, so one process looping over sizes reports the largest so far for every row
+after the first. `ru_maxrss` must not be substituted: it is inherited verbatim across fork+exec,
+so a child allocating nothing reports its parent's peak.
+    Run: `uv run python infra/scripts/bench-ledger-scan.py [--sizes 1000,10000,...]`
 """
 
 from __future__ import annotations
@@ -112,11 +98,8 @@ def _vmhwm() -> float:
 
 def _child(root: Path, repeats: int) -> None:
     """Time and measure one ledger in a process that has held no other.
-
-    Everything happens HERE, not in the parent, because the peak this prints is VmHWM -- a
-    per-process high-water that never falls. A single process walking the sizes would report its
-    largest ledger so far for every row after the first, so one child per size is what makes each row
-    a measurement of that size rather than of the run.
+    Everything happens HERE rather than in the parent: VmHWM never falls, so a single process
+    walking the sizes would report its largest ledger so far for every row after the first.
     """
     best_load = best_totals = float("inf")
     for _ in range(repeats):
