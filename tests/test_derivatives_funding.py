@@ -248,7 +248,8 @@ def _substrate_root(name: str) -> Path:
 _FUNDING_ROOT = _substrate_root("derivatives-funding")
 
 # A closed past window: a forward refresh extends the substrate beyond it and cannot move a count
-# taken over it.
+# taken over it. The row count alone is taken over it — the cadence scan below reads the whole
+# series, because a print past the window is exactly the kind that would break spec 00110 D7.
 _CLOSED_WINDOW_END = datetime(2026, 1, 1, tzinfo=UTC)
 
 
@@ -265,8 +266,8 @@ def test_the_off_cadence_funding_prints_are_one_bounded_stretch_on_sol():
     off_cadence: Counter[int] = Counter()
     off_perps = set()
     for perp in sorted(PERP_SYMBOLS.values()):
-        frame = read_funding_series(_FUNDING_ROOT, perp).filter(pl.col("ts") < _CLOSED_WINDOW_END)
-        prints += frame.height
+        frame = read_funding_series(_FUNDING_ROOT, perp)
+        prints += frame.filter(pl.col("ts") < _CLOSED_WINDOW_END).height
         off = frame.filter(pl.col("interval_hours") != 8)
         if off.height:
             off_perps.add(perp)
