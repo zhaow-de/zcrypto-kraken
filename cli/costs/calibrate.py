@@ -59,9 +59,16 @@ def _hourly_files_in_window(panel_dir: Path, window_start: datetime, window_end:
         # convention, independent of what tzinfo the caller's window happens to carry. Deriving it
         # from the caller would select the wrong FILES for an equivalent-instant, non-UTC window
         # while the polars filter below stayed correct -- a silently partial window.
-        hour_start = datetime(
-            int(p.parent.parent.parent.name), int(p.parent.parent.name), int(p.parent.name), int(p.stem), tzinfo=timezone.utc
-        )
+        try:
+            hour_start = datetime(
+                int(p.parent.parent.parent.name), int(p.parent.parent.name), int(p.parent.name), int(p.stem), tzinfo=timezone.utc
+            )
+        except ValueError, OverflowError:
+            # A hand-made directory that is not a date -- not ours, ignore it, as
+            # `cli/panel/materialize.py`'s `panel_watermark` does over this same tree: two readers of
+            # one tree must not disagree about whether a foreign entry is corruption. Scoped to the
+            # construction, so the polars filter below still raises its own errors.
+            continue
         if hour_start < window_end and hour_start + timedelta(hours=1) > window_start:
             files.append(p)
     return sorted(files)
