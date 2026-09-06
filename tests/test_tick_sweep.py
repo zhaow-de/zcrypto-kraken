@@ -176,7 +176,7 @@ def test_a_permanently_holed_day_moves_from_unhealed_to_gap_when_the_window_pass
     assert first.days_written == 4 and first.days_unhealed == 1  # 08-02's hole is permanent; the watermark is now 08-05
 
     inside = materialize(src, overlay, out, now=now, rescan_days=4)  # floor 08-01 -- the window still reaches 08-02
-    assert inside.days_unhealed >= 1 and inside.days_gap == 0
+    assert inside.days_unhealed == 1 and inside.days_gap == 0
 
     past = materialize(src, overlay, out, now=now, rescan_days=2)  # floor 08-03 -- 08-02 sits one day below it
     assert past.days_gap == 1 and past.days_unhealed == 0
