@@ -16,6 +16,9 @@ from dataclasses import dataclass
 
 COMMENT_BLOCK_LINES = 4
 FILE_PROSE_PERCENT = 20
+# Code lines below which the percentage is unreachable by construction: one class statement under its
+# one-sentence docstring is already half its file, and no edit short of deleting the sentence moves it.
+FILE_PROSE_FLOOR = 4
 TABLE_ROW_CHARS = 200
 SECTION_BYTES = 2048
 CHANGELOG_BULLETS = 5
@@ -119,7 +122,7 @@ def _block_offenders(path: str, blocks: list[Block]) -> list[Offender]:
 def python_offenders(path: str, src: str) -> list[Offender]:
     out = _block_offenders(path, python_blocks(src))
     measured = measure_python(src)
-    if measured and measured[0] and measured[1] * 100 > FILE_PROSE_PERCENT * measured[0]:
+    if measured and measured[0] and measured[2] >= FILE_PROSE_FLOOR and measured[1] * 100 > FILE_PROSE_PERCENT * measured[0]:
         percent = round(100 * measured[1] / measured[0], 1)
         out.append(Offender(path, 1, "file-prose", percent, FILE_PROSE_PERCENT, ""))
     return out
@@ -257,7 +260,14 @@ def render(offenders: list[Offender]) -> str:
 def main(argv: list[str] | None = None) -> int:
     thresholds = " ".join(
         f"{name}={globals()[name]}"
-        for name in ("COMMENT_BLOCK_LINES", "FILE_PROSE_PERCENT", "TABLE_ROW_CHARS", "SECTION_BYTES", "CHANGELOG_BULLETS")
+        for name in (
+            "COMMENT_BLOCK_LINES",
+            "FILE_PROSE_PERCENT",
+            "FILE_PROSE_FLOOR",
+            "TABLE_ROW_CHARS",
+            "SECTION_BYTES",
+            "CHANGELOG_BULLETS",
+        )
     )
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0], epilog=f"thresholds: {thresholds}")
     parser.add_argument("paths", nargs="*", help="files or directories to scan; default: the repo's live prose")

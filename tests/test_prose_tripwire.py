@@ -140,6 +140,24 @@ class TestFileProse:
         assert tw.offenders_for("a.py", "def (:\n") == []
 
 
+class TestTheFileProseFloor:
+    def _src(self, code: int) -> str:
+        """Two comment lines (under the block bar) over `code` code lines — over the percentage at both sizes."""
+        return "# a\n# b\n" + "".join(f"x{i} = {i}\n" for i in range(code))
+
+    def test_the_percentage_bar_starts_at_the_floor(self) -> None:
+        offs = tw.offenders_for("a.py", self._src(tw.FILE_PROSE_FLOOR))
+        assert _kinds(offs) == ["file-prose"]
+
+    def test_a_file_one_code_line_under_the_floor_is_not_measured(self) -> None:
+        src = self._src(tw.FILE_PROSE_FLOOR - 1)
+        assert tw.measure_python(src)[1] * 100 > tw.FILE_PROSE_PERCENT * tw.measure_python(src)[0]
+        assert tw.offenders_for("a.py", src) == []
+
+    def test_a_one_class_module_with_its_one_sentence_docstring_is_not_reported(self) -> None:
+        assert tw.offenders_for("cli/x/errors.py", 'class E(Exception):\n    """One sentence."""\n') == []
+
+
 class TestTableRow:
     def test_trips_one_over(self) -> None:
         row = "|" + "a" * (tw.TABLE_ROW_CHARS - 1)
@@ -376,7 +394,14 @@ class TestTheCommandLine:
             tw.main(["--help"])
         assert exc.value.code == 0
         text = capsys.readouterr().out
-        for name in ("COMMENT_BLOCK_LINES", "FILE_PROSE_PERCENT", "TABLE_ROW_CHARS", "SECTION_BYTES", "CHANGELOG_BULLETS"):
+        for name in (
+            "COMMENT_BLOCK_LINES",
+            "FILE_PROSE_PERCENT",
+            "FILE_PROSE_FLOOR",
+            "TABLE_ROW_CHARS",
+            "SECTION_BYTES",
+            "CHANGELOG_BULLETS",
+        ):
             assert f"{name}={getattr(tw, name)}" in text
 
 
