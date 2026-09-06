@@ -7,9 +7,9 @@
 key). REST caps at ~720 candles per interval, so this v0 dataset covers roughly the last ~2 years of
 daily bars, ~4 months of 4h bars, and ~30 days of 1h bars — enough to build and validate the ingestion
 pipeline, but **not** the full multi-regime history the master plan's §9 walk-forward validation needs.
-The full 2019/2020→2026 history lives only in Kraken's downloadable OHLCVT ZIP archive; backfilling it
-is parked in **[T0001](open-topics/T0001-ohlcvt-full-history-backfill.md)**, which this pipeline will
-later feed.
+The full 2019/2020→2026 history lives only in Kraken's downloadable OHLCVT ZIP archive; that backfill
+landed as `ohlc-full` ([T0001](../open-topics/archive/T0001-ohlcvt-full-history-backfill.md)),
+cataloged in [`data-catalog-full.md`](data-catalog-full.md).
 
 **Fetched at:** 2026-07-07T04:12:55.776871+00:00 (UTC)
 
@@ -95,6 +95,3 @@ table above; that is expected and is exactly why datasets are referenced by hash
 - This is the **v0, REST-seeded** dataset (iter-004). It exists to build and validate `cli/ohlc/`, not
   to serve real backtests — the 4h/1h windows in particular are far too short (~4 months / ~30 days)
   for the master plan's §9 walk-forward regime slices.
-- Full-history ingestion from Kraken's downloadable OHLCVT ZIP archive is parked in
-  [T0001](open-topics/T0001-ohlcvt-full-history-backfill.md); that backfill will feed this same
-  `cli/ohlc` pipeline and this catalog will be regenerated once it lands.

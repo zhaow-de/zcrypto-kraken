@@ -37,10 +37,10 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 
 **The coordinator is unpoked.** The tick resumes a stalled payload turn; nothing resumes main's. So main opens every turn by reading its own last declared next step against what actually happened — an announced send with nothing in the peer's inbox, a "next: X" with no X — before it reads anything else. The owner's `...` is the fallback, not the mechanism.
 
-Main runs it from an in-session `CronCreate` job — session-only, fires only while main is idle, **expires after seven days**: reinstall it at every restart and every week. Its cron field, like every one-shot read's, is in the process's zone — UTC on the ops host — never a conversion to the owner's.
+Main runs it from an in-session `CronCreate` job — session-only, fires only while main is idle, **expires after seven days**: reinstall it at every restart and every week. Its cron field, like every one-shot read's, is in the process's zone — UTC — never a conversion to the owner's.
 
 1. `ListAgents`, then prove each `interactive` row ALIVE from the row's own tmux target — a row carries no PID and a `Remote Control` row has no local process. The chain, every step from the row and the host: `tmux has-session -t '=<session>'` (quoted — in zsh a bare leading `=` is filename expansion and aborts the line); `tmux list-panes -a -F '#{pane_id}'` contains the row's `%<p>` as a whole line (`grep -x`) (a vanished pane target silently resolves to the session's active pane — assert the pane); `pgrep -P "$(tmux display -p -t %<p> '#{pane_pid}')" -x claude` returns a PID; `ss -xlp` shows `/tmp/cc-socks/<pid>.sock` listening with `pid=<pid>`. Any step failing is DEAD, never idle — `ListAgents` keeps listing a session after its process has exited, and the chain is immune to PID reuse, stale socket files and zombies. A session missing or dead for one tick is tolerated; for two it is reported to the owner.
-2. **Poke first.** A payload session that is idle with an open assignment gets a one-line message: what it last declared and a request to continue. This is the whole enforcement mechanism for announced-but-not-started work — a stalled turn resumes on any message, and the owner measured this working where inspection would have been overkill.
+2. **Poke first.** A payload session that is idle with an open assignment gets a one-line message: what it last declared and a request to continue. This is the whole enforcement mechanism for announced-but-not-started work — a stalled turn resumes on any message.
 3. Read git state — branches moved, worktrees, open PRs — and the memo's work-package markers.
 4. Post one report to the owner: per session, what it is on (branch / topic / spec) and whether the branch moved since last tick; the backlog's next three items; anything flagged.
 
@@ -48,7 +48,7 @@ Main runs it from an in-session `CronCreate` job — session-only, fires only wh
 
 - A session cannot be renamed by the session; the owner runs `/rename` from its console, at a quiet moment, and tells main.
 - After a `claude` binary update the owner exits and resumes each session with no running tasks; names persist, connections re-establish.
-- After a workstation restart, `infra/scripts/zcrypto-tmux.zsh` rebuilds the cockpit — one tmux session `zcrypto-main` with the three payload-and-coordinator panes resuming their Claude sessions by ID — and the owner's `zcrypto-zebra` shell; idempotent, so it is safe to run whenever a session is missing. Main reinstalls its tick on resume and re-reads the coordination table before assigning anything.
+- After a workstation restart, `infra/scripts/zcrypto-tmux.zsh` rebuilds the cockpit — one tmux session `zcrypto-main` with the three payload-and-coordinator panes resuming their Claude sessions by ID — and the owner's `zcrypto-zebra` shell; idempotent per TMUX session, so re-running it rebuilds a missing cockpit or zebra and leaves a live one alone — a Claude pane that died inside a live cockpit is NOT rebuilt: kill that tmux session and re-run. Main reinstalls its tick on resume and re-reads the coordination table before assigning anything.
 
 ## The payload contract
 
