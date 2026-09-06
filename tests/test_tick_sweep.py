@@ -1,13 +1,16 @@
 """Settle gate, watermark, heal gate and sweep isolation (spec 00087 D2/D3/D4)."""
 
 import hashlib
+import re
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from cli.capture.segment_writer import TRADE_SCHEMA
-from cli.tick.materialize import materialize
+from cli.tick.errors import TickError
+from cli.tick.materialize import _watermark, materialize
 
 
 def _day(root: Path, pair: str, day: date, *, start_id: int, hours: list[int] | None = None) -> int:
@@ -219,6 +222,36 @@ def test_a_healed_day_inside_the_rescan_window_is_picked_up_later(tmp_path):
     wide = materialize(src, tmp_path / "r", out, now=now, rescan_days=9)
     assert wide.days_written == 1
     assert (out / "BTC" / "EUR" / "2026" / "08" / "05.parquet").exists()
+
+
+def test_a_stray_year_directory_in_the_output_tree_is_refused_by_name(tmp_path):
+    """`publish_day` is this tree's only writer, so a path that is not ours is corruption of canonical output: the
+    watermark refuses, naming the path, rather than yielding a day the sweep would go on to act on."""
+    src, out = tmp_path / "src", tmp_path / "out"
+    nid = _day(src, "BTC/EUR", date(2026, 8, 1), start_id=0)
+    nid = _day(src, "BTC/EUR", date(2026, 8, 2), start_id=nid)
+    _day(src, "BTC/EUR", date(2026, 8, 3), start_id=nid, hours=[0])
+    now = _after(date(2026, 8, 2), hours=27)
+    assert materialize(src, tmp_path / "r", out, now=now).days_written == 2
+    published = out / "BTC" / "EUR" / "2026" / "08" / "02.parquet"
+    assert _watermark(out, "BTC/EUR") == date(2026, 8, 2)  # the true positive, before
+
+    # 2**31 is the boundary: `int()` is arbitrary-precision, so it is `date()`'s conversion of the year to a C int that
+    # fails -- and it fails with OverflowError, which a bare `except ValueError` would let straight through.
+    stray = out / "BTC" / "EUR" / str(2**31) / "08" / "02.parquet"
+    stray.parent.mkdir(parents=True)
+    stray.write_bytes(published.read_bytes())
+    assert sorted((out / "BTC" / "EUR").rglob("*.parquet"))[-1] == stray, "the stray must sort newest, or nothing reads it"
+
+    with pytest.raises(TickError, match=re.escape(str(stray))):
+        _watermark(out, "BTC/EUR")
+    # And the refusal reaches the operator: `_watermark` is called OUTSIDE the per-day `except Exception`, so it aborts
+    # the sweep rather than being booked as one day's error while the run publishes on against a corrupt tree.
+    with pytest.raises(TickError, match=re.escape(str(stray))):
+        materialize(src, tmp_path / "r", out, now=now)
+
+    stray.unlink()
+    assert _watermark(out, "BTC/EUR") == date(2026, 8, 2)  # the true positive, after
 
 
 def test_every_pair_in_the_archive_is_swept(tmp_path):

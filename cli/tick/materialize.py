@@ -157,13 +157,16 @@ def _archive_calendar(index: SegmentIndex) -> dict[str, list[date]]:
 
 
 def _watermark(out_root: Path, pair: str) -> date | None:
-    """The newest published day for `pair`, or None on a first run."""
+    """The newest published day for `pair`, None on a first run, a refusal on a foreign path -- `publish_day` writes here alone."""
     base, quote = pair.split("/")
     finals = sorted((out_root / base / quote).rglob("*.parquet"))
     if not finals:
         return None
     newest = finals[-1]
-    return date(int(newest.parents[1].name), int(newest.parent.name), int(newest.stem))
+    try:
+        return date(int(newest.parents[1].name), int(newest.parent.name), int(newest.stem))
+    except (ValueError, OverflowError) as exc:  # OverflowError: `int()` is arbitrary-precision, `date()`'s C-int year is not
+        raise TickError(f"tape-bars: {pair} published path is not <YYYY>/<MM>/<DD>.parquet: {newest}") from exc
 
 
 def materialize(
