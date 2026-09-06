@@ -452,13 +452,22 @@ def test_snapshot_venue_state_logs_and_returns_none_on_any_exception(tmp_path, m
     assert any(r.levelno == logging.ERROR for r in caplog.records)
 
 
+class _CacheReadableStrategy(ShadowStrategy):
+    """A ShadowStrategy whose `cache` answers instead of refusing -- the inherited property raises
+    until a trader registers the strategy, which would refuse before the Cache read ever happens."""
+
+    cache = None
+
+
 def test_an_engine_error_at_the_boundary_journals_the_error_venue_record(tmp_path, monkeypatch):
-    """The EngineError-to-None degrade leaves the boundary's venue-<HH>.json reading status "error"
-    with the reason, never nothing at all."""
+    """The EngineError-to-None degrade, entered at the Cache read itself, leaves the boundary's
+    venue-<HH>.json reading status "error" with the reason, never nothing at all."""
     config = _config(tmp_path)
-    strategy = ShadowStrategy(config)
+    strategy = _CacheReadableStrategy(config)
+    reads: list = []
 
     def unreadable_cache(cache, *, clock):
+        reads.append(cache)
         raise EngineError("BTC/EUR is absent from the Cache")
 
     def no_transport(pair_key, interval):
@@ -476,6 +485,7 @@ def test_an_engine_error_at_the_boundary_journals_the_error_venue_record(tmp_pat
         snapshot_fn=strategy._snapshot_venue_state,
     )
 
+    assert reads, "the Cache read never ran -- the EngineError this test is named for was not raised"
     doc = json.loads((config.journal_dir / "2026-07-10" / "venue-08.json").read_text())
     assert doc["status"] == "error"
     assert doc["error"] == "no venue snapshot available for this cycle"
