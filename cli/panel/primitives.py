@@ -1,5 +1,5 @@
 """Pure 1s L2 panel primitive math over `OrderBook` state (`cli/capture/book.py`), no I/O (spec 00052 D2). The
-Decimal->float narrowing is deliberate: the raw-side CRC-precision concern (T0045, resolved) binds the raw wire
+Decimal->float narrowing is deliberate: the raw-side CRC-precision concern (T0045) binds the raw wire
 strings, not derived Float64 research columns."""
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
 # the same EUR value as the EUR rungs and `SPREAD_CALIBRATION`'s inner keys stay EUR notionals. It defines what every BTC
 # `fill_bps_*` in the tree MEANS: a recalibration moves `cli/costs/spread.py`'s `CALIBRATION_WINDOW`, never this one, and
 # a later measurement that disagrees means regenerate the tree or explain the divergence, never update this constant.
-BTC_EUR_REFERENCE: float = 55876.28413495087  # the measurement, verbatim
+BTC_EUR_REFERENCE: float = 55876.28413495087  # the spec 00085 D1 Task 1 Step 0 measurement, verbatim
 BTC_EUR_REFERENCE_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-06T06:00:00Z")
 
 NOTIONALS_BY_QUOTE: dict[str, tuple[float, float, float]] = {
@@ -48,7 +48,7 @@ _DEPTH_LEVELS: tuple[int, int, int] = (1, 5, 10)
 PANEL_SCHEMA: dict[str, pl.DataType] = {
     "ts": pl.Datetime("us", "UTC"),
     "updates": pl.Int64,
-    # Seconds from the last message APPLIED to the book to this boundary (T0104, resolved), since
+    # Seconds from the last message APPLIED to the book to this boundary (T0104), since
     # `updates == 0` cannot tell a quiet second from a hole in the archive. Null is "unknown", never
     # 0.0, which would assert a freshness the panel cannot know.
     "stale_seconds": pl.Float64,
