@@ -1031,9 +1031,9 @@ _FIRST_STAGE_SHAPES = (
         # `-e`, `--regexp`, `-f` and `--file` are absent, valueless short letter included: each takes
         # grep's pattern from somewhere other than operand 0, leaving a FILE standing where
         # `_reads_only_safe_paths` skips the pattern. Their absence is what makes that skip sound.
-        # `R` is absent where `r` stays: `-R` DEREFERENCES symlinks, so it reads through one under a
-        # safe root to a file no operand names, and the check that would catch that is a string test
-        # over the spelled path. The runbooks spell `-r`.
+        # `R` is absent where `r` stays: `-R` follows a symlink met while DESCENDING a spelled directory
+        # and `-r` does not, so the letter widens what a safe root reaches. It does not open the operand
+        # hole — `-r`, `-R` and a bare grep read through an operand that is itself a link. Runbooks spell `-r`.
         {"-A": _INT, "-B": _INT, "-C": _INT, "--include": _QUOTED},
         short=r"-[iEvnoclqrFwxsah]{1,8}|-[ABC]\d{1,3}",
         arity=(1, 6),
