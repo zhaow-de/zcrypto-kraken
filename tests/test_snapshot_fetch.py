@@ -24,6 +24,10 @@ def _resultless_response():
     return io.BytesIO(body)
 
 
+def _non_object_response(payload):
+    return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+
 def test_fetch_public_returns_result_on_success(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: _ok_response({"pairs": 1509}))
     assert fetch_public("AssetPairs") == {"pairs": 1509}
@@ -53,3 +57,10 @@ def test_fetch_public_raises_on_a_body_carrying_no_result(monkeypatch):
 def test_fetch_public_returns_a_present_but_empty_result(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: _ok_response({}))
     assert fetch_public("AssetPairs") == {}
+
+
+@pytest.mark.parametrize("body", [None, ["EGeneral:Internal error"]], ids=["json-null", "json-list"])
+def test_fetch_public_raises_on_a_body_that_is_not_a_json_object(monkeypatch, body):
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: _non_object_response(body))
+    with pytest.raises(SnapshotError, match="not a JSON object"):
+        fetch_public("AssetPairs")
