@@ -1063,24 +1063,37 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_config.use_ws_trade is False
 
 
-def test_the_engine_config_states_the_external_order_filter_rather_than_inheriting_it(monkeypatch):
-    """Against a library whose default for `filter_unclaimed_external_orders` reads True,
-    `_exec_engine_config` still produces a config reading False."""
+# Each of the five equals the library's own default, so the recorder-backed assertions above read
+# the same whether `_exec_engine_config` names the field or inherits it; the stand-in below is what
+# tells a stated value from an inherited one.
+@pytest.mark.parametrize(
+    ("field", "stated", "flipped"),
+    [
+        ("reconciliation", True, False),
+        ("filter_unclaimed_external_orders", False, True),
+        ("inflight_check_interval_ms", 2000, 3000),
+        ("inflight_check_threshold_ms", 5000, 7000),
+        ("inflight_check_retries", 5, 7),
+    ],
+)
+def test_the_engine_config_states_each_exec_knob_rather_than_inheriting_it(monkeypatch, field, stated, flipped):
+    """Against a library whose default for the named field reads `flipped`, `_exec_engine_config`
+    still produces a config reading `stated`."""
     real_config = node.LiveExecutionEngineConfig
 
     def default_flipped(**kwargs):
         # `None` is how the library itself spells an unnamed field, so the stand-in resolves it the
         # way a flipped release would and hands every other field to the real constructor.
-        if kwargs.get("filter_unclaimed_external_orders") is None:
-            kwargs["filter_unclaimed_external_orders"] = True
+        if kwargs.get(field) is None:
+            kwargs[field] = flipped
         return real_config(**kwargs)
 
     # Without this the stand-in is free to be inert, and the assertion below would hold under a
     # `_exec_engine_config` that names nothing at all.
-    assert default_flipped().filter_unclaimed_external_orders is True
+    assert getattr(default_flipped(), field) == flipped
 
     monkeypatch.setattr(node, "LiveExecutionEngineConfig", default_flipped)
-    assert node._exec_engine_config().filter_unclaimed_external_orders is False
+    assert getattr(node._exec_engine_config(), field) == stated
 
 
 def test_the_builder_is_given_no_exec_client_by_default(tmp_path, monkeypatch):
