@@ -38,14 +38,16 @@ def _cfg(*, lookbacks=(3,), short="off", band=1.0, short_exposure=0.5):
 
 
 def test_asset_directions_a2_ensemble_is_mean_of_signals():
-    # At k=6 the fast lookback (2) has broken down to -1 while the slow one (5) still holds +1 from
-    # its k=4 breakout, so their mean is 0.0.
+    # k=3, where the arms are +1 (the fast lookback 2, held from its k=1 break) and 0.0 (the slow 5,
+    # still in warmup): the mean 0.5 is the value min (0.0), max (1.0) and sum (1.0) each miss. The
+    # index matters — at the -1/+1 arms of k=6 the short="off" clamp lands mean, min and sum all on
+    # 0.0, so an assertion there cannot tell the aggregation apart.
     prices = [100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 108.0, 107.0]
     union_ts = list(range(len(prices)))
     asset_ts = {"BTC": union_ts}
     cfg = _cfg(lookbacks=(2, 5))
     d = _asset_directions_a2({"BTC": prices}, union_ts, asset_ts, config=cfg)
-    assert d["BTC"][6] == pytest.approx(0.0, abs=1e-12)
+    assert d["BTC"][3] == pytest.approx(0.5)
 
 
 def test_asset_directions_a2_short_toggle():
