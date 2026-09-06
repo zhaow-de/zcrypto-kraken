@@ -1542,9 +1542,8 @@ def iter_tasks(tasks: list[dict], inherited: tuple[str, ...] = ()) -> list[tuple
 # cannot separate a first install from an edit to a unit that already exists. The role's comment
 # says so; these fixtures are the assertion of it.
 def _unit_install(changed: list[bool]) -> dict:
-    # The 8-item loop register the template module produces: the aggregate the guard reads, over the
-    # per-item `results` a narrowed guard would read — present so a narrowing fails on the claim
-    # rather than on a missing key.
+    # The 8-item loop register the template module produces: the aggregate the guard reads, beside the
+    # per-item `results` a narrowed guard would read.
     return {"changed": any(changed), "results": [{"changed": c} for c in changed], "skipped": False}
 
 
@@ -1655,22 +1654,45 @@ def _expand_src(src: str, loop) -> list[str]:
     return [render(src, {"item": item}) for item in items]
 
 
+def _role_asset(name: str) -> Path | None:
+    # Ansible's own resolver, so a role asset is found however its `src:` is spelled — `x.j2` and
+    # `templates/x.j2` name the same file. `None` is off the role: unresolvable, or resolved by the
+    # resolver's last resort, the working directory.
+    from ansible.errors import AnsibleError
+
+    for subdir in ("templates", "files"):
+        try:
+            found = Path(DataLoader().path_dwim_relative_stack([str(OPS_ROLE / "tasks"), str(OPS_ROLE)], subdir, name))
+        except AnsibleError:
+            continue
+        if found.is_file() and OPS_ROLE.resolve() in found.resolve().parents:
+            return found
+    return None
+
+
+def _body_text(task: dict) -> str:
+    # WITHOUT the `when:`, which is what keeps the selection from reading the gate back to itself.
+    return yaml.safe_dump({k: v for k, v in task.items() if k != "when"}, allow_unicode=True)
+
+
 def _consumed_text(task: dict) -> str:
-    # The task's body — WITHOUT its `when:`, which is what keeps the selection from reading the gate
-    # back to itself — plus the text of every file it renders. A `src:` carrying a `/` is a path off
-    # the role (a mount source, a controller-side copy), not a file this role owns; one that resolves
-    # to no file is refused by name, never dropped from the selection in silence.
-    text = yaml.safe_dump({k: v for k, v in task.items() if k != "when"}, allow_unicode=True)
+    # The task's body plus the text of every file it renders. RESOLUTION decides, not spelling: what
+    # resolves inside the role is read however the `src:` is written; what resolves nowhere is off
+    # the role — skipped in silence where the `src:` is written as a path (the NFS mount source, the
+    # controller-side copy), refused by name where it is a bare filename this role should own.
+    text = _body_text(task)
     for value in task.values():
         src = value.get("src") if isinstance(value, dict) else None
-        if not isinstance(src, str) or "/" in src:
+        if not isinstance(src, str):
             continue
         for name in _expand_src(src, task.get("loop")):
-            resolved = next((OPS_ROLE / d / name for d in ("templates", "files") if (OPS_ROLE / d / name).is_file()), None)
-            assert resolved is not None, (
-                f"{task['name']!r} renders {name!r}, which resolves to no file under {OPS_ROLE.name}/: this selection "
-                "cannot read what that task consumes"
-            )
+            resolved = _role_asset(name) if isinstance(name, str) else None
+            if resolved is None:
+                assert "/" in src, (
+                    f"{task['name']!r} renders {name!r}, which resolves to no file under {OPS_ROLE.name}/: this selection "
+                    "cannot read what that task consumes"
+                )
+                continue
             text += resolved.read_text()
     return text
 
@@ -1691,8 +1713,10 @@ def test_every_image_consuming_ops_task_is_gated_on_the_digest():
         "every task naming the digest gate in its own `when:` is selected — the selection is reading the gate back to itself"
     )
     # and were the body read alone, no task consuming the image only through a template would appear.
-    assert [t["name"] for t, gates in selected if any(OPS_DIGEST_GATE in g for g in gates) and not self_gated(t)], (
-        "no selected task is gated by an enclosing block alone — rendered-template text is no longer reaching the selection"
+    # The operand is that template-derived set itself: a body-consuming task added inside a digest-gated
+    # block would hold a "selected and block-gated only" operand non-empty while templates went unread.
+    assert [t["name"] for t, _ in selected if "ops_image" not in _body_text(t)], (
+        "no selected task consumes the image only through a rendered template — template text is no longer reaching the selection"
     )
     for task, gates in selected:
         assert any(OPS_DIGEST_GATE in g for g in gates), f"{task['name']!r} consumes an image reference ungated: {list(gates)}"
@@ -1710,9 +1734,11 @@ def _render_nas_env(hash_scope: str) -> str:
     from ansible.template import trust_as_template
 
     text = NAS_ENV_TEMPLATE.read_text()
-    # A placeholder for EVERY name the template reads, not just the `nas_*` ones: a new line naming
-    # anything else would otherwise raise undefined, a red that says nothing about the claim below.
-    variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(\w+)", text))}
+    # A placeholder for every name the template reads as a BARE variable, not just the `nas_*` ones: a
+    # new line naming anything else would otherwise raise undefined, a red that says nothing about the
+    # claim below. A name that is CALLED is Jinja's own (`lookup`, `now`, `q`) — shadowing it with a
+    # string is its own false red, so the lookahead leaves it to the environment.
+    variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(\w+)\b(?!\s*\()", text))}
     variables["nas_archive_pull_hash_scope"] = hash_scope
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
 
