@@ -38,6 +38,7 @@ The tree only grows by design: the pulls run `rsync -a` with **no** `--delete`, 
    uv run python infra/scripts/prune-host-images.py nas
    uv run python infra/scripts/prune-host-images.py nas --apply
    ```
+   The keep-set is every `docs/reference/fleet-pins.md` row naming `nas` plus whatever digest the running container uses, so **the pins row must already be true of this host** — run it right after that row is updated, never before, which is what the script's own `--help` says and what it cannot check for you. A Phase-4 rollback re-trues no pins row (`.claude/rules/fleet-deploys.md`), so a stale row is a state the fleet actually reaches.
    **Never `docker system prune` or `docker image prune -a` by hand**: both take the recorded rollback operands with them.
 3. **Never delete under `/volume1/ZhaoCrypto`.** `capture-segments*/` and `capture-reconciled/` are unbackfillable L2; `liquidations/` is sole-custody of a non-backfillable feed; `l2-panel/` and `hot/` are the ops node's copies of work you would have to recompute. The `engine-journal/` mirror is a replica of an authoritative copy on the engine host, but the gate exporter scores the whole mirror, so trimming it moves `zcrypto_gate_mismatch_total`'s baseline — not a page-time action.
 4. **If images are already pruned and the fraction is still under 0.1, this is a capacity decision, not an ops fix.** Report the `du` breakdown and the growth rate; adding or resizing storage on DSM is attended and outside the repo.
@@ -133,7 +134,7 @@ One step of the loop failed and the loop continued; the message names the step.
 
 `reconciled channel unwired …` is a WARNING, so an unwired overlay channel pages nothing while custody stops re-acquiring it. The `hot` channel's ERROR line is its only record — raw `rsync` emits no `pull complete`, so the dead-man never watches it.
 
-A single `verify failed` on a segment the capture host was still writing is benign; the next pass re-verifies it. A repeat on the same path, or any failure on a **capture** channel, means the unbackfillable mirror is not advancing.
+A single `verify failed` is not itself a finding: a pull whose copies of the final and its `.sha256` straddled a source-side rebuild of that hour mismatches once, and the next pass re-transfers and re-verifies it. A repeat on the same path, or any failure on a **capture** channel, means the unbackfillable mirror is not advancing.
 
 ### What to do
 
