@@ -13,8 +13,8 @@ D2 = datetime(2024, 1, 5)
 DAILY_TS = [D0, D1, D2]
 DAILY_POSITIONS = {"AAA": [1.0, 2.0], "BBB": [0.1, 0.2]}
 
-# 6 intraday ts -> 5 bars, ends spanning: at-D0 (0.0), inside (D0,D1) (pos[0]), boundary==D1 (pos[0]),
-# inside (D1,D2) (pos[1]), after D2 (0.0).
+# 6 stamps -> 5 bars whose ends span every case: at D0, inside a daily span, exactly on a boundary,
+# and past the last daily stamp.
 INTRADAY_TS = [
     datetime(2023, 12, 31),
     D0,
@@ -65,12 +65,10 @@ def test_expand_validation(daily_positions, daily_ts, intraday_ts):
 
 
 def test_expand_close_indexed_daily_book_shifted_boundaries_day_aligned():
-    # Bar-START-stamped grids (this repo's parquet convention): a raw daily bar stamped day D spans
-    # D -> D+1, and a raw 4h bar stamped D 20:00 spans D 20:00 -> (D+1) 00:00 -- both close at the
-    # same instant, (D+1) 00:00. A close-indexed daily book's position k is decided from bar k's
-    # close, so feeding RAW stamps applies it to the wrong calendar day (one day early, look-ahead).
-    # Shifting both ts lists to close time (daily +1 day; intraday +4h, the bar interval here) lines
-    # position k up on the six 4h bars that actually compose close[k]->close[k+1].
+    # Bar-START-stamped grids (this repo's parquet convention): a close-indexed daily book's position
+    # k is decided from bar k's close, so RAW stamps apply it one calendar day early -- look-ahead.
+    # Shift both ts lists to close time (daily +1 day; intraday +4h here) to line position k up on
+    # the six 4h bars composing close[k]->close[k+1].
     day0 = datetime(2024, 1, 1)
     day1 = datetime(2024, 1, 2)
     day2 = datetime(2024, 1, 3)
@@ -78,12 +76,10 @@ def test_expand_close_indexed_daily_book_shifted_boundaries_day_aligned():
     daily_ts = [day0, day1, day2, day3]  # 3 daily positions: p0 (day0->day1), p1 (day1->day2), p2 (day2->day3)
     positions = {"AAA": [10.0, 20.0, 30.0]}
 
-    # 4h bar-start grid spanning day0 -> day0+4days (4 days x 6 bars/day = 24 bars) -- one day longer
-    # than daily_ts so the close-time shift below has enough runway to resolve all six of p2's bars.
+    # One day longer than daily_ts so the close-time shift below has runway for all six of p2's bars.
     intraday_ts = [day0 + timedelta(hours=4 * i) for i in range(25)]
 
-    # (a) close-time-shifted inputs: daily stamp -> daily stamp + 1 day (bar D's close); intraday
-    # stamp -> intraday stamp + 4h (bar j's close, since these are 4h bars).
+    # (a) close-time-shifted inputs.
     shifted_daily_ts = [ts + timedelta(days=1) for ts in daily_ts]
     shifted_intraday_ts = [ts + timedelta(hours=4) for ts in intraday_ts]
     shifted = expand_daily_positions(positions, shifted_daily_ts, shifted_intraday_ts)
@@ -97,9 +93,7 @@ def test_expand_close_indexed_daily_book_shifted_boundaries_day_aligned():
     )
     assert shifted["AAA"] == expected_shifted
 
-    # (b) raw (bar-start) stamps, the naive/buggy usage: position k lands on calendar day k itself
-    # (day0->day1, day1->day2, day2->day3) instead of day k+1 -- one day early, the look-ahead this
-    # test guards against.
+    # (b) raw (bar-start) stamps, the naive usage: position k lands one calendar day early.
     raw = expand_daily_positions(positions, daily_ts, intraday_ts)
     expected_raw = [10.0] * 6 + [20.0] * 6 + [30.0] * 6 + [0.0] * 6
     assert raw["AAA"] == expected_raw
@@ -132,7 +126,6 @@ def test_governor_custom_config():
 
 
 def test_governor_no_lookahead():
-    # Perturbing a later day's returns must not change any earlier day's bar-multipliers.
     intraday_returns = [-0.011, -0.011, -0.011, 0.0, 0.0, 0.0, 0.01, 0.01]
     day_index = [0, 0, 0, 1, 1, 1, 2, 2]
     base = daily_cadence_governor(intraday_returns, day_index)

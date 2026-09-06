@@ -1,9 +1,7 @@
 """docs/reference/deploy-log.jsonl: the machine record every real converge appends (converge.sh).
 
 One JSON object per line, append-only, never hand-edited: the digest and timestamp a rollback needs
-come from the pass that set them, not from an operator's memory. This guards the shape -- a line that
-does not parse, or lacks a field, makes the whole file unreadable to the next tool that reads it.
-"""
+come from the pass that set them, not from an operator's memory."""
 
 import json
 from pathlib import Path
@@ -34,10 +32,9 @@ def test_the_deploy_log_is_append_only_in_time():
 
 def test_committed_pins_is_never_dropped_once_a_line_carries_it():
     """`committed_pins` records the digest a tier pins in a committed FILE rather than an `-e` flag --
-    the NAS, whose line otherwise named an apply flag and no image at all. It is not required of the
-    lines written before the recorder learned to do it, because those are valid history; what must
-    never happen is a later recorder dropping it again. Monotone adoption is the checkable form of
-    that, and it fails on a regression without rewriting the past."""
+    the NAS, whose line otherwise named an apply flag and no image at all. Lines written before the
+    recorder learned to do it are valid history; what must never happen is a later recorder dropping
+    it again."""
     seen = False
     for i, rec in enumerate(_records(), 1):
         if "committed_pins" in rec:

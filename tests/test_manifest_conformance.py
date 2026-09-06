@@ -1,14 +1,7 @@
 """Every manifest this repo writes conforms; the ones it does not write are named (spec 00099).
 
-Two assertions with different reach, deliberately separated:
-
-  * the WRITERS conform -- CI-runnable, because it drives them into a tmp tree;
-  * the manifests ON DISK conform -- data-gated, because CI has no datasets.
-
-The second is gated on a workstation MARKER rather than on `data/` existing: `data/` exists in a
-fresh checkout (it carries its own `.gitignore`), so a directory-existence gate would redden every
-PR, and a test that reddens every PR gets deleted -- which is worse than no test.
-"""
+The data-gated tests key off a workstation MARKER rather than `data/` existing: `data/` exists in a
+fresh checkout (it carries its own `.gitignore`), so a directory-existence gate would redden every PR."""
 
 import json
 from pathlib import Path
@@ -43,16 +36,14 @@ def test_every_manifest_on_disk_either_conforms_or_is_a_named_out_of_contract_se
     for path in found:
         name = path.parent.name
         if name.startswith(_OUT_OF_CONTRACT):
-            # Out of contract, so it must be attested by the committed sidecar instead.
             assert f'"{name}"' in _SIDECAR.read_text(), f"{name} is out of contract AND unattested"
             continue
         try:
             read_manifest(path)
         except ManifestError:
             legacy.append(name)
-    # Counted and reported, never failed: a healthy `zcrypto data fetch` imports the hub's legacy
-    # manifest for a set with no local copy, and reddening the suite on that would punish a correct
-    # operation. The floor below is what actually asserts; this is visibility.
+    # Counted and reported, never failed: a healthy `zcrypto data fetch` imports the hub's legacy manifest for a set
+    # with no local copy, and reddening the suite on that would punish a correct operation.
     if legacy:
         print(f"\nlegacy manifests present (run `zcrypto data migrate-manifests --apply`): {legacy}")
 
@@ -69,7 +60,7 @@ def test_the_committed_floor_of_sets_is_conformant(name):
 
 
 def test_the_out_of_contract_list_names_only_sets_this_repo_does_not_write():
-    # CI-runnable. The holdout freeze is produced by a process that has never lived in this repo;
+    # The holdout freeze is produced by a process that has never lived in this repo;
     # anything else appearing here would be a set we DO write and simply failed to convert.
     assert _OUT_OF_CONTRACT == ("ohlc-holdout-",)
     assert not any(Path(p).name.startswith("holdout") for p in _ROOT.glob("cli/**/*.py"))

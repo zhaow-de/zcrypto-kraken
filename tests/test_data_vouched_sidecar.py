@@ -1,10 +1,4 @@
-"""Committed attestations for frozen sets whose producer this repo does not write.
-
-The holdout freeze emits a manifest with no per-series `sha256` at all, so `_manifest_sha256s`
-returned the empty set and BOTH consumers of it silently degraded to no-ops -- the sync-side
-`_verify_new_files` and, more importantly, `ObservedReader.read_series`, which cross-checks every
-read against the vouched set but short-circuits on `if vouched and ...`.
-"""
+"""Committed attestations for frozen sets whose producer this repo does not write."""
 
 import json
 from pathlib import Path
@@ -79,8 +73,7 @@ def test_sidecar_hashes_are_keyed_by_dataset(tmp_path, monkeypatch):
     ],
 )
 def test_a_broken_sidecar_line_is_refused_typed_rather_than_ignored(tmp_path, monkeypatch, line, because):
-    # Silently skipping a bad line is how a set loses its attestation without anyone noticing --
-    # the exact failure mode this whole file exists to close.
+    # Silently skipping a bad line is how a set loses its attestation without anyone noticing.
     path = tmp_path / "sidecar.jsonl"
     path.write_text(line + "\n", encoding="utf-8")
     monkeypatch.setattr(sync, "_VOUCHED_SIDECAR", path)
@@ -102,8 +95,7 @@ def test_a_corrupt_sidecar_refuses_in_the_read_surfaces_own_dialect(tmp_path, mo
 
 
 def test_a_missing_sidecar_says_so_rather_than_degrading_in_silence(tmp_path, monkeypatch, caplog):
-    # Absent attestations revert every frozen set to unverified. That is survivable; being
-    # survivable AND silent is the shape this whole change exists to close.
+    # Absent attestations revert every frozen set to unverified -- survivable, but only if it is not also silent.
     monkeypatch.setattr(sync, "_VOUCHED_SIDECAR", tmp_path / "nope.jsonl")
     sync._sidecar_by_dataset.cache_clear()
     with caplog.at_level("WARNING"):
@@ -126,7 +118,6 @@ def _frozen_set(tmp_path, name="frozen-set"):
 
 
 def test_a_manifest_that_vouches_nothing_leaves_the_read_guard_inert_without_a_sidecar(tmp_path, monkeypatch):
-    # The true positive for the defect: this is the state the holdout was in.
     root, _ = _frozen_set(tmp_path)
     _point_sidecar_at(tmp_path, monkeypatch, [])
     reader = ObservedReader(root)
@@ -154,11 +145,7 @@ def test_the_sidecar_arms_the_read_guard_and_a_tampered_frame_is_refused(tmp_pat
 
 
 def test_two_swapped_series_are_caught_although_the_hash_SET_is_unchanged(tmp_path, monkeypatch):
-    """The case membership provably cannot catch, which is why the attestation is path-keyed.
-
-    Swap two series' contents inside one set and the multiset of hashes is identical, so every
-    membership test passes on BOTH halves of the swap. Only a path-bound check sees it.
-    """
+    """The case membership provably cannot catch, which is why the attestation is path-keyed."""
     root = tmp_path / "data"
     a, b = to_frame(_rows(10)), to_frame(_rows(7))
     write_parquet(a, root / "frozen-set" / "A/EUR/1440.parquet")
@@ -187,7 +174,7 @@ def test_two_swapped_series_are_caught_although_the_hash_SET_is_unchanged(tmp_pa
 
 def test_a_path_named_twice_with_different_hashes_is_refused(tmp_path, monkeypatch):
     # A second line for a path silently shadowing the first is how a set ends up attested by the
-    # wrong hash. Same path with the SAME hash is idempotent and allowed.
+    # wrong hash.
     rec = {"dataset": "d", "relpath": "A.parquet", "dataset_sha256": "a" * 64, "rows": 1}
     _point_sidecar_at(tmp_path, monkeypatch, [rec, dict(rec)])
     assert sync.sidecar_hashes("d") == {"a" * 64}  # exact duplicate: fine
@@ -223,8 +210,8 @@ def test_a_fetch_accepts_content_matching_the_path_the_sidecar_names(tmp_path, m
 
 
 def test_a_fetch_refuses_content_that_is_not_what_the_sidecar_names_for_that_path(tmp_path, monkeypatch):
-    # The fetch-side half of path binding. Its manifest vouches nothing, so only the sidecar can
-    # speak -- and it names a hash this file does not have.
+    # Its manifest vouches nothing, so only the sidecar can speak -- and it names a hash this file
+    # does not have.
     hot, _ = _hot_set_attested(tmp_path, monkeypatch, hash_the_sidecar_names="c" * 64)
     with pytest.raises(DataSyncError, match="attests for THAT path"):
         sync.fetch_hot(hot, tmp_path / "data")
@@ -284,9 +271,8 @@ def _conformant_set(tmp_path, name="ohlc-thing"):
 
 
 def test_a_swap_inside_a_manifest_attested_set_is_refused_at_read(tmp_path, monkeypatch):
-    """T0133 shipped path binding for SIDECAR-attested sets and consciously left manifest-attested
-    sets on membership, because deriving a path per hash needed the per-set knowledge the contract
-    now removes. The manifest carries the path itself, so the residual closes here."""
+    """A conformant manifest's series key IS the path, so it binds paths exactly as the sidecar does
+    -- the residual T0133 parked."""
     _point_sidecar_at(tmp_path, monkeypatch, [])  # no sidecar: the manifest is the only attestor
     root, a, b = _conformant_set(tmp_path)
     ObservedReader(root).read_series("ohlc-thing", "A/EUR/1440.parquet")  # healthy

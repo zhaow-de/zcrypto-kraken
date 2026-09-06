@@ -1,16 +1,5 @@
-"""Guard: `tape-bars.sh.j2` renders to the ops materializer's shell script, and the two properties
-it can silently get wrong are pinned by execution rather than by reading the template.
-
-1. **Argument order.** `zcrypto tick materialize` takes `(primary, OUT) --reconciled-root`, while
-   the panel runner this template was modelled on takes `(primary, reconciled) --panel-root`. A
-   transposition renders, runs, exits 0 and publishes the UN-HEALED stream — permanently, since the
-   dataset has no rewrite path. The rendered argv is therefore parsed and matched against the real
-   Typer command's own parameter order.
-2. **The gauge block.** The timer's failure mode is a green silence: the not-yet-healed path exits
-   0 by design, so a stalled healer freezes the dataset while every other surface reports success.
-   The block is executed against a seeded .prom, because every text assertion over it survives the
-   mutations that matter (a carried-forward read moved below the rename, a publish stamp advanced
-   on a run that published nothing).
+"""Guard: `tape-bars.sh.j2` renders to the ops materializer's shell script, pinned against the real
+CLI and the real shell rather than by reading the template.
 
 `trim_blocks=True, lstrip_blocks=False` mirrors Ansible's own Jinja defaults, matching
 `test_infra_archive_pull_template.py`."""
@@ -66,8 +55,7 @@ def _rendered_argv() -> list[str]:
     r = _rendered()
     start = r.index("docker run --rm --pull never")
     command = r[start : r.index('> "$log" 2>&1', start)]
-    # shlex renders each `\<newline>` continuation as a bare newline token; drop those, they are
-    # not arguments.
+    # shlex renders each `\<newline>` continuation as a bare newline token.
     return [t for t in shlex.split(command) if t.strip()]
 
 
@@ -83,8 +71,8 @@ def test_the_runner_calls_the_cli_with_the_arguments_in_the_cli_s_own_order():
     # here, and an isinstance filter silently yields an EMPTY list — which `zip(strict=True)` would
     # then reject, but only by accident.
     positional_names = [p.name for p in materialize.params if p.param_type_name == "argument"]
-    # Pin the CLI side too: if the command's own order ever changes, mapping the rendered tokens
-    # onto it would swap in lockstep and this file would keep passing while the runner was wrong.
+    # If the CLI's own order ever changes, mapping the rendered tokens onto it would swap in
+    # lockstep and this file would keep passing while the runner was wrong.
     assert positional_names == ["primary_root", "out_root"], f"the CLI's positional order changed: {positional_names}"
 
     argv = _rendered_argv()
@@ -111,7 +99,7 @@ def test_the_output_root_is_the_only_writable_mount():
 def test_the_gauge_parse_matches_what_the_cli_actually_prints():
     """The gauges are parsed out of the CLI's summary line, so a wording drift on either side breaks
     them silently. Rather than re-implement the sed in Python, run the real one over the CLI's own
-    format string — a change on either side then fails here."""
+    format string."""
     sed = shutil.which("sed")
     if sed is None:  # pragma: no cover - sed is present on every image we run
         pytest.skip("sed not available")
@@ -139,7 +127,7 @@ def _run_block(tmp_path, *, rc: int, summary: str, now: int, seed: str) -> str:
     block = r[r.index("gauge() {") : r.index(PROM_BLOCK_END) + len(PROM_BLOCK_END)]
     # The slice runs in isolation, so a conditional wrapping the WHOLE block would be invisible to
     # it — a wrapper that skipped the export on a failed run would leave every gauge stale at its
-    # last clean value while exit_code stayed 0. Balance the slice structurally instead.
+    # last clean value while exit_code stayed 0.
     before = r[: r.index("gauge() {")]
     opens = len([ln for ln in before.splitlines() if re.match(r"\s*if\s", ln)])
     closes = len([ln for ln in before.splitlines() if re.match(r"\s*fi\s*$", ln)])

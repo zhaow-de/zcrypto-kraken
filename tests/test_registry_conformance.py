@@ -1,16 +1,4 @@
-"""The disk conformance pass: every schema-4 record's cited bytes, re-hashed against `data/` (spec 00086 D7).
-
-Each `(record, dataset)` citation gets one of three verdicts:
-
-  * `rederived`  — the dataset dir is here and every file it names hashes to the recorded digest;
-  * `absent-here` — the dataset dir is not on this host AND is named in `_ABSENT_OK`;
-  * `finding`    — anything else: a dir that is here with a hash mismatch or a missing named file, or
-    a dir that is NOT here and NOT listed.
-
-There are no schema-4 records yet, so the real-registry half skips — which is why the mechanism is
-proven now against a constructed tmp registry + tmp data tree covering all five shapes. That
-constructed test runs everywhere and is what keeps this file non-vacuous from birth.
-"""
+"""The disk conformance pass: every schema-4 record's cited bytes, re-hashed against `data/` (spec 00086 D7)."""
 
 from __future__ import annotations
 
@@ -190,7 +178,5 @@ def test_the_pass_separates_rederived_from_absent_from_finding(tmp_path):
     assert seen["ds-partial"].detail == "ETH/EUR/1440.parquet: the named file is missing"
     assert seen["ds-partial"].trial_id == 5
 
-    # The committed list is what the real pass consults, and it is empty: under it the SAME absent
-    # citation is a finding. An entry added to appease a run is therefore a visible, reviewed diff.
     with_committed_list = {v.dataset: v for v in conformance(records, root, _ABSENT_OK)}
     assert with_committed_list["ds-elsewhere"].verdict == FINDING

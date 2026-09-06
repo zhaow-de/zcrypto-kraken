@@ -1,22 +1,5 @@
-"""The bounded desync-recovery ladder (spec 00072, T0008).
-
-Recovery from a checksum desync is a single fire-and-forget resubscribe, fired only on the
-transition into desync — deliberately, because re-firing on every out-of-sync update means hundreds
-per second at depth-100, which trips Kraken's subscribe rate limit so the pair can never resync.
-The cost of that guard is that a failed first attempt leaves the pair stuck forever.
-
-This ladder adds rungs 2 and 3: bounded retries, then one escalation to a full reconnect.
-
-Three properties carry the design, and each has a test that fails if it is removed:
-
-1. **Retries are driven by desync STATE, never by protocol responses.** A snapshot that fails its
-   own checksum produces no error frame — Kraken is satisfied and the book is still wrong — so only
-   "still desynced N seconds later" can see it.
-2. **The ladder terminates.** Cycling would turn one stuck pair into a reconnect loop, and every
-   reconnect drops all 12 pairs; that is strictly worse than the defect being fixed.
-3. **It is bounded in wall-clock**, because a desynced pair withholds the host's dead-man ping for
-   ALL pairs, not just itself.
-"""
+"""The bounded desync-recovery ladder (spec 00072, T0008); the numbered properties these tests cite
+are `cli.capture.desync_recovery`'s module docstring."""
 
 from __future__ import annotations
 
@@ -53,8 +36,8 @@ def test_the_first_retry_fires_once_the_grace_expires():
 
 
 def test_a_recovered_pair_stops_the_ladder_and_forgets_its_history():
-    """Recovery is the only thing that resets the ladder — and it must reset fully, or a pair that
-    desyncs twice in an hour would escalate on its second, milder event."""
+    """A recovery clears the active ladder, so a later desync starts a fresh grace instead of
+    resuming mid-ladder."""
     lad = _ladder()
     lad.note_desync("BTC/EUR", at=T0)
     lad.note_recovered("BTC/EUR", at=T0 + timedelta(seconds=5))
@@ -64,7 +47,6 @@ def test_a_recovered_pair_stops_the_ladder_and_forgets_its_history():
 
 
 def test_retries_back_off_and_do_not_fire_early():
-    """5s, 10s, 20s after each preceding attempt — bounded by construction."""
     lad = _ladder()
     lad.note_desync("BTC/EUR", at=T0)
     now = T0 + timedelta(seconds=20.1)
@@ -146,20 +128,14 @@ def test_the_whole_ladder_is_bounded_in_wall_clock():
 
 
 def test_the_escalation_cooldown_survives_a_recovery():
-    """H1. The likeliest healer of an escalated pair is the escalation's own reconnect — it forces a
-    fresh snapshot for every pair. If recovery erased the escalation record, that would close a
-    feedback loop: escalate -> reconnect -> heal -> record gone -> escalate again ~55 s later.
-    Simulated against the real ladder before the fix: a pair desyncing every 10 min escalated
-    6x/hour against the intended 1, a flapping pair 51x/hour -- 72 and ~610 fleet-wide across 12
-    pairs, against 12. Ceilings, not steady state (the ladder has no clock, so the reconnect's own
-    downtime is uncharged); the over-run ratio is what matters.
-    """
+    """The likeliest healer of an escalated pair is the escalation's own reconnect — it forces a fresh
+    snapshot for every pair — so erasing the escalation record on recovery would close a feedback
+    loop: escalate -> reconnect -> heal -> record gone -> escalate again."""
     lad = _ladder()
     lad.note_desync("BTC/EUR", at=T0)
     lad.note_escalated("BTC/EUR", at=T0 + timedelta(seconds=55))
     lad.note_recovered("BTC/EUR", at=T0 + timedelta(seconds=60))  # the reconnect healed it
 
-    # A fresh episode inside the cooldown reaches no rung at all -- and must NOT reach a second reconnect.
     lad.note_desync("BTC/EUR", at=T0 + timedelta(seconds=600))
     now = T0 + timedelta(seconds=600)
     for _ in range(60):
@@ -172,7 +148,7 @@ def test_the_escalation_cooldown_survives_a_recovery():
 
 def test_a_flapping_pair_cannot_manufacture_reconnects():
     """The same defect from the other direction: heal/re-desync cycling must not mint an escalation
-    per cycle. Counts them over a simulated hour."""
+    per cycle."""
     lad = _ladder()
     now, escalations = T0, 0
     for cycle in range(60):

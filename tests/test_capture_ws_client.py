@@ -76,8 +76,6 @@ def test_parse_message_raises_capture_error_on_invalid_json():
         ({"method": "subscribe", "success": False}, "subscribe_error"),
         ({"method": "unsubscribe", "success": True}, "unsubscribe_ack"),
         ({"method": "unsubscribe", "success": False}, "unsubscribe_error"),
-        # Was "other" until T0101: dropping the venue's own status meant nothing recorded whether an
-        # outage had been announced, so the question was unanswerable rather than answered.
         ({"channel": "status"}, "status"),
     ],
 )
@@ -199,10 +197,8 @@ def test_stream_reconnects_with_backoff_after_connection_closed():
 
 # --- T0035: a rejected reconnect ATTEMPT must back off and retry, not kill the daemon ------------
 #
-# Kraken restarted its WS service (close 1012) on 2026-07-13 and answered the reconnect handshake
-# with HTTP 503 while coming back up. `InvalidStatus` is not a `ConnectionClosed`, so pre-fix it
-# escaped stream()'s sole handler, propagated out of the async generator, and crashed the process —
-# the backoff/retry loop built for exactly this never ran past attempt 1.
+# `InvalidStatus` — what Kraken answers the reconnect handshake with (HTTP 503) while its WS service
+# restarts — is not a `ConnectionClosed`, so the drop handler alone would let it crash the process.
 
 
 def _invalid_status_503():
@@ -211,7 +207,6 @@ def _invalid_status_503():
 
 
 def _connect_fn_scripted(*script):
-    """A connect_fn following `script` per call: raise the item if it is an exception, return it otherwise."""
     calls = []
     remaining = list(script)
 
@@ -286,8 +281,7 @@ def test_stream_lets_cancellation_propagate():
 
 
 def test_stream_logs_error_every_10_consecutive_failed_reconnects(caplog):
-    # A genuinely prolonged venue outage must be LOUD: one ERROR per 10 consecutive failed
-    # attempts (not one per failure, and not merely the per-attempt INFO line).
+    # A genuinely prolonged venue outage must be LOUD: one ERROR per 10 consecutive failed attempts.
     async def run():
         conn = _FakeConnection(['{"channel": "heartbeat"}'])
         connect_fn, _ = _connect_fn_scripted(*[_invalid_status_503() for _ in range(10)], conn)
@@ -354,14 +348,8 @@ def test_resubscribe_book_is_noop_when_not_connected():
 
 # --- T0101: a venue-announced restart must not be reconnected into at 1.0 s ----------------------
 #
-# Measured 2026-07-27: Kraken sent `1012 (service restart)` to both capture hosts 19.65 ms apart;
-# the primary's first reconnect fired 1.0 s later and was answered HTTP 503, costing ~3.9 s of extra
-# silence on the unbackfillable path, while the secondary -- whose attempt landed later -- connected
-# first try. Kraken's documented guidance is >= 5 s after maintenance.
-#
-# The pre-push review found this shipped as a mechanism nobody proved runs: every existing close-path
-# test raises `ConnectionClosedError(None, None)`, i.e. `rcvd is None` and no close code, so the
-# branch that reads the code was never executed. These drive the REAL close frame through `stream()`.
+# The other close-path tests raise `ConnectionClosedError(None, None)` -- `rcvd is None`, no close code --
+# so they never reach the branch that reads it. These drive a real `Close` frame through `stream()`.
 
 
 class _ClosingConnection(_FakeConnection):
@@ -406,24 +394,18 @@ def test_a_1012_service_restart_floors_the_first_reconnect_at_five_seconds():
 
 
 def test_an_ordinary_close_still_reconnects_fast():
-    """~8.2 reconnects/day are ordinary drops recovering in single-digit seconds. Slowing them to
-    5 s would trade a rare venue restart for a daily cost on the unbackfillable path."""
+    """Ordinary drops are the daily case: flooring them at 5 s would trade a rare venue restart for a
+    daily cost on the unbackfillable path."""
     msg = json.dumps({"channel": "heartbeat"})
     assert _delays_after_close(1006, messages=[msg]) == [1.0]
 
 
 # --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
 #
-# Recovery sent `unsubscribe` then `subscribe` as two fire-and-forget frames with no correlation to
-# Kraken's replies. Two consequences: the `subscribe` can overtake the `unsubscribe` server-side and
-# be rejected ("Already subscribed"), leaving the pair desynced with the book never re-snapshotted;
-# and a failed attempt left NO trace of its own -- it was inferable only from continued desync.
-#
-# THE DEADLOCK THAT SHAPES THE DESIGN: rung 1 calls `resubscribe_book` from inside the message
-# handler, i.e. from the task that drives `stream()`. Awaiting the ack there would block the very
-# loop that delivers it. So `resubscribe_book` NEVER awaits; it registers the pending req_id and
-# hands the second frame to a short-lived task, which sends `subscribe` on the ack -- or on a
-# timeout, so a lost ack degrades to today's behaviour instead of stranding the pair forever.
+# `resubscribe_book` NEVER awaits its ack: rung 1 calls it from inside the message handler, i.e. from
+# the task that drives `stream()`, where awaiting would block the very loop that delivers the ack.
+# The second frame goes to a short-lived task, released by the ack or by a timeout -- which is why
+# the tests below hand-deliver replies through `note_reply` and `drain_pending_resubscribes`.
 
 
 def test_resubscribe_correlates_both_frames_with_req_ids():
@@ -447,7 +429,7 @@ def test_resubscribe_correlates_both_frames_with_req_ids():
 
 def test_the_subscribe_waits_for_the_unsubscribe_ack():
     """Prevention: the ordering race disappears if the second frame is not sent until the first is
-    acknowledged. Before the ack lands, only the unsubscribe has gone out."""
+    acknowledged."""
 
     async def run():
         conn = _FakeConnection([])
@@ -467,9 +449,8 @@ def test_the_subscribe_waits_for_the_unsubscribe_ack():
 
 
 def test_a_lost_ack_still_subscribes_after_the_timeout():
-    """A never-arriving ack must NOT strand the pair: recovery degrades to the old fire-and-forget
-    ordering rather than never re-subscribing. The stranded-pair failure is the one T0008 exists to
-    remove; this must not reintroduce it."""
+    """A never-arriving ack must not strand the pair -- the exact failure T0008's ladder exists to
+    remove."""
 
     async def run():
         conn = _FakeConnection([])
@@ -486,8 +467,7 @@ def test_a_lost_ack_still_subscribes_after_the_timeout():
 
 
 def test_an_error_reply_is_counted_and_does_not_hang():
-    """Observability: an explicit rejection is now a thing to count, where before it was only
-    inferable from continued desync. It must also release the waiter."""
+    """Observability: an explicit rejection is counted, and it still releases the waiter."""
 
     async def run():
         conn = _FakeConnection([])

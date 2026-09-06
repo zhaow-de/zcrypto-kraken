@@ -1,12 +1,6 @@
-"""Tests for the trial-43 stage-1 re-derivation and the 43-vs-44 cost sweep (cli/portfolio/record43_book.py).
-
-The sleeve-weight, turnover, stress-axis and bisection tests run anywhere — they are the always-on
-cover for the rules record 44 has no analogue for. The data-gated tests need the canonical
-data/ohlc-full machine: the stage-1 reproduction pins every figure registry row 43 registered at the
-precision the row stores, and the sweep pins all four registered cost-stress anchors before any
-swept point is allowed to mean anything, then measures how unstable the 43-vs-44 ordering is across
-the cost axis. Both share one derivation through module-scoped fixtures (~2 min once, not once per
-test; the 1151-point sweep adds about another minute).
+"""Tests for the trial-43 stage-1 re-derivation and the 43-vs-44 cost sweep
+(cli/portfolio/record43_book.py): the helper tests run anywhere, the DATA_ROOT-gated ones need the
+canonical data/ohlc-full machine and share one derivation through module-scoped fixtures.
 """
 
 from datetime import datetime, timedelta
@@ -103,8 +97,8 @@ def test_position_turnover_starts_flat_and_charges_the_entry_bar():
 
 
 def test_stressed_ungoverned_charges_the_extra_cost_on_the_books_own_turnover():
-    """The registered stress axis: the ×1.0 book's net minus (m-1) x 0.006 per unit of ITS turnover —
-    positions are never rebuilt. The two registered rungs must land on the driver's own literals."""
+    """The ×1.0 book's net minus (m-1) x 0.006 per unit of ITS turnover — positions are never
+    rebuilt at the stressed cost."""
     ungoverned = [0.010, -0.020]
     turnover = [1.0, 2.0]
 
@@ -179,7 +173,7 @@ def test_record43_stage1_reproduces_the_registered_row(book):
         assert round(book[key], places) == registered[key], key
 
     # The row's own headline reading of itself: ADOPT under the Sharpe-primary branch, not the
-    # DD-aware one. Asserted on the flags rather than restated in prose.
+    # DD-aware one.
     assert (book["criterion_sharpe_primary"], book["criterion_dd_aware"]) == (1, 0)
 
     # The QA gates the driver runs before any headline counts — each one anchored to a figure that
@@ -189,12 +183,11 @@ def test_record43_stage1_reproduces_the_registered_row(book):
     assert round(qa["b_sleeve_daily_sharpe"], 4) == 1.2455
     assert round(qa["a1lf_book_sharpe"], 4) == 1.3798
     assert [round(s, 4) for s in qa["a2_arm_sharpes"].values()] == [1.3274, 1.3017, 1.3585]
-    # The close-time expansion mapping: raw bar-start stamps would inflate B to ~1.76 (the
-    # look-ahead the pre-run review caught), so these two readings are the mapping's regression pin.
+    # The close-time expansion mapping: raw bar-start stamps would inflate B to ~1.76, so these two
+    # readings are that mapping's regression pin.
     assert round(qa["expansion_sharpes"]["B"], 4) == 1.2704
     assert round(qa["expansion_sharpes"]["A1"], 4) == 1.3927
 
-    # Engagement: all three sleeve weights move, none pinned at 0 or 1.
     for stats in qa["weight_stats"]:
         assert stats["max"] - stats["min"] > 1e-6
         assert 0.0 < stats["min"] and stats["max"] < 1.0
@@ -219,13 +212,10 @@ def test_both_books_reproduce_every_registered_cost_stress_anchor(sweep):
 
 @pytest.mark.skipif(not DATA_ROOT.exists(), reason="canonical dataset not present")
 def test_neither_book_holds_a_durable_lead_across_the_cost_axis(sweep):
-    """Registry-derivable truth, asserted; the census figures inside it are findings, not pins.
-
-    What is pinned: record 44 leads at the ×1.5 rung and record 43 at ×2.0 (both registered), the
-    ordering changes sign between them, and BOTH books still lead somewhere far above the band — so
-    no "beyond ×x it has reversed" reading survives. What is deliberately NOT pinned: the flip
-    count and the last flip's position, which move with the grid's step and ceiling.
-    """
+    """Record 44 leads at the ×1.5 rung and record 43 at ×2.0 (both registered), the ordering
+    changes sign between them, and both books still lead somewhere above the band — so no "beyond
+    ×x it has reversed" reading survives. The flip count and the last flip's position move with the
+    grid's step and ceiling, and are deliberately not pinned."""
     registered43, registered44 = registered_metrics(43), registered_metrics(44)
     assert registered44["cost_stress_1_5x_sharpe_ann"] > registered43["cost_stress_1_5x_sharpe_ann"]
     assert registered44["cost_stress_2x_sharpe_ann"] < registered43["cost_stress_2x_sharpe_ann"]
@@ -252,7 +242,6 @@ def test_neither_book_holds_a_durable_lead_across_the_cost_axis(sweep):
     assert sweep["band"]["lead_counts"][43] > 0 and sweep["band"]["lead_counts"][44] > 0
     assert sweep["band"]["flip_brackets"]
 
-    # The sweep resolves what a coarser grid missed: the step is fine enough that the smallest
-    # counted margin is orders of magnitude above float noise.
+    # The flip-bracket and tail claims above are only resolvable on a grid this fine and this long.
     params = sweep["sweep_parameters"]
     assert params["step"] <= 0.002 and params["high"] >= 3.0

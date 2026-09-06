@@ -1,26 +1,8 @@
 """Every shell template must render, through Ansible's own engine, to valid bash.
 
-This closes the defect class that shipped twice on `panel-regenerate.sh.j2` and was caught both
-times by a live converge rather than by a test:
-
-1. bash's string-length expansion opens with a brace-hash pair, which Jinja reads as a comment tag
-   — the template did not render at all, so the script never installed;
-2. the raw-block fix for (1) rendered perfectly under a bare `jinja2.Environment` and installed
-   BROKEN shell, because Ansible renders with `trim_blocks=True`, which eats the newline after a
-   block tag and welds the following line onto it.
-
-A parse sweep cannot see the second class — trim_blocks changes rendered whitespace, not what
-parses — so the guarantee has to be *render, then check the shell*.
-
-The limit of that guarantee, measured rather than assumed: `bash -n` catches a weld only when the
-joined line is a SYNTAX error, which is what both production defects produced (`len=${#override}`
-welded onto an `if` line). A weld that happens to yield valid shell — `n=1` onto `rc=$?` giving
-`n=1rc=$?` — renders, parses, and passes here while meaning something else entirely. Catching that
-would need per-template behavioural fixtures, which is what the individual template test files
-exist for; this file is the floor, not the ceiling. Two rules follow, and both are
-enforced here rather than left to per-template files: use Ansible's `Templar` (never bare jinja2,
-whose defaults differ from Ansible's in exactly the way that bit us), and require every shell
-template to be registered, so a new one cannot arrive uncovered.
+Render with Ansible's `Templar`, never a bare `jinja2.Environment`: Ansible renders with
+`trim_blocks=True`, which eats the newline after a block tag and welds the following line onto it,
+so a template that renders perfectly under bare jinja2 can still install BROKEN shell.
 """
 
 import pathlib
@@ -32,24 +14,20 @@ import yaml
 ROLES = pathlib.Path(__file__).resolve().parent.parent / "infra" / "ansible" / "roles"
 
 # Vars the templates need that their role defaults do not carry — runtime facts (ops_uid/ops_gid
-# come from getent_passwd at converge time) or values supplied by inventory. The exact values are
-# immaterial: this file asserts that the template RENDERS to valid shell, not what the uid is.
+# come from getent_passwd at converge time) or values supplied by inventory.
 RUNTIME_FACTS = {
     "ops_uid": "1002",
     "ops_gid": "1002",
     # No repo default by design — the pins rule keeps it operand-only, always passed with -e.
     "ops_image_digest": "sha256:" + "ab" * 32,
-    # The access role's ops-side probe reads ops vars that live in inventory, not in its own role.
     "ops_textfile_dir": "/var/lib/zcrypto-ops/textfile",
     "ops_data_dir": "/var/lib/zcrypto-ops",
     # The engine role reads these from getent at converge time and declares them in no defaults
-    # file, so the render has no other source for them.
     "engine_uid": "998",
     "engine_gid": "998",
 }
 
-# Every roles/*/templates/*.sh.j2 must appear here. The completeness test below fails on any
-# unregistered template, so adding one forces a decision instead of silently landing unguarded.
+# Every roles/*/templates/*.sh.j2 must appear here, so a new one cannot land unguarded.
 REGISTERED = {
     "archive-pull.sh.j2",
     "grafana-watchdog.sh.j2",

@@ -1,11 +1,4 @@
-"""TDD for `infra/scripts/grafana_auth.py` — the vaulted-credential resolver both Grafana scripts share.
-
-`continuity.py`'s test file sets the precedent: these are standalone scripts, not package modules,
-so they load via `importlib.util.spec_from_file_location`.
-
-Every test here pins something that actually went wrong during the 2026-07-28 capture rollout, when
-the decrypt was improvised from prose and took two failed attempts before it worked.
-"""
+"""TDD for `infra/scripts/grafana_auth.py` -- the shared vaulted-credential resolver."""
 
 from __future__ import annotations
 
@@ -32,10 +25,9 @@ def test_the_vault_password_file_comes_from_ansible_cfg_not_a_hardcoded_path():
 
 
 def test_the_password_helper_is_EXECUTED_never_read(monkeypatch):
-    """THE footgun. `vault_password_file` names a GPG helper script, not a file containing a
-    password. Reading its bytes yields shell source, and ansible then fails with "no vault secrets
-    were found that could decrypt" -- which reads as a wrong key, sending the next person hunting
-    the wrong thing entirely."""
+    """THE footgun: `vault_password_file` names a helper script, not a file containing a password,
+    and reading its bytes makes ansible fail with "no vault secrets were found that could decrypt"
+    -- which reads as a wrong key."""
     calls = []
 
     def fake_run(argv, **kw):
@@ -43,7 +35,6 @@ def test_the_password_helper_is_EXECUTED_never_read(monkeypatch):
         return subprocess.CompletedProcess(argv, 0, stdout=b"  s3cret\n", stderr=b"")
 
     monkeypatch.setattr(ga.subprocess, "run", fake_run)
-    # Reading the path instead of running it must not be how the password is obtained.
     monkeypatch.setattr(Path, "read_bytes", lambda self: pytest.fail(f"read {self} instead of executing it"))
 
     assert ga.vault_password() == b"s3cret", "stdout, stripped"
@@ -51,12 +42,10 @@ def test_the_password_helper_is_EXECUTED_never_read(monkeypatch):
 
 
 def test_the_vault_context_is_initialized_before_a_scalar_is_read(monkeypatch):
-    """THE OTHER footgun, and the one review found unpinned: `VaultSecretsContext.initialize` looks
-    like dead setup -- it returns nothing, and `secrets` is handed to `set_vault_secrets` two lines
-    later anyway -- so a cleanup pass deletes it and the suite stays green. Without it, `str()` on a
-    `!vault` scalar raises `ReferenceError: A required VaultSecretsContext context is not active`,
-    which reads as an API-version problem rather than a missing step, and the next operator
-    improvises the decrypt all over again."""
+    """THE OTHER footgun: `VaultSecretsContext.initialize` looks like dead setup -- it returns nothing
+    and `secrets` is handed to `set_vault_secrets` anyway -- but without it `str()` on a `!vault`
+    scalar raises `ReferenceError: A required VaultSecretsContext context is not active`, which reads
+    as an API-version problem rather than a missing step."""
     import ansible.parsing.dataloader as dl
     import ansible.parsing.vault as v
 
@@ -80,9 +69,8 @@ def test_the_vault_context_is_initialized_before_a_scalar_is_read(monkeypatch):
 
 
 def test_reading_a_second_credential_does_not_crash_on_the_once_only_initialize(monkeypatch):
-    """`initialize` raises RuntimeError on a second call. The gate reads one credential today, but
-    the signature is parameterized and the superseded recipe says "swap for any other key" -- so a
-    second read must be a no-op, not a crash mid-gate."""
+    """`initialize` raises RuntimeError on a second call, so a second `vault_var` in one run must be
+    a no-op, not a crash mid-gate."""
     import ansible.parsing.dataloader as dl
     import ansible.parsing.vault as v
 

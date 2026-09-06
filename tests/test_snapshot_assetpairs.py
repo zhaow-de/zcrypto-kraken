@@ -54,16 +54,8 @@ def test_btc_quoted_rv_leg_resolves_via_xbt_wsname_token():
     assert eth_btc.quote_altname == "XBT"
 
 
-# --- the ⏱ facts the register was NOT capturing -----------------------------------------------
-# T0113's rationale names fees and borrow-rollover rates as externally owned and silent when
-# stale — but `derive_universe` extracted neither, so an "UNCHANGED" verdict could never have
-# meant "nothing we depend on moved". `margin_rate` is the borrow rate and lives on the ASSET,
-# not the pair; the fee schedule is volume-tiered on the pair. Both are public.
-
-
 def test_fee_schedule_is_extracted_per_pair():
     row = _by_symbol(derive_universe(ASSETPAIRS, ASSETS, ["BTC/EUR"]), "BTC/EUR")
-    # base tier = the [volume, percent] pair at volume 0; the full ladder is kept for drift diffs
     assert row.fee_taker_base == 0.4
     assert row.fee_maker_base == 0.25
     assert row.fees_taker[0] == (0, 0.4)
@@ -97,12 +89,7 @@ def test_absent_symbol_carries_the_new_fields_as_empty_not_missing():
 
 
 def test_quote_borrow_rate_is_extracted_because_it_prices_LONGS():
-    """A margin long borrows the QUOTE currency, so the base-side rate never prices it.
-
-    kraken-fee-schedule.md: "A LONG on margin buys with borrowed fiat → the quote/fiat is
-    extended → the fiat leg's rate". Rendering only the base rate left the book's long side
-    unpriced by this register while looking complete.
-    """
+    """A margin long borrows the QUOTE currency, so the base-side rate never prices it."""
     rows = derive_universe(ASSETPAIRS, ASSETS, ["BTC/EUR", "ETH/BTC"])
     eur_quoted, btc_quoted = _by_symbol(rows, "BTC/EUR"), _by_symbol(rows, "ETH/BTC")
     # EUR leg vs BTC leg: distinct values, so a base/quote mix-up cannot pass by coincidence
