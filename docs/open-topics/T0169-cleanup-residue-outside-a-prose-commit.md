@@ -48,6 +48,10 @@ A test name is read before its body, a live-host claim in a template is a claim 
 - `tests/test_archive_scan_cache.py` (head :487) — the trailing comment still attributes the overlay case to `delete_cache`; the corrected docstring above it says the caller never writes such an entry (`cli/archive/command.py:1089-1094`, `cli/archive/scan_cache.py:31-33`). head :479's "and therefore the entry it stores" is the same wrong pair.
 - `tests/test_engine_concordance.py:69` — `tol = 1e-6  # today's ratified default (concordance.py:159)` keeps the stale coordinate the docstring two lines above no longer uses; `compare_targets` is at `:133`.
 
+### From the `tests/` remainder (T0164, branch `cleanup/prose-tests-remainder`)
+
+- `infra/scripts/kraken-order-semantics-probe.py:2102` — "Kraken's costmin on the EUR pairs is 0.45" is a venue value in prose with no measurement named beside it, in a file an operator runs against real money. Outside a prose pass's reach; it is the one number in that file that can go stale in silence.
+
 ## Suggested next steps
 
 - Rename the two soak tests to what they assert, in the same PR as the next change to that file.

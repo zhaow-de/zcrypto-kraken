@@ -4,7 +4,6 @@ the exact nautilus-trader build the engine is about to be armed on.
 
 Committed because the obligation recurs: every nautilus bump owes this run before the engine may be
 armed on it, and the probes are only comparable across versions if they are the SAME probes.
-Rebuilding them from prose each time silently drifts the comparison.
 
 THIS PLACES REAL ORDERS ON A LIVE KRAKEN ACCOUNT WITH REAL MONEY.
 
@@ -17,12 +16,11 @@ The six questions, and the probe that answers each:
   5. Does submit -> fill -> reconcile -> close -> flat work?
   6. Is the account flat afterwards, with balances reflecting only probe 5?
 
-Shape: `node.run()` owns this thread, and the probe sequence IS the strategy's callbacks. Each step
-either finishes in the callback it started in, or arms a wait -- a predicate plus a clock alert --
-that the next order event, quote or deadline resolves. There is no polling loop and no second
-thread: a node installs its message bus and registries into thread-local storage for the thread
-that drives it, and both `LiveNode` and `Strategy` are pyo3-unsendable, so an attribute read from
-another thread aborts the process with an uncatchable SIGABRT.
+Shape: `node.run()` owns this thread, and the probe sequence IS the strategy's callbacks. There is
+no polling loop and no second thread: a node installs its message bus and registries into
+thread-local storage for the thread that drives it, and both `LiveNode` and `Strategy` are
+pyo3-unsendable, so an attribute read from another thread aborts the process with an uncatchable
+SIGABRT.
 
 THE CACHE IS THE ONLY TRUTH ABOUT AN ORDER. `submit_order` copies the order into the Cache and
 every later event applies to the CACHE's copy; the object the caller kept stays `INITIALIZED`
@@ -149,7 +147,7 @@ BTC_QUOTED_LEGS = ("ETH/BTC", "SOL/BTC")
 # own altname, and the lookup drops an unresolved row with no warning and a successful return, so
 # startup reconciliation cannot see an order resting on one of these -- which is what probe 6 reads.
 # Restated here rather than imported: this script must run when the repo's own code is what changed.
-# `--pair` defaults to BTC/EUR, so the default run trades one of them.
+# `--pair` defaults to one of them, so the default run trades a blind leg.
 RECONCILE_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # The production engine's identity -- the source of the infix our ids must never carry.
@@ -167,13 +165,13 @@ PROBE_NODE_NAME = "p6probe"
 # numeric half is the probe's own 901, never the engine's 001, so nothing this harness records can
 # be mistaken for the engine's view of the same Kraken account.
 PROBE_ACCOUNT_ID = "KRAKEN-901"
-# The two variables carrying the trade credentials. Named here so the refusals can say WHICH is
-# missing without ever touching a value.
 # Where a run's PASS is written up, one file per version, named for the exact version string the
 # interpreter reports. `cli/engine/order-semantics-verified.json` maps version -> doc and is the
 # index; there is deliberately no second list to drift.
 VERIFICATION_DOC_DIR = "docs/reference/adapter-verification/"
 
+# The two variables carrying the trade credentials. Named here so the refusals can say WHICH is
+# missing without ever touching a value.
 API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 
@@ -224,13 +222,7 @@ class Refusal(Exception):
 
 
 def pinned_nautilus_version(pyproject: Path) -> str:
-    """The nautilus-trader version `pyproject.toml` pins, or a Refusal naming what is wrong with it.
-
-    Derived rather than restated so the version this run demands cannot drift from the version the
-    tree resolves. A pin spelled with anything but `===` is a refusal, not a spelling to tolerate:
-    `==` can install a build whose `__version__` is not the string anyone wrote down, and this run's
-    deliverable is exactly that string.
-    """
+    """The nautilus-trader version `pyproject.toml` pins, or a Refusal naming what is wrong with it."""
     try:
         parsed = tomllib.loads(pyproject.read_text())
     except OSError as exc:
@@ -377,9 +369,8 @@ def check_quote(bid: float, ask: float, age: float, max_age: float) -> None:
 def is_post_only_rejection(detail: str) -> bool:
     """True only when the venue rejected the order BECAUSE it would have crossed as post-only.
 
-    Matching the bare substring "post_only" is WRONG and was a live defect: `event_detail` emits
-    the attribute NAME, so an insufficient-funds rejection carries `due_post_only=False` and
-    matched it -- making every REJECTED a PASS on the one probe that exists to test protection.
+    `event_detail` emits the attribute NAME, so the bare substring "post_only" also matches an
+    insufficient-funds rejection carrying `due_post_only=False`.
     """
     return "due_post_only=True" in detail or "POST_ONLY_REJECTED" in detail or "postWouldExecute" in detail
 
@@ -402,14 +393,8 @@ class LeftoverSplit:
 def classify_submitted(submitted: Iterable[str], lookup: Callable[[str], object | None]) -> LeftoverSplit:
     """Split the submitted client order ids by what the CACHE says about each one now.
 
-    `lookup` is `cache.order(ClientOrderId(coid))`, and it is the only admissible source. The order
-    object a caller keeps after `submit_order` is a snapshot that never advances past
-    `INITIALIZED`; classifying by it reads a resting order as "never submitted, nothing at the
-    venue" and returns a clean bill while real money sits at Kraken.
-
-    "Never submitted" is not a status this can infer at all -- it is whether the harness called
-    `submit_order`, which is what the input list records. Everything in that list is treated as
-    possibly at the venue until the Cache says otherwise.
+    `lookup` is `cache.order(ClientOrderId(coid))`, and it is the only admissible source: the order
+    object a caller keeps after `submit_order` never advances past `INITIALIZED`.
     """
     split = LeftoverSplit()
     for coid in submitted:
@@ -468,14 +453,9 @@ class _Wait:
 class Sequencer:
     """The harness's only way of waiting: a predicate, a deadline, and a continuation.
 
-    A callback may not block, so nothing here sleeps or loops. `until` evaluates the predicate at
-    once -- an already-satisfied wait continues immediately and arms no alert at all -- and
-    otherwise arms a deadline and returns. `on_event` re-evaluates when something that could have
-    satisfied it happened; `on_alert` resolves the deadline. The continuation is called exactly
-    once, with True iff the predicate held.
-
-    `arm_alert(name, seconds)` and `cancel_alert(name)` are injected so the whole primitive is
-    exercisable with no clock, no node and no venue.
+    A callback may not block, so nothing here sleeps or loops. `arm_alert(name, seconds)` and
+    `cancel_alert(name)` are injected so the whole primitive is exercisable with no clock, no node
+    and no venue.
     """
 
     def __init__(self, arm_alert: Callable[[str, float], None], cancel_alert: Callable[[str], None]) -> None:
@@ -610,7 +590,7 @@ def _probe_strategy_config() -> StrategyConfig:
     """The strategy's whole configuration: the probe's order-id tag, and nothing else.
 
     `external_order_claims` stays at its `None` default, so this strategy structurally never claims
-    an order it did not submit -- the same scoping the production node relies on.
+    an order it did not submit.
 
     The tag is set rather than left unset so that even an id this harness did NOT mint carries the
     probe infix: `assert_collision_free` requires that infix, and with the tag in place the
@@ -619,20 +599,7 @@ def _probe_strategy_config() -> StrategyConfig:
 
 
 class ProbeStrategy(Strategy):
-    """The six probes, as the callbacks of one strategy.
-
-    The sequence is a queue of steps. A step runs in whatever callback reached it and then either
-    calls `_advance` (done) or arms a wait through `Sequencer` whose continuation eventually does.
-    A step that raises is recorded against its own row and the sequence continues with the next
-    one: a refusal on 4a must not silently cost 4b-4d, which are the margin semantics the entry
-    criterion turns on.
-
-    When the queue empties the sequence tears down -- cancel every submitted id the Cache does not
-    report closed, wait for the cancels to confirm, then stop the node. `on_stop` sweeps again,
-    which is where an interrupted run lands: a signal stops the trader, and commands issued from
-    `on_stop` still reach the execution engine because the node keeps its clients connected for the
-    post-stop window (`--order-timeout`, set on the builder).
-    """
+    """The six probes, as the callbacks of one strategy."""
 
     def __new__(cls, *args, **kwargs):
         """`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
@@ -734,9 +701,8 @@ class ProbeStrategy(Strategy):
     def _build_steps(self) -> list[tuple[str, str, Callable[[], None]]]:
         """(label, name, step) for every selected probe, in protocol order. Probe 4's four
         sub-probes are separate steps so a refusal on one costs only its own row."""
-        # Named once each: the row's name and the name the step reports its own failure under are
-        # the same string by construction, so they cannot drift apart into two spellings of one
-        # probe in the same table.
+        # The margin rows' name and the name the step reports its own failure under are the same
+        # string by construction, so they cannot drift into two spellings of one probe.
         long_name = f"Margin long (leverage {self.args.leverage}), resting"
         short_name = f"Margin short (leverage {self.args.leverage}), resting"
         catalogue: dict[int, list[tuple[str, str, Callable[[], None]]]] = {
@@ -761,10 +727,9 @@ class ProbeStrategy(Strategy):
         """Run the next step, or tear down. Every step ends here, and a step that raises is
         recorded against its own row rather than stopping the sequence.
 
-        Once the node is going down the sequence stops dead. The remaining probes are abandoned
-        deliberately and their rows never appear: a probe that ran during the shutdown would price
-        against a quote feed that is closing, and -- with `--apply` -- would submit orders after the
-        operator asked for the run to end."""
+        Once the node is going down the sequence stops dead: a probe that ran during the shutdown
+        would price against a quote feed that is closing, and -- with `--apply` -- would submit
+        orders after the operator asked for the run to end."""
         if self._stopping:
             if self._steps:
                 print(f"\n!! the node is stopping -- abandoning the {len(self._steps)} probe step(s) not yet run")
@@ -1037,8 +1002,7 @@ class ProbeStrategy(Strategy):
         return planned, order
 
     def submit(self, order, leverage: int | None = None) -> str:
-        """Hand the order to the library and keep only its id. The object is not retained: after
-        this call it is a snapshot that will never change again.
+        """Hand the order to the library and keep only its id.
 
         The single choke point through which every probe order reaches the venue, and therefore
         where the stopping check belongs: commands issued from a stopped strategy still reach the
@@ -1250,9 +1214,7 @@ class ProbeStrategy(Strategy):
         label, name = "4b", "Crossing post-only"
         # The requirement is post-only protection with no fill. WHICH terminal event the adapter
         # surfaces that as -- OrderCanceled or a post-only OrderRejected -- is an adapter mapping
-        # this run OBSERVES; the verdict logic below accepts either. It is stated as owed rather
-        # than carried over from an earlier reading, because a reading taken on one adapter build
-        # and matched against another turns agreement into evidence of nothing.
+        # this run OBSERVES; the verdict logic below accepts either.
         expected = (
             "Venue post-only protection, no fill; RECORD which terminal event it arrives as "
             "(OrderCanceled or a post-only OrderRejected -- either passes)"
@@ -1350,9 +1312,7 @@ class ProbeStrategy(Strategy):
     def _probe5(self) -> None:
         label, name = "5", "Real ~EUR 10 fill round-trip"
         expected = "Submit -> fill -> reconcile -> close -> flat"
-        # Plan BEFORE the gates so a dry run SHOWS the order that would spend money. With the gates
-        # first, probe 5's plan was unreachable in dry-run and first appeared in the live run,
-        # milliseconds ahead of submission.
+        # Plan BEFORE the gates so a dry run SHOWS the order that would spend money.
         bid, ask, mid = self.live_quote()
         planned, buy = self.plan_market(
             probe=f"{label}-buy",
@@ -1619,8 +1579,8 @@ def exec_client_config() -> KrakenExecutionClientConfig:
     ZEUR, under this harness's own account id. Both currency fields read ZEUR because that is
     the `quote_currency.code` every EUR pair carries -- "EUR" would match nothing.
 
-    The credentials are read here and handed straight to the config; they are never stored on a
-    harness object, and the refusal below names the VARIABLES, never their contents."""
+    The credentials are never stored on a harness object, and the refusal below names the
+    VARIABLES, never their contents."""
     api_key = os.environ.get(API_KEY_VAR, "")
     api_secret = os.environ.get(API_SECRET_VAR, "")
     missing = [name for name, value in ((API_KEY_VAR, api_key), (API_SECRET_VAR, api_secret)) if not value]
@@ -1645,8 +1605,7 @@ def exec_client_config() -> KrakenExecutionClientConfig:
 
 
 def build_node(args, strategy: ProbeStrategy) -> LiveNode:
-    """The assembled node: trader identity, logging, the two exec-engine knobs, the Kraken data
-    client, and -- unless `--no-exec` -- the Kraken exec client, with the probe strategy attached.
+    """The assembled node, with the probe strategy attached.
 
     The adapter loads the venue's instrument universe itself on connect, so nothing here selects
     it. `filter_unclaimed_external_orders=False` keeps venue-tagged unclaimed orders in the cache,
@@ -2179,9 +2138,7 @@ def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
         if filled:
             # Orders are only half the exposure. A buy that filled before the run ended is a
             # POSITION, and a run that stopped mid-sequence never got to close it -- nothing in the
-            # order read can see that. Keyed on the sequence not finishing rather than on a signal
-            # arriving: an exec client that dies takes the node down with no signal, and that path
-            # leaves exactly the same open position.
+            # order read can see that.
             print("\n!! this run ended before its sequence finished, AFTER one or more of its orders filled:")
             for coid, qty in filled:
                 print(f"!!   {coid} filled {qty}")

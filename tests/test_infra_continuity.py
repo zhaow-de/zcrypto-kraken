@@ -1,7 +1,4 @@
-"""T0097 / spec 00076: the continuity instrument's measurement semantics.
-
-Every test here constructs the defect it names and asserts the instrument reacts.
-"""
+"""T0097 / spec 00076: the continuity instrument's measurement semantics."""
 
 import datetime as dt
 import importlib.util
@@ -97,7 +94,6 @@ def test_missing_hour_books_once_and_its_excess_is_not_pooled(tmp_path):
     assert tl.missing_hours == 1
     excesses = [s for s, k in tl.boundaries if k == "excess"]
     assert len(excesses) == 1
-    # H0's last row sits 10 s before its boundary, H2's first 10 s after its start: 3600 + 20.
     assert excesses[0] == pytest.approx(20.0, abs=0.01)
     assert len(tl.pool) == len(tl.intra)  # the excess never joins the threshold sample
     # 3 hours span H0..H2 (H1 missing) -- distinct from len(segs) == 2, so a mutant that drops the
@@ -302,8 +298,7 @@ def test_small_sample_is_unmeasured_and_fails_the_bar(tmp_path, capsys):
     rc, out = _run(tmp_path, capsys)
     assert "UNMEASURED" in out
     assert "*** FAIL *** (unmeasured streams: 1)" in out
-    # 00079/D4's attribution, pinned in BOTH directions: the under-bound reason is NAMED, and it is
-    # not misattributed as a steepened tail.
+    # 00079/D4's attribution: the under-bound reason is NAMED, not misattributed as a steepened tail.
     assert f"under the {continuity.MIN_POOL}-interval bound" in out
     assert "steepens more than" not in out
     # Every stream unmeasured is still "we read something and judged it" -- rc 0 with a FAIL
@@ -316,7 +311,6 @@ def test_unmeasured_stream_is_excluded_from_the_total_row(tmp_path, capsys):
     write_stream(tmp_path, "THIN/EUR", {H0: evenly(H0, 200, 18.0)})
     write_stream(tmp_path, "DENSE/EUR", {H0: evenly(H0, 5999, 0.6), H1: evenly(H1, 5999, 0.6)})
     _, out = _run(tmp_path, capsys)
-    # covered_s on TOTAL counts only the measured stream.
     assert float(_column(out, "TOTAL", "covered_s")) == pytest.approx(float(_column(out, "DENSE/EUR", "covered_s")))
     assert "*** FAIL *** (unmeasured streams: 1)" in out
 
@@ -466,8 +460,7 @@ def _full_hour_carved(h: dt.datetime, step: float, windows: list[tuple[float, fl
 
 
 def test_report_renders_contaminated_stream_unmeasured(tmp_path, capsys):
-    """End-to-end wiring pin: every pool-level test above passes with `tail_steepness` implemented
-    but never wired into `measured`, so this test is what stands between that and shipping.
+    """End-to-end wiring pin: the gate reaches the rendered report, not only `tail_steepness`.
 
     Two 200 s windows carved out of hour 0 at 0.6 s spacing put p99.99 on the second-largest
     interval, the contamination the gate refuses;
@@ -484,15 +477,10 @@ def test_report_renders_contaminated_stream_unmeasured(tmp_path, capsys):
     )
     rc, out = _run(tmp_path, capsys)
     assert rc == 0
-    # (a) the refusal is NOT the old MIN_POOL gate -- the pool is more than twice the bound.
     assert int(_column(out, "AAA/EUR", "n")) == 11_332 >= continuity.MIN_POOL
-    # (b) it is refused rather than scored against the self-inflated 2,004.0.
     assert _column(out, "AAA/EUR", "thresh_s") == "UNMEASURED"
-    # (c) and the refusal reaches the verdict instead of being skipped.
     assert "*** FAIL *** (unmeasured streams: 1)" in out
-    # (d) the operator is told WHICH refusal this is ...
     assert "steepens more than 10x across a decade of quantiles" in out
-    # (e) ... and it is not the under-bound one.
     assert f"under the {continuity.MIN_POOL}-interval bound" not in out
 
 
@@ -525,7 +513,7 @@ def _mixed_tree(root: Path) -> None:
 
 
 def test_tail_depth_is_printed_and_correct(tmp_path, capsys):
-    """The `tail` column in all four slots at once: 2 on the refused stream, where the depth is the
+    """The `tail` column in every slot at once: 2 on the refused stream, where the depth is the
     only transparency a reader gets because no threshold is shown; n on a perfectly uniform fixture;
     blank on TOTAL, since depth is per pool and summing it would invent a number, as for `thresh_s`;
     and both rules widen with the header.
@@ -556,15 +544,13 @@ def test_a_one_row_hour_prints_a_blank_tail_instead_of_crashing(tmp_path, capsys
 
 def test_depth_is_provably_not_a_detector():
     """Depth is not a contamination detector (00079/D5): a clean and a contaminated pool of the same
-    size measure the identical depth, while the steepness ratios the gate does use separate them by
-    two orders of magnitude.
+    size measure the identical depth, while the steepness ratios the gate does use separate them.
     """
     rng = random.Random(11)  # pinned: verified to satisfy every assertion below
     clean = pl.Series(_bursty(11_389, rng))
     dirty = pl.Series(_bursty(11_387, rng) + [200.0, 200.0])
     assert len(clean) == len(dirty) == 11_389
     assert continuity.tail_depth(clean) == continuity.tail_depth(dirty) == 2
-    # ... while the statistic the gate DOES use tells them apart on the same data.
     assert max(continuity.tail_steepness(clean)) < continuity.TAIL_RATIO_CUT
     assert max(continuity.tail_steepness(dirty)) >= continuity.TAIL_RATIO_CUT
 

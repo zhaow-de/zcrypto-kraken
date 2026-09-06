@@ -1,8 +1,5 @@
-"""Spec 00082: converge guards evaluated through Ansible's own templar.
-
-The test boundary is the guard's REAL condition expression fed constructed probe outcomes --
-never a re-implementation of the logic; `load_tasks` reads the committed YAML.
-"""
+"""Spec 00082: converge guards evaluated through Ansible's own templar -- the guard's REAL condition
+expression fed constructed probe outcomes, never a re-implementation of the logic."""
 
 import hashlib
 import json
@@ -431,11 +428,8 @@ def test_old_floor_still_passes_after_1800_without_journal():
 
 def test_journal_probe_path_matches_the_engine_role_default():
     """The journal path site.yml probes must be the engine role's `engine_state_dir` default — the
-    literal in site.yml is a deliberate choice (a statically-listed role's defaults are play-wide on
-    this ansible-core, so the literal is not a necessity), and a relocation of that default would
-    otherwise leave the floor permanently conservative (probe rc!=0 forever, guard 'working' but never
-    early).
-    """
+    literal there is deliberate, and a relocated default would leave the probe failing forever, the
+    window floor permanently conservative, and the guard still reading as working."""
     site_text = SITE.read_text()
     defaults = (SITE.parent / "roles" / "engine" / "defaults" / "main.yml").read_text()
     m = re.search(r"^engine_state_dir:\s*(\S+)", defaults, re.M)
@@ -728,7 +722,8 @@ _UNSET = object()  # so a test can pass record=None and mean it
 
 
 def _pinned_nautilus_version() -> str:
-    """The nautilus version the committed pyproject pins, parsed independently of the guard."""
+    """The nautilus version the committed pyproject pins, read with tomllib rather than a copy of the
+    guard's own regex, which would match itself and pass on a mangled read."""
     deps = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["dependencies"]
     entries = [d.strip() for d in deps if re.match(r"^nautilus-trader\b", d.strip())]
     assert len(entries) == 1, f"expected exactly one nautilus-trader dependency, found {entries}"
@@ -847,16 +842,7 @@ def test_arming_override_echo_fires_only_on_an_accepted_override(template, pypro
 
 def test_arming_backstop_reads_the_real_committed_files():
     """Both directions from the REAL role, template and pyproject: a recorded version passes, an
-    absent one refuses.
-
-    The membership list is fed state-agnostically -- the true positive gets the pinned version
-    present, the bite gets it absent -- because a bumped-but-disarmed repo is a blessed state, and
-    asserting the pin IS recorded would go red for the whole legitimate interim between a bump
-    landing and its attended pass running.
-
-    The pinned version is read with tomllib, never a copy of the guard's own regex: a re-derivation
-    matches itself and passes on a mangled read.
-    """
+    absent one refuses."""
     record = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())
     versions = record["verified_nautilus_versions"]
     pin = _pinned_nautilus_version()
@@ -1286,11 +1272,7 @@ def _relay_vars(running: str | None, rendered: str | None, **extra) -> dict:
     ],
 )
 def test_the_ssh_relay_drift_gate_separates_drift_from_health(running, rendered, expected, why):
-    """The gate must pass BOTH healthy shapes and fail every drifted one.
-
-    `__not_running__` is healthy, not drifted: the socket is `Accept=no` and the service has no
-    `[Install]`, so it is inactive from boot until the first connection and `MainPID` reads 0.
-    """
+    """The gate must pass BOTH healthy shapes and fail every drifted one."""
     gate = find_task(load_tasks(ACCESS_TASKS), _RELAY_GATE)
     assert truthy(assert_that(gate), _relay_vars(running, rendered)) is expected, why
 
@@ -1308,10 +1290,8 @@ def test_the_ssh_relay_drift_gate_takes_no_override():
 def test_the_ssh_relay_drift_gate_is_skipped_under_check_and_runs_last():
     """The gate skips under check mode and is the role's last task, so nothing it can fail sits below it.
 
-    `converge.sh` previews with `--check --diff` and ABORTS the run if the preview fails, so a gate
-    that tripped there would block the whole converge -- including the pinned-leaves and Caddyfile
-    tasks that are the client-cert revocation path.
-    """
+    `converge.sh` aborts on a failed `--check --diff` preview, so a gate tripping there would block
+    the whole converge, the client-cert revocation path included."""
     tasks = load_tasks(ACCESS_TASKS)
     gate = find_task(tasks, _RELAY_GATE)
     assert "not ansible_check_mode" in when_conditions(gate), "the gate must not evaluate under --check"
@@ -1331,9 +1311,7 @@ def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice(
     """The running reader must read the PROCESS's argv and the rendered reader the unit FILE.
 
     Repointing the running reader at the unit file makes both sides read the same bytes: the gate
-    then passes on every converge while the relay drifts unbounded -- the Alloy drift failure the
-    `Shared converge mechanics` block records (`.claude/skills/zcrypto-rollout-image/SKILL.md`).
-    """
+    then passes on every converge while the relay drifts unbounded."""
     tasks = load_tasks(ACCESS_TASKS)
     running = find_task(tasks, "read the ssh relay's running target")["ansible.builtin.shell"]["cmd"]
     rendered = find_task(tasks, "read the ssh relay's rendered target")["ansible.builtin.shell"]["cmd"]
@@ -1369,11 +1347,7 @@ def test_the_ssh_relay_readers_read_the_PROCESS_and_the_FILE_not_the_file_twice(
     ],
 )
 def test_the_ssh_relay_running_reader_emits_the_sentinel_only_when_not_running(tmp_path, stub_pid, expect_sentinel, why):
-    """The reader emits `__not_running__` only when the unit is not running (MainPID 0).
-
-    Behavioural, against the committed `cmd` with a stub `systemctl`: an inverted `[ "$pid" = "0" ]`
-    keeps every structural assertion green while making a live relay read as not-running.
-    """
+    """The reader emits `__not_running__` only when the unit is not running (MainPID 0)."""
     import os
     import subprocess
 
@@ -1433,13 +1407,10 @@ def _directives(unit: str) -> dict[str, list[str]]:
 
 
 def test_agentboard_killmode_and_mainpid_stay_coupled():
-    """`KillMode=process` is only safe because the unit ExecStarts the SERVER, not the node shim.
-
-    The two halves live in two files with nothing coupling them. Dropping `KillMode=process`
-    restores the control-group SIGKILL that takes the operator's tmux sessions with it; reverting
-    the ExecStart to the shim while KillMode stays lets systemd kill the wrapper while the real
-    server keeps `:4040`, so the next start cannot bind.
-    """
+    """`KillMode=process` is only safe because the unit ExecStarts the SERVER, not the node shim, and
+    nothing else couples the two files: dropping it restores the control-group SIGKILL that takes the
+    operator's tmux sessions, and reverting to the shim leaves the server holding `:4040` so the next
+    start cannot bind."""
     unit = AGENTBOARD_UNIT.read_text()
     start = AGENTBOARD_START.read_text()
 

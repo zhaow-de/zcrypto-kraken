@@ -117,4 +117,20 @@ Sixteen more from the same pass, reported by the drafters that cut the sentences
 - `tests/test_trades_backfill.py` — nothing walks `BackfillResult`'s fields against the logged `trade backfill complete` line; the buckets pinned by name are pinned individually, so a field added later prints nowhere with every test green. Wanted: a `dataclasses.fields()` walk asserted against the summary.
 - `tests/test_costs_spread.py` and `tests/test_costs_calibrate.py` — nothing pins `max_rows` for the CURRENT window, so a recalibration whose pairs stop being exactly co-sampled restamps green. Wanted: that pin (data-gated on the NAS mount).
 
+### From the `tests/` remainder (T0164, branch `cleanup/prose-tests-remainder`)
+
+The nine files held while `feat/t0168-unasserted-claims` wrote them, plus three a coverage audit found untouched by any branch.
+
+- `tests/test_infra_alert_rules.py` — `_fires_on_absence` is blind to an `lt` evaluator folded into a `math` node; the file says so in prose and asserts nothing. Wanted: a rule fixture whose absence-firing shape is expressed that way, asserted to be classified.
+- `tests/test_infra_alert_rules.py` — `_HEADROOM_DELIBERATELY_ABSENT` is empty, so the stale-excuse arm of its test iterates nothing and is degenerate today. Wanted: either an entry, or the arm asserted to be empty on purpose so a future entry is a decision rather than drift.
+- `tests/test_infra_compose_templates.py` — `OPS_CONTEXT` hand-types `"zcrypto-ops-liquidations"` under a comment claiming it IS the role default, with nothing tying it to `roles/ops/defaults/main.yml`. Wanted: the context read from the role default, so a changed default cannot leave every render test green against a `container_name` production never renders.
+- `tests/test_infra_compose_templates.py` — "mirrors Ansible's own template defaults" is unasserted, so an ansible-core default change diverges from a real converge silently. Wanted: the rendering Environment's `trim_blocks`/`lstrip_blocks` compared against `ansible.plugins.action.template`'s own defaults.
+- `tests/test_ops_postverify.py:104-105` — the docstring says `days_gap` is what nothing else reports, because `days_unhealed` stops counting a day at the moment it becomes permanent (the same division the deployed HELP at `roles/ops/templates/tape-bars.sh.j2:110` makes). Nothing asserts that division. Wanted: a `cli/tick` test that a day past the retry window counts in `days_gap` and not in `days_unhealed`.
+- `tests/test_mutate_probe.py` — `test_cleanup_cp_failure_is_rc9_and_keeps_pristine` declares "Assumes a non-root test run" with no guard: under root `chmod 0444` is a no-op and rc is never 9. Wanted: the `os.geteuid() == 0` skipif its sibling at `tests/test_capture_segment_writer.py:962` was given today.
+- `tests/test_mutate_probe.py` — `test_seeding_failure_is_rc8_not_usage` claimed the rc-8 path leaves no temp dir while reading no TMPDIR. Wanted: the temp dir asserted absent.
+- `tests/test_infra_continuity.py` — `test_since_window_keeps_genesis_from_moving_and_books_a_late_leading_edge` states the 2.6 s crossing and 1.2 s tail stay unbooked, but its `approx(400.0, rel=0.05)` at `:290` spans 380-420 and passes at 403.8. Wanted: `abs=0.5`, which would bite.
+- `tests/test_capture_segment_writer.py` — `test_a_future_dated_final_can_never_brick_the_stream` says the nonsense final is ignored "loudly" with no caplog assertion. Wanted: the log line asserted.
+- `tests/test_infra_alloy_series.py` — the token pattern `zcrypto_[a-z0-9_]{4,}` cannot see an uppercase metric name. Wanted: a case-insensitive sweep asserting every hit is already classified.
+- `tests/test_infra_alloy_series.py` — the derived guard's scope is `zcrypto_*` only, so an `ops_*`, `node_*` or `hc_*` family added to code and to no list is dropped at remote_write with the suite green. Wanted: the same derivation over those prefixes.
+
 Both alert edits and their push are the owner's word at push time: alert text ships through `grafana-push.sh` from merged `develop`, never from a branch.

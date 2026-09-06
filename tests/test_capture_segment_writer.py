@@ -103,7 +103,6 @@ def test_rotates_segment_at_hour_boundary(tmp_path):
     writer = SegmentWriter(tmp_path, "BTC/EUR", "book", BOOK_SCHEMA)
     writer.append(_book_event(14, 0))
     writer.append(_book_event(14, 59))
-    # Crossing into hour 15 must finalize hour 14's segment immediately, before hour 15 is closed.
     writer.append(_book_event(15, 0))
 
     hour14 = _segment_path(tmp_path, 14)
@@ -136,7 +135,6 @@ def test_flush_rows_bounds_buffer_and_merges_parts_into_one_segment(tmp_path):
     writer = SegmentWriter(tmp_path, "BTC/EUR", "book", BOOK_SCHEMA, flush_rows=2)
     for i in range(5):
         writer.append(_book_event(14, i, price=100.0 + i))
-        # The buffer never grows past flush_rows before being flushed to a part file.
         assert len(writer._buffer) <= 2
     writer.append(_book_event(15, 0))  # rotation flushes the tail and merges the hour
 
@@ -144,7 +142,6 @@ def test_flush_rows_bounds_buffer_and_merges_parts_into_one_segment(tmp_path):
     df = pl.read_parquet(path)
     assert df.height == 5
     assert sorted(df["price"].to_list()) == [100.0, 101.0, 102.0, 103.0, 104.0]
-    # Part files were merged away — only the final segment + manifest remain.
     remaining = sorted(p.name for p in path.parent.iterdir())
     assert remaining == [path.name, path.name + ".sha256"]
 
@@ -168,7 +165,6 @@ def test_verify_manifest_raises_when_manifest_missing(tmp_path):
 
 
 def test_verify_manifest_treats_an_empty_sidecar_as_missing(tmp_path):
-    # An empty (or unparseable) sidecar is a MISSING one, not a mismatch.
     path = tmp_path / "orphan.parquet"
     path.write_bytes(b"not-really-parquet")
     path.with_name(path.name + ".sha256").write_text("")
@@ -473,19 +469,12 @@ def test_parts_segments_and_manifests_are_fsynced_before_the_rename(tmp_path, mo
 
 
 # --- the invariant: `<HH>.parquet` on disk is ALWAYS a committed, complete final -----------------
-#
-# Every state below is built by driving the real writer and then restoring the exact bytes a kill
-# would have left.
 
 
 def _crash_inside_merge(tmp_path, *, stage: str) -> Path:
-    """Drive a real hour-10 merge, then restore the on-disk bytes a hard kill at `stage` leaves.
-
-    The merging file's bytes ARE the bytes the final is renamed from, so renaming the committed
-    final back to `<HH>.parquet.merging` reproduces them exactly. `stage` walks the commit sequence:
-    `manifest` (killed before the sidecar was written), `unlink` (before the parts were removed),
-    `replace` (before the atomic rename that publishes the hour).
-    """
+    """Drive a real hour-10 merge, then restore the on-disk bytes a hard kill at `stage` leaves: the
+    merging file's bytes ARE the bytes the final is renamed from, so renaming the committed final
+    back to `<HH>.parquet.merging` reproduces them exactly."""
     w = _new_writer(tmp_path, flush_rows=5)
     for i in range(20):  # 4 parts, empty buffer
         w.append(_hour10_event(i, i))
@@ -1165,8 +1154,7 @@ def test_a_replayed_print_cannot_reopen_a_committed_hour(tmp_path):
 # --- T0037: cross-stream quorum — one untrusted `ts` can never rotate the hour ------------------
 #
 # A row for an hour the `HourOracle` has not confirmed is HELD, never dropped, so the live hour stays
-# open and no genuine row behind a bogus stamp is ever refused. Loss is measured as a set-difference
-# off disk (parts + finals), never predicted.
+# open and no genuine row behind a bogus stamp is ever refused.
 
 
 def _book_event_for(pair: str, hour: int, minute: int = 0, sec: int = 0, *, checksum: int = 42) -> dict:
@@ -1228,7 +1216,6 @@ def test_t0037_lone_in_window_bogus_stamp_never_truncates_the_live_hour(tmp_path
     assert verify_manifest(path) is True
     w.close()
 
-    # Zero genuine rows lost, and the bogus row is STORED in the hour its ts names (never deleted).
     survived = set(_disk_column(tmp_path, "checksum"))
     assert genuine <= survived
     hour11_parts = sorted(_segment_path(tmp_path, 11).parent.glob("11.part*.parquet"))

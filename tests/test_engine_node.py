@@ -1,8 +1,6 @@
-"""The node wrapper (spec 00041): the boundary arithmetic, the restart-inside-a-passable-window
-startup rule, the alert chain (schedule-next-first, run_cycle exceptions contained), the two order
-event streams, and the production-shape LiveNode assembly. The tests that RUN a node against
-Kraken's public endpoint are opt-in on ZCRYPTO_LIVE_VENUE_TESTS=1 and FAIL, never skip, when the
-flag is set and the venue is unreachable.
+"""The node wrapper (spec 00041). The tests that RUN a node against Kraken's public endpoint are
+opt-in on ZCRYPTO_LIVE_VENUE_TESTS=1 and FAIL, never skip, when the flag is set and the venue is
+unreachable.
 """
 
 import ast
@@ -290,11 +288,10 @@ def test_shadow_strategy_bare_construction_defaults(tmp_path):
 
 # --- the venue-visible identity (spec 00100 D8) --------------------------------------------------
 
-# The probe performs the registration `build_shadow_node` performs -- `LiveNode.add_strategy` --
-# and reads back the registered `strategy_id`, the prefix an order minted after it carries, and the
-# id held before it. In a child process: an in-process node build takes the pytest session's
-# faulthandler with it. `others` places a SECOND, tag-less strategy -- `before` or `after` this one,
-# or `alone` for none -- which takes its tag positionally and can contend for this prefix.
+# The probe performs the registration `build_shadow_node` performs -- `LiveNode.add_strategy`. In a
+# child process: an in-process node build takes the pytest session's faulthandler with it. `others`
+# places a SECOND, tag-less strategy -- `before` or `after` this one, or `alone` for none -- which
+# takes its tag positionally and can contend for this prefix.
 _IDENTITY_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
@@ -735,8 +732,7 @@ def test_probe_executor_factory_shape(tmp_path):
 
 def test_no_strategy_claims_external_orders(tmp_path):
     """No strategy this node registers claims external orders, on every construction: `None` there
-    IS the empty claim, and a claim would route the account owner's own hand-placed settling fills
-    onto a strategy's own order topic and into the executor's unknown-order kill trip."""
+    IS the empty claim."""
     strategies = (
         ShadowStrategy(_config(tmp_path)),
         ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None),
@@ -766,7 +762,7 @@ _ORDER_STREAM_WIDENERS = {
 
 
 def test_no_module_widens_the_engines_order_event_stream():
-    """No file under cli/ carries any of the three widener texts, anywhere: the engine's
+    """No file under cli/ carries any of the widener texts, anywhere: the engine's
     order-event stream is the strategy's own subscription plus the observer registered under the
     reserved external identity, and neither needs a bus or a claim to exist. A red run is a widening
     to remove, never an allowance to add. Text, not imports -- a reference in a comment is one a
@@ -1298,11 +1294,9 @@ def test_build_shadow_node_without_exec_client(tmp_path):
 
 
 def test_the_registered_observers_identity_is_exactly_the_venues_external_order_id(tmp_path):
-    """Measured through the real assembly (spec 00100 D2): the observer registers under exactly
-    `EXTERNAL` -- at construction and after registration alike -- the main strategy's own identity
-    is untouched by the second registration, and the observer's handler is the forwarder of the
-    strategy carrying the executor factory, which is what keeps this stream wired WITH the filter
-    that scopes it."""
+    """Measured through the real assembly (spec 00100 D2): the observer's handler is the forwarder
+    of the strategy carrying the executor factory, which is what keeps this stream wired WITH the
+    filter that scopes it."""
     facts = _node_build_facts(tmp_path, exec_enabled=False)
     assert facts["observers"] == ["ExternalOrderObserver"]
     assert facts["observer_ids_registered"] == ["EXTERNAL"]
@@ -1571,7 +1565,7 @@ def test_a_node_that_cannot_finish_starting_raises_out_of_run():
 # pyo3 marks a `LiveNode` unsendable: a cross-thread read is a panic that ABORTS the process --
 # SIGABRT, no Python exception, nothing an `except` can intercept, and nothing logged unless
 # faulthandler is armed (which is why `engine run` arms it). `node.handle()`, captured on the
-# building thread, is the one view that answers normally off-thread. Both halves measured.
+# building thread, is the one view that answers normally off-thread.
 _UNSENDABLE_PROBE = """
 import os, sys, threading
 

@@ -60,6 +60,18 @@ Residuals kept, with their reasons: `tests/conftest.py` stays over the file-pros
 **One adjudication closed rather than registered**: the firewall golden pin's fidelity rests on `_render`'s Jinja settings matching ansible's template module, and they match in effect — ansible 2.21.3 defaults `trim_blocks=True`, `lstrip_blocks=False`, `newline_sequence="\n"`, and `_engine.py` appends the input/output newline difference for parity instead of setting `keep_trailing_newline`. The condition that would break that equivalence is registered in T0168 rather than left in this paragraph.
 
 
+### The `tests/` remainder
+
+Branch `cleanup/prose-tests-remainder`, 2026-09-06, `zcrypto-bravo`: the nine files held back while `feat/t0168-unasserted-claims` wrote them, plus three a coverage audit found that no branch had touched and no commit had dispositioned — `tests/test_infra_alloy_series.py`, `tests/test_open_topics_frontmatter.py` and `infra/scripts/kraken-order-semantics-probe.py`, the last in scope by the coordinator's extension of a `tests/`-only boundary. Read-only drafters, one per file group, each reading that file's own commit log before proposing; two disjoint read-only reviewers on a detached worktree at the commit.
+
+Measured over the twelve (`uv run python infra/scripts/prose-tripwire.py <the twelve>`): 123 → 77 offenders; whole `tests/` 452 → 411.
+
+The finding worth carrying: **a premise stated of a section and false of the tests beneath it**, the class a guard commit landed against the same day, found again in three more places — a capture section banner claiming every state below is built by driving the real writer, which several tests beneath it do not; "every test here constructs the defect it names", false of one whose body is a single equality; and an alert-rules module docstring claiming every constraint it pins is one the provisioning API enforces, while the file also pins runbook links and the README-index bijection. Three counts named no set at all, including "all three configs" against four `*_REQUIRED` lists.
+
+`tests/test_ops_daily.py` took NO edit and that verdict was reviewed rather than assumed: zero blocks over the bar, the same prose ratio on both sides, and a reviewer's own read of its prose against its bodies.
+
+For `infra/scripts/kraken-order-semantics-probe.py`, which places real orders when run, what stays is what an operator needs before spending money — the safety model, the probe ordering, and what a reading does not prove about the venue. Its proof is the AST with docstrings stripped plus, additionally, the source with docstrings AND comments stripped byte-identical; the shell-style "non-comment lines" form does not apply to a Python file whose prose is docstrings.
+
 ## Suggested next steps
 
 - **The remaining scope, one PR per batch, dispatched by `zcrypto-main`** — the 33 `cli/` files left REVISE (rostered below), the nine `tests/` files held for `feat/t0168-unasserted-claims` (the tripwire's report is the worklist; a dozen sub-threshold soak blocks still carry event residue the tripwire cannot see), the three docs. Worklist per assignment: the tripwire's report for that scope, the files that can complete first (fewest offenders, one review round) under a hard clock, otherwise the churn order (`.local/retro/2026-09-04/study/churn.md`, most-changed first) with `.claude/*`, `docs/specs/*` and `docs/plans/*` excluded — the refine-rules round owns the first, and a spec/plan pair is a different kind of document with its own treatment.
