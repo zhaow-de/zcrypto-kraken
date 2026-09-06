@@ -28,6 +28,8 @@ DOC_GLOBS = ("docs/iterations-history*.md", "docs/open-topics/*.md", "README.md"
 EXCLUDED = ("docs/specs/", "docs/plans/", "docs/research/", "docs/open-topics/archive/", "docs/reference/ops-journal/", ".claude/")
 
 _HEADING = re.compile(r"^(#{1,6})\s+\S")
+# Whole-file or per-value ansible-vault content: a prose pass never edits it, so it is never reported.
+_VAULT = re.compile(r"^[ \t]*\$ANSIBLE_VAULT;", re.MULTILINE)
 _CHANGELOG = re.compile(r"iterations-history-phase\d+\.md")
 _SKIP_TOKENS = {tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING, tokenize.ENDMARKER}
 
@@ -163,6 +165,8 @@ def markdown_offenders(path: str, src: str, changelog: bool) -> list[Offender]:
 
 
 def offenders_for(path: str, src: str) -> list[Offender]:
+    if _VAULT.search(src):
+        return []
     suffix = os.path.splitext(path)[1]
     if suffix == ".py":
         return python_offenders(path, src)

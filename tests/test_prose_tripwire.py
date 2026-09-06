@@ -250,6 +250,29 @@ class TestTruePositives:
         assert tw.offenders_for("docs/reference/x.md", src) == []
 
 
+class TestVaultContent:
+    PATH = "infra/ansible/group_vars/all/vault.yml"
+
+    def _header(self) -> str:
+        return "\n".join(["# c"] * (tw.COMMENT_BLOCK_LINES + 1))
+
+    def test_a_comment_block_in_a_plain_yaml_file_is_reported(self) -> None:
+        """The true positive at the same path: the skip is by content, so a non-vault file still trips."""
+        assert _kinds(tw.offenders_for(self.PATH, self._header() + "\nkey: value\n")) == ["comment-block"]
+
+    def test_a_per_value_vault_blob_takes_the_file_out_of_scope(self) -> None:
+        src = self._header() + "\nkey: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          6162636465\n"
+        assert tw.offenders_for(self.PATH, src) == []
+
+    def test_a_whole_file_vault_blob_is_out_of_scope(self) -> None:
+        assert tw.offenders_for("a.yml", "$ANSIBLE_VAULT;1.1;AES256\n6162636465\n" + self._header() + "\n") == []
+
+    def test_the_vault_password_variable_is_not_vault_content(self) -> None:
+        """`ANSIBLE_VAULT_PASSWORD_FILE` names the password file; the blob's header ends in `;`."""
+        src = 'VPF="${ANSIBLE_VAULT_PASSWORD_FILE:-vault-pass.sh}"\n' + self._header() + "\ntrue\n"
+        assert _kinds(tw.offenders_for("infra/ansible/scripts/run.sh", src)) == ["comment-block"]
+
+
 class TestScope:
     @pytest.fixture
     def repo(self, tmp_path: Path, monkeypatch) -> Path:
