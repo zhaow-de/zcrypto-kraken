@@ -17,25 +17,19 @@ capture_log_max_file: "5"
 # lands); empty means the daemon simply skips liveness pings.
 capture_healthcheck_url: ""
 
-# Local retention of committed hour segments, in days (spec 00050 D8, T0032). The durable archive is
-# the NAS mirror — an hourly, hash-verified pull whose worst observed outage is 14 h — so 14 days of
-# local spool is a >= 20x margin over the time an hour needs to reach it. The prune deletes only
-# `<HH>.parquet` finals + their `.sha256` sidecars; never `.part` / `.held` / `.corrupt` (live hour,
-# quarantine, evidence). Raising this is safe; lowering it below a day is not, and the timer refuses.
+# Local retention of committed hour segments, in days (spec 00050 D8, T0032). The NAS mirror is the
+# durable archive, so this disk is a spool. Raising it is safe; lowering it below a day is not, and
+# the timer refuses.
 capture_retention_days: 14
 
-# --- Alloy (spec 00057; T0020's first-time telemetry stand-up on the capture VPSes): this host's own
-# Grafana Cloud shipper. Gated on `capture_alloy_digest` (no default — passed per run, the same way
-# capture_image_digest is): a converge without it skips the whole Alloy block rather than rendering a
-# compose file pointing at a broken image reference. The secrets file (the six GRAFANA_* names) has no
-# role var — alloy-compose.yaml.j2 hardcodes its relative `env_file: ./alloy-secrets.env` — it is
-# rendered by this role from group_vars/observed/vault.yml (tasks/main.yml), owned by zcrypto-alloy.
+# Alloy (spec 00057, T0020), this host's own Grafana Cloud shipper. Gated on `capture_alloy_digest`,
+# which has no default and is passed per run: a converge without it skips the whole Alloy block
+# rather than rendering a compose file pointing at a broken image reference. The secrets file has no
+# role var because alloy-compose.yaml.j2 hardcodes its relative `env_file`.
 capture_alloy_dir: /etc/zcrypto-capture/alloy
 capture_alloy_image: grafana/alloy
 
 # Where one-off timers on this host publish node-exporter .prom files (spec 00071 D1, T0100).
-# Alloy's textfile collector reads it through the EXISTING `/:/host/root:ro` mount as
-# /host/root/var/lib/zcrypto-node-textfile -- so this needs no compose edit and no container
-# recreate. Keep the two in step: a producer writing where no reader looks is precisely the defect
-# T0100 records (tests/test_reboot_check.py pins them together).
+# Alloy's textfile collector reads it through the EXISTING `/:/host/root:ro` mount, so this needs no
+# compose edit and no container recreate.
 capture_textfile_dir: /var/lib/zcrypto-node-textfile

@@ -5,11 +5,10 @@
     ansible_user: root
     ansible_port: 22
   tasks:
-    # Same guard as site.yml, same reason: this play targets `capture_host`, which now holds the live
-    # primary as well as the secondary. Bootstrapping the primary would rewrite its sshd drop-in to
-    # `PermitRootLogin no`, undoing the deliberate key-only root break-glass (commit 0971431). In
-    # practice it would fail unreachable first (the primary's sshd no longer listens on 22), but "it
-    # would probably fail anyway" is not a safety property.
+    # Same guard as site.yml: bootstrapping the primary would rewrite its sshd drop-in to
+    # `PermitRootLogin no`, undoing the deliberate key-only root break-glass. It would in practice
+    # fail unreachable first, since the primary's sshd no longer listens on 22 -- but "it would
+    # probably fail anyway" is not a safety property.
     - name: refuse to bootstrap the live primary unless explicitly asked
       ansible.builtin.assert:
         that: converge_primary | default(false) | bool
@@ -21,13 +20,10 @@
       when: inventory_hostname in groups['engine_host'] | default([])
       tags: [always]
 
-    # Generalises the primary refusal above to the SECONDARY: bootstrap is first-provision only, and
-    # re-running it on any already-provisioned host rewrites the sshd drop-in below. The deploy user
-    # is the evidence that provisioning already happened.
-    #
-    # Capture play only, deliberately: the ops and access plays are LAN-side, write no sshd drop-in,
-    # and the fail_msg's "would rewrite its sshd drop-in" would simply be false there. An explicit
-    # narrow, not an oversight.
+    # Generalises the refusal above to the SECONDARY: bootstrap is first-provision only, re-running
+    # it rewrites the sshd drop-in below, and the deploy user is the evidence that provisioning
+    # already happened. Capture play only, deliberately -- the ops and access plays are LAN-side and
+    # write no drop-in, so the refusal's own message would be false there.
     - name: probe — the zcrypto-deploy user (re-bootstrap refusal)
       ansible.builtin.command: getent passwd zcrypto-deploy
       register: bootstrap_deploy_user_probe
@@ -77,12 +73,9 @@
       ansible.builtin.service: {name: ssh, state: reloaded}
 
 - name: Bootstrap ops node — zcrypto-deploy user only (home-LAN box, no SSH hardening per owner)
-  # Deliberately minimal vs the capture play above: the ops node is a home-LAN box behind NAT, not a
-  # public-IP host, so it gets NO sshd drop-in — SSH stays on port 22 with Debian's defaults, and the
-  # box keeps its existing root break-glass. This play only makes the box converge-able: the
-  # `zcrypto-deploy` user + its key + passwordless sudo, so `run.sh` (the vaulted deploy_zcrypto-ops
-  # key, filename unchanged per spec 00057 D1) can run site.yml afterward. It never
-  # touches engine_host, so no converge_primary guard is needed here.
+  # Deliberately minimal beside the capture play: the ops node is a home-LAN box behind NAT, so it
+  # gets NO sshd drop-in -- SSH stays on 22 with Debian's defaults and the box keeps its root break-
+  # glass. It never touches engine_host, so no converge_primary guard belongs here.
   hosts: ops_host
   gather_facts: false
   vars:
