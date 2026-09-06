@@ -797,3 +797,13 @@ ______________________________________________________________________
 - `zcrypto-reconcile-healable-gap-rate`'s summary is rewritten to say the counter measures the silence a gap was ADMITTED on, not what a splice inserted, and points at the ledger's `residual_seconds` for whether anything was lost. These three rule changes reach the live stack with the next `grafana-push.sh` run from merged develop; until then `alerts.yaml` and Grafana differ by exactly them.
 - `ops-postverify.sh` reads the archive-pull dead-man's own operand as its tenth check: the exit code and both timestamps are written by one `printf` block, so a stopped timer used to leave the report reading ALL PASS about a writer that had not run.
 - The push payload's `notification_settings` is compared whole against the file for every rule, so the single non-default `repeat_interval` cannot be dropped silently by a change to `grafana-push.sh`.
+
+## 2026-09-06 — T0173 resolved: the operator instructions the topology doc was holding, and `fetch_public`'s three refusals
+
+- `infra/runbooks/engine-procedures.md`'s `engine-adhoc-key-read` carries the one-off read that needs the live trade key — the engine image, the `--entrypoint` override, the workstation-side stdin form, and the window that read has to sit in, whose 30-minute floor is a fallback the journal arm SUBSTITUTES rather than an earlier-of-two.
+- `infra/runbooks/zaccess.md`'s `zaccess-converge` and `zaccess-revoke-client-cert` carry the bridgehead's two attended procedures; its sshd offers two authentication tries because that is `devsec.hardening`'s own default, not a setting in this repo.
+- `infra/runbooks/observability.md`'s `zcrypto-alloy-dark` says the bridgehead's Alloy is the one that takes no digest operand and owes no bake, so its config changes converge with a plain `site.yml --limit`.
+- `infra/runbooks/ops-node.md`'s `agentboard-node-upgrade` and `infra/runbooks/nas.md`'s `nas-file-transfer` carry the two procedures that belong to those hosts rather than to the capture pair.
+- `infra/runbooks/drills-telemetry.md` binds every drill below it with the throwaway-subject rule, the log class no pipeline observes, and the reminder that a drill proves wiring and never timing.
+- `docs/reference/fleet.md` points at those pages instead of carrying their procedures, so a reader has one home per instruction rather than two that drift.
+- `zcrypto snapshot`'s reference-data fetch refuses a body that is not a JSON object, a body carrying no `result`, and a `result` that is not an object — three messages naming what arrived, where an operator used to read a traceback about a dict key.
