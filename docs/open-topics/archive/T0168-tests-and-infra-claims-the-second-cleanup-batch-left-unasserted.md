@@ -75,9 +75,9 @@ The owner pruned the remainder on 2026-09-06: 24 bullets kept and asserted, 28 d
 
 - `test(infra): the weld a rendered template can hide from bash -n` · `test(infra): the capture group's "and only them" half, asserted` · `test(infra): the reconcile mode flag, in its position and through its cast` · `test(engine): the gate's universe read off _evaluate_journal, not passed to it by hand` · `test(engine): the engine subcommand set compared, not a six-name list restated` · `test(infra): a print that reaches the trade key, which the accessor-name scan cannot see` · `test(obs): the logship gauge an alert reads, named where a count let it slip` · `test(trades): the echoed summary's arity, so a fourteenth counter cannot be the last one` · `test(ops): the panel regeneration's could-not-read arm, which the NAS deletion branches on` · `test(obs): the ingest regex pinned to both alloy pipelines it is a copy of`.
 
-#### Two bullets the prune did not reach, asserted rather than deliberated
+#### The eleven the prune did not reach
 
-The 2026-09-06 prune enumerated 52 of this section's 63 bullets. Two were in neither list — outside the owner's drops and outside the keeps — so on the coordinator's ruling they were asserted rather than carried:
+The 2026-09-06 prune enumerated 52 of this section's 63 bullets. The other eleven — the tests-remainder batch's, appended after the prune list was built — were in neither the keeps nor the drops, so the owner never saw them. Two are asserted here; the remaining nine are registered as \[[T0174]\], which is their disposition and not a deferral of one:
 
 - `test(continuity): a tolerance wide enough to hide the crossing and tail its docstring excludes` — `approx(400.0, rel=0.05)` spanned 380-420, so a booked 2.6 s crossing or 1.2 s tail passed unseen while the sibling `trunc` assertion stayed green too. `abs=0.5` bites: both defects measured SURVIVED before and KILLED after.
 - `test(tick): the division days_gap makes, which nothing asserted` — a settled, permanently holed day counts as `days_unhealed` while the re-scan window reaches it and as `days_gap` once past it, never as both. Both arms sit in one test, straddling the boundary by a day each way; widening the D4 floor by one day inverts the gap arm while the in-window arm holds.
@@ -86,7 +86,7 @@ The 2026-09-06 prune enumerated 52 of this section's 63 bullets. Two were in nei
 
 Six citations in the readings did not resolve as written; the claims held and the coordinates are corrected here so the archived record is followable.
 
-- The e1b probe's no-echo claim lives in the module docstring, not at `:36` (`:36` is `API_KEY_VAR`).
+- The e1b probe's no-echo claim lives in the module docstring, not at the `API_KEY_VAR` assignment the reading cited.
 - The reconcile mode flag is at `archive-pull.sh.j2:131`, not `:130`.
 - The ops ingest regex is at `roles/ops/files/config.alloy:322`, not `:323`.
 - The rendered engine-prune `ExecStart=` is 157 characters, not about 170; its `ReadWritePaths=` renders to 77.
@@ -97,13 +97,13 @@ Six citations in the readings did not resolve as written; the claims held and th
 
 The owner dropped 28 of the 52 remaining bullets on 2026-09-06, each read at source first. They are recorded here rather than deleted, so a later reader does not re-open one as an oversight.
 
-**Already asserted somewhere else.** `tests/test_infra_compose_templates.py` — the template's `9101` is pinned at `:98`, and the two files are deliberately not in lock-step. `tests/test_mutate_probe.py` — `assert rc == 9` at `:398`, and rc 3's two refusals are discriminated by their message substrings; nothing branches on a numeric code. `tests/test_engine_gate_cache.py` — the `>= 40` replay-path guard is the assertion, its looseness recorded. `tests/test_engine_feeders.py` — `limit_bound` is computed, published and already asserted. `tests/test_engine_journal_prune.py` — both halves are asserted elsewhere in the same file. `tests/test_features_derivatives.py` — the sentence is already gone and four tests call `ratio_features`. `tests/test_dashboards_cover_metrics.py` (two bullets) — the keep-regex claim is asserted in `tests/test_infra_alloy_series.py`, and `test_every_alerted_family_is_charted` already computes the alerted-minus-charted difference. `tests/test_engine_concordance.py` — `compare_targets` returns structurally before the per-asset indexing, so the `KeyError` is unreachable. `tests/test_archive_reconcile_command.py` — the `> 0.0` assertion is satisfied by one half alone. `tests/test_trades_backfill.py` — the one field a machine reads is asserted from both sides.
+**Already asserted somewhere else.** `tests/test_infra_compose_templates.py` — the template's `9101` is pinned at `:98`, and the two files are deliberately not in lock-step. `tests/test_mutate_probe.py` — `assert rc == 9` at `:398`, and rc 3's two refusals are discriminated by their message substrings; nothing branches on a numeric code. `tests/test_engine_gate_cache.py` — the `>= 40` replay-path guard is the assertion, its looseness recorded. `tests/test_engine_feeders.py` — `limit_bound` is computed, published and already asserted. `tests/test_engine_journal_prune.py` — both halves are asserted elsewhere in the same file. `tests/test_features_derivatives.py` — the sentence is already gone and four tests call `ratio_features`. `tests/test_dashboards_cover_metrics.py` (two bullets) — the keep-regex claim is asserted in `tests/test_infra_alloy_series.py`, and `test_every_alerted_family_is_charted` already computes the alerted-minus-charted difference. `tests/test_engine_concordance.py` — `compare_targets` returns structurally before the per-asset indexing, so the `KeyError` is unreachable. `tests/test_trades_backfill.py` — the one field a machine reads is asserted from both sides.
 
 #### Dropped: the claim describes something production never reaches
 
 **Not reached.** `tests/test_alpha_a1_directions.py` — the banded-short branch is research-only; production A1 runs `short="off"`. `tests/test_capture_book.py` — the property is measured continuously on live traffic by an exported per-pair gauge. `tests/test_capture_command.py` — production pairs come from the compose template's explicit list, never this path. `tests/test_tick_materialize.py` — a flattened-tree fixture would pin today's coincidence rather than a contract.
 
-**The opposite is the asserted design.** `tests/test_universe_rules.py` — an uncaptured pair is recorded as unevaluated and NOT rejected, which a test already names. `tests/test_code_prose_citations.py` — the claim holds; the predicate is inline and the file's only assertion is the one that reads it. `tests/test_engine_cycle.py` — the docstring's aside cannot license removing the guard the same test pins with `pytest.raises`.
+**The opposite is the asserted design.** `tests/test_archive_reconcile_command.py` — a `> 0.0` bound that one half satisfies alone is what the file already intends, so tightening it would assert a contract nothing states. `tests/test_universe_rules.py` — an uncaptured pair is recorded as unevaluated and NOT rejected, which a test already names. `tests/test_code_prose_citations.py` — the claim holds as written, so there is nothing an assertion would add. `tests/test_engine_cycle.py` — the docstring's aside cannot license removing the guard the same test pins with `pytest.raises`.
 
 #### Dropped: nothing to pin, and the rest
 
@@ -119,4 +119,4 @@ The owner dropped 28 of the 52 remaining bullets on 2026-09-06, each read at sou
 
 ## Suggested next steps
 
-_(none — every bullet of this topic is above, asserted or consciously dropped.)_
+_(none — every bullet of this topic is above: asserted, consciously dropped, or registered in \[[T0174]\].)_
