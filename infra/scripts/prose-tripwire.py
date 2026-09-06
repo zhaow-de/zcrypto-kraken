@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
 import glob
 import io
 import os
@@ -30,6 +31,8 @@ CODE_SUFFIXES = (".py", ".sh", ".yml", ".yaml")
 DOC_ROOTS = ("docs/reference", "docs/universe", "infra/runbooks")
 DOC_GLOBS = ("docs/iterations-history*.md", "docs/open-topics/*.md", "README.md")
 EXCLUDED = ("docs/specs/", "docs/plans/", "docs/research/", "docs/open-topics/archive/", "docs/reference/ops-journal/", ".claude/")
+# A topic file and its index gain a registry section per registration, so only the section bar is dropped.
+EXEMPT = {"docs/open-topics/*.md": ("section",)}
 
 _HEADING = re.compile(r"^(#{1,6})\s+\S")
 # Whole-file or per-value ansible-vault content: a prose pass never edits it, so it is never reported.
@@ -191,17 +194,30 @@ def markdown_offenders(path: str, src: str, changelog: bool) -> list[Offender]:
     return out
 
 
+def _exempt_kinds(path: str) -> tuple[str, ...]:
+    """A glob's `*` never crosses a directory separator, so a nested path is not the exempted one."""
+    for pattern, kinds in EXEMPT.items():
+        if os.path.dirname(path) == os.path.dirname(pattern) and fnmatch.fnmatchcase(
+            os.path.basename(path), os.path.basename(pattern)
+        ):
+            return kinds
+    return ()
+
+
 def offenders_for(path: str, src: str) -> list[Offender]:
     if _VAULT.search(src):
         return []
     suffix = os.path.splitext(path)[1]
     if suffix == ".py":
-        return python_offenders(path, src)
-    if suffix in (".sh", ".yml", ".yaml"):
-        return _block_offenders(path, hash_blocks(src))
-    if suffix == ".md":
-        return markdown_offenders(path, src, bool(_CHANGELOG.fullmatch(os.path.basename(path))))
-    return []
+        found = python_offenders(path, src)
+    elif suffix in (".sh", ".yml", ".yaml"):
+        found = _block_offenders(path, hash_blocks(src))
+    elif suffix == ".md":
+        found = markdown_offenders(path, src, bool(_CHANGELOG.fullmatch(os.path.basename(path))))
+    else:
+        return []
+    exempt = _exempt_kinds(path)
+    return [o for o in found if o.kind not in exempt]
 
 
 def _norm(path: str) -> str:

@@ -264,6 +264,27 @@ class TestSection:
         assert _kinds(tw.offenders_for("a.md", f"## H\n{body}\n")) == ["section"]
 
 
+class TestTheOpenTopicsSectionExemption:
+    """A topic file and its index grow a section per registration, so only the section bar is dropped."""
+
+    def _section(self) -> str:
+        return "## H\n" + "b" * tw.SECTION_BYTES + "\n"
+
+    def test_a_long_section_in_a_reference_page_trips(self) -> None:
+        assert _kinds(tw.offenders_for("docs/reference/x.md", self._section())) == ["section"]
+
+    @pytest.mark.parametrize("path", ["docs/open-topics/T0001-x.md", "docs/open-topics/README.md"])
+    def test_the_same_section_under_open_topics_does_not(self, path: str) -> None:
+        assert tw.offenders_for(path, self._section()) == []
+
+    def test_the_table_row_bar_still_applies_there(self) -> None:
+        row = "|" + "a" * tw.TABLE_ROW_CHARS + "|"
+        assert _kinds(tw.offenders_for("docs/open-topics/T0001-x.md", f"# t\n\n{row}\n")) == ["table-row"]
+
+    def test_a_nested_path_that_only_looks_like_it_is_not_exempt(self) -> None:
+        assert _kinds(tw.offenders_for("docs/open-topics/sub/x.md", self._section())) == ["section"]
+
+
 class TestChangelogEntry:
     PATH = "docs/iterations-history-phase9.md"
 
