@@ -64,3 +64,9 @@ def test_fetch_public_raises_on_a_body_that_is_not_a_json_object(monkeypatch, bo
     monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: _non_object_response(body))
     with pytest.raises(SnapshotError, match="not a JSON object"):
         fetch_public("AssetPairs")
+
+
+def test_fetch_public_raises_on_a_result_that_is_not_an_object(monkeypatch):
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: _ok_response(["XXBTZEUR"]))
+    with pytest.raises(SnapshotError, match="result for AssetPairs is list, not an object"):
+        fetch_public("AssetPairs")

@@ -13,7 +13,8 @@ _TIMEOUT_SECONDS = 15
 def fetch_public(method: str) -> dict:
     """GET a Kraken public reference-data endpoint and return its `result` dict, raising `SnapshotError`
     on a transport or JSON failure, on a non-empty `error` array, which Kraken carries inside HTTP 200,
-    on a body that is not a JSON object at all, and on a body carrying no `result`."""
+    on a body that is not a JSON object at all, on a body carrying no `result`, and on a `result` that
+    is not itself an object."""
     url = f"{_BASE_URL}/{method}"
     try:
         with urllib.request.urlopen(url, timeout=_TIMEOUT_SECONDS) as response:
@@ -31,4 +32,6 @@ def fetch_public(method: str) -> dict:
     result = payload.get("result")
     if result is None:
         raise SnapshotError(f"no result in the response for {method}: {payload!r}")
+    if not isinstance(result, dict):
+        raise SnapshotError(f"result for {method} is {type(result).__name__}, not an object: {result!r:.200}")
     return result
