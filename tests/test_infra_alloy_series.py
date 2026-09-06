@@ -448,13 +448,14 @@ def _tokens_in_tree_raw() -> dict[str, set[str]]:
 
 
 def test_no_zcrypto_metric_name_is_spelled_with_a_capital():
-    """Prometheus names are case-sensitive and every keep-regex is lowercase, so a capitalised
-    `zcrypto_` name is dropped at remote_write however this file classifies it."""
+    """Prometheus names are case-sensitive, so a capitalised `zcrypto_` name is a different series from
+    its lowercase twin -- and the sweep below keys on `.lower()`, so it would answer for the twin and
+    never for the name actually published."""
     capitalised = sorted((name, sorted(where)) for name, where in _tokens_in_tree_raw().items() if name != name.lower())
     assert not capitalised, (
-        f"a zcrypto_ metric name carries a capital: {capitalised} -- the keep-regexes are lowercase and "
-        "Prometheus names are case-sensitive, so this series is dropped at remote_write whatever the "
-        "sweep below makes of it"
+        f"a zcrypto_ metric name carries a capital: {capitalised} -- Prometheus names are case-sensitive, "
+        "so this is a different series from its lowercase twin, and the sweep below keys on `.lower()` "
+        "and would classify it as that twin"
     )
 
 
