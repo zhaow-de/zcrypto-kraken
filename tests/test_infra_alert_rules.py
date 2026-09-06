@@ -104,9 +104,9 @@ def _receivers_suppressing_resolve() -> set[str]:
 
 def _fires_on_absence(rule) -> bool:
     """True when the rule pages because a measured value fell BELOW its threshold -- a rule stating an
-    age ABOVE a limit reads as presence, however stale it means -- and raises, naming the rule and the
-    node, on an expression node that states no direction it can read."""
-    below = False
+    age ABOVE a limit reads as presence, however stale it means -- and raises, naming the rule, unless
+    it read a direction: `False` is an answer about what was read, never about a rule it could not."""
+    below, read = False, False
     for node in rule["data"]:
         if node.get("datasourceUid") != "__expr__":
             continue  # a datasource query states no comparison; only the expression nodes do
@@ -130,6 +130,12 @@ def _fires_on_absence(rule) -> bool:
                 f"(operators {found or '[]'}) -- a dead-man read as a burst rule is one pinned to a silent clear"
             )
         below = below or any(op in _ABSENCE_OPERATORS for op in found)
+        read = True
+    if not read:
+        raise AssertionError(
+            f"{rule['uid']}: no expression node states a comparison this reader can follow -- the "
+            "condition sits on a query or a reduce, and `False` here would be a burst verdict on nothing read"
+        )
     return below
 
 
@@ -211,6 +217,16 @@ def test_the_absence_reader_refuses_a_direction_it_cannot_read():
     unreadable["data"][1]["model"] = {"type": "sql", "expression": "SELECT 1"}
     with pytest.raises(AssertionError, match=r"zcrypto-invented-dead-man: expression node 'B' is a 'sql' node"):
         _fires_on_absence(unreadable)
+
+    # And the arm no node reaches: a rule whose condition sits on the query itself, or on a `reduce`.
+    # Every refusal above is per node, so a rule that offers none of them fell straight through to
+    # `return below` -- False, the burst verdict, on nothing read.
+    nothing_read = {"uid": "zcrypto-invented-dead-man", "data": [unreadable["data"][0]]}
+    with pytest.raises(AssertionError, match=r"zcrypto-invented-dead-man: no expression node states a comparison"):
+        _fires_on_absence(nothing_read)
+    nothing_read["data"].append({"refId": "B", "datasourceUid": "__expr__", "model": {"type": "reduce"}})
+    with pytest.raises(AssertionError, match=r"zcrypto-invented-dead-man: no expression node states a comparison"):
+        _fires_on_absence(nothing_read)
 
 
 def test_no_rule_in_the_file_trips_the_readers_refusal():
