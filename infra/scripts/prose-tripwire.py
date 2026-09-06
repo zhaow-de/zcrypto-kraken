@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long sections, long changelog entries.
-Usage: prose-tripwire.py [--since REV | --write-baseline PATH | --check-baseline PATH] [PATH ...] — default scope cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/**/README.md infra/external-systems.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/.
+Usage: prose-tripwire.py [--since REV | --write-baseline PATH | --check-baseline PATH] [PATH ...] — default scope the TRACKED cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/**/README.md infra/external-systems.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/.
 An offender's identity in the baseline is its path, its kind and its anchor — a block's first line, or a row's or heading's first cell, whitespace-normalised — never its line number, which every edit above it moves — a path change re-keys every offender in the file, so a rename is re-recorded, not edited."""
 
 from __future__ import annotations
@@ -9,7 +9,6 @@ import argparse
 import ast
 import collections
 import fnmatch
-import glob
 import io
 import os
 import re
@@ -17,6 +16,7 @@ import subprocess
 import sys
 import tokenize
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 COMMENT_BLOCK_LINES = 4
 FILE_PROSE_PERCENT = 20
@@ -245,10 +245,17 @@ def _walk(root: str, suffixes: tuple[str, ...]) -> list[str]:
     return found
 
 
+def _tracked() -> list[str]:
+    """The index, so the default scope is the commit's content: a staged file is in it, an untracked one is not."""
+    listed = subprocess.run(["git", "ls-files", "-z"], capture_output=True, encoding="utf-8", errors="replace", check=True)
+    return [p for p in listed.stdout.split("\0") if p]
+
+
 def default_paths() -> list[str]:
-    found = [p for root in CODE_ROOTS for p in _walk(root, CODE_SUFFIXES)]
-    found += [p for root in DOC_ROOTS for p in _walk(root, (".md",))]
-    found += [_norm(p) for pattern in DOC_GLOBS for p in sorted(glob.glob(pattern, recursive=True)) if os.path.isfile(p)]
+    tracked = _tracked()
+    found = [p for p in tracked if p.startswith(tuple(f"{root}/" for root in CODE_ROOTS)) and p.endswith(CODE_SUFFIXES)]
+    found += [p for p in tracked if p.startswith(tuple(f"{root}/" for root in DOC_ROOTS)) and p.endswith(".md")]
+    found += [p for p in tracked if any(PurePosixPath(p).full_match(pattern) for pattern in DOC_GLOBS)]
     return sorted({p for p in found if not _excluded(p)})
 
 

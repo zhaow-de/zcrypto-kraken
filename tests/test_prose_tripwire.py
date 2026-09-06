@@ -348,6 +348,9 @@ class TestVaultContent:
         assert _kinds(tw.offenders_for("infra/ansible/scripts/run.sh", src)) == ["comment-block"]
 
 
+_GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+
+
 class TestScope:
     @pytest.fixture
     def repo(self, tmp_path: Path, monkeypatch) -> Path:
@@ -381,6 +384,8 @@ class TestScope:
             (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / rel).write_text("# t\n")
         monkeypatch.chdir(tmp_path)
+        subprocess.run([*_GIT, "init", "-q"], check=True)
+        subprocess.run([*_GIT, "add", "-A", "-f", "."], check=True)
         return tmp_path
 
     def test_the_default_scope(self, repo: Path) -> None:
@@ -429,6 +434,36 @@ class TestScope:
 
     def test_an_explicit_file_is_scanned_as_named(self, repo: Path) -> None:
         assert tw.expand_paths(["docs/specs/00001-z.md"]) == ["docs/specs/00001-z.md"]
+
+
+class TestTheIndexIsTheDefaultScope:
+    """The commit's content is what the ratchet reads, so an untracked file cannot refuse a commit that leaves it out."""
+
+    @pytest.fixture
+    def repo(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        subprocess.run([*_GIT, "init", "-q"], check=True)
+        (tmp_path / "cli").mkdir()
+        (tmp_path / "cli" / "kept.py").write_text("x = 1\n")
+        subprocess.run([*_GIT, "add", "-f", "cli/kept.py"], check=True)
+        assert tw.main(["--write-baseline", "base.txt"]) == 0
+        return tmp_path
+
+    def test_an_untracked_offender_passes_and_the_same_file_staged_fails(self, repo: Path, capsys) -> None:
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (repo / "cli" / "fresh.py").write_text(_py(["# fresh"] * n, 6 * n))
+        assert tw.main(["--check-baseline", "base.txt"]) == 0
+        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+        subprocess.run([*_GIT, "add", "-f", "cli/fresh.py"], check=True)
+        assert tw.main(["--check-baseline", "base.txt"]) == 1
+        assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
+
+    def test_a_named_path_is_scanned_tracked_or_not(self, repo: Path, capsys) -> None:
+        """An explicit argument is the caller's word, not the index's."""
+        n = tw.COMMENT_BLOCK_LINES + 1
+        (repo / "cli" / "fresh.py").write_text(_py(["# fresh"] * n, 6 * n))
+        assert tw.main(["--check-baseline", "base.txt", "cli/fresh.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
 
 
 class TestTheCommandLine:
@@ -483,9 +518,6 @@ class TestTheCommandLine:
             "CHANGELOG_BULLETS",
         ):
             assert f"{name}={getattr(tw, name)}" in text
-
-
-_GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
 
 
 def _commit(*paths: str) -> None:
