@@ -428,6 +428,7 @@ cli/xcheck/binance.py:32: comment-block 6 > 4	"""GET Binance's public daily klin
 cli/xcheck/binance.py:53: comment-block 8 > 4	"""Fetch daily klines for `pair` via `fetch_fn` and parse into a canonical `{ts, close}` frame.
 cli/xcheck/binance.py:81: comment-block 7 > 4	"""Cross-check a canonical Kraken daily frame against a Binance daily-closes frame on their `ts` overlap.
 cli/xcheck/binance.py:117: comment-block 9 > 4	"""Cross-check each `symbol`'s Kraken daily series under `kraken_root` against Binance.
+docs/iterations-history-phase6.md:801: changelog-entry 7 > 5	## 2026-09-06 — T0173 resolved: the operator instructions the topology doc was holding, and `fetch_public`'s three refusals
 docs/open-topics/T0018-phase6-build-sequence.md:68: table-row 208 > 200	`00089`
 docs/open-topics/T0018-phase6-build-sequence.md:69: table-row 291 > 200	`00094`
 docs/open-topics/T0018-phase6-build-sequence.md:70: table-row 342 > 200	`00090`
@@ -477,22 +478,22 @@ docs/reference/drill-log.md:45: section 15357 > 2048	## 2026-08-31 — R — pas
 docs/reference/drill-log.md:49: section 2952 > 2048	## 2026-09-01 — C′-fail — pass
 docs/reference/drill-log.md:55: section 3317 > 2048	## 2026-09-02 — N — pass
 docs/reference/drill-log.md:59: section 6280 > 2048	## 2026-09-04 — P — pass
-docs/reference/fleet-pins.md:12: section 2280 > 2048	## Current pins
-docs/reference/fleet-pins.md:27: table-row 454 > 200	agentboard
-docs/reference/fleet.md:5: section 8012 > 2048	## Hosts
+docs/reference/fleet-pins.md:12: section 2301 > 2048	## Current pins
+docs/reference/fleet-pins.md:27: table-row 475 > 200	agentboard
+docs/reference/fleet.md:5: section 4014 > 2048	## Hosts
 docs/reference/fleet.md:11: table-row 352 > 200	`zcrypto-ops`
-docs/reference/fleet.md:12: table-row 457 > 200	`nas`
+docs/reference/fleet.md:12: table-row 371 > 200	`nas`
 docs/reference/fleet.md:13: table-row 487 > 200	`zaccess`
-docs/reference/fleet.md:27: section 4389 > 2048	## Services and instruments
-docs/reference/fleet.md:32: table-row 492 > 200	`zcrypto-engine`
-docs/reference/fleet.md:34: table-row 246 > 200	`grafana-alloy`
-docs/reference/fleet.md:35: table-row 277 > 200	ops timers
-docs/reference/fleet.md:36: table-row 501 > 200	capture/engine timers
-docs/reference/fleet.md:38: table-row 301 > 200	gate export
-docs/reference/fleet.md:39: table-row 274 > 200	Caddy (mTLS edge)
-docs/reference/fleet.md:41: table-row 278 > 200	socket-proxyd relays
-docs/reference/fleet.md:42: table-row 227 > 200	agentboard (G2)
-docs/reference/fleet.md:43: table-row 231 > 200	access probe timers
+docs/reference/fleet.md:26: section 4389 > 2048	## Services and instruments
+docs/reference/fleet.md:31: table-row 492 > 200	`zcrypto-engine`
+docs/reference/fleet.md:33: table-row 246 > 200	`grafana-alloy`
+docs/reference/fleet.md:34: table-row 277 > 200	ops timers
+docs/reference/fleet.md:35: table-row 501 > 200	capture/engine timers
+docs/reference/fleet.md:37: table-row 301 > 200	gate export
+docs/reference/fleet.md:38: table-row 274 > 200	Caddy (mTLS edge)
+docs/reference/fleet.md:40: table-row 278 > 200	socket-proxyd relays
+docs/reference/fleet.md:41: table-row 227 > 200	agentboard (G2)
+docs/reference/fleet.md:42: table-row 231 > 200	access probe timers
 docs/reference/kraken-snapshot-register.md:42: section 4032 > 2048	## Endpoint-reported fee ladder, borrow rate & margin bands
 docs/reference/kraken-snapshot-register.md:113: section 5138 > 2048	## Re-confirmation log
 docs/reference/kraken-snapshot-register.md:122: table-row 327 > 200	#0 (Phase 0, iter-002)
@@ -502,7 +503,7 @@ docs/reference/multi-agent-protocol.md:36: section 2151 > 2048	## The hourly tic
 docs/reference/sleeve-composition-ledger.md:1: section 2160 > 2048	# Sleeve composition ledger
 docs/reference/sleeve-composition-ledger.md:13: section 2619 > 2048	### 2026-08-22 — B and A1 re-arm; the one-sleeve era ends
 docs/reference/symbol-corporate-action-ledger.md:18: section 2498 > 2048	## Corporate actions
-infra/ansible/files/README.md:1: section 2346 > 2048	# Key inventory
+infra/ansible/files/README.md:1: section 2348 > 2048	# Key inventory
 infra/ansible/files/README.md:22: table-row 270 > 200	`zcrypto_hot_push_ed25519{,.pub}`
 infra/ansible/host_vars/nas/vars.yml:30: comment-block 21 > 4	# ALWAYS the `-compat` (no-AVX) build: this Atom dies instantly on the default build with `Illegal
 infra/ansible/host_vars/nas/vars.yml:69: comment-block 5 > 4	# The four ops channels below address the host by FQDN. The pull loop runs StrictHostKeyChecking=yes
@@ -676,9 +677,9 @@ infra/ops/README.md:101: table-row 544 > 200	`zcrypto-archive-pull.timer`
 infra/ops/README.md:194: section 3249 > 2048	## Alloy telemetry stack (Task 1, spec 00054 D1/D7)
 infra/runbooks/README.md:5: section 2662 > 2048	## Scope — what belongs here, and what does not
 infra/runbooks/README.md:21: section 2547 > 2048	### [`capture.md`](capture.md) — the venue feed and the archive's hour boundaries
-infra/runbooks/README.md:50: section 2336 > 2048	### [`ops.md`](ops.md) — the nightly archive sweep and the tape-bars dataset
-infra/runbooks/README.md:65: section 2084 > 2048	### [`engine.md`](engine.md) — the trading engine and its order path
-infra/runbooks/README.md:160: section 2169 > 2048	### [`drills-order-path.md`](drills-order-path.md) — induce the fault where money is at stake
+infra/runbooks/README.md:53: section 2336 > 2048	### [`ops.md`](ops.md) — the nightly archive sweep and the tape-bars dataset
+infra/runbooks/README.md:68: section 2084 > 2048	### [`engine.md`](engine.md) — the trading engine and its order path
+infra/runbooks/README.md:166: section 2169 > 2048	### [`drills-order-path.md`](drills-order-path.md) — induce the fault where money is at stake
 infra/runbooks/capture-daemon.md:17: section 2738 > 2048	### What it means
 infra/runbooks/capture-daemon.md:39: section 3142 > 2048	### What to do
 infra/runbooks/capture-daemon.md:124: section 2933 > 2048	### What to do
@@ -697,15 +698,15 @@ infra/runbooks/drills-order-path.md:9: section 5172 > 2048	## Standing rules —
 infra/runbooks/drills-order-path.md:20: section 2599 > 2048	## How every bound on this page was derived
 infra/runbooks/drills-order-path.md:203: section 2271 > 2048	### Must fire
 infra/runbooks/drills-order-path.md:416: section 2614 > 2048	### Record
-infra/runbooks/drills-telemetry.md:7: section 2567 > 2048	## Standing rules — these bind every section below
-infra/runbooks/drills-telemetry.md:17: section 7841 > 2048	## How every bound on this page was derived
-infra/runbooks/drills-telemetry.md:64: section 2397 > 2048	### Must fire
-infra/runbooks/drills-telemetry.md:86: section 2696 > 2048	### Record
-infra/runbooks/drills-telemetry.md:170: section 2588 > 2048	### Induce
-infra/runbooks/drills-telemetry.md:379: section 4289 > 2048	### Preconditions
-infra/runbooks/drills-telemetry.md:524: section 4121 > 2048	### What it means
-infra/runbooks/drills-telemetry.md:535: table-row 244 > 200	L
-infra/runbooks/drills-telemetry.md:555: section 4347 > 2048	### What to do
+infra/runbooks/drills-telemetry.md:7: section 3374 > 2048	## Standing rules — these bind every section below
+infra/runbooks/drills-telemetry.md:19: section 8656 > 2048	## How every bound on this page was derived
+infra/runbooks/drills-telemetry.md:68: section 2397 > 2048	### Must fire
+infra/runbooks/drills-telemetry.md:90: section 2696 > 2048	### Record
+infra/runbooks/drills-telemetry.md:174: section 2588 > 2048	### Induce
+infra/runbooks/drills-telemetry.md:383: section 4289 > 2048	### Preconditions
+infra/runbooks/drills-telemetry.md:528: section 4121 > 2048	### What it means
+infra/runbooks/drills-telemetry.md:539: table-row 244 > 200	L
+infra/runbooks/drills-telemetry.md:559: section 4347 > 2048	### What to do
 infra/runbooks/engine-procedures.md:15: section 4512 > 2048	### What it means
 infra/runbooks/engine-procedures.md:84: section 14322 > 2048	#### 1. Pre-probe — before anything touches the host
 infra/runbooks/engine-procedures.md:154: section 11028 > 2048	#### 2. Arm — two keys, in this order
