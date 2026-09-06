@@ -148,25 +148,28 @@ def test_unreadable_parquet_is_isolated_not_raised(tmp_path: Path) -> None:
     assert result.replay_ok is False
 
 
-def test_a_year_directory_too_large_for_a_c_int_loses_its_hour_not_the_run(tmp_path: Path) -> None:
-    """An hour under a `2147483648` year replays with `hour=None`; the well-formed hour keeps its own."""
-    # `int()` is arbitrary-precision, so the throw is `datetime`'s C-int year conversion:
-    # `datetime(2**31 - 1, ...)` raises ValueError but `datetime(2**31, ...)` raises OverflowError.
+def test_a_year_directory_that_is_not_a_date_loses_its_hour_not_the_run(tmp_path: Path) -> None:
+    """Both arms: an hour under a non-numeric year and under one past the C-int ceiling replay with `hour=None`."""
+    # `int()` is arbitrary-precision, so the two throws come from different calls: `int("nope")` raises
+    # ValueError, while `datetime(2**31, ...)` raises OverflowError from its C-int year conversion.
     # `_hour_from_path` is typed `datetime | None` and `replay_segment` reads its result BEFORE the
     # try that isolates every other failure, so the narrower except broke the never-raises contract
     # `_sidecar_digest` and `_replay_and_checkpoint` both name and neither of them guards against.
     frame = _explode("BTC/EUR", H, _coherent_messages())
     well_formed = _book(tmp_path, "BTC/EUR", H, frame)
     oversized = tmp_path / "BTC" / "EUR" / "book" / str(2**31) / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.parquet"
-    oversized.parent.mkdir(parents=True)
-    frame.write_parquet(oversized, compression="zstd")
+    notadate = tmp_path / "BTC" / "EUR" / "book" / "nope" / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.parquet"
+    for stray in (oversized, notadate):
+        stray.parent.mkdir(parents=True)
+        frame.write_parquet(stray, compression="zstd")
 
     assert replay_segment(well_formed, "BTC/EUR", depth=10).hour == H  # the true positive keeps its identity
 
-    result = replay_segment(oversized, "BTC/EUR", depth=10)
-    assert result.hour is None  # unidentifiable, not a raise
-    assert result.replay_ok is True  # the bytes are fine; only the path's hour was unreadable
-    assert result.error is None
+    for stray in (oversized, notadate):
+        result = replay_segment(stray, "BTC/EUR", depth=10)
+        assert result.hour is None, stray  # unidentifiable, not a raise
+        assert result.replay_ok is True, stray  # the bytes are fine; only the path's hour was unreadable
+        assert result.error is None, stray
 
 
 def test_out_of_order_ts_is_flagged(tmp_path: Path) -> None:
