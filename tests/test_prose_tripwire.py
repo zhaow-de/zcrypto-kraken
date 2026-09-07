@@ -602,20 +602,21 @@ class TestTheCommandLine:
         o = tw.Offender("a.md", 1, "section", 1234567, tw.SECTION_BYTES, "h")
         assert tw.render([o]).splitlines()[0] == f"a.md:1: section 1234567 > {tw.SECTION_BYTES}"
 
+    def test_the_char_bar_is_the_line_bar_at_ruffs_own_width(self) -> None:
+        """A hard-coded 528 whose comment claims a derivation: this is what binds it to both operands."""
+        import tomllib
+
+        width = tomllib.loads((_REPO / "ruff.toml").read_text())["line-length"]
+        assert tw.COMMENT_BLOCK_CHARS == tw.COMMENT_BLOCK_LINES * width
+
     def test_help_prints_every_threshold(self, capsys) -> None:
         with pytest.raises(SystemExit) as exc:
             tw.main(["--help"])
         assert exc.value.code == 0
         text = capsys.readouterr().out
-        for name in (
-            "COMMENT_BLOCK_LINES",
-            "FILE_PROSE_PERCENT",
-            "FILE_PROSE_FLOOR",
-            "TABLE_ROW_CHARS",
-            "SECTION_BYTES",
-            "CHANGELOG_BULLETS",
-        ):
+        for name in tw.THRESHOLDS:
             assert f"{name}={getattr(tw, name)}" in text
+        assert "COMMENT_BLOCK_CHARS" in tw.THRESHOLDS
 
 
 def _commit(*paths: str) -> None:

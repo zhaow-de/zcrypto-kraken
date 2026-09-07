@@ -42,6 +42,16 @@ SECTION_BYTES = 2048
 CHANGELOG_BULLETS = 5
 
 KINDS = ("comment-block", "comment-mass", "file-prose", "table-row", "section", "changelog-entry")
+# Every bar `--help` advertises: the names an operator reads a violation against.
+THRESHOLDS = (
+    "COMMENT_BLOCK_LINES",
+    "COMMENT_BLOCK_CHARS",
+    "FILE_PROSE_PERCENT",
+    "FILE_PROSE_FLOOR",
+    "TABLE_ROW_CHARS",
+    "SECTION_BYTES",
+    "CHANGELOG_BULLETS",
+)
 CODE_ROOTS = ("cli", "tests", "infra")
 CODE_SUFFIXES = (".py", ".sh", ".yml", ".yaml")
 DOC_ROOTS = ("docs/reference", "docs/universe", "infra/runbooks")
@@ -403,18 +413,8 @@ def render(offenders: list[Offender]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    thresholds = " ".join(
-        f"{name}={globals()[name]}"
-        for name in (
-            "COMMENT_BLOCK_LINES",
-            "FILE_PROSE_PERCENT",
-            "FILE_PROSE_FLOOR",
-            "TABLE_ROW_CHARS",
-            "SECTION_BYTES",
-            "CHANGELOG_BULLETS",
-        )
-    )
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0], epilog=f"thresholds: {thresholds}")
+    thresholds = " ".join(f"{name}={globals()[name]}" for name in THRESHOLDS)
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].replace("\n", " "), epilog=f"thresholds: {thresholds}")
     parser.add_argument("paths", nargs="*", help="files or directories to scan; default: the repo's live prose")
     parser.add_argument("--since", metavar="REV", help="report only offenders absent at REV")
     parser.add_argument("--write-baseline", metavar="PATH", help="write today's offenders to PATH as the ratchet's baseline")
