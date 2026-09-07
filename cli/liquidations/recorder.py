@@ -63,7 +63,7 @@ def parse_force_order(raw: str) -> dict | None:
 
 
 class LiquidationRecorder:
-    """Routes parsed forceOrder rows to a per-symbol `SegmentWriter`, created lazily.
+    """Routes parsed forceOrder rows to a per-symbol `SegmentWriter`.
 
     `!forceOrder@arr` carries every symbol, so no pair list exists up front; a single feed has no sibling stream to corroborate an
     hour boundary, so `oracle` stays unset and rotation trusts each event's own `ts`; `dedup_key="event_id"` drops redeliveries."""
