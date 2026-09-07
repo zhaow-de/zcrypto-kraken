@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'the owner is next in healthchecks.io — the `zcrypto-liquidations` description still names two withholding conditions where the code now has three'
+ripe_when: 'the `zcrypto-liquidations` description still names two withholding conditions where the code now has three — read it back through the read-only key, the way `tests/fixtures/healthchecks_descriptions.json` is fetched'
 ---
 
 # T0175 — a swallowed finalize failure pings the dead-man green
@@ -25,7 +25,7 @@ The dead-man is the only external witness of the liquidations poller; a ping aft
 
 ## Done so far
 
-The code half is resolved on branch `fix/t0175-finalize-failure-pings-green`.
+The code half is resolved by the commits below.
 
 - `finalize_completed_hours` returns `FinalizeOutcome(finalized, failed)` instead of a bare count — `fix(capture): a sweep that wrote nothing was indistinguishable from one with nothing to do`. `failed` is read off one fact, no final on disk after the attempt; an hour that was already final and stays so is in neither half, which is the merge this class declines.
 - That reading was got wrong once and corrected under review — `fix(capture): the already-final gate hid the very loss this branch exists to report`. Gating the failed arm on `already_final` suppressed the case where an UNREADABLE final is quarantined and its rebuild then fails, leaving the hour with no final at all: T0175 surviving inside its own fix.
