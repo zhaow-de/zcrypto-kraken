@@ -1,18 +1,9 @@
-"""The shadow cycle core (spec 00041 SS the cycle core): `run_cycle` drives one 4h boundary
-end-to-end -- the settle-verify store refresh (bounded by the 25-min reserve inside the ratified
-30-min gate window), the raw-series staleness check, per-grid union alignment, snapshot journaling
-with journal-relative paths, the record-44 fast build, intended orders against the shadow NAV, and
-either the validated success record (the current `SCHEMA_VERSION`) or the failed-cycle sidecar.
-Aware-UTC everywhere: naive datetimes are rejected at the boundary (a naive/aware mix makes
-`validate_record`'s `!=` checks silently always-true).
+"""The shadow cycle core (spec 00041 SS the cycle core). Aware-UTC everywhere: naive datetimes are rejected at
+the boundary -- a naive/aware mix makes `validate_record`'s `!=` checks silently always-true.
 
-Twelve legs, ten of them modelled (spec 00094 D1/D2). The store, the journaled snapshots, the
-targets and the orders all key by full symbol; the MODEL does not widen. `select_model_inputs`
-contracts the twelve-symbol store down to the ten `/EUR` legs on their own calendar before the
-builder runs, and `_expand_to_basket` maps the ten base-keyed outputs back onto the twelve-symbol
-basket with `ETH/BTC` and `SOL/BTC` at exactly `0.0`. Both functions are shared, not copied: the
-gate replay and the soak's loaders import them from here.
-"""
+Twelve legs, ten of them modelled (spec 00094 D1/D2). The store, the journaled snapshots, the targets and
+the orders all key by full symbol; the MODEL does not widen. `select_model_inputs` and `_expand_to_basket`
+are shared, not copied: the gate replay and the soak's loaders import them from here."""
 
 from __future__ import annotations
 
@@ -91,10 +82,8 @@ def _utc_now() -> datetime:
 
 
 def _code_version() -> str:
-    """`version("zcrypto")`, plus `+{first 12 chars of ZCRYPTO_BUILD_REVISION}` when that env var is
-    non-empty (T0130, D8) -- the cycle record and the venue record both take their value from this
-    one function, so the two artifacts never disagree. The env var is populated by a build arg
-    (00089 Task 8); until then it is unset and this is bare."""
+    """The cycle record and the venue record both take their version from this one function, so the two
+    journaled artifacts never disagree (T0130, D8)."""
     base = version("zcrypto")
     revision = os.environ.get("ZCRYPTO_BUILD_REVISION")
     if not revision:
@@ -123,14 +112,10 @@ def _update_metrics(result: CycleResult, completed_at: datetime, duration_second
 
 
 def _ping_healthcheck(success: bool) -> None:
-    """The dead-man's-switch ping (spec 00042): once a completion artifact lands, GET
-    HEALTHCHECK_URL after the success record, or HEALTHCHECK_URL + "/fail" after the failed-cycle
-    sidecar -- no-op when the env var is unset (the workstation soak), one attempt, 10 s timeout,
-    ANY exception swallowed via logger.warning; the ping can never affect the CycleResult. The
-    third completion path is pinned by design: a PROPAGATING exception (poisoned store, disk
-    error) pings NOTHING -- the dead-man's switch alerts by silence once period + grace lapse, so
-    an alert WITHOUT a preceding /fail ping reads "the node is up but a cycle raised -- read the
-    logs, suspect the store", not "the container died"."""
+    """The dead-man's-switch ping (spec 00042): swallows every exception, so the ping can never affect the
+    CycleResult. The third completion path is pinned by design -- a PROPAGATING exception (poisoned store,
+    disk error) pings NOTHING, so an alert WITHOUT a preceding /fail ping reads "the node is up but a cycle
+    raised -- read the logs, suspect the store", not "the container died"."""
     url = os.environ.get("HEALTHCHECK_URL")
     if not url:
         return
@@ -210,8 +195,6 @@ def _aware_clock(clock):
 
 
 def _expected_tails(cycle_ts: datetime) -> dict[int, datetime]:
-    """The boundary invariant's expected last stamp per grid: the 4h bar at cycle_ts - 4h, and the
-    daily bar at (last midnight <= cycle_ts) - 1d."""
     midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
     return {240: cycle_ts - _H4, 1440: midnight - timedelta(days=1)}
 
@@ -265,8 +248,8 @@ def _refresh_with_settle_verify(store_dir: Path, cycle_ts: datetime, *, fetch_fn
 
 
 def _stale_pairs(raw_series: dict, cycle_ts: datetime) -> tuple[str, ...]:
-    """Staleness on each pair's RAW series (own last stamp vs the boundary invariant): the last 4h
-    stamp must equal cycle_ts - 4h and the last daily stamp (the last midnight <= cycle_ts) - 1d."""
+    """Staleness is judged on each pair's OWN raw last stamp, before `_union_align` re-keys every pair onto one
+    shared calendar."""
     expected = _expected_tails(cycle_ts)
     stale = {symbol for (symbol, interval), (ts, _) in raw_series.items() if not ts or ts[-1] != expected[interval]}
     return tuple(sorted(stale))
@@ -418,17 +401,13 @@ def _append_orders(
     targets: dict[str, float],
     h4_close: dict[str, float | None],
 ) -> list[dict]:
-    """Intended orders: delta = target - previous target (the most recent successful record's; flat
-    0 only when none exists), notional = delta * shadow_nav_eur, quantity = notional / the 4h close
-    of the bar stamped cycle_ts - 4h. `side` carries delta's sign; quantity and notional_eur are
-    magnitudes. Appended to the day's human-readable orders.jsonl under a header line disclosing
-    where the previous targets came from (first-cycle flat start, or a crossed gap).
+    """Intended orders against the most recent successful record's targets (flat 0 only when none exists).
 
-    Emission is delta-driven, which is what keeps the two `/BTC` legs structurally silent: their
-    target is `0.0` by construction and their previous target is `0.0` too, so no row is ever
-    written for them. `h4_close` is each symbol's own quote-currency close, so `notional_eur` is
-    EUR-true only for the ten `/EUR` legs -- whoever first sizes a real `/BTC` order owns the
-    conversion (`cli.engine.instruments.fx_eur_notional`, spec 00094 D4/D5)."""
+    Emission is delta-driven, which is what keeps the two `/BTC` legs structurally silent: their target and
+    their previous target are both `0.0`, so no row is ever written for them. `h4_close` is each symbol's
+    own quote-currency close, so `notional_eur` is EUR-true only for the ten `/EUR` legs -- whoever first
+    sizes a real `/BTC` order owns the conversion (`cli.engine.instruments.fx_eur_notional`, spec 00094
+    D4/D5)."""
     prev_boundary, prev_targets = _previous_success(config.journal_dir, cycle_ts)
     if prev_targets is None:
         note = "first cycle -- no previously journaled targets, the shadow book starts flat"
@@ -582,32 +561,14 @@ def run_cycle(
     clock=_utc_now,
     venue_state: VenueState | None = None,
 ) -> CycleResult:
-    """Run one shadow cycle at the 4h boundary `cycle_ts` (spec 00041 SS the cycle core, steps 1-8).
+    """Run one shadow cycle at the 4h boundary `cycle_ts` (spec 00041 SS the cycle core).
 
-    0. `venue_state` (00089 Task 4), if given, is run through `runtime_concordance` and journaled to
-       venue-<HH>.json FIRST -- before anything below -- so a cycle that dies later still leaves this
-    boundary's venue evidence; `venue_state=None` journals an error record instead. Either way
-    `venue_state` is READ-ONLY: it is never consulted for targets or orders, only journaled and
-    summarized onto `CycleResult.venue`. 1. Settle-verify refresh of the store, transport + settle
-    retries bounded by cycle_ts + 25 min; exhausting the reserve writes a failed-cycle sidecar
-    (reason "refresh_deadline"). 2. Staleness on each pair's raw series vs the boundary invariant; a
-    stale pair writes a sidecar (reason "stale_pair") and skips the build; the fresh series are then
-    union-aligned per grid over all twelve symbols. 3. Snapshot parquets journaled under
-    <YYYY-MM-DD>/snapshots/cycle-<HH>/, manifest paths relative to journal_dir, hashes via the one
-    shared snapshot_content_hash. 4. select_model_inputs contracts to the ten EUR legs on their own
-    calendar -> build_crossfreq_system_fast (default config) -> the newest-row targets ->
-    _expand_to_basket back onto the twelve symbols, the two /BTC legs at exactly 0.0; the ten bases'
-    forming-row closes come off that same contraction for the record, and a missing one raises.
-    5. Intended orders vs the most recent successful record's targets (symbol-normalized whatever
-    schema wrote them), appended to the day's orders.jsonl. 6. The CycleRecord at the current
-    SCHEMA_VERSION, validated before write, at <YYYY-MM-DD>/cycle-<HH>.json -- carries NO venue
-    field; the full snapshot lives only in venue-<HH>.json.
-
-    cycle_ts must be aware and on the 4h UTC grid (normalized to UTC; naive raises EngineError), and
-    the injected clock must return aware datetimes. A store data-integrity failure (refresh_store's
-    EngineError -- poisoned tail / catastrophic staleness) propagates: its documented recovery is
-    `zcrypto engine seed`, not a per-cycle retry.
-    """
+    `cycle_ts` must be aware and on the 4h UTC grid (normalized to UTC; naive raises EngineError), and the
+    injected clock must return aware datetimes. `venue_state` is READ-ONLY: journaled and summarized onto
+    `CycleResult.venue`, never consulted for targets or orders. A stale pair or an exhausted refresh reserve
+    is a failed CycleResult with a sidecar, not a raise; a store data-integrity failure (refresh_store's
+    EngineError -- poisoned tail / catastrophic staleness) propagates, and its documented recovery is
+    `zcrypto engine seed`, not a per-cycle retry."""
     cycle_ts = _normalize_cycle_ts(cycle_ts)
     read_clock = _aware_clock(clock)
     started_at = read_clock()
