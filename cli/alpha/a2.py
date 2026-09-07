@@ -66,9 +66,6 @@ class A2Config:
 
 
 def _donchian_signal(prices: list[float], *, window: int, band: float) -> list[float]:
-    """Per-lookback Donchian breakout signal: +1 on a new window-high (channel_position >= band), -1
-    on a new window-low (<= -band), else the prior signal held (0.0 before the first break); it adds
-    no look-ahead, only carrying channel_position's causal state forward. Length len(prices)-1."""
     cp = channel_position(prices, window=window)
     out: list[float] = []
     held = 0.0

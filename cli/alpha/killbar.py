@@ -26,50 +26,26 @@ def a1_kill_bar(
     n_resamples: int = 1000,
 ) -> dict:
     """The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031), folded to the
-    T0009-ratified protocol (2026-07-09, decisions log [iter-072]): a variant is archived unless ALL hold:
-    its DSR clears DSR_PASS_THRESHOLD at its trial count, SPA says it beats the benchmark on the decisive
-    window, it survives 1.5x cost stress, and its worst regime slice does not underperform the
-    benchmark's own worst slice.
+    ratified protocol: a variant is archived unless ALL hold: its DSR clears DSR_PASS_THRESHOLD at
+    its trial count, SPA says it beats the benchmark on the decisive window, it survives 1.5x cost
+    stress, and its worst regime slice does not underperform the benchmark's own worst slice.
 
-    DSR leg: `deflated_sharpe_ratio` here returns a PROBABILITY P(true SR > deflated benchmark), so the
-    leg is `dsr > DSR_PASS_THRESHOLD`. Ratified 2026-07-09 (T0009): the bar is the stricter
-    López-de-Prado significance threshold, `dsr > 0.95` — not just the pre-ratification 0.5 "deflated
-    point estimate positive" bar. SPA-beats-benchmark carries the significance-vs-benchmark burden
-    separately.
-
-    SPA leg (ratified 2026-07-09, T0009): the caller passes NET-OF-COST series for both
-    `book_net_returns` and `benchmark_net_returns` (each already charged its own turnover + carry — the
-    same contract as `net_of_cost_verdict`). The leg is evaluated on the decisive window
-    `[decisive_start:]` — `spa_p_value`/`spa_pass` are the decisive-window figures; the full-window
-    p-value is also computed and returned as `spa_p_value_full` for reporting. `decisive_start` is the
-    benchmark's post-warm-up cut (230 for B3+vt-dynamic). `n_resamples` feeds both windows' bootstrap;
-    its default (1000) matches every registry row recorded before the fold-in, while the pre-registered
-    trial protocol ([iter-059]) passes 2000 explicitly.
+    SPA leg: the caller passes NET-OF-COST series for both `book_net_returns` and
+    `benchmark_net_returns`, each already charged its own turnover + carry — the same contract as
+    `net_of_cost_verdict`. `decisive_start` is the benchmark's post-warm-up cut.
 
     Units contract: `sr = sharpe(book_net_returns)` is PER-PERIOD (PSR's formula is per-observation with
     n_obs = len(returns)), so `var_trials` MUST be in per-period Sharpe² units (at iter-046 = the variance
     of the 16 variants' per-period Sharpes) — NOT annualized. A per-period trial-Sharpe stdev > 1 is
     nonsensical, so `var_trials > 1.0` is rejected (a likely annualized-vs-per-period units mix-up).
 
-    "survives cost stress" = the cost-stressed series' own Sharpe is still > 0 (own-series, full window;
-    a judgment call from the original design, see docs/plans/00031 "Design decisions ... flagged for
-    review" — unchanged by T0009). Worst-slice leg (ratified 2026-07-09, T0009): the other original
-    judgment call — "worst slice not disqualifying" = every regime_slices entry's Sharpe > 0 — is
-    superseded by the benchmark-relative
-    `benchmark_relative_worst_slice(regime_slices, benchmark_slices)["beats_benchmark_worst"]`; the
-    caller excludes stub/partial-year slices from BOTH `regime_slices` and `benchmark_slices` before
-    calling. The book's own worst non-degenerate slice (`worst_slice_name`, `worst_slice_sharpe`) and the
-    full relative diagnostic (minus its verbose `per_slice` detail, as `worst_slice_relative`) stay in the
-    result for the record, but no longer drive `worst_slice_pass`.
+    "survives cost stress" = the cost-stressed series' own Sharpe is still > 0 (own-series, full
+    window). The caller excludes stub/partial-year slices from BOTH `regime_slices` and
+    `benchmark_slices` before calling.
 
-    Worst-slice leg robustness (iter-046, `.tmp/decisions.md`): a regime slice that is zero-variance or
-    shorter than 2 periods (e.g. a calendar-year slice sitting entirely inside the 200-day gate warm-up,
-    or a bear year a long/flat book correctly sat out) means the book took NO risk that regime — there is
-    no risk-adjusted performance to judge and Sharpe is undefined, so the slice is skipped when recording
-    the book's own worst-slice fields. If every slice is degenerate this way, `worst_slice_name`/
-    `worst_slice_sharpe` fall back to the `<no-nondegenerate-slice>`/nan sentinel, and `worst_slice_pass`
-    is False (there is nothing evaluable for the relative diagnostic to compare either, since its
-    per-slice skip rule also triggers whenever the book side is degenerate).
+    A regime slice that is zero-variance or shorter than 2 periods means the book took NO risk that
+    regime — there is no risk-adjusted performance to judge and Sharpe is undefined, so the slice is
+    skipped.
     """
     if len(book_net_returns) != len(benchmark_net_returns):
         raise AlphaError("book_net_returns and benchmark_net_returns must have the same length")
@@ -180,19 +156,10 @@ def net_of_cost_verdict(
     seed: int,
     n_resamples: int = 2000,
 ) -> dict:
-    """Net-of-cost head-to-head verdict: the SPA check the pre-registered `a1_kill_bar`'s SPA leg omits.
-
-    A1's investigation found that `a1_kill_bar`'s SPA leg ran on the zero-fee `book_net_returns`/
-    `benchmark_net_returns` the caller happened to pass in, over-crediting a high-turnover family that
-    actually loses net-of-cost. The net-of-cost contract was folded into `a1_kill_bar`'s SPA leg per
-    T0009 (decisions log [iter-072], 2026-07-09); this standalone tool remains for drivers/diagnostics.
-    Both `book_net_of_cost` and `benchmark_net_of_cost` must already be
-    charged their own realistic cost by the caller (the book's turnover plus any short margin carry; the
-    benchmark's own turnover) before being passed in here.
-
-    Builds the T x 1 outperformance matrix (book minus benchmark per period) and runs
-    `reality_check_pvalue` on it -- the same SPA machinery `a1_kill_bar`'s SPA leg uses -- so `beats` is
-    `spa_p_value < 0.05`. Sharpe figures are per-period (no annualization), consistent with
+    """Net-of-cost head-to-head SPA verdict, retained as a standalone diagnostic beside
+    `a1_kill_bar`'s SPA leg. Both `book_net_of_cost` and `benchmark_net_of_cost` must already be
+    charged their own realistic cost by the caller (the book's turnover plus any short margin
+    carry; the benchmark's own turnover). Sharpe figures are per-period, consistent with
     `a1_kill_bar`.
     """
     if len(book_net_of_cost) != len(benchmark_net_of_cost):
@@ -235,21 +202,13 @@ def benchmark_relative_worst_slice(
 ) -> dict:
     """Benchmark-relative, exposure-aware alternative to `a1_kill_bar`'s worst-slice leg.
 
-    The pre-registered worst-slice leg is absolute ("every non-degenerate slice's Sharpe > 0") and
-    exposure-blind. On real data (iter-053, docs/research/09.phase4-a2-results.md) the frozen benchmark
-    fails that very leg: its 2014 per-period Sharpe is -0.108 (ann. -2.07) even though its gate kept it
-    ~87% flat, so it lost only -5.5% with a 6.0% drawdown -- while a fully-exposed challenger with a
-    BETTER Sharpe (ann. -1.80) actually lost -8.4% with an 8.4% drawdown. A Sharpe-only slice test
-    punishes prudent non-participation and hides P&L. This diagnostic reports Sharpe AND total return
-    AND max drawdown, per slice, book vs. benchmark, so that contradiction is visible.
+    The pre-registered leg is absolute ("every non-degenerate slice's Sharpe > 0") and
+    exposure-blind, so it punishes prudent non-participation and hides P&L: it can fail a book
+    that lost less. This reports Sharpe AND total return AND max drawdown per slice, book vs.
+    benchmark, so that contradiction is visible (iter-053,
+    docs/research/09.phase4-a2-results.md).
 
-    This check was folded into `a1_kill_bar`'s worst-slice leg per T0009 (decisions log [iter-072],
-    2026-07-09); the standalone tool remains for drivers/diagnostics.
-
-    `book_slices` and `benchmark_slices` are keyed by the same slice labels (e.g. calendar years), each
-    mapping to that slice's per-period return series. A slice is degenerate (Sharpe undefined) using the
-    same rule `a1_kill_bar` applies: len(rets) < 2 or min(rets) == max(rets). A slice is skipped -- the
-    book-vs-benchmark comparison is undefined -- if EITHER side is degenerate.
+    Degeneracy uses the same rule `a1_kill_bar` applies, on either side.
     """
     if not book_slices or not benchmark_slices:
         raise AlphaError("book_slices and benchmark_slices must both be non-empty dicts")
