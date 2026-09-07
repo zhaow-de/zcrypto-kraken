@@ -68,7 +68,6 @@ def sidecar_hash_by_path(dataset: str) -> dict[str, str]:
 
 
 def sidecar_hashes(dataset: str) -> set[str]:
-
     return set(_sidecar_by_dataset().get(dataset, {}).values())
 
 
@@ -127,10 +126,10 @@ def _manifest_sha256s(node: object) -> set[str]:
 def _attestations_for_set(manifest_dir: Path, set_name: str) -> tuple[set[str], dict[str, str]]:
     """What attests `set_name`: (every vouched hash, the path-bound subset of them).
 
-    A CONFORMANT manifest carries the path as its series key, so it contributes path bindings just
-    as the sidecar does. A legacy manifest can
-    only contribute membership, because deriving a path from its keys is the per-set knowledge the
-    contract exists to remove; such a set degrades rather than being refused.
+    A CONFORMANT manifest carries the path as its series key, so it contributes path bindings just as
+    the sidecar does. A legacy manifest can only contribute membership, because deriving a path from
+    its keys is the per-set knowledge the contract exists to remove; such a set degrades rather than
+    being refused. Content hashing targets transfer corruption, the real risk on this channel.
     """
     from cli.data.manifest import ManifestError, read_manifest
 

@@ -225,7 +225,6 @@ def _check_digest(value: Any, field: str, where: str = "") -> None:
 
 
 def _walk_key(node: Any, key: str) -> set[str]:
-
     found: set[str] = set()
     if isinstance(node, dict):
         for k, v in node.items():
