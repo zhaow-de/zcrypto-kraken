@@ -518,11 +518,7 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
 
 
 def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
-    """`LiveNodeBuilder` is value-returning -- each call hands back a NEW builder and the receiver keeps
-    nothing (measured on 2.0.0rc4; the test stand-in returns `self` and cannot see it) -- so a call whose
-    result is dropped drops its client while the node still reports as built.
-
-    `exec_enabled` alone decides whether this engine may reach the venue's private side: off, the
+    """`exec_enabled` alone decides whether this engine may reach the venue's private side: off, the
     credentials are never read; on with either variable absent, this REFUSES rather than substituting a
     placeholder that would defer the failure to the first submission."""
     builder = (
