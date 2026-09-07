@@ -49,7 +49,7 @@ def fetch(
 
 @data_app.command()
 def push() -> None:
-    """Push this node's authored sets to the configured push_dest (never the rw NFS mount)."""
+    """Push this node's authored sets to the configured push_dest -- by convention never the rw NFS mount."""
     try:
         cfg = load_config()
         dest = resolve_push_dest(cfg)

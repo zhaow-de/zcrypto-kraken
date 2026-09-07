@@ -266,8 +266,8 @@ REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
 
 def rebuild_sets(sets: Sequence[str], ctx: RebuildContext) -> list[Path]:
     """Mint `data_root/<name>-<stamp>` for each named set, run its builder with that as `out_root`, and
-    return the minted dirs; DataSyncError on an unknown name or an existing sibling, and from the builder it runs. NEVER writes into
-    the live set dir -- the sibling is the whole contract (spec 00056 D1c/D3)."""
+    return the minted dirs; DataSyncError on an unknown name or an existing sibling, and from the
+    builder it runs. NEVER writes into the live set dir -- the sibling is the whole contract (spec 00056 D1c/D3)."""
     minted = []
     for name in sets:
         builder = REBUILDABLE.get(name)

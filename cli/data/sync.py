@@ -28,7 +28,7 @@ def _sidecar_by_dataset() -> dict[str, dict[str, str]]:
     Some canonical sets are produced by a freeze process this repo does not write, whose manifest
     exposes no per-series hash at all -- leaving `_manifest_sha256s` empty and every consumer of it
     silently inert. This file is where those sets' hashes live instead. It is OUR format, uniform
-    across sets, so reading it needs none of the per-set manifest knowledge that the manifest
+    across sets, so reading it needs none of the per-set knowledge the LEGACY manifest
     shapes would demand.
 
     Values are `dataset_hash` (sha256 of the frame's canonical CSV) -- the SAME grade every manifest
@@ -116,10 +116,10 @@ def _count_files(root: Path) -> int:
 
 def _manifest_sha256s(node: object) -> set[str]:
     """Every per-artifact ``sha256`` value anywhere in a (possibly deeply nested) manifest -- the
-    content hashes the producer vouches for. A LEGACY manifest nests ``series`` by symbol (and by
+    content hashes the producer vouches for. A LEGACY manifest may nest ``series`` by symbol (and by
     grid for OHLC: ``series[symbol][grid].sha256``; funding was ``series[symbol].sha256``), and each
     set laid its parquets out differently, so a file path cannot be derived from its keys without
-    per-set knowledge. So such a set is attested by content hash alone -- catching transfer
+    per-set knowledge. So such a manifest contributes content hashes only -- catching transfer
     corruption (the real risk on an append-only, rsync-checksummed channel) without coupling
     this code to any set's on-disk layout. A manifest-level ``manifest_sha256``
     (the holdout carries one; it is not a per-parquet hash) is deliberately NOT collected -- the key

@@ -57,7 +57,7 @@ def set_digest(series: dict[str, Any], keys: Sequence[str] | None = None) -> str
     """sha256 over the member hashes, in ascending lexicographic order OF THE SERIES KEY.
 
     Ordering by the key rather than by any part's meaning is what keeps this free of per-set
-    knowledge: the legacy writers disagreed precisely here -- `backfill.py` sorted interval keys as
+    knowledge: the legacy writers disagreed precisely here -- `cli/backfill/backfill.py` sorted interval keys as
     strings ('1440' < '240' < '60') and `reach.py` as integers -- so no single recipe could
     reproduce both and the ordering had to become a decision.
     """
