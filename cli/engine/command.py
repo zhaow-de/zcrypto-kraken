@@ -113,8 +113,8 @@ def _parse_at(raw: str) -> datetime:
 
 
 def _journal_artifacts(journal_dir: Path, pattern: str, name_glob: str) -> list[tuple[datetime, Path]]:
-    """(boundary, path) pairs for `<pattern>/<name_glob>` under the journal, sorted by boundary;
-    files whose day-dir/hour names don't parse are skipped (mirrors the cycle core's back-search)."""
+    """Sorted (boundary, path) pairs; a file whose day-dir or hour name does not parse is skipped rather than
+    raising, mirroring the cycle core's back-search."""
     out = []
     for path in journal_dir.glob(f"{pattern}/{name_glob}"):
         try:
@@ -298,10 +298,10 @@ def _write_prom_textfile(
     now: datetime,
     duration_seconds: float,
 ) -> None:
-    """Atomically write the gate-export Prometheus textfile metrics: a `.tmp` sibling then `os.replace`, so a scrape never observes
-    a partial file. The cache metrics are always emitted -- hits 0 and invalidated 0 when `--cache` was omitted -- so a degrading
-    cache is visible, except `_oldest_verification_age_seconds`, omitted like `_journal_pull_lag_seconds` when there is nothing to
-    report; `_replayed`/`_hits` carry no `_total`: they are per-run gauges, and enabling the cache would read as a counter reset."""
+    """Atomically write the gate-export metrics so a scrape never observes a partial file: the cache metrics
+    are always emitted -- 0 when `--cache` was omitted -- so a degrading cache is visible, an age with
+    nothing to report is omitted rather than published as 0, and `_replayed`/`_hits` carry no `_total`
+    because enabling the cache would read as a counter reset."""
     lines = [
         "# HELP zcrypto_gate_status 1 if the >=14-clean-day gate is MET else 0",
         f"zcrypto_gate_status {1 if status.gate_met else 0}",
@@ -666,7 +666,6 @@ def _seed_cycle_state(journal_dir: Path) -> tuple[datetime, bool | None]:
 
 
 def _seed_completed_at(journal_dir: Path) -> datetime:
-    """`_seed_cycle_state`'s completed_at half alone."""
     return _seed_cycle_state(journal_dir)[0]
 
 
@@ -1461,7 +1460,6 @@ def _tracking_note(week: dict) -> str:
 
 
 def _render_tracking(payload: dict) -> str:
-    """The weekly comparison, the window-wide floor, and the realized cost blend."""
     tracking, floor, cost = payload["tracking"], payload["floor"], payload["cost"]
     lines = [
         "Weekly tracking error: what the book actually held, against the drift floor the venue's minimums impose",
