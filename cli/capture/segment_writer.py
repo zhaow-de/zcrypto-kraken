@@ -268,7 +268,9 @@ def _hour_of(hour_dir: Path, hh: str) -> datetime | None:
 @dataclass(frozen=True)
 class FinalizeOutcome:
     """A sweep that finalized nothing looks identical to one that had nothing to do, so `failed` is the
-    only thing separating them: an hour whose final does not exist after the attempt (T0175)."""
+    only thing separating them (T0175). It is read off one fact -- no final on disk after the attempt
+    -- and never off whether one was there before, because an hour can arrive already final and still
+    end with none: an unreadable final is quarantined, and the rebuild that follows can fail."""
 
     finalized: int
     failed: tuple[datetime, ...]
@@ -427,8 +429,8 @@ class SegmentWriter:
 
         Finalize every hour STRICTLY OLDER than `cutoff` that currently holds a row — the open
         hour (if any) plus any crash-leftover part-hours the event stream itself has not yet swept.
-        Returns a `FinalizeOutcome`, in whose two halves an hour whose final was ALREADY there
-        counts in neither: that is the merge this class declines. Hours `>= cutoff` are NEVER touched.
+        Returns a `FinalizeOutcome`; 0 finalized is the correct, idempotent answer once there is
+        nothing left to do. Hours `>= cutoff` are NEVER touched.
 
         T0046: rotation is event-driven — an hour closes only when the NEXT event for this same
         (pair, kind) crosses its boundary (`_enter_hour`) — which fits a continuously-emitting
@@ -473,12 +475,12 @@ class SegmentWriter:
             already_final = final_path.exists()
             self._finalize_hour(hour)
             self._current_hour = None
-            if not already_final:
-                if final_path.exists():
+            if final_path.exists():
+                if not already_final:
                     finalized += 1
                     newest_hour = hour
-                else:
-                    failed.append(hour)
+            else:
+                failed.append(hour)
 
         root = self._base_dir / self._pair / self._kind
         for hour_dir in sorted({path.parent for path in root.rglob("*.part*.parquet")}):
@@ -489,12 +491,12 @@ class SegmentWriter:
                 final_path = hour_dir / f"{hh}.parquet"
                 already_final = final_path.exists()
                 self._merge_hour(hour_dir, hh)
-                if not already_final:
-                    if final_path.exists():
+                if final_path.exists():
+                    if not already_final:
                         finalized += 1
                         newest_hour = hour if newest_hour is None else max(newest_hour, hour)
-                    else:
-                        failed.append(hour)
+                else:
+                    failed.append(hour)
 
         if newest_hour is not None:
             floor = newest_hour + timedelta(hours=1)

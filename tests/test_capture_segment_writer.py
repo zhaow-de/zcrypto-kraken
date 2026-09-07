@@ -2039,6 +2039,28 @@ def test_finalize_completed_hours_merges_crash_leftover_parts_with_no_open_hour(
     assert w2._current_hour is None
 
 
+def test_finalize_completed_hours_reports_an_hour_whose_rebuild_failed_under_an_existing_final(tmp_path, monkeypatch):
+    """The failure `already_final` used to hide: an unreadable final is quarantined, the rebuild fails,
+    and the hour ends with no final at all -- so `failed` is read off the attempt, never off before."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    for i in range(4):
+        w.append(_hour10_event(i, i))
+    hour_dir = _segment_path(tmp_path, 10).parent
+    assert len(list(hour_dir.glob("10.part*.parquet"))) == 4, "the parts must exist, or the rebuild is not attempted"
+    _segment_path(tmp_path, 10).write_bytes(b"a torn final: readable as a file, not as parquet")
+    w._current_hour = None  # the crash-leftover branch, where `already_final` is True
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert not _segment_path(tmp_path, 10).exists(), "the fixture must leave the hour with no final, or it proves nothing"
+    assert list(hour_dir.glob("10.parquet.corrupt*")), "the unreadable final is quarantined, never deleted"
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+
+
 def test_finalize_completed_hours_is_idempotent(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
