@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -350,7 +351,7 @@ class SegmentWriter:
         self.segments_written = 0
         self.segment_bytes = 0
         self.rows_held = 0
-        self.rows_quarantined = 0
+        self.rows_quarantined = self._load_quarantined()
         self.hour_finalized_early = 0  # hours FINALIZED before our clock said they were over (`_count_if_early`)
         self.ts_past_dated_hour = 0  # oracle-bearing first stamps that opened a part-less hour behind the clock (`_enter_hour`)
         self._recover()
@@ -417,6 +418,7 @@ class SegmentWriter:
             if rows:
                 self._write_part(rows, hour, marker=".held")
                 self.rows_quarantined += len(rows)
+                self._save_quarantined()
         self._held = {}
         self._held_seen = {}
 
@@ -597,6 +599,7 @@ class SegmentWriter:
         if len(rows) >= self._flush_rows:
             self._write_part(rows, hour, marker=".held")
             self.rows_quarantined += len(rows)
+            self._save_quarantined()
             self._held[hour] = []
 
     def _implausible(self, ts: datetime) -> bool:
@@ -655,6 +658,40 @@ class SegmentWriter:
         # Clamped: a clock stepped BACKWARD must only ever make the guard laxer, never tighter.
         elapsed = max(now - self._max_at, timedelta(0))
         return ts > self._max_ts + elapsed + MAX_TS_AHEAD and ts > now + MAX_TS_AHEAD
+
+    def _quarantined_path(self) -> Path:
+        return self._base_dir / self._pair / self._kind / "rows-quarantined.json"
+
+    def _load_quarantined(self) -> int:
+        """The count a previous process left, or 0. NEVER raises: this runs at construction, before
+        the daemon connects, so anything escaping stops capture on every restart (T0161)."""
+        try:
+            payload = json.loads(self._quarantined_path().read_text())
+            value = payload["rows_quarantined"] if isinstance(payload, dict) else None
+            return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+        except FileNotFoundError:
+            return 0  # a writer that has never spilled, which is every writer on a fresh tree
+        except Exception:
+            logger.exception(
+                "unreadable quarantine count, seeding 0 pair=%s kind=%s path=%s",
+                self._pair,
+                self._kind,
+                self._quarantined_path(),
+            )
+            return 0
+
+    def _save_quarantined(self) -> None:
+        """Publish the count atomically after a spill. NEVER raises -- the rows are already safe on
+        disk, and losing their COUNT must not cost the daemon that captured them."""
+        path = self._quarantined_path()
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps({"rows_quarantined": self.rows_quarantined}))
+            _replace_durably(tmp, path)
+        except Exception:
+            logger.exception("could not persist the quarantine count pair=%s kind=%s", self._pair, self._kind)
+            tmp.unlink(missing_ok=True)
 
     def _hour_dir(self, hour: datetime) -> Path:
         return self._base_dir / self._pair / self._kind / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"

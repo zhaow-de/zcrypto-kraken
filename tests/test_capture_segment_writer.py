@@ -2321,6 +2321,40 @@ def test_rows_quarantined_accumulates_across_restarts_and_never_double_counts(tm
     assert fourth.rows_quarantined == 5
 
 
+@pytest.mark.parametrize(
+    "corrupt",
+    [b"", b"{", b"null", b"3", b'{"rows_quarantined": "many"}', b'{"rows_quarantined": -4}', b'{"rows_quarantined": true}'],
+    ids=["empty", "truncated", "json-null", "json-scalar", "wrong-type", "negative", "bool"],
+)
+def test_an_unreadable_quarantine_count_seeds_zero_and_never_stops_capture(tmp_path, corrupt):
+    """This read runs before the daemon connects, so anything escaping it stops capture on EVERY
+    restart. Every shape a torn or hand-edited file can take seeds 0 instead."""
+    state = tmp_path / "BTC/EUR" / "book" / "rows-quarantined.json"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_bytes(corrupt)
+
+    assert _new_writer(tmp_path, flush_rows=5).rows_quarantined == 0
+
+
+def test_a_failed_quarantine_write_never_costs_the_daemon(tmp_path, clock, monkeypatch, caplog):
+    """The rows are already on disk by then: losing their COUNT must not take the process with it."""
+    clock.now = _ts(10, 3)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    for i in range(3):
+        w.append(_trade_event(10, i, i))
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    with caplog.at_level(logging.ERROR):
+        w.close()  # must not raise
+
+    assert w.rows_quarantined == 3, "the in-process count still moves; only its persistence was lost"
+    assert not (tmp_path / "BTC/EUR" / "trades" / "rows-quarantined.json.tmp").exists(), "the partial is cleaned up"
+    assert any("quarantine count" in r.getMessage() for r in caplog.records)
+
+
 def test_a_raising_metrics_update_after_a_segment_commit_does_not_undo_or_interrupt_it(tmp_path, monkeypatch, caplog):
     # Isolation invariant (spec 00069 D5): `_merge_hour` already committed the segment (durable on
     # disk, manifest written) by the time the metrics update runs -- a raising `stat()` there must
