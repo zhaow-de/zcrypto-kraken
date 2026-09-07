@@ -28,7 +28,7 @@ SPOT_FEE_TIERS: tuple[tuple[float, float, float], ...] = (
 
 
 def spot_fee_rates(thirty_day_volume_usd: float) -> dict:
-    """Maker/taker fee fractions + 1-based tier for a 30-day USD spot volume (Kraken, 2026-07-09 schedule)."""
+    """Maker/taker fee fractions + 1-based tier for a 30-day USD spot volume."""
     if not math.isfinite(thirty_day_volume_usd) or thirty_day_volume_usd < 0:
         raise CostModelError(f"thirty_day_volume_usd must be finite and >= 0, got {thirty_day_volume_usd}")
     idx = 0
