@@ -25,6 +25,7 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 - **Availability and affinity.** Main keeps the coordination table: session → status (idle / busy) → branch → topic or spec → warm-context tags → last report. A subject goes to the idle session that already holds its context; else the idle one; never zebra.
 - **One assignment per payload session at a time**, and every payload status message names its branch and latest commit hash.
 - **A dispatch on a fresh owner instruction that REORDERS a sequenced package waits one turn for the owner's next message, or its brief says HELD at its head.**
+- **An addition to a closing fold-in that adds a MECHANISM is new work — a topic or its own branch — never appended**; a fix rides, a mechanism opens a review loop where it costs most.
 - **A table row is the session's CURRENT state, one line per cell** — status, branch, topic or spec, and what the branch has GROWN: a new guard, file or claimed property named in a payload report goes into the topic column, and the tick compares the columns pairwise for a property pinned on two branches. A block below the table exists only while its assignment is in flight and is deleted when it lands.
 - **A dispatched assignment whose pre-push loop reaches its third round carrying a Critical or Important gets a transcript retro by main before that session's next assignment** — rounds, findings by class, minutes per round, what the author's own tier could have caught; the output is registry records and a proposed rule or skill change, never a verbal note.
 
@@ -38,7 +39,7 @@ An assignment message carries:
 - an arm for a gap surfaced by implementation: it goes to whoever decides items in that assignment;
 - when the owner is present in the payload session, what the owner decides, with questions batched per topic.
 
-Its scope has three rules: a scope line that licenses an artefact licenses the artefact's mandatory consequences — an alert rule carries its runbook section, panel and README row; a brief that DEFINES a check states the census it was run against, as a spec's measured basis does; under a hard clock the first wave is the set that can COMPLETE inside the window, never the head of the global order. And an assignment governed by rules that exist only on an unmerged branch waits for the merge, or the brief names the branch and quotes every clause relied on — the relay is the rule.
+Its scope has three rules: a scope line that licenses an artefact licenses the artefact's mandatory consequences — an alert rule carries its runbook section, panel and README row; a brief that DEFINES a check states the census it was run against, as a spec's measured basis does; under a hard clock the first wave is the set that can COMPLETE inside the window, never the head of the global order. And an assignment governed by rules that exist only on an unmerged branch waits for the merge, or the brief names the branch and quotes every clause relied on — the relay is the rule. A brief names a constructed defect it has constructed, or labels it a hypothesis; a briefed failure mode is derived from the tree by the assignee, never transcribed into a commit body.
 
 ## The hourly tick
 
