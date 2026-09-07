@@ -1,4 +1,4 @@
-"""The Coinalyze REST poller (spec 00051 OPS-2) that replaced the Binance forceOrder WS recorder Binance geo-fences from every
+"""The Coinalyze REST poller (spec 00051 OPS-2) that replaced the Binance forceOrder WS recorder that Binance geo-fences from every
 egress we own, writing through the same `SegmentWriter` and data dir so NAS replication and the dead-man carry over. Overlap
 safety is an invariant, not an optimization target: the whole-window re-fetch each cycle is made safe by the bucket watermark,
 `SegmentWriter`'s dedup over the open hour and its late-event floor over finalized ones TOGETHER, so narrowing the window or
@@ -84,8 +84,8 @@ _SEGMENT_FILE_RE = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/(\d{2})\.(?:parquet|par
 
 
 def prime_bucket_watermarks(data_dir: Path, coins: list[str]) -> dict[str, int]:
-    """Fail-open per coin: one whose data is missing or unreadable is simply absent from the result, so
-    its whole window re-submits once and the writer's own defenses absorb it."""
+    """Fail-open per coin: one whose data is missing, unreadable or without a usable `ts` is absent from the
+    result, so its whole window re-submits once and the writer's defenses absorb it."""
     marks: dict[str, int] = {}
     for coin in coins:
         by_hour: dict[tuple[str, ...], list[Path]] = {}
@@ -139,10 +139,10 @@ def poll_cycle(
     now: datetime | None = None,
     opener=urllib.request.urlopen,
 ) -> int:
-    """Only buckets Coinalyze has proven closed are appended; the count returned is submissions, not rows
-    kept, since the writer's `dedup_key` absorbs the re-polled overlap. `watermarks` is mutated in
-    place, a coin's mark advancing only on a successful append, and `None` disables the filter. A fetch
-    failure raises before any row is appended, so a failed cycle writes nothing."""
+    """Only buckets Coinalyze has proven closed are appended; the count returned is submissions, not rows kept,
+    since the writer's `dedup_key` absorbs the re-polled overlap. `watermarks` is mutated in place, a coin's
+    mark advancing only on a successful append, and `None` disables the filter. A fetch failure raises
+    before any row is appended; a later raise leaves earlier rows buffered."""
     now = now or datetime.now(UTC)
     now_s = int(now.timestamp())
     frm = now_s - _CATCHUP_WINDOW_SECONDS
@@ -224,10 +224,10 @@ def _poll_once(
     bucket_watermarks: dict[str, int],
     metrics: _PollMetrics | None = None,
 ) -> bool:
-    """Returns whether one cycle fully succeeded — the dead-man ping's gate. Every step's failure but one is
-    treated the same way: log, write nothing more, return False so the caller withholds the ping, and the
-    loop keeps going, retrying next cycle. The escapes, both by design: the finalize sweep's `CaptureError`
-    re-raise, and the `KeyboardInterrupt` `_run` maps SIGTERM to."""
+    """Returns whether one cycle fully succeeded — the dead-man ping's gate. A step's failure is logged and
+    returns False so the caller withholds the ping, and the loop keeps going; a reported sweep failure lets
+    the remaining writers finish first. The escapes, both by design: the finalize sweep's `CaptureError` re-
+    raise, and the `KeyboardInterrupt` `_run` maps SIGTERM to."""
     try:
         watermark.check()
     except Exception:

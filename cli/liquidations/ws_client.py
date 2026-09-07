@@ -22,7 +22,8 @@ _RECONNECT_ERROR_EVERY = 10  # log an ERROR every N consecutive failed reconnect
 
 
 def compute_backoff(attempt: int, *, base: float = _BACKOFF_BASE_SECONDS, max_delay: float = _BACKOFF_MAX_SECONDS) -> float:
-    """Exponential backoff delay (seconds) for the `attempt`-th (0-indexed) reconnect, capped at `max_delay`."""
+    """Seconds before the `attempt`-th (0-indexed) reconnect, capped at `max_delay`; a negative `attempt` is
+    refused."""
     if attempt < 0:
         raise LiquidationsError(f"attempt must be >= 0, got {attempt}")
     return min(base * (2**attempt), max_delay)
