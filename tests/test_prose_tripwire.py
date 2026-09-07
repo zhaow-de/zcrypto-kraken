@@ -794,6 +794,17 @@ class TestTheBaselineRatchet:
         out = capsys.readouterr().out.splitlines()
         assert [o.split(" recorded ")[1] for o in out[:3]] == ["one of 6, 10, 22"] * 3
 
+    def test_a_row_already_claimed_by_its_own_anchor_is_not_offered_as_a_source(self, tree: Path, capsys) -> None:
+        """The snapshot is taken AFTER the anchor-keyed matches: those rows were identified, not guessed at."""
+        (tree / "kept.py").write_text(_py(["# a"] * 10 + ["x = 0", ""] + ["# b"] * 22, 60 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        live = ["# a"] * 10 + ["x = 0", ""] + ["# B"] * 6
+        (tree / "kept.py").write_text(_py(live, 60 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[0].endswith("recorded 22")  # not "one of 10, 22": the 10 is `# a`'s, matched by its anchor
+        assert out[-1] == _summary(rewritten=1)
+
     def test_candidates_of_one_size_name_it_rather_than_offering_a_choice(self, tree: Path, capsys) -> None:
         """Two same-size rows: which one was the source does not change what was recorded."""
         (tree / "kept.py").write_text(_py(["# a"] * 6 + ["x = 0", ""] + ["# b"] * 6, 40 * self.N))

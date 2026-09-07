@@ -369,6 +369,11 @@ def read_baseline(path: str) -> dict[tuple[str, str, str], list[float]]:
     return known
 
 
+def _absorbable(rows: dict[tuple[str, str, str], list[float]], o: Offender) -> list[tuple[float, tuple[str, str, str]]]:
+    """The rows a rewritten block could have come from: its own path and kind, and no smaller than it."""
+    return sorted((m, key) for key, pool in rows.items() if key[0] == o.path and key[1] == o.kind for m in pool if m >= o.measured)
+
+
 def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]):
     """A keep may shrink but never grow, and a rewrite re-keys itself because the anchor is the block's
     first line -- which is why a retired row of the same path and kind can still claim it."""
@@ -387,18 +392,13 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
     retired = {key: list(pool) for key, pool in known.items()}
     rewritten, still_new = [], []
     for o in new:
-        candidates = sorted(
-            (m, key) for key, pool in known.items() if key[0] == o.path and key[1] == o.kind for m in pool if m >= o.measured
-        )
+        candidates = _absorbable(known, o)
         if candidates:
             was, key = candidates[0]
             known[key].remove(was)
             # Every candidate could be this block's own row: the anchor that identified it is exactly what
             # the rewrite changed. Name one size only when one size could have been the source.
-            sources = sorted(
-                {m for k, pool in retired.items() if k[0] == o.path and k[1] == o.kind for m in pool if m >= o.measured}
-            )
-            rewritten.append((o, sources))
+            rewritten.append((o, sorted({m for m, _ in _absorbable(retired, o)})))
         else:
             still_new.append(o)
     return still_new, grown, rewritten, sum(len(pool) for pool in known.values())
