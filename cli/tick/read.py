@@ -63,11 +63,9 @@ def _read_bytes(source: str | Path | tuple[str | Path, str]) -> tuple[bytes, str
 
 
 def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame:
-    """A bare file, or a `(zip_path, member_name)` pair read from the ZIP without full extraction; rows in the order
-    read, neither de-duplicated nor re-sorted (`cli.tick.aggregate` sorts before bucketing), layout auto-detected
-    by `_detect_schema` and `side` null throughout the complete one. Refuses with `TickError` a corrupt ZIP or a
-    missing member, an empty or unreadable CSV, a row missing a required field, a non-numeric or NaN value, and a
-    `side` outside `b`/`s`."""
+    """A bare file, or a `(zip_path, member_name)` pair read from the ZIP without full extraction; rows in the
+    order read, neither de-duplicated nor re-sorted -- `cli.tick.aggregate` sorts before bucketing. `side` is
+    null throughout the complete layout."""
     data, label = _read_bytes(source)
     has_header = _sniff_has_header(data)
     schema = _detect_schema(data, has_header)

@@ -391,7 +391,6 @@ cli/snapshot/register.py:15: comment-block 5 > 4	"""Assemble a structured, conte
 cli/snapshot/register.py:31: comment-block 8 > 4	# The three ways a selected pair changes identity underneath us -- T0025's trigger, as a check the
 cli/snapshot/register.py:43: comment-block 7 > 4	"""Reasons this snapshot must stop a reference-data sweep, one string each; empty means clean.
 cli/snapshot/register.py:105: comment-block 5 > 4	# The ⏱ cost facts. Rendered as base tier + ladder depth rather than the full ladders: the
-cli/tick/read.py:66: comment-block 5 > 4	"""A bare file, or a `(zip_path, member_name)` pair read from the ZIP without full extraction; rows in the order
 cli/trades/backfill.py:1: comment-block 14 > 4	"""Orchestration for spec 00053 Task 4: heal the canonical trade stream.
 cli/trades/backfill.py:1: file-prose 24.3 > 20
 cli/trades/backfill.py:81: comment-block 5 > 4	# A book final's mere EXISTENCE proves only that at least one book event landed somewhere in the
