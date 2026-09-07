@@ -19,6 +19,10 @@ The dead-man is the only external witness of the liquidations poller; a ping aft
 - The T0164 retro's claim that a raise from the sweep crash-loops the container was FALSE: `finalize_completed_hours`'s only `raise` is the oracle guard, unreachable from `_run`, which builds writers with no oracle; the rest delegates to callees that swallow.
 - The healthchecks fixture's description for `zcrypto-liquidations` enumerates two withholding conditions; a swallowed sweep failure would be a third, and changing the live description is a host action.
 
+- Reproduced end to end on `bf6dce0c`, one `_poll_once` per case with `_run`'s own ping gate applied verbatim. Healthy: `_poll_once -> True`, ping sent, `12.parquet` written. The same cycle with the write refused: `_poll_once -> True`, **ping sent**, nothing written. The two modes are indistinguishable on every external signal.
+- The failing write must be injected BELOW `_write_part`'s own `except Exception`, never by replacing `_write_part`: a double that replaces the method removes the swallow under study and the `OSError` propagates, which is not what production does. `_replace_durably` — the last statement inside that `try` — is where a read-only or full mount actually fails, and patching it reproduces the swallow at any euid, so no root-skip is needed.
+- One caller today, adjudicated: `cli/liquidations/coinalyze.py:261` inside `_poll_once`. It pings a dead-man after the sweep — `_run`'s `if ok and not watermark.breached and watermark.measurable: ping_healthcheck(...)` — so a silent sweep failure is a false all-clear there. No other call site exists in `cli/`; the two other `git grep` hits are the method's own definition and a comment.
+
 ## Suggested next steps
 
 - Reproduce: in a scratch worktree, mount-simulate a failing write (`chmod a-w` the hour directory, or a `_write_part` double that raises `OSError`), run one `_poll_once` with the real writer set, and read `finalize_completed_hours`'s return and the ping call — expected today: 0 and a ping.
