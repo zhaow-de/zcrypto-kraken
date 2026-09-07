@@ -41,8 +41,11 @@ def test_fetch_ohlc_raises_on_transport_error():
     def _raise(url, timeout=None):
         raise urllib.error.URLError("boom")
 
-    with pytest.raises(OHLCError):
+    with pytest.raises(OHLCError) as caught:
         fetch_ohlc("XXBTZEUR", 1440, opener=_raise)
+    assert "transport error fetching OHLC" in str(caught.value)
+    # The IDENTITY, not the phrasing: an operator paged off the cycle must see WHICH pair stalled.
+    assert "XXBTZEUR" in str(caught.value) and "1440" in str(caught.value)
 
 
 def test_fetch_ohlc_raises_on_missing_result_key():
@@ -91,6 +94,7 @@ def test_fetch_ohlc_contains_a_body_whose_bytes_do_not_decode(payload):
     # The LABEL, not just the containment: rejoining the two blocks would still raise `OHLCError`
     # -- the wide transport arm catches `ValueError` -- so only this pins the split.
     assert "undecodable or invalid JSON" in str(caught.value)
+    assert "XXBTZEUR" in str(caught.value) and "1440" in str(caught.value)
 
 
 @pytest.mark.parametrize("body", [[], "oops", None, 0])
