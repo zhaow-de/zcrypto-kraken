@@ -2327,7 +2327,7 @@ def test_a_cap_site_spill_that_never_reached_disk_is_neither_counted_nor_persist
         for i in range(2):
             w.append(_trade_event(10, i, i))  # the cap trips on the second, while the process runs on
 
-    # Asserted BEFORE the absences below: without it every one of them holds when the cap never fires.
+    # Without this, every absence below holds just as well when the cap never fires at all.
     assert any("buffer dropped" in r.getMessage() for r in caplog.records), "the cap must have spilled and lost it"
     assert not list(tmp_path.rglob("*.held*.parquet")), "the fixture must lose the rows, or it proves nothing"
     assert w.rows_quarantined == 0
