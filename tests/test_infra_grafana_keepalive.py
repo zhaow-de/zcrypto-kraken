@@ -52,6 +52,37 @@ def test_a_success_is_recorded_with_its_duration_and_both_stamps(tmp_path):
     assert metrics["zcrypto_grafana_keepalive_last_success_timestamp_seconds"] == str(run)
 
 
+def test_the_token_is_delivered_on_stdin_and_never_in_argv(tmp_path):
+    """/proc/<pid>/cmdline is world-readable, so a token passed as `-H` is legible to every local
+    account for the length of the call; /proc/<pid>/environ, which carries it here, is root-only."""
+    metrics = _run(
+        tmp_path,
+        "#!/bin/sh\n"
+        'd="$(dirname "$0")"\n'
+        "tr '\\0' '\\n' < /proc/self/cmdline > \"$d/argv.txt\"\n"
+        'cat > "$d/stdin.txt"\n'
+        "printf '200 0.412\\n'\n",
+        token="glsa_SUPERSECRET_VALUE",
+    )
+    argv = (tmp_path / "bin" / "argv.txt").read_text()
+    stdin = (tmp_path / "bin" / "stdin.txt").read_text()
+
+    # The true positive first: a runner that simply stopped sending the header would pass the
+    # absence assertion below while authenticating nothing.
+    assert 'header = "Authorization: Bearer glsa_SUPERSECRET_VALUE"' in stdin
+    assert "glsa_SUPERSECRET_VALUE" not in argv, f"the token reached argv: {argv}"
+    assert metrics["zcrypto_grafana_keepalive_status"] == "200"
+
+
+def test_a_curl_that_ends_its_write_out_with_a_newline_is_read_the_same(tmp_path):
+    """Real curl's `-w` format ends in `\n`; every other stub here omits it, so without this the
+    suite exercises only the shape curl does not emit."""
+    metrics = _run(tmp_path, '#!/bin/sh\nprintf "200 0.412\\n"\n')
+
+    assert metrics["zcrypto_grafana_keepalive_status"] == "200"
+    assert metrics["zcrypto_grafana_keepalive_duration_seconds"] == "0.412"
+
+
 def test_a_503_is_recorded_rather_than_swallowed(tmp_path):
     """The hibernation signature. `curl -f` would have turned this into an error exit and no data."""
     metrics = _run(tmp_path, '#!/bin/sh\nprintf "503 12.8"\n')
