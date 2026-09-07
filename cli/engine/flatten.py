@@ -176,19 +176,14 @@ def _as_step(value: Any, field: str, what: str) -> float:
 
 
 def _symbol_of(instrument_id: Any) -> str:
-    """`BTC/EUR.KRAKEN` -> `BTC/EUR`. The venue half is stripped; the adapter has already renamed
-    Kraken's legacy XBT/XDG codes (`cli/engine/instruments.py`)."""
+    """Only the venue suffix is stripped -- the adapter has already renamed Kraken's legacy XBT/XDG codes
+    (`cli/engine/instruments.py`)."""
     return str(instrument_id).rsplit(".", 1)[0]
 
 
 def _journalled(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """The keyword arguments as the journal records them: a nautilus enum by its string form, every
-    other value verbatim.
-
-    Each read below builds ONE kwargs dict and both sends and journals it, so no scoping value is
-    spelled a second time beside the call. A hand-written literal is a journal that can read MARGIN
-    while CASH went out, and the journal is what an operator reads mid-incident.
-    """
+    """Each read builds ONE kwargs dict and both sends and journals it through here, since a hand-written
+    literal beside the call is a journal that can read MARGIN while CASH went out."""
     return {key: str(value) if isinstance(value, AccountType) else value for key, value in kwargs.items()}
 
 
