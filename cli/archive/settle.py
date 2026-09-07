@@ -47,9 +47,13 @@ FINAL_NAME = re.compile(r"^(\d{2})\.parquet$")
 def settled_hours(*, now: datetime, window_hours: int) -> list[datetime]:
     """The trailing window of hours old enough to be complete on both mirrors, OLDEST first.
 
-    Re-scanned every cycle: an hour that was residual last cycle may be healable this one (a late
-    pull), and the ledger — not this list — is what stops an already-decided hour being re-decided.
+    Re-scanned every cycle: a residual hour may be healable in the next, and the LEDGER — not this list —
+    stops a decided hour being re-decided. Every hour inherits `now`'s offset, so a non-UTC `now` is refused here.
     """
+    if now.tzinfo is None:
+        raise CaptureError(f"refusing to settle hours from {now!r}: a naive `now`, with no offset to check against UTC")
+    if now.utcoffset() != timedelta(0):
+        raise CaptureError(f"refusing to settle hours from {now!r}: a `now` at UTC offset {now.isoformat()[-6:]}, not at UTC")
     newest = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=SETTLE_HOURS)
     return [newest - timedelta(hours=i) for i in reversed(range(window_hours))]
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import re
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -52,6 +53,33 @@ def test_the_settle_boundary_is_inclusive_at_exactly_h_plus_two():
     assert settled_hours(now=H + timedelta(hours=SETTLE_HOURS), window_hours=1) == [H]
     # one microsecond earlier and the hour is still in flight
     assert settled_hours(now=H + timedelta(hours=SETTLE_HOURS, microseconds=-1), window_hours=1) == [H - timedelta(hours=1)]
+
+
+def test_a_now_at_a_non_zero_utc_offset_is_refused():
+    """The propagation boundary: this function preserves whatever offset `now` carries, so every hour
+    it yields would reach the reconciler -- and its nine ledger writes -- stamped in the wrong zone."""
+    for offset, rendered in ((timedelta(hours=5, minutes=30), "+05:30"), (timedelta(hours=-8), "-08:00")):
+        with pytest.raises(CaptureError, match=re.escape(rendered)):
+            settled_hours(now=H.astimezone(UTC).replace(tzinfo=timezone(offset)), window_hours=48)
+
+
+def test_a_naive_now_is_refused_as_naive_and_not_as_a_bogus_offset():
+    """The naive arm changes the MESSAGE, never the verdict: `naive.utcoffset()` is `None` and
+    `None != timedelta(0)`, so the offset arm below already refuses it -- with a message that slices
+    an offset off a string that has none, rendering "at UTC offset :00:00"."""
+    with pytest.raises(CaptureError, match="naive") as excinfo:
+        settled_hours(now=datetime(2026, 7, 16, 9), window_hours=48)
+
+    assert ":00:00" not in str(excinfo.value), "the old arm's rendering, on a value with no offset at all"
+
+
+def test_a_utc_now_still_yields_its_window_unchanged():
+    """The true positive beside the refusal: the guard rejects the offset, never the caller's window."""
+    hours = settled_hours(now=H + timedelta(hours=SETTLE_HOURS), window_hours=48)
+
+    assert len(hours) == 48
+    assert hours == sorted(hours)
+    assert hours[-1] == H
 
 
 def test_the_window_is_a_trailing_run_of_hours_oldest_first():
