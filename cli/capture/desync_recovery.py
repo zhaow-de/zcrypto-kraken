@@ -85,23 +85,10 @@ class DesyncRecovery:
     def note_recovered(self, pair: str, *, at: datetime) -> None:
         """The pair is in sync again: clear the active ladder, but KEEP the escalation record.
 
-        Dropping `escalated_at` here would make the cooldown bind only on a pair that stays
-        *continuously* desynced — and the likeliest healer is the escalation's own reconnect, which
-        forces a fresh snapshot for every pair. That is a positive feedback path: escalate ->
-        reconnect -> pair heals -> record erased -> next episode escalates ~55 s later. Simulated
-        against the real ladder, a pair desyncing every 10 minutes escalated 6x/hour against the
-        intended 1, and a flapping pair 51x/hour -- 72 and ~610 reconnects/hour fleet-wide across
-        12 pairs, against 12. Those are state-machine ceilings: this class has no clock and no I/O,
-        so it does not charge the reconnect's own downtime, and the real rate would be lower. The
-        over-run ratio is the point. This docstring once priced a reconnect at ~39 s of silence per
-        pair, from T0101's arithmetic on one incident; that figure was WRONG and is withdrawn --
-        measured against the hosts' own logs a reconnect costs SECONDS -- single-digit under every method
-        tried (0.002-2.82 s close-frame-to-first-book-event; 2.276-6.204 s close-to-first-processed-
-        message, which counts the replay burst). The two disagree on the exact interval; neither is
-        anywhere near 39.
-        The "strictly worse than the defect" argument for the terminal state survives at the smaller
-        number, since 6 escalations/pair/hour is still six times the intended bound.
-        """
+        Dropping `escalated_at` here would make the cooldown bind only on a pair that stays *continuously*
+        desynced — and the likeliest healer is the escalation's own reconnect, which forces a fresh snapshot
+        for every pair. That is a positive feedback path: escalate -> reconnect -> pair heals -> record
+        erased -> the next episode escalates on a fresh ladder, so the once-per-cooldown bound never binds."""
         state = self._pairs.get(pair)
         if state is None:
             return
@@ -113,7 +100,6 @@ class DesyncRecovery:
         self._pairs.pop(pair, None)
 
     def note_attempt(self, pair: str, *, at: datetime) -> None:
-        """A retry was just issued. Advances the backoff schedule."""
         state = self._pairs.get(pair)
         if state is None:
             return
@@ -126,7 +112,7 @@ class DesyncRecovery:
         state.escalated_at = at
 
     def due(self, pair: str, *, at: datetime) -> Action:
-        """What to do for `pair` now. Pure — call it as often as you like."""
+        """What to do for `pair` now — not pure: cooldown expiry re-arms."""
         state = self._pairs.get(pair)
         if state is None or state.desynced_at is None:
             return Action.NONE
