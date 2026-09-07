@@ -1,8 +1,7 @@
 """The manifest contract (spec 00099): one shape, so no consumer needs per-set knowledge.
 
-Five writers plus an external freeze used to emit four `series` shapes, three timestamp spellings
-and two digest names. A generic reader over that zoo is a pile of special cases discovered one
-review at a time, so this module takes the other answer: normalise the writers, and give every
+A generic reader over the shapes the writers used to emit is a pile of special cases discovered
+one review at a time, so this module takes the other answer: normalise the writers, and give every
 consumer one reader.
 
 The load-bearing decision is that `series` is keyed by the parquet's path RELATIVE TO THE DATASET
@@ -57,9 +56,7 @@ def set_digest(series: dict[str, Any], keys: Sequence[str] | None = None) -> str
     """sha256 over the member hashes, in ascending lexicographic order OF THE SERIES KEY.
 
     Ordering by the key rather than by any part's meaning is what keeps this free of per-set
-    knowledge: the legacy writers disagreed precisely here -- `backfill.py` sorted interval keys as
-    strings ('1440' < '240' < '60') and `reach.py` as integers -- so no single recipe could
-    reproduce both and the ordering had to become a decision.
+    knowledge: the legacy writers disagreed here, so the ordering had to become a decision.
     """
     members = list(series) if keys is None else list(keys)
     if not members:
@@ -80,7 +77,7 @@ def build_manifest(
     subsets: dict[str, Sequence[str]] | None = None,
     provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The conformant document. `provenance` never reaches any digest -- see the module docstring."""
+    """The conformant document."""
     if not series:
         raise ManifestError("refusing a manifest with an empty series map")
     for key in series:
@@ -138,8 +135,7 @@ class Manifest:
         return {leaf["sha256"] for leaf in self.series.values()}
 
     def hash_by_path(self) -> dict[str, str]:
-        """Path -> attested hash. This is the thing a manifest could not previously give without
-        per-set knowledge, and the reason a swapped pair used to be invisible."""
+        """Path -> attested hash."""
         return {key: leaf["sha256"] for key, leaf in self.series.items()}
 
 
@@ -229,7 +225,6 @@ def _check_digest(value: Any, field: str, where: str = "") -> None:
 
 
 def _walk_key(node: Any, key: str) -> set[str]:
-    """Every string value stored under `key`, at any depth."""
     found: set[str] = set()
     if isinstance(node, dict):
         for k, v in node.items():
