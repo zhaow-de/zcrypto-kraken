@@ -29,9 +29,9 @@ def compute_backoff(attempt: int, *, base: float = _BACKOFF_BASE_SECONDS, max_de
 
 
 class BinanceLiquidationClient:
-    """Thin async client for Binance USD-M futures' keyless `!forceOrder@arr` combined stream: connect, receive, parse,
-    auto-reconnect with exponential backoff on any drop, mirroring `cli.capture.ws_client.CaptureClient`'s reconnect loop.
-    `connect_fn`/`sleep_fn` are injected so that loop is unit-testable without a real socket or real delays."""
+    """Async client for Binance USD-M futures' `!forceOrder@arr` stream — a parallel implementation of
+    `cli.capture.ws_client.CaptureClient`'s reconnect loop, not a shared import. `connect_fn`/`sleep_fn` are
+    injected so that loop is unit-testable without a real socket or real delays."""
 
     def __init__(
         self,
@@ -47,12 +47,12 @@ class BinanceLiquidationClient:
 
     @property
     def connected(self) -> bool:
-        """True while a live WS connection is established; False during reconnect/backoff, so the dead-man gate stops pinging."""
+        """False during reconnect and backoff, so the dead-man gate stops pinging."""
         return self._ws is not None
 
     async def stream(self) -> AsyncIterator[dict]:
-        """Yield parsed forceOrder row dicts forever, reconnecting (with backoff) on any drop. Cancel the consuming task
-        to stop — there is no internal stop condition."""
+        """Yield forceOrder rows forever, silently dropping everything else; reconnects on any disconnect.
+        Cancel the consuming task to stop — there is no internal stop condition."""
         attempt = 0
         while True:
             try:

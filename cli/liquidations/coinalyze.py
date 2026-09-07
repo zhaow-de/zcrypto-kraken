@@ -224,10 +224,10 @@ def _poll_once(
     bucket_watermarks: dict[str, int],
     metrics: _PollMetrics | None = None,
 ) -> bool:
-    """Run one cycle's watermark check, fetch/write and finalize sweep; returns whether it fully
-    succeeded (the dead-man ping's gate). Every step's failure is treated the same way: log, write
-    nothing more, return False so the caller withholds the ping -- and the loop keeps going, retrying
-    next cycle. The `KeyboardInterrupt` `_run` maps SIGTERM to is the one escape, by design."""
+    """Returns whether one cycle fully succeeded — the dead-man ping's gate. Every step's failure but one is
+    treated the same way: log, write nothing more, return False so the caller withholds the ping, and the
+    loop keeps going, retrying next cycle. The escapes, both by design: the finalize sweep's `CaptureError`
+    re-raise, and the `KeyboardInterrupt` `_run` maps SIGTERM to."""
     try:
         watermark.check()
     except Exception:
