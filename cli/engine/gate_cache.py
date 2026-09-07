@@ -1,33 +1,11 @@
-"""The gate-export scoring cache primitives (spec 00060): fingerprints, load/save, and the
-`GateCache` container that lets `_evaluate_journal` reuse a prior run's `CycleOutcome`s instead of
-re-replaying every journaled cycle. Pure and file-format only -- no journal/replay wiring here (see
-cli.engine.command for the `--cache` opt-in).
+"""Gate-export scoring-cache primitives (spec 00060): the two fingerprints, load/save, and the `GateCache`
+container. Pure and file-format only -- no journal/replay wiring here (see cli.engine.command for the
+`--cache` opt-in).
 
-Two fingerprints (D2/D3): `evidence_fingerprint` covers what a single cycle's replay verdict
-depends on from the journal side (every journaled SnapshotEntry IN FULL -- pair, grid, n_bars,
-first_ts, last_ts, content_hash, path, not just content_hash -- plus cycle_ts, completed_at,
-final_targets) -- a mismatch invalidates just that cycle's entry. `replay_fingerprint` covers the
-REPLAY CODE instead -- the source bytes of the modules that determine a replay's result, the
-effective CrossfreqSystemConfig, the replay path itself, and the execution environment (installed
-numpy version, Python major.minor) -- stored once per cache file; a mismatch invalidates the whole
-cache. Since spec 00065 that module set is DERIVED, not enumerated: `_replay_code_paths()` walks
-the transitive `cli.*` import closure of `_REPLAY_ROOTS`. The hand-maintained list it replaced
-covered 12 of those 61 modules and was wrong three separate times -- most consequentially it never
-hashed `cli/portfolio/__init__.py`, the re-export layer every replay binds
-`build_crossfreq_system_fast` through, so rebinding the fast builder to the verified one changed
-every verdict while leaving the fingerprint byte-identical.
-
-Deliberately over-sensitive (a comment-only edit to a covered module, or a `uv.lock` bump that
-changes numpy/Python numeric behaviour with the journal and replay code otherwise unchanged, costs
-one full rebuild): over-invalidation is safe, under-invalidation silently corrupts gate evidence
-(T0074).
-
-D5 -- fail open, never fail trusting: `load_cache` never raises; any problem (absent/unreadable/
-truncated/unparseable file, wrong schema_version, or a replay_fp mismatch) degrades to an EMPTY
-cache, which forces every cycle to be replayed. D6 -- `save_cache` writes atomically (`<path>.tmp`
-+ os.replace) and never raises on write failure -- a crash or a failed write leaves the previous
-cache intact, and the cache is an optimization: the run already succeeded without it.
-"""
+The fingerprints differ in blast radius: an `evidence_fingerprint` mismatch invalidates one cycle's entry;
+`replay_fingerprint` is stored once per file and a mismatch invalidates the whole cache. Both are
+deliberately over-sensitive, and load/save fail open rather than fail trusting, because over-invalidation
+costs one rebuild while under-invalidation silently corrupts gate evidence (T0074)."""
 
 from __future__ import annotations
 
@@ -110,20 +88,10 @@ def _ancestor_packages(module_path: Path, repo_root: Path) -> list[Path]:
 
 
 def _import_edges(module_path: Path, repo_root: Path) -> list[Path]:
-    """The `cli.*` modules `module_path` imports. Best-effort BY DESIGN (D6): a file that cannot be
-    read or parsed yields NO edges rather than raising, and the caller digests its bytes anyway. The
-    safe direction is always-hash / sometimes-fail-to-traverse -- swallowing a SyntaxError into "no
-    imports" is survivable, swallowing it into "not covered" is the exact under-invalidation this
-    walker exists to close. Traversal loss is bounded: a file that does not parse does not import.
-
-    TRAVERSAL LIMITS, stated in full because presenting one of them as the only one is how the
-    ancestor-package gap stayed hidden: (1) only ABSOLUTE `cli.*` imports are traversed -- `cli/`
-    contains none of the relative kind (verified: 0 of 134 modules), so no edge is lost today;
-    (2) dynamic imports (`importlib`, `__import__`, a PEP 562 `__getattr__`) are invisible to a
-    static walk -- `cli/engine/__init__.py` has such a `__getattr__`, which is one reason the
-    superset test matters; (3) ancestor packages are handled explicitly in `_resolve_module`
-    rather than falling out of the walk. A relative import added later
-    would not be followed."""
+    """Only ABSOLUTE `cli.*` imports are traversed; a relative import, or a name-based dynamic one
+    (`importlib`, `__import__`), yields no edge. A PEP 562 `__getattr__` whose body holds a real import
+    statement IS followed -- `cli/engine/__init__.py`'s yields the `cli/engine/node.py` edge
+    `_replay_code_paths` reports as its one over-inclusion -- which is one reason the superset test matters."""
     try:
         tree = ast.parse(module_path.read_bytes())
     except (OSError, SyntaxError, ValueError) as exc:
@@ -193,26 +161,15 @@ def _replay_code_paths() -> tuple[Path, ...]:
 
 
 def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, path: str = "fast") -> str:
-    """sha256 over the source bytes of the modules that determine a replay's result, the effective
-    config, the replay path ("fast"/"verified" select different builders -- a route switch must
-    not serve the other route's cached verdicts), and the execution environment (T0074: numpy
-    version + Python major.minor -- a `uv.lock` bump can change numeric behaviour with the journal
-    and every covered module's bytes unchanged, which would otherwise serve a stale cached PASS).
-    Deliberately over-sensitive: a comment-only edit to any covered module, a numpy version
-    change, or a Python MINOR bump all invalidate the cache. A Python PATCH release deliberately
-    does not -- patch releases do not change float arithmetic, so the full rebuild would buy
-    nothing; `sys.version_info[:2]` is the digested value.
+    """sha256 over the source bytes of `_replay_code_paths()`, the effective config, the replay path
+    ("fast"/"verified" select different builders -- a route switch must not serve the other route's cached
+    verdicts), and the execution environment (T0074: numpy version + Python major.minor -- a `uv.lock` bump
+    can change numeric behaviour with every covered module's bytes unchanged). A Python PATCH release
+    deliberately does not invalidate: patch releases do not change float arithmetic, so the rebuild would
+    buy nothing.
 
-    Since spec 00065 the covered set is `_replay_code_paths()` -- the transitive `cli.*` import
-    closure of `_REPLAY_ROOTS`, not a hand-maintained list -- so an edit to any module that
-    executes on a replay invalidates the cache, including parts of those modules unrelated to
-    replay. "Executes", not merely "is imported by": the first cut of this walk covered only leaf
-    modules, leaving the four ancestor `__init__.py` files running unhashed on every replay, and
-    that gap was exploitable at a byte-identical fingerprint. The superset test named above is what
-    makes this sentence checkable rather than aspirational. That cost is accepted, and is the same trade as before, only wider:
-    over-invalidation costs one rebuild, under-invalidation silently corrupts gate evidence
-    (T0074). Whole files are digested rather than the verdict-path code extracted, because moving
-    code onto and off the verdict path is riskier than the cache efficiency that would buy."""
+    Whole files are digested rather than the verdict-path code extracted, because moving code onto and off
+    the verdict path is riskier than the cache efficiency that would buy."""
     digest = hashlib.sha256()
     for module_path in _replay_code_paths():
         digest.update(module_path.read_bytes())
@@ -228,12 +185,11 @@ def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig(), 
 
 
 def evidence_fingerprint(record: CycleRecord) -> str:
-    """sha256 over everything a replay verdict depends on from the journal side: every journaled
-    SnapshotEntry in FULL (pair, grid, n_bars, first_ts, last_ts, content_hash, path) in canonical
-    (pair, grid) order, plus cycle_ts, completed_at, final_targets. The full entry, not just
-    content_hash, because replay_cycle also reconciles freshly read data against
-    n_bars/first_ts/last_ts and raises EngineJournalError on disagreement -- a content_hash-only
-    fingerprint would let a cached PASS survive a metadata tamper the real replay would reject."""
+    """sha256 over the journal side of a replay verdict: each journaled SnapshotEntry in FULL, in canonical
+    (pair, grid) order, plus the cycle's timestamps and final_targets. The full entry, not just
+    content_hash, because replay_cycle also reconciles freshly read data against n_bars/first_ts/last_ts and
+    raises EngineJournalError on disagreement -- a content_hash-only fingerprint would let a cached PASS
+    survive a metadata tamper the real replay would reject."""
     ordered = sorted(record.snapshots, key=lambda s: (s.pair, s.grid))
     payload = {
         "snapshots": [
@@ -289,9 +245,8 @@ class GateCache:
 
 
 def oldest_verification_age(cache: GateCache, now: datetime) -> float | None:
-    """now - min(verified_at) in seconds, across every entry (D5); None when the cache is empty.
-    Makes the cache's staleness observable -- a rotation that silently stops looks exactly like a
-    healthy cache without this."""
+    """Seconds since the oldest entry's `verified_at` (D5); None when the cache is empty. Makes the cache's
+    staleness observable -- a rotation that silently stops looks exactly like a healthy cache without this."""
     if not cache.entries:
         return None
     oldest = min(verified_at for _, _, verified_at in cache.entries.values())
@@ -344,8 +299,8 @@ def load_cache(path: Path | None, replay_fp: str) -> GateCache:
 
 
 def save_cache(path: Path | None, cache: GateCache) -> None:
-    """Atomic <path>.tmp + os.replace. No-op when path is None. Never raises on write failure --
-    log and continue (the cache is an optimization; the run already succeeded)."""
+    """Atomic: a failed write leaves the previous cache intact. No-op on a None path; never raises on write
+    failure (an optimization: the run already succeeded)."""
     if path is None:
         return
     try:

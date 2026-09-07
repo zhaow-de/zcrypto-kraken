@@ -77,12 +77,10 @@ class GateVerdict:
 class ExecutionGate:
     """The single predicate every submission must pass.
 
-    Cheap and side-effect-free by construction so that callers evaluate it immediately before
-    EVERY submission rather than once per cycle: a resting post-only order that later crosses is a
-    second submission decision, taken minutes after cycle entry, by which time the arm file, the
-    kill file and the venue may all have changed. The only cost is one `Path.exists()` call plus
-    two `os.lstat()` calls plus a venue read that is cached for `snapshot_max_age_seconds`.
-    """
+    Cheap and side-effect-free by construction so that callers evaluate it immediately before EVERY
+    submission rather than once per cycle: a resting post-only order that later crosses is a second
+    submission decision, taken minutes after cycle entry, by which time the arm file, the kill file and the
+    venue may all have changed."""
 
     def __init__(
         self,
@@ -104,24 +102,8 @@ class ExecutionGate:
         self._nautilus_version_reader = nautilus_version_reader
 
     def _present(self, name: str, *, fail_open: bool) -> bool:
-        """Presence of one control file. The arm file fails closed by reading ABSENT on any
-        doubt; the kill and restart-hold files fail closed by reading PRESENT on any doubt --
-        opposite directions, both deliberate, because absence is what ARMS the first and PERMITS
-        the second.
-
-        `fail_open=False` (ARM_FILE): `Path.exists()`, `except OSError: return False`. A missing
-        dir, a permission error, a broken symlink -- anything that keeps us from confirming the
-        file is there -- reads as "not armed".
-
-        `fail_open=True` (KILL_FILE, RESTART_HOLD_FILE): a direct `os.lstat()`, not
-        `Path.exists()`/`os.path.lexists()` -- both of those swallow EVERY `OSError`/`ValueError`
-        (EACCES, EIO, ELOOP, ENAMETOOLONG, a stale mount, a chmod-000 parent, an embedded NUL)
-        into `False`, which is exactly the wrong direction for a fail-open file: "can't tell"
-        would silently read as "no kill switch" and permit. Only `FileNotFoundError` -- the file
-        genuinely is not there -- reads as absent; every other `OSError`, and `ValueError` (which
-        `os.lstat` raises rather than `OSError` for an embedded NUL byte -- there is no path on
-        disk for that to be a filesystem error about), reads as present and refuses.
-        """
+        """opposite directions, both deliberate, because PRESENCE is what arms the first and ABSENCE is what
+        permits the second."""
         path = self._dir / name
         if not fail_open:
             try:

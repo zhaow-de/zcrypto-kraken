@@ -1,46 +1,27 @@
-"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this
-spec that touches Nautilus types -- everything downstream (the journaled artifact, the strategy
-hook) consumes plain `VenueState` data. `venue_state_from_cache` reads the Cache once and freezes
-it; nothing here mutates the Cache or places an order.
+"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this spec that
+touches Nautilus types -- everything downstream (the journaled artifact, the strategy hook) consumes plain
+`VenueState` data. Nothing here mutates the Cache or places an order, and `positions` values are signed net
+quantities (negative for SHORT, `0.0` when flat).
 
 Two-layer failure design, deliberate:
 
-- `venue_state_from_cache` raises `EngineError` on a STRUCTURAL read failure only -- an
-  `INSTRUMENT_IDS` symbol entirely absent from the Cache, the Cache's own instrument disagreeing
-  with the expected `InstrumentId` (a venue-truth divergence in its own right, never narrowed
-  silently), or no account cached for the venue. Those mean the snapshot as a whole cannot be
-  trusted, so the caller (the strategy hook) converts the raise to `None` and the cycle
-  proceeds without venue truth (00089 D7): absence is loud, never blocking.
-- A present instrument's Cache-supplied numeric constraint (`ordermin`/`lot_step`/`tick_size`)
-  that reads back `None` does NOT raise here -- it freezes as `0.0` and is left for
-  `runtime_concordance` to flag per leg, so one broken leg degrades to a per-symbol concordance
-  failure instead of discarding the whole snapshot (positions and balances on the other eleven
-  legs stay evidence).
+- `venue_state_from_cache` raises `EngineError` on a STRUCTURAL read failure only -- an `INSTRUMENT_IDS`
+symbol absent from the Cache, the Cache's own instrument disagreeing with the expected `InstrumentId` (a
+venue-truth divergence in its own right, never narrowed silently), or no account cached for the venue. The
+caller (the strategy hook) converts the raise to `None` and the cycle proceeds without venue truth (00089
+D7): absence is loud, never blocking. - A present instrument's Cache-supplied numeric constraint
+(`ordermin`/`lot_step`/`tick_size`) that reads back `None` does NOT raise here -- it freezes as `0.0` for
+`runtime_concordance` to flag per leg, so one broken leg degrades to a per-symbol concordance failure
+instead of discarding the whole snapshot.
 
-`costmin` is NOT Cache-supplied at all (spec 00089 D5a, measured): probed against the
-nautilus-trader 1.230.0 Kraken adapter (`KrakenSpotHttpClient.request_instruments`,
-loopback-served canned `AssetPairs`), the compiled Rust parser reads `ordermin`/`tick_size` into
-`min_quantity`/`price_increment` correctly but never maps `costmin` into `min_notional` -- it
-comes back `None` for every pair, always, on this adapter version. Kraken's costmin is also not a
-single venue constant (0.5 / 0.45 / 0.00002 depending on the pair), so it can't be hardcoded as
-one number either. It is instead read from the committed `cli.engine.instruments.COSTMIN`
-constant, labelled `"costmin_source": "snapshot-constant"` in `to_payload()` so no future
-reader mistakes it for something the venue said this cycle, and its correctness is
-`tests/test_costmin_drift.py`'s job -- `runtime_concordance` deliberately never checks it (a
-constant that failed all twelve legs on the first cycle would hold D6's alert red forever, the
-exact T0135 failure D2 exists to avoid).
-
-Instrument attribute names and the Position/Account surfaces are probe-confirmed, not guessed
-(measured on nautilus-trader 1.230.0): `Cache.instrument(InstrumentId) -> Instrument | None`,
-`Cache.positions_open(instrument_id=...) -> list[Position]` (`[]` when flat, not an error),
-`Cache.account_for_venue(venue=...) -> Account | None`. `CurrencyPair` carries `min_quantity`,
-`size_increment`, `price_increment` (all `Quantity`/`Price`, `float()`-able, or `None`).
-`Position.signed_qty` is a `float`, positive for LONG, negative for SHORT, `0.0` for FLAT --
-confirmed by constructing real fills (`nautilus_trader.model.position.Position`), not by docstring
-alone: a SELL-opened position read back `-1.0`, a BUY-opened one `+2.0`. `Account.balances_free()
--> dict[Currency, Money]`; `Currency.code` is the currency string, `Money`/`Quantity`/`Price` are
-all `float()`-able.
-"""
+`costmin` is NOT Cache-supplied at all (spec 00089 D5a): the nautilus-trader 1.230.0 Kraken adapter's
+compiled parser, loopback-probed, never maps `costmin` into `min_notional` -- it reads back `None` for every
+pair -- and Kraken's costmin is not one venue constant either, so it is read from the committed
+`cli.engine.instruments.COSTMIN`, labelled `"costmin_source": "snapshot-constant"` in `to_payload()`, and
+left to `tests/test_costmin_drift.py`; `runtime_concordance` deliberately never checks it (a constant
+failing all twelve legs on the first cycle would hold D6's alert red forever, the exact T0135 failure D2
+exists to avoid). Only `instrument` and `account_for_venue` are None-checked; `positions_open` is not,
+because it returns `[]` for a flat leg rather than raising."""
 
 from __future__ import annotations
 
@@ -84,10 +65,8 @@ class VenueState:
     balances: dict[str, float]
 
     def to_payload(self) -> dict:
-        """JSON-ready: `snapshot_at` as ISO-8601, everything else already plain float/str.
-        Each instrument entry carries `costmin_source` (D5a) -- costmin is a committed constant,
-        never something the venue said this cycle, and the artifact must say so -- beside the
-        `costmin_quote` field `InstrumentConstraints` itself already carries (00094 D4)."""
+        """JSON-ready; each instrument entry carries `costmin_source` (D5a) so no reader mistakes a committed
+        constant for something the venue said this cycle."""
         return {
             "snapshot_at": self.snapshot_at.isoformat(),
             "instruments": {symbol: {**asdict(c), "costmin_source": "snapshot-constant"} for symbol, c in self.instruments.items()},
@@ -111,14 +90,11 @@ def _to_float(value: object) -> float:
 
 
 def venue_state_from_cache(cache, *, clock: Callable[[], datetime]) -> VenueState:
-    """Read the twelve `INSTRUMENT_IDS` legs from `cache` and freeze them into a `VenueState`.
-
-    Raises `EngineError` on a structural read failure -- a symbol's instrument entirely absent from
-    the Cache, the Cache's own instrument id disagreeing with the expected one, or no account
-    cached for the venue (each named in the message). The caller converts the raise to `None`;
-    this function never narrows a failure into a partial/silent result. `costmin` is never read
-    from `cache` at all (module docstring, D5a) -- it comes from the committed `COSTMIN`.
-    """
+    """Raises `EngineError` on a structural read failure -- an `INSTRUMENT_IDS` symbol's instrument absent from
+    the Cache, the Cache's own instrument id disagreeing with the expected one, or no account cached for the
+    venue (each named in the message). The caller converts the raise to `None`; this function never narrows
+    a failure into a partial/silent result. `costmin` is never read from `cache` at all (module docstring,
+    D5a) -- it comes from the committed `COSTMIN`."""
     instruments: dict[str, InstrumentConstraints] = {}
     positions: dict[str, float] = {}
     for symbol, instrument_id_str in INSTRUMENT_IDS.items():

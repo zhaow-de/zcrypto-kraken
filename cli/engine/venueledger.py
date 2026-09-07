@@ -35,9 +35,9 @@ def _key_error(what: str, actual: object, expected: frozenset) -> EngineJournalE
 
 
 def validate_venue_record(doc: dict) -> None:
-    """Raise EngineJournalError when a record's `schema_version` or `status` is unrecognized, a
-    required key missing or a forbidden one present, or a key set or its symbol-vs-base keying
-    disagrees with the version the record itself declares -- refused, never silently normalized."""
+    """Raise EngineJournalError on any shape violation; the version-keyed checks run against the
+    `schema_version` the record itself declares -- refused, never silently normalized into the current
+    version."""
     schema_version = doc.get("schema_version") if isinstance(doc, dict) else None
     if schema_version not in _LOADABLE_VENUE_SCHEMA_VERSIONS:
         raise EngineJournalError(
@@ -101,9 +101,8 @@ def write_venue_record(
     code_version: str,
     error: str | None = None,
 ) -> Path:
-    """Write the cycle's venue record; `state=None` requires `error` and writes `status: "error"`
-    with no `state` key -- there is nothing to record but why -- while `state=None` without
-    `error` is a caller bug and raises `ValueError`."""
+    """`state=None` means the cycle failed and requires `error` -- there is nothing to record but why; without
+    it the call is a caller bug and raises `ValueError` before writing anything."""
     if state is None and error is None:
         raise ValueError("write_venue_record: state=None requires error to be set")
     path = venue_record_path(journal_dir, cycle_ts)
