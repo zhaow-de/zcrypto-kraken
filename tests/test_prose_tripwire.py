@@ -756,6 +756,40 @@ class TestTheBaselineRatchet:
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         assert capsys.readouterr().out.splitlines()[-1] == _summary(rewritten=1, retired=1)
 
+    def test_two_possible_sources_are_named_as_two_rather_than_guessed(self, tree: Path, capsys) -> None:
+        """The anchor that identified the row is what a rewrite changes, so any candidate could be its own."""
+        body = ["# kept"] * 22 + ["x = 0", ""] + ["# sibling"] * 6
+        (tree / "kept.py").write_text(_py(body, 40 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * 5, 40 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"rewritten: kept.py:1: comment-block 6 > {tw.COMMENT_BLOCK_LINES} recorded one of 6, 22"
+        assert out[-1] == _summary(rewritten=1, retired=1)
+
+    def test_one_possible_source_is_named_exactly(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").write_text(_py(["# kept"] * 22, 40 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * 5, 40 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"rewritten: kept.py:1: comment-block 6 > {tw.COMMENT_BLOCK_LINES} recorded 22"
+        assert out[-1] == _summary(rewritten=1)
+
+    def test_the_smallest_candidate_is_still_the_one_consumed(self, tree: Path, capsys) -> None:
+        """Which row is spent shows in the SECOND block's line: taking the largest first would leave it the 6."""
+        body = ["# kept"] * 22 + ["x = 0", ""] + ["# sibling"] * 6
+        (tree / "kept.py").write_text(_py(body, 40 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        rewritten = ["# rewritten"] + ["# kept"] * 5 + ["x = 0", ""] + ["# second"] * 6
+        (tree / "kept.py").write_text(_py(rewritten, 40 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        bar = tw.COMMENT_BLOCK_LINES
+        assert out[0] == f"rewritten: kept.py:1: comment-block 6 > {bar} recorded one of 6, 22"
+        assert out[1] == f"rewritten: kept.py:9: comment-block 6 > {bar} recorded 22"
+        assert out[-1] == _summary(rewritten=2)
+
     def test_a_rewritten_keep_that_grew_with_nothing_larger_to_absorb_it_fails(self, tree: Path, capsys) -> None:
         (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * self.N, 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1

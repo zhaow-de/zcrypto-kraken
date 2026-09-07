@@ -389,7 +389,9 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
         if candidates:
             was, key = candidates[0]
             known[key].remove(was)
-            rewritten.append((o, was))
+            # Every candidate could be this block's own row: the anchor that identified it is exactly what
+            # the rewrite changed. Name one size only when one row could have been the source.
+            rewritten.append((o, [m for m, _ in candidates]))
         else:
             still_new.append(o)
     return still_new, grown, rewritten, sum(len(pool) for pool in known.values())
@@ -429,8 +431,9 @@ def main(argv: list[str] | None = None) -> int:
             print(_line(o))
         for o, was in grown:
             print(f"grown: {_line(o)} recorded {was:.10g}")
-        for o, was in rewritten:
-            print(f"rewritten: {_line(o)} recorded {was:.10g}")
+        for o, sizes in rewritten:
+            recorded = f"{sizes[0]:.10g}" if len(sizes) == 1 else "one of " + ", ".join(f"{m:.10g}" for m in sizes)
+            print(f"rewritten: {_line(o)} recorded {recorded}")
         print(f"new: {len(new)} grown: {len(grown)} rewritten: {len(rewritten)} retired: {retired}")
         if new or grown:
             print(f"cut what is listed above, or record it as a keep with --write-baseline {args.check_baseline}", file=sys.stderr)
