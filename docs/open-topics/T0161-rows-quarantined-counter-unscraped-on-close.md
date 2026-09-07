@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: 'a capture converge is scheduled for its own reasons AFTER spec 00109''s — every candidate fix needs one, so this rides a window rather than opening one'
+status: partial
+ripe_when: 'the memo''s C7 capture rollout has deployed this build to both hosts AND a spill has since happened -- `increase(zcrypto_capture_rows_quarantined_total{host=~"zcrypto|zcrypto-red"}[6h])` read by value through `infra/scripts/grafana-query.py`, non-zero on the host whose `.held` file is newer than that host''s container start'
 ---
 
 # The quarantined-rows counter is blind to the spill that happens as the process dies
@@ -31,23 +31,23 @@ Scope, stated so nobody over-reads this: the metric is **not** wholly blind. Cap
 - Scrape interval is 60 s (`infra/ansible/roles/capture/files/config.alloy`).
 - Registered 2026-09-02 **on the owner's explicit word**, during `00109`'s execution. **Its first draft claimed a converge-free fix existed; pre-push review falsified that, and the correction is recorded below rather than quietly swapped in.**
 
+## Done so far
+
+The code is on `fix/t0161-quarantined-count-persists`; the converge that deploys it is C7's, never this branch's.
+
+- The count is durable across a restart — `fix(capture): the quarantine count survives the process that spilled the rows`. A JSON file at the writer's own root, written after each spill and read at construction. The rejected alternative is recorded there: seeding from the on-disk `.held` inventory decreases when a spill is redeemed, and a decrease is what an `increase()` reads as a counter reset.
+- The branch also killed an over-count it would otherwise have made permanent — `fix(capture): a spill that never reached disk was counted, and this branch was about to make it permanent`. `_write_part` swallows its own failure; both increment sites ran unconditionally after it, so a spill that never landed counted, and the durable seed would have carried that phantom into every later process. `_write_part` reports now and both increments are gated on it.
+- `infra/runbooks/capture.md`'s shape 3 no longer tells an operator the counter cannot corroborate a `close()` spill.
+- One new failure mode is written beside the seed: the gauge is an unlabelled sum, so a writer seeding 0 beside a sibling that seeds a count takes the sum down without reaching zero, which `increase()` reads as a step. A dropped pair or one unreadable state file can page once, and it self-clears.
+
+### Why the read after C7 is a natural spill, not a constructed one
+
+The rollout's own restart cannot show persistence: the outgoing image wrote no state file, so its first post-deploy scrape is 0 by construction, whatever the fix does. The read has to be a spill made by the NEW image and seen after a later restart.
+
+Constructing that spill inside an attended window is a race, measured rather than argued. Rows are held only while their hour is unconfirmed, and `HourOracle.confirmed_hour` confirms as soon as `HOUR_QUORUM` (2) witnesses reach the hour — a second live stream, or the handicapped clock at `CLOCK_WITNESS_MARGIN` (5 min). Probed: with one stream the hour confirms at 5 min past; with two it confirms as soon as the second emits, 2 s into the hour. The capture hosts run many streams, so the window in which a stop produces a spill is **seconds after an hour boundary**, and a stop that misses it spills nothing — a green that proves only that nothing was tested.
+
+So the trigger is the first natural spill after deploy. A deliberately single-stream window would widen it to 5 minutes, but that means stopping a live stream to make a metric readable, which is not worth inducing a capture fault for.
+
 ## Suggested next steps
 
-**All three candidate fixes require a capture converge. There is no cheap option, and the one that looks cheapest is the broadest.**
-
-- **Emit a log line on the `.held` spill, then rule that the detector.** This is *not* a Grafana-only change: the emission does not exist, so it means editing `segment_writer.py` — writer code, a new image, a re-pin behind the secondary bake — **plus** the rule push and the runbook edit. Broadest of the three.
-- **Persist the count across restart** so the step survives the process that made it. Owes a capture converge.
-- **Widen the shutdown grace** so the final scrape lands. Smallest code change, but a timing bet against a 60 s scrape rather than a fix. Owes a capture converge.
-
-**Do not push a Loki rule ahead of the emission.** A rule matching a line nothing emits can never fire, and `fleet-deploys.md` forbids pruning the superseded rule until the replacement's first sample is read BY VALUE — a sample that never arrives. The operator then either stalls or prunes anyway and loses the metric-based rule too. That trap has no exit once entered.
-
-**None of these may ride `00109`'s own capture converge**, which carries no design for this.
-
-**To decide against evidence rather than reasoning**, on each capture host:
-
-```
-ssh zcrypto      'sudo find /var/lib/zcrypto-capture -name "*.held*.parquet" -printf "%T@ %TF %TT %p\n" | sort -n | tail -20'
-ssh zcrypto-red  'same command'
-```
-
-Then read `zcrypto_capture_rows_quarantined_total{host=~"zcrypto|zcrypto-red"}` by value (`infra/scripts/grafana-query.py`), and compare each `.held` file's mtime against the capture container's stop times (`docker inspect --format '{{.State.FinishedAt}}' zcrypto-capture`, scoped — never an unscoped inspect on this fleet). A `.held` file written within the shutdown window whose rows never appear in the counter is a `close()`-path spill the metric lost, and is the direct evidence. If production has never produced one, that is itself an argument for the smallest fix.
+- Read the counter by value once C7 has deployed both hosts and a spill has since happened; the `ripe_when` above carries the query and the freshness check that makes it non-degenerate.
