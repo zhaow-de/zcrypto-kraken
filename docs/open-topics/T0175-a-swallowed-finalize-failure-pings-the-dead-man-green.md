@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: 'the next change to `cli/capture/segment_writer.py::finalize_completed_hours` or to `cli/liquidations/coinalyze.py::_poll_once` — `git log --oneline develop -- cli/capture/segment_writer.py cli/liquidations/coinalyze.py` shows a commit newer than `docs(liquidations): the module''s narration cut to its decisions, six function docstrings to their contracts`'
+status: partial
+ripe_when: 'the owner is next in healthchecks.io — the `zcrypto-liquidations` description still names two withholding conditions where the code now has three'
 ---
 
 # T0175 — a swallowed finalize failure pings the dead-man green
@@ -23,9 +23,16 @@ The dead-man is the only external witness of the liquidations poller; a ping aft
 - The failing write must be injected BELOW `_write_part`'s own `except Exception`, never by replacing `_write_part`: a double that replaces the method removes the swallow under study and the `OSError` propagates, which is not what production does. `_replace_durably` — the last statement inside that `try` — is where a read-only or full mount actually fails, and patching it reproduces the swallow at any euid, so no root-skip is needed.
 - One caller today, adjudicated: `cli/liquidations/coinalyze.py:261` inside `_poll_once`. It pings a dead-man after the sweep — `_run`'s `if ok and not watermark.breached and watermark.measurable: ping_healthcheck(...)` — so a silent sweep failure is a false all-clear there. No other call site exists in `cli/`; the two other `git grep` hits are the method's own definition and a comment.
 
+## Done so far
+
+The code half is resolved on branch `fix/t0175-finalize-failure-pings-green`.
+
+- `finalize_completed_hours` returns `FinalizeOutcome(finalized, failed)` instead of a bare count — `fix(capture): a sweep that wrote nothing was indistinguishable from one with nothing to do`. `failed` is read off one fact, no final on disk after the attempt; an hour that was already final and stays so is in neither half, which is the merge this class declines.
+- That reading was got wrong once and corrected under review — `fix(capture): the already-final gate hid the very loss this branch exists to report`. Gating the failed arm on `already_final` suppressed the case where an UNREADABLE final is quarantined and its rebuild then fails, leaving the hour with no final at all: T0175 surviving inside its own fix.
+- `_poll_once` logs the lost hours by name and returns False, so `_run`'s gate withholds the ping while every other writer still gets its sweep. The `logger.error` also reaches `zcrypto-ops-error-logs`, so the withhold has a second, independent signal.
+- Guards, each proven by restoring the defect under `infra/scripts/mutate-probe.sh`: the red test (`test_a_finalize_that_wrote_nothing_withholds_the_dead_man_ping`), its true positive, the open-hour and crash-leftover report arms, and the caller's withhold.
+- `infra/runbooks/observability.md`'s dead-man map names the third withholding condition — `docs(obs): the dead-man map's liquidations row gains the third condition that now withholds its ping`.
+
 ## Suggested next steps
 
-- Reproduce: in a scratch worktree, mount-simulate a failing write (`chmod a-w` the hour directory, or a `_write_part` double that raises `OSError`), run one `_poll_once` with the real writer set, and read `finalize_completed_hours`'s return and the ping call — expected today: 0 and a ping.
-- Decide the signal: `finalize_completed_hours` returns a count of failed hours beside the finalized count (or raises `CaptureError` on any hour it could not finalize), and `_poll_once` withholds the ping when any hour failed. Widen the guard first: a test where a finalize failure withholds the ping, red before the fix, and the healthy sweep as the true positive; then the fix, then the mutation probe.
-- Sweep every caller of `finalize_completed_hours` (`git grep -n finalize_completed_hours -- cli/`) — one adjudication row per call site: does its caller ping a dead-man or publish a healthy gauge after the sweep?
 - **(human)** Rewrite the `zcrypto-liquidations` check's description in healthchecks.io to name the third withholding condition (`zcrypto-daily-ops` step 6's mechanics: the admin key from the capture-host vault, the description field only, read back after), after the fix lands.
