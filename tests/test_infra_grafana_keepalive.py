@@ -72,7 +72,8 @@ def test_the_token_is_delivered_on_stdin_and_never_in_argv(tmp_path):
     assert 'header = "Authorization: Bearer glsa_NotARealToken_aB3-xY9"' in stdin
     # Without `--config -` curl never reads that stdin, and both assertions below still pass while
     # every call goes out unauthenticated.
-    assert "--config" in argv.split("\n"), f"curl was not told to read the config: {argv}"
+    args = argv.split("\n")
+    assert args[args.index("--config") + 1] == "-", f"curl reads its config from elsewhere: {argv}"
     assert "glsa_NotARealToken_aB3-xY9" not in argv, f"the token reached argv: {argv}"
     assert metrics["zcrypto_grafana_keepalive_status"] == "200"
 
@@ -104,8 +105,8 @@ def test_an_unreachable_host_writes_the_failure_rather_than_nothing(tmp_path):
 
 
 def test_a_curl_that_writes_nothing_at_all_still_leaves_a_sample(tmp_path):
-    """`-w` writes nothing if curl dies before the write-out; the parse must not publish an empty value,
-    which would make the textfile unscrapeable and take the whole exporter's other families with it."""
+    """`-w` writes nothing if curl dies before the write-out; the parse publishes 0 rather than an
+    empty value, which would leave this file unscrapeable."""
     metrics = _run(tmp_path, "#!/bin/sh\nexit 7\n")
 
     assert metrics["zcrypto_grafana_keepalive_status"] == "0"
@@ -125,6 +126,7 @@ def test_no_token_writes_no_file_at_all(tmp_path):
     """Before the owner mints it there is nothing to say, and `(no series)` says that honestly where a
     zero status would read as a call that happened and failed."""
     assert _run(tmp_path, '#!/bin/sh\nprintf "200 0.1"\n', token="") == {}
+    assert not (tmp_path / "grafana-keepalive.prom").exists(), "no file at all, not an empty one"
 
 
 @pytest.mark.parametrize(

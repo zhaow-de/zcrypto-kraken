@@ -204,10 +204,11 @@ The load is Alloy plus the timers under `infra/ansible/roles/ops/` — the overl
 | `zcrypto-verify-replay.timer` | `03:41:00` | yes |
 | `zcrypto-verified-replay.timer` | `05:23:00` | yes |
 | `zcrypto-grafana-watchdog.timer` | `*:0/5:41` | no |
+| `zcrypto-grafana-keepalive.timer` | `*:37:00` | no |
 
 The bar is 20 whatever the box has. If you are going to reason about the ratio, read the thread count from `nproc` on the host rather than from any figure written here or in a spec.
 
-**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the six timers are `Persistent=true`, so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
+**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the seven timers are `Persistent=true`, so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 
 ### What to do
 
