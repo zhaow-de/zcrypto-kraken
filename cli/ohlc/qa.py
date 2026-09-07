@@ -12,7 +12,8 @@ INTERVAL_SECONDS = {"1440": 86400, "240": 14400, "60": 3600, "15": 900}
 
 def detect_gaps(frame: pl.DataFrame, interval_secs: int) -> list[dict]:
     """Find gaps in `frame`'s `ts` column exceeding `interval_secs`; `frame` is assumed sorted (`to_frame`
-    guarantees it). `missing` counts the grid candles absent BETWEEN the two timestamps, both exclusive."""
+    guarantees it). `missing` counts the grid candles absent BETWEEN each gap's two endpoints, both
+    exclusive."""
     diffs = frame.select(
         pl.col("ts").shift(1).alias("after_ts"),
         pl.col("ts").alias("before_ts"),

@@ -3,10 +3,10 @@
 from a bare `list[float | None]`:
 
 FEED THE RIGHT SERIES. `funding_zscore`, `funding_sign_persistence` and `funding_accrued_carry` take
-the realized-funding PRINT series at its settlement interval, never `align_asof`'s grid-aligned carry;
-`oi_log_delta`, `oi_zscore` and `oi_momentum` take the GRID series -- `align_asof` over
-`oi_levels_from_raw` -- never the raw 5-minute source. Either violation is perfectly causal, so the
-truncating-prefix guard cannot see it (spec 00110 D3/D7).
+the realized-funding PRINT series at a CONSTANT settlement interval, never `align_asof`'s
+grid-aligned carry; `oi_log_delta`, `oi_zscore` and `oi_momentum` take the GRID series --
+`align_asof` over `oi_levels_from_raw` -- never the raw 5-minute source. Either violation is
+perfectly causal, so the truncating-prefix guard cannot see it (spec 00110 D3/D7).
 
 PREFIX THE COLUMNS `binperp_`. The books are Binance's, not the Kraken spot book they will sit beside,
 and a column called `oi_zscore` next to Kraken columns invites the wrong reading (spec 00110 D8).
@@ -59,7 +59,8 @@ def align_asof(
 def funding_zscore(rates: list[float | None], *, window: int) -> list[float | None]:
     """Trailing z-score of the funding print over the inclusive window ending at k, sample stdev
     (spec 00110 D7). None until the window is full, and None wherever that window holds a null. A
-    zero-variance window scores 0.0: flat is exactly average, a reading rather than an absence."""
+    zero-variance window scores 0.0: flat is exactly average, a reading rather than an absence. Uses
+    only rates[<= k] -> no look-ahead."""
     _validate_rates("rates", rates)
     _validate_window("window", window)
     out: list[float | None] = []

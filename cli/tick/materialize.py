@@ -81,7 +81,7 @@ RESCAN_DAYS = 3
 
 @dataclass(frozen=True)
 class MaterializeResult:
-    """One sweep's verdict."""
+    """One sweep's verdict; a day that raises is isolated into `errors` rather than costing the others."""
 
     days_written: int
     days_skipped: int
