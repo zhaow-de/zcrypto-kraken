@@ -159,6 +159,42 @@ def test_poll_once_unexpected_exception_counts_as_error_not_api_error(tmp_path, 
     assert families["zcrypto_liquidations_api_errors_total"].samples[0].value == 0.0
 
 
+# --- isolation regression: a raising finalize sweep never aborts the poll cycle --------------------
+
+
+class _RaisingFinalizeWriter:
+    """A writer whose hour-closing sweep raises -- an OSError there is a full disk, not a bad cycle."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def finalize_completed_hours(self, cutoff):
+        raise OSError("finalize boom")
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_raising_finalize_sweep_never_aborts_a_poll_cycle(tmp_path, monkeypatch, caplog):
+    _one_row_poll_cycle(monkeypatch)
+    registry = CollectorRegistry()
+    metrics = _PollMetrics(registry)
+    writers = _writers(tmp_path)
+    writers["ETH"] = _RaisingFinalizeWriter()
+
+    with caplog.at_level("ERROR"):
+        ok = _poll_once("key", writers, _watermark(tmp_path), {}, metrics)
+    for w in writers.values():
+        w.close()
+
+    assert ok is False  # the cycle failed, so the dead-man ping is withheld -- but `_run` keeps looping
+    assert "finalize boom" in caplog.text
+    families = _families(registry)
+    outcomes = {s.labels["outcome"]: s.value for s in families["zcrypto_liquidations_polls_total"].samples}
+    assert outcomes.get("error") == 1.0 and outcomes.get("ok", 0.0) == 0.0
+    assert families["zcrypto_liquidations_api_errors_total"].samples[0].value == 0.0
+
+
 # --- isolation regression: a raising metrics update never aborts the poll cycle -------------------
 
 

@@ -262,10 +262,10 @@ def _poll_once(
     bucket_watermarks: dict[str, int],
     metrics: _PollMetrics | None = None,
 ) -> bool:
-    """Run one cycle's watermark check + fetch/write; returns whether it fully succeeded (the
-    dead-man ping's gate). A watermark probe that raises, a breach, or a `LiquidationsError` from
-    `poll_cycle` are all treated the same way: log a warning, write nothing more, return False so
-    the caller withholds the ping -- and the loop keeps going, retrying next cycle."""
+    """Run one cycle's watermark check, fetch/write and finalize sweep; returns whether it fully
+    succeeded (the dead-man ping's gate). Every step's failure is treated the same way: log, write
+    nothing more, return False so the caller withholds the ping -- and the loop keeps going,
+    retrying next cycle. Nothing here raises past this frame."""
     try:
         watermark.check()
     except Exception:
@@ -293,9 +293,16 @@ def _poll_once(
         return False
     # T0046: close any hour old enough that nothing recoverable can still arrive for it (see
     # _FINALIZE_LAG_SECONDS) -- the sparse-symbol writers that a genuine event never rotates.
-    finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
-    for writer in writers.values():
-        writer.finalize_completed_hours(finalize_cutoff)
+    try:
+        finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
+        for writer in writers.values():
+            writer.finalize_completed_hours(finalize_cutoff)
+    except Exception:
+        # Inside the loop's contract like every step above it: a full disk here is a failed cycle to
+        # retry, not a reason to exit _run and crash-loop the container against the same condition.
+        logger.exception("Coinalyze finalize sweep failed -- retrying next cycle")
+        _record_outcome(metrics, ok=False)
+        return False
     _record_outcome(metrics, ok=True)
     return True
 
