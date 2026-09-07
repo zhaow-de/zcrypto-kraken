@@ -263,8 +263,9 @@ def _poll_once(
         except CaptureError:
             raise  # the oracle guard: a fail-fast this must not turn into an unbounded retry
         except Exception:
-            # Per writer, so one bad writer does not cost the other nine their sweep every cycle. This
-            # enforces _poll_once's own contract instead of borrowing `_merge_hour`'s "Never raises".
+            # A raise is unexpected here -- the sweep reports rather than raises -- so it ends the cycle
+            # rather than borrowing `_merge_hour`'s "Never raises"; the REPORTED failure below is the
+            # one that lets every remaining writer finish its sweep first.
             logger.exception("Coinalyze finalize sweep failed for %s -- retrying next cycle", coin)
             _record_outcome(metrics, ok=False)
             return False

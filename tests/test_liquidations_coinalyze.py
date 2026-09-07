@@ -687,3 +687,25 @@ def test_a_finalize_that_wrote_nothing_withholds_the_dead_man_ping(tmp_path, mon
 
     assert not list(tmp_path.rglob("*.parquet")), "the fixture must leave nothing written, or it proves nothing"
     assert pings == [], "a cycle that wrote nothing pinged the dead-man green"
+
+
+def test_a_healthy_cycle_still_pings_the_dead_man(tmp_path, monkeypatch):
+    """The true positive beside the guard above: without it, a poller that never pings ships green."""
+    from cli.liquidations import coinalyze as mod
+
+    hour = datetime(2024, 3, 1, 12, tzinfo=UTC)
+    row = {"ts": hour, "symbol": "BTCUSDT_PERP.A", "long_usd": 1.0, "short_usd": 2.0, "event_id": "e-1"}
+
+    def one_row(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
+        writers["BTC"].append(dict(row))
+        return 1
+
+    monkeypatch.setattr(mod, "poll_cycle", one_row)
+    monkeypatch.setattr(mod, "_sleep", lambda seconds: None)
+    pings: list[str] = []
+    monkeypatch.setattr(mod, "ping_healthcheck", lambda url: pings.append(url))
+
+    mod._run(tmp_path, "key", 300, "https://hc.example/ping", duration=0)
+
+    assert list(tmp_path.rglob("*.parquet")), "the healthy cycle must actually write, or the ping proves nothing"
+    assert pings == ["https://hc.example/ping"]

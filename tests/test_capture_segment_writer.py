@@ -2061,6 +2061,25 @@ def test_finalize_completed_hours_reports_an_hour_whose_rebuild_failed_under_an_
     assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
 
 
+def test_finalize_completed_hours_reports_a_crash_leftover_hour_it_could_not_write(tmp_path, monkeypatch):
+    """The branch that runs after a restart: parts on disk, no open hour, and the merge cannot write."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    for i in range(4):
+        w.append(_hour10_event(i, i))
+    w._current_hour = None  # what a restart leaves: parts swept by nobody, no open hour
+    hour_dir = _segment_path(tmp_path, 10).parent
+    assert len(list(hour_dir.glob("10.part*.parquet"))) == 4, "the parts must exist, or nothing is attempted"
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert not _segment_path(tmp_path, 10).exists(), "the fixture must leave no final, or it proves nothing"
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+
+
 def test_finalize_completed_hours_is_idempotent(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
