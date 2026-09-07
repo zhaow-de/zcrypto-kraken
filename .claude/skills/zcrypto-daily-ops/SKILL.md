@@ -18,7 +18,7 @@ The proactive half of day-2 operations. Alerts fire at you; this pass goes looki
 uv run python infra/scripts/ops-daily.py report --since 24h
 ```
 
-Exit **0** all-clear · **1** attention · **2** a source could not be read. **Exit 2 is the first finding**, and the report names which source: a source that cannot be reached is a finding about that source, never a gap to pass over. `(no series)` is a FAIL, never a zero.
+Run it from a checkout at `develop`'s tip, never from the `ops-journal` worktree — that branch is re-cut from `develop` only at the month change, so between re-cuts its scripts are stale and would measure the fleet with an old instrument; the journal entry is written in the `ops-journal` worktree, the report is not. Exit **0** all-clear · **1** attention · **2** a source could not be read. **Exit 2 is the first finding**, and the report names which source: a source that cannot be reached is a finding about that source, never a gap to pass over. `(no series)` is a FAIL, never a zero.
 
 ## 2. Follow the runbook, per alert that fired
 
