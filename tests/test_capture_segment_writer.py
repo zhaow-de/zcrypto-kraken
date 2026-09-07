@@ -2313,6 +2313,24 @@ def test_a_spill_that_never_reached_disk_is_neither_counted_nor_persisted(tmp_pa
     assert _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id").rows_quarantined == 0
 
 
+def test_a_cap_site_spill_that_never_reached_disk_is_neither_counted_nor_persisted(tmp_path, clock, monkeypatch):
+    """The same gate as the `close()` one, on the hotter path: the cap fires every `flush_rows` held
+    rows, so an over-count here compounds where the shutdown one happens once."""
+    clock.now = _ts(10, 3)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id", flush_rows=2)
+
+    def no_space(self, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer.pl.DataFrame, "write_parquet", no_space)
+    for i in range(2):
+        w.append(_trade_event(10, i, i))  # the cap trips on the second, while the process runs on
+
+    assert not list(tmp_path.rglob("*.held*.parquet")), "the fixture must lose the rows, or it proves nothing"
+    assert w.rows_quarantined == 0
+    assert not (tmp_path / "BTC/EUR" / "trades" / "rows-quarantined.json").exists()
+
+
 def test_rows_quarantined_seeds_zero_when_nothing_was_ever_spilled(tmp_path, clock):
     """The true positive: a restart over a clean tree reports 0, never a phantom step."""
     clock.now = _ts(10, 3)
@@ -2386,14 +2404,14 @@ def test_a_failed_quarantine_write_never_costs_the_daemon(tmp_path, clock, caplo
         w.append(_trade_event(10, i, i))
     state_dir = tmp_path / "BTC/EUR" / "trades"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "rows-quarantined.json.tmp").mkdir()  # the tmp write now raises IsADirectoryError
+    (state_dir / "rows-quarantined.json").mkdir()  # `_replace_durably`'s rename fails; the tmp is written
 
     with caplog.at_level(logging.ERROR):
         w.close()  # must not raise
 
     assert list(state_dir.rglob("*.held*.parquet")), "the ROWS must have landed, or this is the other failure"
     assert w.rows_quarantined == 3, "the in-process count still moves; only its persistence was lost"
-    assert not (state_dir / "rows-quarantined.json").exists(), "nothing was published"
+    assert not (state_dir / "rows-quarantined.json.tmp").exists(), "the partial is cleaned up, never left to be read"
     assert any("quarantine count" in r.getMessage() for r in caplog.records)
 
 
