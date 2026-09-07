@@ -63,8 +63,8 @@ prometheus.exporter.unix "host" {
   rootfs_path = "/host/root"
 
   textfile {
-    // The five timers' textfiles (archive-pull, panel-materialize, tape-bars, verify-replay,
-    // verified-replay), written since OPS-3/OPS-4 into ops_textfile_dir but scraped by nothing
+    // The six timers' textfiles (archive-pull, panel-materialize, tape-bars, verify-replay,
+    // verified-replay, grafana-keepalive), written into ops_textfile_dir but scraped by nothing
     // until this task. alloy-compose.yaml.j2 mounts that host directory read-only at this exact
     // container path -- literal "/textfile", exactly like the NAS's, not a templated
     // ops_textfile_dir -- because this string names the CONTAINER's view of the mount, not the
