@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'the memo''s C7 capture rollout has deployed this build to both hosts AND a spill has since happened -- `increase(zcrypto_capture_rows_quarantined_total{host=~"zcrypto|zcrypto-red"}[6h])` read by value through `infra/scripts/grafana-query.py`, non-zero on the host whose `.held` file is newer than that host''s container start'
+ripe_when: 'a spill has happened since the deploy -- `increase(zcrypto_capture_rows_quarantined_total{host=~"zcrypto|zcrypto-red"}[6h])` read by value through `infra/scripts/grafana-query.py`, non-zero on the host whose `.held` file is newer than that host''s container start'
 ---
 
 # The quarantined-rows counter is blind to the spill that happens as the process dies
@@ -48,6 +48,8 @@ Constructing that spill inside an attended window is a race, measured rather tha
 
 So the trigger is the first natural spill after deploy. A deliberately single-stream window would widen it to 5 minutes, but that means stopping a live stream to make a metric readable, which is not worth inducing a capture fault for.
 
+**Deployed 2026-09-07 by C7** (`06998998e876`, revision `c7067af3`): the secondary at 15:55:10Z, the primary at 19:04:29Z, both verified running the digest with RestartCount 0. What remains is a reading, not work.
+
 ## Suggested next steps
 
-- Read the counter by value once C7 has deployed both hosts and a spill has since happened; the `ripe_when` above carries the query and the freshness check that makes it non-degenerate.
+- Read the counter by value once a spill has happened; the `ripe_when` above carries the query and the freshness check that makes it non-degenerate. The deploy half is discharged: C7 put this build on `zcrypto-red` at 2026-09-07 15:55:10 and on `zcrypto` at 19:04:29, both reading 0 at the restart — which is the value the freshness check exists to distinguish from a real read, because the outgoing image wrote no state file.
