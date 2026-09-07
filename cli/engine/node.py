@@ -518,7 +518,11 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
 
 
 def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
-    """`exec_enabled` alone decides whether this engine may reach the venue's private side: off, the
+    """`LiveNodeBuilder` is value-returning -- each call hands back a NEW builder and the receiver keeps
+    nothing (measured on 2.0.0rc4; the test stand-in returns `self` and cannot see it) -- so a call whose
+    result is dropped drops its client while the node still reports as built.
+
+    `exec_enabled` alone decides whether this engine may reach the venue's private side: off, the
     credentials are never read; on with either variable absent, this REFUSES rather than substituting a
     placeholder that would defer the failure to the first submission."""
     builder = (
@@ -544,7 +548,7 @@ def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
 
 def _probe_executor_factory(config: EngineConfig) -> Callable:
     """Returns `factory(strategy) -> ProbeExecutor`; `venue_reader` is passed explicitly rather than left to
-    the class default so a test can substitute it."""
+    the class default so a test can substitute it, mirroring `command.run`'s own gate construction."""
     return lambda strategy: ProbeExecutor(
         client=strategy,
         gate=ExecutionGate(
@@ -557,7 +561,7 @@ def _probe_executor_factory(config: EngineConfig) -> Callable:
 
 
 def build_shadow_node(config: EngineConfig) -> LiveNode:
-    """Assembles the shadow node without reaching the network — nothing connects until `node.run()` — and hands
+    """Assembles the shadow node without reaching the network -- nothing connects until `node.run()` -- and hands
     the observer THIS strategy's forwarder, because the filter scoping external events is the executor's and
     a strategy wired without one drops them."""
     node = _node_builder(config).build()

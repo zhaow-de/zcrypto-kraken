@@ -298,9 +298,9 @@ def _write_prom_textfile(
     now: datetime,
     duration_seconds: float,
 ) -> None:
-    """Atomically write the gate-export metrics so a scrape never observes a partial file: the cache metrics
-    are always emitted -- 0 when `--cache` was omitted -- so a degrading cache is visible, an age with
-    nothing to report is omitted rather than published as 0, and `_replayed`/`_hits` carry no `_total`
+    """Atomically write the gate-export metrics so a scrape never observes a partial file: hits and
+    invalidated are always emitted, 0 when `--cache` was omitted, so a degrading cache is visible; an age
+    with nothing to report is omitted rather than published as 0; and `_replayed`/`_hits` carry no `_total`
     because enabling the cache would read as a counter reset."""
     lines = [
         "# HELP zcrypto_gate_status 1 if the >=14-clean-day gate is MET else 0",
