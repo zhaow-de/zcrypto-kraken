@@ -36,9 +36,9 @@ class Gap:
       * flag **True** — the boundary IS a primary wire message. The primary block owns every row at
         that `ts` (all rows of one Kraken message share it), so the secondary side must be **strict**
         there (`>` / `<`): admitting it would tear one book update in half.
-      * flag **False** — the boundary is not a primary wire message. **Nobody** owns it, so the secondary side must be **inclusive**
-        there (`>=` / `<=`): excluding it silently drops real rows — every level-row of the message
-        that sits exactly on that edge.
+      * flag **False** — the boundary is not a primary wire message. **Nobody** owns it, so the
+        secondary side must be **inclusive** there (`>=` / `<=`): excluding it silently drops real
+        rows — every level-row of the message that sits exactly on that edge.
 
     Symmetrically, the primary head block for a gap takes `ts <= start` only when `start` IS a
     primary message, and the primary tail resumes at `ts >= end`.
@@ -315,8 +315,8 @@ def measure_residual(gaps: list[Gap], spliced: pl.DataFrame, *, min_gap_seconds:
 
     Every spliced message counts as fill here, including a **snapshot** — unlike `secondary_covers`,
     which refuses to let one witness a gap at all. The asymmetry is deliberate and bounded: a snapshot
-    IS book state at that instant, so the second it lands is genuinely not missing, and each distinct
-    the N+1 windows N marks bound each credit at most `min_gap_seconds`. Admitting the window remains
+    IS book state at that instant, so the second it lands is genuinely not missing, and the N+1
+    windows N marks bound each credit at most `min_gap_seconds`. Admitting the window remains
     the strict question; measuring what the window still lacks is the lenient one.
     """
     if not gaps:

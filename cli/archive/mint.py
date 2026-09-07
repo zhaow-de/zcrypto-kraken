@@ -38,7 +38,7 @@ def ledger_append(root: Path, record: dict) -> None:
 
 
 def _check_hour(hour: datetime) -> datetime:
-    """Return the hour's EXCLUSIVE end boundary, refusing anything that is not an exact UTC hour: the
+    """Return the hour's EXCLUSIVE end boundary, refusing a naive or non-hour-aligned `hour`: the
     path is formatted straight from `hour`, so a stray 09:30 would publish half an hour under the
     09:00 file's name, which promises the whole of it."""
     if hour.tzinfo is None or hour != hour.replace(minute=0, second=0, microsecond=0):

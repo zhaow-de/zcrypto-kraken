@@ -62,7 +62,7 @@ def verify_tree(
     come from the walk, not the hash, so a cycle that transferred nothing keeps reporting freshness
     (spec 00102 D1). `verified` lists only the finals hashed AND ok, so under a narrowed scope
     `prune_stale_parts` reaches a final's parts on its arrival cycle (a transfer in a clean cycle is always hashed) or
-    within 24 cycles (its slice), never later.
+    within 24 cycles (its slice) across an uninterrupted run — the counter resets on restart.
     """
     checked = ok = hashed = 0
     failed: list[str] = []

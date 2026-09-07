@@ -309,8 +309,8 @@ def classify_dark_episode(
     EXACTLY TWO windows, deliberately. With three or more there is no way to tell which gaps are the
     episode's own sputtering and which are healthy traffic separating unrelated incidents, and three
     successive review rounds each constructed a different false `venue_silent` out of multi-gap
-    reasoning. Refusing to classify is the honest answer and costs nothing measurable: all four
-    `both_streams_silent` records in the live ledger carry one window or two, never more.
+    reasoning. Refusing to classify is the honest answer and costs nothing measurable: a `both_streams_silent`
+    record carries one window or two in practice.
     """
     if len(windows) != 2:
         return EpisodeVerdict(UNDETERMINED, 0, 0, 0.0, 0, 0, ())
