@@ -51,8 +51,6 @@ def _utc_now() -> datetime:
 
 @dataclass(frozen=True)
 class SeedEntry:
-    """One pair x grid's seeding outcome."""
-
     pair: str
     interval: int
     overlap_bars: int
@@ -67,8 +65,6 @@ class SeedReport:
 
 @dataclass(frozen=True)
 class RefreshEntry:
-    """One pair x grid's refresh outcome."""
-
     pair: str
     interval: int
     appended: int
@@ -97,10 +93,10 @@ def _reconcile(
     shortfall_hint: str,
     mismatch_hint: str,
 ) -> tuple[int, int, pl.DataFrame]:
-    """Join `store_frame` and `rest_frame` on `ts`, enforce the seam guards, and return `(overlap_bars, replaced_tail_rows, merged_frame)`.
+    """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally.
 
-    Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy -- a safety fix here likely applies there too.
-    """
+    Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy -- a
+    safety fix here likely applies there too."""
     overlap_bars, mismatches = seam_overlap(store_frame, rest_frame)
     if overlap_bars < min_overlap:
         raise EngineError(
@@ -211,6 +207,5 @@ def refresh_store(
 
 
 def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list[datetime], list[float | None]]:
-    """Read `symbol`'s full-history `(ts, close)` series for `interval` from the store."""
     frame = read_parquet(_store_path(store_dir, symbol, interval))
     return frame["ts"].to_list(), frame["close"].to_list()
