@@ -2290,6 +2290,28 @@ def test_rows_quarantined_survives_the_process_that_spilled_them(tmp_path, clock
     assert reborn.rows_quarantined == 3
 
 
+def test_a_spill_that_never_reached_disk_is_neither_counted_nor_persisted(tmp_path, clock, monkeypatch, caplog):
+    """`_write_part` swallows its own failure, so the count must read its VERDICT, not its return to
+    the caller: a page saying "nothing is lost -- the rows are kept" over rows that were dropped is
+    the alert inverted at exactly the moment it matters."""
+    clock.now = _ts(10, 3)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    for i in range(3):
+        w.append(_trade_event(10, i, i))
+
+    def no_space(self, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer.pl.DataFrame, "write_parquet", no_space)
+    with caplog.at_level(logging.ERROR):
+        w.close()  # the parquet write fails; the ~30-byte JSON write would not have
+
+    assert not list(tmp_path.rglob("*.held*.parquet")), "the fixture must lose the rows, or it proves nothing"
+    assert w.rows_quarantined == 0
+    assert not (tmp_path / "BTC/EUR" / "trades" / "rows-quarantined.json").exists()
+    assert _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id").rows_quarantined == 0
+
+
 def test_rows_quarantined_seeds_zero_when_nothing_was_ever_spilled(tmp_path, clock):
     """The true positive: a restart over a clean tree reports 0, never a phantom step."""
     clock.now = _ts(10, 3)
@@ -2353,22 +2375,24 @@ def test_an_unreadable_quarantine_count_seeds_zero_and_never_stops_capture(tmp_p
     assert _new_writer(tmp_path, flush_rows=5).rows_quarantined == 0
 
 
-def test_a_failed_quarantine_write_never_costs_the_daemon(tmp_path, clock, monkeypatch, caplog):
-    """The rows are already on disk by then: losing their COUNT must not take the process with it."""
+def test_a_failed_quarantine_write_never_costs_the_daemon(tmp_path, clock, caplog):
+    """Only the COUNT's write fails, never the rows': the spill lands, and losing its bookkeeping must
+    not take the process with it. Patching a shared seam (`_replace_durably`) would fail BOTH writes
+    and assert a mode production cannot produce, so the state path itself is what is made unwritable."""
     clock.now = _ts(10, 3)
     w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
     for i in range(3):
         w.append(_trade_event(10, i, i))
+    state_dir = tmp_path / "BTC/EUR" / "trades"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "rows-quarantined.json.tmp").mkdir()  # the tmp write now raises IsADirectoryError
 
-    def no_space(tmp, dest):
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
     with caplog.at_level(logging.ERROR):
         w.close()  # must not raise
 
+    assert list(state_dir.rglob("*.held*.parquet")), "the ROWS must have landed, or this is the other failure"
     assert w.rows_quarantined == 3, "the in-process count still moves; only its persistence was lost"
-    assert not (tmp_path / "BTC/EUR" / "trades" / "rows-quarantined.json.tmp").exists(), "the partial is cleaned up"
+    assert not (state_dir / "rows-quarantined.json").exists(), "nothing was published"
     assert any("quarantine count" in r.getMessage() for r in caplog.records)
 
 

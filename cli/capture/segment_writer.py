@@ -416,9 +416,9 @@ class SegmentWriter:
         self._flush_buffer()
         for hour, rows in self._held.items():
             if rows:
-                self._write_part(rows, hour, marker=".held")
-                self.rows_quarantined += len(rows)
-                self._save_quarantined()
+                if self._write_part(rows, hour, marker=".held"):
+                    self.rows_quarantined += len(rows)
+                    self._save_quarantined()
         self._held = {}
         self._held_seen = {}
 
@@ -597,9 +597,9 @@ class SegmentWriter:
             self._max_ts = ts
             self._max_at = _utcnow()
         if len(rows) >= self._flush_rows:
-            self._write_part(rows, hour, marker=".held")
-            self.rows_quarantined += len(rows)
-            self._save_quarantined()
+            if self._write_part(rows, hour, marker=".held"):
+                self.rows_quarantined += len(rows)
+                self._save_quarantined()
             self._held[hour] = []
 
     def _implausible(self, ts: datetime) -> bool:
@@ -691,7 +691,10 @@ class SegmentWriter:
             _replace_durably(tmp, path)
         except Exception:
             logger.exception("could not persist the quarantine count pair=%s kind=%s", self._pair, self._kind)
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)  # the cleanup must not raise either: this whole path is best-effort
+            except OSError:
+                pass
 
     def _hour_dir(self, hour: datetime) -> Path:
         return self._base_dir / self._pair / self._kind / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
@@ -766,7 +769,7 @@ class SegmentWriter:
         self._write_part(self._buffer, self._current_hour)
         self._buffer = []
 
-    def _write_part(self, rows: list[dict], hour: datetime, *, marker: str = ".part") -> None:
+    def _write_part(self, rows: list[dict], hour: datetime, *, marker: str = ".part") -> bool:
         hour_dir = self._hour_dir(hour)
         hh = f"{hour:%H}"
         try:
@@ -780,6 +783,7 @@ class SegmentWriter:
             df = pl.DataFrame(rows, schema=self._schema)
             df.write_parquet(tmp_path, compression="zstd")
             _replace_durably(tmp_path, part_path)  # atomic + durable: a kill can never leave a torn part
+            return True
         except Exception:
             # The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
             # (EIO, ENOSPC despite DiskWatermark) away from taking down the single consumer task —
@@ -787,6 +791,7 @@ class SegmentWriter:
             # streams need not be. The dead-man's switch goes red on the watermark breach that
             # normally causes this, and the traceback names the pair.
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)
+            return False
 
     def _count_if_early(self, hour: datetime) -> None:
         """Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
