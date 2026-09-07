@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -241,11 +241,6 @@ def _walk_key(node: Any, key: str) -> set[str]:
         for item in node:
             found |= _walk_key(item, key)
     return found
-
-
-def conformant_paths(root: Path) -> Iterable[Path]:
-    """Every `manifest.json` under `root`'s immediate dataset directories."""
-    return sorted(root.glob("*/manifest.json"))
 
 
 def convert_dataset(root: Path, *, apply: bool = False) -> dict[str, Any]:
