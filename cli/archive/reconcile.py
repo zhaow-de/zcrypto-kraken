@@ -266,7 +266,7 @@ def partition_gaps(
     """
     _validate_hour_bounds(hour_start, hour_end)
     _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
-    _message_ts(secondary)  # for its check alone: raises on non-decreasing `ts` (see its docstring)
+    _message_ts(secondary)  # for its check alone: raises on a DECREASING `ts` (see its docstring)
     witnessed: list[Gap] = []
     blind: list[Gap] = []
     for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end):
