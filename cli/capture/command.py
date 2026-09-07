@@ -126,9 +126,11 @@ def _parse_ts(raw: str) -> datetime:
         ts = datetime.fromisoformat(raw)
     except ValueError as exc:
         raise CaptureError(f"unparseable timestamp from Kraken WS: {raw!r}") from exc
-    # Kraken stamps UTC; a naive value would raise TypeError out of every writer comparison against it (`_implausible`,
-    # the late-event floor) and so out of the single consumer task, killing capture for every pair on one missing `Z`.
-    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+    # NORMALISE, never refuse: an offset stamp is converted, a naive one still defaults to UTC. Refusing an
+    # unexpected format would kill capture for every pair on a venue change -- worse than what it closes. A naive
+    # value would raise TypeError out of every writer comparison against it (`_implausible`, the late-event floor)
+    # and so out of the single consumer task, which is why that branch cannot refuse either.
+    return ts.astimezone(UTC) if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
 # Drill knob (spec 00072 D7), shipped in the image rather than a test-only build: the ladder is only closable if a drill
