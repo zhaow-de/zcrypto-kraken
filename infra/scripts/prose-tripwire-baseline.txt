@@ -105,43 +105,43 @@ cli/capture/desync_recovery.py:1: file-prose 45 > 20
 cli/capture/desync_recovery.py:33: comment-block 5 > 4	# Defaults per spec 00072 D3. NOT fitted to production: `zcrypto_capture_resubscribes_total` reads 0
 cli/capture/desync_recovery.py:69: comment-block 5 > 4	"""Rung 1 has fired (the transition resubscribe). Start the grace clock.
 cli/capture/desync_recovery.py:86: comment-block 19 > 4	"""The pair is in sync again: clear the active ladder, but KEEP the escalation record.
-cli/capture/segment_writer.py:1: file-prose 48 > 20
-cli/capture/segment_writer.py:51: comment-block 5 > 4	# One row per Coinalyze closed 1-min liquidation bucket (spec 00051 OPS-2, T0023 fallback: Binance
-cli/capture/segment_writer.py:66: comment-block 7 > 4	# How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage
-cli/capture/segment_writer.py:75: comment-block 16 > 4	# How many CONSECUTIVE timestamps the guard may refuse before it stands down (see `_implausible`).
-cli/capture/segment_writer.py:93: comment-block 15 > 4	# The one bound that is NEVER stood down and needs no second witness (see `_implausible`).
-cli/capture/segment_writer.py:110: comment-block 10 > 4	# How many witnesses must vouch that an hour has BEGUN before any stream may act on the boundary —
-cli/capture/segment_writer.py:122: comment-block 6 > 4	# The clock witness's handicap: it vouches for hour H only once it reads H's start plus this margin.
-cli/capture/segment_writer.py:132: comment-block 25 > 4	"""Cross-stream corroboration that an hour has genuinely begun (T0037).
-cli/capture/segment_writer.py:163: comment-block 16 > 4	"""Record that `stream` saw a plausible event stamped `ts` (its guard already ran).
-cli/capture/segment_writer.py:203: comment-block 6 > 4	"""`None` if every row of `path` can be read, else the exception the read failed with.
-cli/capture/segment_writer.py:217: comment-block 6 > 4	"""`os.replace` into `dest`, fsyncing the data and then the directory entry.
-cli/capture/segment_writer.py:237: comment-block 10 > 4	"""`"<HH>.part0007.parquet"` -> `7`; `None` if the name is not one of ours.
-cli/capture/segment_writer.py:254: comment-block 6 > 4	"""`.../<YYYY>/<MM>/<DD>` + `"07"` -> that UTC hour; `None` if the path is not one of ours.
-cli/capture/segment_writer.py:268: comment-block 37 > 4	"""Buffers `(pair, kind)` capture events and streams them to hourly zstd-Parquet segments.
-cli/capture/segment_writer.py:361: comment-block 7 > 4	# An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
-cli/capture/segment_writer.py:371: comment-block 7 > 4	# T0037: acting on a boundary — finalizing the live hour because one ts says a new hour
-cli/capture/segment_writer.py:393: comment-block 10 > 4	"""Flush the buffer — and any held rows — to disk (idempotent). Deliberately does **not**
-cli/capture/segment_writer.py:412: comment-block 40 > 4	"""INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
-cli/capture/segment_writer.py:491: comment-block 14 > 4	# Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
-cli/capture/segment_writer.py:537: comment-block 13 > 4	"""Park a row whose hour the oracle has not confirmed. It still advances the stream witness
-cli/capture/segment_writer.py:576: comment-block 45 > 4	"""True only if `ts` is far ahead of BOTH where the stream should have got to by now AND our
-cli/capture/segment_writer.py:649: comment-block 5 > 4	# Seed the de-dup set from the parts a previous process already wrote for this hour. On a
-cli/capture/segment_writer.py:659: comment-block 11 > 4	"""Redeem `hour`'s held-spill files (`<HH>.held####.parquet`) into ordinary parts.
-cli/capture/segment_writer.py:720: comment-block 5 > 4	# The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
-cli/capture/segment_writer.py:728: comment-block 8 > 4	"""Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
-cli/capture/segment_writer.py:753: comment-block 8 > 4	"""Merge the hour's parts into a committed `<HH>.parquet`. Never raises.
-cli/capture/segment_writer.py:776: comment-block 7 > 4	# AMBIGUOUS, and unresolvable from here — the pre-T0036 writer produced BOTH
-cli/capture/segment_writer.py:798: comment-block 5 > 4	# Isolation invariant (spec 00069 D5): the commit above already succeeded and
-cli/capture/segment_writer.py:816: comment-block 10 > 4	"""Stream `inputs` into `<HH>.parquet.merging`, atomically. False if nothing could be read.
-cli/capture/segment_writer.py:843: comment-block 13 > 4	"""Publish an interrupted-or-fresh `<HH>.parquet.merging` as the hour's committed final.
-cli/capture/segment_writer.py:862: comment-block 7 > 4	"""True if every row of `path` decodes; else quarantine it and return False.
-cli/capture/segment_writer.py:876: comment-block 5 > 4	"""Rename an unreadable file aside, **never delete it**: it is evidence, and rows may still
-cli/capture/segment_writer.py:897: comment-block 7 > 4	"""Finish what a previous process left mid-merge, and read off disk which hours are closed.
-cli/capture/segment_writer.py:934: comment-block 7 > 4	# `_commit` hashes these bytes, unlinks the parts they came from and renames them
-cli/capture/segment_writer.py:949: comment-block 6 > 4	# Which hours are closed. A `<HH>.parquet` is one, by the invariant. So is a `.merging` file
-cli/capture/segment_writer.py:962: comment-block 7 > 4	# An hour that has not happened cannot have been committed: a future-dated segment is
-cli/capture/segment_writer.py:989: comment-block 8 > 4	"""Write `<HH>.parquet.sha256` from `source`'s bytes — atomically and durably, so a kill can
+cli/capture/segment_writer.py:1: file-prose 46.3 > 20
+cli/capture/segment_writer.py:53: comment-block 5 > 4	# One row per Coinalyze closed 1-min liquidation bucket (spec 00051 OPS-2, T0023 fallback: Binance
+cli/capture/segment_writer.py:68: comment-block 7 > 4	# How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage
+cli/capture/segment_writer.py:77: comment-block 16 > 4	# How many CONSECUTIVE timestamps the guard may refuse before it stands down (see `_implausible`).
+cli/capture/segment_writer.py:95: comment-block 15 > 4	# The one bound that is NEVER stood down and needs no second witness (see `_implausible`).
+cli/capture/segment_writer.py:112: comment-block 10 > 4	# How many witnesses must vouch that an hour has BEGUN before any stream may act on the boundary —
+cli/capture/segment_writer.py:124: comment-block 6 > 4	# The clock witness's handicap: it vouches for hour H only once it reads H's start plus this margin.
+cli/capture/segment_writer.py:134: comment-block 25 > 4	"""Cross-stream corroboration that an hour has genuinely begun (T0037).
+cli/capture/segment_writer.py:165: comment-block 16 > 4	"""Record that `stream` saw a plausible event stamped `ts` (its guard already ran).
+cli/capture/segment_writer.py:205: comment-block 6 > 4	"""`None` if every row of `path` can be read, else the exception the read failed with.
+cli/capture/segment_writer.py:219: comment-block 6 > 4	"""`os.replace` into `dest`, fsyncing the data and then the directory entry.
+cli/capture/segment_writer.py:239: comment-block 10 > 4	"""`"<HH>.part0007.parquet"` -> `7`; `None` if the name is not one of ours.
+cli/capture/segment_writer.py:256: comment-block 6 > 4	"""`.../<YYYY>/<MM>/<DD>` + `"07"` -> that UTC hour; `None` if the path is not one of ours.
+cli/capture/segment_writer.py:281: comment-block 37 > 4	"""Buffers `(pair, kind)` capture events and streams them to hourly zstd-Parquet segments.
+cli/capture/segment_writer.py:374: comment-block 7 > 4	# An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
+cli/capture/segment_writer.py:384: comment-block 7 > 4	# T0037: acting on a boundary — finalizing the live hour because one ts says a new hour
+cli/capture/segment_writer.py:406: comment-block 10 > 4	"""Flush the buffer — and any held rows — to disk (idempotent). Deliberately does **not**
+cli/capture/segment_writer.py:426: comment-block 40 > 4	"""INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
+cli/capture/segment_writer.py:520: comment-block 14 > 4	# Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
+cli/capture/segment_writer.py:566: comment-block 13 > 4	"""Park a row whose hour the oracle has not confirmed. It still advances the stream witness
+cli/capture/segment_writer.py:606: comment-block 45 > 4	"""True only if `ts` is far ahead of BOTH where the stream should have got to by now AND our
+cli/capture/segment_writer.py:718: comment-block 5 > 4	# Seed the de-dup set from the parts a previous process already wrote for this hour. On a
+cli/capture/segment_writer.py:728: comment-block 11 > 4	"""Redeem `hour`'s held-spill files (`<HH>.held####.parquet`) into ordinary parts.
+cli/capture/segment_writer.py:790: comment-block 5 > 4	# The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
+cli/capture/segment_writer.py:799: comment-block 8 > 4	"""Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
+cli/capture/segment_writer.py:824: comment-block 8 > 4	"""Merge the hour's parts into a committed `<HH>.parquet`. Never raises.
+cli/capture/segment_writer.py:847: comment-block 7 > 4	# AMBIGUOUS, and unresolvable from here — the pre-T0036 writer produced BOTH
+cli/capture/segment_writer.py:869: comment-block 5 > 4	# Isolation invariant (spec 00069 D5): the commit above already succeeded and
+cli/capture/segment_writer.py:887: comment-block 10 > 4	"""Stream `inputs` into `<HH>.parquet.merging`, atomically. False if nothing could be read.
+cli/capture/segment_writer.py:914: comment-block 13 > 4	"""Publish an interrupted-or-fresh `<HH>.parquet.merging` as the hour's committed final.
+cli/capture/segment_writer.py:933: comment-block 7 > 4	"""True if every row of `path` decodes; else quarantine it and return False.
+cli/capture/segment_writer.py:947: comment-block 5 > 4	"""Rename an unreadable file aside, **never delete it**: it is evidence, and rows may still
+cli/capture/segment_writer.py:968: comment-block 7 > 4	"""Finish what a previous process left mid-merge, and read off disk which hours are closed.
+cli/capture/segment_writer.py:1005: comment-block 7 > 4	# `_commit` hashes these bytes, unlinks the parts they came from and renames them
+cli/capture/segment_writer.py:1020: comment-block 6 > 4	# Which hours are closed. A `<HH>.parquet` is one, by the invariant. So is a `.merging` file
+cli/capture/segment_writer.py:1033: comment-block 7 > 4	# An hour that has not happened cannot have been committed: a future-dated segment is
+cli/capture/segment_writer.py:1060: comment-block 8 > 4	"""Write `<HH>.parquet.sha256` from `source`'s bytes — atomically and durably, so a kill can
 cli/capture/ws_client.py:1: file-prose 34.2 > 20
 cli/capture/ws_client.py:39: comment-block 5 > 4	"""Build a WS v2 `subscribe` request for `channel` (`"book"` or `"trade"`) over `symbols`.
 cli/capture/ws_client.py:54: comment-block 5 > 4	"""Build a WS v2 `unsubscribe` request for `channel` over `symbols` — the inverse of
@@ -173,7 +173,7 @@ cli/data/sync.py:141: comment-block 7 > 4	"""What attests `set_name`: (every vou
 cli/data/sync.py:172: comment-block 7 > 4	"""Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
 cli/data/sync.py:189: comment-block 6 > 4	"""Re-hash what a push is about to transmit, and refuse content nothing attests.
 cli/data/sync.py:200: comment-block 5 > 4	# Fail closed, and MORE readily than the fetch side: this is the permanent direction. A
-cli/engine/command.py:1737: comment-mass 855 > 528	"""Close every open position and sell every non-EUR balance at market, account-wide.
+cli/engine/command.py:1735: comment-mass 855 > 528	"""Close every open position and sell every non-EUR balance at market, account-wide.
 cli/engine/cycle.py:1: comment-block 15 > 4	"""The shadow cycle core (spec 00041 SS the cycle core): `run_cycle` drives one 4h boundary
 cli/engine/cycle.py:1: file-prose 36.4 > 20
 cli/engine/cycle.py:77: comment-block 9 > 4	# The engine's per-cycle hook (spec 00069 D5/T4): `run()` installs this UNCONDITIONALLY -- it no
@@ -260,38 +260,37 @@ cli/engine/executor.py:2372: comment-block 11 > 4	"""Realized PnL over every ins
 cli/engine/executor.py:2413: comment-block 6 > 4	# `commission` is optional on the event, and a fee-less fill still gets its row: the
 cli/engine/executor.py:2426: comment-block 21 > 4	"""An event for an order that is not the one in flight: an order this process superseded, one
 cli/engine/executor.py:2468: comment-block 7 > 4	# Both completion tests carry a one-lot-step tolerance, because both compare a SUM of
-cli/engine/executor.py:2601: comment-block 15 > 4	"""An ambiguous outcome ends the WHOLE plan, not just its intent (owner ruling).
+cli/engine/executor.py:2599: comment-block 15 > 4	"""An ambiguous outcome ends the WHOLE plan, not just its intent (owner ruling).
 cli/engine/flatten.py:1: comment-block 28 > 4	"""`zcrypto engine flatten` -- the red button (spec 00106).
-cli/engine/flatten.py:1: file-prose 30.7 > 20
+cli/engine/flatten.py:1: file-prose 30.4 > 20
 cli/engine/flatten.py:66: comment-block 5 > 4	# The rung-1 leverage, and the only value ever accepted live from this repo (probes 4c/4d in
 cli/engine/flatten.py:76: comment-block 5 > 4	# The basket legs Kraken spells two ways, which are exactly the legs `read_open_orders` cannot see
 cli/engine/flatten.py:122: comment-block 7 > 4	"""Every request with its parameters and every answer verbatim -- the journal's spine.
 cli/engine/flatten.py:166: comment-block 6 > 4	"""A quantization step, which must be positive to be one.
-cli/engine/flatten.py:185: comment-block 7 > 4	"""The keyword arguments as the journal records them: a nautilus enum by its string form, every
-cli/engine/flatten.py:196: comment-block 21 > 4	"""The orders resting at the venue that the adapter can resolve an instrument for -- NOT every
-cli/engine/flatten.py:252: comment-block 5 > 4	# `None` read as "no positions" is the one shape that CONFIRMS ITSELF: `build_plan` shows no
-cli/engine/flatten.py:316: comment-block 7 > 4	"""The three constraints a sized order needs, required on THIS pair only. Validating the whole
-cli/engine/flatten.py:365: comment-block 5 > 4	# `_required` rejects only `None` and `_as_float` only the non-finite, so a zero would flow
-cli/engine/flatten.py:423: comment-block 9 > 4	"""One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
-cli/engine/flatten.py:541: comment-block 6 > 4	"""The committed per-symbol notional floor, or None when it does not apply to this pair.
-cli/engine/flatten.py:557: comment-block 8 > 4	"""The reference price at the venue's tick, or None where the floor leaves nothing of it.
-cli/engine/flatten.py:574: comment-block 6 > 4	"""`size_order`'s verdict on one quantity -- the engine's own arithmetic, floors and all.
-cli/engine/flatten.py:596: comment-block 9 > 4	"""`flat` / `dust` / `residual` for one non-EUR free spot balance.
-cli/engine/flatten.py:613: comment-block 8 > 4	"""One leg's order quantity and whether it is sent at all.
-cli/engine/flatten.py:672: comment-block 13 > 4	"""Every leg, sized, with its reference price -- and every book read taken HERE, before the
-cli/engine/flatten.py:734: comment-block 7 > 4	"""What an operator reads before typing the word. Estimates stay in each leg's own quote
-cli/engine/flatten.py:771: comment-block 9 > 4	"""Present or refuse. Without it, the engine's next start re-opens what this sweep closes; the
-cli/engine/flatten.py:800: comment-block 11 > 4	"""The typed word, read from the controlling terminal and NEVER from stdin: a pipe or a heredoc
-cli/engine/flatten.py:857: comment-block 13 > 4	"""`FLT-<basic ISO-8601 UTC>-<n>`. Inside the id SHAPE Kraken has already accepted from this
-cli/engine/flatten.py:878: comment-block 14 > 4	"""One MARKET IOC order. The quantity is minted at the precision the venue's own lot step
-cli/engine/flatten.py:936: comment-block 19 > 4	"""Never raises: a rejection is journaled and the sweep continues, and is never retried.
-cli/engine/flatten.py:980: comment-block 16 > 4	"""A POST-WRITE read whose answer nothing but the journal consumes: run it, or name the failure
-cli/engine/flatten.py:1004: comment-block 12 > 4	"""From the account-wide cancel to the final snapshot. Re-runnable: a second run finds less to
-cli/engine/flatten.py:1072: comment-block 9 > 4	"""Everything in the final snapshot that says the account is not flat.
-cli/engine/flatten.py:1131: comment-block 5 > 4	"""ISO-8601 BASIC form: an operator types this path mid-incident, and the extended form's `:`
-cli/engine/flatten.py:1161: comment-block 5 > 4	# The condition this fallback exists for is routinely the SAME one that broke the
-cli/engine/flatten.py:1173: comment-block 12 > 4	"""`echo`, with a stdout that can go away.
-cli/engine/flatten.py:1209: comment-block 6 > 4	"""The whole button. Returns the process exit code; raises nothing.
+cli/engine/flatten.py:191: comment-block 21 > 4	"""The orders resting at the venue that the adapter can resolve an instrument for -- NOT every
+cli/engine/flatten.py:247: comment-block 5 > 4	# `None` read as "no positions" is the one shape that CONFIRMS ITSELF: `build_plan` shows no
+cli/engine/flatten.py:311: comment-block 7 > 4	"""The three constraints a sized order needs, required on THIS pair only. Validating the whole
+cli/engine/flatten.py:360: comment-block 5 > 4	# `_required` rejects only `None` and `_as_float` only the non-finite, so a zero would flow
+cli/engine/flatten.py:418: comment-block 9 > 4	"""One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
+cli/engine/flatten.py:536: comment-block 6 > 4	"""The committed per-symbol notional floor, or None when it does not apply to this pair.
+cli/engine/flatten.py:552: comment-block 8 > 4	"""The reference price at the venue's tick, or None where the floor leaves nothing of it.
+cli/engine/flatten.py:569: comment-block 6 > 4	"""`size_order`'s verdict on one quantity -- the engine's own arithmetic, floors and all.
+cli/engine/flatten.py:591: comment-block 9 > 4	"""`flat` / `dust` / `residual` for one non-EUR free spot balance.
+cli/engine/flatten.py:608: comment-block 8 > 4	"""One leg's order quantity and whether it is sent at all.
+cli/engine/flatten.py:667: comment-block 13 > 4	"""Every leg, sized, with its reference price -- and every book read taken HERE, before the
+cli/engine/flatten.py:729: comment-block 7 > 4	"""What an operator reads before typing the word. Estimates stay in each leg's own quote
+cli/engine/flatten.py:766: comment-block 9 > 4	"""Present or refuse. Without it, the engine's next start re-opens what this sweep closes; the
+cli/engine/flatten.py:795: comment-block 11 > 4	"""The typed word, read from the controlling terminal and NEVER from stdin: a pipe or a heredoc
+cli/engine/flatten.py:852: comment-block 13 > 4	"""`FLT-<basic ISO-8601 UTC>-<n>`. Inside the id SHAPE Kraken has already accepted from this
+cli/engine/flatten.py:873: comment-block 14 > 4	"""One MARKET IOC order. The quantity is minted at the precision the venue's own lot step
+cli/engine/flatten.py:931: comment-block 19 > 4	"""Never raises: a rejection is journaled and the sweep continues, and is never retried.
+cli/engine/flatten.py:975: comment-block 16 > 4	"""A POST-WRITE read whose answer nothing but the journal consumes: run it, or name the failure
+cli/engine/flatten.py:999: comment-block 12 > 4	"""From the account-wide cancel to the final snapshot. Re-runnable: a second run finds less to
+cli/engine/flatten.py:1067: comment-block 9 > 4	"""Everything in the final snapshot that says the account is not flat.
+cli/engine/flatten.py:1126: comment-block 5 > 4	"""ISO-8601 BASIC form: an operator types this path mid-incident, and the extended form's `:`
+cli/engine/flatten.py:1156: comment-block 5 > 4	# The condition this fallback exists for is routinely the SAME one that broke the
+cli/engine/flatten.py:1168: comment-block 12 > 4	"""`echo`, with a stdout that can go away.
+cli/engine/flatten.py:1204: comment-block 6 > 4	"""The whole button. Returns the process exit code; raises nothing.
 cli/engine/gate_cache.py:1: comment-block 30 > 4	"""The gate-export scoring cache primitives (spec 00060): fingerprints, load/save, and the
 cli/engine/gate_cache.py:1: file-prose 43.1 > 20
 cli/engine/gate_cache.py:58: comment-block 9 > 4	# The replay entry points (spec 00065 D1). Coverage is DERIVED from these by _replay_code_paths()
@@ -312,22 +311,20 @@ cli/engine/instruments.py:89: comment-block 7 > 4	"""Floor `value` down to the n
 cli/engine/instruments.py:112: comment-block 10 > 4	"""Quantize `target_qty`/`reference_price` to the venue's `lot_step`/`tick_size`, then check
 cli/engine/instruments.py:136: comment-block 8 > 4	"""EUR-denominate one symbol's `qty * price` notional, quote-aware: an `/EUR` leg needs no
 cli/engine/node.py:1: comment-block 7 > 4	"""The node wrapper (spec 00041 SS the node wrapper): pure 4h-boundary arithmetic, the
-cli/engine/node.py:1: file-prose 41 > 20
+cli/engine/node.py:1: file-prose 39.2 > 20
 cli/engine/node.py:59: comment-block 5 > 4	# The client-order-id tag, a venue-visible identifier: registration stamps it into `strategy_id`
 cli/engine/node.py:66: comment-block 5 > 4	# The identity nautilus stamps on an order this process did not submit: reconciliation adopts a
 cli/engine/node.py:96: comment-block 5 > 4	"""The restart-inside-a-passable-window rule: return B = most_recent_boundary(now) iff no
 cli/engine/node.py:112: comment-block 5 > 4	"""Invoke run_cycle, catching and logging any exception -- the node must survive; an
 cli/engine/node.py:167: comment-block 26 > 4	"""The thin strategy owning ONLY timer arithmetic and the probe executor's wiring: on_start
 cli/engine/node.py:195: comment-block 10 > 4	"""`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
-cli/engine/node.py:297: comment-block 16 > 4	"""The observer's whole configuration: the external order identity, and nothing else.
-cli/engine/node.py:322: comment-block 22 > 4	"""The second order stream (spec 00098 D1, 00100 D2): registered under the venue's external
-cli/engine/node.py:346: comment-block 5 > 4	"""`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
-cli/engine/node.py:412: comment-block 17 > 4	"""Every knob explicit (all five are library defaults) because all five are load-bearing here.
-cli/engine/node.py:439: comment-block 15 > 4	"""The Kraken data client. The adapter loads the venue's instrument universe itself on connect;
-cli/engine/node.py:462: comment-block 5 > 4	"""The trade key and secret read from the environment, or None when either is absent or empty.
-cli/engine/node.py:489: comment-block 25 > 4	# Matched literally against the loaded instrument's `quote_currency.code`, which for
-cli/engine/node.py:524: comment-block 11 > 4	"""The assembled builder: trader identity, logging, the two exec-engine knobs, the Kraken data
-cli/engine/node.py:573: comment-block 8 > 4	"""Assemble (never run here) the production-shape shadow LiveNode: the builder's clients
+cli/engine/node.py:297: comment-block 14 > 4	"""`order_id_tag` is left unset DELIBERATELY. A tag is appended to the id -- measured, a tag "EXT" yields
+cli/engine/node.py:320: comment-block 22 > 4	"""The second order stream (spec 00098 D1, 00100 D2): registered under the venue's external
+cli/engine/node.py:344: comment-block 5 > 4	"""`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
+cli/engine/node.py:410: comment-block 17 > 4	"""Every knob explicit (all five are library defaults) because all five are load-bearing here.
+cli/engine/node.py:437: comment-block 15 > 4	"""The Kraken data client. The adapter loads the venue's instrument universe itself on connect;
+cli/engine/node.py:460: comment-block 5 > 4	"""The trade key and secret read from the environment, or None when either is absent or empty.
+cli/engine/node.py:486: comment-block 25 > 4	# Matched literally against the loaded instrument's `quote_currency.code`, which for
 cli/engine/soak.py:282: comment-block 7 > 4	"""Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
 cli/engine/soak.py:536: comment-block 7 > 4	"""Roll per-metric verdicts into a multiplicity-aware summary: judging N discriminating metrics at `band`
 cli/engine/soak.py:585: comment-block 6 > 4	"""Reconcile two per-metric null verdicts (spec 00061 D1) -- pure: two labels in, a `DualVerdict` out. An
@@ -362,8 +359,8 @@ cli/liquidations/coinalyze.py:43: comment-block 5 > 4	# Load-bearing (verified l
 cli/liquidations/coinalyze.py:49: comment-block 8 > 4	# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
 cli/liquidations/coinalyze.py:59: comment-block 11 > 4	# T0046: most of the funding basket's symbols liquidate rarely, so `SegmentWriter`'s event-driven
 cli/liquidations/coinalyze.py:248: comment-block 5 > 4	# A malformed bucket (null l/s, missing t, non-dict entry) raises TypeError/KeyError/
-cli/liquidations/coinalyze.py:281: comment-block 5 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
-cli/liquidations/coinalyze.py:293: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
+cli/liquidations/coinalyze.py:297: comment-block 5 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
+cli/liquidations/coinalyze.py:309: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
 cli/ohlc/reach.py:1: comment-block 7 > 4	"""REST reach-round: carry the canonical OHLC basket forward from Kraken's public OHLC endpoint.
 cli/panel/materialize.py:1: comment-block 17 > 4	"""Hour materializer + watermarked sweep for the 1s L2 panel (spec 00052 D3/D4/D5/D6).
 cli/panel/materialize.py:1: file-prose 36.3 > 20
@@ -671,7 +668,7 @@ infra/runbooks/README.md:166: section 2169 > 2048	### [`drills-order-path.md`](d
 infra/runbooks/capture-daemon.md:17: section 2738 > 2048	### What it means
 infra/runbooks/capture-daemon.md:39: section 3142 > 2048	### What to do
 infra/runbooks/capture-daemon.md:124: section 2933 > 2048	### What to do
-infra/runbooks/capture-daemon.md:155: section 3238 > 2048	### What it means
+infra/runbooks/capture-daemon.md:155: section 3430 > 2048	### What it means
 infra/runbooks/capture-daemon.md:164: table-row 210 > 200	`desync recovery: pair=… still desynced after bounded retries -- forcing a full reconnect`
 infra/runbooks/capture-daemon.md:168: table-row 206 > 200	`WS reconnect still failing after N consecutive attempts`
 infra/runbooks/capture-daemon.md:170: table-row 456 > 200	`an uncommitted merge is in the way …` / `an interrupted merge beside a committed final — left untouched …` / `parts beside a readable final — ambiguous, left untouched …` / `merge failed …`
@@ -681,7 +678,7 @@ infra/runbooks/capture.md:107: table-row 372 > 200	**(a) two bogus stamps in one
 infra/runbooks/capture.md:108: table-row 361 > 200	**(b) a clock leading over five minutes, plus one bogus stamp**
 infra/runbooks/capture.md:109: table-row 388 > 200	**past-dated first stamp**
 infra/runbooks/capture.md:113: section 2704 > 2048	### What to do
-infra/runbooks/capture.md:173: section 8295 > 2048	### What it means
+infra/runbooks/capture.md:173: section 8287 > 2048	### What it means
 infra/runbooks/drills-order-path.md:9: section 5172 > 2048	## Standing rules — these bind every section below
 infra/runbooks/drills-order-path.md:20: section 2599 > 2048	## How every bound on this page was derived
 infra/runbooks/drills-order-path.md:203: section 2271 > 2048	### Must fire
@@ -739,7 +736,7 @@ infra/runbooks/observability.md:158: section 2347 > 2048	### What to do
 infra/runbooks/observability.md:201: section 2113 > 2048	### What to do
 infra/runbooks/observability.md:240: section 2513 > 2048	### What it means
 infra/runbooks/observability.md:262: section 5817 > 2048	### What to do
-infra/runbooks/observability.md:333: section 3479 > 2048	### The dead-man map
+infra/runbooks/observability.md:333: section 3472 > 2048	### The dead-man map
 infra/runbooks/observability.md:339: table-row 317 > 200	`capture`
 infra/runbooks/observability.md:341: table-row 337 > 200	`engine`
 infra/runbooks/observability.md:342: table-row 220 > 200	`nas`
@@ -910,14 +907,14 @@ tests/test_archive_settle.py:635: comment-block 7 > 4	# --- `us_view`: the colum
 tests/test_benchmark_dynamic_basket.py:1: file-prose 28.6 > 20
 tests/test_capture_gap_monitor.py:234: comment-block 7 > 4	# --- T0032(c): a probe that CANNOT MEASURE must not read as healthy ------------------------------
 tests/test_capture_prune.py:1: comment-block 5 > 4	"""Segment retention on the capture hosts (spec 00050 D8 — closes T0032's retention half).
-tests/test_capture_segment_writer.py:1: file-prose 31 > 20
-tests/test_capture_segment_writer.py:67: comment-block 7 > 4	"""Pin `_utcnow()` an hour ahead of the events the tests feed, so an ordinary event is plausible and only
-tests/test_capture_segment_writer.py:681: comment-block 5 > 4	# A stray DIRECTORY, not a stray file. `__init__` walks the whole tree and hands every
-tests/test_capture_segment_writer.py:896: comment-block 5 > 4	# The clock is the sole witness for a stream's first event — at a cold start, and after an outage longer
-tests/test_capture_segment_writer.py:1501: comment-block 6 > 4	# The T0037 truncation re-attacked through the oracle itself: a garbage burst on stream A stands its
-tests/test_capture_segment_writer.py:1792: comment-block 5 > 4	# Residual (c) — the past-dated fabrication (spec 00103 D5, narrowed by spec 00109 D1): a process's FIRST
-tests/test_capture_segment_writer.py:1812: comment-block 6 > 4	# Spec 00109 D1: a mid-hour restart whose FIRST event is a replayed pre-restart print opens the PREVIOUS
-tests/test_capture_segment_writer.py:1862: comment-block 5 > 4	# Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an hour's
+tests/test_capture_segment_writer.py:1: file-prose 29.2 > 20
+tests/test_capture_segment_writer.py:75: comment-block 7 > 4	"""Pin `_utcnow()` an hour ahead of the events the tests feed, so an ordinary event is plausible and only
+tests/test_capture_segment_writer.py:689: comment-block 5 > 4	# A stray DIRECTORY, not a stray file. `__init__` walks the whole tree and hands every
+tests/test_capture_segment_writer.py:904: comment-block 5 > 4	# The clock is the sole witness for a stream's first event — at a cold start, and after an outage longer
+tests/test_capture_segment_writer.py:1509: comment-block 6 > 4	# The T0037 truncation re-attacked through the oracle itself: a garbage burst on stream A stands its
+tests/test_capture_segment_writer.py:1800: comment-block 5 > 4	# Residual (c) — the past-dated fabrication (spec 00103 D5, narrowed by spec 00109 D1): a process's FIRST
+tests/test_capture_segment_writer.py:1820: comment-block 6 > 4	# Spec 00109 D1: a mid-hour restart whose FIRST event is a replayed pre-restart print opens the PREVIOUS
+tests/test_capture_segment_writer.py:1870: comment-block 5 > 4	# Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an hour's
 tests/test_capture_ws_client.py:403: comment-block 6 > 4	# --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
 tests/test_code_prose_citations.py:1: comment-block 6 > 4	"""Guard for `.claude/rules/prose.md`'s resolvable-citation rule.
 tests/test_code_prose_citations.py:1: file-prose 22.4 > 20
