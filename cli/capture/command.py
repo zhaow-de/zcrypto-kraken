@@ -96,8 +96,8 @@ def resolve_universe_path(data_root: Path) -> Path:
 
 
 def _default_pairs(universe_path: Path) -> list[str]:
-    """The EUR-majors default: the EUR-quoted symbols of the point-in-time universe's `selected` list
-    (master-plan §3 / T0003)."""
+    """The EUR-majors default (master-plan §3 / T0003); a missing or unparseable universe file is refused,
+    never defaulted."""
     if not universe_path.exists():
         raise CaptureError(
             f"no point-in-time universe file at {universe_path} to derive default pairs from — pass --pairs explicitly"

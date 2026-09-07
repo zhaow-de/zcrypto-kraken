@@ -253,12 +253,9 @@ def _part_index(path: Path, *, marker: str = ".part") -> int | None:
 
 
 def _hour_of(hour_dir: Path, hh: str) -> datetime | None:
-    """`.../<YYYY>/<MM>/<DD>` + `"07"` -> that UTC hour; `None` if the path is not one of ours.
-
-    Nothing this writer creates fails to parse, but construction and the rotation path both walk the
-    tree, and a raise from either stops capture for every pair and both kinds — so a stray file is
-    skipped, never fatal.
-    """
+    """`None`, never a raise, for a path that is not one of ours: construction and the rotation path both walk
+    the tree, and a raise from either stops capture for every pair and both kinds — a stray file is skipped,
+    never fatal."""
     day, month, year = hour_dir.name, hour_dir.parent.name, hour_dir.parent.parent.name
     try:
         return datetime(int(year), int(month), int(day), int(hh), tzinfo=UTC)
@@ -357,8 +354,8 @@ class SegmentWriter:
         self._recover()
 
     def append(self, event: dict) -> None:
-        """Append one event dict (keys matching `schema`). Rotates the previous hour's segment first
-        if `event["ts"]` has crossed into a new hour."""
+        """Append one event dict (keys matching `schema`); the row may be dropped — an implausible or late
+        `ts`, or a replay already seen — or held pending oracle confirmation."""
         ts = event["ts"]
         if self._implausible(ts):
             if ts != self._last_drop_ts:  # one bad message is one bad ts, however many rows it carries
@@ -423,46 +420,26 @@ class SegmentWriter:
         self._held_seen = {}
 
     def finalize_completed_hours(self, cutoff: datetime) -> FinalizeOutcome:
-        """INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
-        spills entirely -- on an oracle-bearing writer, finalizing an hour with held rows would
-        floor-lock the hour and strand its quarantine forever (never merged, never redeemed). The
-        only sanctioned caller (the Coinalyze poller) builds writers without an oracle; the guard
-        below makes any future oracle-bearing caller fail fast instead of silently foreclosing rows.
+        """INTENDED FOR NON-ORACLE WRITERS ONLY: it ignores held spills entirely, so on an oracle-bearing
+        writer finalizing an hour with held rows would floor-lock the hour and strand its quarantine forever
+        (never merged, never redeemed) — such a caller is refused rather than silently foreclosing rows.
 
-        Finalize every hour STRICTLY OLDER than `cutoff` that currently holds a row — the open
-        hour (if any) plus any crash-leftover part-hours the event stream itself has not yet swept.
-        Returns a `FinalizeOutcome`; 0 finalized is the correct, idempotent answer once there is
-        nothing left to do. Hours `>= cutoff` are NEVER touched.
+        Finalize every hour STRICTLY OLDER than `cutoff` that currently holds a row — the open hour plus any
+        crash-leftover part-hours the event stream itself has not yet swept. Returns a `FinalizeOutcome`; 0
+        finalized is the correct, idempotent answer once there is nothing left to do. Hours `>= cutoff` are
+        NEVER touched.
 
-        T0046: rotation is event-driven — an hour closes only when the NEXT event for this same
-        (pair, kind) crosses its boundary (`_enter_hour`) — which fits a continuously-emitting
-        stream but stalls indefinitely for a sparse one (a symbol quiet for hours never produces
-        the "next" event that would close it). This is the wall-clock escape hatch: the CALLER
-        decides `cutoff` (see `cli/liquidations/coinalyze.py` for the margin that makes it safe),
-        and this method finalizes anything provably older than it, via the exact same
-        `_finalize_hour`/`_merge_hour` path an ordinary rotation uses. A pair that keeps emitting
-        normally never has an hour cross `cutoff` while still open, so calling this on the live
-        capture daemon's writers would be a no-op in practice — nothing here changes what an
-        ordinary rotation does; it is purely additive.
+        T0046: ordinary rotation is event-driven — an hour closes only when the NEXT event for this same
+        (pair, kind) crosses its boundary (`_enter_hour`) — which stalls indefinitely for a sparse stream.
+        This is the wall-clock escape hatch, and the CALLER owns `cutoff`'s safety margin (see
+        `cli/liquidations/coinalyze.py`).
 
-        Two independent things can be older than `cutoff`:
-
-        1. The open hour (`self._current_hour`) — flushed and merged, then the writer is left with
-           NO open hour (`None`), so the next event re-derives its own hour from scratch exactly
-           like a fresh writer's first event does (`_enter_hour`'s `is None` branch: sweep, open).
-        2. Any OTHER part-hours already on disk — crash leftovers from a previous process that
-           never got swept, because sweeping is deferred to this writer's first event and one may
-           never come for a symbol this sparse.
-
-        Setting `_current_hour` to `None` is new for this class — the ordinary rotation path only
-        ever advances it forward via `_open_hour`, which re-anchors the late-event floor for free
-        as a side effect. With no such call here, this method re-anchors `self._floor` itself for
-        every hour it actually finalizes (a merge this class declines — e.g. the AMBIGUOUS
-        parts-beside-a-final case — does not count, and does not raise the floor). Skipping this
-        would let a late replay for an hour finalized here — arriving while `_current_hour` is
-        still `None` — silently reopen it, and its eventual re-rotation would then read as "parts
-        beside a readable final": the class's own ambiguous, human-only state.
-        """
+        An open hour finalized here is left `None`, so the next event re-derives its own hour exactly like a
+        fresh writer's first one. That skips `_open_hour`, which is what ordinarily re-anchors the late-
+        event floor, so this method re-anchors `self._floor` itself for every hour it actually finalizes (a
+        merge it declines — e.g. the AMBIGUOUS parts-beside-a-final case — does not count). Without that, a
+        late replay could silently reopen an hour finalized here, and its re-rotation would read as that
+        same ambiguous, human-only state."""
         if self._oracle is not None:
             raise CaptureError(
                 "finalize_completed_hours is not supported on oracle-bearing writers (held spills would be stranded)"
@@ -514,8 +491,7 @@ class SegmentWriter:
         return FinalizeOutcome(finalized, tuple(sorted(set(failed))))  # one hour, one entry: both arms can reach it
 
     def _enter_hour(self, hour: datetime) -> None:
-        """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
-        A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
+        """A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
         if self._current_hour is None:
             # Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
             # is the only one that can open an hour behind the wall clock -- from here on `floor` is
@@ -545,8 +521,7 @@ class SegmentWriter:
             self._open_hour(hour)
 
     def _admit(self, event: dict) -> None:
-        """The write path proper: de-dup, advance the stream witness, buffer, flush. The event's
-        hour is already open."""
+        """The write path proper: the caller guarantees the event's hour is already open."""
         if self._dedup_key is not None:
             key = event[self._dedup_key]
             if key in self._seen:
@@ -1079,7 +1054,8 @@ class SegmentWriter:
 
 
 def verify_manifest(path: Path) -> bool:
-    """Recompute `path`'s sha256 and compare it against its `<path>.sha256` sidecar."""
+    """True iff `path`'s bytes hash to the `<path>.sha256` sidecar; a missing or empty sidecar raises
+    `CaptureError`."""
     manifest_path = path.with_name(path.name + ".sha256")
     recorded = manifest_path.read_text().split() if manifest_path.exists() else []
     if not recorded:

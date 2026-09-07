@@ -36,11 +36,8 @@ _WS_CLOSE_SERVICE_RESTART = 1012
 def build_subscribe_message(
     channel: str, symbols: list[str], *, depth: int | None = None, snapshot: bool = True, req_id: int | None = None
 ) -> dict:
-    """Build a WS v2 `subscribe` request for `channel` (`"book"` or `"trade"`) over `symbols`.
-
-    See https://docs.kraken.com/api/docs/websocket-v2/book and .../trade for the request shape:
-    `{"method": "subscribe", "params": {"channel": ..., "symbol": [...], ...}}`.
-    """
+    """Build a WS v2 `subscribe` request; `channel` is `"book"` or `"trade"` — shape per
+    https://docs.kraken.com/api/docs/websocket-v2/book (and .../trade)."""
     params: dict = {"channel": channel, "symbol": list(symbols), "snapshot": snapshot}
     if depth is not None:
         params["depth"] = depth
@@ -313,7 +310,7 @@ class CaptureClient:
         task.add_done_callback(self._resub_tasks.discard)
 
     async def drain_pending_resubscribes(self, timeout: float = 10.0) -> None:
-        """Await the in-flight resubscribe waiters (shutdown, and the tests' determinism hook)."""
+        """Await the waiters `resubscribe_book` never awaits — the tests' determinism hook."""
         if not self._resub_tasks:
             return
         await asyncio.wait(set(self._resub_tasks), timeout=timeout)

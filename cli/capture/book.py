@@ -24,9 +24,8 @@ def _to_decimal(value: Decimal | str | int | float) -> Decimal:
 
 
 def _format_level(value: Decimal) -> str:
-    """Format one price/qty per Kraken's checksum recipe: strip the decimal point, then strip
-    leading zeros (e.g. `Decimal("0.00100000")` -> `"100000"`, `Decimal("45283.5")` -> `"452835"`).
-    """
+    """Render one price/qty as Kraken's checksum recipe requires -- the digits are the value's coefficient, so
+    `Decimal("0.001")` and `Decimal("0.00100000")` differ here."""
     digits = f"{value:f}".replace(".", "").replace("-", "").lstrip("0")
     return digits or "0"
 
@@ -40,16 +39,11 @@ def _extract_level(raw: dict) -> tuple[Decimal, Decimal]:
 
 
 class OrderBook:
-    """Per-pair L2 book state, rebuilt from a WS v2 snapshot and kept current via updates.
+    """Per-pair L2 book state, held congruent with Kraken's subscribed depth window (`depth` levels per side);
+    `desynced` carries the last checksum verdict for the caller to act on.
 
-    The book is kept **congruent with Kraken's subscribed depth window** (`depth` levels per side)
-    -- see `_prune`. `ingest_snapshot`/`ingest_update` apply the payload and validate Kraken's
-    per-message CRC32 `checksum`, tracking `desynced` so the caller (the WS client / gap monitor)
-    can react to a mismatch.
-
-    `depth` is deliberately **required**: a depth-limited book cannot be maintained correctly
-    without it, and defaulting it would silently reintroduce T0008 (below).
-    """
+    `depth` is deliberately **required**: a depth-limited book cannot be maintained correctly without it,
+    and defaulting it would silently reintroduce T0008 (below)."""
 
     def __init__(self, symbol: str, depth: int) -> None:
         self.symbol = symbol
@@ -79,17 +73,16 @@ class OrderBook:
             self.bids = dict(sorted(self.bids.items(), reverse=True)[: self.depth])
 
     def ingest_snapshot(self, data: dict) -> bool:
-        """Replace the book with a `type: snapshot` payload's `bids`/`asks`. Returns whether the
-        rebuilt book's checksum matches `data["checksum"]`."""
+        """Replaces the book outright; returns whether the rebuilt book's checksum matches the payload's, and
+        `desynced` records the same verdict."""
         self.bids = dict(_extract_level(level) for level in data.get("bids", []))
         self.asks = dict(_extract_level(level) for level in data.get("asks", []))
         self._prune()
         return self.validate(data["checksum"])
 
     def ingest_update(self, data: dict) -> bool:
-        """Apply a `type: update` payload's bid/ask deltas (qty `0` removes the level), prune back
-        to the subscribed depth, then validate the resulting book's checksum against
-        `data["checksum"]`."""
+        """Applies the payload's deltas -- qty `0` removes the level rather than storing a zero -- and returns
+        whether the updated book's checksum matches the payload's."""
         self._apply_side(self.bids, data.get("bids", []))
         self._apply_side(self.asks, data.get("asks", []))
         self._prune()
@@ -105,8 +98,8 @@ class OrderBook:
                 side[price] = qty
 
     def checksum(self) -> int:
-        """Kraken's CRC32 book checksum: format+concatenate the top-10 asks (low-to-high) then
-        the top-10 bids (high-to-low), CRC32 the ASCII bytes, cast to unsigned 32-bit."""
+        """Kraken's CRC32 book checksum, reproduced exactly -- a deviation from the venue's recipe surfaces as
+        a checksum mismatch, i.e. a desync rather than an error."""
         top_asks = sorted(self.asks.items())[:_CHECKSUM_LEVELS]
         top_bids = sorted(self.bids.items(), reverse=True)[:_CHECKSUM_LEVELS]
         asks_str = "".join(_format_level(price) + _format_level(qty) for price, qty in top_asks)
