@@ -2321,6 +2321,23 @@ def test_rows_quarantined_accumulates_across_restarts_and_never_double_counts(tm
     assert fourth.rows_quarantined == 5
 
 
+def test_rows_quarantined_persists_the_cap_site_spill_too(tmp_path, clock):
+    """The live path, not the shutdown one: a held hour reaching `flush_rows` spills while the process
+    runs, and a restart after it must still carry the count -- close() is not the only writer."""
+    clock.now = _ts(10, 3)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id", flush_rows=2)
+    for i in range(2):
+        w.append(_trade_event(10, i, i))
+    assert w.rows_quarantined == 2, "the cap must have spilled while running, or this is the close() path again"
+
+    assert (
+        _oracle_writer(
+            tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id", flush_rows=2
+        ).rows_quarantined
+        == 2
+    )
+
+
 @pytest.mark.parametrize(
     "corrupt",
     [b"", b"{", b"null", b"3", b'{"rows_quarantined": "many"}', b'{"rows_quarantined": -4}', b'{"rows_quarantined": true}'],
@@ -2328,7 +2345,7 @@ def test_rows_quarantined_accumulates_across_restarts_and_never_double_counts(tm
 )
 def test_an_unreadable_quarantine_count_seeds_zero_and_never_stops_capture(tmp_path, corrupt):
     """This read runs before the daemon connects, so anything escaping it stops capture on EVERY
-    restart. Every shape a torn or hand-edited file can take seeds 0 instead."""
+    restart -- these shapes seed 0, and the `except` below them is deliberately unbounded."""
     state = tmp_path / "BTC/EUR" / "book" / "rows-quarantined.json"
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_bytes(corrupt)
