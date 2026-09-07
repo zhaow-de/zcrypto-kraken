@@ -62,3 +62,42 @@ def test_the_index_has_one_title_and_no_blockquote_line():
     quoted = [n for n, line in enumerate(lines, 1) if line.startswith(">")]
     assert titles == [1], f"the topic index has H1 lines other than its title: {titles}"
     assert not quoted, f"blockquote lines in the topic index: {quoted}"
+
+
+# --- each topic has exactly one bullet in the index ------------------------------------------------
+# A rebase that keeps both sides of an index conflict re-adds the bullet the other side had moved, so a
+# topic reads twice. A link inside another bullet's description is a cross-reference, not a bullet.
+
+_BULLET_ID = re.compile(r"^- \[(T\d{4})[^\]]*\]\(")
+
+
+def duplicate_bullets(text: str) -> list[str]:
+    """The index lines whose leading link names a topic an earlier bullet already named."""
+    first: dict[str, int] = {}
+    defects: list[str] = []
+    for n, line in enumerate(text.split("\n"), 1):
+        m = _BULLET_ID.match(line)
+        if not m:
+            continue
+        tid = m.group(1)
+        if tid in first:
+            defects.append(f"line {n}: {tid} has a second bullet (first at line {first[tid]})")
+        first.setdefault(tid, n)
+    return defects
+
+
+def test_the_index_has_one_bullet_per_topic():
+    assert duplicate_bullets((TOPICS / "README.md").read_text()) == []
+
+
+def test_duplicate_bullets_names_a_second_bullet_and_ignores_a_cross_reference():
+    """The checker on a planted defect: a topic with two bullets is named once; a link to it inside another bullet's text is not."""
+    planted = "\n".join(
+        [
+            "# index",
+            "- [T0001 — a](archive/T0001-a.md) — resolved.",
+            "- [T0002 — b](archive/T0002-b.md) — resolved with [T0001](archive/T0001-a.md) beside it.",
+            "- [T0001 — a](archive/T0001-a.md) — resolved again.",
+        ]
+    )
+    assert duplicate_bullets(planted) == ["line 4: T0001 has a second bullet (first at line 2)"]
