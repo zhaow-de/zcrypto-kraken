@@ -72,7 +72,7 @@ _BULLET_ID = re.compile(r"^- \[(T\d{4})[^\]]*\]\(")
 
 
 def duplicate_bullets(text: str) -> list[str]:
-    """The index lines whose leading link names a topic an earlier bullet already named."""
+    """Every index line whose leading link repeats a topic an earlier bullet already led with."""
     first: dict[str, int] = {}
     defects: list[str] = []
     for n, line in enumerate(text.split("\n"), 1):
@@ -99,7 +99,7 @@ def test_the_index_has_one_bullet_per_topic():
 
 
 def test_duplicate_bullets_names_a_second_bullet_and_ignores_a_cross_reference():
-    """The checker on a planted defect: a topic with two bullets is named once; a link to it inside another bullet's text is not."""
+    """A topic with two bullets is named once, at the second; a link to it inside another bullet's text is not a bullet."""
     planted = "\n".join(
         [
             "# index",
