@@ -8,8 +8,8 @@ the current window, so importing them would make the control follow the very res
 check. That test is the standing instrument for attributing a restamp's move to the window rather
 than to this code.
 
-The statistic, matching the query of record: the mean of `(fill_bps_bid_<size> +
-fill_bps_ask_<size>) / 2` per pair per rung. `hours` means hourly panel files PER PAIR, not summed
+The statistic, matching the query of record: the mean of the two sides' `fill_bps` at each size,
+per pair per rung. `hours` means hourly panel files PER PAIR, not summed
 pair-hours -- where pairs differ, the minimum is reported and `max_rows - min_rows` exposes the
 spread (a partial NAS pull of one leg must be visible, not averaged away).
 """
@@ -72,11 +72,10 @@ def _hourly_files_in_window(panel_dir: Path, window_start: datetime, window_end:
 
 
 def calibrate(panel_root: Path, window_start: datetime, window_end: datetime) -> CalibrationResult:
-    """Scan every `<BASE>/<QUOTE>/panel-1s/**` pair under `panel_root` and compute the mean
-    effective-spread table over `[window_start, window_end]`, plus its provenance.
+    """The mean effective-spread table over `[window_start, window_end]`, plus its provenance; refused if no
+    BTC/EUR rows land in the window.
 
-    `window_start`/`window_end` must be timezone-aware (panel `ts` is `Datetime("us", "UTC")`; a
-    naive literal compared against it raises `SchemaError`).
+    `window_start`/`window_end` must be timezone-aware (panel `ts` is `Datetime("us", "UTC")`).
     """
     table: dict[str, dict[int, float]] = {}
     hours_per_pair: dict[str, int] = {}
