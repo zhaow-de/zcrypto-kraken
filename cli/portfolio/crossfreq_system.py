@@ -27,7 +27,7 @@ the net series cover completed bars only, and their figures are identical to a n
 P&L convention disclosure: governed_net reproduces the registered trial's returns-overlay cost
 convention — multiplier-transition turnover is deliberately unpriced (record 33's ratified
 governor semantics). A live engine trading final_targets pays fee on |delta(mult x limited)|, which
-exceeds the overlay's mult x fee x |delta limited| on governor engage/disengage days.
+the overlay's mult x fee x |delta limited| typically under-prices on governor engage/disengage days.
 
 Two callables, one truth: build_crossfreq_system (the verified path above) and
 build_crossfreq_system_fast (the equivalence-gated fast path — same signature, same result type,
@@ -629,8 +629,8 @@ def build_crossfreq_system_fast(
 
     Error-behavior asymmetry: outputs are gated, error paths are not — on degenerate inputs the
     verified path may raise where this path returns a result (e.g. the zero-variance Sharpe check
-    in a1_book_returns/a2_book_returns' run_backtest metrics, which this path never computes). Inputs that
-    pass validation and produce results produce EQUAL results on both paths.
+    in a1_book_returns/a2_book_returns' run_backtest metrics, which this path never computes).
+    Inputs that pass validation and produce results produce EQUAL results on both paths.
 
     How it stays equal (spec 00040 §fast path): every discrete decision layer — SMA gates, basket
     qualification, inverse-vol weight fallbacks, cap clipping, Donchian breakout comparisons,
