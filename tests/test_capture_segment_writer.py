@@ -2274,6 +2274,53 @@ def test_rows_quarantined_counts_only_rows_actually_spilled_to_a_held_file(tmp_p
     assert w.rows_quarantined == 3
 
 
+def test_rows_quarantined_survives_the_process_that_spilled_them(tmp_path, clock):
+    """T0161: `close()` spills into a process that is exiting, 60 s before the next scrape. The count
+    the next process reports must include it, or the alert's `increase()` never sees the step."""
+    clock.now = _ts(10, 3)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    for i in range(3):
+        w.append(_trade_event(10, i, i))
+    w.close()
+    assert w.rows_quarantined == 3, "the fixture must actually spill, or this proves nothing"
+    del w  # the process dies before its next scrape
+
+    reborn = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+
+    assert reborn.rows_quarantined == 3
+
+
+def test_rows_quarantined_seeds_zero_when_nothing_was_ever_spilled(tmp_path, clock):
+    """The true positive: a restart over a clean tree reports 0, never a phantom step."""
+    clock.now = _ts(10, 3)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    w.close()
+    assert _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id").rows_quarantined == 0
+
+
+def test_rows_quarantined_accumulates_across_restarts_and_never_double_counts(tmp_path, clock):
+    """An `increase()` reads a counter that only ever rises: two restarts must not re-add the same
+    spill, and a spill after a restart must add to what was seeded rather than replace it."""
+    clock.now = _ts(10, 3)
+    first = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    for i in range(3):
+        first.append(_trade_event(10, i, i))
+    first.close()
+
+    second = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    assert second.rows_quarantined == 3
+    second.close()  # nothing held, so nothing more spills
+
+    third = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    assert third.rows_quarantined == 3, "a restart that spilled nothing must not re-add the earlier spill"
+    for i in range(3, 5):
+        third.append(_trade_event(10, i, i))
+    third.close()
+
+    fourth = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    assert fourth.rows_quarantined == 5
+
+
 def test_a_raising_metrics_update_after_a_segment_commit_does_not_undo_or_interrupt_it(tmp_path, monkeypatch, caplog):
     # Isolation invariant (spec 00069 D5): `_merge_hour` already committed the segment (durable on
     # disk, manifest written) by the time the metrics update runs -- a raising `stat()` there must
