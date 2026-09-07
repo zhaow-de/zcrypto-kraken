@@ -2313,7 +2313,7 @@ def test_a_spill_that_never_reached_disk_is_neither_counted_nor_persisted(tmp_pa
     assert _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id").rows_quarantined == 0
 
 
-def test_a_cap_site_spill_that_never_reached_disk_is_neither_counted_nor_persisted(tmp_path, clock, monkeypatch):
+def test_a_cap_site_spill_that_never_reached_disk_is_neither_counted_nor_persisted(tmp_path, clock, monkeypatch, caplog):
     """The same gate as the `close()` one, on the hotter path: the cap fires every `flush_rows` held
     rows, so an over-count here compounds where the shutdown one happens once."""
     clock.now = _ts(10, 3)
@@ -2323,9 +2323,12 @@ def test_a_cap_site_spill_that_never_reached_disk_is_neither_counted_nor_persist
         raise OSError(28, "No space left on device")
 
     monkeypatch.setattr(segment_writer.pl.DataFrame, "write_parquet", no_space)
-    for i in range(2):
-        w.append(_trade_event(10, i, i))  # the cap trips on the second, while the process runs on
+    with caplog.at_level(logging.ERROR):
+        for i in range(2):
+            w.append(_trade_event(10, i, i))  # the cap trips on the second, while the process runs on
 
+    # Asserted BEFORE the absences below: without it every one of them holds when the cap never fires.
+    assert any("buffer dropped" in r.getMessage() for r in caplog.records), "the cap must have spilled and lost it"
     assert not list(tmp_path.rglob("*.held*.parquet")), "the fixture must lose the rows, or it proves nothing"
     assert w.rows_quarantined == 0
     assert not (tmp_path / "BTC/EUR" / "trades" / "rows-quarantined.json").exists()
