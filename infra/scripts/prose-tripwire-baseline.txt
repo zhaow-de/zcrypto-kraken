@@ -356,18 +356,14 @@ cli/features/derivatives.py:240: comment-block 7 > 4	"""Carry Binance's four rat
 cli/features/derivatives.py:261: comment-block 8 > 4	"""Coverage of one column inside one calendar year: how many rows carried a reading, how many
 cli/features/derivatives.py:277: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
 cli/features/volatility.py:1: file-prose 20.8 > 20
-cli/liquidations/coinalyze.py:1: comment-block 22 > 4	"""Coinalyze REST liquidation-history poller (`zcrypto liquidations-poll`, spec 00051 OPS-2): the
-cli/liquidations/coinalyze.py:1: file-prose 33.2 > 20
-cli/liquidations/coinalyze.py:58: comment-block 5 > 4	# Load-bearing (verified live 2026-07-15, stable over 150s): SegmentWriter's dedup keeps the FIRST
-cli/liquidations/coinalyze.py:64: comment-block 8 > 4	# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
-cli/liquidations/coinalyze.py:74: comment-block 11 > 4	# T0046: most of the funding basket's symbols liquidate rarely, so `SegmentWriter`'s event-driven
-cli/liquidations/coinalyze.py:102: comment-block 6 > 4	"""Newest persisted bucket start (epoch s) per coin, read from the segment tree at startup.
-cli/liquidations/coinalyze.py:133: comment-block 10 > 4	"""GET Coinalyze's `/v1/liquidation-history` for `symbols` (one batched call) over `[frm, to]`
-cli/liquidations/coinalyze.py:167: comment-block 15 > 4	"""One poll cycle: fetch `coins`' batched Coinalyze symbols over the last 30h and append every
-cli/liquidations/coinalyze.py:241: comment-block 5 > 4	"""Isolation invariant (spec 00069 D5): by the time this runs, `_poll_once`'s real work --
-cli/liquidations/coinalyze.py:286: comment-block 5 > 4	# A malformed bucket (null l/s, missing t, non-dict entry) raises TypeError/KeyError/
-cli/liquidations/coinalyze.py:310: comment-block 5 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
-cli/liquidations/coinalyze.py:322: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
+cli/liquidations/coinalyze.py:1: comment-block 6 > 4	"""The Coinalyze REST poller (spec 00051 OPS-2) that replaced the Binance forceOrder WS recorder Binance geo-fences from every
+cli/liquidations/coinalyze.py:1: file-prose 25.5 > 20
+cli/liquidations/coinalyze.py:43: comment-block 5 > 4	# Load-bearing (verified live 2026-07-15, stable over 150s): SegmentWriter's dedup keeps the FIRST
+cli/liquidations/coinalyze.py:49: comment-block 8 > 4	# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
+cli/liquidations/coinalyze.py:59: comment-block 11 > 4	# T0046: most of the funding basket's symbols liquidate rarely, so `SegmentWriter`'s event-driven
+cli/liquidations/coinalyze.py:248: comment-block 5 > 4	# A malformed bucket (null l/s, missing t, non-dict entry) raises TypeError/KeyError/
+cli/liquidations/coinalyze.py:281: comment-block 5 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
+cli/liquidations/coinalyze.py:293: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
 cli/ohlc/reach.py:1: comment-block 7 > 4	"""REST reach-round: carry the canonical OHLC basket forward from Kraken's public OHLC endpoint.
 cli/panel/materialize.py:1: comment-block 17 > 4	"""Hour materializer + watermarked sweep for the 1s L2 panel (spec 00052 D3/D4/D5/D6).
 cli/panel/materialize.py:1: file-prose 36.3 > 20
@@ -423,12 +419,6 @@ cli/trades/backfill.py:145: comment-block 10 > 4	# The book sibling of a trades 
 cli/trades/backfill.py:267: comment-block 5 > 4	# No trades final for a settled hour, and a book final that SPANS it: the signature of a
 cli/universe/rules.py:9: comment-block 7 > 4	# effective-spread bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`, so this and the volume floor
 cli/universe/rules.py:55: comment-block 5 > 4	"""Apply the master plan §3 mechanical selection rule to each `cli.snapshot` `PairSnapshot`.
-cli/xcheck/binance.py:1: file-prose 20.1 > 20
-cli/xcheck/binance.py:18: comment-block 6 > 4	"""Map a canonical `"BASE/QUOTE"` symbol to its Binance ticker (e.g. `"BTC/EUR"` -> `"BTCEUR"`).
-cli/xcheck/binance.py:32: comment-block 6 > 4	"""GET Binance's public daily klines for `pair` and return the raw kline rows.
-cli/xcheck/binance.py:53: comment-block 8 > 4	"""Fetch daily klines for `pair` via `fetch_fn` and parse into a canonical `{ts, close}` frame.
-cli/xcheck/binance.py:81: comment-block 7 > 4	"""Cross-check a canonical Kraken daily frame against a Binance daily-closes frame on their `ts` overlap.
-cli/xcheck/binance.py:117: comment-block 9 > 4	"""Cross-check each `symbol`'s Kraken daily series under `kraken_root` against Binance.
 docs/iterations-history-phase6.md:801: changelog-entry 7 > 5	## 2026-09-06 — T0173 resolved: the operator instructions the topology doc was holding, and `fetch_public`'s three refusals
 docs/open-topics/T0018-phase6-build-sequence.md:68: table-row 208 > 200	`00089`
 docs/open-topics/T0018-phase6-build-sequence.md:69: table-row 291 > 200	`00094`
