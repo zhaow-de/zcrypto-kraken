@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -31,15 +32,19 @@ def fetch_ohlc(pair_key: str, interval: int, *, opener=urllib.request.urlopen) -
     """Kraken answers HTTP 200 with failures carried in the body's `error` array, and puts the rows
     under a pair-specific key beside `last`."""
     url = f"{_BASE_URL}?pair={pair_key}&interval={interval}"
+    # TWO blocks, each wrapping only the statements whose failures its own arm names, so no arm can
+    # relabel another's: one enumeration always leaves the next level open, and this closes the class.
+    # The transport arm can be wide because nothing here decodes; the decode arm stays narrow because
+    # `json.loads` is the only statement it covers. `read()` stays inside the `with` so the response closes.
     try:
         with opener(url, timeout=_TIMEOUT_SECONDS) as response:
-            payload = json.load(response)
-    except (urllib.error.URLError, OSError) as exc:
+            raw = response.read()
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as exc:
         raise OHLCError(f"transport error fetching OHLC for {pair_key}@{interval}: {exc}") from exc
+
+    try:
+        payload = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        # Both classes are `ValueError` subclasses but SIBLINGS -- a body whose bytes do not decode
-        # never reaches `JSONDecodeError`. Named rather than `except ValueError`, because this `try`
-        # also wraps `opener(...)`: a wide arm would relabel an opener's own ValueError "invalid JSON".
         raise OHLCError(f"undecodable or invalid JSON from OHLC for {pair_key}@{interval}: {exc}") from exc
 
     # Kraken's contract is a JSON object; anything else valid-but-not-an-object reached `.get` below.

@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import urllib.error
@@ -82,17 +83,70 @@ def _raw_opener(payload: bytes):
 
 @pytest.mark.parametrize("payload", [b"\xff", b'{"error":[],"result":{"X":\xc3'])
 def test_fetch_ohlc_contains_a_body_whose_bytes_do_not_decode(payload):
-    """`UnicodeDecodeError` is a sibling of `JSONDecodeError` under `ValueError`, never a subclass.
-
-    So a body that does not decode is a JSON failure the JSON arm cannot see, and it left this
-    function untyped -- past `cycle.py`'s `except OHLCError` retry and out of the cycle."""
+    """`UnicodeDecodeError` is a sibling of `JSONDecodeError` under `ValueError`, never a subclass,
+    so the decode arm must name it to see a body that does not decode."""
     with pytest.raises(OHLCError) as caught:
         fetch_ohlc("XXBTZEUR", 1440, opener=_raw_opener(payload))
     assert isinstance(caught.value.__cause__, UnicodeDecodeError)
+    # The LABEL, not just the containment: rejoining the two blocks would still raise `OHLCError`
+    # -- the wide transport arm catches `ValueError` -- so only this pins the split.
+    assert "undecodable or invalid JSON" in str(caught.value)
 
 
 @pytest.mark.parametrize("body", [[], "oops", None, 0])
 def test_fetch_ohlc_contains_valid_json_that_is_not_an_object(body):
-    """Kraken's contract is a JSON object; anything else reached `.get` and raised `AttributeError`."""
-    with pytest.raises(OHLCError):
+    """Valid JSON that is not an object is refused BY SHAPE, named as such rather than by whatever
+    `.get` would have raised."""
+    with pytest.raises(OHLCError) as caught:
         fetch_ohlc("XXBTZEUR", 1440, opener=_opener(body))
+    assert "is not a JSON object" in str(caught.value)
+
+
+def _raising_opener(exc: Exception):
+    def _open(url, timeout=None):
+        raise exc
+
+    return _open
+
+
+def _reading_opener(exc: Exception):
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def read(self, *args):
+            raise exc
+
+    def _open(url, timeout=None):
+        return _Resp(b"")
+
+    return _open
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        http.client.IncompleteRead(b"x" * 12, 42),
+        http.client.BadStatusLine("garbage"),
+        http.client.LineTooLong("header line"),
+        ValueError("opener said no"),
+    ],
+)
+def test_fetch_ohlc_contains_a_failing_opener(exc):
+    """The opener seam is transport: `HTTPException` is neither `OSError` nor `ValueError`, so no
+    arm saw it, and a plain `ValueError` from the opener had no arm either."""
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc("XXBTZEUR", 1440, opener=_raising_opener(exc))
+    assert caught.value.__cause__ is exc
+
+
+def test_fetch_ohlc_contains_a_truncated_body():
+    """`IncompleteRead` from `.read()` is the production-reachable one: a body shorter than its
+    `Content-Length`."""
+    exc = http.client.IncompleteRead(b"x" * 12, 42)
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc("XXBTZEUR", 1440, opener=_reading_opener(exc))
+    assert caught.value.__cause__ is exc
