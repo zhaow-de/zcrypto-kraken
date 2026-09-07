@@ -102,8 +102,13 @@ class ExecutionGate:
         self._nautilus_version_reader = nautilus_version_reader
 
     def _present(self, name: str, *, fail_open: bool) -> bool:
-        """opposite directions, both deliberate, because PRESENCE is what arms the first and ABSENCE is what
-        permits the second."""
+        """Presence of one control file. The arm file fails closed by reading ABSENT on any doubt; the kill
+        and restart-hold files fail closed by reading PRESENT on any doubt -- opposite directions, both
+        deliberate, because PRESENCE is what arms the first and ABSENCE is what permits the second. The
+        fail-open pair reads `os.lstat` rather than `Path.exists()`, which swallows every `OSError` and
+        `ValueError` into `False` so that "can't tell" would permit: only `FileNotFoundError` reads as
+        absent, and `ValueError` is caught beside `OSError` because `os.lstat` raises it for an embedded
+        NUL."""
         path = self._dir / name
         if not fail_open:
             try:

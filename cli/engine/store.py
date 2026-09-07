@@ -93,7 +93,9 @@ def _reconcile(
     shortfall_hint: str,
     mismatch_hint: str,
 ) -> tuple[int, int, pl.DataFrame]:
-    """Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy -- a
+    """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally.
+
+    Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy -- a
     safety fix here likely applies there too."""
     overlap_bars, mismatches = seam_overlap(store_frame, rest_frame)
     if overlap_bars < min_overlap:

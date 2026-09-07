@@ -1,7 +1,8 @@
 """The engine's venue instrument map, the committed costmin constant, and the pure sizing and FX terms (spec
 00089, widened by spec 00094).
 
-`INSTRUMENT_IDS` must agree with nautilus-trader 1.230.0's Kraken adapter `normalize_spot_symbol`, which
+`INSTRUMENT_IDS` was probed at nautilus-trader 1.230.0 against its Kraken adapter `normalize_spot_symbol`
+(re-probe when the pin moves), which
 renames the legacy `XBT`/`XDG` codes and STRIPS the venue alias whichever currency is the quote -- so
 `ETH/BTC`'s InstrumentId is `ETH/BTC.KRAKEN`, never an XBT form, though the venue's own wire pair key is
 `XETHXXBT` (`cli.engine.store.PAIR_KEYS["ETH/BTC"]`). The tests pin the dict below, not the adapter's parse,

@@ -193,7 +193,8 @@ def update_plan_intent(
     reasons: tuple[str, ...] = (),
     filled_qty: float = 0.0,
 ) -> None:
-    """Never creates a record -- raises EngineError when the record, the plan entry, or the intent is absent."""
+    """`index` is matched as a FIELD of each intent, never a list position. Never creates a record -- raises
+    EngineError when the record, the plan entry, or the intent is absent."""
     path = exec_record_path(journal_dir, cycle_ts)
     if not path.exists():
         raise EngineError(f"exec record absent: {path}")

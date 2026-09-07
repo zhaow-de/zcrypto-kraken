@@ -9,7 +9,8 @@ Two-layer failure design, deliberate:
 symbol absent from the Cache, the Cache's own instrument disagreeing with the expected `InstrumentId` (a
 venue-truth divergence in its own right, never narrowed silently), or no account cached for the venue. The
 caller (the strategy hook) converts the raise to `None` and the cycle proceeds without venue truth (00089
-D7): absence is loud, never blocking. - A present instrument's Cache-supplied numeric constraint
+D7): absence is loud, never blocking.
+- A present instrument's Cache-supplied numeric constraint
 (`ordermin`/`lot_step`/`tick_size`) that reads back `None` does NOT raise here -- it freezes as `0.0` for
 `runtime_concordance` to flag per leg, so one broken leg degrades to a per-symbol concordance failure
 instead of discarding the whole snapshot.
@@ -21,7 +22,8 @@ pair -- and Kraken's costmin is not one venue constant either, so it is read fro
 left to `tests/test_costmin_drift.py`; `runtime_concordance` deliberately never checks it (a constant
 failing all twelve legs on the first cycle would hold D6's alert red forever, the exact T0135 failure D2
 exists to avoid). Only `instrument` and `account_for_venue` are None-checked; `positions_open` is not,
-because it returns `[]` for a flat leg rather than raising."""
+because it returns `[]` for a flat leg rather than raising -- probed at nautilus-trader 1.230.0;
+re-probe when the pin moves."""
 
 from __future__ import annotations
 

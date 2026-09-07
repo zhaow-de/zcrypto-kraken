@@ -90,8 +90,8 @@ def _ancestor_packages(module_path: Path, repo_root: Path) -> list[Path]:
 def _import_edges(module_path: Path, repo_root: Path) -> list[Path]:
     """Only ABSOLUTE `cli.*` imports are traversed; a relative import, or a name-based dynamic one
     (`importlib`, `__import__`), yields no edge. A PEP 562 `__getattr__` whose body holds a real import
-    statement IS followed -- `cli/engine/__init__.py`'s yields the `cli/engine/node.py` edge
-    `_replay_code_paths` reports as its one over-inclusion -- which is one reason the superset test matters."""
+    statement IS followed -- `cli/engine/__init__.py`'s is one, which is why the
+    closure over-includes and why the superset test matters."""
     try:
         tree = ast.parse(module_path.read_bytes())
     except (OSError, SyntaxError, ValueError) as exc:
