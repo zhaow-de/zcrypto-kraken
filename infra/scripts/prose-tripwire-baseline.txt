@@ -330,13 +330,13 @@ cli/engine/venuestate.py:44: comment-block 5 > 4	"""One symbol's venue-quoted or
 cli/engine/venuestate.py:95: comment-block 5 > 4	"""Raises `EngineError` on a structural read failure -- an `INSTRUMENT_IDS` symbol's instrument absent from
 cli/engine/venuestate.py:133: comment-block 7 > 4	"""Per `INSTRUMENT_IDS` symbol (never `state.instruments`, so a hand-built state missing a
 cli/features/derivatives.py:1: comment-block 19 > 4	"""Derivatives-positioning features over Binance USDT-M perpetuals, mapped to Kraken spot bases by
-cli/features/derivatives.py:1: file-prose 31.3 > 20
+cli/features/derivatives.py:1: file-prose 31 > 20
 cli/features/derivatives.py:37: comment-block 5 > 4	"""As-of forward fill onto a decision grid, using only source rows at or before each grid stamp
-cli/features/derivatives.py:81: comment-block 5 > 4	"""Run length of consecutive same-sign funding prints ending at k, counting the print at k --
-cli/features/derivatives.py:123: comment-block 8 > 4	"""Map the substrate's `0.0` open-interest placeholders to None; pass everything else through.
-cli/features/derivatives.py:200: comment-block 5 > 4	"""Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
-cli/features/derivatives.py:219: comment-block 7 > 4	"""Coverage of one column inside one calendar year; the stamps are None for both when the year
-cli/features/derivatives.py:234: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
+cli/features/derivatives.py:80: comment-block 5 > 4	"""Run length of consecutive same-sign funding prints ending at k, counting the print at k --
+cli/features/derivatives.py:122: comment-block 8 > 4	"""Map the substrate's `0.0` open-interest placeholders to None; pass everything else through.
+cli/features/derivatives.py:199: comment-block 5 > 4	"""Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
+cli/features/derivatives.py:218: comment-block 7 > 4	"""Coverage of one column inside one calendar year; the stamps are None for both when the year
+cli/features/derivatives.py:233: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
 cli/features/volatility.py:1: file-prose 20.8 > 20
 cli/liquidations/coinalyze.py:1: comment-block 6 > 4	"""The Coinalyze REST poller (spec 00051 OPS-2) that replaced the Binance forceOrder WS recorder that Binance geo-fences from every
 cli/liquidations/coinalyze.py:1: file-prose 25.5 > 20
@@ -391,6 +391,7 @@ cli/snapshot/register.py:15: comment-block 5 > 4	"""Assemble a structured, conte
 cli/snapshot/register.py:31: comment-block 8 > 4	# The three ways a selected pair changes identity underneath us -- T0025's trigger, as a check the
 cli/snapshot/register.py:43: comment-block 7 > 4	"""Reasons this snapshot must stop a reference-data sweep, one string each; empty means clean.
 cli/snapshot/register.py:105: comment-block 5 > 4	# The ⏱ cost facts. Rendered as base tier + ladder depth rather than the full ladders: the
+cli/tick/read.py:66: comment-block 5 > 4	"""A bare file, or a `(zip_path, member_name)` pair read from the ZIP without full extraction; rows in the order
 cli/trades/backfill.py:1: comment-block 14 > 4	"""Orchestration for spec 00053 Task 4: heal the canonical trade stream.
 cli/trades/backfill.py:1: file-prose 24.3 > 20
 cli/trades/backfill.py:81: comment-block 5 > 4	# A book final's mere EXISTENCE proves only that at least one book event landed somewhere in the
