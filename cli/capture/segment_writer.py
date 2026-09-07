@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -264,6 +265,17 @@ def _hour_of(hour_dir: Path, hh: str) -> datetime | None:
         return None
 
 
+@dataclass(frozen=True)
+class FinalizeOutcome:
+    """A sweep that finalized nothing looks identical to one that had nothing to do, so `failed` is the
+    only thing separating them (T0175). It is read off one fact -- no final on disk after the attempt
+    -- and never off whether one was there before, because an hour can arrive already final and still
+    end with none: an unreadable final is quarantined, and the rebuild that follows can fail."""
+
+    finalized: int
+    failed: tuple[datetime, ...]
+
+
 class SegmentWriter:
     """Buffers `(pair, kind)` capture events and streams them to hourly zstd-Parquet segments.
 
@@ -408,7 +420,7 @@ class SegmentWriter:
         self._held = {}
         self._held_seen = {}
 
-    def finalize_completed_hours(self, cutoff: datetime) -> int:
+    def finalize_completed_hours(self, cutoff: datetime) -> FinalizeOutcome:
         """INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
         spills entirely -- on an oracle-bearing writer, finalizing an hour with held rows would
         floor-lock the hour and strand its quarantine forever (never merged, never redeemed). The
@@ -417,8 +429,8 @@ class SegmentWriter:
 
         Finalize every hour STRICTLY OLDER than `cutoff` that currently holds a row — the open
         hour (if any) plus any crash-leftover part-hours the event stream itself has not yet swept.
-        Returns the count of hours this call actually finalized (0 is the correct, idempotent
-        answer once there is nothing left to do). Hours `>= cutoff` are NEVER touched.
+        Returns a `FinalizeOutcome`; 0 finalized is the correct, idempotent answer once there is
+        nothing left to do. Hours `>= cutoff` are NEVER touched.
 
         T0046: rotation is event-driven — an hour closes only when the NEXT event for this same
         (pair, kind) crosses its boundary (`_enter_hour`) — which fits a continuously-emitting
@@ -454,6 +466,7 @@ class SegmentWriter:
                 "finalize_completed_hours is not supported on oracle-bearing writers (held spills would be stranded)"
             )
         finalized = 0
+        failed: list[datetime] = []
         newest_hour: datetime | None = None
 
         if self._current_hour is not None and self._current_hour < cutoff:
@@ -462,11 +475,22 @@ class SegmentWriter:
             already_final = final_path.exists()
             self._finalize_hour(hour)
             self._current_hour = None
-            if not already_final and final_path.exists():
-                finalized += 1
-                newest_hour = hour
+            if final_path.exists():
+                if not already_final:
+                    finalized += 1
+                    newest_hour = hour
+            else:
+                failed.append(hour)
 
         root = self._base_dir / self._pair / self._kind
+        # A `<HH>.parquet.merging` with no final is an hour whose merge completed and whose commit did
+        # not: its parts are already unlinked, so the parts walk below cannot see it and no sweep will
+        # re-attempt it. Reported every cycle, never rewritten -- `_recover` is what commits it.
+        for merging in sorted(root.rglob("*.parquet.merging")):
+            hour = _hour_of(merging.parent, merging.name.split(".")[0])
+            if hour is not None and hour < cutoff and not merging.with_suffix("").exists():
+                failed.append(hour)
+
         for hour_dir in sorted({path.parent for path in root.rglob("*.part*.parquet")}):
             for hh in sorted({path.name.split(".part")[0] for path in hour_dir.glob("*.part*.parquet")}):
                 hour = _hour_of(hour_dir, hh)
@@ -475,14 +499,17 @@ class SegmentWriter:
                 final_path = hour_dir / f"{hh}.parquet"
                 already_final = final_path.exists()
                 self._merge_hour(hour_dir, hh)
-                if not already_final and final_path.exists():
-                    finalized += 1
-                    newest_hour = hour if newest_hour is None else max(newest_hour, hour)
+                if final_path.exists():
+                    if not already_final:
+                        finalized += 1
+                        newest_hour = hour if newest_hour is None else max(newest_hour, hour)
+                else:
+                    failed.append(hour)
 
         if newest_hour is not None:
             floor = newest_hour + timedelta(hours=1)
             self._floor = floor if self._floor is None else max(self._floor, floor)
-        return finalized
+        return FinalizeOutcome(finalized, tuple(sorted(set(failed))))  # one hour, one entry: both arms can reach it
 
     def _enter_hour(self, hour: datetime) -> None:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.

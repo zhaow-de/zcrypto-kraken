@@ -9,7 +9,15 @@ import pytest
 
 from cli.capture import segment_writer
 from cli.capture.errors import CaptureError
-from cli.capture.segment_writer import BOOK_SCHEMA, LIQ_AGG_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
+from cli.capture.segment_writer import (
+    BOOK_SCHEMA,
+    LIQ_AGG_SCHEMA,
+    TRADE_SCHEMA,
+    FinalizeOutcome,
+    HourOracle,
+    SegmentWriter,
+    verify_manifest,
+)
 
 
 def _ts(hour: int, minute: int = 0, sec: int = 0) -> datetime:
@@ -1957,7 +1965,7 @@ def test_t0037_an_oracle_less_writer_reopening_a_prior_hour_counts_nothing(tmp_p
     # fabrication. It bites: without `self._oracle is not None` the append below reads 1.
     w = _new_writer(tmp_path, flush_rows=5000)  # oracle-less, as the poller builds them
     w.append(_book_event(10, 0))
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
     assert w._current_hour is None  # the re-entry this gate exists for
 
     w.append(_book_event(11, 30))  # at/above the floor, but behind the pinned 16:00 clock
@@ -1973,7 +1981,7 @@ def test_t0037_an_oracle_less_writer_reopening_a_prior_hour_counts_nothing(tmp_p
 
 def test_finalize_completed_hours_on_a_fresh_writer_is_a_no_op(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
-    assert w.finalize_completed_hours(_ts(11, 0)) == 0
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, ())
 
 
 def test_finalize_completed_hours_flushes_and_finalizes_a_stale_open_hour(tmp_path):
@@ -1981,9 +1989,9 @@ def test_finalize_completed_hours_flushes_and_finalizes_a_stale_open_hour(tmp_pa
     w.append(_book_event(10, 0))
     w.append(_book_event(10, 30))
 
-    finalized = w.finalize_completed_hours(_ts(11, 0))
+    outcome = w.finalize_completed_hours(_ts(11, 0))
 
-    assert finalized == 1
+    assert outcome == FinalizeOutcome(1, ())
     assert w._buffer == []
     assert w._current_hour is None
     path = _segment_path(tmp_path, 10)
@@ -1996,9 +2004,9 @@ def test_finalize_completed_hours_leaves_an_hour_at_or_after_the_cutoff_untouche
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(14, 0))
 
-    finalized = w.finalize_completed_hours(_ts(14, 0))  # the open hour itself -- not STRICTLY older
+    outcome = w.finalize_completed_hours(_ts(14, 0))  # the open hour itself -- not STRICTLY older
 
-    assert finalized == 0
+    assert outcome == FinalizeOutcome(0, ())
     assert w._current_hour == _ts(14, 0)
     assert w._buffer  # still buffered -- untouched
     assert not _segment_path(tmp_path, 14).exists()
@@ -2016,9 +2024,9 @@ def test_finalize_completed_hours_merges_crash_leftover_parts_with_no_open_hour(
     w2 = _new_writer(tmp_path, flush_rows=5)
     assert w2._current_hour is None
 
-    finalized = w2.finalize_completed_hours(_ts(11, 0))
+    outcome = w2.finalize_completed_hours(_ts(11, 0))
 
-    assert finalized == 1
+    assert outcome == FinalizeOutcome(1, ())
     path = _segment_path(tmp_path, 10)
     assert path.exists()
     assert verify_manifest(path) is True
@@ -2031,13 +2039,152 @@ def test_finalize_completed_hours_merges_crash_leftover_parts_with_no_open_hour(
     assert w2._current_hour is None
 
 
+def test_finalize_completed_hours_reports_an_hour_whose_rebuild_failed_under_an_existing_final(tmp_path, monkeypatch):
+    """The failure `already_final` used to hide: an unreadable final is quarantined, the rebuild fails,
+    and the hour ends with no final at all -- so `failed` is read off the attempt, never off before."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    for i in range(4):
+        w.append(_hour10_event(i, i))
+    hour_dir = _segment_path(tmp_path, 10).parent
+    assert len(list(hour_dir.glob("10.part*.parquet"))) == 4, "the parts must exist, or the rebuild is not attempted"
+    _segment_path(tmp_path, 10).write_bytes(b"a torn final: readable as a file, not as parquet")
+    w._current_hour = None  # the crash-leftover branch, where `already_final` is True
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert not _segment_path(tmp_path, 10).exists(), "the fixture must leave the hour with no final, or it proves nothing"
+    assert list(hour_dir.glob("10.parquet.corrupt*")), "the unreadable final is quarantined, never deleted"
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+
+
+def test_finalize_completed_hours_reports_a_crash_leftover_hour_it_could_not_write(tmp_path, monkeypatch):
+    """The branch that runs after a restart: parts on disk, no open hour, and the merge cannot write."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    for i in range(4):
+        w.append(_hour10_event(i, i))
+    w._current_hour = None  # what a restart leaves: parts swept by nobody, no open hour
+    hour_dir = _segment_path(tmp_path, 10).parent
+    assert len(list(hour_dir.glob("10.part*.parquet"))) == 4, "the parts must exist, or nothing is attempted"
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert not _segment_path(tmp_path, 10).exists(), "the fixture must leave no final, or it proves nothing"
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+
+
+def test_finalize_completed_hours_reports_one_entry_per_lost_hour(tmp_path, monkeypatch):
+    """An open hour with parts already on disk is reachable by BOTH arms -- the open-hour flush and the
+    walk over surviving parts -- so a caller naming the lost hours must not name this one twice."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    for i in range(3):
+        w.append(_hour10_event(i, i))
+    w.append(_hour10_event(3, 3))  # the hour is still open AND has parts on disk
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert not _segment_path(tmp_path, 10).exists(), "the fixture must leave no final, or it proves nothing"
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+
+
+def test_finalize_completed_hours_reports_an_open_hour_it_could_not_write(tmp_path, monkeypatch):
+    """The open-hour arm on its own: nothing on disk yet, so only that arm can reach the hour."""
+    w = _new_writer(tmp_path, flush_rows=1000)  # nothing flushes, so no parts exist
+    w.append(_hour10_event(0, 0))
+    assert not list(_segment_path(tmp_path, 10).parent.glob("10.part*.parquet")), "no parts, or the walk reaches it too"
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert not _segment_path(tmp_path, 10).exists()
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+
+
+def test_finalize_completed_hours_reports_a_stranded_merging_with_no_final(tmp_path):
+    """The hour no sweep re-attempts: its merge completed, its commit did not, and its parts are gone --
+    so the parts walk cannot see it, and only this report keeps the dead-man from going green over it."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    w.append(_hour10_event(0, 0))
+    hour_dir = _segment_path(tmp_path, 10).parent
+    merging = hour_dir / "10.parquet.merging"
+    merging.write_bytes(b"a complete merge whose commit never landed")
+    for part in hour_dir.glob("10.part*.parquet"):
+        part.unlink()  # what a finalize does once the merge is written
+    w._current_hour = None
+    assert not list(hour_dir.glob("10.part*.parquet")), "no parts, or the walk would see the hour anyway"
+
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+    assert merging.exists(), "reported, never rewritten -- `_recover` is what commits it"
+    assert not _segment_path(tmp_path, 10).exists()
+
+
+def test_finalize_completed_hours_is_silent_on_a_merging_beside_its_final(tmp_path):
+    """A `.merging` left beside a committed final is not a lost hour: the hour is published, and the
+    leftover is what the next `_recover` clears. Reporting it would withhold the ping over nothing."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    w.append(_hour10_event(0, 0))
+    w.finalize_completed_hours(_ts(11, 0))
+    final = _segment_path(tmp_path, 10)
+    assert final.exists(), "the hour must be published, or this is the stranded case instead"
+    (final.parent / "10.parquet.merging").write_bytes(b"a leftover beside a committed hour")
+
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, ())
+
+
+def test_finalize_completed_hours_leaves_a_stranded_merging_at_or_after_the_cutoff_alone(tmp_path):
+    """An hour inside the settle lag is not yet anyone's to judge -- the same rule the parts walk keeps."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    w.append(_hour10_event(0, 0))
+    hour_dir = _segment_path(tmp_path, 10).parent
+    (hour_dir / "10.parquet.merging").write_bytes(b"a complete merge whose commit never landed")
+    for part in hour_dir.glob("10.part*.parquet"):
+        part.unlink()
+    w._current_hour = None
+
+    assert w.finalize_completed_hours(_ts(10, 0)) == FinalizeOutcome(0, ())  # cutoff AT the hour: untouched
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, (_ts(10, 0),))  # past it: reported
+
+
+def test_finalize_completed_hours_is_silent_on_a_merging_a_restart_has_committed(tmp_path):
+    """The true positive beside it: `_recover` commits the stranded merge, and the hour stops being lost."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    w.append(_hour10_event(0, 0))
+    hour_dir = _segment_path(tmp_path, 10).parent
+    parts = sorted(hour_dir.glob("10.part*.parquet"))
+    (hour_dir / "10.parquet.merging").write_bytes(parts[0].read_bytes())
+    for part in parts:
+        part.unlink()
+
+    _new_writer(tmp_path, flush_rows=1)  # a restart: `_recover` commits the merging file
+
+    assert _segment_path(tmp_path, 10).exists(), "the restart must commit it, or this proves nothing"
+    w2 = _new_writer(tmp_path, flush_rows=1)
+    assert w2.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, ())
+
+
 def test_finalize_completed_hours_is_idempotent(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
 
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
-    assert w.finalize_completed_hours(_ts(11, 0)) == 0
-    assert w.finalize_completed_hours(_ts(12, 0)) == 0  # a later cutoff still finds nothing left
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, ())
+    assert w.finalize_completed_hours(_ts(12, 0)) == FinalizeOutcome(0, ())  # a later cutoff still finds nothing left
 
 
 def test_finalize_completed_hours_makes_a_later_replay_a_dropped_late_event(tmp_path):
@@ -2047,7 +2194,7 @@ def test_finalize_completed_hours_makes_a_later_replay_a_dropped_late_event(tmp_
     # ambiguity T0036 exists to prevent.
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
 
     w.append(_book_event(10, 30, checksum=999))  # a late replay for the now-finalized hour
 
@@ -2059,7 +2206,7 @@ def test_finalize_completed_hours_makes_a_later_replay_a_dropped_late_event(tmp_
 def test_finalize_completed_hours_then_close_is_safe(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
 
     w.close()  # must not raise, and must not touch the already-finalized hour
 
@@ -2170,7 +2317,7 @@ def test_a_late_event_behind_a_committed_hour_is_dropped_at_info(tmp_path, caplo
     # `zcrypto_capture_reconnects_total` -- never a count of these lines -- measures how often it happens.
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
     with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):
         w.append(_book_event(10, 30, checksum=999))
     assert _drop_levels(caplog, "dropping late event") == [logging.INFO]

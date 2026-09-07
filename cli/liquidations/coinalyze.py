@@ -256,17 +256,33 @@ def _poll_once(
     # T0046: close any hour old enough that nothing recoverable can still arrive for it (see
     # _FINALIZE_LAG_SECONDS) -- the sparse-symbol writers that a genuine event never rotates.
     finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
+    swept_ok = True
     for coin, writer in writers.items():
         try:
-            writer.finalize_completed_hours(finalize_cutoff)
+            outcome = writer.finalize_completed_hours(finalize_cutoff)
         except CaptureError:
             raise  # the oracle guard: a fail-fast this must not turn into an unbounded retry
         except Exception:
-            # Per writer, so one bad writer does not cost the other nine their sweep every cycle. This
-            # enforces _poll_once's own contract instead of borrowing `_merge_hour`'s "Never raises".
+            # A raise is unexpected here -- the sweep reports rather than raises -- so it ends the cycle
+            # rather than borrowing `_merge_hour`'s "Never raises"; the REPORTED failure below is the
+            # one that lets every remaining writer finish its sweep first.
             logger.exception("Coinalyze finalize sweep failed for %s -- retrying next cycle", coin)
             _record_outcome(metrics, ok=False)
             return False
+        if outcome.failed:
+            # T0175: the write under the sweep swallows its own errors, so this is the only signal that
+            # an hour was lost. Every other writer still gets its sweep -- what a failure costs is the
+            # dead-man ping, which the caller withholds on a False, not this cycle's remaining work.
+            logger.error(
+                "Coinalyze finalize left %d hour(s) unwritten for %s: %s -- withholding the dead-man ping",
+                len(outcome.failed),
+                coin,
+                ", ".join(f"{hour:%Y-%m-%dT%H}" for hour in outcome.failed),
+            )
+            swept_ok = False
+    if not swept_ok:
+        _record_outcome(metrics, ok=False)
+        return False
     _record_outcome(metrics, ok=True)
     return True
 
