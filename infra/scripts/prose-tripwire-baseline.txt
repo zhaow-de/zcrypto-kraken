@@ -521,8 +521,8 @@ infra/ansible/roles/nas/tasks/main.yml:196: comment-block 8 > 4	# The apply: fla
 infra/ansible/roles/nas/tasks/main.yml:217: comment-block 5 > 4	# Restarts Alloy so it re-reads the config.alloy THIS converge deployed: the config dir is
 infra/ansible/roles/ops/defaults/main.yml:37: comment-block 5 > 4	# Fleet users and groups (spec 00057): the machine-to-machine data user runs the data containers,
 infra/ansible/roles/ops/defaults/main.yml:57: comment-block 5 > 4	# The nightly verify-replay checkpoint (spec 00078 D9): the per-hour raw facts that let the sweep
-infra/ansible/roles/ops/defaults/main.yml:102: comment-block 8 > 4	# OPS-5 (spec 00054 D2): the overlay writer's knobs. DETECT-ONLY is this role's default, and the
-infra/ansible/roles/ops/defaults/main.yml:113: comment-block 5 > 4	# The --mint flip (spec 00050 Task 12's last step). DEFAULT FALSE: minting writes healed hours into
+infra/ansible/roles/ops/defaults/main.yml:107: comment-block 8 > 4	# OPS-5 (spec 00054 D2): the overlay writer's knobs. DETECT-ONLY is this role's default, and the
+infra/ansible/roles/ops/defaults/main.yml:118: comment-block 5 > 4	# The --mint flip (spec 00050 Task 12's last step). DEFAULT FALSE: minting writes healed hours into
 infra/ansible/roles/ops/tasks/main.yml:1: comment-block 5 > 4	# The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
 infra/ansible/roles/ops/tasks/main.yml:23: comment-block 9 > 4	# The zcrypto CLI's own Loki push creds for the ops-node LIQUIDATIONS container (spec 00068 D5/T6)
 infra/ansible/roles/ops/tasks/main.yml:57: comment-block 19 > 4	# --- T0058: the NAS custody export, mounted READ-ONLY over NFS. Replaces the retired hourly
@@ -537,16 +537,16 @@ infra/ansible/roles/ops/tasks/main.yml:370: comment-block 5 > 4	# spec 00082 D1 
 infra/ansible/roles/ops/tasks/main.yml:384: comment-block 15 > 4	# The overlay tree arrived here under the NOW-REMOVED NAS pull (spec 00054 D2) via `rsync -a`, which
 infra/ansible/roles/ops/tasks/main.yml:407: comment-block 7 > 4	# The overlay-writer runner (OPS-5, spec 00054 D2; re-plumbed by T0058): archive-pull.sh.j2
 infra/ansible/roles/ops/tasks/main.yml:444: comment-block 5 > 4	# --- T0083: the Grafana-availability pinger gating the zcrypto-grafana-watchdog dead-man --------
-infra/ansible/roles/ops/tasks/main.yml:489: comment-block 6 > 4	# OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
-infra/ansible/roles/ops/tasks/main.yml:522: comment-block 9 > 4	# Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
-infra/ansible/roles/ops/tasks/main.yml:538: comment-block 12 > 4	# A NEWLY ADDED timer's unit file was never really written under --check, so systemd cannot
-infra/ansible/roles/ops/tasks/main.yml:563: comment-block 5 > 4	# The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
-infra/ansible/roles/ops/tasks/main.yml:573: comment-block 5 > 4	# T0110: the Alloy block's digest gate skips the config copy on any converge that omits the digest,
-infra/ansible/roles/ops/tasks/main.yml:609: comment-block 5 > 4	# Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
-infra/ansible/roles/ops/tasks/main.yml:622: comment-block 11 > 4	# Alloy mounts /:/host/root:ro for free-disk-space metrics, so running it as a user whose home
-infra/ansible/roles/ops/tasks/main.yml:651: comment-block 7 > 4	# A NAMED group_add entry resolves against the CONTAINER's own /etc/group, not the host's, and
-infra/ansible/roles/ops/tasks/main.yml:687: comment-block 6 > 4	# In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
-infra/ansible/roles/ops/tasks/main.yml:710: comment-block 6 > 4	# Renders straight from the vault (group_vars/observed/vault.yml). no_log + diff: false:
+infra/ansible/roles/ops/tasks/main.yml:533: comment-block 6 > 4	# OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
+infra/ansible/roles/ops/tasks/main.yml:566: comment-block 9 > 4	# Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
+infra/ansible/roles/ops/tasks/main.yml:582: comment-block 12 > 4	# A NEWLY ADDED timer's unit file was never really written under --check, so systemd cannot
+infra/ansible/roles/ops/tasks/main.yml:607: comment-block 5 > 4	# The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
+infra/ansible/roles/ops/tasks/main.yml:617: comment-block 5 > 4	# T0110: the Alloy block's digest gate skips the config copy on any converge that omits the digest,
+infra/ansible/roles/ops/tasks/main.yml:653: comment-block 5 > 4	# Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
+infra/ansible/roles/ops/tasks/main.yml:666: comment-block 11 > 4	# Alloy mounts /:/host/root:ro for free-disk-space metrics, so running it as a user whose home
+infra/ansible/roles/ops/tasks/main.yml:695: comment-block 7 > 4	# A NAMED group_add entry resolves against the CONTAINER's own /etc/group, not the host's, and
+infra/ansible/roles/ops/tasks/main.yml:731: comment-block 6 > 4	# In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
+infra/ansible/roles/ops/tasks/main.yml:754: comment-block 6 > 4	# Renders straight from the vault (group_vars/observed/vault.yml). no_log + diff: false:
 infra/ansible/scripts/converge.sh:53: comment-block 6 > 4	# The real pass, RECORDED into a git-tracked log: fleet-pins.md is re-trued from the line this
 infra/ansible/site.yml:131: comment-block 7 > 4	# The window condition is mirrored here character-for-character. A folded scalar keeps both the
 infra/external-systems.md:126: section 8264 > 2048	### Initial setup<a name="initial-setup"></a>
@@ -735,7 +735,7 @@ infra/runbooks/observability.md:348: table-row 256 > 200	`ops`
 infra/runbooks/observability.md:354: section 2593 > 2048	### What to do
 infra/runbooks/observability.md:375: section 3679 > 2048	### What you are seeing
 infra/runbooks/observability.md:388: section 4816 > 2048	### What it means
-infra/runbooks/observability.md:408: section 5945 > 2048	### What to do
+infra/runbooks/observability.md:408: section 6797 > 2048	### What to do
 infra/runbooks/ops-node.md:23: section 2083 > 2048	### What it means
 infra/runbooks/ops-node.md:35: section 3027 > 2048	### What to do
 infra/runbooks/ops-node.md:79: section 2197 > 2048	### What to do
