@@ -370,7 +370,8 @@ def read_baseline(path: str) -> dict[tuple[str, str, str], list[float]]:
 
 
 def _absorbable(rows: dict[tuple[str, str, str], list[float]], o: Offender) -> list[tuple[float, tuple[str, str, str]]]:
-    """The rows a rewritten block could have come from: its own path and kind, and no smaller than it."""
+    """The rows a rewritten block could have come from: its own path and kind, no smaller than it, and
+    smallest first — its first caller spends `[0]`, so the tightest row is the one consumed."""
     return sorted((m, key) for key, pool in rows.items() if key[0] == o.path and key[1] == o.kind for m in pool if m >= o.measured)
 
 

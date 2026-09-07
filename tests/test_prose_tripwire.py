@@ -777,8 +777,9 @@ class TestTheBaselineRatchet:
         assert out[-1] == _summary(rewritten=1)
 
     def test_the_smallest_candidate_is_still_the_one_consumed(self, tree: Path, capsys) -> None:
-        """Order decides the GATE here: give the 6-block the 22 and the 22-block has nothing left to take."""
-        (tree / "kept.py").write_text(_py(["# kept"] * 6 + ["x = 0", ""] + ["# sibling"] * 22, 40 * self.N))
+        """Order decides the GATE: give the 6-block the 22 and the 22-block has nothing left to take. The rows
+        are RECORDED largest first, so the pool is not already sorted and dropping the sort cannot hide."""
+        (tree / "kept.py").write_text(_py(["# kept"] * 22 + ["x = 0", ""] + ["# sibling"] * 6, 40 * self.N))
         assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
         (tree / "kept.py").write_text(_py(["# A"] * 6 + ["x = 0", ""] + ["# B"] * 22, 40 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
