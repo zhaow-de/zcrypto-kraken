@@ -137,7 +137,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Resolved<a name="resolved-1"></a>
 
-- [T0177 — `_check_hour` accepts an exact hour at any UTC offset](archive/T0177-mint-check-hour-accepts-any-offset.md) — **resolved 2026-09-07**: two guards, at `_check_hour` and at `settled_hours` where a non-UTC offset would spread to ten write sites, so no hour bearing one can reach a file name or a ledger key. Both latent by construction and proven by deleting each arm.
+- [T0177 — `_check_hour` accepts an exact hour at any UTC offset](archive/T0177-mint-check-hour-accepts-any-offset.md) — **resolved 2026-09-07**: two guards, at `_check_hour` and at `settled_hours` where a non-UTC offset would spread to eleven write sites, so no such hour can reach a file name or a ledger key ON THE ARCHIVE MINTING PATH — other wall-clock formatters are named in the topic and unguarded. Both latent by construction and proven by deleting each arm.
 
 - [T0040 — alert on docker-socket-proxy denials and non-routine calls](archive/T0040-docker-socket-proxy-denial-alert.md) — closed unbuilt: the proxy it would have watched was removed the same day, so the denial stream it depended on no longer exists; the security residual that replaces it is [T0042](archive/T0042-alloy-holds-root-equivalent-docker-access.md).
 
