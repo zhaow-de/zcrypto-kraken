@@ -616,6 +616,10 @@ def test_parse_ts_refuses_a_stamp_it_cannot_represent_in_utc():
     Untyped it would leave `_parse_ts` and end the consumer task; the refusal buys diagnosis, not
     availability — capture stops either way, but as the documented `CaptureError`."""
     for raw in ("0001-01-01T00:00:00+05:30", "9999-12-31T23:59:59-08:00"):
-        with pytest.raises(CaptureError):
+        with pytest.raises(CaptureError) as caught:
             _parse_ts(raw)
+        assert isinstance(caught.value.__cause__, OverflowError)  # the CONVERSION arm
+    with pytest.raises(CaptureError) as caught:
+        _parse_ts("not-a-timestamp")
+    assert isinstance(caught.value.__cause__, ValueError)  # the PARSE arm -- so the check above discriminates
     assert _parse_ts("9999-12-31T23:59:59Z").year == 9999  # the same edge in UTC is representable and kept
