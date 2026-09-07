@@ -2086,7 +2086,7 @@ def test_finalize_completed_hours_reports_one_entry_per_lost_hour(tmp_path, monk
     w = _new_writer(tmp_path, flush_rows=1)
     for i in range(3):
         w.append(_hour10_event(i, i))
-    w.append(_hour10_event(3, 3))  # buffered: the hour is still open AND has parts on disk
+    w.append(_hour10_event(3, 3))  # the hour is still open AND has parts on disk
 
     def no_space(tmp, dest):
         raise OSError(28, "No space left on device")
@@ -2132,6 +2132,33 @@ def test_finalize_completed_hours_reports_a_stranded_merging_with_no_final(tmp_p
     assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
     assert merging.exists(), "reported, never rewritten -- `_recover` is what commits it"
     assert not _segment_path(tmp_path, 10).exists()
+
+
+def test_finalize_completed_hours_is_silent_on_a_merging_beside_its_final(tmp_path):
+    """A `.merging` left beside a committed final is not a lost hour: the hour is published, and the
+    leftover is what the next `_recover` clears. Reporting it would withhold the ping over nothing."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    w.append(_hour10_event(0, 0))
+    w.finalize_completed_hours(_ts(11, 0))
+    final = _segment_path(tmp_path, 10)
+    assert final.exists(), "the hour must be published, or this is the stranded case instead"
+    (final.parent / "10.parquet.merging").write_bytes(b"a leftover beside a committed hour")
+
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, ())
+
+
+def test_finalize_completed_hours_leaves_a_stranded_merging_at_or_after_the_cutoff_alone(tmp_path):
+    """An hour inside the settle lag is not yet anyone's to judge -- the same rule the parts walk keeps."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    w.append(_hour10_event(0, 0))
+    hour_dir = _segment_path(tmp_path, 10).parent
+    (hour_dir / "10.parquet.merging").write_bytes(b"a complete merge whose commit never landed")
+    for part in hour_dir.glob("10.part*.parquet"):
+        part.unlink()
+    w._current_hour = None
+
+    assert w.finalize_completed_hours(_ts(10, 0)) == FinalizeOutcome(0, ())  # cutoff AT the hour: untouched
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, (_ts(10, 0),))  # past it: reported
 
 
 def test_finalize_completed_hours_is_silent_on_a_merging_a_restart_has_committed(tmp_path):

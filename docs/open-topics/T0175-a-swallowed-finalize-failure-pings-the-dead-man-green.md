@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'the `zcrypto-liquidations` description still names two withholding conditions where the code now has three — read it back through the read-only key, the way `tests/fixtures/healthchecks_descriptions.json` is fetched'
+ripe_when: 'the `zcrypto-liquidations` description still names two withholding conditions where the code now has three — read it back the way `infra/scripts/ops_daily.py` does, `GET https://healthchecks.io/api/v3/checks/` with `X-Api-Key` from `grafana_auth.vault_var("healthchecks_readonly_api_key")`'
 ---
 
 # T0175 — a swallowed finalize failure pings the dead-man green
