@@ -41,17 +41,11 @@ TABLE_ROW_CHARS = 200
 SECTION_BYTES = 2048
 CHANGELOG_BULLETS = 5
 
+# Every bar `--help` advertises, derived so an eighth cannot be added without appearing there.
+THRESHOLDS = tuple(name for name, value in list(globals().items()) if name.isupper() and type(value) is int)
+
 KINDS = ("comment-block", "comment-mass", "file-prose", "table-row", "section", "changelog-entry")
-# Every bar `--help` advertises: the names an operator reads a violation against.
-THRESHOLDS = (
-    "COMMENT_BLOCK_LINES",
-    "COMMENT_BLOCK_CHARS",
-    "FILE_PROSE_PERCENT",
-    "FILE_PROSE_FLOOR",
-    "TABLE_ROW_CHARS",
-    "SECTION_BYTES",
-    "CHANGELOG_BULLETS",
-)
+
 CODE_ROOTS = ("cli", "tests", "infra")
 CODE_SUFFIXES = (".py", ".sh", ".yml", ".yaml")
 DOC_ROOTS = ("docs/reference", "docs/universe", "infra/runbooks")

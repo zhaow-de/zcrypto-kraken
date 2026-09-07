@@ -82,7 +82,10 @@ repos:
         always_run: true
 
   # A RATCHET, not a bar: the committed baseline holds today's offenders as conscious keeps and this
-  # fails only on one it does not record, or on a recorded keep that grew. The baseline is generated
+  # fails on an offender the file's recorded rows of that kind cannot cover — each current offender
+  # must consume a distinct recorded row at least as large, so prose can move or shrink inside a file
+  # and kind but never grow in total. A block whose first line changed re-keys itself, so it is
+  # matched against those rows rather than reported new. The baseline is generated
   # (`--write-baseline`) and regenerated at every rebase — never hand-edited.
   - repo: local
     hooks:

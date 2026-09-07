@@ -616,7 +616,9 @@ class TestTheCommandLine:
         text = capsys.readouterr().out
         for name in tw.THRESHOLDS:
             assert f"{name}={getattr(tw, name)}" in text
-        assert "COMMENT_BLOCK_CHARS" in tw.THRESHOLDS
+        # THRESHOLDS derives itself, so iterating it cannot notice an omission: pin the set instead.
+        assert set(tw.THRESHOLDS) == {n for n, v in vars(tw).items() if n.isupper() and type(v) is int}
+        assert "long changelog entries." in text
 
 
 def _commit(*paths: str) -> None:
@@ -736,10 +738,19 @@ class TestTheBaselineRatchet:
         (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * (self.N - 1), 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         out = capsys.readouterr().out.splitlines()
-        assert out[0].startswith("rewritten: kept.py:1: comment-block")
+        assert out[0] == f"rewritten: kept.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES} recorded {self.N}"
         assert out[-1] == _summary(rewritten=1)
 
-    def test_a_rewritten_keep_that_grew_still_fails(self, tree: Path, capsys) -> None:
+    def test_a_re_anchored_block_is_covered_by_a_larger_retired_sibling(self, tree: Path, capsys) -> None:
+        """Per (path, kind), not per block: a grown block passes when a larger sibling retires, and what
+        still cannot happen is a file's prose growing in total, since each offender consumes a distinct row."""
+        (tree / "kept.py").write_text(_py(["# alpha"] * 6 + ["x = 0", ""] + ["# beta"] * 22, 40 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        (tree / "kept.py").write_text(_py(["# alpha rewritten"] + ["# alpha"] * 9, 40 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines()[-1] == _summary(rewritten=1, retired=1)
+
+    def test_a_rewritten_keep_that_grew_with_nothing_larger_to_absorb_it_fails(self, tree: Path, capsys) -> None:
         (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * self.N, 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         assert capsys.readouterr().out.splitlines()[-1] == _summary(new=1, retired=1)
@@ -752,6 +763,9 @@ class TestTheBaselineRatchet:
         assert capsys.readouterr().out.splitlines()[-1] == _summary(new=1, rewritten=1)
 
     def test_a_retired_row_of_another_kind_does_not_absorb_it(self, tree: Path, capsys) -> None:
+        """The recorded row is LARGER than the offender's measure, so only the kind guard can refuse it."""
+        (tree / "kept.py").write_text(_py(["# kept"] * 40, 6 * 40))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
         (tree / "kept.py").write_text("# a\n# b\n" + "".join(f"x{i} = {i}\n" for i in range(tw.FILE_PROSE_FLOOR)))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         assert capsys.readouterr().out.splitlines()[-1] == _summary(new=1, retired=1)
