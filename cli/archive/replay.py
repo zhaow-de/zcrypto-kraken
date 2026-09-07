@@ -46,8 +46,8 @@ class ReplayResult:
 
 def regroup_messages(frame: pl.DataFrame) -> list[dict]:
     """Rebuild the WS-shaped messages from the exploded per-level rows — the inverse of the capture
-    writer's fan-out (`cli/capture/command.py::_handle_book_message`): consecutive rows sharing
-    `(ts, symbol, type, checksum)` are one message, its levels rebuilt onto `bids`/`asks` by `side` in row order."""
+    writer's fan-out (`cli/capture/command.py::_handle_book_message`): rows group CONSECUTIVELY,
+    never globally, and levels rebuild onto `bids`/`asks` by `side` in row order."""
     messages: list[dict] = []
     key: tuple | None = None
     for row in frame.iter_rows(named=True):
@@ -70,7 +70,7 @@ def regroup_messages(frame: pl.DataFrame) -> list[dict]:
 
 
 def _hour_from_path(path: Path) -> datetime | None:
-    """The hour a canonical final's `<...>/<YYYY>/<MM>/<DD>/<HH>.parquet` path encodes."""
+    """The hour this canonical final covers, or `None` when its date components do not parse."""
     parts = path.parts
     try:
         return datetime(int(parts[-4]), int(parts[-3]), int(parts[-2]), int(path.name[:2]), tzinfo=UTC)
@@ -277,7 +277,7 @@ def _audit_facts(row: CheckpointRow) -> tuple:
 
 
 def _hour_label(pair: str, hour: datetime) -> str:
-    """`PAIR YYYY-MM-DD HH:00` — how a mismatched hour is named to the operator."""
+    """How a mismatched hour is named to the operator."""
     return f"{pair} {hour:%Y-%m-%d %H:00}"
 
 
@@ -294,7 +294,7 @@ def verify_replay_incremental(
 ) -> tuple[list[ReplayResult], Census]:
     """Continuity-replay the canonical archive incrementally — `verify_replay`'s `(pair, hour)`-ordered verdicts plus a
     `Census`. Unseen hours replay unconditionally, or the sweep falls behind ingest; stale ones drain oldest-first until
-    `drain_budget_s` and the rest is `pending`; `audit_k` cache-served hours are re-audited. Raises `EvictionRefusedError`
+    `drain_budget_s` and the rest is `pending`; up to `audit_k` cache-served hours are re-audited. Raises `EvictionRefusedError`
     or, when the state dir cannot be written, `CheckpointWriteError` instead of a summary — the run reads broken, not green."""
     started = _monotonic()
     segments = list(canonical_segments(primary_root, reconciled_root, kind="book"))
