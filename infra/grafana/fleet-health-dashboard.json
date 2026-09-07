@@ -2283,7 +2283,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 95
       },
@@ -2298,9 +2298,29 @@
           "legendFormat": "HTTP status"
         }
       ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
       "fieldConfig": {
         "defaults": {
-          "unit": "none"
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       }
@@ -2308,16 +2328,16 @@
     {
       "id": 802,
       "type": "timeseries",
-      "title": "Keep-alive — call duration and age of the last success",
-      "description": "Three seconds-valued series from that same call. Duration: a normal answer is well under a second, and a call taking one to two minutes is a wake-up already in progress — a success, not a fault, which is why the call's timeout is 120 s. Age of last run and age of last success: if both climb past an hour together, the timer on the ops host has stopped and no call is being made at all; if only the success age climbs, the timer is running and the calls are failing, and the status panel beside this one says with what code.",
+      "title": "Keep-alive — how long the call took",
+      "description": "A normal answer is well under a second. One to two minutes is a wake-up already in progress — a success, not a fault, which is why the call's timeout is 120 s. It has its own panel because a duration this small is invisible on any axis shared with the stamp ages beside it.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 95
       },
       "targets": [
@@ -2329,14 +2349,58 @@
           "expr": "zcrypto_grafana_keepalive_duration_seconds",
           "refId": "A",
           "legendFormat": "call duration"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 803,
+      "type": "timeseries",
+      "title": "Keep-alive — age of the last run and the last success",
+      "description": "If both climb past an hour together, the timer on the ops host has stopped and no call is being made at all; if only the success age climbs, the timer is running and the calls are failing, and the status panel says with what code. The success age is ABSENT until the first 200 rather than reading as the whole unix epoch, because the runner publishes 0 for a stamp it has never set.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 95
+      },
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
           "expr": "time() - zcrypto_grafana_keepalive_last_run_timestamp_seconds",
-          "refId": "B",
+          "refId": "A",
           "legendFormat": "age of last run"
         },
         {
@@ -2344,14 +2408,34 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "time() - zcrypto_grafana_keepalive_last_success_timestamp_seconds",
-          "refId": "C",
+          "expr": "time() - (zcrypto_grafana_keepalive_last_success_timestamp_seconds > 0)",
+          "refId": "B",
           "legendFormat": "age of last success"
         }
       ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       }
