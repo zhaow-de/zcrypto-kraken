@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'the next change to `cli/capture/segment_writer.py::finalize_completed_hours` or to `cli/liquidations/coinalyze.py::_poll_once` — `git log --oneline develop -- cli/capture/segment_writer.py cli/liquidations/coinalyze.py` shows a commit newer than the one this topic cites'
+ripe_when: 'the next change to `cli/capture/segment_writer.py::finalize_completed_hours` or to `cli/liquidations/coinalyze.py::_poll_once` — `git log --oneline develop -- cli/capture/segment_writer.py cli/liquidations/coinalyze.py` shows a commit newer than `docs(liquidations): the module''s narration cut to its decisions, six function docstrings to their contracts`'
 ---
 
 # T0175 — a swallowed finalize failure pings the dead-man green
