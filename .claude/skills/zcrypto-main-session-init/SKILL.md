@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # zcrypto-main-session-init
 
-Run this at the start of every `zcrypto-marco` session (the main session) and after every resume. The protocol itself is `docs/reference/multi-agent-protocol.md` — read it first; this skill is only the startup sequence and the tick's text.
+Run this at the start of every `zcrypto-marco` session (the coordinator session) and after every resume. The protocol itself is `docs/reference/multi-agent-protocol.md` — read it first; this skill is only the startup sequence and the tick's text.
 
 ## Startup
 
