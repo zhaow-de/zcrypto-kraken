@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: 'the `zcrypto-liquidations` description still names two withholding conditions where the code now has three — read it back the way `infra/scripts/ops_daily.py` does, `GET https://healthchecks.io/api/v3/checks/` with `X-Api-Key` from `grafana_auth.vault_var("healthchecks_readonly_api_key")`'
+status: resolved
 ---
 
 # T0175 — a swallowed finalize failure pings the dead-man green
@@ -33,6 +32,6 @@ The code half is resolved by the commits below.
 - Guards, each proven by restoring the defect under `infra/scripts/mutate-probe.sh`: the red test (`test_a_finalize_that_wrote_nothing_withholds_the_dead_man_ping`), its true positive, the open-hour and crash-leftover report arms, and the caller's withhold.
 - `infra/runbooks/observability.md`'s dead-man map names the third withholding condition — `docs(obs): the dead-man map's liquidations row gains the third condition that now withholds its ping`.
 
-## Suggested next steps
+## Resolution
 
-- **(human)** Rewrite the `zcrypto-liquidations` check's description in healthchecks.io to name the third withholding condition (`zcrypto-daily-ops` step 6's mechanics: the admin key from the capture-host vault, the description field only, read back after), after the fix lands.
+The code half landed on this branch (`## Done so far`). The `zcrypto-liquidations` check's description in healthchecks.io was rewritten by the owner on 2026-09-07 to name the third withholding condition — *or when a finalize sweep left an hour unwritten* — with the Runbook link kept and nothing else on the check touched; read back through the read-only key the way `infra/scripts/ops_daily.py` fetches it, byte-equal to the intended text, grace 600 and status up unchanged; the fixture `tests/fixtures/healthchecks_descriptions.json` carries the same text. Every sub-item is done.
