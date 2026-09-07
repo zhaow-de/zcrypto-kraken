@@ -63,6 +63,16 @@ def test_a_now_at_a_non_zero_utc_offset_is_refused():
             settled_hours(now=H.astimezone(UTC).replace(tzinfo=timezone(offset)), window_hours=48)
 
 
+def test_a_naive_now_is_refused_as_naive_and_not_as_a_bogus_offset():
+    """The naive arm changes the MESSAGE, never the verdict: `naive.utcoffset()` is `None` and
+    `None != timedelta(0)`, so the offset arm below already refuses it -- with a message that slices
+    an offset off a string that has none, rendering "at UTC offset :00:00"."""
+    with pytest.raises(CaptureError, match="naive") as excinfo:
+        settled_hours(now=datetime(2026, 7, 16, 9), window_hours=48)
+
+    assert ":00:00" not in str(excinfo.value), "the old arm's rendering, on a value with no offset at all"
+
+
 def test_a_utc_now_still_yields_its_window_unchanged():
     """The true positive beside the refusal: the guard rejects the offset, never the caller's window."""
     hours = settled_hours(now=H + timedelta(hours=SETTLE_HOURS), window_hours=48)
