@@ -11,10 +11,8 @@ INTERVAL_SECONDS = {"1440": 86400, "240": 14400, "60": 3600, "15": 900}
 
 
 def detect_gaps(frame: pl.DataFrame, interval_secs: int) -> list[dict]:
-    """Find gaps in `frame`'s `ts` column exceeding `interval_secs`; `frame` is assumed sorted (`to_frame` guarantees it).
-
-    Each gap is `{after_ts, before_ts, missing}`, `missing` counting the grid candles absent between the two timestamps.
-    """
+    """Find gaps in `frame`'s `ts` column exceeding `interval_secs`; `frame` is assumed sorted (`to_frame`
+    guarantees it). `missing` counts the grid candles absent BETWEEN the two timestamps, both exclusive."""
     diffs = frame.select(
         pl.col("ts").shift(1).alias("after_ts"),
         pl.col("ts").alias("before_ts"),
@@ -32,7 +30,6 @@ def detect_gaps(frame: pl.DataFrame, interval_secs: int) -> list[dict]:
 
 
 def wick_outliers(frame: pl.DataFrame, *, rel_range: float = 0.20) -> list[dict]:
-    """Return candles whose intraday range `(high - low) / close` exceeds `rel_range`."""
     flagged = frame.select(
         "ts",
         "high",
@@ -45,10 +42,8 @@ def wick_outliers(frame: pl.DataFrame, *, rel_range: float = 0.20) -> list[dict]
 
 
 def price_discontinuities(frame: pl.DataFrame, *, max_ratio: float = 3.0) -> list[dict]:
-    """Return bar-over-bar close moves beyond `max_ratio`x or below `1 / max_ratio` — candidate corporate actions or data errors.
-
-    Genuine crypto moves trip it too, so classify each `{ts, prev_close, close, ratio}` hit against known events.
-    """
+    """Return bar-over-bar close moves beyond `max_ratio`x or below `1 / max_ratio` -- candidate corporate actions
+    or data errors. Genuine crypto moves trip it too, so classify each hit against known events."""
     if frame.height < 2:
         return []
     flagged = (

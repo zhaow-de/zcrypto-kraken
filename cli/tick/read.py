@@ -63,10 +63,9 @@ def _read_bytes(source: str | Path | tuple[str | Path, str]) -> tuple[bytes, str
 
 
 def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame:
-    """Read a Kraken trades CSV — a bare file, or a `(zip_path, member_name)` pair read out of the ZIP without full extraction —
-    into a `ts` (`Datetime("us", "UTC")`)/`price`/`volume`/`side` frame, rows in the order read, neither de-duplicated nor
-    re-sorted — `cli.tick.aggregate` sorts before bucketing. The layout is auto-detected (`_detect_schema`) and `side` is null
-    throughout the complete one. Raises `TickError` on an empty, malformed or unparseable input."""
+    """Read a Kraken trades CSV -- a bare file, or a `(zip_path, member_name)` pair read out of the ZIP without full
+    extraction -- rows in the order read, neither de-duplicated nor re-sorted: `cli.tick.aggregate` sorts before
+    bucketing. The layout is auto-detected (`_detect_schema`) and `side` is null throughout the complete one."""
     data, label = _read_bytes(source)
     has_header = _sniff_has_header(data)
     schema = _detect_schema(data, has_header)

@@ -4,9 +4,8 @@ from cli.features._validate import _validate_prices
 
 
 def drawdown_state(prices: list[float]) -> list[float]:
-    """Current drawdown from the running (expanding) peak: dd[k] = prices[k]/max(prices[0..k]) - 1,
-    in [-1, 0] (0.0 at a new high, negative below the peak). Length len(prices)-1; dd[k] uses only
-    prices[<= k] via the running max through k."""
+    """Current drawdown from the running (expanding) peak, in [-1, 0] (0.0 at a new high, negative
+    below the peak). Length len(prices)-1; uses only prices[<= k]."""
     _validate_prices(prices)
     out: list[float] = []
     peak = prices[0]

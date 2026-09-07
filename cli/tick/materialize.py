@@ -34,8 +34,7 @@ def segment_index(primary_root: Path, reconciled_root: Path) -> SegmentIndex:
 
 
 def build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame:
-    """The healed tape for `pair` on UTC `day`, aggregated to 15m bars -- whatever hours the day HAS, since completeness is
-    `is_heal_complete`'s measured trade_id contiguity (D3/D4) and never hour-file presence."""
+    """The healed tape for `pair` on UTC `day`, aggregated to 15m bars -- whatever hours the day HAS."""
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + timedelta(days=1)
     hours = index.get(pair, {})
@@ -82,7 +81,7 @@ RESCAN_DAYS = 3
 
 @dataclass(frozen=True)
 class MaterializeResult:
-    """One sweep's verdict; a day that raises is isolated into `errors` -- one bad day must not cost the others."""
+    """One sweep's verdict."""
 
     days_written: int
     days_skipped: int
@@ -96,10 +95,9 @@ class MaterializeResult:
 
 
 def is_heal_complete(index: SegmentIndex, pair: str, day: date) -> bool:
-    """Has the healer finished with this day? MEASURED, never inferred from the clock (D3): `cli.trades.gaps.detect` treats
-    the first and last observed ids as endpoints rather than gaps, so the day is read with the NEAREST PRESENT segment each
-    side -- never merely the adjacent hour, which a quiet hour leaves absent, silently publishing a truncated day; no later
-    segment is the live edge and is refused, no earlier is the archive's genesis day and is accepted."""
+    """Has the healer finished with this day? MEASURED, never inferred from the clock (D3), and read with the NEAREST
+    PRESENT segment each side -- never merely the adjacent hour, which a quiet hour leaves absent, silently publishing a
+    truncated day."""
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + timedelta(days=1)
     hours = index.get(pair, {})
@@ -157,7 +155,8 @@ def _archive_calendar(index: SegmentIndex) -> dict[str, list[date]]:
 
 
 def _watermark(out_root: Path, pair: str) -> date | None:
-    """The newest published day for `pair`, None on a first run, a refusal when that path is not a date -- `publish_day` writes here alone."""
+    """The newest published day for `pair`, None on a first run, a refusal when that path is not a date
+    -- `publish_day` writes here alone."""
     base, quote = pair.split("/")
     finals = sorted((out_root / base / quote).rglob("*.parquet"))
     if not finals:

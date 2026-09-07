@@ -28,10 +28,9 @@ PAIR_KEYS: dict[str, str] = {
 
 
 def fetch_ohlc(pair_key: str, interval: int, *, opener=urllib.request.urlopen) -> list[list]:
-    """GET Kraken's public OHLC endpoint for `pair_key`/`interval` and return the candle rows; every refusal raises `OHLCError`.
-
-    Kraken answers HTTP 200 with failures carried in the body's `error` array, and puts the rows under a
-    pair-specific key beside `last`."""
+    """A transport, JSON, or venue-payload failure raises `OHLCError`: Kraken answers HTTP 200 with
+    failures carried in the body's `error` array, and puts the rows under a pair-specific key
+    beside `last`."""
     url = f"{_BASE_URL}?pair={pair_key}&interval={interval}"
     try:
         with opener(url, timeout=_TIMEOUT_SECONDS) as response:

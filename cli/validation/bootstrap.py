@@ -52,7 +52,7 @@ def bootstrap_ci(
     alpha: float = 0.05,
     seed: int,
 ) -> dict:
-    """Percentile CI of `statistic` under the stationary block bootstrap (see docs/specs/00009). Never NaN."""
+    """Percentile CI of `statistic` under the stationary block bootstrap; never NaN."""
     if not isinstance(seed, int):
         raise ValidationError(f"seed must be an int, got {seed!r}")
     if not series:
