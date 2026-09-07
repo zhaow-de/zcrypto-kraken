@@ -293,9 +293,10 @@ A **warning** Grafana alert, one instance per capture machine. That machine spil
 
 1. **Find them**: `sudo find /var/lib/zcrypto-capture -name '*.held*.parquet'` on the machine the page names. The path carries the pair, kind and hour.
 2. **Correlate with a restart** — `sudo docker inspect --format '{{.RestartCount}}' zcrypto-capture` and `--format '{{.State.StartedAt}}'`. A stop within five minutes of an hour boundary explains the event completely and needs nothing further.
-3. **No restart? Look for a sparse hour on one pair** — a stream that printed once and had no second live stream in its hour.
-4. **Do not delete the files and do not fold them in by hand.** Redemption is automatic and hand-merging puts uncorroborated rows into a certified tree, which is the exact thing quarantining them prevents.
-5. **Spills that persist across many hours are the design working**, not a stuck queue: that hour genuinely never had a second witness, and keeping its rows out of a certified final is the safe side of an unanswerable question.
+3. **No new `.held` file anywhere?** A restart whose log carries `unreadable quarantine count`, or one that followed a pair leaving `capture_pairs`, re-sums a durable per-writer count that is now lower — which reads as a step with nothing spilled. Nothing to do; it clears at the next spill or the next scrape cycle.
+4. **No restart? Look for a sparse hour on one pair** — a stream that printed once and had no second live stream in its hour.
+5. **Do not delete the files and do not fold them in by hand.** Redemption is automatic and hand-merging puts uncorroborated rows into a certified tree, which is the exact thing quarantining them prevents.
+6. **Spills that persist across many hours are the design working**, not a stuck queue: that hour genuinely never had a second witness, and keeping its rows out of a certified final is the safe side of an unanswerable question.
 
 ### Retire when
 
