@@ -80,7 +80,7 @@ def build_manifest(
     subsets: dict[str, Sequence[str]] | None = None,
     provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The conformant document. `provenance` never reaches any digest -- see the module docstring."""
+    """The conformant document. `provenance` is free-form, so it never reaches any digest."""
     if not series:
         raise ManifestError("refusing a manifest with an empty series map")
     for key in series:

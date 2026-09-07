@@ -92,7 +92,7 @@ def _refresh_oi(ctx: RebuildContext, out_root: Path) -> None:
 
 
 def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
-    """Mint a refdata snapshot via `build_snapshot`, matching the live set's filename convention
+    """Mint a refdata snapshot matching the live set's filename convention
     (`kraken-refdata-<UTC stamp>.json`) and payload shape, so the sibling is drop-in (spec 00056 D3)."""
     fetched_at = datetime.now(UTC)
     snapshot = build_snapshot(fetch_public("AssetPairs"), fetch_public("Assets"), list(CANDIDATE_SYMBOLS), fetched_at.isoformat())
@@ -266,7 +266,7 @@ REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
 
 def rebuild_sets(sets: Sequence[str], ctx: RebuildContext) -> list[Path]:
     """Mint `data_root/<name>-<stamp>` for each named set, run its builder with that as `out_root`, and
-    return the minted dirs; DataSyncError on an unknown name or an existing sibling. NEVER writes into
+    return the minted dirs; DataSyncError on an unknown name or an existing sibling, and from the builder it runs. NEVER writes into
     the live set dir -- the sibling is the whole contract (spec 00056 D1c/D3)."""
     minted = []
     for name in sets:

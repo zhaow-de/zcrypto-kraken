@@ -2,4 +2,4 @@ from __future__ import annotations
 
 
 class DataSyncError(Exception):
-    """A hot-cluster sync step failed (rsync error, manifest mismatch, missing set)."""
+    """A `cli.data` step failed: sync (rsync error, manifest mismatch, missing set), rebuild, or a malformed attestation."""
