@@ -483,6 +483,14 @@ class SegmentWriter:
                 failed.append(hour)
 
         root = self._base_dir / self._pair / self._kind
+        # A `<HH>.parquet.merging` with no final is an hour whose merge completed and whose commit did
+        # not: its parts are already unlinked, so the parts walk below cannot see it and no sweep will
+        # re-attempt it. Reported every cycle, never rewritten -- `_recover` is what commits it.
+        for merging in sorted(root.rglob("*.parquet.merging")):
+            hour = _hour_of(merging.parent, merging.name.split(".")[0])
+            if hour is not None and hour < cutoff and not merging.with_suffix("").exists():
+                failed.append(hour)
+
         for hour_dir in sorted({path.parent for path in root.rglob("*.part*.parquet")}):
             for hh in sorted({path.name.split(".part")[0] for path in hour_dir.glob("*.part*.parquet")}):
                 hour = _hour_of(hour_dir, hh)

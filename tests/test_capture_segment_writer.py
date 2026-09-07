@@ -2114,6 +2114,43 @@ def test_finalize_completed_hours_reports_an_open_hour_it_could_not_write(tmp_pa
     assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
 
 
+def test_finalize_completed_hours_reports_a_stranded_merging_with_no_final(tmp_path):
+    """The hour no sweep re-attempts: its merge completed, its commit did not, and its parts are gone --
+    so the parts walk cannot see it, and only this report keeps the dead-man from going green over it."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    w.append(_hour10_event(0, 0))
+    hour_dir = _segment_path(tmp_path, 10).parent
+    merging = hour_dir / "10.parquet.merging"
+    merging.write_bytes(b"a complete merge whose commit never landed")
+    for part in hour_dir.glob("10.part*.parquet"):
+        part.unlink()  # what a finalize does once the merge is written
+    w._current_hour = None
+    assert not list(hour_dir.glob("10.part*.parquet")), "no parts, or the walk would see the hour anyway"
+
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+    assert merging.exists(), "reported, never rewritten -- `_recover` is what commits it"
+    assert not _segment_path(tmp_path, 10).exists()
+
+
+def test_finalize_completed_hours_is_silent_on_a_merging_a_restart_has_committed(tmp_path):
+    """The true positive beside it: `_recover` commits the stranded merge, and the hour stops being lost."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    w.append(_hour10_event(0, 0))
+    hour_dir = _segment_path(tmp_path, 10).parent
+    parts = sorted(hour_dir.glob("10.part*.parquet"))
+    (hour_dir / "10.parquet.merging").write_bytes(parts[0].read_bytes())
+    for part in parts:
+        part.unlink()
+
+    _new_writer(tmp_path, flush_rows=1)  # a restart: `_recover` commits the merging file
+
+    assert _segment_path(tmp_path, 10).exists(), "the restart must commit it, or this proves nothing"
+    w2 = _new_writer(tmp_path, flush_rows=1)
+    assert w2.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, ())
+
+
 def test_finalize_completed_hours_is_idempotent(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
