@@ -14,7 +14,7 @@ Reading rules:
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (verified resident at the re-pin) |
 | --- | --- | --- | --- | --- |
 | capture | zcrypto | `ac6172b9ffb2` — revision `4925e060`: the `00109` past-dated predicate and the `cli/engine` corrections | 2026-09-04 17:13:25 | `6ece9ceb1c18` (verified resident at the re-pin) |
-| capture | zcrypto-red | `ac6172b9ffb2` — revision `4925e060`, the same payload as the primary row | 2026-09-04 09:27:12 | `6ece9ceb1c18` (verified resident at the re-pin) |
+| capture | zcrypto-red | `06998998e876` — revision `c7067af3`: T0161's persisted quarantine count; primary held for 19:00Z | 2026-09-07 15:55:10 | `ac6172b9ffb2` (verified resident at the re-pin) |
 | engine | zcrypto | `ac6172b9ffb2` — revision `4925e060`, the capture build's `cli/engine` corrections and metric HELP text | 2026-09-04 17:14:08 | `6ece9ceb1c18` (verified resident at the re-pin) |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` (v1.18.0) — one Alloy on all four hosts, each with its own memory cap and `GOMEMLIMIT` | 2026-07-27 | `4f6ddc56ffdc` (v1.17.1) |
 | ops (timers + liquidations) | zcrypto-ops | `6ece9ceb1c18` — revision `8f4ac521`: the reconcile ledger-scan gauge | 2026-09-01 14:26:42 | `08f6abb379a7` (verified resident at the re-pin) |
@@ -37,7 +37,8 @@ Reading rules:
 
 ## Full digests — current pins and their operands only; everything older is in this file's git log
 
-- `ac6172b9ffb2` = `sha256:ac6172b9ffb2c1693fa4b55a2498b1ec93ecbb6d13eb4109c5d81a6e7a0e69dd` — **capture PRIMARY, capture SECONDARY and ENGINE current**, revision `4925e060`; its `-compat` twin `sha256:64262906e4bb84a15218d84a9434cad0dd526464f501dee089d93f6edfa80083` is not pinned here.
+- `ac6172b9ffb2` = `sha256:ac6172b9ffb2c1693fa4b55a2498b1ec93ecbb6d13eb4109c5d81a6e7a0e69dd` — **capture PRIMARY and ENGINE current, and the capture SECONDARY's rollback operand**, revision `4925e060`; its `-compat` twin `sha256:64262906e4bb84a15218d84a9434cad0dd526464f501dee089d93f6edfa80083` is not pinned here.
+- `06998998e876` = `sha256:06998998e8760edecb3b98dccafcd5f28b0f257b7c1f2a881cecebd7d32a2b1d` — revision `c7067af3`, carrying T0161 and T0175: **capture SECONDARY current**.
 - `6ece9ceb1c18` = `sha256:6ece9ceb1c181888daf403329d567041ac3481ce7926d03eb32d137d30a7e912` — the AVX build of `8f4ac521`: **ops current, and the capture pair's and the engine's rollback operand**.
 - `ee5ba1d92b46` = `sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470` — the `-compat` build of `8f4ac521`, **NAS current**; its committed source is `nas_capture_image` (`infra/ansible/host_vars/nas/vars.yml`), which this entry must agree with.
 - `08f6abb379a7` = `sha256:08f6abb379a7f16215456a97009d5ca0a5f8e2cc88725407e2f0135b422f9eec` — revision `eb6a503a`, the AVX build carrying `ws_idle_timeout_ms=0` (spec `00101`), **ops' rollback operand only**.
