@@ -36,8 +36,15 @@ def fetch_ohlc(pair_key: str, interval: int, *, opener=urllib.request.urlopen) -
             payload = json.load(response)
     except (urllib.error.URLError, OSError) as exc:
         raise OHLCError(f"transport error fetching OHLC for {pair_key}@{interval}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise OHLCError(f"invalid JSON from OHLC for {pair_key}@{interval}: {exc}") from exc
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # Both classes are `ValueError` subclasses but SIBLINGS -- a body whose bytes do not decode
+        # never reaches `JSONDecodeError`. Named rather than `except ValueError`, because this `try`
+        # also wraps `opener(...)`: a wide arm would relabel an opener's own ValueError "invalid JSON".
+        raise OHLCError(f"undecodable or invalid JSON from OHLC for {pair_key}@{interval}: {exc}") from exc
+
+    # Kraken's contract is a JSON object; anything else valid-but-not-an-object reached `.get` below.
+    if not isinstance(payload, dict):
+        raise OHLCError(f"OHLC response for {pair_key}@{interval} is not a JSON object: {type(payload).__name__}")
 
     errors = payload.get("error") or []
     if errors:

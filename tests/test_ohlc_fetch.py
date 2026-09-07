@@ -71,3 +71,28 @@ def test_the_btc_quoted_legs_carry_the_venues_xbt_spelling():
 
     assert PAIR_KEYS["ETH/BTC"] == "XETHXXBT"
     assert PAIR_KEYS["SOL/BTC"] == "SOLXBT"
+
+
+def _raw_opener(payload: bytes):
+    def _open(url, timeout=None):
+        return io.BytesIO(payload)
+
+    return _open
+
+
+@pytest.mark.parametrize("payload", [b"\xff", b'{"error":[],"result":{"X":\xc3'])
+def test_fetch_ohlc_contains_a_body_whose_bytes_do_not_decode(payload):
+    """`UnicodeDecodeError` is a sibling of `JSONDecodeError` under `ValueError`, never a subclass.
+
+    So a body that does not decode is a JSON failure the JSON arm cannot see, and it left this
+    function untyped -- past `cycle.py`'s `except OHLCError` retry and out of the cycle."""
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc("XXBTZEUR", 1440, opener=_raw_opener(payload))
+    assert isinstance(caught.value.__cause__, UnicodeDecodeError)
+
+
+@pytest.mark.parametrize("body", [[], "oops", None, 0])
+def test_fetch_ohlc_contains_valid_json_that_is_not_an_object(body):
+    """Kraken's contract is a JSON object; anything else reached `.get` and raised `AttributeError`."""
+    with pytest.raises(OHLCError):
+        fetch_ohlc("XXBTZEUR", 1440, opener=_opener(body))
