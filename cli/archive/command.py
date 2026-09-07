@@ -119,7 +119,7 @@ class HashScope(str, Enum):
 def _write_pull_textfile(path: Path, *, channel: str, result: VerifyResult, verify_seconds: float) -> None:
     """This run's verify cost as textfile-collector gauges, one FILE per channel (spec 00102 D4): five
     pulls share the collector directory on the NAS, and a shared file would carry whichever ran last.
-    tmp + os.replace, the gate export's idiom, so a scrape never reads a partial file. `files_walked` is
+    The gate export's idiom, so a scrape never reads a partial file. `files_walked` is
     `checked` -- the denominator that makes `files_hashed` readable, and the series that grows."""
     label = f'{{channel="{channel}"}}'
     lines = [
@@ -453,8 +453,7 @@ def _write_textfile(
     ledger_scan_seconds: float,
 ) -> None:
     """Publish `reconcile.prom` atomically: a textfile is scraped in place, so a half-written one is
-    scraped as garbage. Temp in the SAME directory (so the rename is a same-filesystem `os.replace`),
-    then rename over the destination -- a scrape sees the old file or the new one, never half of one.
+    scraped as garbage -- a scrape sees the old file or the new one, never half of one.
     """
     lines: list[str] = []
 

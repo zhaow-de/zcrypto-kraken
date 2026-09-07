@@ -36,8 +36,7 @@ class Gap:
       * flag **True** — the boundary IS a primary wire message. The primary block owns every row at
         that `ts` (all rows of one Kraken message share it), so the secondary side must be **strict**
         there (`>` / `<`): admitting it would tear one book update in half.
-      * flag **False** — the boundary is the hour boundary (head/tail gap) or the window's own edge
-        (wholly-absent primary). **Nobody** owns it, so the secondary side must be **inclusive**
+      * flag **False** — the boundary is not a primary wire message. **Nobody** owns it, so the secondary side must be **inclusive**
         there (`>=` / `<=`): excluding it silently drops real rows — every level-row of the message
         that sits exactly on that edge.
 
@@ -77,8 +76,8 @@ def _message_ts(df: pl.DataFrame) -> np.ndarray:
     assertion should never fire — which is exactly what makes it worth having.
 
     The check runs on the RAW row order, before dedup: an exact-duplicate stamp reappearing after a
-    strictly newer one (raw `[0, 5, 0]`) is out of order, but dropping equal neighbours would collapse
-    it to `[0, 5]` first — which looks monotone. Checking the deduped list can't see that.
+    strictly newer one (raw `[0, 5, 0]`) is out of order, but deduping by VALUE would collapse it to
+    `[0, 5]` first — which looks monotone. Checking the deduped list can't see that.
 
     Dropping equal NEIGHBOURS is the dedup, and it is exactly `unique(maintain_order=True)` only
     because the sequence has just been proven non-decreasing.
@@ -317,7 +316,7 @@ def measure_residual(gaps: list[Gap], spliced: pl.DataFrame, *, min_gap_seconds:
     Every spliced message counts as fill here, including a **snapshot** — unlike `secondary_covers`,
     which refuses to let one witness a gap at all. The asymmetry is deliberate and bounded: a snapshot
     IS book state at that instant, so the second it lands is genuinely not missing, and each distinct
-    mark can credit at most `min_gap_seconds` of the surrounding window. Admitting the window remains
+    the N+1 windows N marks bound each credit at most `min_gap_seconds`. Admitting the window remains
     the strict question; measuring what the window still lacks is the lenient one.
     """
     if not gaps:
@@ -386,8 +385,7 @@ def splice_book(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap])
     the whole hour. Rows are concatenated in source order and NEVER sorted: L2 updates carry absolute
     quantities, so reordering within a `ts` changes the book.
 
-    Output is BLOCK-ordered, not necessarily time-ordered (a row that leaked in from an adjacent hour
-    lands in a trailing primary block rather than being dropped) — a consumer must never "fix" that by
+    Output is BLOCK-ordered, not necessarily time-ordered — a consumer must never "fix" that by
     sorting, for the same absolute-quantity reason.
 
     The secondary block deliberately keeps its **snapshot** rows. A snapshot is a full book state, so

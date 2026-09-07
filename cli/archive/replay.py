@@ -46,8 +46,8 @@ class ReplayResult:
 
 def regroup_messages(frame: pl.DataFrame) -> list[dict]:
     """Rebuild the WS-shaped messages from the exploded per-level rows — the inverse of the capture
-    writer's fan-out (`cli/capture/command.py::_handle_book_message`): consecutive rows sharing
-    `(ts, symbol, type, checksum)` are one message, its levels rebuilt onto `bids`/`asks` by `side` in row order."""
+    writer's fan-out (`cli/capture/command.py::_handle_book_message`), levels rebuilt onto
+    `bids`/`asks` by `side` in row order."""
     messages: list[dict] = []
     key: tuple | None = None
     for row in frame.iter_rows(named=True):
@@ -70,7 +70,7 @@ def regroup_messages(frame: pl.DataFrame) -> list[dict]:
 
 
 def _hour_from_path(path: Path) -> datetime | None:
-    """The hour a canonical final's `<...>/<YYYY>/<MM>/<DD>/<HH>.parquet` path encodes."""
+    """The hour this canonical final covers, or `None` if the path is not one of ours."""
     parts = path.parts
     try:
         return datetime(int(parts[-4]), int(parts[-3]), int(parts[-2]), int(path.name[:2]), tzinfo=UTC)
@@ -277,7 +277,7 @@ def _audit_facts(row: CheckpointRow) -> tuple:
 
 
 def _hour_label(pair: str, hour: datetime) -> str:
-    """`PAIR YYYY-MM-DD HH:00` — how a mismatched hour is named to the operator."""
+    """How a mismatched hour is named to the operator."""
     return f"{pair} {hour:%Y-%m-%d %H:00}"
 
 

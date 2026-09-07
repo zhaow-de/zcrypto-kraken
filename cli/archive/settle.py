@@ -55,12 +55,12 @@ def settled_hours(*, now: datetime, window_hours: int) -> list[datetime]:
 
 
 def is_late(hour: datetime, *, now: datetime) -> bool:
-    """Past the late deadline (see `LATE_MINT_HOURS`)."""
+    """At or past the late deadline (see `LATE_MINT_HOURS`)."""
     return now - hour >= timedelta(hours=LATE_MINT_HOURS)
 
 
 def hour_path(root: Path, pair: str, kind: str, hour: datetime) -> Path:
-    """`<root>/<BASE>/<QUOTE>/<kind>/<YYYY>/<MM>/<DD>/<HH>.parquet` — the pair spans two levels."""
+    """This hour's final under `root` — the pair spans two directory levels."""
     base, quote = pair.split("/")
     return root / base / quote / kind / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}" / f"{hour:%H}.parquet"
 
