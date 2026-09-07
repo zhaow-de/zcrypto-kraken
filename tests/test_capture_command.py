@@ -550,7 +550,7 @@ def test_capture_refuses_to_start_beside_another_writer(tmp_path, monkeypatch):
 # --- the venue's timestamp is normalised to UTC at the parse boundary -------------------------------
 
 
-def _offset_book_event(stamp: str) -> dict:
+def _book_event_at(stamp: str) -> dict:
     return {
         "ts": _parse_ts(stamp),
         "symbol": "BTC/EUR",
@@ -583,7 +583,7 @@ def test_an_offset_stamped_event_is_written_under_the_utc_hour(tmp_path):
     `-08:00` puts the instant in the NEXT day, so a wall-clock answer misfiles by directory as well
     as by name -- and both spellings are one instant, so only the tree separates them."""
     writer = SegmentWriter(tmp_path, "BTC/EUR", "book", BOOK_SCHEMA)
-    writer.append(_offset_book_event("2026-07-08T17:30:00-08:00"))
+    writer.append(_book_event_at("2026-07-08T17:30:00-08:00"))
     writer.close()
     assert _parquets_under(tmp_path) == ["BTC/EUR/book/2026/07/09/01.part0000.parquet"]
 
@@ -595,7 +595,7 @@ def test_a_z_stamped_event_is_unchanged_in_instant_tz_and_destination(tmp_path):
     assert ts.utcoffset() == timedelta(0)
 
     writer = SegmentWriter(tmp_path, "BTC/EUR", "book", BOOK_SCHEMA)
-    writer.append(_offset_book_event("2026-07-08T17:30:00Z"))
+    writer.append(_book_event_at("2026-07-08T17:30:00Z"))
     writer.close()
     assert _parquets_under(tmp_path) == ["BTC/EUR/book/2026/07/08/17.part0000.parquet"]
 
@@ -608,3 +608,14 @@ def test_the_hour_oracle_confirms_the_utc_hour_of_an_offset_stamp():
     oracle = HourOracle()
     oracle.observe(("BTC/EUR", "book"), _parse_ts("2026-07-08T17:45:00+05:30"))
     assert oracle.confirmed_hour() == datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
+
+
+def test_parse_ts_refuses_a_stamp_it_cannot_represent_in_utc():
+    """`astimezone` raises OverflowError within its own offset of the datetime domain edges.
+
+    Untyped it would leave `_parse_ts` and end the consumer task; the refusal buys diagnosis, not
+    availability — capture stops either way, but as the documented `CaptureError`."""
+    for raw in ("0001-01-01T00:00:00+05:30", "9999-12-31T23:59:59-08:00"):
+        with pytest.raises(CaptureError):
+            _parse_ts(raw)
+    assert _parse_ts("9999-12-31T23:59:59Z").year == 9999  # the same edge in UTC is representable and kept
