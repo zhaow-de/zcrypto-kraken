@@ -353,8 +353,8 @@ class SegmentWriter:
         self._recover()
 
     def append(self, event: dict) -> None:
-        """Append one event dict (keys matching `schema`); the row may be dropped (implausible or late `ts`) or
-        held pending oracle confirmation."""
+        """Append one event dict (keys matching `schema`); the row may be dropped — an implausible or late
+        `ts`, or a replay already seen — or held pending oracle confirmation."""
         ts = event["ts"]
         if self._implausible(ts):
             if ts != self._last_drop_ts:  # one bad message is one bad ts, however many rows it carries
@@ -435,9 +435,9 @@ class SegmentWriter:
         An open hour finalized here is left `None`, so the next event re-derives its own hour exactly like a
         fresh writer's first one. That skips `_open_hour`, which is what ordinarily re-anchors the late-
         event floor, so this method re-anchors `self._floor` itself for every hour it actually finalizes (a
-        merge it declines — the AMBIGUOUS parts-beside-a-final case — does not count). Without that, a late
-        replay could silently reopen an hour finalized here, and its re-rotation would read as that same
-        ambiguous, human-only state."""
+        merge it declines — e.g. the AMBIGUOUS parts-beside-a-final case — does not count). Without that, a
+        late replay could silently reopen an hour finalized here, and its re-rotation would read as that
+        same ambiguous, human-only state."""
         if self._oracle is not None:
             raise CaptureError(
                 "finalize_completed_hours is not supported on oracle-bearing writers (held spills would be stranded)"
@@ -1010,7 +1010,8 @@ class SegmentWriter:
 
 
 def verify_manifest(path: Path) -> bool:
-    """Raises `CaptureError` when the `<path>.sha256` sidecar is missing or empty."""
+    """True iff `path`'s bytes hash to the `<path>.sha256` sidecar; a missing or empty sidecar raises
+    `CaptureError`."""
     manifest_path = path.with_name(path.name + ".sha256")
     recorded = manifest_path.read_text().split() if manifest_path.exists() else []
     if not recorded:

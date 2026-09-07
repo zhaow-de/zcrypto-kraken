@@ -100,6 +100,7 @@ class DesyncRecovery:
         self._pairs.pop(pair, None)
 
     def note_attempt(self, pair: str, *, at: datetime) -> None:
+        """A retry was just issued. Advances the backoff schedule."""
         state = self._pairs.get(pair)
         if state is None:
             return

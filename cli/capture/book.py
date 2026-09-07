@@ -24,8 +24,8 @@ def _to_decimal(value: Decimal | str | int | float) -> Decimal:
 
 
 def _format_level(value: Decimal) -> str:
-    """Render one price/qty as Kraken's checksum recipe requires -- the digits come from the value's exponent,
-    so `Decimal("0.001")` and `Decimal("0.00100000")` differ here."""
+    """Render one price/qty as Kraken's checksum recipe requires -- the digits are the value's coefficient, so
+    `Decimal("0.001")` and `Decimal("0.00100000")` differ here."""
     digits = f"{value:f}".replace(".", "").replace("-", "").lstrip("0")
     return digits or "0"
 
