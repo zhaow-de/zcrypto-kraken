@@ -2258,6 +2258,103 @@
           "sort": "none"
         }
       }
+    },
+    {
+      "id": 800,
+      "type": "row",
+      "title": "Grafana Cloud keep-alive",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 94
+      }
+    },
+    {
+      "id": 801,
+      "type": "timeseries",
+      "title": "Keep-alive — HTTP status of the hourly call",
+      "description": "The value IS the HTTP status of the hourly authenticated call this stack makes to itself from the ops host. 200 is healthy. 503 is the instance hibernating: nothing is lost, ingest never stopped, and opening any dashboard wakes it within a minute or two. 0 means nothing answered at all, which is an outage rather than a sleep — work infra/runbooks/observability.md's grafana-cloud-dark section. Anything else (401, 403) means the call's token no longer authenticates, so the call has stopped counting as activity even while it keeps being made.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 95
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_grafana_keepalive_status",
+          "refId": "A",
+          "legendFormat": "HTTP status"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 802,
+      "type": "timeseries",
+      "title": "Keep-alive — call duration and age of the last success",
+      "description": "Three seconds-valued series from that same call. Duration: a normal answer is well under a second, and a call taking one to two minutes is a wake-up already in progress — a success, not a fault, which is why the call's timeout is 120 s. Age of last run and age of last success: if both climb past an hour together, the timer on the ops host has stopped and no call is being made at all; if only the success age climbs, the timer is running and the calls are failing, and the status panel beside this one says with what code.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 95
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_grafana_keepalive_duration_seconds",
+          "refId": "A",
+          "legendFormat": "call duration"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_grafana_keepalive_last_run_timestamp_seconds",
+          "refId": "B",
+          "legendFormat": "age of last run"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_grafana_keepalive_last_success_timestamp_seconds",
+          "refId": "C",
+          "legendFormat": "age of last success"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
     }
   ],
   "refresh": "1m",
