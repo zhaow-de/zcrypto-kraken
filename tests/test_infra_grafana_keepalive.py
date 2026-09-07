@@ -53,8 +53,8 @@ def test_a_success_is_recorded_with_its_duration_and_both_stamps(tmp_path):
 
 
 def test_the_token_is_delivered_on_stdin_and_never_in_argv(tmp_path):
-    """/proc/<pid>/cmdline is world-readable, so a token passed as `-H` is legible to every local
-    account for the length of the call; /proc/<pid>/environ, which carries it here, is root-only."""
+    """The runner engages curl's stdin config, puts the token in it, and passes no token in argv --
+    /proc/<pid>/cmdline is world-readable where /proc/<pid>/environ, which carries the value, is not."""
     metrics = _run(
         tmp_path,
         "#!/bin/sh\n"
@@ -62,21 +62,23 @@ def test_the_token_is_delivered_on_stdin_and_never_in_argv(tmp_path):
         "tr '\\0' '\\n' < /proc/self/cmdline > \"$d/argv.txt\"\n"
         'cat > "$d/stdin.txt"\n'
         "printf '200 0.412\\n'\n",
-        token="glsa_SUPERSECRET_VALUE",
+        token="glsa_NotARealToken_aB3-xY9",
     )
     argv = (tmp_path / "bin" / "argv.txt").read_text()
     stdin = (tmp_path / "bin" / "stdin.txt").read_text()
 
     # The true positive first: a runner that simply stopped sending the header would pass the
     # absence assertion below while authenticating nothing.
-    assert 'header = "Authorization: Bearer glsa_SUPERSECRET_VALUE"' in stdin
-    assert "glsa_SUPERSECRET_VALUE" not in argv, f"the token reached argv: {argv}"
+    assert 'header = "Authorization: Bearer glsa_NotARealToken_aB3-xY9"' in stdin
+    # Without `--config -` curl never reads that stdin, and both assertions below still pass while
+    # every call goes out unauthenticated.
+    assert "--config" in argv.split("\n"), f"curl was not told to read the config: {argv}"
+    assert "glsa_NotARealToken_aB3-xY9" not in argv, f"the token reached argv: {argv}"
     assert metrics["zcrypto_grafana_keepalive_status"] == "200"
 
 
 def test_a_curl_that_ends_its_write_out_with_a_newline_is_read_the_same(tmp_path):
-    """Real curl's `-w` format ends in `\n`; every other stub here omits it, so without this the
-    suite exercises only the shape curl does not emit."""
+    """A write-out ending in a newline is read the same as one that does not -- real curl ends it."""
     metrics = _run(tmp_path, '#!/bin/sh\nprintf "200 0.412\\n"\n')
 
     assert metrics["zcrypto_grafana_keepalive_status"] == "200"
