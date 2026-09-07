@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -264,6 +265,15 @@ def _hour_of(hour_dir: Path, hh: str) -> datetime | None:
         return None
 
 
+@dataclass(frozen=True)
+class FinalizeOutcome:
+    """A sweep that finalized nothing looks identical to one that had nothing to do, so `failed` is the
+    only thing separating them: an hour whose final does not exist after the attempt (T0175)."""
+
+    finalized: int
+    failed: tuple[datetime, ...]
+
+
 class SegmentWriter:
     """Buffers `(pair, kind)` capture events and streams them to hourly zstd-Parquet segments.
 
@@ -408,7 +418,7 @@ class SegmentWriter:
         self._held = {}
         self._held_seen = {}
 
-    def finalize_completed_hours(self, cutoff: datetime) -> int:
+    def finalize_completed_hours(self, cutoff: datetime) -> FinalizeOutcome:
         """INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
         spills entirely -- on an oracle-bearing writer, finalizing an hour with held rows would
         floor-lock the hour and strand its quarantine forever (never merged, never redeemed). The
@@ -417,8 +427,8 @@ class SegmentWriter:
 
         Finalize every hour STRICTLY OLDER than `cutoff` that currently holds a row — the open
         hour (if any) plus any crash-leftover part-hours the event stream itself has not yet swept.
-        Returns the count of hours this call actually finalized (0 is the correct, idempotent
-        answer once there is nothing left to do). Hours `>= cutoff` are NEVER touched.
+        Returns a `FinalizeOutcome`, in whose two halves an hour whose final was ALREADY there
+        counts in neither: that is the merge this class declines. Hours `>= cutoff` are NEVER touched.
 
         T0046: rotation is event-driven — an hour closes only when the NEXT event for this same
         (pair, kind) crosses its boundary (`_enter_hour`) — which fits a continuously-emitting
@@ -454,6 +464,7 @@ class SegmentWriter:
                 "finalize_completed_hours is not supported on oracle-bearing writers (held spills would be stranded)"
             )
         finalized = 0
+        failed: list[datetime] = []
         newest_hour: datetime | None = None
 
         if self._current_hour is not None and self._current_hour < cutoff:
@@ -462,9 +473,12 @@ class SegmentWriter:
             already_final = final_path.exists()
             self._finalize_hour(hour)
             self._current_hour = None
-            if not already_final and final_path.exists():
-                finalized += 1
-                newest_hour = hour
+            if not already_final:
+                if final_path.exists():
+                    finalized += 1
+                    newest_hour = hour
+                else:
+                    failed.append(hour)
 
         root = self._base_dir / self._pair / self._kind
         for hour_dir in sorted({path.parent for path in root.rglob("*.part*.parquet")}):
@@ -475,14 +489,17 @@ class SegmentWriter:
                 final_path = hour_dir / f"{hh}.parquet"
                 already_final = final_path.exists()
                 self._merge_hour(hour_dir, hh)
-                if not already_final and final_path.exists():
-                    finalized += 1
-                    newest_hour = hour if newest_hour is None else max(newest_hour, hour)
+                if not already_final:
+                    if final_path.exists():
+                        finalized += 1
+                        newest_hour = hour if newest_hour is None else max(newest_hour, hour)
+                    else:
+                        failed.append(hour)
 
         if newest_hour is not None:
             floor = newest_hour + timedelta(hours=1)
             self._floor = floor if self._floor is None else max(self._floor, floor)
-        return finalized
+        return FinalizeOutcome(finalized, tuple(sorted(failed)))
 
     def _enter_hour(self, hour: datetime) -> None:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.

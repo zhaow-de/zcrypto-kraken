@@ -9,7 +9,15 @@ import pytest
 
 from cli.capture import segment_writer
 from cli.capture.errors import CaptureError
-from cli.capture.segment_writer import BOOK_SCHEMA, LIQ_AGG_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
+from cli.capture.segment_writer import (
+    BOOK_SCHEMA,
+    LIQ_AGG_SCHEMA,
+    TRADE_SCHEMA,
+    FinalizeOutcome,
+    HourOracle,
+    SegmentWriter,
+    verify_manifest,
+)
 
 
 def _ts(hour: int, minute: int = 0, sec: int = 0) -> datetime:
@@ -1957,7 +1965,7 @@ def test_t0037_an_oracle_less_writer_reopening_a_prior_hour_counts_nothing(tmp_p
     # fabrication. It bites: without `self._oracle is not None` the append below reads 1.
     w = _new_writer(tmp_path, flush_rows=5000)  # oracle-less, as the poller builds them
     w.append(_book_event(10, 0))
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
     assert w._current_hour is None  # the re-entry this gate exists for
 
     w.append(_book_event(11, 30))  # at/above the floor, but behind the pinned 16:00 clock
@@ -1973,7 +1981,7 @@ def test_t0037_an_oracle_less_writer_reopening_a_prior_hour_counts_nothing(tmp_p
 
 def test_finalize_completed_hours_on_a_fresh_writer_is_a_no_op(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
-    assert w.finalize_completed_hours(_ts(11, 0)) == 0
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, ())
 
 
 def test_finalize_completed_hours_flushes_and_finalizes_a_stale_open_hour(tmp_path):
@@ -1981,9 +1989,9 @@ def test_finalize_completed_hours_flushes_and_finalizes_a_stale_open_hour(tmp_pa
     w.append(_book_event(10, 0))
     w.append(_book_event(10, 30))
 
-    finalized = w.finalize_completed_hours(_ts(11, 0))
+    outcome = w.finalize_completed_hours(_ts(11, 0))
 
-    assert finalized == 1
+    assert outcome == FinalizeOutcome(1, ())
     assert w._buffer == []
     assert w._current_hour is None
     path = _segment_path(tmp_path, 10)
@@ -1996,9 +2004,9 @@ def test_finalize_completed_hours_leaves_an_hour_at_or_after_the_cutoff_untouche
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(14, 0))
 
-    finalized = w.finalize_completed_hours(_ts(14, 0))  # the open hour itself -- not STRICTLY older
+    outcome = w.finalize_completed_hours(_ts(14, 0))  # the open hour itself -- not STRICTLY older
 
-    assert finalized == 0
+    assert outcome == FinalizeOutcome(0, ())
     assert w._current_hour == _ts(14, 0)
     assert w._buffer  # still buffered -- untouched
     assert not _segment_path(tmp_path, 14).exists()
@@ -2016,9 +2024,9 @@ def test_finalize_completed_hours_merges_crash_leftover_parts_with_no_open_hour(
     w2 = _new_writer(tmp_path, flush_rows=5)
     assert w2._current_hour is None
 
-    finalized = w2.finalize_completed_hours(_ts(11, 0))
+    outcome = w2.finalize_completed_hours(_ts(11, 0))
 
-    assert finalized == 1
+    assert outcome == FinalizeOutcome(1, ())
     path = _segment_path(tmp_path, 10)
     assert path.exists()
     assert verify_manifest(path) is True
@@ -2035,9 +2043,9 @@ def test_finalize_completed_hours_is_idempotent(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
 
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
-    assert w.finalize_completed_hours(_ts(11, 0)) == 0
-    assert w.finalize_completed_hours(_ts(12, 0)) == 0  # a later cutoff still finds nothing left
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(0, ())
+    assert w.finalize_completed_hours(_ts(12, 0)) == FinalizeOutcome(0, ())  # a later cutoff still finds nothing left
 
 
 def test_finalize_completed_hours_makes_a_later_replay_a_dropped_late_event(tmp_path):
@@ -2047,7 +2055,7 @@ def test_finalize_completed_hours_makes_a_later_replay_a_dropped_late_event(tmp_
     # ambiguity T0036 exists to prevent.
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
 
     w.append(_book_event(10, 30, checksum=999))  # a late replay for the now-finalized hour
 
@@ -2059,7 +2067,7 @@ def test_finalize_completed_hours_makes_a_later_replay_a_dropped_late_event(tmp_
 def test_finalize_completed_hours_then_close_is_safe(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
 
     w.close()  # must not raise, and must not touch the already-finalized hour
 
@@ -2170,7 +2178,7 @@ def test_a_late_event_behind_a_committed_hour_is_dropped_at_info(tmp_path, caplo
     # `zcrypto_capture_reconnects_total` -- never a count of these lines -- measures how often it happens.
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))
-    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == FinalizeOutcome(1, ())
     with caplog.at_level(logging.INFO, logger="zcrypto.capture.segment_writer"):
         w.append(_book_event(10, 30, checksum=999))
     assert _drop_levels(caplog, "dropping late event") == [logging.INFO]

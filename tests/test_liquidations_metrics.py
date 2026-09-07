@@ -10,7 +10,7 @@ import pytest
 from prometheus_client import CollectorRegistry
 
 from cli.capture.gap_monitor import DiskWatermark
-from cli.capture.segment_writer import LIQ_AGG_SCHEMA, SegmentWriter
+from cli.capture.segment_writer import LIQ_AGG_SCHEMA, FinalizeOutcome, SegmentWriter
 from cli.liquidations import coinalyze as mod
 from cli.liquidations.coinalyze import COINS, _poll_once, _PollMetrics
 from cli.liquidations.errors import LiquidationsError
@@ -193,6 +193,40 @@ def test_a_raising_finalize_sweep_never_aborts_a_poll_cycle(tmp_path, monkeypatc
     outcomes = {s.labels["outcome"]: s.value for s in families["zcrypto_liquidations_polls_total"].samples}
     assert outcomes.get("error") == 1.0 and outcomes.get("ok", 0.0) == 0.0
     assert families["zcrypto_liquidations_api_errors_total"].samples[0].value == 0.0
+
+
+class _SilentlyFailingWriter:
+    """A sweep that reports a lost hour instead of raising: the shape a read-only mount produces once
+    `_write_part` has swallowed its own error, which is the only way the caller can hear about it."""
+
+    def __init__(self, hour) -> None:
+        self.hour = hour
+
+    def finalize_completed_hours(self, cutoff):
+        return FinalizeOutcome(0, (self.hour,))
+
+    def close(self):
+        pass
+
+
+def test_a_sweep_that_reports_a_lost_hour_fails_the_cycle(tmp_path, monkeypatch, caplog):
+    """T0175 at the caller: a reported failure withholds the ping exactly as a raise does."""
+    _one_row_poll_cycle(monkeypatch)
+    registry = CollectorRegistry()
+    metrics = _PollMetrics(registry)
+    writers = _writers(tmp_path)
+    lost = datetime(2024, 3, 1, 12, tzinfo=UTC)
+    writers["ETH"] = _SilentlyFailingWriter(lost)
+
+    with caplog.at_level("ERROR"):
+        ok = _poll_once("key", writers, _watermark(tmp_path), {}, metrics)
+    for w in writers.values():
+        w.close()
+
+    assert ok is False  # the gate `_run` reads before pinging
+    assert "2024-03-01T12" in caplog.text  # the lost hour is named, not just counted
+    outcomes = {s.labels["outcome"]: s.value for s in _families(registry)["zcrypto_liquidations_polls_total"].samples}
+    assert outcomes.get("error") == 1.0 and outcomes.get("ok", 0.0) == 0.0
 
 
 # --- isolation regression: a raising metrics update never aborts the poll cycle -------------------
