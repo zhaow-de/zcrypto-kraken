@@ -118,8 +118,8 @@ def crosscheck_dataset(kraken_root: Path, symbols: list[str], *, fetch_fn=fetch_
 
     For each `"BASE/QUOTE"` in `symbols`, reads `kraken_root/{base}/{quote}/1440.parquet` and compares
     it to Binance's daily closes (`binance_pair_name(symbol)`, fetched via `fetch_fn`). A symbol that
-    isn't `"BASE/QUOTE"`, or whose Binance fetch raises `XCheckError` (pair not listed on Binance), is
-    skipped and recorded under `skipped` instead of `series`. Returns `{series: {symbol:
+    isn't `"BASE/QUOTE"`, whose parquet is absent, or whose Binance fetch raises `XCheckError` (pair
+    not listed on Binance), is skipped and recorded under `skipped` instead of `series`. Returns `{series: {symbol:
     crosscheck_series-dict}, skipped: [...], summary}`, where `summary` is `{series_count,
     min_close_corr, max_abs_rel_diff_overall}`.
     """
@@ -131,7 +131,7 @@ def crosscheck_dataset(kraken_root: Path, symbols: list[str], *, fetch_fn=fetch_
             base, quote = symbol.split("/")
             kraken = read_parquet(kraken_root / base / quote / "1440.parquet")
             binance = binance_daily_closes(binance_pair_name(symbol), fetch_fn=fetch_fn)
-        except ValueError, XCheckError:
+        except ValueError, XCheckError, FileNotFoundError:
             skipped.append(symbol)
             continue
         series[symbol] = crosscheck_series(kraken, binance)
