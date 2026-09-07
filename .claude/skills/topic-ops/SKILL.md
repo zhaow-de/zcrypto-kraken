@@ -36,7 +36,7 @@ status: open   # one of: open | partial | resolved
 
 A `partial` topic carries a `## Done so far` section between `## Findings so far` and `## Suggested next steps`, recording what landed (link commits/PRs/spec). Its `## Suggested next steps` then lists only the still-open remainder.
 
-**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit — an anchor whose first occurrence sits inside body prose deletes whole sections silently. A splice — a section moved, merged or removed — is an edit and takes the same anchor count and heading-set check; a rebase that keeps both sides of an index conflict re-adds a topic's stale bullet, so after any rebase touching the index, grep each topic id for exactly one link.
+**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit — an anchor whose first occurrence sits inside body prose deletes whole sections silently. A splice — a section moved, merged or removed — is an edit and takes the same anchor count and heading-set check; after any rebase touching the index (a keep-both resolution re-adds a moved bullet), grep each topic id for exactly one link.
 
 ## Partially completing a topic
 
