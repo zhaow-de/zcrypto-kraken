@@ -22,7 +22,7 @@ data_app = typer.Typer(
 
 
 def _abort(message: str) -> typer.Exit:
-    """A clean one-line error (logged, no traceback) + exit code 1. Usage: `raise _abort(...)`."""
+    """Usage: `raise _abort(...)` -- it RETURNS the exception."""
     logger.error(message)
     return typer.Exit(code=1)
 

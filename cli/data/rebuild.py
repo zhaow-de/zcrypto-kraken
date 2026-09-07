@@ -69,9 +69,8 @@ def _rebuild_ohlc_15m(ctx: RebuildContext, out_root: Path) -> None:
 
 
 def _rebuild_ohlc_reach(ctx: RebuildContext, out_root: Path) -> None:
-    """Carry `ohlc-full` forward from Kraken's REST OHLC window (T0065), reading the LIVE canonical
-    set and writing only into the minted sibling; series the window no longer reaches land
-    `.detached` and are warned about, not refused."""
+    """Carry `ohlc-full` forward from Kraken's REST OHLC window (T0065); series the window no longer
+    reaches land `.detached` and are warned about, not refused."""
     report = reach_round(_require_ohlc_full(ctx), out_root)
     detached = report.detached
     if detached:
@@ -92,8 +91,7 @@ def _refresh_oi(ctx: RebuildContext, out_root: Path) -> None:
 
 
 def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
-    """Mint a refdata snapshot matching the live set's filename convention
-    (`kraken-refdata-<UTC stamp>.json`) and payload shape, so the sibling is drop-in (spec 00056 D3)."""
+    """Mint a refdata snapshot matching the live set's payload shape (spec 00056 D3)."""
     fetched_at = datetime.now(UTC)
     snapshot = build_snapshot(fetch_public("AssetPairs"), fetch_public("Assets"), list(CANDIDATE_SYMBOLS), fetched_at.isoformat())
     (out_root / f"kraken-refdata-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}.json").write_text(json.dumps(snapshot, sort_keys=True))
@@ -131,7 +129,7 @@ def resolve_ohlc_source(data_root: Path) -> Path:
     """The newest stamped `ohlc-reach-<%Y%m%d>` sibling, else canonical `ohlc-full`: newest-wins because
     publication is additive (`rsync --ignore-existing`), so a fixed name is never refreshable on the hub.
     Only exact stamped names are candidates, fixed-width digits sorting chronologically, so a stray sibling
-    never outranks a date. Not for `_rebuild_ohlc_reach`, which anchors on `_require_ohlc_full`'s canonical."""
+    never outranks a date."""
     stamped = sorted(
         (p for p in data_root.glob("ohlc-reach-*") if p.is_dir() and _STAMPED_REACH.fullmatch(p.name)),
         key=lambda p: p.name,
@@ -147,9 +145,7 @@ def resolve_ohlc_source(data_root: Path) -> Path:
 
 def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     """Refresh the point-in-time universe file via the canonical builders, matching the live set's
-    filename (`point-in-time-universe.json`) and payload shape -- including the `selected` key
-    `zcrypto capture` reads (spec 00056 D3). Volumes are read from `resolve_ohlc_source(...)`, so the
-    refresh never repulls OHLC: it reads whichever set already reaches furthest."""
+    payload shape -- including the `selected` key `zcrypto capture` reads (spec 00056 D3)."""
     symbols = list(CANDIDATE_SYMBOLS)
     assetpairs_result = fetch_public("AssetPairs")
     assets_result = fetch_public("Assets")
@@ -265,9 +261,7 @@ REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
 
 
 def rebuild_sets(sets: Sequence[str], ctx: RebuildContext) -> list[Path]:
-    """Mint `data_root/<name>-<stamp>` for each named set, run its builder with that as `out_root`, and
-    return the minted dirs; DataSyncError on an unknown name or an existing sibling, and from the
-    builder it runs. NEVER writes into the live set dir -- the sibling is the whole contract (spec 00056 D1c/D3)."""
+    """NEVER writes into the live set dir -- the sibling is the whole contract (spec 00056 D1c/D3)."""
     minted = []
     for name in sets:
         builder = REBUILDABLE.get(name)
