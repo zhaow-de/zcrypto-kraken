@@ -23,9 +23,9 @@ Four named Claude Code sessions on this repo, one owner. The owner keeps all fou
 ## Assignment
 
 - **Availability and affinity.** Main keeps the coordination table: session → status (idle / busy) → branch → topic or spec → warm-context tags → last report. A subject goes to the idle session that already holds its context; else the idle one; never zebra.
-- **One assignment per payload session at a time**, and every payload status message names its branch and latest commit hash, so main reads progress from git without asking.
-- **A dispatch on a fresh owner instruction that REORDERS a sequenced package waits one turn for the owner's next message, or its brief says HELD at its head** — a dispatch is cheap to send and expensive to unwind.
-- **A table row is the session's CURRENT state, one line per cell** — status, branch, topic or spec, and what the branch has GROWN: a new guard, file or claimed property named in a payload report goes into the topic column, and the tick compares the columns pairwise, since a property pinned on two branches is a merge collision and a doubled review cost before it is anything else. A block below the table exists only while its assignment is in flight and is deleted when it lands.
+- **One assignment per payload session at a time**, and every payload status message names its branch and latest commit hash.
+- **A dispatch on a fresh owner instruction that REORDERS a sequenced package waits one turn for the owner's next message, or its brief says HELD at its head.**
+- **A table row is the session's CURRENT state, one line per cell** — status, branch, topic or spec, and what the branch has GROWN: a new guard, file or claimed property named in a payload report goes into the topic column, and the tick compares the columns pairwise for a property pinned on two branches. A block below the table exists only while its assignment is in flight and is deleted when it lands.
 - **A dispatched assignment whose pre-push loop reaches its third round carrying a Critical or Important gets a transcript retro by main before that session's next assignment** — rounds, findings by class, minutes per round, what the author's own tier could have caught; the output is registry records and a proposed rule or skill change, never a verbal note.
 
 ## The brief
