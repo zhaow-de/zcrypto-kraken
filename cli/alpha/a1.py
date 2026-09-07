@@ -82,7 +82,7 @@ class A1Config:
 
 def _map_to_union_index(own_ts: list, own_values: list[float], union_ts: list) -> list[float | None]:
     """Remap an asset's per-move series (`own_values[j]` spans `own_ts[j] -> own_ts[j+1]`) onto the union
-    return index, adding no look-ahead; None where the asset was absent for either endpoint."""
+    return index, adding no look-ahead; None where the two union endpoints are not adjacent in `own_ts`."""
     own_pos = {ts: j for j, ts in enumerate(own_ts)}
     mapped: list[float | None] = []
     for k in range(len(union_ts) - 1):

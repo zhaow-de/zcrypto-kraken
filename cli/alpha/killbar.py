@@ -25,8 +25,7 @@ def a1_kill_bar(
     decisive_start: int = 0,
     n_resamples: int = 1000,
 ) -> dict:
-    """The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031), folded to the
-    ratified protocol: a variant is archived unless ALL hold: its DSR clears DSR_PASS_THRESHOLD at
+    """The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031): a variant is archived unless ALL hold: its DSR clears DSR_PASS_THRESHOLD at
     its trial count, SPA says it beats the benchmark on the decisive window, it survives 1.5x cost
     stress, and its worst regime slice does not underperform the benchmark's own worst slice.
 
@@ -200,11 +199,12 @@ def benchmark_relative_worst_slice(
     book_slices: dict[str, list[float]],
     benchmark_slices: dict[str, list[float]],
 ) -> dict:
-    """Benchmark-relative, exposure-aware alternative to `a1_kill_bar`'s worst-slice leg.
+    """Benchmark-relative, exposure-aware worst-slice comparison: `a1_kill_bar`'s worst-slice leg
+    calls this and takes its verdict.
 
-    The pre-registered leg is absolute ("every non-degenerate slice's Sharpe > 0") and
-    exposure-blind, so it punishes prudent non-participation and hides P&L: it can fail a book
-    that lost less. This reports Sharpe AND total return AND max drawdown per slice, book vs.
+    The pre-registered leg it replaced was absolute ("every non-degenerate slice's Sharpe > 0") and
+    exposure-blind, so it punishes prudent non-participation and hides P&L: a book
+    that lost less can carry the worse Sharpe. This reports Sharpe AND total return AND max drawdown per slice, book vs.
     benchmark, so that contradiction is visible (iter-053,
     docs/research/09.phase4-a2-results.md).
 
