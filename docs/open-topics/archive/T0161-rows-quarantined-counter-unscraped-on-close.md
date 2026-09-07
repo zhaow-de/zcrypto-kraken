@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: 'the memo''s C7 capture rollout has deployed this build to both hosts AND a spill has since happened -- `increase(zcrypto_capture_rows_quarantined_total{host=~"zcrypto|zcrypto-red"}[6h])` read by value through `infra/scripts/grafana-query.py`, non-zero on the host whose `.held` file is newer than that host''s container start'
+status: resolved
 ---
 
 # The quarantined-rows counter is blind to the spill that happens as the process dies
@@ -48,6 +47,24 @@ Constructing that spill inside an attended window is a race, measured rather tha
 
 So the trigger is the first natural spill after deploy. A deliberately single-stream window would widen it to 5 minutes, but that means stopping a live stream to make a metric readable, which is not worth inducing a capture fault for.
 
-## Suggested next steps
+**Deployed 2026-09-07 by C7** (`06998998e876`, revision `c7067af3`): the secondary at 15:55:10Z, the primary at 19:04:29Z, both verified running the digest with RestartCount 0. What remains is a reading, not work.
 
-- Read the counter by value once C7 has deployed both hosts and a spill has since happened; the `ripe_when` above carries the query and the freshness check that makes it non-degenerate.
+## Resolution
+
+Resolved 2026-09-07. The fix is deployed and the mechanism is proven on the deployed artifact; the live counter is watched by a standing alert, so nothing is left waiting on a person.
+
+**Deployed by C7** (`06998998e876`, revision `c7067af3`): `zcrypto-red` at 15:55:10Z, `zcrypto` at 19:04:29Z, both verified running the digest with RestartCount 0.
+
+**Accepted on the deployed digest, not on the repo tree.** The same script ran inside both images as an ephemeral container against a scratch directory — no capture path, no canonical data — and the two artifacts answer differently, which is what makes the green evidence rather than a tautology:
+
+| arm | `06998998e876` (deployed) | `ac6172b9ffb2` (the rollback operand) |
+| --- | --- | --- |
+| spill at close, then the process ends | 3 rows spilled, `.held` written, state file written | 3 rows spilled, `.held` written, **no state file** |
+| a new writer on the same directory | seeds **3** | seeds **0** — the defect |
+| a later spill adds, then another restart | 5, then 5 | 2, then 0 |
+| a fresh tree | seeds 0 | seeds 0 |
+| an unreadable state file | seeds 0, no exception | no state file exists to corrupt |
+
+**The live spill was not obtainable and is deliberately not owed.** Measured while closing this: `max_over_time` and `increase` over 30 days read 0 on both hosts across ~20,000 scrapes each, and no `.held` file exists or has existed in that window. The mechanism explains it — `HourOracle.confirmed_hour` counts the wall clock (handicapped by `CLOCK_WITNESS_MARGIN`) as one witness, so with 24 streams a second witness lands within milliseconds of a start and rows are held only in that sliver, and only inside the first `CLOCK_WITNESS_MARGIN` of an hour. Constructing one on a live host would mean repeatedly restarting a capture daemon to hit a millisecond window, which is a deliberate gap in capture to make a metric readable; that trade was refused. Waiting instead would have left this topic open on a condition that may not arise for months.
+
+**What watches it now**: `zcrypto-capture-rows-quarantined` in `infra/grafana/alerts.yaml` is deployed and evaluates exactly the reading this topic wanted — `increase(zcrypto_capture_rows_quarantined_total{host=~"zcrypto|zcrypto-red"}[6h])`, `for: 15m` — so the first natural spill pages an operator with the count that now survives the process that made it. `infra/runbooks/capture.md`'s ALERT entry carries the partial-seed shape that the durable seed introduces.

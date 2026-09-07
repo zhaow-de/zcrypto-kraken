@@ -466,7 +466,7 @@ docs/reference/drill-log.md:45: section 15357 > 2048	## 2026-08-31 — R — pas
 docs/reference/drill-log.md:49: section 2952 > 2048	## 2026-09-01 — C′-fail — pass
 docs/reference/drill-log.md:55: section 3317 > 2048	## 2026-09-02 — N — pass
 docs/reference/drill-log.md:59: section 6280 > 2048	## 2026-09-04 — P — pass
-docs/reference/fleet-pins.md:12: section 2301 > 2048	## Current pins
+docs/reference/fleet-pins.md:12: section 2325 > 2048	## Current pins
 docs/reference/fleet-pins.md:27: table-row 475 > 200	agentboard
 docs/reference/fleet.md:5: section 4014 > 2048	## Hosts
 docs/reference/fleet.md:11: table-row 352 > 200	`zcrypto-ops`
