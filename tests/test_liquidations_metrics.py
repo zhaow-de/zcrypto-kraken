@@ -163,7 +163,8 @@ def test_poll_once_unexpected_exception_counts_as_error_not_api_error(tmp_path, 
 
 
 class _RaisingFinalizeWriter:
-    """A writer whose hour-closing sweep raises -- an OSError there is a full disk, not a bad cycle."""
+    """A writer whose hour-closing sweep raises: no real `SegmentWriter` does, which is the point --
+    `_poll_once`'s contract must hold on its own, not on `_merge_hour`'s "Never raises" docstring."""
 
     def __init__(self) -> None:
         self.closed = False

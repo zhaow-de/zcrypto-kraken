@@ -39,6 +39,7 @@ import typer
 from prometheus_client import Counter, Gauge
 
 from cli.capture.command import single_instance_lock
+from cli.capture.errors import CaptureError
 from cli.capture.gap_monitor import DiskWatermark, ping_healthcheck
 from cli.capture.segment_writer import LIQ_AGG_SCHEMA, SegmentWriter
 from cli.liquidations.errors import LiquidationsError
@@ -264,8 +265,8 @@ def _poll_once(
 ) -> bool:
     """Run one cycle's watermark check, fetch/write and finalize sweep; returns whether it fully
     succeeded (the dead-man ping's gate). Every step's failure is treated the same way: log, write
-    nothing more, return False so the caller withholds the ping -- and the loop keeps going,
-    retrying next cycle. Nothing here raises past this frame."""
+    nothing more, return False so the caller withholds the ping -- and the loop keeps going, retrying
+    next cycle. The `KeyboardInterrupt` `_run` maps SIGTERM to is the one escape, by design."""
     try:
         watermark.check()
     except Exception:
@@ -293,16 +294,18 @@ def _poll_once(
         return False
     # T0046: close any hour old enough that nothing recoverable can still arrive for it (see
     # _FINALIZE_LAG_SECONDS) -- the sparse-symbol writers that a genuine event never rotates.
-    try:
-        finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
-        for writer in writers.values():
+    finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
+    for coin, writer in writers.items():
+        try:
             writer.finalize_completed_hours(finalize_cutoff)
-    except Exception:
-        # Inside the loop's contract like every step above it: a full disk here is a failed cycle to
-        # retry, not a reason to exit _run and crash-loop the container against the same condition.
-        logger.exception("Coinalyze finalize sweep failed -- retrying next cycle")
-        _record_outcome(metrics, ok=False)
-        return False
+        except CaptureError:
+            raise  # the oracle guard: a fail-fast this must not turn into an unbounded retry
+        except Exception:
+            # Per writer, so one bad writer does not cost the other nine their sweep every cycle. This
+            # enforces _poll_once's own contract instead of borrowing `_merge_hour`'s "Never raises".
+            logger.exception("Coinalyze finalize sweep failed for %s -- retrying next cycle", coin)
+            _record_outcome(metrics, ok=False)
+            return False
     _record_outcome(metrics, ok=True)
     return True
 
