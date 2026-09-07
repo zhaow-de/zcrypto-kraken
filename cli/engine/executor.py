@@ -2559,9 +2559,8 @@ class ProbeExecutor:
         )
 
     def _finish_active(self, outcome: str | None = None, reasons=(), filled_qty: float = 0.0) -> None:
-        """End the in-flight intent: unsubscribe, journal its outcome, and hand the tick to the next
-        intent. `outcome=None` means `_submit` already journaled and counted this one -- it knows
-        whether the order was refused or left ambiguous, and this does not."""
+        """`outcome=None` means `_submit` already journaled and counted this one -- it knows whether the order
+        was refused or left ambiguous, and this does not."""
         active = self._active
         try:
             self._client.unsubscribe_quotes(active.instrument_id)
@@ -2586,8 +2585,7 @@ class ProbeExecutor:
         self._halt_plan(index, f"not run -- intent {index} was revoked mid-flight")
 
     def _halt_plan(self, from_index: int, reason: str) -> None:
-        """Stop the plan after `from_index`: journal every later intent as refused, naming why, and
-        drop the running plan. The ledger, not this process's memory, is what says they never ran."""
+        """The ledger, not this process's memory, is what says the intents after `from_index` never ran."""
         if self._plan is None:
             return  # a trip inside the terminal that led here already dropped it -- nothing left to stop
         for index in range(from_index + 1, len(self._plan.intents)):
