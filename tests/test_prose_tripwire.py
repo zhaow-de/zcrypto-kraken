@@ -28,6 +28,48 @@ def _kinds(offenders) -> list[str]:
     return [o.kind for o in offenders]
 
 
+class TestCommentMass:
+    """The character bar under the line bar: a block wide enough to evade the line count."""
+
+    def test_one_line_over_the_char_bar_trips(self) -> None:
+        wide = "# " + "x" * tw.COMMENT_BLOCK_CHARS
+        offs = tw.offenders_for("a.py", _py([wide], 24))
+        assert _kinds(offs) == ["comment-mass"]
+        assert (offs[0].line, offs[0].measured, offs[0].threshold) == (1, len(wide), tw.COMMENT_BLOCK_CHARS)
+
+    def test_a_block_at_the_char_bar_passes(self) -> None:
+        wide = "#" + "x" * (tw.COMMENT_BLOCK_CHARS - 1)
+        assert len(wide) == tw.COMMENT_BLOCK_CHARS
+        assert tw.offenders_for("a.py", _py([wide], 24)) == []
+
+    def test_a_wide_docstring_on_one_line_trips(self) -> None:
+        wide = '"""' + "d" * tw.COMMENT_BLOCK_CHARS + '"""'
+        offs = tw.offenders_for("a.py", _py([wide], 24))
+        assert _kinds(offs) == ["comment-mass"]
+
+    def test_mass_accumulates_across_lines_under_the_line_bar(self) -> None:
+        third = "# " + "x" * (tw.COMMENT_BLOCK_CHARS // 2)
+        offs = tw.offenders_for("a.py", _py([third, third], 24))
+        assert _kinds(offs) == ["comment-mass"]
+        assert offs[0].measured == 2 * len(third)
+
+    def test_a_block_over_both_bars_is_reported_once_as_a_line_offender(self) -> None:
+        wide = "# " + "x" * tw.COMMENT_BLOCK_CHARS
+        n = tw.COMMENT_BLOCK_LINES + 1
+        offs = tw.offenders_for("a.py", _py([wide] * n, 6 * n))
+        assert _kinds(offs) == ["comment-block"]
+        assert offs[0].measured == n
+
+    def test_a_normal_block_under_both_bars_passes(self) -> None:
+        body = ["# a sentence that says what the code cannot, and stops there."] * tw.COMMENT_BLOCK_LINES
+        assert tw.offenders_for("a.py", _py(body, 24)) == []
+
+    def test_a_hash_file_is_measured_the_same_way(self) -> None:
+        wide = "# " + "x" * tw.COMMENT_BLOCK_CHARS
+        offs = tw.offenders_for("a.sh", wide + "\necho hi\n")
+        assert _kinds(offs) == ["comment-mass"]
+
+
 class TestCommentBlock:
     def test_python_trips_one_over(self) -> None:
         n = tw.COMMENT_BLOCK_LINES + 1
@@ -527,7 +569,7 @@ class TestTheCommandLine:
     def test_clean_exits_zero_with_an_all_zero_summary(self, tree: Path, capsys) -> None:
         assert tw.main(["clean.py"]) == 0
         out = capsys.readouterr().out.splitlines()
-        assert out == ["offenders: comment-block=0 file-prose=0 table-row=0 section=0 changelog-entry=0 (total 0)"]
+        assert out == ["offenders: " + " ".join(f"{k}=0" for k in tw.KINDS) + " (total 0)"]
 
     def test_an_offender_exits_one_and_is_listed_before_the_summary(self, tree: Path, capsys) -> None:
         n = tw.COMMENT_BLOCK_LINES + 1
