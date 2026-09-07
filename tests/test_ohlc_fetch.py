@@ -156,3 +156,19 @@ def test_fetch_ohlc_contains_a_truncated_body():
         fetch_ohlc("XXBTZEUR", 1440, opener=_reading_opener(exc))
     assert caught.value.__cause__ is exc
     assert "transport error fetching OHLC" in str(caught.value)
+
+
+@pytest.mark.parametrize(("pair_key", "interval"), [("XXBTZEUR", 1440), ("XETHZEUR", 60)])
+def test_fetch_ohlc_names_the_pair_it_was_called_for(pair_key, interval):
+    """A SECOND pair and interval, because every other call in this file passes the same literal.
+
+    Against one fixture an identity pin cannot tell interpolation from a constant: a message
+    hardcoding `XXBTZEUR@1440` satisfies it while naming the wrong pair to a paged operator."""
+
+    def _raise(url, timeout=None):
+        raise urllib.error.URLError("boom")
+
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc(pair_key, interval, opener=_raise)
+    assert pair_key in str(caught.value)
+    assert str(interval) in str(caught.value)
