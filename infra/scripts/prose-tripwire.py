@@ -369,7 +369,9 @@ def read_baseline(path: str) -> dict[tuple[str, str, str], list[float]]:
 
 def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]):
     """New: nothing recorded under its key that it could have grown from -- `new_since`'s rule, so a keep may shrink but never grow.
-    Grown: a smaller recorded value under the same key, which it consumes. Retired: recorded values nothing matched."""
+    Grown: a smaller recorded value under the same key, which it consumes. Rewritten: a keep whose first line changed, so its
+    anchor re-keys it -- matched to a retired row of the same path and kind that is at least as large, smallest first.
+    Retired: recorded values nothing matched."""
     new, grown = [], []
     for o in new_since(offenders, known):
         pool = known.get(o.key, [])
@@ -379,7 +381,18 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
             grown.append((o, max(smaller)))
         else:
             new.append(o)
-    return new, grown, sum(len(pool) for pool in known.values())
+    rewritten, still_new = [], []
+    for o in new:
+        candidates = sorted(
+            (m, key) for key, pool in known.items() if key[0] == o.path and key[1] == o.kind for m in pool if m >= o.measured
+        )
+        if candidates:
+            was, key = candidates[0]
+            known[key].remove(was)
+            rewritten.append((o, was))
+        else:
+            still_new.append(o)
+    return still_new, grown, rewritten, sum(len(pool) for pool in known.values())
 
 
 def render(offenders: list[Offender]) -> str:
@@ -421,12 +434,14 @@ def main(argv: list[str] | None = None) -> int:
         if not os.path.isfile(args.check_baseline):
             print(f"{args.check_baseline}: no such baseline -- write one with --write-baseline", file=sys.stderr)
             return 2
-        new, grown, retired = against_baseline(offenders, read_baseline(args.check_baseline))
+        new, grown, rewritten, retired = against_baseline(offenders, read_baseline(args.check_baseline))
         for o in new:
             print(_line(o))
         for o, was in grown:
             print(f"grown: {_line(o)} recorded {was:.10g}")
-        print(f"new: {len(new)} grown: {len(grown)} retired: {retired}")
+        for o, was in rewritten:
+            print(f"rewritten: {_line(o)} recorded {was:.10g}")
+        print(f"new: {len(new)} grown: {len(grown)} rewritten: {len(rewritten)} retired: {retired}")
         if new or grown:
             print(f"cut what is listed above, or record it as a keep with --write-baseline {args.check_baseline}", file=sys.stderr)
             return 1

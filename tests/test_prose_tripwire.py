@@ -24,6 +24,11 @@ def _py(prose_lines: list[str], code_lines: int) -> str:
     return "\n".join(prose_lines + [f"x{i} = {i}" for i in range(code_lines)]) + "\n"
 
 
+def _summary(new: int = 0, grown: int = 0, rewritten: int = 0, retired: int = 0) -> str:
+    """The check's last line, built rather than transcribed, so a new counter is one edit here."""
+    return f"new: {new} grown: {grown} rewritten: {rewritten} retired: {retired}"
+
+
 def _kinds(offenders) -> list[str]:
     return [o.kind for o in offenders]
 
@@ -495,7 +500,7 @@ class TestTheIndexIsTheDefaultScope:
         n = tw.COMMENT_BLOCK_LINES + 1
         (repo / "cli" / "fresh.py").write_text(_py(["# fresh"] * n, 6 * n))
         assert tw.main(["--check-baseline", "base.txt"]) == 0
-        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+        assert capsys.readouterr().out.splitlines() == [_summary()]
         subprocess.run([*_GIT, "add", "-f", "cli/fresh.py"], check=True)
         assert tw.main(["--check-baseline", "base.txt"]) == 1
         assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
@@ -509,7 +514,7 @@ class TestTheIndexIsTheDefaultScope:
         assert (repo / "base.txt").read_text().startswith("cli/gone.py:1: comment-block")
         (repo / "cli" / "gone.py").unlink()
         assert tw.main(["--check-baseline", "base.txt"]) == 0
-        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 1"]
+        assert capsys.readouterr().out.splitlines() == [_summary(retired=1)]
 
     def test_a_named_path_is_scanned_tracked_or_not(self, repo: Path, capsys) -> None:
         """An explicit argument is the caller's word, not the index's."""
@@ -723,7 +728,38 @@ class TestTheBaselineRatchet:
     def test_a_moved_offender_passes(self, tree: Path, capsys) -> None:
         (tree / "kept.py").write_text("y = 0\n" * 10 + _py(["# kept"] * self.N, 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
-        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+        assert capsys.readouterr().out.splitlines() == [_summary()]
+
+    def test_a_rewritten_keep_still_over_the_bar_passes_as_a_rewrite(self, tree: Path, capsys) -> None:
+        """The anchor changed and the block shrank: a rewrite consuming its retired row, not a new offender."""
+        (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * (self.N - 1), 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[0].startswith("rewritten: kept.py:1: comment-block")
+        assert out[-1] == _summary(rewritten=1)
+
+    def test_a_rewritten_keep_that_grew_still_fails(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[-1] == _summary(new=1, retired=1)
+
+    def test_one_retired_row_absorbs_one_offender_and_no_more(self, tree: Path, capsys) -> None:
+        """The count is what the gate reads: a rewrite beside a genuinely new block still fails."""
+        body = ["# rewritten"] + ["# kept"] * (self.N - 1) + ["x = 0", ""] + ["# brand new"] * self.N
+        (tree / "kept.py").write_text(_py(body, 14 * self.N))  # code enough that only the block bars can trip
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[-1] == _summary(new=1, rewritten=1)
+
+    def test_a_retired_row_of_another_kind_does_not_absorb_it(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").write_text("# a\n# b\n" + "".join(f"x{i} = {i}\n" for i in range(tw.FILE_PROSE_FLOOR)))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[-1] == _summary(new=1, retired=1)
+
+    def test_a_retired_row_in_another_file_does_not_absorb_it(self, tree: Path, capsys) -> None:
+        (tree / "kept.py").unlink()
+        (tree / "other.py").write_text(_py(["# kept"] * self.N, 6 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "other.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[-1] == _summary(new=1, retired=1)
 
     def test_a_block_that_grew_by_a_line_fails_and_is_counted_grown(self, tree: Path, capsys) -> None:
         """The anchor matched and the size rose: one grown block, not one new offender beside one retired keep."""
@@ -731,11 +767,11 @@ class TestTheBaselineRatchet:
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         out = capsys.readouterr().out.splitlines()
         assert out[0] == f"grown: kept.py:1: comment-block {self.N + 1} > {tw.COMMENT_BLOCK_LINES} recorded {self.N}"
-        assert out[-1] == "new: 0 grown: 1 retired: 0"
+        assert out[-1] == _summary(grown=1)
 
     def test_the_recorded_block_unchanged_passes(self, tree: Path, capsys) -> None:
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
-        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+        assert capsys.readouterr().out.splitlines() == [_summary()]
 
     def test_a_block_that_shrank_but_is_still_over_the_bar_passes(self, tree: Path, capsys) -> None:
         """The arm is directional: a keep getting shorter is the improvement the ratchet exists to allow."""
@@ -744,7 +780,7 @@ class TestTheBaselineRatchet:
         assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
         (tree / "kept.py").write_text(_py(["# kept"] * (big - 1), 6 * big))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
-        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 0"]
+        assert capsys.readouterr().out.splitlines() == [_summary()]
 
     def test_a_second_offender_in_a_recorded_file_fails_and_names_it(self, tree: Path, capsys) -> None:
         block = _py(["# kept"] * self.N, 6 * self.N)
@@ -752,7 +788,7 @@ class TestTheBaselineRatchet:
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         out = capsys.readouterr().out.splitlines()
         assert out[0] == f"kept.py:{7 * self.N + 1}: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
-        assert out[-1] == "new: 1 grown: 0 retired: 0"
+        assert out[-1] == _summary(new=1)
 
     def test_a_duplicate_of_the_recorded_offender_is_new_and_not_the_keep_grown(self, tree: Path, capsys) -> None:
         """The recorded entry is consumed by the first block, so the second has nothing smaller to have grown from."""
@@ -761,19 +797,19 @@ class TestTheBaselineRatchet:
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         out = capsys.readouterr().out.splitlines()
         assert out[0] == f"kept.py:{7 * self.N + 1}: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
-        assert out[-1] == "new: 1 grown: 0 retired: 0"
+        assert out[-1] == _summary(new=1)
 
     def test_an_offender_in_an_unrecorded_file_fails_and_is_printed(self, tree: Path, capsys) -> None:
         (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py", "fresh.py"]) == 1
         out = capsys.readouterr().out.splitlines()
         assert out[0] == f"fresh.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
-        assert out[-1] == "new: 1 grown: 0 retired: 0"
+        assert out[-1] == _summary(new=1)
 
     def test_a_cleaned_offender_passes_and_is_reported_retired(self, tree: Path, capsys) -> None:
         (tree / "kept.py").write_text("y = 0\n")
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
-        assert capsys.readouterr().out.splitlines() == ["new: 0 grown: 0 retired: 1"]
+        assert capsys.readouterr().out.splitlines() == [_summary(retired=1)]
 
     def test_a_failing_check_names_the_remedy_on_stderr(self, tree: Path, capsys) -> None:
         (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
