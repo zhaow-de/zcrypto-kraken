@@ -18,8 +18,7 @@ from cli.obs.metrics import METRICS_PORT_ENV_VAR
 
 
 def _families(registry: CollectorRegistry) -> dict:
-    """Sample-name -> the family carrying it (`Counter` strips a trailing `_total` from
-    `family.name` and re-adds it per sample -- see `tests/test_capture_metrics.py::_families`)."""
+    """Keyed by SAMPLE name, because `Counter` strips a trailing `_total` from the family's own name and re-adds it per sample."""
     result: dict = {}
     for family in registry.collect():
         for sample in family.samples:
@@ -41,7 +40,7 @@ def _watermark(tmp_path: Path, *, free: int = 10_000) -> DiskWatermark:
 
 
 def _one_row_poll_cycle(monkeypatch):
-    """A `poll_cycle` stand-in that writes one row to BTC's writer and reports one submission."""
+    """Its row is dated 2024-03-01, far enough behind the real clock that a cycle's own finalize step closes the hour."""
 
     def fn(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         writers["BTC"].append(
