@@ -49,7 +49,7 @@ def round_trip_fee(
     taker_open: bool = False,
     taker_close: bool = False,
 ) -> float:
-    """Open+close fee cost on `notional`; each leg is taker if flagged, else maker (default maker-first)."""
+    """Open+close fee on `notional` — each leg is charged on the FULL notional, not half each."""
     for name, value in (("notional", notional), ("maker_rate", maker_rate), ("taker_rate", taker_rate)):
         if not math.isfinite(value) or value < 0:
             raise CostModelError(f"{name} must be finite and >= 0, got {value}")
