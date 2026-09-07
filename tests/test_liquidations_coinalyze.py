@@ -656,3 +656,34 @@ def test_run_primes_watermarks_and_threads_them_to_poll_cycle(tmp_path, monkeypa
     monkeypatch.setattr(mod, "_sleep", lambda seconds: None)
     mod._run(tmp_path, "key", 300, None, duration=0)
     assert seen["watermarks"] == {"BTC": t}
+
+
+def test_a_finalize_that_wrote_nothing_withholds_the_dead_man_ping(tmp_path, monkeypatch):
+    """T0175: the sweep's write failing must not read as a healthy cycle on the only external witness."""
+    from cli.capture import segment_writer as sw
+    from cli.liquidations import coinalyze as mod
+
+    hour = datetime(2024, 3, 1, 12, tzinfo=UTC)
+    row = {"ts": hour, "symbol": "BTCUSDT_PERP.A", "long_usd": 1.0, "short_usd": 2.0, "event_id": "e-1"}
+
+    def one_row(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
+        writers["BTC"].append(dict(row))
+        return 1
+
+    monkeypatch.setattr(mod, "poll_cycle", one_row)
+    monkeypatch.setattr(mod, "_sleep", lambda seconds: None)
+    pings: list[str] = []
+    monkeypatch.setattr(mod, "ping_healthcheck", lambda url: pings.append(url))
+
+    # The failure lands INSIDE `_write_part`, below its own `except Exception` -- replacing
+    # `_write_part` would remove the swallow this test is about. `_replace_durably` is the last
+    # statement in its try, exactly where a read-only or full mount fails.
+    def refuse(tmp, dest):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(sw, "_replace_durably", refuse)
+
+    mod._run(tmp_path, "key", 300, "https://hc.example/ping", duration=0)
+
+    assert not list(tmp_path.rglob("*.parquet")), "the fixture must leave nothing written, or it proves nothing"
+    assert pings == [], "a cycle that wrote nothing pinged the dead-man green"
