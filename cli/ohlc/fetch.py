@@ -34,8 +34,8 @@ def fetch_ohlc(pair_key: str, interval: int, *, opener=urllib.request.urlopen) -
     url = f"{_BASE_URL}?pair={pair_key}&interval={interval}"
     # TWO blocks, each wrapping only the statements whose failures its own arm names, so no arm can
     # relabel another's: one enumeration always leaves the next level open, and this closes the class.
-    # The transport arm can be wide because nothing here decodes; the decode arm stays narrow because
-    # `json.loads` is the only statement it covers. `read()` stays inside the `with` so the response closes.
+    # The transport arm can be wide because nothing here decodes. `read()` stays INSIDE the `with`:
+    # a real HTTPResponse returns b"" after close, so reading outside it truncates SILENTLY.
     try:
         with opener(url, timeout=_TIMEOUT_SECONDS) as response:
             raw = response.read()

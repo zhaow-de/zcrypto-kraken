@@ -141,6 +141,7 @@ def test_fetch_ohlc_contains_a_failing_opener(exc):
     with pytest.raises(OHLCError) as caught:
         fetch_ohlc("XXBTZEUR", 1440, opener=_raising_opener(exc))
     assert caught.value.__cause__ is exc
+    assert "transport error fetching OHLC" in str(caught.value)  # the LABEL, or the arms can swap silently
 
 
 def test_fetch_ohlc_contains_a_truncated_body():
@@ -150,3 +151,4 @@ def test_fetch_ohlc_contains_a_truncated_body():
     with pytest.raises(OHLCError) as caught:
         fetch_ohlc("XXBTZEUR", 1440, opener=_reading_opener(exc))
     assert caught.value.__cause__ is exc
+    assert "transport error fetching OHLC" in str(caught.value)
