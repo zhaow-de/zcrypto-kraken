@@ -44,6 +44,19 @@ grafana_sa_token: !vault |
           66323566333036666663333830616262343166336235306639363131323836326264303230633232
           6265356530323136323864643137636634323133646439373934
 
+# The keep-alive's Viewer-scoped service account (`sa-1-zcrypto-keepalive`), minted 2026-09-07 for
+# the hourly authenticated request that tests whether Grafana Cloud counts such requests as
+# activity. Deliberately NOT `grafana_sa_token`: this one is rendered onto `zcrypto-ops`, so its
+# blast radius is a host rather than the workstation, and Viewer is all `/api/search` needs.
+grafana_ro_token: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          37633838663531376336323736663065663536303965376561656230326434386462666337373238
+          6236363034333962326465303964323139396265386461660a393530643838333530663232376432
+          37323965333665663361366166323133306537376163333038323534333836396438376131376566
+          6132383665613234350a353833616564353764356165393161313161303666353039366561353732
+          38373464666665383662633430363933366462356337306464323462643565343834636365323938
+          3931366533346338633432336563616339383534316535626364
+
 # Slack incoming-webhook URL (app `zcrypto-alerts`, minted + vaulted by the owner 2026-07-15,
 # T0047). Consumed by grafana-push.sh's contact-point provisioning; treat as a credential.
 slack_webhook_url: !vault |
