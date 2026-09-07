@@ -172,8 +172,7 @@ def hash_blocks(src: str) -> list[Block]:
 
 
 def _block_offenders(path: str, blocks: list[Block], text: list[str]) -> list[Offender]:
-    """One offender per over-bar block: `comment-block` when it is too many lines, `comment-mass` when
-    it is too many characters in few enough lines to pass that bar."""
+    """At most one offender per block, so a block over both bars is not counted twice."""
     out = []
     for b in blocks:
         lines = b.end - b.start + 1
@@ -355,10 +354,8 @@ def _line(o: Offender) -> str:
 
 
 def baseline_text(offenders: list[Offender]) -> str:
-    """The report line plus a tab and the anchor, one per offender, sorted -- generated, never hand-edited.
-
-    An empty anchor leaves the tab off, so no line ends in whitespace a formatting hook would strip.
-    """
+    """Generated, never hand-edited; an anchorless offender leaves the tab off, so no line ends in
+    whitespace a formatting hook would strip."""
     return "".join(_line(o) + (f"\t{o.anchor}" if o.anchor else "") + "\n" for o in sorted(offenders))
 
 
@@ -378,10 +375,8 @@ def read_baseline(path: str) -> dict[tuple[str, str, str], list[float]]:
 
 
 def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]):
-    """New: nothing recorded under its key that it could have grown from -- `new_since`'s rule, so a keep may shrink but never grow.
-    Grown: a smaller recorded value under the same key, which it consumes. Rewritten: a keep whose first line changed, so its
-    anchor re-keys it -- matched to a retired row of the same path and kind that is at least as large, smallest first.
-    Retired: recorded values nothing matched."""
+    """A keep may shrink but never grow, and a rewrite re-keys itself because the anchor is the block's
+    first line -- which is why a retired row of the same path and kind can still claim it."""
     new, grown = [], []
     for o in new_since(offenders, known):
         pool = known.get(o.key, [])

@@ -118,7 +118,7 @@ class TestTheValidatorIsTheCheckers:
     def test_narrowing_the_checkers_kind_set_makes_the_helper_refuse_too(
         self, checkout: pathlib.Path, tmp_path: pathlib.Path, monkeypatch
     ) -> None:
-        """One kind set, one home: mutate it in the checker and the appender refuses on the same record."""
+        """One kind set, one home."""
         fake = tmp_path / "scripts"
         fake.mkdir()
         patched = _CHECKER.read_text().replace('"self-correction", ', "")
