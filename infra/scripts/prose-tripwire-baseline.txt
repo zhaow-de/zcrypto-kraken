@@ -462,10 +462,10 @@ docs/reference/fleet.md:5: section 4014 > 2048	## Hosts
 docs/reference/fleet.md:11: table-row 352 > 200	`zcrypto-ops`
 docs/reference/fleet.md:12: table-row 371 > 200	`nas`
 docs/reference/fleet.md:13: table-row 487 > 200	`zaccess`
-docs/reference/fleet.md:26: section 4408 > 2048	## Services and instruments
+docs/reference/fleet.md:26: section 4423 > 2048	## Services and instruments
 docs/reference/fleet.md:31: table-row 492 > 200	`zcrypto-engine`
 docs/reference/fleet.md:33: table-row 246 > 200	`grafana-alloy`
-docs/reference/fleet.md:34: table-row 296 > 200	ops timers
+docs/reference/fleet.md:34: table-row 311 > 200	ops timers
 docs/reference/fleet.md:35: table-row 501 > 200	capture/engine timers
 docs/reference/fleet.md:37: table-row 301 > 200	gate export
 docs/reference/fleet.md:38: table-row 274 > 200	Caddy (mTLS edge)

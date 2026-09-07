@@ -73,6 +73,7 @@ def test_the_token_is_delivered_on_stdin_and_never_in_argv(tmp_path):
     # Without `--config -` curl never reads that stdin, and both assertions below still pass while
     # every call goes out unauthenticated.
     args = argv.split("\n")
+    assert "--config" in args, f"curl was not told to read a config at all: {argv}"
     assert args[args.index("--config") + 1] == "-", f"curl reads its config from elsewhere: {argv}"
     assert "glsa_NotARealToken_aB3-xY9" not in argv, f"the token reached argv: {argv}"
     assert metrics["zcrypto_grafana_keepalive_status"] == "200"

@@ -5,8 +5,8 @@
 Description=Hourly Grafana Cloud keep-alive
 
 [Timer]
-# Hourly at a minute no other unit on this host uses: clear of the watchdog's 5-minute grid and of
-# the :12/:22/:42/:52 slots, and not the :23 that `zcrypto-verified-replay` takes daily. No
+# Hourly at a minute no other unit on this host uses -- checked against every timer the ops and
+# access_ops roles install, not against a remembered pattern. No
 # Persistent=: a slot missed while the host was down is not worth catching up, and a catch-up run
 # would answer for a window nobody was awake to keep alive.
 OnCalendar=*:37:00
