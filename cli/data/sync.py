@@ -164,10 +164,6 @@ def _attestations_for_set(manifest_dir: Path, set_name: str) -> tuple[set[str], 
     return vouched | sidecar_hashes(set_name), by_path
 
 
-def _vouched_for_set(manifest_dir: Path, set_name: str) -> set[str]:
-    return _attestations_for_set(manifest_dir, set_name)[0]
-
-
 def _attestation_failure(set_dir: Path, rel: str, vouched: set[str], by_path: dict[str, str]) -> str | None:
     """Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
 

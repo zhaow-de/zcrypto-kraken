@@ -165,7 +165,7 @@ cli/data/manifest.py:121: comment-block 6 > 4	"""The digest that identifies this
 cli/data/manifest.py:133: comment-block 5 > 4	"""The attested content hashes, read from `series` EXPLICITLY.
 cli/data/manifest.py:252: comment-block 13 > 4	"""Rewrite one dataset's legacy manifest into the contract, from the parquets on disk.
 cli/data/manifest.py:309: comment-block 5 > 4	# The WHOLE legacy document, `series` included. The per-series rows are where the evidence that
-cli/data/sync.py:1: file-prose 26.3 > 20
+cli/data/sync.py:1: file-prose 26.6 > 20
 cli/data/sync.py:26: comment-block 12 > 4	"""The committed per-series attestations, keyed by dataset.
 cli/data/sync.py:68: comment-block 6 > 4	"""Committed attestations for `dataset` BOUND TO PATHS, or empty when it has none.
 cli/data/sync.py:118: comment-block 9 > 4	"""Every per-artifact ``sha256`` value anywhere in a (possibly deeply nested) manifest -- the
