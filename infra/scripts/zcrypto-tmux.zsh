@@ -8,7 +8,7 @@
 # Layout (one tmux session, COCKPIT, one window):
 #   +---------------+---------------+
 #   |               | zcrypto-alex  |
-#   | zcrypto-main  +---------------+
+#   | zcrypto-marco +---------------+
 #   |               | zcrypto-bravo |
 #   +---------------+---------------+
 # plus a separate tmux session `zcrypto-zebra` -- the owner's own shell at the repo root, no
@@ -63,11 +63,11 @@ if ! "${TMUX[@]}" has-session -t "=$COCKPIT" 2>/dev/null; then
   [[ -n $left ]] || { print -u2 -- 'zcrypto-tmux: could not resolve the cockpit pane'; exit 1; }
   right=$("${TMUX[@]}" split-window -h -t "$left" -c "$REPO" -P -F '#{pane_id}')
   lower=$("${TMUX[@]}" split-window -v -t "$right" -c "$REPO" -P -F '#{pane_id}')
-  "${TMUX[@]}" select-pane -t "$left"  -T zcrypto-main
+  "${TMUX[@]}" select-pane -t "$left"  -T zcrypto-marco
   "${TMUX[@]}" select-pane -t "$right" -T zcrypto-alex
   "${TMUX[@]}" select-pane -t "$lower" -T zcrypto-bravo
   "${TMUX[@]}" set-option -w -t "${COCKPIT}:cockpit" pane-border-status top   # titles visible, this window only
-  "${TMUX[@]}" send-keys -t "$left"  "$(pane_cmd zcrypto-main)"  C-m
+  "${TMUX[@]}" send-keys -t "$left"  "$(pane_cmd zcrypto-marco)"  C-m
   "${TMUX[@]}" send-keys -t "$right" "$(pane_cmd zcrypto-alex)"  C-m
   "${TMUX[@]}" send-keys -t "$lower" "$(pane_cmd zcrypto-bravo)" C-m
   "${TMUX[@]}" select-pane -t "$left"
