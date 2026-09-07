@@ -2307,6 +2307,7 @@ def test_a_spill_that_never_reached_disk_is_neither_counted_nor_persisted(tmp_pa
         w.close()  # the parquet write fails; the ~30-byte JSON write would not have
 
     assert not list(tmp_path.rglob("*.held*.parquet")), "the fixture must lose the rows, or it proves nothing"
+    assert any("buffer dropped" in r.getMessage() for r in caplog.records), "the loss is counted nowhere, so it must be LOGGED"
     assert w.rows_quarantined == 0
     assert not (tmp_path / "BTC/EUR" / "trades" / "rows-quarantined.json").exists()
     assert _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id").rows_quarantined == 0
