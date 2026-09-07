@@ -381,6 +381,10 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
             grown.append((o, max(smaller)))
         else:
             new.append(o)
+    # What each offender COULD have come from is read from the retired rows as they stood before any of
+    # them was matched: consuming left to right would otherwise leave the last offender naming one row
+    # as a fact when every permutation is an equally valid assignment.
+    retired = {key: list(pool) for key, pool in known.items()}
     rewritten, still_new = [], []
     for o in new:
         candidates = sorted(
@@ -390,8 +394,11 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
             was, key = candidates[0]
             known[key].remove(was)
             # Every candidate could be this block's own row: the anchor that identified it is exactly what
-            # the rewrite changed. Name one size only when one row could have been the source.
-            rewritten.append((o, [m for m, _ in candidates]))
+            # the rewrite changed. Name one size only when one size could have been the source.
+            sources = sorted(
+                {m for k, pool in retired.items() if k[0] == o.path and k[1] == o.kind for m in pool if m >= o.measured}
+            )
+            rewritten.append((o, sources))
         else:
             still_new.append(o)
     return still_new, grown, rewritten, sum(len(pool) for pool in known.values())

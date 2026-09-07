@@ -777,18 +777,31 @@ class TestTheBaselineRatchet:
         assert out[-1] == _summary(rewritten=1)
 
     def test_the_smallest_candidate_is_still_the_one_consumed(self, tree: Path, capsys) -> None:
-        """Which row is spent shows in the SECOND block's line: taking the largest first would leave it the 6."""
-        body = ["# kept"] * 22 + ["x = 0", ""] + ["# sibling"] * 6
-        (tree / "kept.py").write_text(_py(body, 40 * self.N))
+        """Order decides the GATE here: give the 6-block the 22 and the 22-block has nothing left to take."""
+        (tree / "kept.py").write_text(_py(["# kept"] * 6 + ["x = 0", ""] + ["# sibling"] * 22, 40 * self.N))
         assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
-        rewritten = ["# rewritten"] + ["# kept"] * 5 + ["x = 0", ""] + ["# second"] * 6
-        (tree / "kept.py").write_text(_py(rewritten, 40 * self.N))
+        (tree / "kept.py").write_text(_py(["# A"] * 6 + ["x = 0", ""] + ["# B"] * 22, 40 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines()[-1] == _summary(rewritten=2)
+
+    def test_every_offender_names_the_rows_that_stood_before_any_was_matched(self, tree: Path, capsys) -> None:
+        """Consuming left to right would leave the last offender naming one row as fact; all three could be its own."""
+        body = ["# a"] * 6 + ["x = 0", ""] + ["# b"] * 10 + ["y = 0", ""] + ["# c"] * 22
+        (tree / "kept.py").write_text(_py(body, 60 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        (tree / "kept.py").write_text(_py(["# A"] * 6 + ["x = 0", ""] + ["# B"] * 6 + ["y = 0", ""] + ["# C"] * 6, 60 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         out = capsys.readouterr().out.splitlines()
-        bar = tw.COMMENT_BLOCK_LINES
-        assert out[0] == f"rewritten: kept.py:1: comment-block 6 > {bar} recorded one of 6, 22"
-        assert out[1] == f"rewritten: kept.py:9: comment-block 6 > {bar} recorded 22"
-        assert out[-1] == _summary(rewritten=2)
+        assert [o.split(" recorded ")[1] for o in out[:3]] == ["one of 6, 10, 22"] * 3
+
+    def test_candidates_of_one_size_name_it_rather_than_offering_a_choice(self, tree: Path, capsys) -> None:
+        """Two same-size rows: which one was the source does not change what was recorded."""
+        (tree / "kept.py").write_text(_py(["# a"] * 6 + ["x = 0", ""] + ["# b"] * 6, 40 * self.N))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        (tree / "kept.py").write_text(_py(["# A"] * 6 + ["x = 0", ""] + ["# B"] * 6, 40 * self.N))
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        out = capsys.readouterr().out.splitlines()
+        assert all(o.endswith("recorded 6") for o in out[:2])
 
     def test_a_rewritten_keep_that_grew_with_nothing_larger_to_absorb_it_fails(self, tree: Path, capsys) -> None:
         (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * self.N, 6 * self.N))
