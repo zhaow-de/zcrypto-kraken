@@ -2080,6 +2080,40 @@ def test_finalize_completed_hours_reports_a_crash_leftover_hour_it_could_not_wri
     assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
 
 
+def test_finalize_completed_hours_reports_one_entry_per_lost_hour(tmp_path, monkeypatch):
+    """An open hour with parts already on disk is reachable by BOTH arms -- the open-hour flush and the
+    walk over surviving parts -- so a caller naming the lost hours must not name this one twice."""
+    w = _new_writer(tmp_path, flush_rows=1)
+    for i in range(3):
+        w.append(_hour10_event(i, i))
+    w.append(_hour10_event(3, 3))  # buffered: the hour is still open AND has parts on disk
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert not _segment_path(tmp_path, 10).exists(), "the fixture must leave no final, or it proves nothing"
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+
+
+def test_finalize_completed_hours_reports_an_open_hour_it_could_not_write(tmp_path, monkeypatch):
+    """The open-hour arm on its own: nothing on disk yet, so only that arm can reach the hour."""
+    w = _new_writer(tmp_path, flush_rows=1000)  # nothing flushes, so no parts exist
+    w.append(_hour10_event(0, 0))
+    assert not list(_segment_path(tmp_path, 10).parent.glob("10.part*.parquet")), "no parts, or the walk reaches it too"
+
+    def no_space(tmp, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(segment_writer, "_replace_durably", no_space)
+    outcome = w.finalize_completed_hours(_ts(11, 0))
+
+    assert not _segment_path(tmp_path, 10).exists()
+    assert outcome == FinalizeOutcome(0, (_ts(10, 0),))
+
+
 def test_finalize_completed_hours_is_idempotent(tmp_path):
     w = _new_writer(tmp_path, flush_rows=5000)
     w.append(_book_event(10, 0))

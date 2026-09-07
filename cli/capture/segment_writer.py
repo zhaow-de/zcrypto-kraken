@@ -501,7 +501,7 @@ class SegmentWriter:
         if newest_hour is not None:
             floor = newest_hour + timedelta(hours=1)
             self._floor = floor if self._floor is None else max(self._floor, floor)
-        return FinalizeOutcome(finalized, tuple(sorted(failed)))
+        return FinalizeOutcome(finalized, tuple(sorted(set(failed))))  # one hour, one entry: both arms can reach it
 
     def _enter_hour(self, hour: datetime) -> None:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
