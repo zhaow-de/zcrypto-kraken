@@ -86,8 +86,16 @@ def duplicate_bullets(text: str) -> list[str]:
     return defects
 
 
+_ANY_TOPIC_ITEM = re.compile(r"^\s*[-*+] .*\]\((?:archive/)?T\d{4}-")
+
+
 def test_the_index_has_one_bullet_per_topic():
-    assert duplicate_bullets((TOPICS / "README.md").read_text()) == []
+    text = (TOPICS / "README.md").read_text()
+    assert duplicate_bullets(text) == []
+    admitted = {m.group(1) for m in (_BULLET_ID.match(line) for line in text.split("\n")) if m}
+    assert admitted == {p.name[:5] for p in OPEN_TOPICS + ARCHIVED}, "a topic file with no bullet, or a bullet with no file"
+    unhandled = [n for n, line in enumerate(text.split("\n"), 1) if _ANY_TOPIC_ITEM.match(line) and not _BULLET_ID.match(line)]
+    assert not unhandled, f"list items linking a topic in a shape the checker does not read: {unhandled}"
 
 
 def test_duplicate_bullets_names_a_second_bullet_and_ignores_a_cross_reference():
