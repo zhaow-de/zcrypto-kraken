@@ -11,6 +11,7 @@ import datetime as dt
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -27,10 +28,11 @@ def _validator():
 
 def main_checkout(cwd: pathlib.Path | None = None) -> pathlib.Path:
     """The first `git worktree list` row: a worktree's own inbox is removed when its branch merges."""
-    out = subprocess.run(["git", "worktree", "list"], cwd=cwd, capture_output=True, text=True, check=True).stdout.splitlines()
-    if not out:
-        raise RuntimeError("git worktree list returned nothing")
-    return pathlib.Path(out[0].split()[0]).resolve()
+    cmd = ["git", "worktree", "list", "--porcelain"]
+    out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=True).stdout.splitlines()
+    if not out or not out[0].startswith("worktree "):
+        raise RuntimeError(f"no worktree row in `git worktree list --porcelain`: {out[:1]}")
+    return pathlib.Path(out[0].removeprefix("worktree ")).resolve()
 
 
 def build(args: argparse.Namespace, now: str) -> dict:
@@ -62,13 +64,22 @@ def run(argv: list[str], cwd: pathlib.Path | None = None, now: str | None = None
             print(f"append-lesson: refused — {problem}", file=sys.stderr)
         return 1
 
-    root = main_checkout(cwd)
-    inbox = (root / ".local" / "agent-lessons" / f"{args.session}.jsonl").resolve()
-    if not inbox.is_relative_to(root):
-        print(f"append-lesson: refused — {inbox} is outside the main checkout {root}", file=sys.stderr)
+    try:
+        root = main_checkout(cwd)
+    except (subprocess.CalledProcessError, OSError, RuntimeError) as exc:
+        detail = getattr(exc, "stderr", None) or exc
+        print(f"append-lesson: refused — cannot resolve the main checkout: {detail}", file=sys.stderr)
         return 2
-    if not inbox.parent.is_dir():
-        print(f"append-lesson: refused — {inbox.parent} does not exist", file=sys.stderr)
+    # The session names ONE file in the inbox directory: a name carrying `/` or `..` resolves to a path
+    # still inside the checkout, which a containment check against the ROOT accepts and the harvest
+    # never reads -- a lesson written, reported appended, and lost.
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.session):
+        print(f"append-lesson: refused — {args.session!r} is not a session name", file=sys.stderr)
+        return 2
+    inbox_dir = (root / ".local" / "agent-lessons").resolve()
+    inbox = inbox_dir / f"{args.session}.jsonl"
+    if not inbox_dir.is_dir():
+        print(f"append-lesson: refused — {inbox_dir} does not exist", file=sys.stderr)
         return 2
 
     with inbox.open("a", encoding="utf-8") as fh:

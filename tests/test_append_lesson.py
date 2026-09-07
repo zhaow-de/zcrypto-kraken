@@ -66,6 +66,7 @@ class TestTheHappyPath:
 
         stamp = json.loads(_inbox(checkout).read_text())["ts"]
         assert stamp.endswith("Z")
+        assert "." not in stamp  # whole seconds, the shape every existing inbox record uses
         assert dt.datetime.fromisoformat(stamp).tzinfo == dt.UTC
 
 
@@ -112,6 +113,46 @@ class TestItResolvesTheMainCheckout:
         (checkout / ".local" / "agent-lessons").rmdir()
         assert al.run(_argv(), cwd=checkout, now=NOW) == 2
         assert "does not exist" in capsys.readouterr().err
+
+
+class TestTheSessionNamesOneFileInTheInbox:
+    """A session that is not a plain name is refused before any path is built from it."""
+
+    @pytest.mark.parametrize(
+        "session",
+        ["../../evil", "../..", "..", "team/bravo", "/etc/passwd", ".hidden", "a b"],
+        ids=["up-into-root", "up-twice", "dotdot", "separator", "absolute", "leading-dot", "space"],
+    )
+    def test_a_session_that_is_not_a_plain_name_refuses(self, checkout: pathlib.Path, session: str, capsys) -> None:
+        assert al.run(_argv(session=session), cwd=checkout, now=NOW) == 2
+        assert "is not a session name" in capsys.readouterr().err
+
+    def test_an_empty_session_is_the_validators_refusal_not_the_names(self, checkout: pathlib.Path, capsys) -> None:
+        """The record check runs first, so an empty session is a malformed record (1), not a bad name (2)."""
+        assert al.run(_argv(session=""), cwd=checkout, now=NOW) == 1
+        assert "session must be a non-empty string" in capsys.readouterr().err
+
+    def test_traversal_writes_nothing_anywhere_under_the_checkout(self, checkout: pathlib.Path) -> None:
+        before = sorted(str(p.relative_to(checkout)) for p in checkout.rglob("*") if p.is_file())
+        assert al.run(_argv(session="../../evil"), cwd=checkout, now=NOW) == 2
+        assert sorted(str(p.relative_to(checkout)) for p in checkout.rglob("*") if p.is_file()) == before
+
+
+class TestItCannotResolveTheCheckout:
+    def test_outside_a_checkout_it_refuses_legibly_and_not_as_a_validation_failure(self, tmp_path: pathlib.Path, capsys) -> None:
+        """Exit 2, not 1: a caller must tell 'not a git repo' from 'your record is malformed'."""
+        outside = tmp_path / "nowhere"
+        outside.mkdir()
+        assert al.run(_argv(), cwd=outside, now=NOW) == 2
+        assert "cannot resolve the main checkout" in capsys.readouterr().err
+
+    def test_a_checkout_path_with_a_space_is_parsed_whole(self, tmp_path: pathlib.Path) -> None:
+        spaced = tmp_path / "my repo"
+        spaced.mkdir()
+        subprocess.run(["git", "init", "-q", str(spaced)], check=True)
+        (spaced / ".local" / "agent-lessons").mkdir(parents=True)
+        assert al.main_checkout(spaced) == spaced.resolve()
+        assert al.run(_argv(), cwd=spaced, now=NOW) == 0
 
 
 class TestTheValidatorIsTheCheckers:
