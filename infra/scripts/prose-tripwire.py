@@ -41,7 +41,8 @@ TABLE_ROW_CHARS = 200
 SECTION_BYTES = 2048
 CHANGELOG_BULLETS = 5
 
-# Every bar `--help` advertises, derived so an eighth cannot be added without appearing there.
+# Every uppercase int constant, which is what every bar is today: `--help` advertises exactly these,
+# and a bar of any other type would need adding here and to the test that pins this set.
 THRESHOLDS = tuple(name for name, value in list(globals().items()) if name.isupper() and type(value) is int)
 
 KINDS = ("comment-block", "comment-mass", "file-prose", "table-row", "section", "changelog-entry")

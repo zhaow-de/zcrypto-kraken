@@ -618,6 +618,12 @@ class TestTheCommandLine:
             assert f"{name}={getattr(tw, name)}" in text
         # THRESHOLDS derives itself, so iterating it cannot notice an omission: pin the set instead.
         assert set(tw.THRESHOLDS) == {n for n, v in vars(tw).items() if n.isupper() and type(v) is int}
+
+    def test_help_prints_the_whole_description_sentence(self, capsys) -> None:
+        """One assertion per test: a regression here and in the thresholds must redden separately."""
+        with pytest.raises(SystemExit):
+            tw.main(["--help"])
+        text = " ".join(capsys.readouterr().out.split())  # argparse re-wraps the description to $COLUMNS
         assert "long changelog entries." in text
 
 
