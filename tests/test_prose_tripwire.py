@@ -613,7 +613,7 @@ class TestTheCommandLine:
         with pytest.raises(SystemExit) as exc:
             tw.main(["--help"])
         assert exc.value.code == 0
-        text = capsys.readouterr().out
+        text = "".join(capsys.readouterr().out.split())  # argparse wraps the epilog and breaks long words
         for name in tw.THRESHOLDS:
             assert f"{name}={getattr(tw, name)}" in text
         # THRESHOLDS derives itself, so iterating it cannot notice an omission: pin the set instead.

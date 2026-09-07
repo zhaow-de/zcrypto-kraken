@@ -41,7 +41,7 @@ TABLE_ROW_CHARS = 200
 SECTION_BYTES = 2048
 CHANGELOG_BULLETS = 5
 
-# Every uppercase int constant, which is what every bar is today: `--help` advertises exactly these,
+# Every uppercase int constant above this line, which is what every bar is today: `--help` advertises exactly these,
 # and a bar of any other type would need adding here and to the test that pins this set.
 THRESHOLDS = tuple(name for name, value in list(globals().items()) if name.isupper() and type(value) is int)
 
