@@ -7,22 +7,22 @@ sleeves on the 4h union calendar — B (daily benchmark w*l3, intraday-held), A1
 7-offset-mean positions, intraday-held), A2 (equal-weight ensemble of trials 37-39's native-4h arms)
 — rolling 180-bar inverse-vol sleeve weights through k-1 (ANY degenerate window -> all 1/3), cap
 20%/10%, full per-asset costing at 0.006/side, §10 governor at daily cadence. The adaptive sleeve
-weighting is the `ivol180` of the variant string and the sole construction difference from record
-44, which fixes the three weights at 1/3.
+weighting is the `ivol180` of the variant string and the sole PRE-REGISTERED construction
+difference from record 44, which fixes the three weights at 1/3.
 
 Run: `uv run python -m cli.portfolio.record43_book` (~3 min 05 s measured: ~2 min 07 s of it the
 stage-1 derivation, where the three A2 arms and the two daily sleeves dominate, then record 44's
 build and the ~1 min 1151-point cost sweep). It takes no tuning knobs and reads only frozen inputs — re-running it is
-the whole point. Every QA gate the original driver ran is kept as an assert AND returned in the
-result's `qa` block, so a caller checks them without re-reading this file.
+the whole point. Every QA gate the original driver ran is kept as an assert AND its measured value
+returned in the result, so a caller checks them without re-reading this file.
 
 ## Provenance — recovered, not reconstructed
 
 Trial 43's `run_ref` names scratchpad scripts that were believed permanently lost. On 2026-08-21 all
 five were recovered VERBATIM from the iter-080/081 session transcript's `Write`/`Edit` records; the
-transcript itself was destroyed by the tooling's 30-day retention prune four minutes after being
-read and 27 minutes before the commit that preserved the bytes, so it can never be re-read. The
-recovered stage-1 driver then reproduced row 43's registered figures exactly on two machines —
+transcript itself was destroyed by the tooling's 30-day retention prune before the commit that
+preserved the bytes, so it can never be re-read. The recovered stage-1 driver then reproduced
+row 43's registered figures exactly on two machines —
 including `weight_warmup_bars` 180 and `weight_zero_vol_fallback_bars` 10638, which fall out of the
 computation rather than being fitted. That behavioural reproduction, not the replay, is the proof.
 
@@ -176,8 +176,8 @@ DD_AWARE_MAXDD_MARGIN = 0.015
 def btc_forward_filled(prices: dict[str, list[float | None]]) -> dict[str, list[float | None]]:
     """The registered feed map's second grid: BTC forward-filled, every other asset's Nones kept.
 
-    BTC alone because it is the regime series `a1_book_returns` gates on — a None there would drop
-    the gate, while the other assets' Nones are meaningful absence the book primitives handle.
+    BTC alone because it is the regime series `a1_book_returns` gates on — it refuses a None-bearing
+    BTC column outright, while the other assets' Nones are meaningful absence the book primitives handle.
     """
     btc = list(prices["BTC"])
     last = None
@@ -237,10 +237,10 @@ def position_turnover(positions: dict[str, list[float]], n: int, *, assets: tupl
 
 
 def build_b_sleeve(daily_prices: dict[str, list[float | None]]) -> tuple[dict[str, list[float]], list[float]]:
-    """B sleeve on the DAILY calendar: (per-asset positions, own net-of-cost series).
+    """B sleeve on the DAILY calendar: (per-asset positions, own net-of-cost series — basket gross,
+    per-asset turnover).
 
-    Dynamic inverse-vol basket at 30 -> 200d SMA gate on the basket's own equity -> vol target
-    0.10/sqrt(365) at 30 -> inverse-vol weights at 30, charged per-asset turnover. The net-of-cost
+    The net-of-cost
     series takes the BASKET's gross (l3 * basket), not the per-asset sum: that is what makes it
     comparable elementwise to the committed builder's `benchmark_net_of_cost`.
     """

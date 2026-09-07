@@ -517,8 +517,7 @@ def _vol_target_positions(rv: np.ndarray, target_vol: float, max_leverage: float
 
 
 def _b_daily_positions_fast(prices_by_asset: dict[str, list[float | None]], assets: tuple[str, ...]) -> dict[str, list[float]]:
-    """The B sleeve on the (extended) daily grid: dynamic_inverse_vol_basket -> equity -> sma_gate
-    -> vol_target -> inverse-vol weights, each layer bit-identical to the verified construction.
+    """The B sleeve on the (extended) daily grid, each layer bit-identical to the verified construction.
     The verified path's internal QA comparator (a transcription check against record 33's
     build_combined_system, redundant here) is not re-run — the fast-vs-verified equivalence tests
     subsume it."""
@@ -629,8 +628,8 @@ def build_crossfreq_system_fast(
     identical integer diagnostics (the layers are in fact bit-identical by construction).
 
     Error-behavior asymmetry: outputs are gated, error paths are not — on degenerate inputs the
-    verified path may raise where this path returns a result (e.g. the zero-variance book check
-    inside its internal QA comparator, which this path skips per the replay policy). Inputs that
+    verified path may raise where this path returns a result (e.g. the zero-variance Sharpe check
+    in a1_book_returns/a2_book_returns' run_backtest metrics, which this path never computes). Inputs that
     pass validation and produce results produce EQUAL results on both paths.
 
     How it stays equal (spec 00040 §fast path): every discrete decision layer — SMA gates, basket
