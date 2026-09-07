@@ -663,8 +663,10 @@ class SegmentWriter:
         return self._base_dir / self._pair / self._kind / "rows-quarantined.json"
 
     def _load_quarantined(self) -> int:
-        """The count a previous process left, or 0. NEVER raises: this runs at construction, before
-        the daemon connects, so anything escaping stops capture on every restart (T0161)."""
+        """The count a previous process left, or 0. NEVER raises -- this runs at construction, before
+        the daemon connects, so anything escaping stops capture on every restart (T0161). Seeding 0
+        where a sibling seeds a count takes the UNLABELLED sum down without reaching zero, which
+        `increase()` reads as a step: a dropped pair or one unreadable file can page once."""
         try:
             payload = json.loads(self._quarantined_path().read_text())
             value = payload["rows_quarantined"] if isinstance(payload, dict) else None
