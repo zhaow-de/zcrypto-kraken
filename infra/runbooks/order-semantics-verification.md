@@ -12,7 +12,7 @@ disarmed. It is owed at **every** nautilus-trader bump, before the engine may be
 **A pass binds to one exact version string and nothing else** — §1.6 says what that demands of the
 pin, and it may need deciding days before anything else here.
 
-**This places real orders on a live Kraken account.** Every step below runs in the main session, by
+**This places real orders on a live Kraken account.** Every step below runs in the attending session's main loop, by
 hand, in order. Nothing here belongs in a subagent: host- and credential-touching steps die at the
 permission gate there.
 

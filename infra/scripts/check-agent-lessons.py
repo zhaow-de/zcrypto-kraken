@@ -11,6 +11,21 @@ REQUIRED = {"ts", "session", "branch", "kind", "cites", "what", "why"}
 KINDS = {"self-correction", "rule-deviation", "rule-feedback", "skill-feedback", "miscount"}
 
 
+def record_errors(rec: object) -> list[str]:
+    """Every way one parsed record fails the shape, so a writer can refuse before it appends."""
+    if not isinstance(rec, dict) or set(rec) != REQUIRED:
+        return [f"keys must be exactly {sorted(REQUIRED)}"]
+    out = []
+    if rec["kind"] not in KINDS:
+        out.append(f"kind must be one of {sorted(KINDS)}, got {rec['kind']!r}")
+    if not isinstance(rec["cites"], list) or not all(isinstance(c, str) and c for c in rec["cites"]):
+        out.append("cites must be a list of non-empty strings")
+    for key in ("ts", "session", "branch", "what", "why"):
+        if not isinstance(rec[key], str) or not rec[key].strip():
+            out.append(f"{key} must be a non-empty string")
+    return out
+
+
 def check(path: str) -> int:
     bad = 0
     with open(path, encoding="utf-8") as fh:
@@ -22,20 +37,9 @@ def check(path: str) -> int:
                 print(f"{path}:{n}: not a JSON record ({exc.msg})")
                 bad += 1
                 continue
-            if not isinstance(rec, dict) or set(rec) != REQUIRED:
-                print(f"{path}:{n}: keys must be exactly {sorted(REQUIRED)}")
+            for problem in record_errors(rec):
+                print(f"{path}:{n}: {problem}")
                 bad += 1
-                continue
-            if rec["kind"] not in KINDS:
-                print(f"{path}:{n}: kind must be one of {sorted(KINDS)}, got {rec['kind']!r}")
-                bad += 1
-            if not isinstance(rec["cites"], list) or not all(isinstance(c, str) and c for c in rec["cites"]):
-                print(f"{path}:{n}: cites must be a list of non-empty strings")
-                bad += 1
-            for key in ("ts", "session", "branch", "what", "why"):
-                if not isinstance(rec[key], str) or not rec[key].strip():
-                    print(f"{path}:{n}: {key} must be a non-empty string")
-                    bad += 1
     return 1 if bad else 0
 
 

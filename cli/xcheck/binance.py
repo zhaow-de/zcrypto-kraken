@@ -15,12 +15,7 @@ _TIMEOUT_SECONDS = 15
 
 
 def binance_pair_name(symbol: str) -> str:
-    """Map a canonical `"BASE/QUOTE"` symbol to its Binance ticker (e.g. `"BTC/EUR"` -> `"BTCEUR"`).
-
-    The project's symbols already use the common tickers Binance expects (`BTC`, `DOGE`, ...), not
-    Kraken's internal codes (`XBT`, `XDG`), so no translation table is needed. Raises `XCheckError`
-    on a symbol that isn't `"BASE/QUOTE"`.
-    """
+    """No translation table: the project's symbols already carry the common tickers Binance expects, never Kraken's internal codes."""
     parts = symbol.split("/")
     if len(parts) != 2 or not parts[0] or not parts[1]:
         raise XCheckError(f"not a BASE/QUOTE symbol: {symbol!r}")
@@ -29,12 +24,7 @@ def binance_pair_name(symbol: str) -> str:
 
 
 def fetch_binance_klines(pair: str, *, limit: int = 1000) -> list:
-    """GET Binance's public daily klines for `pair` and return the raw kline rows.
-
-    Raises `XCheckError` on a transport/JSON failure, or when the decoded body isn't a list. Returns
-    only the most recent <= `limit` daily candles (Binance single-page limit, max 1000) — a
-    recent-window check, not full history.
-    """
+    """A recent-window check, never full history: `limit` is Binance's single-page maximum and this makes one request."""
     url = f"{_BASE_URL}?symbol={pair}&interval=1d&limit={limit}"
     try:
         with urllib.request.urlopen(url, timeout=_TIMEOUT_SECONDS) as response:
@@ -50,14 +40,7 @@ def fetch_binance_klines(pair: str, *, limit: int = 1000) -> list:
 
 
 def binance_daily_closes(pair: str, *, fetch_fn=fetch_binance_klines, limit: int = 1000) -> pl.DataFrame:
-    """Fetch daily klines for `pair` via `fetch_fn` and parse into a canonical `{ts, close}` frame.
-
-    Each kline row is `[openTime_ms, open, high, low, close, volume, closeTime, ...]` (>= 5 fields);
-    `openTime_ms` -> `ts` (`Datetime("us", "UTC")`), `close` (row[4], a string) -> `Float64`. The
-    result is sorted ascending and exact-`ts` de-duped. Raises `XCheckError` on an empty result or
-    an unparseable row. Covers only the most recent <= `limit` daily candles (a recent-window
-    check; full-overlap via `startTime` pagination is a deferred follow-up).
-    """
+    """A Binance kline row is `[openTime_ms, open, high, low, close, volume, closeTime, ...]`, which is what `row[0]` and `row[4]` below are."""
     rows = fetch_fn(pair, limit=limit)
     if not rows:
         raise XCheckError(f"empty klines result for {pair}")
@@ -78,13 +61,7 @@ def binance_daily_closes(pair: str, *, fetch_fn=fetch_binance_klines, limit: int
 
 
 def crosscheck_series(kraken: pl.DataFrame, binance: pl.DataFrame) -> dict:
-    """Cross-check a canonical Kraken daily frame against a Binance daily-closes frame on their `ts` overlap.
-
-    Returns `{overlap_rows, close_corr, return_corr, max_abs_rel_diff, max_rel_diff_ts}`, where
-    `max_abs_rel_diff = max(|k_close - b_close| / b_close)` and `max_rel_diff_ts` is its date;
-    `close_corr` / `return_corr` are the Pearson correlation of the closes / of daily pct-returns.
-    Fewer than 2 overlapping rows yields null correlations and a zero max-diff.
-    """
+    """Compare two daily frames on their `ts` overlap: the relative difference is taken against Binance's close, and fewer than two overlapping rows is null, not zero correlation."""
     joined = kraken.select("ts", "close").join(binance.select("ts", "close"), on="ts", how="inner", suffix="_binance").sort("ts")
     overlap_rows = joined.height
     if overlap_rows < 2:
@@ -114,15 +91,7 @@ def crosscheck_series(kraken: pl.DataFrame, binance: pl.DataFrame) -> dict:
 
 
 def crosscheck_dataset(kraken_root: Path, symbols: list[str], *, fetch_fn=fetch_binance_klines) -> dict:
-    """Cross-check each `symbol`'s Kraken daily series under `kraken_root` against Binance.
-
-    For each `"BASE/QUOTE"` in `symbols`, reads `kraken_root/{base}/{quote}/1440.parquet` and compares
-    it to Binance's daily closes (`binance_pair_name(symbol)`, fetched via `fetch_fn`). A symbol that
-    isn't `"BASE/QUOTE"`, or whose Binance fetch raises `XCheckError` (pair not listed on Binance), is
-    skipped and recorded under `skipped` instead of `series`. Returns `{series: {symbol:
-    crosscheck_series-dict}, skipped: [...], summary}`, where `summary` is `{series_count,
-    min_close_corr, max_abs_rel_diff_overall}`.
-    """
+    """Cross-check each symbol's Kraken daily series against Binance's closes into one dict of `series`, `skipped` and `summary`; a symbol that cannot be checked — malformed, no parquet, not listed on Binance — lands in `skipped`, never raises."""
     series: dict[str, dict] = {}
     skipped: list[str] = []
 
@@ -131,7 +100,7 @@ def crosscheck_dataset(kraken_root: Path, symbols: list[str], *, fetch_fn=fetch_
             base, quote = symbol.split("/")
             kraken = read_parquet(kraken_root / base / quote / "1440.parquet")
             binance = binance_daily_closes(binance_pair_name(symbol), fetch_fn=fetch_fn)
-        except ValueError, XCheckError:
+        except ValueError, XCheckError, FileNotFoundError:
             skipped.append(symbol)
             continue
         series[symbol] = crosscheck_series(kraken, binance)
@@ -147,7 +116,6 @@ def crosscheck_dataset(kraken_root: Path, symbols: list[str], *, fetch_fn=fetch_
 
 
 def render_markdown(report: dict) -> str:
-    """Render a cross-check `report` (as returned by `crosscheck_dataset`) as a Markdown table + summary."""
     lines = [
         "# Binance Cross-Check Report",
         "",

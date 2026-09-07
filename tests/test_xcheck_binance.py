@@ -211,6 +211,25 @@ def test_crosscheck_dataset_skips_malformed_symbol_without_crashing(tmp_path):
     assert report["summary"]["series_count"] == 1
 
 
+def test_crosscheck_dataset_skips_a_symbol_whose_parquet_is_absent(tmp_path):
+    """The other arm of the skip: well-formed, but nothing on disk to read."""
+    # `"/EUR"` is the shape that hides it -- `split("/")` gives an empty base, which pathlib drops, so
+    # the read is attempted against a path that was never a dataset. `read_parquet` raises
+    # FileNotFoundError, which is neither ValueError nor XCheckError.
+    root = tmp_path / "ohlc-full"
+    write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / "BTC" / "EUR" / "1440.parquet")
+
+    def fetch_fn(pair, *, limit=1000):
+        ts_ms = [(BASE_TS + i * DAY) * 1000 for i in range(3)]
+        return [_kline(ts, 100.0) for ts in ts_ms]
+
+    report = crosscheck_dataset(root, ["SOL/EUR", "/EUR", "BTC/EUR"], fetch_fn=fetch_fn)
+
+    assert report["skipped"] == ["SOL/EUR", "/EUR"]
+    assert "BTC/EUR" in report["series"]  # the true positive: the healthy symbol is still crosschecked
+    assert report["summary"]["series_count"] == 1
+
+
 # --- render_markdown ---
 
 

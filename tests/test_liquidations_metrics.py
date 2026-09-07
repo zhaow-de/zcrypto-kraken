@@ -18,8 +18,7 @@ from cli.obs.metrics import METRICS_PORT_ENV_VAR
 
 
 def _families(registry: CollectorRegistry) -> dict:
-    """Sample-name -> the family carrying it (`Counter` strips a trailing `_total` from
-    `family.name` and re-adds it per sample -- see `tests/test_capture_metrics.py::_families`)."""
+    """Keyed by SAMPLE name, because `Counter` strips a trailing `_total` from the family's own name and re-adds it per sample."""
     result: dict = {}
     for family in registry.collect():
         for sample in family.samples:
@@ -41,7 +40,7 @@ def _watermark(tmp_path: Path, *, free: int = 10_000) -> DiskWatermark:
 
 
 def _one_row_poll_cycle(monkeypatch):
-    """A `poll_cycle` stand-in that writes one row to BTC's writer and reports one submission."""
+    """Its row is dated 2024-03-01, far enough behind the real clock that a cycle's own finalize step closes the hour."""
 
     def fn(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         writers["BTC"].append(
@@ -156,6 +155,43 @@ def test_poll_once_unexpected_exception_counts_as_error_not_api_error(tmp_path, 
     families = _families(registry)
     error_sample = next(s for s in families["zcrypto_liquidations_polls_total"].samples if s.labels["outcome"] == "error")
     assert error_sample.value == 1.0
+    assert families["zcrypto_liquidations_api_errors_total"].samples[0].value == 0.0
+
+
+# --- isolation regression: a raising finalize sweep never aborts the poll cycle --------------------
+
+
+class _RaisingFinalizeWriter:
+    """A writer whose hour-closing sweep raises: no real `SegmentWriter` does, which is the point --
+    `_poll_once`'s contract must hold on its own, not on `_merge_hour`'s "Never raises" docstring."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def finalize_completed_hours(self, cutoff):
+        raise OSError("finalize boom")
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_raising_finalize_sweep_never_aborts_a_poll_cycle(tmp_path, monkeypatch, caplog):
+    _one_row_poll_cycle(monkeypatch)
+    registry = CollectorRegistry()
+    metrics = _PollMetrics(registry)
+    writers = _writers(tmp_path)
+    writers["ETH"] = _RaisingFinalizeWriter()
+
+    with caplog.at_level("ERROR"):
+        ok = _poll_once("key", writers, _watermark(tmp_path), {}, metrics)
+    for w in writers.values():
+        w.close()
+
+    assert ok is False  # the cycle failed, so the dead-man ping is withheld -- but `_run` keeps looping
+    assert "finalize boom" in caplog.text
+    families = _families(registry)
+    outcomes = {s.labels["outcome"]: s.value for s in families["zcrypto_liquidations_polls_total"].samples}
+    assert outcomes.get("error") == 1.0 and outcomes.get("ok", 0.0) == 0.0
     assert families["zcrypto_liquidations_api_errors_total"].samples[0].value == 0.0
 
 

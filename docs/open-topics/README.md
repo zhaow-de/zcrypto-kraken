@@ -20,6 +20,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; the conditioning-overlay class was attributed out (trials 45+46 REJECT) (ripe when: a genuinely new B1 hypothesis — not a conditioning overlay on the A2 book — is pre-registered, or the human expands/closes the shared B budget).
+- [T0176 — a docstring that restates its body has no instrument](T0176-a-docstring-that-restates-its-body-has-no-instrument.md) — the size ratchet, the citation test and the walker all pass a docstring that narrates its own function; a `docstring-restates-body` tripwire kind with a tuned threshold, then a drain wave. Ripe when the next `cli/` prose wave is planned.
 
 ### Partially done<a name="partially-done"></a>
 
@@ -108,6 +109,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0161 — the quarantined-rows counter is blind to the spill that happens as the process dies](T0161-rows-quarantined-counter-unscraped-on-close.md) — `zcrypto-capture-rows-quarantined` reads a counter with two increment sites that do not behave alike: the `_hold()` one is scraped normally and works, while the `close()` one lands in an exiting process that is gone before the next 60 s scrape, with no `stop_grace_period` anywhere under `infra/`. A value never published cannot be read by any expression, so a shutdown-time spill — the case most correlated with a re-pin or a crash near an hour boundary — reads healthy. Excluded from spec `00109` D3 on purpose, since absolute-value does not repair it. All three candidate fixes owe a capture converge — there is no cheap option: the writer emits no critical-level logging at all, so "rule the CRITICAL log line the detector" means first ADDING the emission, making it the broadest of the three. Ripe when a capture converge is scheduled after `00109`'s for its own reasons.
 
 - [T0163 — client order id length is unmeasured](T0163-client-order-id-length-unmeasured.md) — the probe's 18-character truncation comment cannot be squared with its own 27-character ids passing; ripe when a versioned adapter-verification row quotes a minted id as the venue returned it.
+
+- [T0175 — a swallowed finalize failure pings the dead-man green](T0175-a-swallowed-finalize-failure-pings-the-dead-man-green.md) — on a read-only or full mount `finalize_completed_hours` swallows the failure and `_poll_once` pings the liquidations dead-man anyway; hours go unfinalized under an all-clear. Ripe when either file next changes.
 
 ### Partially done<a name="partially-done-1"></a>
 
