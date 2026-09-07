@@ -647,8 +647,8 @@
       The Alloy config on this host does NOT match the repo. A converge that omits
       `ops_alloy_digest` skips the config copy and still exits 0, so the host can serve a stale
       keep-regex indefinitely while every other check passes. Re-run this converge with
-      `-e ops_alloy_digest=<currently-running>`, then recreate the container so the new file is
-      read. Runbook context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
+      `-e ops_alloy_digest=<currently-running>`: that run copies the file and its handler reloads
+      Alloy, so nothing further is needed here. Runbook context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
     success_msg: "deployed Alloy config matches the repo"
   # Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
   # copy the file, so asserting first would fail the host, drop it from every later task, and
