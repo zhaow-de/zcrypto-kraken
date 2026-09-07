@@ -20,6 +20,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; the conditioning-overlay class was attributed out (trials 45+46 REJECT) (ripe when: a genuinely new B1 hypothesis — not a conditioning overlay on the A2 book — is pre-registered, or the human expands/closes the shared B budget).
+- [T0176 — a docstring that restates its body has no instrument](T0176-a-docstring-that-restates-its-body-has-no-instrument.md) — the size ratchet, the citation test and the walker all pass a docstring that narrates its own function; a `docstring-restates-body` tripwire kind with a tuned threshold, then a drain wave. Ripe when the next `cli/` prose wave is planned.
 
 ### Partially done<a name="partially-done"></a>
 
