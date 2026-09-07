@@ -9,7 +9,7 @@
 - State assumptions; mark each *validated* (by which command) / *assumed* / *unknown*.
 - Multiple interpretations → present 2–3 with tradeoffs; don't pick silently.
 - Distinguish symptom from root problem.
-- Unclear? Stop, name what's confusing, and ask the session's authority — the owner attended, `zcrypto-main` as a payload session; an unattended `zcrypto-auto-exec` run decides reversible forks itself and parks only irreversible steps.
+- Unclear? Stop, name what's confusing, and ask the session's authority — the owner attended, `zcrypto-marco` as a payload session; an unattended `zcrypto-auto-exec` run decides reversible forks itself and parks only irreversible steps.
 
 ## Simplicity first
 
