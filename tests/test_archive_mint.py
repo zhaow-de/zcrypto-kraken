@@ -240,8 +240,8 @@ def test_minting_an_hour_at_a_non_zero_utc_offset_is_rejected(tmp_path):
 
 
 def test_a_non_utc_hour_is_refused_before_anything_reaches_the_tree(tmp_path):
-    """The claim T0177 actually makes: the canonical tree cannot receive a wrong-hour file name. Read
-    off DISK, never inferred from the raise -- a refusal that fires after a partial write is no defence."""
+    """The claim T0177 makes about THIS path: no wrong-hour file name is minted here. Read off DISK,
+    never inferred from the raise -- a refusal that fires after a partial write is no defence."""
     # `-08:00`: 09:00 there is 17:00 UTC, so this would put an eight-hour lie in the one place a
     # final states which hour it covers.
     pacific = timezone(timedelta(hours=-8))

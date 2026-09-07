@@ -50,7 +50,9 @@ def settled_hours(*, now: datetime, window_hours: int) -> list[datetime]:
     Re-scanned every cycle: a residual hour may be healable in the next, and the LEDGER — not this list —
     stops a decided hour being re-decided. Every hour inherits `now`'s offset, so a non-UTC `now` is refused here.
     """
-    if now.tzinfo is None or now.utcoffset() != timedelta(0):
+    if now.tzinfo is None:
+        raise CaptureError(f"refusing to settle hours from {now!r}: a naive `now`, with no offset to check against UTC")
+    if now.utcoffset() != timedelta(0):
         raise CaptureError(f"refusing to settle hours from {now!r}: a `now` at UTC offset {now.isoformat()[-6:]}, not at UTC")
     newest = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=SETTLE_HOURS)
     return [newest - timedelta(hours=i) for i in reversed(range(window_hours))]

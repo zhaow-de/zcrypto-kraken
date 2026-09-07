@@ -57,7 +57,7 @@ def test_the_settle_boundary_is_inclusive_at_exactly_h_plus_two():
 
 def test_a_now_at_a_non_zero_utc_offset_is_refused():
     """The propagation boundary: this function preserves whatever offset `now` carries, so every hour
-    it yields would reach the reconciler -- and its ten ledger writes -- stamped in the wrong zone."""
+    it yields would reach the reconciler -- and its nine ledger writes -- stamped in the wrong zone."""
     for offset, rendered in ((timedelta(hours=5, minutes=30), "+05:30"), (timedelta(hours=-8), "-08:00")):
         with pytest.raises(CaptureError, match=re.escape(rendered)):
             settled_hours(now=H.astimezone(UTC).replace(tzinfo=timezone(offset)), window_hours=48)

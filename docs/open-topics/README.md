@@ -137,8 +137,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Resolved<a name="resolved-1"></a>
 
-- [T0177 — `_check_hour` accepts an exact hour at any UTC offset](archive/T0177-mint-check-hour-accepts-any-offset.md) — **resolved 2026-09-07**: two guards, at `_check_hour` and at `settled_hours` where a non-UTC offset would spread to eleven write sites, so no such hour can reach a file name or a ledger key ON THE ARCHIVE MINTING PATH — other wall-clock formatters are named in the topic and unguarded. Both latent by construction and proven by deleting each arm.
-
 - [T0040 — alert on docker-socket-proxy denials and non-routine calls](archive/T0040-docker-socket-proxy-denial-alert.md) — closed unbuilt: the proxy it would have watched was removed the same day, so the denial stream it depended on no longer exists; the security residual that replaces it is [T0042](archive/T0042-alloy-holds-root-equivalent-docker-access.md).
 
 - [T0046 — sparse-symbol liquidation hours never finalize](archive/T0046-sparse-symbol-liquidation-hours-never-finalize.md) — resolved via wall-clock finalization: `SegmentWriter.finalize_completed_hours(cutoff)` (additive) closes an open or crash-leftover hour once it is provably older than the caller's cutoff; the Coinalyze poller calls it with a 31h lag (safely past its 30h catch-up window and Coinalyze's own retention), so sparse-symbol manifests now appear at most ~31h late instead of never — ships to the running poller with the next ops-node image re-pin.
@@ -384,3 +382,5 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0169 — cleanup residue outside a prose commit](archive/T0169-cleanup-residue-outside-a-prose-commit.md) — resolved 2026-09-06: the in-repo residue of the prose cleanup fixed on its own branch, the status-annotation sweep landed, the tripwire's string-literal exclusion with T0164's closing PR, the logrotate task deleted once the file was measured absent, the old keys measured gone from every admin account and the `nas-hot` path verified jailed, the archive-pull rename recorded as not owed.
 
 - [T0175 — a swallowed finalize failure pings the dead-man green](archive/T0175-a-swallowed-finalize-failure-pings-the-dead-man-green.md) — **resolved 2026-09-07**: the sweep reports the hours it could not finalize and the poller withholds the dead-man ping (report-and-withhold, the owner's ruling); the healthchecks description names the third condition, read back.
+
+- [T0177 — `_check_hour` accepts an exact hour at any UTC offset](archive/T0177-mint-check-hour-accepts-any-offset.md) — **resolved 2026-09-07**: two guards, at `_check_hour` and at `settled_hours` where a non-UTC offset would spread to eleven write sites, so no such hour can reach a file name or a ledger key ON THE ARCHIVE MINTING PATH — other wall-clock formatters are named in the topic and unguarded. Both latent by construction and proven by deleting each arm.
