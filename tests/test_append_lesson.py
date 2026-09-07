@@ -101,7 +101,23 @@ class TestARefusalWritesNothing:
 
 class TestItResolvesTheMainCheckout:
     def test_a_worktree_cwd_resolves_to_the_main_checkout(self, checkout: pathlib.Path, tmp_path: pathlib.Path) -> None:
-        subprocess.run(["git", "-C", str(checkout), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(checkout),
+                "-c",
+                "user.name=zcrypto-test",
+                "-c",
+                "user.email=zcrypto-test@example.invalid",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "x",
+            ],
+            check=True,
+        )
         wt = tmp_path / "wt"
         subprocess.run(["git", "-C", str(checkout), "worktree", "add", "-q", "--detach", str(wt)], check=True)
         assert al.main_checkout(wt) == checkout.resolve()
