@@ -294,22 +294,20 @@ class ShadowStrategy(Strategy):
 
 
 def _external_observer_config() -> StrategyConfig:
-    """The observer's whole configuration: the external order identity, and nothing else.
+    """`order_id_tag` is left unset DELIBERATELY. A tag is appended to the id -- measured, a tag "EXT" yields
+    `EXTERNAL-EXT` -- and events for orders the venue reports under the plain external identity would then
+    reach no strategy at all: no exception, no log, no failing test, the whole stream simply dark. Unset,
+    the id reads exactly `EXTERNAL` both at construction and after registration, which is where
+    tests/test_engine_node.py measures it.
 
-    `order_id_tag` is left unset DELIBERATELY. A tag is appended to the id -- measured, a tag "EXT"
-    yields `EXTERNAL-EXT` -- and events for orders the venue reports under the plain external
-    identity would then reach no strategy at all: no exception, no log, no failing test, the whole
-    stream simply dark. Unset, the id reads exactly `EXTERNAL` both at construction and after
-    registration, which is where tests/test_engine_node.py measures it.
+    The claim list stays at its `None` default here as it does on the main strategy: a claim is what would
+    route the account owner's own hand-placed settling fills onto a claiming strategy's own order topic and
+    into the unknown-order kill trip.
 
-    The claim list stays at its `None` default here as it does on the main strategy: a claim is what
-    would route the account owner's own hand-placed settling fills onto a claiming strategy's own
-    order topic and into the unknown-order kill trip.
-
-    The three management flags are set rather than inherited. They arm order management INSIDE the
-    library, which reaches the venue without calling any of the sealed methods -- and on this
-    identity every order it could manage belongs to the account owner. Inherited, a default flip
-    would arm them silently; stated, a flip is visible in this call."""
+    The three management flags are set rather than inherited. They arm order management INSIDE the library,
+    which reaches the venue without calling any of the sealed methods -- and on this identity every order it
+    could manage belongs to the account owner. Inherited, a default flip would arm them silently; stated, a
+    flip is visible in this call."""
     return StrategyConfig(
         strategy_id=_EXTERNAL_STRATEGY_ID,
         manage_contingent_orders=False,
@@ -472,9 +470,8 @@ def _credentials() -> tuple[str, str] | None:
 
 
 def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
-    """The exec client: MARGIN spot account reporting in ZEUR, under this engine's own account id.
-    Both currency fields read ZEUR: margin summary figures are denominated in it, and spot position
-    reports cover the ZEUR-quoted instruments."""
+    """Both currency fields read ZEUR for different reasons: margin summary figures are denominated in it, and
+    spot position reports cover the ZEUR-quoted instruments."""
     api_key, api_secret = credentials
     return KrakenExecutionClientConfig(
         account_id=AccountId(_ACCOUNT_ID),
@@ -521,17 +518,9 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
 
 
 def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
-    """The assembled builder: trader identity, logging, the two exec-engine knobs, the Kraken data
-    client, and -- only when `exec_enabled` -- the Kraken exec client.
-
-    Every call takes the builder the previous one returned; the chain's value is the whole state.
-
-    `exec_enabled` alone decides whether this engine may reach the venue's private side. With it
-    off the credentials are never even read and the node is data-only, which is what a keyless run
-    has always been: the trade key is IP-bound to the engine host, so a run anywhere else observes
-    and cannot trade. With it ON and either variable absent, this REFUSES rather than building a
-    node that looks armed and is not -- a substituted placeholder would defer the failure from here
-    to the first submission."""
+    """`exec_enabled` alone decides whether this engine may reach the venue's private side: off, the
+    credentials are never read; on with either variable absent, this REFUSES rather than substituting a
+    placeholder that would defer the failure to the first submission."""
     builder = (
         LiveNode.builder(name=_NODE_NAME, trader_id=TraderId(_TRADER_ID), environment=Environment.LIVE)
         .with_logging(_logging_config())
@@ -554,10 +543,8 @@ def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
 
 
 def _probe_executor_factory(config: EngineConfig) -> Callable:
-    """The production executor factory: `factory(strategy) -> ProbeExecutor`, with the strategy
-    itself as the client handle and a gate reading the deployed control-file tree beside the
-    journal. `venue_reader` is passed explicitly (rather than relying on the class default) so a
-    test can substitute it, mirroring `command.run`'s own gate construction."""
+    """Returns `factory(strategy) -> ProbeExecutor`; `venue_reader` is passed explicitly rather than left to
+    the class default so a test can substitute it."""
     return lambda strategy: ProbeExecutor(
         client=strategy,
         gate=ExecutionGate(
@@ -570,14 +557,9 @@ def _probe_executor_factory(config: EngineConfig) -> Callable:
 
 
 def build_shadow_node(config: EngineConfig) -> LiveNode:
-    """Assemble (never run here) the production-shape shadow LiveNode: the builder's clients
-    constructed, then the ShadowStrategy attached with the probe executor wired, then the external
-    order observer attached onto that strategy's own external forwarder. Building constructs clients
-    only -- no network until node.run().
-
-    The observer takes the forwarder of THIS strategy, the one carrying the executor factory: the
-    filter that scopes external events is the executor's, so the second stream is wired with an
-    executor or its events are dropped unacted-on."""
+    """Assembles the shadow node without reaching the network — nothing connects until `node.run()` — and hands
+    the observer THIS strategy's forwarder, because the filter scoping external events is the executor's and
+    a strategy wired without one drops them."""
     node = _node_builder(config).build()
     strategy = ShadowStrategy(config, executor_factory=_probe_executor_factory(config))
     node.add_strategy(strategy)
