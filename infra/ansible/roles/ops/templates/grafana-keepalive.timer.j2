@@ -1,0 +1,15 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-grafana-keepalive.timer — do
+# not hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-keepalive.timer.j2
+# instead.
+[Unit]
+Description=Hourly Grafana Cloud keep-alive
+
+[Timer]
+# Hourly, on an off-minute clear of the every-5-minutes watchdog and of the hour boundary where the
+# ops timers cluster. No Persistent=: a slot missed while the host was down is not worth catching up,
+# and a catch-up run would answer for a window nobody was awake to keep alive.
+OnCalendar=*:23:00
+Unit=zcrypto-grafana-keepalive.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-grafana-keepalive — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2 instead.
+#
+# One authenticated Grafana Cloud request per hour, and a textfile recording what it got.
+#
+# The hypothesis this tests: Grafana Cloud counts AUTHENTICATED requests as activity and ignores
+# anonymous ones. The evidence for it is negative -- the unauthenticated 5-minute watchdog probe has
+# run for months against an endpoint the app itself serves, and the instance hibernated regardless --
+# so the keep-alive half of this script is a hypothesis under test, not a known fix. The measuring
+# half is what makes it an experiment: a hibernation shows as a 503, and a wake-up as a slow 200,
+# and neither is visible in any series today.
+set -euo pipefail
+
+PROM="{{ ops_textfile_dir }}/grafana-keepalive.prom"
+URL="{{ ops_grafana_keepalive_url }}"
+
+# The token arrives from the secrets env file the unit sources, never from this template: rendering
+# it here would put the credential in a 0755 file. Unset means the owner has not minted it yet --
+# exit before writing, so the series is absent rather than reporting a zero that looks like an answer.
+[ -n "${ZCRYPTO_GRAFANA_KEEPALIVE_TOKEN:-}" ] || exit 0
+
+now="$(date +%s)"
+# No `-f`: a 503 is the measurement, not an error. `-w` gives both facts in one request, and the
+# timeout is deliberately generous against the watchdog's 20 s -- a wake-up takes a minute or more,
+# and cutting it short would record a timeout where the fact is a slow success.
+# The trailing newline in `-w` is load-bearing: without it `read` hits EOF having assigned its
+# variables and returns 1, which under `set -e` kills the script BEFORE it writes anything -- the
+# failure that leaves no series at all. `|| true` covers the case where curl writes nothing.
+read -r code seconds < <(
+  curl -sS -m 120 -o /dev/null \
+    -w '%{http_code} %{time_total}\n' \
+    -H "Authorization: Bearer ${ZCRYPTO_GRAFANA_KEEPALIVE_TOKEN}" \
+    "$URL" 2>/dev/null
+) || true
+# curl writes 000 when it never got a status (DNS, refused, timeout), and writes nothing at all if it
+# dies before the write-out; both become 0, which is distinguishable from an absent series.
+case "${code:-}" in ''|*[!0-9]*) code=0 ;; esac
+case "${seconds:-}" in ''|*[!0-9.]*) seconds=0 ;; esac
+[ "$code" = "000" ] && code=0
+
+success=0
+[ "$code" = "200" ] && success="$now"
+# Carry forward the previous success stamp, so `time() - last_success` measures the real gap rather
+# than resetting to 0 on every failed run.
+if [ "$success" = "0" ] && [ -r "$PROM" ]; then
+  success="$(awk '$1 == "zcrypto_grafana_keepalive_last_success_timestamp_seconds" {print $2}' "$PROM" 2>/dev/null || true)"
+  case "${success:-}" in ''|*[!0-9]*) success=0 ;; esac
+fi
+
+# Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
+# half-written one is scraped as garbage.
+tmp="$PROM.tmp"
+{
+  printf '# HELP zcrypto_grafana_keepalive_status HTTP status of the last hourly authenticated Grafana call; 503 is the instance hibernating, 401 a bad token, 0 no answer at all.\n'
+  printf '# TYPE zcrypto_grafana_keepalive_status gauge\n'
+  printf 'zcrypto_grafana_keepalive_status %s\n' "$code"
+  printf '# HELP zcrypto_grafana_keepalive_duration_seconds Total time of that request. A wake-up answers slowly, so seconds here is the other half of the hibernation signature.\n'
+  printf '# TYPE zcrypto_grafana_keepalive_duration_seconds gauge\n'
+  printf 'zcrypto_grafana_keepalive_duration_seconds %s\n' "$seconds"
+  printf '# HELP zcrypto_grafana_keepalive_last_run_timestamp_seconds Unix time of the last run, whatever it got. Stale here means the timer stopped, which a frozen status alone would not show.\n'
+  printf '# TYPE zcrypto_grafana_keepalive_last_run_timestamp_seconds gauge\n'
+  printf 'zcrypto_grafana_keepalive_last_run_timestamp_seconds %s\n' "$now"
+  printf '# HELP zcrypto_grafana_keepalive_last_success_timestamp_seconds Unix time of the last 200 (0 = never seen one).\n'
+  printf '# TYPE zcrypto_grafana_keepalive_last_success_timestamp_seconds gauge\n'
+  printf 'zcrypto_grafana_keepalive_last_success_timestamp_seconds %s\n' "$success"
+} > "$tmp"
+mv -f "$tmp" "$PROM"

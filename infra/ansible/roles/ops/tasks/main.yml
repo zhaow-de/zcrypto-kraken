@@ -479,6 +479,50 @@
         state: started
       ignore_errors: "{{ ansible_check_mode }}"
 
+# --- The Grafana Cloud keep-alive: one authenticated call an hour, and the metric that measures it -
+# Unconditional like the watchdog above (curl-only). Only the secrets file is gated, so a converge
+# before the token exists installs a timer that runs and exits without writing, never one that fails
+# every slot -- the unit's `EnvironmentFile=-` is the other half of that.
+- name: install the grafana keep-alive
+  block:
+    - name: render the grafana keep-alive secrets env file
+      ansible.builtin.template:
+        src: grafana-keepalive-secrets.env.j2
+        dest: "{{ ops_compose_dir }}/grafana-keepalive-secrets.env"
+        owner: root
+        group: root
+        mode: "0600"
+      when: grafana_ro_token is defined
+      no_log: true
+      diff: false
+
+    - name: install the grafana keep-alive runner script
+      ansible.builtin.template:
+        src: grafana-keepalive.sh.j2
+        dest: /usr/local/sbin/zcrypto-grafana-keepalive
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: render the grafana keep-alive systemd service + timer
+      ansible.builtin.template:
+        src: "grafana-keepalive.{{ item }}.j2"
+        dest: "/etc/systemd/system/zcrypto-grafana-keepalive.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+
+    # ignore_errors under check mode only, for the reason the watchdog's enable states: a `--check`
+    # preview writes no unit files, so on a host without the timer this enable cannot resolve it.
+    - name: enable + start the grafana keep-alive timer
+      ansible.builtin.systemd_service:
+        name: zcrypto-grafana-keepalive.timer
+        daemon_reload: true
+        enabled: true
+        state: started
+      ignore_errors: "{{ ansible_check_mode }}"
+
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize and tape-bars
 # (spec 00087 D6) materialize timers. Digest-gated for the same reason as the overlay-writer block
