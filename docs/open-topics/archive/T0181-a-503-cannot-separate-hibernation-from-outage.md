@@ -32,8 +32,8 @@ That answers the question this topic was opened to preserve. The undecidability 
 
 The surfaces are left as they stand, deliberately. They already say a 503 does not distinguish the two and route the operator onward in both cases, which is "503 is 503" in operating form; the accept arm's proposal to author one sentence and point at it from three places was not taken, because the ruling's other half was to keep it simple and ship.
 
-**One item is NOT closed by this ruling and is registered as its own topic, `T0182`**: `infra/runbooks/observability.md` step 1 says nothing about what a `200` means and does not warn that the reading can be up to an hour old — `OnCalendar=*:37:00` against the watchdog's `*:0/5:41`. That follows from the two schedules and not from the decision, so the ruling does not reach it, and a topic being archived is no place for it to live.
+**One item the ruling did not reach was fixed in the same PR**: `infra/runbooks/observability.md` step 1 said nothing about what a `200` means and never warned that the reading can be an hour old — `OnCalendar=*:37:00` against the watchdog's `*:0/5:41`. That followed from the two schedules rather than from this decision, so the ruling left it standing; the owner's answer was that a one-clause fix resolves it on the spot, and step 1 now carries both.
 
 ## Suggested next steps
 
-_Superseded by the Resolution above._ The decision this section asked for was made; the two arms it laid out are spent, and the surfaces it proposed editing were deliberately left alone. What survived the ruling is `T0182`, and nothing here is owed.
+_Superseded by the Resolution above._ The decision this section asked for was made; the two arms it laid out are spent, and the surfaces it proposed editing were deliberately left alone but for step 1's one-clause fix, which the same PR carries. Nothing here is owed.
