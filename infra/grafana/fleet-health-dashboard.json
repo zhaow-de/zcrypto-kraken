@@ -2276,7 +2276,7 @@
       "id": 801,
       "type": "timeseries",
       "title": "Keep-alive — HTTP status of the hourly call",
-      "description": "The hourly call's HTTP status over time. What each value means is in the metric's own HELP text, which is where it is kept — it reaches the host, where an unreadable Grafana is read, and this panel cannot. What this panel is for is the question no single value answers: whether 503s are still occurring since the keep-alive started, which is the only evidence that would settle whether the hourly call prevents hibernation.",
+      "description": "The hourly call's HTTP status over time. What each value means is in the metric's own HELP text, which is where it is kept — it reaches the host, where an unreadable Grafana is read, and this panel cannot. What this panel shows that no single value does is whether 503s are still occurring. A 503 recurring refutes the hypothesis that the hourly call prevents hibernation; their absence over any window is consistent with the call working and equally with hibernation having stopped for another reason, so it confirms nothing.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
