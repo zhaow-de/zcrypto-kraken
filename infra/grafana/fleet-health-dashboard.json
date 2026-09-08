@@ -2276,7 +2276,7 @@
       "id": 801,
       "type": "timeseries",
       "title": "Keep-alive — HTTP status of the hourly call",
-      "description": "The value IS the HTTP status of the hourly authenticated call this stack makes to itself from the ops host. 200 is healthy. 503 is what BOTH a hibernation and a Grafana Cloud outage look like — the call saw a status, not a reason, so read it as either until the vendor's status page says which; a hibernation loses nothing, since ingest never stops, and ends when someone opens a dashboard and waits out the loading. 0 means the call got no status at all, and the duration beside it is what separates the two causes: 0 at roughly 120 s is the call hitting its own timeout, which is what a slow wake-up looks like and where waiting is the action; 0 in a fraction of a second is nothing answering, which is infra/runbooks/observability.md's grafana-cloud-dark section. A 401 or 403 is the unambiguous bad case: the hypothesis under test is that AUTHENTICATED requests count as activity, so a call that does not authenticate is not the call being made, and the experiment is dead until the token is fixed. Any other value — a 429, a 502 — reached Grafana, and whether it counted is what this cannot tell you.",
+      "description": "The hourly call's HTTP status over time. What each value means is in the metric's own HELP text, which is where it is kept — it reaches the host, where an unreadable Grafana is read, and this panel cannot. What this panel is for is the question no single value answers: whether 503s are still occurring since the keep-alive started, which is the only evidence that would settle whether the hourly call prevents hibernation.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2329,7 +2329,7 @@
       "id": 802,
       "type": "timeseries",
       "title": "Keep-alive — how long the call took",
-      "description": "A normal answer is well under a second. One to two minutes is a wake-up already in progress — a success, not a fault, which is why the call's timeout is 120 s. It has its own panel because a duration this small is invisible on any axis shared with the stamp ages beside it.",
+      "description": "How long each call took, capped by its 120 s timeout. A call that reaches the cap records a status of 0, so read this beside panel 801. It has its own panel because a duration this small is invisible on any axis shared with the stamp ages.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2382,7 +2382,7 @@
       "id": 803,
       "type": "timeseries",
       "title": "Keep-alive — age of the last run and the last success",
-      "description": "If both ages climb together past an hour, nothing has written a sample since — the timer stopped, or the runner is exiting early because no token rendered, which it does without writing; `systemctl list-timers` and the presence of the secrets env file separate those two. If only the success age climbs, runs are happening and failing, and the status panel says with what code. The success age is ABSENT until the first 200 rather than reading as the whole unix epoch, because the runner publishes 0 for a stamp it has never set.",
+      "description": "Age of the last run and of the last success. Both climbing together means nothing has written a sample since; only the success age climbing means runs are happening and failing. The metric's HELP text carries what separates the causes of each. The success age is ABSENT until the first 200 rather than reading as the whole unix epoch, because the runner publishes 0 for a stamp it has never set.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
