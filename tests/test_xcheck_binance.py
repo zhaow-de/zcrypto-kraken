@@ -289,8 +289,10 @@ def test_summary_and_render_carry_the_deviation_a_populated_run_measures(tmp_pat
 
     report = crosscheck_dataset(root, ["BTC/EUR"], fetch_fn=fetch_fn)
 
+    md = render_markdown(report)
     assert report["summary"]["max_abs_rel_diff_overall"] == pytest.approx(0.25)
-    assert "Max abs rel diff overall: 0.250000" in render_markdown(report)
+    assert "Max abs rel diff overall: 0.250000" in md
+    assert "| 0.250000 |" in md  # the per-series cell, whose guard is separate from the summary's
 
 
 def test_render_markdown_contains_series_row_and_summary(tmp_path):
