@@ -1,5 +1,5 @@
 """Derivatives-positioning features over Binance USDT-M perpetuals, mapped to Kraken spot bases by
-`PERP_SYMBOLS` in `cli/derivatives/funding.py`. Three module-wide obligations a caller cannot see
+`PERP_SYMBOLS` in `cli/derivatives/funding.py`. Module-wide obligations a caller cannot see
 from a bare `list[float | None]`:
 
 FEED THE RIGHT SERIES. `funding_zscore`, `funding_sign_persistence` and `funding_accrued_carry` take
