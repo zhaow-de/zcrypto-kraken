@@ -11,9 +11,7 @@ def build_universe_file(
     provenance: dict,
     spread_cap: dict | str = "pending-capture",
 ) -> dict:
-    """Assemble the point-in-time universe file; deterministic given fixed inputs.
-
-    `spread_cap` is the literal `"pending-capture"` when no spread criterion ran, else the record
+    """`spread_cap` is the literal `"pending-capture"` when no spread criterion ran, else the record
     naming the cap, its reference notional and the calibration behind it (spec 00067)."""
     return {
         "as_of": as_of,
@@ -27,7 +25,6 @@ def build_universe_file(
 
 
 def render_markdown(file: dict) -> str:
-    """Render the universe file as Markdown."""
     lines = [
         f"**As of:** {file['as_of']} (UTC)",
         f"**Escalate:** {file['escalate']}",
@@ -42,16 +39,11 @@ def render_markdown(file: dict) -> str:
         "|---|---|---|---|---|---|---|",
     ]
     cap = file["spread_cap"]
-    # The two nulls are not interchangeable: on the placeholder path the criterion never ran, so every row
-    # is null, symbols with plenty of capture included; under a real cap the symbol had no calibrated
-    # spread — labelling both "not captured" would state something false about the first.
     unscreened = "—" if isinstance(cap, str) else "not screened"
     for entry in file["entries"]:
         selected = "yes" if entry["selected"] else "no"
         margin = "yes" if entry["margin_enabled"] else "no"
         reasons = "; ".join(entry["reasons"]) if entry["reasons"] else "-"
-        # Under a real cap an unscreened symbol says so rather than reading silently blank, so a filter
-        # that covered only part of the universe cannot be mistaken for a universe-wide one (spec 00067 D3).
         spread = entry.get("spread_bps")
         spread_cell = unscreened if spread is None else f"{spread:.3f}"
         lines.append(
@@ -75,8 +67,6 @@ def render_markdown(file: dict) -> str:
             "",
             f"Source: {cap['source']}.",
             "",
-            # Name the symbols, never the cause: hardcoding "because the legs are BTC-quoted" would
-            # assert it of any future pair missing from the calibration table too.
             f"**{cap['unevaluated_count']} of {len(file['entries'])} symbols carry `spread_bps: null`** "
             f"— no calibrated spread at the reference notional, so the cap did not screen them: "
             f"{unscreened_symbols}."
