@@ -220,7 +220,8 @@ class TestASubstitutedFieldIsRefused:
         stored.write_text(json.dumps(rec) + "\n")
         chk = _load(_CHECKER, "chk_harvest")
         assert chk.check(str(stored)) == 1
-        # WHICH refusal: a later one this fixture happens to trip would keep this green with the arm gone.
+        # WHICH refusal: every refusal here returns the same exit code, so only the message tells
+        # them apart -- this arm's text swapped for the cite arm's passes any check but this one.
         assert "what must be one line" in capsys.readouterr().out
 
     def test_a_legitimate_one_line_lesson_still_writes(self, checkout: pathlib.Path) -> None:
