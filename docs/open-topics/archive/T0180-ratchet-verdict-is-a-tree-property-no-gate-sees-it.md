@@ -53,9 +53,9 @@ Not measured, and so not established: whether the pre-rebase originals of those 
 
 ## Resolution
 
-Two arms, two mechanisms, because no single one reaches both.
+Three mechanisms, none of which reaches everything the others do. What each actually delivers, since a claim of completeness here would be worth less than the truth:
 
-**The rebase-and-push and local-merge-and-push arms: a `pre-push` stage on the ratchet**, the owner's ruling, catching them before anything leaves the machine. Delivered by `.pre-commit-config.yaml` declaring `stages: [pre-commit, pre-push]` on `prose-tripwire`, plus `default_stages: [pre-commit]` and an explicit `stages: [pre-commit]` on the five upstream hooks whose own manifest declares `pre-push` — without those, installing the hook type puts all eighteen hooks in the push stage, and two of the five rewrite files.
+**A `pre-push` stage on the ratchet** — local and earliest, the owner's ruling. It catches a rebased or locally-merged red tip before it leaves the machine, **once installed**: the config is landed, and the install is deliberately deferred until every live branch carries `default_stages`, so as of this closure `.git/hooks` holds `pre-commit` alone and nothing runs that stage here. Delivered by `.pre-commit-config.yaml` declaring `stages: [pre-commit, pre-push]` on `prose-tripwire`, plus `default_stages: [pre-commit]` and an explicit `stages: [pre-commit]` on the five upstream hooks whose own manifest declares `pre-push` — without those, installing the hook type puts all eighteen hooks in the push stage, and two of the five rewrite files.
 
 Proven both ways against a local bare repo as the remote, from a clone carrying only the pre-push hook: a green tree pushes and the ref moves; a tree at `file-prose 21.1 > 20` is refused with `hook id: prose-tripwire`, and the remote ref does not move.
 
@@ -65,8 +65,14 @@ Proven both ways against a local bare repo as the remote, from a clone carrying 
 
 **The local step.** `pre-commit install --hook-type pre-push` is per-clone and is not carried by the repository: a fresh clone has to run it again, and the tracked `stages:` declarations are what make the intent version-controlled rather than folklore. That, the hook's dependency on the main checkout's `.venv`, and the fact that a successful push is not evidence any hook ran are recorded in `.pre-commit-config.yaml`'s own comment block, which is what someone touching hooks reads.
 
-**The server-side merge arm: a step in `coverage.yml`.** `gh pr merge --merge` creates its commit on GitHub, where no local hook exists at that moment — so that arm is unreachable from any hook, whatever is installed. `actions/checkout@v7` on a `pull_request` event resolves `refs/pull/N/merge`, the test merge of head into base, which is the same tree that merge produces; a step in the job that already is the required `Full test suite` context measures it. Read from an actual run's log rather than documentation, because the check-run's reported `head_sha` is the PR head and says the opposite.
+**A step in `coverage.yml`** — the only one of the three that blocks anything. It measures the merge tree at PR time, and it covers the rebase arm too, since a rebased red branch's `refs/pull/N/merge` contains that red tree. Its limit: `strict: false` lets a PR merge against a base that has advanced since the run, so the tree that merges can differ from the tree measured.
+
+**Why the merge arm needs it at all.** `gh pr merge --merge` creates its commit on GitHub, where no local hook exists at that moment — so that arm is unreachable from any hook, whatever is installed. `actions/checkout@v7` on a `pull_request` event resolves `refs/pull/N/merge`, the test merge of head into base, which is the same tree that merge produces; a step in the job that already is the required `Full test suite` context measures it. Read from an actual run's log rather than documentation, because the check-run's reported `head_sha` is the PR head and says the opposite.
 
 Both invoke `pre-commit run --hook-stage pre-push`, so the hook and the CI step run the same thing by construction and a green in one means what a green in the other means. `tests/test_pre_push_stage.py` holds that stage at the ratchet alone, resolved through `all_hooks` rather than read off the YAML — the widening that made this necessary arrived from an upstream manifest the config never mentions.
 
 Constructed for the merge arm: two branches each adding one comment line in a different region of one file, each measuring 20.0 and passing its own gate; their clean auto-merge measures 21.1 and is refused. Both parents green, the merge red.
+
+**A `push`-triggered job on `develop`** — detective, never preventive, covering exactly the residual the PR step cannot: it re-measures `develop` after every merge and shouts. `strict: true` would have prevented that residual instead, and was rejected because it stales every open PR on each merge, with two or three routinely open.
+
+**The residual after all three, stated rather than implied**: a red `develop` can exist for about a minute. It cannot exist unnoticed, and it bites only someone who cuts a branch or commits against `develop` inside that minute.

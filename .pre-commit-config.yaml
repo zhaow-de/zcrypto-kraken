@@ -6,15 +6,18 @@
 # rewrites it (measured 2026-07-24). tests/test_vendored_rrsync_integrity.py is the tripwire.
 exclude: '^infra/nas/rrsync$'
 
-# Every hook is a commit-time hook unless it says otherwise. Without this, installing any other hook
-# type puts all of them in that stage, and the ratchet is the only one worth paying for twice.
+# Every hook is a commit-time hook unless it says otherwise. Removing this line puts 13 of the 18
+# into the push stage — the five below pin themselves out of it — and the ratchet is the only one
+# worth paying for twice.
 # The push stage needs `pre-commit install --hook-type pre-push`, which is per-clone: a fresh clone
 # has none until it is re-run, and these declarations are the tracked half of that arrangement.
-# The generated hook execs the MAIN CHECKOUT's `.venv/bin/python` by absolute path, and every
-# worktree shares it — delete that venv and every push fails in milliseconds with "`pre-commit` not
-# found", naming neither this file nor `uv sync`.
-# A push that succeeds is not evidence any hook ran: pre-commit skips the push stage entirely when
-# every commit is already reachable from a remote-tracking ref of that remote.
+# The generated hook execs the MAIN CHECKOUT's `.venv/bin/python` by absolute path, shared by every
+# worktree. Delete that venv and, while `pre-commit` is absent from PATH as it is here, every push
+# fails in milliseconds naming neither this file nor `uv sync`; install it on PATH instead and pushes
+# silently run a different, unpinned pre-commit.
+# A push that succeeds is not evidence any hook ran. pre-commit skips the push stage outright when
+# every commit is already reachable from a remote-tracking ref of that remote — and the hooks measure
+# the tree you are STANDING in, not the ref you are pushing.
 default_stages: [pre-commit]
 
 repos:
