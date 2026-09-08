@@ -61,7 +61,7 @@ def binance_daily_closes(pair: str, *, fetch_fn=fetch_binance_klines, limit: int
 
 
 def crosscheck_series(kraken: pl.DataFrame, binance: pl.DataFrame) -> dict:
-    """Compare two daily frames on their `ts` overlap: the relative difference is taken against Binance's close, and fewer than two overlapping rows is null, not zero correlation."""
+    """Compare two daily frames on their `ts` overlap: the relative difference is taken against Binance's close, and fewer than two overlapping rows yields nulls, never a zero difference or correlation."""
     joined = kraken.select("ts", "close").join(binance.select("ts", "close"), on="ts", how="inner", suffix="_binance").sort("ts")
     overlap_rows = joined.height
     if overlap_rows < 2:
@@ -69,7 +69,10 @@ def crosscheck_series(kraken: pl.DataFrame, binance: pl.DataFrame) -> dict:
             "overlap_rows": overlap_rows,
             "close_corr": None,
             "return_corr": None,
-            "max_abs_rel_diff": 0.0,
+            # None, not 0.0: this is what the dataset maximum below is taken over, and a symbol
+            # whose Binance window does not reach Kraken's would otherwise contribute perfect
+            # agreement to it.
+            "max_abs_rel_diff": None,
             "max_rel_diff_ts": None,
         }
 
@@ -106,7 +109,7 @@ def crosscheck_dataset(kraken_root: Path, symbols: list[str], *, fetch_fn=fetch_
         series[symbol] = crosscheck_series(kraken, binance)
 
     close_corrs = [s["close_corr"] for s in series.values() if s["close_corr"] is not None]
-    max_diffs = [s["max_abs_rel_diff"] for s in series.values()]
+    max_diffs = [s["max_abs_rel_diff"] for s in series.values() if s["max_abs_rel_diff"] is not None]
     summary = {
         "series_count": len(series),
         "min_close_corr": min(close_corrs) if close_corrs else None,
@@ -127,10 +130,9 @@ def render_markdown(report: dict) -> str:
     for symbol, s in report["series"].items():
         close_corr = f"{s['close_corr']:.4f}" if s["close_corr"] is not None else "n/a"
         return_corr = f"{s['return_corr']:.4f}" if s["return_corr"] is not None else "n/a"
+        max_abs_rel_diff = f"{s['max_abs_rel_diff']:.6f}" if s["max_abs_rel_diff"] is not None else "n/a"
         worst_date = s["max_rel_diff_ts"].date().isoformat() if s["max_rel_diff_ts"] is not None else "n/a"
-        lines.append(
-            f"| {symbol} | {s['overlap_rows']} | {close_corr} | {return_corr} | {s['max_abs_rel_diff']:.6f} | {worst_date} |"
-        )
+        lines.append(f"| {symbol} | {s['overlap_rows']} | {close_corr} | {return_corr} | {max_abs_rel_diff} | {worst_date} |")
 
     summary = report["summary"]
     min_close_corr = f"{summary['min_close_corr']:.4f}" if summary["min_close_corr"] is not None else "n/a"
