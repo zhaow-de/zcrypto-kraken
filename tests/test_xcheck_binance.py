@@ -275,6 +275,31 @@ def test_summary_over_a_symbol_with_no_overlap_reports_no_deviation(tmp_path):
     assert "| n/a |" in md  # the per-series cell, which formatted the same value
 
 
+def test_summary_over_a_mixed_universe_ignores_the_symbol_that_measured_nothing(tmp_path):
+    """The branch's headline scenario, which neither the all-populated nor the no-series test builds:
+    some symbols reach and some do not. The `is not None` filter in `crosscheck_dataset` is what makes
+    it work, and without a fixture that mixes, deleting that filter passes the suite."""
+    root = tmp_path / "ohlc-full"
+    for base, quote in [("BTC", "EUR"), ("ETH", "EUR"), ("SOL", "BTC")]:
+        write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / base / quote / "1440.parquet")
+
+    def fetch_fn(pair, *, limit=1000):
+        if pair == "SOLBTC":  # listed, answered, and its window does not reach Kraken's
+            ts_ms = [(BASE_TS + (1000 + i) * DAY) * 1000 for i in range(3)]
+            return [_kline(ts, 100.0) for ts in ts_ms]
+        ts_ms = [(BASE_TS + i * DAY) * 1000 for i in range(3)]
+        close = 80.0 if pair == "BTCEUR" else 125.0  # 20/80 = 0.25 against 25/125 = 0.20
+        return [_kline(ts, 100.0 if i != 1 else close) for i, ts in enumerate(ts_ms)]
+
+    report = crosscheck_dataset(root, ["BTC/EUR", "ETH/EUR", "SOL/BTC"], fetch_fn=fetch_fn)
+
+    assert report["series"]["SOL/BTC"]["max_abs_rel_diff"] is None
+    assert report["series"]["ETH/EUR"]["max_abs_rel_diff"] == pytest.approx(0.20)
+    # 0.25, not 0.20: the aggregate is the WORST deviation across the universe, and the unmeasured
+    # symbol contributes nothing to it rather than a zero.
+    assert report["summary"]["max_abs_rel_diff_overall"] == pytest.approx(0.25)
+
+
 def test_summary_and_render_carry_the_deviation_a_populated_run_measures(tmp_path):
     """The control beside the two None cases: with a real overlap and a planted diff, both the
     summary and the rendered line must carry the measured number, so a guard that answered None or
