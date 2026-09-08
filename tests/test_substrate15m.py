@@ -175,6 +175,7 @@ def test_seam_15m_to_1h_reproduces_canonical_hourly_in_window(tmp_path):
     assert entry["n_volume_mismatch"] == 0
     assert entry["n_volume_bitexact"] == 2
     assert entry["n_count_mismatch"] == 0
+    assert entry["max_price_rel_diff"] == 0.0
     assert entry["max_volume_rel_diff"] == 0.0
     assert entry["all_match"] is True
 
@@ -229,6 +230,9 @@ def test_seam_15m_to_1h_flags_price_and_volume_mismatches(tmp_path):
     assert entry["n_volume_mismatch"] == 1
     assert entry["n_volume_bitexact"] == 1  # only the uncorrupted hour is still bit-identical
     assert entry["n_count_mismatch"] == 0
+    # The populated control for the empty-window test's two `None`s: a measured maximum, and one
+    # large enough to be the planted 999.0 high rather than the ~1e-2 volume corruption.
+    assert entry["max_price_rel_diff"] > 0.5
     assert entry["max_volume_rel_diff"] > 5e-16
     assert entry["all_match"] is False
 
