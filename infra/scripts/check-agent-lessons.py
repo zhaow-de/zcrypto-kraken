@@ -37,31 +37,32 @@ def record_errors(rec: object) -> list[str]:
 def check(path: str) -> int:
     bad = 0
     try:
-        fh = open(path, encoding="utf-8")
-    except OSError as exc:
-        # Only the open: a path that vanishes mid-read is a different fault and labelling it "called
-        # me wrong" would be the mislabel this refusal exists to prevent.
-        print(f"cannot read {path}: {exc.strerror}", file=sys.stderr)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        # Acquiring the text, not examining it: nothing was read AS a record, so nothing here can be
+        # a malformed one. The decode has to be caught at this step -- raised inside the loop it
+        # escaped the generator `max` consumes, leaving every later path on the command line
+        # unopened while the exit code said a record was bad.
+        reason = exc.strerror if isinstance(exc, OSError) else str(exc)
+        print(f"cannot read {path}: {reason}", file=sys.stderr)
         return 2
-    with fh:
-        for n, raw in enumerate(fh, 1):
-            line = raw.rstrip("\n")
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError as exc:
-                print(f"{path}:{n}: not a JSON record ({exc.msg})")
-                bad += 1
-                continue
-            for problem in record_errors(rec):
-                print(f"{path}:{n}: {problem}")
-                bad += 1
+    for n, line in enumerate(text.splitlines(), 1):
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError as exc:
+            print(f"{path}:{n}: not a JSON record ({exc.msg})")
+            bad += 1
+            continue
+        for problem in record_errors(rec):
+            print(f"{path}:{n}: {problem}")
+            bad += 1
     return 1 if bad else 0
 
 
 if __name__ == "__main__":
     if not sys.argv[1:]:
-        # Exiting 0 with nothing opened reports a clean this run never measured: a glob matching
-        # nothing is a wrong path, not an empty one.
+        # Exiting 0 with nothing opened reports a clean this run never measured.
         print(f"usage: {sys.argv[0]} <inbox.jsonl>...", file=sys.stderr)
         sys.exit(2)
     sys.exit(max(check(p) for p in sys.argv[1:]))

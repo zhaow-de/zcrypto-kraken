@@ -45,7 +45,32 @@ def test_an_unreadable_path_refuses_the_same_way_no_path_does(tmp_path: pathlib.
     done = _run(str(tmp_path / "no-such-inbox.jsonl"))
     assert done.returncode == 2, "an unreadable path is a call error, not a bad inbox"
     assert "cannot read" in done.stderr
+    # WHICH path and WHY: the round globs several inboxes, so a refusal naming neither leaves an
+    # operator to work out which one failed.
+    assert "no-such-inbox.jsonl" in done.stderr
+    assert "No such file or directory" in done.stderr
     assert "Traceback" not in done.stderr
+
+
+def test_a_file_whose_bytes_are_not_utf8_is_unreadable_not_malformed(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "zcrypto-bravo.jsonl"
+    path.write_bytes(b"\xff\xfe not utf-8\n")
+    done = _run(str(path))
+    assert done.returncode == 2, "a file that cannot be decoded was never read, so no record is malformed"
+    assert "Traceback" not in done.stderr
+
+
+def test_an_unreadable_file_does_not_strand_the_paths_after_it(tmp_path: pathlib.Path) -> None:
+    # The round checks every inbox in one invocation. A decode failure raised inside the loop
+    # propagated out of the generator `max()` consumes, so every path after it went unopened while
+    # the exit code reported a malformed record -- a clean over inboxes nothing had looked at.
+    first = tmp_path / "a.jsonl"
+    first.write_bytes(b"\xff\n")
+    second = tmp_path / "b.jsonl"
+    second.write_text(json.dumps({**OK, "kind": "bogus"}) + "\n")
+    done = _run(str(first), str(second))
+    assert "b.jsonl" in done.stdout, "the inbox after the unreadable one must still be checked"
+    assert "kind must be one of" in done.stdout
 
 
 def test_a_valid_inbox_still_passes(tmp_path: pathlib.Path) -> None:
