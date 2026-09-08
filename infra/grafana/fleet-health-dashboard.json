@@ -2382,7 +2382,7 @@
       "id": 803,
       "type": "timeseries",
       "title": "Keep-alive — age of the last run and the last success",
-      "description": "Age of the last run and of the last success. Both climbing together means nothing has written a sample since; only the success age climbing means runs are happening and failing. The metric's HELP text carries what separates the causes of each. The success age is ABSENT until the first 200 rather than reading as the whole unix epoch, because the runner publishes 0 for a stamp it has never set.",
+      "description": "Age of the last run and of the last success. Both climbing together means nothing has written a sample since; only the success age climbing means runs are happening and failing. The metric's HELP text carries what separates the causes of each. The red line on the run age is the budget its own alert uses: 2.5 hours on an hourly timer, so one skipped tick stays quiet and two page. The success age is ABSENT until the first 200 rather than reading as the whole unix epoch, because the runner publishes 0 for a stamp it has never set.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

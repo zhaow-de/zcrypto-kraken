@@ -160,18 +160,20 @@ A **warning** Grafana alert (`Ops · Grafana keep-alive stopped running`): `time
 
 ### What it means
 
-`zcrypto-grafana-keepalive.timer` fires hourly at `:37` and its unit makes one authenticated call to Grafana Cloud, writing `/var/lib/zcrypto-ops/textfile/grafana-keepalive.prom`. The gauge this rule reads is the stamp of the last completed **run**, whatever that run got back, so it advances on a 503 and on a 401 exactly as it does on a 200. **This rule is about the keep-alive service, not about Grafana.** A hibernating or dark Grafana Cloud leaves the service running and this rule quiet; that state is `observability.md`'s `grafana-cloud-dark` and reaches you by other rules.
+`zcrypto-grafana-keepalive.timer` fires hourly at `:37` and its unit makes one authenticated call to Grafana Cloud, writing `/var/lib/zcrypto-ops/textfile/grafana-keepalive.prom`. The gauge this rule reads is the stamp of the last completed **run**, whatever that run got back, so it advances on a 503 and on a 401 exactly as it does on a 200. **This rule is about the keep-alive service, not about Grafana.** A hibernating or dark Grafana Cloud leaves the service running and this rule quiet, by design. **No Grafana rule pages on that state** — a rule cannot page about the system that evaluates it — so what reaches you is the healthchecks.io dead-man, a separate failure domain on purpose. The procedure for it is [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark).
 
 The threshold tolerates one skipped tick. A healthy value sawtooths from about 0 up to 3600, one missed hour peaks near 7200, and the timer carries no `Persistent=`, so a converge landing on `:37` legitimately skips a slot. Two consecutive misses are not a schedule artefact.
 
-**`noDataState: Alerting` is deliberate**: no series at all means the host is down, its Alloy is dark, or the unit has never run since the textfile was last cleared — each of which is the alarm rather than an absence of one.
+**`noDataState: Alerting` is deliberate**: no series at all means the host is down, its Alloy is dark, the unit has never run since the textfile was last cleared, or **the role has not yet been converged onto the host** — each of which is the alarm rather than an absence of one.
+
+**That last cause makes the push order load-bearing.** Until an ops converge installs the units and the first scrape lands, this rule has no series and will page within `for: 5m` of being pushed, asserting a run that never happened. Push it after the metric's first record, or accept one self-healing page knowingly; `fleet-deploys.md` states the rule and this is a case of it.
 
 ### What to do
 
 1. **Read the timer and the unit on the host.** `ssh hp`, then `sudo systemctl list-timers zcrypto-grafana-keepalive.timer --all` for its last and next elapse, and `sudo systemctl status zcrypto-grafana-keepalive.service` for the last run's result.
 2. **Read the file the rule reads.** `grep zcrypto_grafana_keepalive /var/lib/zcrypto-ops/textfile/grafana-keepalive.prom`. An absent file with the timer enabled means the runner is exiting before it writes, which it does when its token is missing — the secrets file is rendered only when `grafana_ro_token` is defined, so a converge that ran without the vault variable leaves the unit exiting 0 and silent.
 3. **A present file with a stale stamp** means the unit is not being started: check the timer is enabled, and that the last converge did not leave it masked or the calendar edited on the host.
-4. **`journalctl -u zcrypto-grafana-keepalive.service --since 6h`** for the runs that did happen — `curl` failures are recorded in the file rather than the log, so an empty journal with a fresh file is normal.
+4. **`sudo journalctl -u zcrypto-grafana-keepalive.service --since -6h --no-pager | wc -l`** for the runs that did happen, and read the count before anything else. `--since` needs the signed form; a bare `6h` fails to parse and the empty output that follows reads as a clean bill. Unprivileged, the same command prints `-- No entries --` whatever the unit did.
 
 ### Retire when
 
