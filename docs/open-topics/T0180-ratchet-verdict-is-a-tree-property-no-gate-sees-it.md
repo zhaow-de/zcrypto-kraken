@@ -1,5 +1,5 @@
 ---
-status: resolved
+status: partial
 ---
 
 # The prose ratchet's verdict is a tree property, and no gate evaluates it after a rebase or a merge
@@ -51,14 +51,23 @@ Prose is unchanged, 14 to 14, across `6e86d5b6` — the commit that went green. 
 
 Not measured, and so not established: whether the pre-rebase originals of those commits were green. Those objects are likely gone.
 
-## Resolution
+## Done so far
 
-**The owner ruled for the `pre-push` stage over a CI job.** Closed by `.pre-commit-config.yaml` declaring `stages: [pre-commit, pre-push]` on `prose-tripwire`, plus `default_stages: [pre-commit]` and an explicit `stages: [pre-commit]` on the five upstream hooks whose own manifest declares `pre-push` — without those, installing the hook type puts all eighteen hooks in the push stage, and two of the five rewrite files.
+**The owner ruled for the `pre-push` stage over a CI job**, and it closes the REBASE-and-push arm and the local-merge-and-push arm. Delivered by `.pre-commit-config.yaml` declaring `stages: [pre-commit, pre-push]` on `prose-tripwire`, plus `default_stages: [pre-commit]` and an explicit `stages: [pre-commit]` on the five upstream hooks whose own manifest declares `pre-push` — without those, installing the hook type puts all eighteen hooks in the push stage, and two of the five rewrite files.
 
 Proven both ways against a local bare repo as the remote, from a clone carrying only the pre-push hook: a green tree pushes and the ref moves; a tree at `file-prose 21.1 > 20` is refused with `hook id: prose-tripwire`, and the remote ref does not move.
 
-**The objection this topic raised against `pre-push` was false, and correcting it is why the option was nearly lost.** A worktree's hooks are not per-worktree state: `git rev-parse --git-path hooks` in every linked worktree resolves to the main checkout's `.git/hooks`, because a worktree's `.git` is a file pointing at the common directory. One install covers every worktree, present and future. `core.hooksPath` is unset here.
+**The WORKTREE half of this topic's objection to `pre-push` was false, and correcting it is why the option was nearly lost** — the clone half is true and is recorded below. A worktree's hooks are not per-worktree state: `git rev-parse --git-path hooks` in every linked worktree resolves to the main checkout's `.git/hooks`, because a worktree's `.git` is a file pointing at the common directory. One install covers every worktree, present and future. `core.hooksPath` is unset here.
 
 **`/usr/share/git-core/templates/hooks` is not the mechanism**, since it will be asked again. A template directory is copied into a repository at `git init` / `git clone` time only, so editing one does nothing for a repository that already exists; that system path is root-owned; and `init.templateDir` is unset at every level here. For *future* clones the supported path is `pre-commit init-templatedir`, which needs no root.
 
-**The local step.** `pre-commit install --hook-type pre-push` is per-clone and is not carried by the repository: a fresh clone has to run it again, and the tracked `stages:` declarations are what make the intent version-controlled rather than folklore.
+**The local step.** `pre-commit install --hook-type pre-push` is per-clone and is not carried by the repository: a fresh clone has to run it again, and the tracked `stages:` declarations are what make the intent version-controlled rather than folklore. That, the hook's dependency on the main checkout's `.venv`, and the fact that a successful push is not evidence any hook ran are recorded in `.pre-commit-config.yaml`'s own comment block, which is what someone touching hooks reads.
+
+## Suggested next steps
+
+**The SERVER-SIDE merge arm is still open, and it is the one this topic's title names alongside rebase.** Every PR here lands through `gh pr merge --merge`, which creates a commit on GitHub that no local hook touches. So `develop`'s tip after each merge is an unmeasured tree — and it is the tip every branch then rebases onto. The reachable shape: one branch regenerates the baseline, another carries an offender a removed row used to cover; each green alone, the merge red.
+
+The present mitigation is manual and unregistered: the ratchet has been run by hand on merge results, three times in one night, precisely because nothing else does it.
+
+- Decide the gate for that arm. A CI job on `pull_request` is the candidate this topic already described, and it is the only one of the two that can see a merge result; a local hook structurally cannot. It costs a check the `merge-pr` evaluator blocks on when it fails.
+- Until then, name the manual run somewhere it will be done rather than remembered — the merge routine is `merge-pr`'s own step sequence.
