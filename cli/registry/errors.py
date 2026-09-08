@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 class RegistryError(Exception):
-    """A trial-registry validation or integrity rule was violated."""
+    pass
 
 
 class RegistryCorruptionError(RegistryError):

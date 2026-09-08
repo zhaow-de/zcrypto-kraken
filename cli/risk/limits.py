@@ -1,5 +1,4 @@
-"""§10 portfolio limits — pure pre-trade transforms: per-asset caps, gross-leverage cap, net-exposure band, margin floor.
-A governor, not an optimizer: the excess sits in cash; at or inside a limit nothing scales, and an untouched value is bit-identical.
+"""A governor, not an optimizer: the excess sits in cash; at or inside a limit nothing scales, and an untouched value is bit-identical.
 One limit may re-tighten another's input, so the consumer sets the order — recommended: caps → gross → net → margin floor.
 Each limit is idempotent in the model but only float-approximately, so any fixed-point loop must not key on bitwise equality."""
 
@@ -13,7 +12,7 @@ from cli.risk.errors import RiskError
 def apply_position_caps(
     positions: dict[str, list[float]], *, long_cap: float = 0.20, short_cap: float = 0.10
 ) -> dict[str, list[float]]:
-    """Clip each asset's per-bar position to [-short_cap, +long_cap]; the defaults are §10's per-asset NAV caps."""
+    """The defaults are §10's per-asset NAV caps."""
     if not isinstance(positions, dict) or not positions:
         raise RiskError(f"positions must be a non-empty dict, got {positions!r}")
     for cap_name, cap in (("long_cap", long_cap), ("short_cap", short_cap)):
@@ -33,7 +32,6 @@ def apply_position_caps(
 
 
 def _validate_positions(positions: dict[str, list[float]]) -> None:
-    """Guard shared by the whole-book limits: a non-empty dict of non-empty, equal-length lists of finite numbers."""
     if not isinstance(positions, dict) or not positions:
         raise RiskError(f"positions must be a non-empty dict, got {positions!r}")
     lengths = set()
@@ -51,7 +49,7 @@ def _validate_positions(positions: dict[str, list[float]]) -> None:
 def apply_gross_leverage_cap(
     positions: dict[str, list[float]], *, soft_cap: float = 1.5, hard_cap: float = 2.0
 ) -> dict[str, list[float]]:
-    """Scale each bar with gross leverage above soft_cap proportionally down to it; the defaults are §10's soft and hard caps.
+    """The defaults are §10's soft and hard caps.
 
     hard_cap is §10's alerting constant, validated (soft_cap <= hard_cap) but otherwise unused: a transform that scales
     to soft_cap can never emit gross above it, so hard needs no second code path."""
@@ -74,7 +72,7 @@ def apply_gross_leverage_cap(
 def apply_net_exposure_band(
     positions: dict[str, list[float]], *, short_bound: float = -0.5, long_bound: float = 1.0
 ) -> dict[str, list[float]]:
-    """Scale each bar whose net exposure leaves [short_bound, long_bound] back to the breached bound; the defaults are §10's band.
+    """The defaults are §10's band.
 
     Both sides scale the whole book (factors in (0, 1), so gross shrinks too): a band breach de-risks, never re-optimizes."""
     _validate_positions(positions)
@@ -105,7 +103,7 @@ def _margin_used(long_gross: float, short_gross: float) -> float:
 
 
 def margin_level(bar_positions: dict[str, float]) -> float:
-    """Margin level of one bar of weights under the unit-NAV model (see _margin_used); math.inf when no margin is in use."""
+    """`math.inf` when no margin is in use."""
     if not isinstance(bar_positions, dict) or not bar_positions:
         raise RiskError(f"bar_positions must be a non-empty dict, got {bar_positions!r}")
     for asset, weight in bar_positions.items():
@@ -130,10 +128,8 @@ def _margin_floor_scale(long_gross: float, short_gross: float, floor: float) -> 
 
 
 def apply_margin_floor(positions: dict[str, list[float]], *, floor: float = 2.5) -> dict[str, list[float]]:
-    """Scale each bar whose margin level is below floor down to exactly the floor; the default is §10's self-imposed floor.
-
-    Margin model per _margin_used, scale factor per _margin_floor_scale's closed form. floor must be >= 1: a
-    self-imposed margin floor below 100% is past liquidation, meaningless under §10."""
+    """The default is §10's self-imposed floor, and floor must be >= 1: a self-imposed margin floor below 100% is
+    past liquidation, meaningless under §10."""
     _validate_positions(positions)
     if not isinstance(floor, (int, float)) or not math.isfinite(floor) or floor < 1.0:
         raise RiskError(f"floor must be a finite number >= 1, got {floor!r}")

@@ -66,7 +66,7 @@ def _validate(returns: list[float], config: GovernorConfig) -> None:
 
 
 def drawdown_governor(returns: list[float], *, config: GovernorConfig = GovernorConfig()) -> GovernorResult:
-    """Apply the §10 governor to a (net-of-cost) returns series; see the module docstring for semantics."""
+    """`returns` must be net of cost."""
     _validate(returns, config)
     multipliers: list[float] = []
     governed: list[float] = []
