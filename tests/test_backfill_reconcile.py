@@ -66,16 +66,23 @@ def test_reconcile_series_disjoint_ts_zero_overlap():
 
 def test_reconcile_dataset_discovers_symbols_and_aggregates_summary(tmp_path):
     frame = to_frame(_rows(5))
+    degraded_rows = _rows(5)
+    degraded_rows[2] = _row(BASE_TS + 2 * HOUR, h="999.0")  # planted diff, so the minimum is not 1.0
     backfill_root = tmp_path / "backfill"
     rest_root = tmp_path / "rest"
     write_parquet(frame, backfill_root / "BTC" / "EUR" / "60.parquet")
     write_parquet(frame, rest_root / "BTC" / "EUR" / "60.parquet")
+    write_parquet(frame, backfill_root / "ETH" / "EUR" / "60.parquet")
+    write_parquet(to_frame(degraded_rows), rest_root / "ETH" / "EUR" / "60.parquet")
 
     report = reconcile_dataset(backfill_root, rest_root, {"60": HOUR})
 
-    assert set(report["series"]) == {"BTC/EUR/60"}
+    assert set(report["series"]) == {"BTC/EUR/60", "ETH/EUR/60"}
     assert report["series"]["BTC/EUR/60"]["ohlc_match_rate"] == 1.0
-    assert report["summary"]["series_count"] == 1
+    assert report["summary"]["series_count"] == 2
+    # The populated control for the empty-dataset case: a measured minimum, and one the aggregate had
+    # to pick out of two series rather than hand back from a fallback.
+    assert report["summary"]["min_ohlc_match_rate"] == pytest.approx(4 / 5)
 
 
 def test_reconcile_dataset_skips_series_absent_from_rest_root(tmp_path):
