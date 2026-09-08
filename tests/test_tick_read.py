@@ -181,3 +181,50 @@ def test_read_trades_csv_corrupted_zip_raises(tmp_path):
 
     with pytest.raises(TickError):
         read_trades_csv((zip_path, "XBTEUR.csv"))
+
+
+@pytest.mark.parametrize(
+    ("name", "first_field"),
+    [
+        ("milliseconds", "1699999999000"),
+        ("nanoseconds", "1699999999000000000"),
+        ("overflowing float", "1e300"),
+        ("infinity", "inf"),
+    ],
+)
+def test_read_trades_csv_refuses_a_ts_that_is_not_epoch_seconds(tmp_path, name, first_field):
+    """A `ts` outside the plausible epoch-SECONDS range is refused, whichever way it fails.
+
+    Milliseconds is the case that used to PASS: read as ~year 55000, filtered out by the caller's
+    window, reported as 0% coverage rather than as unreadable input."""
+    path = tmp_path / "XBTEUR.csv"
+    path.write_text(f"{first_field},100.5,2.0\n{first_field},101.0,1.0\n")
+
+    with pytest.raises(TickError) as caught:
+        read_trades_csv(path)
+    assert "epoch seconds" in str(caught.value)
+    assert "XBTEUR.csv" in str(caught.value)
+
+
+def test_read_trades_csv_refuses_a_ts_below_the_epoch_floor(tmp_path):
+    """The floor, exercised through the QUARTERLY layout because that is where it is reachable.
+
+    A 3-field row whose first field is below `_MIN_UNIX_TS` is not "complete" by `_detect_schema`, so
+    it is refused as a short quarterly row before any value check -- correct, but a different guard."""
+    path = tmp_path / "XBTEUR.csv"
+    path.write_text("100.5,2.0,-1e300,b\n101.0,1.0,-1e300,s\n")
+
+    with pytest.raises(TickError) as caught:
+        read_trades_csv(path)
+    assert "epoch seconds" in str(caught.value)
+
+
+def test_read_trades_csv_still_reads_a_valid_seconds_file(tmp_path):
+    """The true positive: the range guard must not refuse the data it exists to protect."""
+    path = tmp_path / "XBTEUR.csv"
+    path.write_text("1700000000.123456,100.5,2.0\n1700000060.5,101.0,1.0\n")
+
+    frame = read_trades_csv(path)
+
+    assert frame["ts"][0].isoformat() == "2023-11-14T22:13:20.123456+00:00"
+    assert frame["price"].to_list() == [100.5, 101.0]
