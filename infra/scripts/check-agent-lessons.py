@@ -52,4 +52,9 @@ def check(path: str) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(max(check(p) for p in sys.argv[1:]) if sys.argv[1:] else 0)
+    if not sys.argv[1:]:
+        # Exiting 0 with nothing opened reports a clean this run never measured, and the harvest
+        # reads that as a checked inbox: a glob matching nothing is a wrong path, not an empty one.
+        print(f"usage: {sys.argv[0]} <inbox.jsonl>...", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(max(check(p) for p in sys.argv[1:]))

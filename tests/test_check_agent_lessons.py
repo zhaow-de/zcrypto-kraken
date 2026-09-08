@@ -1,0 +1,49 @@
+"""The inbox checker's entry point: with no path it refuses, rather than reporting the clean it never looked for."""
+
+import json
+import pathlib
+import subprocess
+import sys
+
+_ROOT = pathlib.Path(__file__).resolve().parents[1]
+_SCRIPT = _ROOT / "infra" / "scripts" / "check-agent-lessons.py"
+
+OK = {
+    "ts": "2026-09-08T00:00:00Z",
+    "session": "zcrypto-bravo",
+    "branch": "fix/x",
+    "kind": "self-correction",
+    "cites": ["a.md"],
+    "what": "a thing",
+    "why": "a reason",
+}
+
+
+def _run(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(_SCRIPT), *args], capture_output=True, text=True, cwd=_ROOT)
+
+
+def _inbox(tmp_path: pathlib.Path, *records: dict) -> str:
+    path = tmp_path / "zcrypto-bravo.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    return str(path)
+
+
+def test_no_path_is_refused_not_reported_clean() -> None:
+    # The defect: an empty glob or a forgotten argument exited 0 having opened nothing, and the
+    # harvest reads that as an inbox it checked.
+    done = _run()
+    assert done.returncode != 0, "a bare invocation must refuse, not report a clean it never measured"
+    assert "usage" in done.stderr.lower()
+
+
+def test_a_valid_inbox_still_passes(tmp_path: pathlib.Path) -> None:
+    # The true positive beside the refusal: a guard that refused every invocation would ship green.
+    done = _run(_inbox(tmp_path, OK))
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_a_malformed_record_still_fails_and_names_its_line(tmp_path: pathlib.Path) -> None:
+    done = _run(_inbox(tmp_path, OK, {**OK, "kind": "rule-not-followed"}))
+    assert done.returncode == 1
+    assert ":2:" in done.stdout
