@@ -8,6 +8,7 @@ _OMIT_EXTRA_KEYS = set(logging.LogRecord("x", logging.INFO, "x", 0, "", (), None
 
 
 def _extract_extra(record: logging.LogRecord) -> dict:
+    """The underscore keys are reserved for internal bookkeeping."""
     return {k: v for k, v in record.__dict__.items() if k not in _OMIT_EXTRA_KEYS and not k.startswith("_")}
 
 

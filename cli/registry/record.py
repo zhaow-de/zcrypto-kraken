@@ -220,7 +220,9 @@ def validate_stored_record(rec: dict, where: str) -> None:
 
 @dataclass(frozen=True, kw_only=True)
 class TrialRecord:
-    """A single trial record; `variant` is schema_version 3+ only, omitted from the serialized line when None."""
+    """A single trial record; `variant` is schema_version 3+ only, omitted from the serialized line when None. Trials 25-32
+    (family A1, schema_version 2) predate the field and carry theirs in free-text `notes` (`variant=A2-donchian`), never
+    backfilled because the registry is append-only, so a reader selecting on `variant` misses them."""
 
     trial_id: int
     schema_version: int

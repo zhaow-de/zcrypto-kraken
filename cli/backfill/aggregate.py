@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def aggregate_minutes(minute_rows: list[list], interval_secs: int) -> list[list]:
-    """`vwap` is a close-price proxy: the dumps carry no vwap."""
+    """`vwap` is a reconstruction proxy: the dumps carry no vwap."""
     if not minute_rows:
         return []
 

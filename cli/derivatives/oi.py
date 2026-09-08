@@ -88,7 +88,7 @@ def _get_bytes(url: str, *, opener) -> bytes:
                 return response.read()
         except urllib.error.HTTPError as exc:
             if exc.code is None or exc.code < 500:
-                raise  # a non-5xx status (incl 404) is definitive -- the caller distinguishes it
+                raise
             last_exc = exc
             if attempt < _MAX_RETRIES:
                 _logger.warning(
@@ -105,7 +105,7 @@ def _get_bytes(url: str, *, opener) -> bytes:
 
 def fetch_oi_day(perp: str, day: datetime, *, opener=urllib.request.urlopen) -> list[list] | None:
     """`None` when the day 404s (before the perp's metrics listing, or not yet published), otherwise one
-    `[create_time_ms, *_FLOAT_COLUMNS]` row per data line; a checksum mismatch or any parse failure raises `DerivativesError`."""
+    `[create_time_ms, *_FLOAT_COLUMNS]` row per data line."""
     zip_url = _day_url(perp, day)
     try:
         zip_bytes = _get_bytes(zip_url, opener=opener)
@@ -243,8 +243,7 @@ def build_oi_substrate(
     opener=urllib.request.urlopen,
     resume: bool = False,
 ) -> dict:
-    """One `clock()` read fixes the end boundary for every symbol, so a midnight-crossing run gives them all the same last
-    day; `resume=True` reuses an `oi.parquet` already present in `out_root`, letting an interrupted backfill finish."""
+    """`resume=True` reuses an `oi.parquet` already present in `out_root`, letting an interrupted backfill finish."""
     now = clock()
     end_boundary = datetime(now.year, now.month, now.day, tzinfo=UTC)
     series: dict[str, dict] = {}

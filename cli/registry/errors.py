@@ -6,4 +6,4 @@ class RegistryError(Exception):
 
 
 class RegistryCorruptionError(RegistryError):
-    """A registry record in its stored form failed to parse or broke a stored-record or chain rule."""
+    pass

@@ -103,7 +103,6 @@ def _margin_used(long_gross: float, short_gross: float) -> float:
 
 
 def margin_level(bar_positions: dict[str, float]) -> float:
-    """`math.inf` when no margin is in use."""
     if not isinstance(bar_positions, dict) or not bar_positions:
         raise RiskError(f"bar_positions must be a non-empty dict, got {bar_positions!r}")
     for asset, weight in bar_positions.items():
