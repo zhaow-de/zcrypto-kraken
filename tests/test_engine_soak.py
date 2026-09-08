@@ -891,6 +891,18 @@ def test_analyze_soak_context_and_d4():
     assert a.pnl_verdict.verdict in ("consistent", "weakly-consistent", "inconsistent", "n/a")
 
 
+def test_analyze_soak_context_rates_over_an_empty_null_report_no_rate():
+    """Both context rates divide by the null's own extent. With no null periods, `0.0` says the null
+    never breached a cap and never engaged the governor -- a measurement, reported for a backtest that
+    produced none, into the payload a go-live decision reads."""
+    null = _mk_null([], [])
+
+    a = analyze_soak(_mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6), null, band=0.90)
+
+    assert a.null_cap_rate is None
+    assert a.null_gov_rate is None
+
+
 def _mk_internals(cycle_ts, mult_by_cycle=None, breach_by_cycle=None):
     return RealizedInternals(
         available=True,

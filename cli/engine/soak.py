@@ -902,8 +902,8 @@ class SoakAnalysis:
     L: int  # scored realized bars
     gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi, governor_engagement, cap_breach
     panel: PanelSummary  # summarize_panel over the discriminating (non-"n/a") gating verdicts
-    null_gov_rate: float  # backtest CONTEXT: fraction of null days governor-engaged
-    null_cap_rate: float  # backtest CONTEXT: cap_breach_bars / n_periods
+    null_gov_rate: float | None  # backtest CONTEXT: fraction of null days governor-engaged; None over no null days
+    null_cap_rate: float | None  # backtest CONTEXT: cap_breach_bars / n_periods; None over no null periods
     d4_gap_bps: float  # mean(governed_net - net_live) over frozen history, in bps (x1e4)
     d4_active: bool  # governor engaged anywhere in the null (any mult < 1)
     pnl_mean: float  # realized interior mean net/cycle
@@ -1130,8 +1130,12 @@ def analyze_soak(
 
     panel = summarize_panel(gating_verdicts, band=band, dual_verdicts=dual_verdicts)
 
-    null_gov_rate = _mean(governor_engaged_daily(null.multipliers, null.day_index))
-    null_cap_rate = null.cap_breach_bars / null.n_periods if null.n_periods > 0 else 0.0
+    # None, not 0.0, for BOTH: each divides by the null's own extent, and 0.0 reports a backtest that
+    # never breached a cap and never engaged the governor. `_mean` has no polarity of its own, so its
+    # empty case is guarded here rather than in the helper, where four other call sites need the float.
+    gov_daily = governor_engaged_daily(null.multipliers, null.day_index)
+    null_gov_rate = _mean(gov_daily) if gov_daily else None
+    null_cap_rate = null.cap_breach_bars / null.n_periods if null.n_periods > 0 else None
 
     d4_gap_bps = _mean([g - n for g, n in zip(null.governed_net, null.net_live)]) * 1e4
     d4_active = any(m < 1.0 for m in null.multipliers)
