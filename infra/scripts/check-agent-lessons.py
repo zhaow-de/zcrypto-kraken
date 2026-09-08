@@ -10,8 +10,7 @@ import sys
 
 REQUIRED = {"ts", "session", "branch", "kind", "cites", "what", "why"}
 KINDS = {"self-correction", "rule-deviation", "rule-feedback", "skill-feedback", "miscount"}
-# A lesson field is one line, and every other check accepts a multi-line one: it is a non-empty string
-# of the right type, so nothing else here refuses it.
+# A lesson field is one line; every other check accepts a multi-line one as a non-empty string of the right type.
 _ONE_LINE = "%s must be one line, but contains a newline (if a shell substitution ran in your argument, single-quote it)"
 
 
