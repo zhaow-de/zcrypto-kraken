@@ -171,7 +171,7 @@ def materialize(
         "--since",
         help="Only hours at/after this UTC boundary: a YYYY-MM-DD date or an ISO-8601 hour (e.g. 2026-07-16T09).",
     ),
-    depth: int = typer.Option(100, "--depth", help="Book depth the archive was captured at (capture's default 100)."),
+    depth: int = typer.Option(100, "--depth", help="Book depth the archive was captured at."),
     allow_holes: bool = typer.Option(
         False,
         "--allow-holes",
@@ -182,7 +182,7 @@ def materialize(
         "--settle-hours",
         help="Defer hours newer than this many hours: a heal-settle margin so an hour is only "
         "materialized once the reconciler has finished healing it (its max mint is 6h after the "
-        "hour). Default 7h.",
+        "hour).",
     ),
 ) -> None:
     """Materialize canonical book hours (reconciled-first) into the 1s L2 panel.
