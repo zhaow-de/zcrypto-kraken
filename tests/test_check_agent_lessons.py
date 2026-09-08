@@ -74,7 +74,7 @@ def test_an_unreadable_file_does_not_strand_the_paths_after_it(tmp_path: pathlib
 
 
 def test_two_records_spliced_onto_one_physical_line_are_one_line(tmp_path: pathlib.Path) -> None:
-    # `str.splitlines()` breaks on NEL, LS and PS where iterating the file does not, so a splice that
+    # `str.splitlines()` breaks on separators that iterating the file does not, so a splice that
     # put two records on one line read as two clean ones and the file was certified. The tool's whole
     # output is `path:line`, so it has to agree with the file about where the lines are.
     path = tmp_path / "zcrypto-bravo.jsonl"
@@ -94,8 +94,9 @@ def test_an_unreadable_path_outranks_a_bad_record(tmp_path: pathlib.Path) -> Non
 
 
 def test_a_bad_record_before_an_unreadable_path_still_exits_2(tmp_path: pathlib.Path) -> None:
-    # The other order. With only the unreadable-first case pinned, rewriting the aggregation to the
-    # first non-zero code passes -- and which of 1 and 2 comes back is this branch's whole subject.
+    # The other order. With only the unreadable-first case pinned, the EAGER first-non-zero rewrite
+    # -- `next((c for c in list(...) if c), 0)` -- passes. The lazy spelling is already dead, stopping
+    # before it opens the later path. Which of 1 and 2 comes back is this branch's whole subject.
     bad = tmp_path / "bad.jsonl"
     bad.write_text(json.dumps({**OK, "kind": "bogus"}) + "\n")
     done = _run(str(bad), str(tmp_path / "gone.jsonl"))

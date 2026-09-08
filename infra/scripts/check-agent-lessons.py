@@ -38,6 +38,7 @@ def record_errors(rec: object) -> list[str]:
 def check(path: str) -> int:
     bad = 0
     try:
+        # Universal-newline mode is load-bearing: `newline=""` lets a lone CR collapse an inbox to one line.
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
     except (OSError, UnicodeDecodeError) as exc:
@@ -46,9 +47,8 @@ def check(path: str) -> int:
         reason = exc.strerror if isinstance(exc, OSError) else str(exc)
         print(f"cannot read {path}: {reason}", file=sys.stderr)
         return 2
-    # `io.StringIO`, not `splitlines()`, which breaks on separators file iteration does not, leaving
-    # the tool disagreeing with the file about its own lines. Equivalent only while the open stays in
-    # universal-newline mode: under `newline=""` a lone CR survives and collapses an inbox to one line.
+    # `io.StringIO` iterates the text exactly as iterating the file object would; `splitlines()` breaks
+    # on separators that iteration does not, leaving the tool disagreeing with the file about its lines.
     for n, raw in enumerate(io.StringIO(text), 1):
         line = raw.rstrip("\n")
         try:
