@@ -1,0 +1,142 @@
+# The docstring pruning pass
+
+A periodic maintenance pass over a package's docstrings and comments: delete what the code already says, keep what only prose can say. Runs a few times a year, never continuously.
+
+It is a **prose-only** pass: the branch changes no behaviour. That is not an axiom but a claim, proved per batch by the gate below — and on the batch this file is written from it held for 20 of 24 changed files, not all 24. Read the gate section before relying on it.
+
+## The one test
+
+For every sentence: **would it be false or pointless after the next change to what it describes?** Then it is an event in the wrong place. And before that: **can the types, an assertion, or a test hold this claim?** If they can, they do, and the sentence goes.
+
+Prose says only what the code cannot — a decision, an invariant the types do not hold, a refusal's reason.
+
+## What the pass pays on, and what predicts it
+
+**This is the page to read first.**
+
+The pass pays on **narration**: sentences restating the code, restating a fact a named test already pins, or reproducing a figure from a report. Repeated argument folded to a single home is narration's most legible form and the single most productive edit on record — six docstrings framing the same two input series collapsed into one module docstring, supplying 68.7% of one batch's whole reduction (`cli/features/derivatives.py`, measured at `e96054eb`). It is an instance, not the mechanism.
+
+**Repetition does not predict yield, and mass may.** Every column below is measured at that package's **own** base — the parent of the merge that cut it, which is not one shared revision. Raw docstring chars (`clean=False`), 8-gram shingles repeated in ≥3 docstrings:
+
+| package | own base | docs | raw mass | shingles | tripwire rows | outcome |
+|---|---|---:|---:|---:|---:|---:|
+| `cli/alpha` | `0d1ccb78` | 24 | 14,370 | 0 | 8 | −48.37% |
+| `cli/features` | `d17327c2` | 20 | 11,015 | 57 | 14 | −35.73% |
+| `cli/data` | `f97e5a67` | 33 | 9,703 | 0 | 15 | −26.38% |
+| `cli/tick` | `d17327c2` | 20 | 4,853 | 0 | 0 | −13.72% |
+| `cli/ohlc` | `d17327c2` | 23 | 4,334 | 0 | 1 | −11.70% |
+| `cli/validation` | `d17327c2` | 21 | 2,231 | 0 | 0 | −0.99% |
+
+One package in six had any repetition, and the deepest cut ever made had none — so **repetition is falsified as a predictor**. Neither tripwire rows nor shingles order the outcomes: the package with the fewest rows of the top three yielded most.
+
+**Base mass, however, ranks the six perfectly** — the ordering by mass and the ordering by yield are the same sequence. At n=6 that is a signal worth measuring before a batch, not a law: it is one batch of one pass, and no mechanism is offered for why a bigger package should give back a larger share. **The open question is whether mass predicts; the settled answer is that repetition does not.**
+
+`cli/tick` and `cli/validation` read identically on rows and shingles — zero and zero — and yielded −13.72% and −0.99%, so those two columns do not separate the batch's second-best case from its worst. On mass the two differ by 2.2×, in the direction their outcomes went.
+
+**Yield and damage are not opposite ends of one axis.** `cli/tick` was zero-signal, the batch's second-best yield, *and* supplied three of the four contracts a correction round had to restore. Best gain and worst damage, same package.
+
+## What the record does support
+
+The damage half, which is the useful half.
+
+**Cutting is destructive where docstrings carry provenance and bounds.** `cli/validation` was cut −13.58% and ended −0.99% from base after three review rounds gave 92.74% of that cut back: three of its four restorations were spec pointers or contracts nothing else held, and one returned byte-identical to base. Its docstrings looked like narration and were the only path from code to a design.
+
+**A package's RISK is judged by READING its docstrings, never by counting them.** Ask what they carry — provenance, a bound, a registered trial, a refusal's reason — not how many rows a tool flags. That judgement is about damage, it is made per package before starting, and it is a different question from yield, which is measured and is open above.
+
+**Flagged prose that has already survived a pass is not backlog.** One package went through twice, across 17 of its 21 files, and still carries 163 tripwire rows and 159,418 raw docstring chars (`clean=False`, at `e96054eb`) — 9.2× that whole four-package batch at the same revision. Its four never-opened files carry zero rows between them. A row count cannot tell a cold reader whether a row is a conscious keep or the load-bearing shape the pass is worst at. **Count rows in files the pass has never opened; check that with `git log --merges` over the pass's own branches, never from memory.**
+
+**Stopping is a valid outcome, but it is reported by its reason, per package.** At one stop, 14 packages had never been opened: 10 carried zero tripwire rows and zero shingles, and 4 carried rows — 10, 7, 4 and 2. Two of those four were excluded on risk and two on cost, the latter holding 3,378 raw chars between them. **State the count and the disposition; do not convert mass into an expected yield**, which needs the rate this document says is not established. A stop reported as "nothing is left" is stronger than the evidence, will not survive a reader's own `grep`, and hides the cost of what was deliberately left.
+
+## The gate
+
+A prose-only claim is worth nothing unless it is proved mechanically. Against the batch's base, for every changed file, compare:
+
+1. **The stripped-AST dump** — parse, remove every docstring, fill emptied bodies with `ast.Pass()`, `ast.dump(..., include_attributes=False)` — **together with a per-scope count of non-docstring statements.**
+2. **The `tokenize.COMMENT` token stream.** The AST is structurally blind to comments.
+
+The statement count is not decoration. Without it, `docstring + pass` and `docstring alone` reduce to the same tree, so deleting a `pass` reads inert — and that fired four times in merged work, where deleting an exception class's docstring emptied its body and the class became `class XError(Exception): pass`. **The normalisation that makes two trees comparable modelled the exact transformation it was meant to detect.** Ask of every normalisation: what change does this make invisible, and can the pass produce that change? This one could, in its most routine operation.
+
+The obvious repairs are worse. Dropping the fill, or swapping the docstring for a placeholder, both make *adding* a module docstring read as a statement change — a legitimate prose-only edit. **Six arms, and the last three are the ones a naive fix breaks**: `pass` deleted, return value changed, statement added must all differ; docstring text changed, docstring deleted, module docstring **added** must all compare equal.
+
+**Prove the instruments bite, with every mutant anchor selected by a parser** — the statement arm from an AST node after the docstring `Expr`, the comparison arm from an `ast.Compare` outside every docstring span, the comment arm from a real `COMMENT` token. A regex anchor flips comparisons *inside docstrings*, the dump correctly does not move, and the arm reports a false BLIND.
+
+The two instruments disagree about what a comment is, and both are right: a docstring is not a `#` comment, so adding one leaves the COMMENT stream identical — while a prose tripwire's `comment-block` kind counts docstrings, so it moves once the block crosses its own line bar.
+
+## Review
+
+**Prose-only is what makes review cheap, so it must be true before it is claimed.** Reviewers told a diff cannot change behaviour spend their whole budget on whether each sentence is true; a false premise spends it on the wrong thing.
+
+What actually produced this file's material was not the cadence floor of one whole-branch read. It was **two blind arms per batch plus an independent sampling read on a cadence**. Both are load-bearing and they catch different things: the arms found a false containment claim by driving the function; the sampling read found that a batch had drifted from pruning into fact-checking, which no per-commit review sees because each commit looks correct. A session running one read at the end will not learn it has drifted until the mass delta says −0.4%.
+
+**Brief a reader on what to test, not on what to accept**, and never bar it from where findings are registered — one reader reported a defect as registered nowhere because its brief excluded the file it was registered in, manufacturing a false finding of the class it was hunting. A reader that cannot see a place says **"not visible from here"** and names what it searched.
+
+**A code defect the pass finds is not fixed here and is not deferred to a topic.** Prose-only forbids the first; the no-deferral rule forbids the second. It becomes its own work item on its own branch, handed to whoever owns that code, registered where the coordinator can see it — a commit message is not registration. This pass's headline failure mode was exactly such a defect.
+
+## Standing procedures
+
+**Run the ruling's grep before the ruling closes, not after the batch does.** Parse the region for the shape the ruling names, read every hit, record each disposition with its reason in the commit body. Two hits kept with reasons is a ruling; a count with no dispositions is a sweep.
+
+**Run it before RESTORING, not only before cutting.** A restoration is a claim landing in the tree and takes the same proof as a cut.
+
+**Sweep for the clause you are KEEPING, not only the one you are cutting.** In `cli/validation` at `e96054eb`, three docstrings were cut to a third of their size with `never NaN` preserved verbatim in each, while the same clause stood in six places across that package — every one already asserted by a named test. A rewrite decides what survives as much as what goes, and the surviving clause never gets the sweep.
+
+**Sweep the argument, not just the ruling.** When a fix argues from uniformity or from "the only path to X", run that argument across the package before landing it. An argument justifying more edits than the fix makes is either incomplete or wrong.
+
+**A figure carries its revision, its unit and its denominator in the same sentence as itself** — three axes of one rule, and each has produced a wrong number here. *Revision*: a package measured at a shared revision that post-dated its own cut reported the output of that cut as its input. *Unit*: raw (`clean=False`), cleaned and whitespace-collapsed mass are 159,418, 151,843 and 151,661 for one package. *Denominator*: 95 characters given back is +0.55% of surviving mass or 1.82% of the reduction, and a decision to keep running turns on the second. Each is right about something and wrong where it stands, and a numeral audit sees none of them. Report the per-package delta of every round, correction rounds included, positive included.
+
+**Check the length of the docstrings the batch rewrote, and do not rewrap a line whose length is not the finding.** A rewritten docstring can exceed the wrap target with nothing to catch it; a reflow with no word changed is still an edit that pushed two blocks a line longer and made a ratchet absorb the growth. Run the length sweep as the batch's last step, before any baseline is regenerated.
+
+**With a prose ratchet: keep `--check-baseline`'s classification BEFORE `--write-baseline`.** The re-record rewrites the baseline to match the tree, so afterwards the check reports zeroes and what it absorbed is unrecoverable. (`prose.md` owns the rest: condense to the bar, never to the tool's threshold.) A section split invented to reach a number is the defect a recorded keep was refusing.
+
+**A prose ratio can be satisfied by writing more code.** One file left a prose-density bar without losing a
+sentence: a commit added two code lines while the prose stayed at fourteen, and the file came to rest at exactly
+the threshold — where the next comment line pushed it back over and reddened the integration branch. A ratio is
+not a measure of prose; check the numerator, and treat a file sitting on the bar as re-reddening the next time
+anyone writes a comment in it.
+
+**A ratchet's verdict is a property of the TREE, not of a commit** (`T0180`). A rebase runs no pre-commit hook, and CI may run none either, so a green that every commit on a branch honestly earned can be invalid the moment those commits are replayed or merged — a branch that recorded a baseline mid-way and then outgrew it lands red with nothing downstream to notice. Re-run the check on the final tip after any rebase, and on the integration branch after any merge.
+
+## Failure modes: what the prose claims
+
+Each of these happened, and the instance is what makes the rule legible.
+
+**A false containment claim.** A docstring said every failure raises the project's error type. Driven through a stub with a healthy control, six inputs escaped in two classes the handlers could not catch — one a sibling of the caught exception rather than a subclass of it, which is the trap that generalises. *Never state what a function contains without driving it.* And **do not write what escapes**: an enumerated blind spot is a completeness claim by omission. The containment sentence is earned back by the commit that makes it true.
+
+**An enumeration is a completeness claim whichever direction it faces.** Told to state positively what the code *does* guarantee, the pass produced a six-item transcription of the function's own `raise` statements — narration *and* an implied completeness the code lacked, the same defect it had removed one file over. Restating a banned list from the other side is not compliance.
+
+**When a cut changes how many of something there are, delete the count — do not correct it.** A module docstring headed "Two module-wide obligations" became "Three" in the same commit that folded six paragraphs into it: a completed enumeration written into the pass's best work. The reader counts the headed paragraphs.
+
+**A surviving copy is a licence only when its line is quoted.** A contract was deleted because a nearby comment "already said it". It said something else. The failure is invisible from the deleting side — a plausible sibling is exactly what a hurried check finds: same function, same file, right level of detail, different claim. The error then recurred by checking *one* neighbour and not the other. **Name every candidate copy, and quote the line carrying the claim.**
+
+**A cut that removes a refusal, a postcondition or a return shape is a transfer to the next reviewer.** Before deleting a sentence, ask whether the types hold it. If not it is contract — condense it or make it an assertion. The sentence that should go is the one restating the function's own name, almost always directly above the contract; deleting it is how a restored contract is paid for without growing the block.
+
+**Naming a failure mode is not immunity from it.** Every mode above was written down before it was committed. The completed count landed in the flagship commit of the flagship batch, by the author who had named that mode; a scope claim was overstated in the paragraph after naming the mode it belongs to; two writers holding the same correction reproduced it in the next document each wrote. A reader who has just finished this list is at their most confident, and that is when the list stops protecting them. Run the check anyway.
+
+## Failure modes: what the instruments report
+
+An instrument reports independently of the thing it describes, and every one of these looked like a pass.
+
+**A figure can be correct and about the wrong thing, and a numeral audit cannot see it.** A package was proposed as the largest remaining candidate with its row and character counts both exactly right; it had already been through the pass twice, so every number was true and the word *remaining* was false. The correction was then carried into a second document by a second writer who had already read it, and that document reproduced the same contradiction. **Remaining** is a word about a set, and neither writer was tracking the set — both were tracking the numbers attached to it. Auditing numerals establishes *nothing lost* and can never establish *nothing invented*, because the subject of a measurement is not a numeral. State what each figure is a measurement **of**, and verify the subject separately from the value.
+
+**A filter that fails open returns the unfiltered set, and the answer keeps the right shape.** An exclusion meant to drop one already-finished package from a survey of fifteen matched nothing: the result listed fifteen names, right type, about the right length, with the excluded package's hits still in the total. It reports a true count of the wrong set — the mode above wearing a tool's clothes. **Print the excluded set beside the kept set**; an empty exclusion is invisible in the kept set alone, and a set operation belongs where the comparison is explicit rather than in shell pattern matching.
+
+**Serials, versions and short numeric ids collide with data** (`agent-ops.md` owns the rule). A five-digit spec serial grepped across a repo full of floats returned three confident hits that were a quantity, a drawdown and a timestamp; taking the counts would have inverted the ruling.
+
+**A review is a producer, not an authority over a measurement** (`agent-ops.md` owns the two-producers rule). When a dispatched review's figure contradicts a measured one, report both and name which is yours: deferring once would have shipped a fix that closed three symptoms and left the real defect untouched.
+
+**Split CALL from ACCESS in any probe of what a function raises.** A probe touching a lazily-evaluated or converted value inside the same `try` as the call attributes the consumer's exception to the callee. Two phases, and report which raised.
+
+**An empty selection exits 0.** A test selection matching nothing, a tool invoked with no arguments — both report success. Assert the selection and print its count before trusting any run. In one shell an unquoted variable holding many paths is a single word, which composes with this into a green that means nothing.
+
+**A guard whose output nothing consumes is decoration.** Chain the destructive step to its check, or read the output before the next call; printing a refusal and continuing is worse than no check, because the transcript looks verified.
+
+## Tooling
+
+Small, disposable scripts, kept beside the pass rather than committed as machinery:
+
+- the two-instrument comparison against the batch base — stripped-AST dump plus per-scope non-docstring statement counts, and the COMMENT stream;
+- the instrument prover, which mutates each parser-selected anchor and requires every arm to bite;
+- the batch self-check: docstring mass before/after with its unit named, and tripwire rows before/after, emitted from one invocation at one revision;
+- a repetition detector, useful for *finding* a fold to make and useless for predicting whether a package will yield.
+
+**Write them into an isolated subdirectory with the repo path pinned, never into a shared scratchpad under a generic name.** Two sessions both wrote `mass.py`; the file one of them read was the other's.

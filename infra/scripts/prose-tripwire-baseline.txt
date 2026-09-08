@@ -437,6 +437,12 @@ docs/reference/data-catalog-full.md:115: section 2201 > 2048	### Canonical trade
 docs/reference/data-catalog-full.md:123: section 3095 > 2048	### L2 primitive panel (`l2-panel/`, since 2026-07-08 capture start; accruing hourly)
 docs/reference/data-catalog-full.md:131: section 3001 > 2048	### Tape-bars — 15m OHLCV from the captured trade tape (`tape-bars/`, since 2026-07-08; daily finals)
 docs/reference/data-catalog.md:26: section 6111 > 2048	## Dataset
+docs/reference/docstring-pass-method.md:13: section 2520 > 2048	## What the pass pays on, and what predicts it
+docs/reference/docstring-pass-method.md:38: section 2059 > 2048	## What the record does support
+docs/reference/docstring-pass-method.md:50: section 2114 > 2048	## The gate
+docs/reference/docstring-pass-method.md:75: section 3599 > 2048	## Standing procedures
+docs/reference/docstring-pass-method.md:99: section 2795 > 2048	## Failure modes: what the prose claims
+docs/reference/docstring-pass-method.md:115: section 2992 > 2048	## Failure modes: what the instruments report
 docs/reference/drill-log.md:9: section 4240 > 2048	## 2026-08-31 — J′ — pass
 docs/reference/drill-log.md:13: section 6747 > 2048	## 2026-08-31 — K — pass
 docs/reference/drill-log.md:17: section 3857 > 2048	## 2026-08-31 — O — pass
