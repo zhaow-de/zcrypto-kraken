@@ -45,8 +45,8 @@ SECONDS_PER_HOUR = 3600
 # 1h pull/visibility buffer.
 PANEL_SETTLE = timedelta(hours=7)
 
-# Cumulative-depth price levels the panel reports (mirrors `primitives._DEPTH_LEVELS` -- kept as its
-# own constant here since that name is module-private and this is generation metadata, not math).
+# Cumulative-depth price levels the panel reports -- its own constant rather than
+# `primitives._DEPTH_LEVELS` because that name is module-private and this is generation metadata.
 K_LEVELS: tuple[int, int, int] = (1, 5, 10)
 
 # A column addition is a GENERATION change under spec 00052 D5: a multi-hour scan across a schema
@@ -176,7 +176,7 @@ def write_state(panel_root: Path, pair: str, hour: datetime, book: OrderBook, *,
     """Persist `book`'s end-of-hour state as `<HH>.state.json`, next to the hour's parquet, for O(1)
     watermark resume (spec 00052 D3). `str(Decimal)` keys/values round-trip exactly -- a bare JSON
     float would silently reintroduce the precision loss `OrderBook._prune` was written to avoid
-    (T0008). Atomic like `write_hour`: a PID-suffixed tmp + `_replace_durably`.
+    (T0008).
     """
     path = _state_path(panel_root, pair, hour)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,10 +237,7 @@ def panel_watermark(panel_root: Path, pair: str) -> datetime | None:
 
 @dataclass(frozen=True)
 class MaterializeResult:
-    """One sweep's verdict: what got written, what the watermark already covered, which hours were
-    deferred as not-yet-heal-complete (spec 00052 D6 / T0066), which couldn't anchor to prior state
-    (honest gaps, spec 00052 D3), and which failed outright (isolated, never raised -- see
-    `materialize`)."""
+    """One sweep's verdict; `materialize` states what each outcome means."""
 
     hours_written: int
     hours_skipped: int
@@ -252,7 +249,7 @@ class MaterializeResult:
     #: (T0092/spec 00085 D1) -- counted once per pair, not once per hour-segment, or a single
     #: out-of-scope pair with hundreds of captured hours would inflate this by the hour count.
     #: Reported so an out-of-scope stream is visible rather than an absence that looks like
-    #: success. Defaulted and last so it stays after the non-default `errors` field.
+    #: success.
     pairs_out_of_scope: int = 0
 
 
@@ -407,7 +404,7 @@ def write_meta(panel_root: Path) -> Path:
         "code_ref": _code_ref(),
     }
     path = panel_root / "panel-meta.json"
-    # Atomic like everything else in this module: a kill mid-write must not leave a
+    # A kill mid-write must not leave a
     # truncated meta for the CLI's generation check to choke on.
     tmp = path.with_name(f"panel-meta.json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(meta, indent=1) + "\n")

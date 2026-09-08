@@ -132,7 +132,7 @@ def backfill(
     for p, hour, path in canonical_segments(primary_root, reconciled_root, kind="trades"):
         if pair is not None and p != pair:
             continue
-        if hour + _SETTLE > now:  # settle rule: the in-flight hour is untouchable
+        if hour + _SETTLE > now:
             continue
         hours[p].append((hour, path))
 
@@ -165,8 +165,6 @@ def backfill(
             continue
         det = detect(pl.concat(list(frames.values())))
         gaps_found += len(det.gaps)
-        # Found, independent of healed: what the detector found in THIS pair, populated in both
-        # --mint and --detect-only, since it describes the archive as found, never as fixed.
         trades_missing += det.missing
 
         # Duplicates: split the pair-span total between what a per-hour mint CAN collapse (a
@@ -201,7 +199,7 @@ def backfill(
                 pair_fetch_error_missing += g.missing
                 continue
             inside = page.filter((pl.col("trade_id") > g.after_id) & (pl.col("trade_id") < g.before_id))
-            pair_unrecoverable += g.missing - inside.height  # never fabricated: absent ids stay absent
+            pair_unrecoverable += g.missing - inside.height
             got = pl.concat([got, inside]) if got.height else inside
         unrecoverable += pair_unrecoverable
         fetch_failed += pair_fetch_error_missing
@@ -225,8 +223,6 @@ def backfill(
         for h in sorted(touched):
             rest_rows = got_by_hour.get(h, pl.DataFrame([], schema=TRADE_SCHEMA))
             if h + _SETTLE > now:
-                # Fetched and inside the gap, but the hour hasn't settled yet: never mint (the
-                # settle rule stays) and never silently drop — a later run lands it once it settles.
                 pair_deferred += rest_rows.height
                 continue
             existing = frames.get(h, pl.DataFrame([], schema=TRADE_SCHEMA))  # empty: mint fresh from REST alone
