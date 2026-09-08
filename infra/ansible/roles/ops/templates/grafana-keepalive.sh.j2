@@ -61,7 +61,7 @@ tmp="$PROM.tmp"
 # These HELP lines are the ONE home for what these values mean. They are the only explanation that
 # reaches the host, where an unreadable Grafana is read; a panel needs Grafana up and a runbook needs
 # the repo. Panels and runbooks report and point here, and restate nothing -- six surfaces each
-# carrying their own reading is what six review rounds of contradictions came from.
+# carrying their own reading is what the review rounds of contradictions came from.
 {
   printf '# HELP zcrypto_grafana_keepalive_status HTTP status of the last hourly authenticated Grafana call, or 0 when it got no status at all. 200 is the call succeeding. 503 is what a hibernation and a Grafana Cloud outage both return and this call cannot tell them apart. For 0, read the duration beside it: a call that ran to its 120 s timeout is indistinguishable from here between an instance waking and egress going nowhere, while 0 in a fraction of a second is nothing answering. 401 or 403 is the unambiguous bad case -- the hypothesis under test is that AUTHENTICATED requests count as activity, so a call that does not authenticate is not the call being made. For any other value, whether the call counted as activity is unknown.\n'
   printf '# TYPE zcrypto_grafana_keepalive_status gauge\n'
