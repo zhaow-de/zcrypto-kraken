@@ -194,10 +194,7 @@ def test_read_trades_csv_corrupted_zip_raises(tmp_path):
     ],
 )
 def test_read_trades_csv_refuses_a_ts_that_is_not_epoch_seconds(tmp_path, name, first_field):
-    """A `ts` outside the plausible epoch-SECONDS range is refused, whichever way it fails.
-
-    Milliseconds is the case that used to PASS: read as ~year 55000, filtered out by the caller's
-    window, reported as 0% coverage rather than as unreadable input."""
+    """A `ts` outside the plausible epoch-SECONDS range is refused, whichever way it fails."""
     path = tmp_path / "XBTEUR.csv"
     path.write_text(f"{first_field},100.5,2.0\n{first_field},101.0,1.0\n")
 

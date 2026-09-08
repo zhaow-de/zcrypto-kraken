@@ -69,8 +69,8 @@ def _read_bytes(source: str | Path | tuple[str | Path, str]) -> tuple[bytes, str
 def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame:
     """A bare file, or a `(zip_path, member_name)` pair read from the ZIP without full extraction; rows in the
     order read, neither de-duplicated nor re-sorted -- `cli.tick.aggregate` sorts before bucketing. `side` is
-    null throughout the complete layout. Refusals reach the caller as `TickError`, a `ts` outside plausible
-    epoch SECONDS among them, so a millisecond file fails here rather than parsing into the far future."""
+    null throughout the complete layout. A refused input raises `TickError`, a `ts` outside plausible epoch
+    SECONDS among them, so a millisecond file fails here rather than parsing into the far future."""
     data, label = _read_bytes(source)
     has_header = _sniff_has_header(data)
     schema = _detect_schema(data, has_header)
