@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # The prose ratchet's verdict is a tree property, and no gate evaluates it after a rebase or a merge
@@ -51,9 +51,11 @@ Prose is unchanged, 14 to 14, across `6e86d5b6` — the commit that went green. 
 
 Not measured, and so not established: whether the pre-rebase originals of those commits were green. Those objects are likely gone.
 
-## Done so far
+## Resolution
 
-**The owner ruled for the `pre-push` stage over a CI job**, and it closes the REBASE-and-push arm and the local-merge-and-push arm. Delivered by `.pre-commit-config.yaml` declaring `stages: [pre-commit, pre-push]` on `prose-tripwire`, plus `default_stages: [pre-commit]` and an explicit `stages: [pre-commit]` on the five upstream hooks whose own manifest declares `pre-push` — without those, installing the hook type puts all eighteen hooks in the push stage, and two of the five rewrite files.
+Two arms, two mechanisms, because no single one reaches both.
+
+**The rebase-and-push and local-merge-and-push arms: a `pre-push` stage on the ratchet**, the owner's ruling, catching them before anything leaves the machine. Delivered by `.pre-commit-config.yaml` declaring `stages: [pre-commit, pre-push]` on `prose-tripwire`, plus `default_stages: [pre-commit]` and an explicit `stages: [pre-commit]` on the five upstream hooks whose own manifest declares `pre-push` — without those, installing the hook type puts all eighteen hooks in the push stage, and two of the five rewrite files.
 
 Proven both ways against a local bare repo as the remote, from a clone carrying only the pre-push hook: a green tree pushes and the ref moves; a tree at `file-prose 21.1 > 20` is refused with `hook id: prose-tripwire`, and the remote ref does not move.
 
@@ -63,11 +65,8 @@ Proven both ways against a local bare repo as the remote, from a clone carrying 
 
 **The local step.** `pre-commit install --hook-type pre-push` is per-clone and is not carried by the repository: a fresh clone has to run it again, and the tracked `stages:` declarations are what make the intent version-controlled rather than folklore. That, the hook's dependency on the main checkout's `.venv`, and the fact that a successful push is not evidence any hook ran are recorded in `.pre-commit-config.yaml`'s own comment block, which is what someone touching hooks reads.
 
-## Suggested next steps
+**The server-side merge arm: a step in `coverage.yml`.** `gh pr merge --merge` creates its commit on GitHub, where no local hook exists at that moment — so that arm is unreachable from any hook, whatever is installed. `actions/checkout@v7` on a `pull_request` event resolves `refs/pull/N/merge`, the test merge of head into base, which is the same tree that merge produces; a step in the job that already is the required `Full test suite` context measures it. Read from an actual run's log rather than documentation, because the check-run's reported `head_sha` is the PR head and says the opposite.
 
-**The SERVER-SIDE merge arm is still open, and it is the one this topic's title names alongside rebase.** Every PR here lands through `gh pr merge --merge`, which creates a commit on GitHub that no local hook touches. So `develop`'s tip after each merge is an unmeasured tree — and it is the tip every branch then rebases onto. The reachable shape: one branch regenerates the baseline, another carries an offender a removed row used to cover; each green alone, the merge red.
+Both invoke `pre-commit run --hook-stage pre-push`, so the hook and the CI step run the same thing by construction and a green in one means what a green in the other means. `tests/test_pre_push_stage.py` holds that stage at the ratchet alone, resolved through `all_hooks` rather than read off the YAML — the widening that made this necessary arrived from an upstream manifest the config never mentions.
 
-The present mitigation is manual and unregistered: the ratchet has been run by hand on merge results, three times in one night, precisely because nothing else does it.
-
-- Decide the gate for that arm. A CI job on `pull_request` is the candidate this topic already described, and it is the only one of the two that can see a merge result; a local hook structurally cannot. It costs a check the `merge-pr` evaluator blocks on when it fails.
-- Until then, name the manual run somewhere it will be done rather than remembered — the merge routine is `merge-pr`'s own step sequence.
+Constructed for the merge arm: two branches each adding one comment line in a different region of one file, each measuring 20.0 and passing its own gate; their clean auto-merge measures 21.1 and is refused. Both parents green, the merge red.
