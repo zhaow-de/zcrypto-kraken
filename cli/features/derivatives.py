@@ -1,5 +1,5 @@
 """Derivatives-positioning features over Binance USDT-M perpetuals, mapped to Kraken spot bases by
-`PERP_SYMBOLS` in `cli/derivatives/funding.py`. Three module-wide obligations a caller cannot see
+`PERP_SYMBOLS` in `cli/derivatives/funding.py`. Module-wide obligations a caller cannot see
 from a bare `list[float | None]`:
 
 FEED THE RIGHT SERIES. `funding_zscore`, `funding_sign_persistence` and `funding_accrued_carry` take
@@ -196,10 +196,10 @@ _RATIO_COLUMNS: tuple[str, ...] = (
 
 
 def ratio_features(ratios: dict[str, list[float | None]]) -> dict[str, list[float | None]]:
-    """Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
+    """Carry Binance's ratio columns through under `binperp_` names. No arithmetic and no
     imputation: these columns carry genuine venue gaps, and filling one would manufacture a reading
     the venue never published (spec 00110 D5). Call `coverage_by_year` to see the shape for the
-    substrate in hand. All four are required: a caller that dropped one would otherwise get a
+    substrate in hand. All are required: a caller that dropped one would otherwise get a
     silently smaller frame."""
     unknown = set(ratios) - set(_RATIO_COLUMNS)
     if unknown:
@@ -233,7 +233,7 @@ def coverage_by_year(ts: list[datetime], values: list[float | None]) -> dict[int
     """Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
     only how much (spec 00110 D6). The counts alone cannot separate a late start from an interior
     outage -- both can read `(2, 10)`, and they mean opposite things for a fold over that year --
-    so the two stamps travel with them.
+    so the stamps travel with them.
 
     Raises FeatureError on a length mismatch, `align_asof`'s rule: the derived null fraction is
     only as good as `total`, and a zip that truncates to the shorter input under-counts it and
