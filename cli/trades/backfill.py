@@ -7,8 +7,7 @@ into the reconciled overlay. Never fabricates a trade: an id REST will not serve
 the minted hour and is counted as `trades_unrecoverable`; a row REST serves but whose hour hasn't
 settled yet is counted as `trades_deferred`, never minted and never silently dropped. The healing
 counters (`trades_recovered`, `duplicates_collapsed`, ...) are derived from what actually landed
-(D9): after minting, the pair's canonical view is re-read from disk and re-checked against the
-invariant. `trades_missing` / `duplicate_rows_found` are a separate pair of counters answering a
+(D9). `trades_missing` / `duplicate_rows_found` are a separate pair of counters answering a
 different question -- what the detector FOUND, independent of what was healed -- and are populated
 in both `--mint` and `--detect-only` modes, since they describe the archive as found, not as healed.
 """
@@ -133,7 +132,7 @@ def backfill(
     for p, hour, path in canonical_segments(primary_root, reconciled_root, kind="trades"):
         if pair is not None and p != pair:
             continue
-        if hour + _SETTLE > now:  # settle rule: the in-flight hour is untouchable
+        if hour + _SETTLE > now:
             continue
         hours[p].append((hour, path))
 
@@ -147,11 +146,8 @@ def backfill(
     # a quiet pair -- an hour with no events writes no file at all) from a genuinely lost file, so it
     # calls both "nobody traded", and this sweep then repairs the second one SILENTLY.
     #
-    # Skipped in detect-only, which never reaches the mint loop that reads it, and narrowed to the
-    # requested pair. The narrowing bounds what is RETAINED, not the scan: `canonical_segments` takes
-    # no pair argument and still globs `*/*/book/*/*/*/*.parquet` across the whole tree, and book is
-    # the dominant volume of the archive -- so if this ever becomes the cost, the glob is where to
-    # look, not this filter.
+    # Skipped in detect-only, which never reaches the mint loop that reads it. The pair narrowing
+    # bounds what is RETAINED, not what is scanned.
     book_finals: dict[str, dict[dt.datetime, Path]] = {}
     if not detect_only:
         for p2, hour, path in canonical_segments(primary_root, reconciled_root, kind="book"):
@@ -169,8 +165,6 @@ def backfill(
             continue
         det = detect(pl.concat(list(frames.values())))
         gaps_found += len(det.gaps)
-        # Found, independent of healed: what the detector found in THIS pair, populated in both
-        # --mint and --detect-only, since it describes the archive as found, never as fixed.
         trades_missing += det.missing
 
         # Duplicates: split the pair-span total between what a per-hour mint CAN collapse (a
@@ -205,7 +199,7 @@ def backfill(
                 pair_fetch_error_missing += g.missing
                 continue
             inside = page.filter((pl.col("trade_id") > g.after_id) & (pl.col("trade_id") < g.before_id))
-            pair_unrecoverable += g.missing - inside.height  # never fabricated: absent ids stay absent
+            pair_unrecoverable += g.missing - inside.height
             got = pl.concat([got, inside]) if got.height else inside
         unrecoverable += pair_unrecoverable
         fetch_failed += pair_fetch_error_missing
@@ -229,8 +223,6 @@ def backfill(
         for h in sorted(touched):
             rest_rows = got_by_hour.get(h, pl.DataFrame([], schema=TRADE_SCHEMA))
             if h + _SETTLE > now:
-                # Fetched and inside the gap, but the hour hasn't settled yet: never mint (the
-                # settle rule stays) and never silently drop — a later run lands it once it settles.
                 pair_deferred += rest_rows.height
                 continue
             existing = frames.get(h, pl.DataFrame([], schema=TRADE_SCHEMA))  # empty: mint fresh from REST alone
@@ -260,7 +252,7 @@ def backfill(
                 # make the strongest check in the sweep go quiet on exactly the failure it exists for.
                 pair_mint_failed += union.added_from_secondary
                 continue
-            # Counted from the UNION result, not the fetch: only rows that actually landed count.
+            # Counted from the UNION result, not the fetch.
             pair_recovered += union.added_from_secondary
             pair_dup_collapsed += union.deduped_rows
             pair_minted += 1
@@ -290,15 +282,12 @@ def backfill(
                 ",".join(h.isoformat() for h in pair_repaired_hours),
             )
 
-        # D9 — the manifest is not the check. Re-read this pair's settled canonical view off disk
-        # and re-run detect(); every remaining gap/duplicate must be explained by a known bucket.
         resettled = _read_pair_settled(primary_root, reconciled_root, p, now)
         det2 = detect(pl.concat(list(resettled.values()))) if resettled else detect(pl.DataFrame([], schema=TRADE_SCHEMA))
         residual_missing = det2.missing - (pair_unrecoverable + pair_deferred + pair_fetch_error_missing)
         residual_dup_rows = (det2.rows - det2.unique) - cross_hour_dup_rows
         if residual_missing != 0 or residual_dup_rows != 0:
             msg = (
-                # The full-attribution accounting invariant is D9 in the spec vocabulary.
                 f"trade backfill accounting invariant violated for pair={p}: post-mint missing={det2.missing} "
                 f"(unrecoverable={pair_unrecoverable} deferred={pair_deferred} "
                 f"fetch_errors={pair_fetch_error_missing} unaccounted={residual_missing}), "

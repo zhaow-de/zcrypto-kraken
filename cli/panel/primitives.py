@@ -121,8 +121,8 @@ def sample_row(
     microprice = (ask_qty * bid + bid_qty * ask) / (bid_qty + ask_qty)
     imbalance_l1 = bid_qty / (bid_qty + ask_qty)
 
-    bid_levels = sorted(bids.items(), reverse=True)  # best (highest) price first -- a sell's walk
-    ask_levels = sorted(asks.items())  # best (lowest) price first -- a buy's walk
+    bid_levels = sorted(bids.items(), reverse=True)  # a sell's walk
+    ask_levels = sorted(asks.items())  # a buy's walk
 
     row: dict[str, float | int | None] = {
         "updates": updates,
