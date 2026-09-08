@@ -9,6 +9,10 @@ import sys
 
 REQUIRED = {"ts", "session", "branch", "kind", "cites", "what", "why"}
 KINDS = {"self-correction", "rule-deviation", "rule-feedback", "skill-feedback", "miscount"}
+# A lesson field is one line, and every other check accepts a multi-line one: it is a non-empty string
+# of the right type. A command substitution is the usual way one arrives -- a backticked symbol name
+# inside a DOUBLE-quoted shell argument runs -- so the refusal names single-quoting as the remedy.
+_ONE_LINE = "%s must be one line, but contains a newline (if a shell substitution ran in your argument, single-quote it)"
 
 
 def record_errors(rec: object) -> list[str]:
@@ -20,9 +24,13 @@ def record_errors(rec: object) -> list[str]:
         out.append(f"kind must be one of {sorted(KINDS)}, got {rec['kind']!r}")
     if not isinstance(rec["cites"], list) or not all(isinstance(c, str) and c for c in rec["cites"]):
         out.append("cites must be a list of non-empty strings")
+    elif any("\n" in c for c in rec["cites"]):
+        out.append(_ONE_LINE % "a cite")
     for key in ("ts", "session", "branch", "what", "why"):
         if not isinstance(rec[key], str) or not rec[key].strip():
             out.append(f"{key} must be a non-empty string")
+        elif "\n" in rec[key]:
+            out.append(_ONE_LINE % key)
     return out
 
 

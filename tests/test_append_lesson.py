@@ -183,3 +183,51 @@ class TestTheValidatorIsTheCheckers:
         monkeypatch.setattr(al, "_CHECKER", fake / "check-agent-lessons.py")
         assert al.run(_argv(), cwd=checkout, now=NOW) == 1
         assert not _inbox(checkout).exists()
+
+
+class TestASubstitutedFieldIsRefused:
+    """A backticked symbol name in a DOUBLE-quoted shell argument runs as command substitution.
+
+    The output is spliced into the field, so what lands is multi-line and every other check passes:
+    it is a non-empty string of the right type. A newline is the tell no legitimate field carries."""
+
+    SPLICED = "derive the list from CHANGELOG.md\nCLAUDE.md\ncli\ndocs/ output rather than typing it"
+
+    # `session` belongs in the arm: `record_errors` runs before the `re.fullmatch` on `args.session`,
+    # so a newline-bearing session is refused here and the name check never sees it.
+    @pytest.mark.parametrize("field", ["what", "why", "branch", "session"])
+    def test_a_field_carrying_substituted_output_refuses(self, checkout: pathlib.Path, capsys, field: str) -> None:
+        inbox = _inbox(checkout)
+        inbox.write_text("")
+        before = inbox.stat().st_size
+        assert al.run(_argv(**{field: self.SPLICED}), cwd=checkout, now=NOW) == 1
+        assert inbox.stat().st_size == before
+        err = capsys.readouterr().err
+        assert field in err
+        assert "single-quote" in err  # the refusal must say what to do, not only what is wrong
+
+    def test_a_cite_carrying_substituted_output_refuses(self, checkout: pathlib.Path, capsys) -> None:
+        assert al.run(_argv(cites="cli/tick/read.py\nCLAUDE.md"), cwd=checkout, now=NOW) == 1
+        assert "single-quote" in capsys.readouterr().err
+
+    def test_the_harvest_refuses_a_stored_record_too(self, tmp_path: pathlib.Path, capsys) -> None:
+        """The arm has to hold when `check()` reads a record it did not write, carrying the newline
+        escaped inside one physical line as a JSON-serialising writer stores it."""
+        stored = tmp_path / "zcrypto-x.jsonl"
+        rec = dict(
+            ts="2026-09-08T00:00:00Z", session="zcrypto-x", branch="fix/x", kind="miscount", cites=[], what="a\nb", why="fine"
+        )
+        stored.write_text(json.dumps(rec) + "\n")
+        chk = _load(_CHECKER, "chk_harvest")
+        assert chk.check(str(stored)) == 1
+        # WHICH refusal: every refusal here returns the same exit code, so only the message tells
+        # them apart -- this arm's text swapped for the cite arm's passes any check but this one.
+        assert "what must be one line" in capsys.readouterr().out
+
+    def test_a_legitimate_one_line_lesson_still_writes(self, checkout: pathlib.Path) -> None:
+        """The true positive: the guard must not refuse the records it exists to protect."""
+        assert (
+            al.run(_argv(what="backticks in a double-quoted arg run", why="so pass prose single-quoted"), cwd=checkout, now=NOW)
+            == 0
+        )
+        assert json.loads(_inbox(checkout).read_text())["what"] == "backticks in a double-quoted arg run"
