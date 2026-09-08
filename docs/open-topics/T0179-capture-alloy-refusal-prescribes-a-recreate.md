@@ -23,7 +23,7 @@ Checked rather than inferred from the ops twin, because a shared phrase is not a
 - `infra/ansible/roles/capture/tasks/main.yml:528` — the config copy notifies it, so the re-run reloads without further action.
 - `infra/ansible/roles/capture/tasks/main.yml:431` — the clause, split across lines 431-432 ("…so the new file is / read."), which is why a single-line grep for the whole phrase misses it.
 
-The ops-side fix and its reasoning are on `feat/grafana-keepalive` — the same correction applies here, with `capture_alloy_digest` for `ops_alloy_digest`. Its second half is worth carrying too: "nothing further is needed" is false when the container is DOWN, because `status_code: [200, -1]` treats a connection failure as success and nothing in that play starts Alloy.
+The ops-side fix and its reasoning are on `feat/grafana-keepalive` — the same correction applies here, with `capture_alloy_digest` for `ops_alloy_digest`. Its second half is worth carrying too: "nothing further is needed" is false when the container is DOWN, because `status_code: [200, -1]` treats a connection failure as success and no task in that play starts Alloy.
 
 ## Suggested next steps
 

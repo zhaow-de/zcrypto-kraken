@@ -88,7 +88,7 @@ def test_a_curl_that_ends_its_write_out_with_a_newline_is_read_the_same(tmp_path
 
 
 def test_a_503_is_recorded_rather_than_swallowed(tmp_path):
-    """The hibernation signature. `curl -f` would have turned this into an error exit and no data."""
+    """A 503 is recorded rather than swallowed. `curl -f` would have made it an error exit and no data."""
     metrics = _run(tmp_path, '#!/bin/sh\nprintf "503 12.8"\n')
 
     assert metrics["zcrypto_grafana_keepalive_status"] == "503"
