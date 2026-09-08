@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # The prose ratchet's verdict is a tree property, and no gate evaluates it after a rebase or a merge
@@ -51,9 +51,14 @@ Prose is unchanged, 14 to 14, across `6e86d5b6` — the commit that went green. 
 
 Not measured, and so not established: whether the pre-rebase originals of those commits were green. Those objects are likely gone.
 
-## Suggested next steps
+## Resolution
 
-Either candidate adds a gate every session pays, so **the choice is the owner's**, not a session's.
+**The owner ruled for the `pre-push` stage over a CI job.** Closed by `.pre-commit-config.yaml` declaring `stages: [pre-commit, pre-push]` on `prose-tripwire`, plus `default_stages: [pre-commit]` and an explicit `stages: [pre-commit]` on the five upstream hooks whose own manifest declares `pre-push` — without those, installing the hook type puts all eighteen hooks in the push stage, and two of the five rewrite files.
 
-- **A CI job running the tripwire on `pull_request` into `develop`.** Catches this instance, and also the case neither hook can see — a merge result that is red though both parents were green. Needs no per-clone state and is visible in the merge gate. Cost: another check that `merge-pr`'s evaluator blocks on when it fails.
-- **A `pre-push` hook stage.** Catches this instance too, since the pushed tip measures red. Cheaper to run, but it is per-clone state: a fresh worktree or a new session's clone silently has no such hook, so the guard is absent exactly where it is most needed.
+Proven both ways against a local bare repo as the remote, from a clone carrying only the pre-push hook: a green tree pushes and the ref moves; a tree at `file-prose 21.1 > 20` is refused with `hook id: prose-tripwire`, and the remote ref does not move.
+
+**The objection this topic raised against `pre-push` was false, and correcting it is why the option was nearly lost.** A worktree's hooks are not per-worktree state: `git rev-parse --git-path hooks` in every linked worktree resolves to the main checkout's `.git/hooks`, because a worktree's `.git` is a file pointing at the common directory. One install covers every worktree, present and future. `core.hooksPath` is unset here.
+
+**`/usr/share/git-core/templates/hooks` is not the mechanism**, since it will be asked again. A template directory is copied into a repository at `git init` / `git clone` time only, so editing one does nothing for a repository that already exists; that system path is root-owned; and `init.templateDir` is unset at every level here. For *future* clones the supported path is `pre-commit init-templatedir`, which needs no root.
+
+**The local step.** `pre-commit install --hook-type pre-push` is per-clone and is not carried by the repository: a fresh clone has to run it again, and the tracked `stages:` declarations are what make the intent version-controlled rather than folklore.

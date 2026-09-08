@@ -20,7 +20,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; the conditioning-overlay class was attributed out (trials 45+46 REJECT) (ripe when: a genuinely new B1 hypothesis — not a conditioning overlay on the A2 book — is pre-registered, or the human expands/closes the shared B budget).
-- [T0180 — the prose ratchet's verdict is a tree property no gate sees](T0180-ratchet-verdict-is-a-tree-property-no-gate-sees-it.md) — the tripwire measures the whole tree and runs only in `pre-commit`, so a rebase or a merge can land a red `develop` through a PR gate that cannot see it; landed one on `8e639df0`. The fix is the owner's choice between a CI job and a `pre-push` stage, both of which cost every session.
 
 ### Partially done<a name="partially-done"></a>
 
@@ -97,6 +96,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0171 — date-directory parsers let an oversized component escape](archive/T0171-date-directory-parsers-let-an-oversized-component-escape.md) — **resolved 2026-09-06**: all seven walkers guard both arms of the parse, and the two that had no guard were decided on who writes the tree — the calibration skips a foreign directory, the tick watermark refuses one by name and aborts the sweep.
 
 - [T0176 — a docstring that restates its body has no instrument](archive/T0176-a-docstring-that-restates-its-body-has-no-instrument.md) — **resolved 2026-09-07**: measured, not built. Fifty docstrings drawn from a 251-strong population under `cli/` were labelled by hand, 14 narrating and 36 contract; no setting of the designed finder separates them — best F1 0.49 at precision 0.33, a precision ceiling of 0.40, and two further feature families that do not discriminate at all — because the best contract docstrings here cite rejected alternatives and so score highest on citation density. No tripwire kind ships, the class stays under `prose.md`'s bar applied by the whole-branch reader, and the tooling-led drain wave is dropped.
+
+- [T0180 — the prose ratchet's verdict is a tree property no gate sees](archive/T0180-ratchet-verdict-is-a-tree-property-no-gate-sees-it.md) — **resolved 2026-09-08**: the owner ruled for a `pre-push` stage over a CI job, and the objection against it was false — a worktree's hooks resolve to the main checkout's, so one install covers every worktree. `default_stages` and five explicit `stages: [pre-commit]` keep the push stage to the ratchet alone; proven both ways against a local bare remote.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
