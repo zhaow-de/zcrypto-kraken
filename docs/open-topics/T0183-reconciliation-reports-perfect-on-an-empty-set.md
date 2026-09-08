@@ -16,7 +16,7 @@ The family is defined by that shape, not by a literal. A `1.0`, a `100.0` and a 
 
 A reconciliation exists to answer whether two sources agree, and its empty case is the one where a caller most needs to know it got no answer. `agent-ops.md` already names the class for queries — *an empty filtered query is not an absent event; require a positive trace and print the input's line count before trusting any zero* — and these are the same failure inside the code that computes the number rather than in a shell reading it. A pipeline whose upstream join silently produced no overlap reports a clean reconciliation, and every downstream reader, dashboard and operator sees agreement.
 
-Every member sits on data QA rather than on the live trade path, which is why this was registered rather than escalated.
+Every member sits on data QA rather than on the live trade path, which is why this was registered rather than escalated. `cli/engine/soak.py` was held out of the first pass until that was established for it too: its `soak_report` is reached only by the offline `soak-check` command, the shadow node's `run()` never references it, and the file contains no order-placing call. Its review floor is therefore ordinary — but it is the instrument the go-live decision reads, so a fabricated number there cannot place a trade and can still steer whether trades are placed at all.
 
 ## Findings so far
 
@@ -40,7 +40,12 @@ Excluded, with the reason:
 - `cli/risk/limits.py` — `math.inf` headroom on zero use is correct.
 - `cli/alpha/b1.py`, `cli/features/{channel,derivatives,momentum}.py` — neutral defaults for a feature, not summaries of a comparison.
 
-Flagged, NOT adjudicated: `cli/engine/soak.py`'s `_mean` (a generic helper) and `analyze_soak`'s `gov_live`. Their polarity turns on callers the sweep did not read, and a guess would put a wrong row in a census.
+**The two flagged sites, adjudicated once `cli/engine/soak.py` came into scope.** Neither is a member.
+
+- `_mean` is a generic helper with no polarity of its own, so its empty case belongs to its callers. Three of its five feed `_judge_dual`, which returns `"n/a"` whatever the live value once the window is non-positive — `windowed_null` gives `[]` and `metric_verdict` returns `"n/a"` under `len(null_values) < 2`. `pnl_mean`'s `0.0` is neutral rather than a success value. The one caller that was a member, `null_gov_rate`, is guarded at its own call site.
+- `analyze_soak`'s `gov_live` has no success direction at all: it is one side of a comparison, not a score. Its `0.0` also cannot reach a substantive verdict — with no realized days, both the window and `effective_n` are zero, and `metric_verdict` returns `"n/a"` on either arm. It reaches the report only as the `live` figure beside an `"n/a"`, and `MetricVerdict.live` is typed `float`, so a `None` there would be mechanism out of proportion to a number already marked unjudged.
+
+**`structural_metrics`' `bar_hhi` is a member whose FIX SHAPE is open, and it is the one place in this family where `None` is not a drop-in.** `0.0` is HHI's diversified end and it is what a bar with no gross exposure returns, so a flat bar inside an active window pulls the mean HHI toward *better diversified than anything measured*. But `hhi` is an element of a per-bar list, not a field of a report: `analyze_soak` takes `_mean` over the realized list and hands the null's list to `windowed_null` and `block_bootstrap_null`, all of which need floats. Excluding unmeasurable bars is the only treatment that preserves the meaning, and it changes that one metric's window and `effective_n` — a behavioural change to a number the go-live decision reads, which is a decision rather than a fix. `test_analyze_soak_degenerate_zero_exposure` drives six all-zero-weight bars through the branch, so it is live and covered.
 
 **Two things recorded rather than fixed.** `_match_stats`'s `else None` arm is unreachable — `reconcile`'s own empty-intervals return fires first, proven by a `12345.0` mutation of that arm surviving the suite — so its census row below is the family's shape stated where the shape belongs, not a live defect removed. And `all_match: False` on an empty join still conflates *nothing was compared* with *compared and disagreed*; it is the fail-safe direction and the only other one a boolean has, so a caller that needs to tell them apart reads `n_joined` beside it.
 
@@ -59,6 +64,8 @@ Flagged, NOT adjudicated: `cli/engine/soak.py`'s `_mean` (a generic helper) and 
 | `cli/backfill/reconcile.py` · `reconcile_series` | `volume_rel_diff_max` | `0.0` | `None`, rendered `n/a` |
 | `cli/backfill/reconcile.py` · `reconcile_series` | `vwap_mean_abs_rel_diff` | `0.0` | `None`, rendered `n/a` |
 | `cli/backfill/reconcile.py` · `reconcile_dataset` | `min_ohlc_match_rate` | `1.0` | `None`, rendered `n/a` |
+| `cli/engine/soak.py` · `analyze_soak` | `null_cap_rate` | `0.0` | `None` |
+| `cli/engine/soak.py` · `analyze_soak` | `null_gov_rate` | `0.0` | `None` |
 
 `reconcile_series`'s three fields are one branch but three decisions: a rate whose success value is `1.0` beside two deviation measures whose success value is `0.0`. Listing them as one row is how a reader stops seeing a `0.0` as a member at all.
 
@@ -66,5 +73,4 @@ Each fix carries a test whose empty case fails against the pre-fix literal, and 
 
 ## Suggested next steps
 
-- `cli/engine/soak.py`'s `structural_metrics` (`bar_hhi`, `0.0`) and `analyze_soak` (`null_cap_rate`, `0.0`) still return their success value on an empty denominator. A return-value change is behavioural, so the prose-only exemption does not reach them; they need the coordinator's word on that file's review floor before the fix, which is why no `ripe_when:` is declared — the remainder is a question to ask, not a repo state to wait on.
-- Adjudicate `cli/engine/soak.py`'s `_mean` and `analyze_soak`'s `gov_live` by reading what their callers do with the value.
+- Decide `structural_metrics`' `bar_hhi`, the one member whose fix changes a reported aggregate rather than a reported field (above). The choice is between leaving a flat bar's `0.0` in the mean and excluding it, which moves that metric's window and `effective_n`. It is the owner's call, not a defect to fix quietly; no `ripe_when:` is declared because the remainder is a question to ask, not a repo state to wait on.
