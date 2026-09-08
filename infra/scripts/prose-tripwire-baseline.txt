@@ -334,7 +334,7 @@ cli/features/derivatives.py:1: file-prose 31 > 20
 cli/features/derivatives.py:37: comment-block 5 > 4	"""As-of forward fill onto a decision grid, using only source rows at or before each grid stamp
 cli/features/derivatives.py:80: comment-block 5 > 4	"""Run length of consecutive same-sign funding prints ending at k, counting the print at k --
 cli/features/derivatives.py:122: comment-block 8 > 4	"""Map the substrate's `0.0` open-interest placeholders to None; pass everything else through.
-cli/features/derivatives.py:199: comment-block 5 > 4	"""Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
+cli/features/derivatives.py:199: comment-block 5 > 4	"""Carry Binance's ratio columns through under `binperp_` names. No arithmetic and no
 cli/features/derivatives.py:218: comment-block 7 > 4	"""Coverage of one column inside one calendar year; the stamps are None for both when the year
 cli/features/derivatives.py:233: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
 cli/features/volatility.py:1: file-prose 20.8 > 20
