@@ -183,9 +183,7 @@ def write_state(panel_root: Path, pair: str, hour: datetime, book: OrderBook, *,
     state = {
         "bids": {str(price): str(qty) for price, qty in book.bids.items()},
         "asks": {str(price): str(qty) for price, qty in book.asks.items()},
-        # T0104: the staleness clock crosses hours with the book, so it is persisted with it. A
-        # sidecar written before this key still loads -- `load_state` returns None for the time,
-        # which the panel emits as a null `stale_seconds` rather than a fabricated 0.0.
+        # T0104: the staleness clock crosses hours with the book, so it is persisted with it.
         "last_msg_ts": last_msg_ts.isoformat() if last_msg_ts is not None else None,
     }
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")

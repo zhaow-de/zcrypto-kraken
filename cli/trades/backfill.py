@@ -252,7 +252,7 @@ def backfill(
                 # make the strongest check in the sweep go quiet on exactly the failure it exists for.
                 pair_mint_failed += union.added_from_secondary
                 continue
-            # Counted from the UNION result, not the fetch: only rows that actually landed count.
+            # Counted from the UNION result, not the fetch.
             pair_recovered += union.added_from_secondary
             pair_dup_collapsed += union.deduped_rows
             pair_minted += 1
