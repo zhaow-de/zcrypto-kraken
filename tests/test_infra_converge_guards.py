@@ -84,6 +84,12 @@ def test_capture_digest_preflight_refuses_unpulled_digest():
 PAIR_BASE = {"capture_pairs": ["BTC/EUR", "ETH/EUR", "XRP/BTC"]}
 
 
+def test_capture_pairs_must_be_non_empty():
+    task = find_task(load_tasks(CAPTURE), "refuse an empty capture pair list")
+    assert not truthy(assert_that(task), {"capture_pairs": []})
+    assert truthy(assert_that(task), PAIR_BASE)
+
+
 def test_pair_add_order_refuses_a_pair_the_primary_lacks():
     task = find_task(load_tasks(CAPTURE), "pair-add order — refuse a pair the primary does not already carry")
     refuse = {**PAIR_BASE, "capture_primary_pairs": ["BTC/EUR", "ETH/EUR"]}
