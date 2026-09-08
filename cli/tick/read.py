@@ -113,9 +113,8 @@ def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame
     if frame.select(pl.any_horizontal(pl.col("price", "volume", "ts").is_nan())).to_series().any():
         raise TickError(f"NaN price/volume/ts in {label}")
 
-    # A ts in another unit parses as a number and casts cleanly, so nothing above sees it: milliseconds
-    # read as ~year 55000, the caller's window filter drops every row, and the report says 0% coverage
-    # rather than "unreadable input". Refused here, where the message can name the actual fault.
+    # A ts in another unit parses as a number and casts cleanly, so nothing above sees it. Refused
+    # here, where the message can name the actual fault.
     outside = frame.filter(~pl.col("ts").is_between(_MIN_EPOCH_SECONDS, _MAX_EPOCH_SECONDS))
     if not outside.is_empty():
         raise TickError(f"ts outside plausible epoch seconds in {label}: {outside['ts'][0]}")
