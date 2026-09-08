@@ -11,6 +11,10 @@ _QUARTERLY_COLUMNS = ["price", "volume", "ts", "side"]
 _COMPLETE_COLUMNS = ["ts", "price", "volume"]
 _VALID_SIDES = ["b", "s"]
 _MIN_UNIX_TS = 1e9  # a plausible Unix timestamp (2001+); crypto prices/volumes are far smaller
+# Deliberately NOT `_MIN_UNIX_TS`, whose job is choosing the LAYOUT in `_detect_schema`: a ceiling there
+# would change which files parse as "complete". These bound the VALUE, and only after the cast.
+_MIN_EPOCH_SECONDS = 1e9  # 2001-09-09
+_MAX_EPOCH_SECONDS = 4e9  # 2096-10-02 -- a MILLISECOND stamp for 2001 is already 1e12, so the gap is wide
 
 
 def _sniff_has_header(data: bytes) -> bool:
@@ -65,7 +69,8 @@ def _read_bytes(source: str | Path | tuple[str | Path, str]) -> tuple[bytes, str
 def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame:
     """A bare file, or a `(zip_path, member_name)` pair read from the ZIP without full extraction; rows in the
     order read, neither de-duplicated nor re-sorted -- `cli.tick.aggregate` sorts before bucketing. `side` is
-    null throughout the complete layout."""
+    null throughout the complete layout. A refused input raises `TickError`, a `ts` outside plausible epoch
+    SECONDS among them, so a millisecond file fails here rather than parsing into the far future."""
     data, label = _read_bytes(source)
     has_header = _sniff_has_header(data)
     schema = _detect_schema(data, has_header)
@@ -108,6 +113,12 @@ def read_trades_csv(source: str | Path | tuple[str | Path, str]) -> pl.DataFrame
 
     if frame.select(pl.any_horizontal(pl.col("price", "volume", "ts").is_nan())).to_series().any():
         raise TickError(f"NaN price/volume/ts in {label}")
+
+    # A ts in another unit parses as a number and casts cleanly, so nothing above sees it. Refused
+    # here, where the message can name the actual fault.
+    outside = frame.filter(~pl.col("ts").is_between(_MIN_EPOCH_SECONDS, _MAX_EPOCH_SECONDS))
+    if not outside.is_empty():
+        raise TickError(f"ts outside plausible epoch seconds in {label}: {outside['ts'][0]}")
 
     if schema == "quarterly" and not frame.filter(~pl.col("side").is_in(_VALID_SIDES)).is_empty():
         raise TickError(f"side value other than 'b'/'s' in {label}")
