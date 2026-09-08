@@ -1,0 +1,15 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-grafana-keepalive.service — do
+# not hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-keepalive.service.j2
+# instead.
+[Unit]
+Description=Hourly authenticated Grafana Cloud call, and the textfile recording what it got
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The token, 0600 and owned by root, sourced rather than interpolated into the runner script.
+# `-` so a host whose owner has not minted the token yet still starts the unit: the script exits
+# before writing when the variable is unset.
+EnvironmentFile=-{{ ops_compose_dir }}/grafana-keepalive-secrets.env
+ExecStart=/usr/local/sbin/zcrypto-grafana-keepalive

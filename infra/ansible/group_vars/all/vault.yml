@@ -1,13 +1,15 @@
 # group_vars/all — PROJECT-LEVEL SECRETS, MIXED CUSTODY. Read the next paragraph before editing:
-# three of these DO render onto managed hosts, so this is not a workstation-only file.
+# four of these DO render onto managed hosts, so this is not a workstation-only file.
 #
-# MIXED CUSTODY — do not read this file as workstation-only. Three of the eight values ARE
-# rendered onto managed hosts through inventory: `zaccess_wg_bridgehead_private_key` and
-# `zaccess_wg_preshared_key` by `roles/access`, `zaccess_wg_ops_private_key` and the same preshared
-# key by `roles/access_ops`, both templating `/etc/wireguard/zaccess0.conf`. **Editing any of those
-# three needs a converge of BOTH ends** — `--limit zaccess` and `--limit zcrypto-ops` (the host is
-# `zcrypto-ops`; there is no host or group called `ops`) — or an end keeps the old key. Both, because
-# each peer block carries the other end's public key.
+# MIXED CUSTODY — do not read this file as workstation-only. Four of the nine values ARE
+# rendered onto managed hosts through inventory. Three are WireGuard secrets:
+# `zaccess_wg_bridgehead_private_key` and `zaccess_wg_preshared_key` by `roles/access`,
+# `zaccess_wg_ops_private_key` and the same preshared key by `roles/access_ops`, both templating
+# `/etc/wireguard/zaccess0.conf`. **Editing any of those three needs a converge of BOTH ends** —
+# `--limit zaccess` and `--limit zcrypto-ops` (the host is `zcrypto-ops`; there is no host or group
+# called `ops`) — or an end keeps the old key. Both, because each peer block carries the other end's
+# public key. The fourth is `grafana_ro_token`, rendered onto `zcrypto-ops` alone by `roles/ops`'s
+# `render the grafana keep-alive secrets env file`; editing it needs `--limit zcrypto-ops` only.
 #
 # The other five never reach a host. Four are read from the WORKSTATION BY FILE PATH:
 # `grafana_sa_token` by `infra/scripts/grafana-query.py` and `infra/scripts/ops_daily.py`,
@@ -43,6 +45,19 @@ grafana_sa_token: !vault |
           3939666566383866390a316239666461373238303532393130363537663966343737393261363233
           66323566333036666663333830616262343166336235306639363131323836326264303230633232
           6265356530323136323864643137636634323133646439373934
+
+# The keep-alive's Viewer-scoped service account (`sa-1-zcrypto-keepalive`). Deliberately NOT
+# `grafana_sa_token`: this one is rendered onto `zcrypto-ops` by `roles/ops`'s `render the grafana
+# keep-alive secrets env file`, so its blast radius is a host rather than the workstation, and Viewer
+# is all `/api/search` needs.
+grafana_ro_token: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          37633838663531376336323736663065663536303965376561656230326434386462666337373238
+          6236363034333962326465303964323139396265386461660a393530643838333530663232376432
+          37323965333665663361366166323133306537376163333038323534333836396438376131376566
+          6132383665613234350a353833616564353764356165393161313161303666353039366561353732
+          38373464666665383662633430363933366462356337306464323462643565343834636365323938
+          3931366533346338633432336563616339383534316535626364
 
 # Slack incoming-webhook URL (app `zcrypto-alerts`, minted + vaulted by the owner 2026-07-15,
 # T0047). Consumed by grafana-push.sh's contact-point provisioning; treat as a credential.

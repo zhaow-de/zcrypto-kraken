@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-grafana-keepalive — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2 instead.
+#
+# One authenticated Grafana Cloud request per hour, and a textfile recording what it got.
+#
+# The hypothesis this tests: Grafana Cloud counts AUTHENTICATED requests as activity and ignores
+# anonymous ones. The evidence for it is negative -- the unauthenticated 5-minute watchdog probe has
+# run for months against an endpoint the app itself serves, and the instance hibernated regardless --
+# so the keep-alive half of this script is a hypothesis under test, not a known fix. The measuring
+# half is what makes it an experiment: what each call got is recorded, and none of it is visible in
+# any series today.
+set -euo pipefail
+
+PROM="{{ ops_textfile_dir }}/grafana-keepalive.prom"
+URL="{{ ops_grafana_keepalive_url }}"
+
+# The token arrives from the secrets env file the unit sources, never from this template: rendering
+# it here would put the credential in a 0755 file. Unset means the owner has not minted it yet --
+# exit before writing, so the series is absent rather than reporting a zero that looks like an answer.
+[ -n "${ZCRYPTO_GRAFANA_KEEPALIVE_TOKEN:-}" ] || exit 0
+
+now="$(date +%s)"
+# No `-f`: a 503 is the measurement, not an error. `-w` gives both facts in one request, and the
+# timeout is deliberately generous against the watchdog's 20 s: a waking instance answers slowly and
+# nobody has measured how slowly, so a short timeout would cap the very reading this exists to take.
+# `|| true` is what keeps a `read` that returns 1 from killing the script under `set -e` before it
+# writes anything -- the failure that leaves no series at all. It returns 1 whenever curl's output
+# ends without a newline, which is both the write-out below being cut short and, absent the `\n` in
+# `-w`, every ordinary run.
+#
+# The header goes in on stdin, never in argv: /proc/<pid>/cmdline is world-readable, so a
+# `-H "Authorization: Bearer $TOKEN"` is legible to any local account for the length of the call --
+# up to the full 120 s, which is when a slow call is most likely. The env file carrying the
+# value is 0600 and /proc/<pid>/environ is root-only, so this closes the remaining half.
+read -r code seconds < <(
+  curl -sS -m 120 -o /dev/null \
+    -w '%{http_code} %{time_total}\n' \
+    --config - "$URL" 2>/dev/null <<CURLRC
+header = "Authorization: Bearer ${ZCRYPTO_GRAFANA_KEEPALIVE_TOKEN}"
+CURLRC
+) || true
+# curl writes 000 when it never got a status (DNS, refused, timeout), and writes nothing at all if it
+# dies before the write-out; both become 0, which is distinguishable from an absent series.
+case "${code:-}" in ''|*[!0-9]*) code=0 ;; esac
+case "${seconds:-}" in ''|*[!0-9.]*) seconds=0 ;; esac
+[ "$code" = "000" ] && code=0
+
+success=0
+[ "$code" = "200" ] && success="$now"
+# Carry forward the previous success stamp, so `time() - last_success` measures the real gap rather
+# than resetting to 0 on every failed run.
+if [ "$success" = "0" ] && [ -r "$PROM" ]; then
+  success="$(awk '$1 == "zcrypto_grafana_keepalive_last_success_timestamp_seconds" {print $2}' "$PROM" 2>/dev/null || true)"
+  case "${success:-}" in ''|*[!0-9]*) success=0 ;; esac
+fi
+
+# Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
+# half-written one is scraped as garbage.
+tmp="$PROM.tmp"
+# These HELP lines are the ONE home for what these values mean. They are the only explanation that
+# reaches the host, where an unreadable Grafana is read; a panel needs Grafana up and a runbook needs
+# the repo. Panels and runbooks report and point here, and restate nothing -- six surfaces each
+# carrying their own reading is what the review rounds of contradictions came from.
+{
+  printf '# HELP zcrypto_grafana_keepalive_status HTTP status of the last hourly authenticated Grafana call, or 0 when it got no status at all. 200 is the call succeeding. 503 is what a hibernation and a Grafana Cloud outage both return and this call cannot tell them apart. For 0, read the duration beside it: a call that ran to its 120 s timeout is indistinguishable from here between an instance waking and egress going nowhere, while 0 in a fraction of a second is nothing answering. 401 or 403 is the unambiguous bad case -- the hypothesis under test is that AUTHENTICATED requests count as activity, so a call that does not authenticate is not the call being made. For any other value, whether the call counted as activity is unknown.\n'
+  printf '# TYPE zcrypto_grafana_keepalive_status gauge\n'
+  printf 'zcrypto_grafana_keepalive_status %s\n' "$code"
+  printf '# HELP zcrypto_grafana_keepalive_duration_seconds Total time of that request, capped by its 120 s timeout. A call that reaches the cap records a status of 0, so read the two together.\n'
+  printf '# TYPE zcrypto_grafana_keepalive_duration_seconds gauge\n'
+  printf 'zcrypto_grafana_keepalive_duration_seconds %s\n' "$seconds"
+  printf '# HELP zcrypto_grafana_keepalive_last_run_timestamp_seconds Unix time of the last run, whatever it got. Stale here means nothing has written since: the timer stopped, or the runner exited early for want of a token, which it does silently. `systemctl list-timers` and the presence of the secrets env file separate those two; a frozen status alone shows neither.\n'
+  printf '# TYPE zcrypto_grafana_keepalive_last_run_timestamp_seconds gauge\n'
+  printf 'zcrypto_grafana_keepalive_last_run_timestamp_seconds %s\n' "$now"
+  printf '# HELP zcrypto_grafana_keepalive_last_success_timestamp_seconds Unix time of the last 200 (0 = never seen one).\n'
+  printf '# TYPE zcrypto_grafana_keepalive_last_success_timestamp_seconds gauge\n'
+  printf 'zcrypto_grafana_keepalive_last_success_timestamp_seconds %s\n' "$success"
+} > "$tmp"
+mv -f "$tmp" "$PROM"

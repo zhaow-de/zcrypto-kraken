@@ -71,6 +71,11 @@ ops_verified_replay_healthcheck_url: ""
 ops_grafana_watchdog_healthcheck_url: ""
 ops_grafana_watchdog_probe_url: "https://zcrypto2026.grafana.net/api/health"
 
+# The keep-alive's target. `/api/search?limit=1` is the cheapest call that exercises the Grafana APP
+# rather than an edge -- which is the whole point, since the unauthenticated `/api/health` probe above
+# has run for months without preventing hibernation.
+ops_grafana_keepalive_url: "https://zcrypto2026.grafana.net/api/search?limit=1"
+
 # The liquidations poller's dead-man ping URL (LIQUIDATIONS_HEALTHCHECK_URL in the rendered
 # compose). Empty means the recorder simply skips liveness pings, same as the capture daemon.
 ops_liquidations_healthcheck_url: ""

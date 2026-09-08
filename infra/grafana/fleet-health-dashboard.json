@@ -2258,6 +2258,218 @@
           "sort": "none"
         }
       }
+    },
+    {
+      "id": 800,
+      "type": "row",
+      "title": "Grafana Cloud keep-alive",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 94
+      }
+    },
+    {
+      "id": 801,
+      "type": "timeseries",
+      "title": "Keep-alive — HTTP status of the hourly call",
+      "description": "The hourly call's HTTP status over time. What each value means is in the metric's own HELP text, which is where it is kept — it reaches the host, where an unreadable Grafana is read, and this panel cannot. What this panel shows that no single value does is whether 503s are still occurring. Their absence over any window is consistent with the call working and equally with hibernation having stopped for another reason, so it confirms nothing — and a 503 does not say which of a hibernation and an outage produced it, so a recurrence does not refute either.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 95
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_grafana_keepalive_status",
+          "refId": "A",
+          "legendFormat": "HTTP status"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 802,
+      "type": "timeseries",
+      "title": "Keep-alive — how long the call took",
+      "description": "How long each call took, capped by its 120 s timeout. A call that reaches the cap records a status of 0, so read this beside panel 801. It has its own panel because a duration this small is invisible on any axis shared with the stamp ages.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 95
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_grafana_keepalive_duration_seconds",
+          "refId": "A",
+          "legendFormat": "call duration"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 803,
+      "type": "timeseries",
+      "title": "Keep-alive — age of the last run and the last success",
+      "description": "Age of the last run and of the last success. Both climbing together means nothing has written a sample since; only the success age climbing means runs are happening and failing. The metric's HELP text carries what separates the causes of each. The red line on the run age is the budget its own alert uses: 2.5 hours on an hourly timer, so one skipped tick stays quiet and two page. The success age is ABSENT until the first 200 rather than reading as the whole unix epoch, because the runner publishes 0 for a stamp it has never set.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 95
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_grafana_keepalive_last_run_timestamp_seconds",
+          "refId": "A",
+          "legendFormat": "age of last run"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - (zcrypto_grafana_keepalive_last_success_timestamp_seconds > 0)",
+          "refId": "B",
+          "legendFormat": "age of last success"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 9000
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "refresh": "1m",

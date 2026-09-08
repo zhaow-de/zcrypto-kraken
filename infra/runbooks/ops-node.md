@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-Everything below is produced on one host — `zcrypto-ops`, reached as `ssh hp`. Six systemd timers run there (`infra/ansible/roles/ops/`); **five** fire a `Type=oneshot` unit that runs an ephemeral, digest-pinned `docker run --rm --pull never` and then publishes a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
+Everything below is produced on one host — `zcrypto-ops`, reached as `ssh hp`. Seven systemd timers run there (`infra/ansible/roles/ops/`); **five** fire a `Type=oneshot` unit that runs an ephemeral, digest-pinned `docker run --rm --pull never` and then publishes a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
 
 `README.md` beside this file is the index, and states what belongs in a runbook at all.
 
@@ -150,6 +150,37 @@ The healthchecks.io dead-man for this timer is fed only on a clean, fully-caught
 
 ______________________________________________________________________
 
+<a name="zcrypto-ops-grafana-keepalive-stale"></a>
+
+## zcrypto-ops-grafana-keepalive-stale — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert (`Ops · Grafana keep-alive stopped running`): `time() - zcrypto_grafana_keepalive_last_run_timestamp_seconds > 9000`, `for: 5m`, `noDataState: Alerting`, panel `zcrypto-fleet`/803.
+
+### What it means
+
+`zcrypto-grafana-keepalive.timer` fires hourly at `:37` and its unit makes one authenticated call to Grafana Cloud, writing `/var/lib/zcrypto-ops/textfile/grafana-keepalive.prom`. The gauge this rule reads is the stamp of the last completed **run**, whatever that run got back, so it advances on a 503 and on a 401 exactly as it does on a 200. **This rule is about the keep-alive service, not about Grafana.** A hibernating or dark Grafana Cloud leaves the service running and this rule quiet, by design. **No Grafana rule pages on that state** — a rule cannot page about the system that evaluates it — so what reaches you is the healthchecks.io dead-man, a separate failure domain on purpose. The procedure for it is [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark).
+
+The threshold tolerates one skipped tick. A healthy value sawtooths from about 0 up to 3600, one missed hour peaks near 7200, and the timer carries no `Persistent=`, so a converge landing on `:37` legitimately skips a slot. Two consecutive misses are not a schedule artefact.
+
+**`noDataState: Alerting` is deliberate**: no series at all means the host is down, its Alloy is dark, the unit has never run since the textfile was last cleared, the role has not yet been converged onto the host, or **the timer is firing and the runner is exiting before it writes because no token was rendered** — each of which is the alarm rather than an absence of one. It is the only one of the five where the unit runs, succeeds and leaves no file.
+
+**The un-converged cause makes the push order load-bearing.** Until an ops converge installs the units and the first scrape lands, this rule has no series and will page within `for: 5m` of being pushed, asserting a run that never happened. Push it after the metric's first record, or accept one self-healing page knowingly; `fleet-deploys.md` states the rule and this is a case of it.
+
+### What to do
+
+1. **Read the timer and the unit on the host.** `ssh hp`, then `sudo systemctl list-timers zcrypto-grafana-keepalive.timer --all` for its last and next elapse, and `sudo systemctl status zcrypto-grafana-keepalive.service` for the last run's result.
+2. **Read the file the rule reads.** `grep zcrypto_grafana_keepalive /var/lib/zcrypto-ops/textfile/grafana-keepalive.prom`. An absent file with the timer enabled means the runner is exiting before it writes, which it does when its token is missing — the secrets file is rendered only when `grafana_ro_token` is defined, so a converge that ran without the vault variable leaves the unit exiting 0 and silent.
+3. **A present file with a stale stamp** means the unit is not being started: check the timer is enabled, and that the last converge did not leave it masked or the calendar edited on the host.
+4. **Read the journal, and prove you read something**: `sudo journalctl -u zcrypto-grafana-keepalive.service --since -6h --no-pager | wc -l` first, then the same without `wc` — an unprivileged `journalctl -u` prints `-- No entries --` under a hint to rerun with `sudo`, which is a permissions artifact and not an idle unit. The runner prints nothing of its own, so the lines you get are systemd's own record of the starts.
+
+### Retire when
+
+`zcrypto-ops-grafana-keepalive-stale` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_grafana_keepalive_last_run_timestamp_seconds` is no longer written by `infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2`.
+
+______________________________________________________________________
+
 <a name="zcrypto-ops-panel-exit-nonzero"></a>
 
 ## zcrypto-ops-panel-exit-nonzero — ALERT
@@ -204,10 +235,11 @@ The load is Alloy plus the timers under `infra/ansible/roles/ops/` — the overl
 | `zcrypto-verify-replay.timer` | `03:41:00` | yes |
 | `zcrypto-verified-replay.timer` | `05:23:00` | yes |
 | `zcrypto-grafana-watchdog.timer` | `*:0/5:41` | no |
+| `zcrypto-grafana-keepalive.timer` | `*:37:00` | no |
 
 The bar is 20 whatever the box has. If you are going to reason about the ratio, read the thread count from `nproc` on the host rather than from any figure written here or in a spec.
 
-**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the six timers are `Persistent=true`, so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
+**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the seven timers are `Persistent=true`, so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 
 ### What to do
 
