@@ -577,53 +577,53 @@ infra/grafana/alerts.yaml:1512: comment-block 20 > 4	# The degrading-primary det
 infra/grafana/alerts.yaml:1659: comment-block 8 > 4	# --- Ops node (spec 00054): the timer jobs, the logs pipeline, and the host itself ---------------
 infra/grafana/alerts.yaml:1675: comment-block 8 > 4	# The dead-man for the ops node's overlay-WRITER cycle. The unit and metric names are
 infra/grafana/alerts.yaml:1745: comment-block 7 > 4	# OK, not Alerting: the dead-man rule above already owns "the cycle stopped running/succeeding
-infra/grafana/alerts.yaml:1853: comment-block 11 > 4	# SUPERSEDES `Ops · verify-replay non-zero exit` (uid zcrypto-ops-verify-replay-exit-nonzero):
-infra/grafana/alerts.yaml:1911: comment-block 6 > 4	# Mode (iii): the sweep itself did not complete, regardless of what it found -- a crashed
-infra/grafana/alerts.yaml:2005: comment-block 24 > 4	# The incremental sweep (spec 00078) replays hours it has never seen unconditionally and drains
-infra/grafana/alerts.yaml:2093: comment-block 5 > 4	# The ONLY durable report of this event. A settled day that stayed unpublished until the
-infra/grafana/alerts.yaml:2143: comment-block 5 > 4	# Deliberately LAST_PUBLISH, not last_success. The unhealed path exits 0 by design, so a
-infra/grafana/alerts.yaml:2231: comment-block 10 > 4	# Scoped to host="ops": infra/ansible/roles/ops/files/config.alloy sets
-infra/grafana/alerts.yaml:2280: comment-block 32 > 4	# Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the parse
-infra/grafana/alerts.yaml:2364: comment-block 18 > 4	# The canary that closes the ERROR-logs rule's green-when-blind gap for the Alloy-fed half of
-infra/grafana/alerts.yaml:2433: comment-block 9 > 4	# The liquidations poller is the ONLY ops workload that bypasses Alloy entirely (direct-ship,
-infra/grafana/alerts.yaml:2494: comment-block 17 > 4	# Covers the `zcrypto-*` units, which `zcrypto-ops-log-pipeline-dead` above cannot: a parse
-infra/grafana/alerts.yaml:2561: comment-block 19 > 4	# The journal-scoped companion to the canary above, which is scoped to `container="alloy"` and
-infra/grafana/alerts.yaml:2624: comment-block 14 > 4	# ---- Capture hosts (zcrypto = primary + engine, zcrypto-red = secondary) --------------------
-infra/grafana/alerts.yaml:2645: comment-block 5 > 4	# The unbackfillable L2 spool (/var/lib/zcrypto-capture) is on the root fs, which is why the
-infra/grafana/alerts.yaml:2691: comment-block 7 > 4	# The capture VPSes run unattended-upgrades with Automatic-Reboot "false" (T0027, spec 00071):
-infra/grafana/alerts.yaml:2947: comment-block 13 > 4	# Recovery from a checksum desync is a BOUNDED LADDER (`cli/capture/desync_recovery.py`):
-infra/grafana/alerts.yaml:2998: comment-block 10 > 4	# The second half of T0008's trigger, self-evaluating. The desync rate this was written against
-infra/grafana/alerts.yaml:3051: comment-block 12 > 4	# The recovery ladder's resubscribe leg has an alert for how OFTEN it runs (above) and this one
-infra/grafana/alerts.yaml:3104: comment-block 10 > 4	# The blackout class: every pair on a host silent at once while the WS reports connected, the
-infra/grafana/alerts.yaml:3132: comment-block 12 > 4	# 120 s. The pending period is NOT free here: the gauge is scraped every 60 s
-infra/grafana/alerts.yaml:3148: comment-block 17 > 4	# OK, and it is the SAME blindness class as noDataState above rather than a relaxation. When the
-infra/grafana/alerts.yaml:3166: comment-block 8 > 4	# 0s, and it is arithmetic rather than impatience: a pending period is added directly to the
-infra/grafana/alerts.yaml:3202: comment-block 10 > 4	# The single-stuck-stream class, which nothing else catches: one pair has stopped delivering
-infra/grafana/alerts.yaml:3230: comment-block 20 > 4	# 300 s -- roughly twenty times the natural per-pair maximum, and ~10x the daemon's own
-infra/grafana/alerts.yaml:3284: comment-block 9 > 4	# A breached watermark does not merely warn: cli/capture/command.py's book and trade handlers
-infra/grafana/alerts.yaml:3314: comment-block 11 > 4	# 0s, and it is arithmetic rather than impatience. The pending period is NOT free on this rule:
-infra/grafana/alerts.yaml:3342: comment-block 8 > 4	# Held rows spilled to a `.held` sidecar for an hour the oracle never CONFIRMED (spec 00103 D6).
-infra/grafana/alerts.yaml:3382: comment-block 5 > 4	# --- The hour-rotation residuals (T0037, spec 00103) -------------------------------------------
-infra/grafana/alerts.yaml:3395: comment-block 14 > 4	# T0037's residual (a) made visible (spec 00103 D1/D2/D3). Two streams each taking a
-infra/grafana/alerts.yaml:3450: comment-block 16 > 4	# T0037's past-dated residual (spec 00109 D1, which narrows spec 00103 D5's predicate). The
-infra/grafana/alerts.yaml:3508: comment-block 22 > 4	# CRITICAL, and not because a drifting clock is itself an emergency. Spec 00103 D1b makes this
-infra/grafana/alerts.yaml:3614: comment-block 33 > 4	# Deliberately a NEGATIVE match rather than an enumeration of known states: the payload shape
-infra/grafana/alerts.yaml:3685: comment-block 24 > 4	# The deliberate COMPLEMENT to zcrypto-capture-venue-not-online, which latches. That rule fires
-infra/grafana/alerts.yaml:3747: comment-block 9 > 4	# Liveness, and deliberately NOT the ship-success gauge: the worker skips the push when the
-infra/grafana/alerts.yaml:3837: comment-block 5 > 4	# NORMALIZED per core, because the two capture boxes differ in core count: dividing load1 by the
-infra/grafana/alerts.yaml:3884: comment-block 29 > 4	# Loki, level LABEL not a text grep -- no regex anywhere in this path (spec 00068 D4). The
-infra/grafana/alerts.yaml:3956: comment-block 15 > 4	# Two per-host canaries that make the ERROR rule above trustworthy (mirror zcrypto-ops-log-pipeline-dead).
-infra/grafana/alerts.yaml:4071: comment-block 5 > 4	# Fleet · Alloy dark (T0079) -- one rule per host, all `critical`. Uniform severity is deliberate:
-infra/grafana/alerts.yaml:4077: comment-block 6 > 4	# --- memory, watched as a ROUTINE and never as a rollout read --------------------------------------
-infra/grafana/alerts.yaml:4090: comment-block 11 > 4	# RSS as a fraction of the CONTAINER limit -- the only number that says "how long until the
-infra/grafana/alerts.yaml:4154: comment-block 6 > 4	# Alloy gets its OWN bar because it genuinely runs near its ceiling and the app daemons do not:
-infra/grafana/alerts.yaml:4210: comment-block 9 > 4	# Read the hourly FLOOR, never a sample -- the segment-rotation sawtooth spans several MiB and
-infra/grafana/alerts.yaml:4243: comment-block 5 > 4	# PROVISIONAL: 64 MiB of floor growth in a day. No real leak has ever been measured on
-infra/grafana/alerts.yaml:4276: comment-block 6 > 4	# `RestartCount` was a bake abort signal read by hand on the host; it has no metric (no
-infra/grafana/alerts.yaml:4333: comment-block 11 > 4	# `{host="nas"}` (spec 00069 D7): the NAS's config.alloy sets
-infra/grafana/alerts.yaml:4550: comment-block 8 > 4	# T0083 mutual watchdog, Grafana half. Owns two failures in one rule: (a) any healthchecks.io
-infra/grafana/alerts.yaml:4650: comment-block 9 > 4	# Either end reporting a stale handshake is the failure -- PersistentKeepalive=25 means a healthy
-infra/grafana/alerts.yaml:4698: comment-block 8 > 4	# min across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
+infra/grafana/alerts.yaml:1896: comment-block 11 > 4	# SUPERSEDES `Ops · verify-replay non-zero exit` (uid zcrypto-ops-verify-replay-exit-nonzero):
+infra/grafana/alerts.yaml:1954: comment-block 6 > 4	# Mode (iii): the sweep itself did not complete, regardless of what it found -- a crashed
+infra/grafana/alerts.yaml:2048: comment-block 24 > 4	# The incremental sweep (spec 00078) replays hours it has never seen unconditionally and drains
+infra/grafana/alerts.yaml:2136: comment-block 5 > 4	# The ONLY durable report of this event. A settled day that stayed unpublished until the
+infra/grafana/alerts.yaml:2186: comment-block 5 > 4	# Deliberately LAST_PUBLISH, not last_success. The unhealed path exits 0 by design, so a
+infra/grafana/alerts.yaml:2274: comment-block 10 > 4	# Scoped to host="ops": infra/ansible/roles/ops/files/config.alloy sets
+infra/grafana/alerts.yaml:2323: comment-block 32 > 4	# Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the parse
+infra/grafana/alerts.yaml:2407: comment-block 18 > 4	# The canary that closes the ERROR-logs rule's green-when-blind gap for the Alloy-fed half of
+infra/grafana/alerts.yaml:2476: comment-block 9 > 4	# The liquidations poller is the ONLY ops workload that bypasses Alloy entirely (direct-ship,
+infra/grafana/alerts.yaml:2537: comment-block 17 > 4	# Covers the `zcrypto-*` units, which `zcrypto-ops-log-pipeline-dead` above cannot: a parse
+infra/grafana/alerts.yaml:2604: comment-block 19 > 4	# The journal-scoped companion to the canary above, which is scoped to `container="alloy"` and
+infra/grafana/alerts.yaml:2667: comment-block 14 > 4	# ---- Capture hosts (zcrypto = primary + engine, zcrypto-red = secondary) --------------------
+infra/grafana/alerts.yaml:2688: comment-block 5 > 4	# The unbackfillable L2 spool (/var/lib/zcrypto-capture) is on the root fs, which is why the
+infra/grafana/alerts.yaml:2734: comment-block 7 > 4	# The capture VPSes run unattended-upgrades with Automatic-Reboot "false" (T0027, spec 00071):
+infra/grafana/alerts.yaml:2990: comment-block 13 > 4	# Recovery from a checksum desync is a BOUNDED LADDER (`cli/capture/desync_recovery.py`):
+infra/grafana/alerts.yaml:3041: comment-block 10 > 4	# The second half of T0008's trigger, self-evaluating. The desync rate this was written against
+infra/grafana/alerts.yaml:3094: comment-block 12 > 4	# The recovery ladder's resubscribe leg has an alert for how OFTEN it runs (above) and this one
+infra/grafana/alerts.yaml:3147: comment-block 10 > 4	# The blackout class: every pair on a host silent at once while the WS reports connected, the
+infra/grafana/alerts.yaml:3175: comment-block 12 > 4	# 120 s. The pending period is NOT free here: the gauge is scraped every 60 s
+infra/grafana/alerts.yaml:3191: comment-block 17 > 4	# OK, and it is the SAME blindness class as noDataState above rather than a relaxation. When the
+infra/grafana/alerts.yaml:3209: comment-block 8 > 4	# 0s, and it is arithmetic rather than impatience: a pending period is added directly to the
+infra/grafana/alerts.yaml:3245: comment-block 10 > 4	# The single-stuck-stream class, which nothing else catches: one pair has stopped delivering
+infra/grafana/alerts.yaml:3273: comment-block 20 > 4	# 300 s -- roughly twenty times the natural per-pair maximum, and ~10x the daemon's own
+infra/grafana/alerts.yaml:3327: comment-block 9 > 4	# A breached watermark does not merely warn: cli/capture/command.py's book and trade handlers
+infra/grafana/alerts.yaml:3357: comment-block 11 > 4	# 0s, and it is arithmetic rather than impatience. The pending period is NOT free on this rule:
+infra/grafana/alerts.yaml:3385: comment-block 8 > 4	# Held rows spilled to a `.held` sidecar for an hour the oracle never CONFIRMED (spec 00103 D6).
+infra/grafana/alerts.yaml:3425: comment-block 5 > 4	# --- The hour-rotation residuals (T0037, spec 00103) -------------------------------------------
+infra/grafana/alerts.yaml:3438: comment-block 14 > 4	# T0037's residual (a) made visible (spec 00103 D1/D2/D3). Two streams each taking a
+infra/grafana/alerts.yaml:3493: comment-block 16 > 4	# T0037's past-dated residual (spec 00109 D1, which narrows spec 00103 D5's predicate). The
+infra/grafana/alerts.yaml:3551: comment-block 22 > 4	# CRITICAL, and not because a drifting clock is itself an emergency. Spec 00103 D1b makes this
+infra/grafana/alerts.yaml:3657: comment-block 33 > 4	# Deliberately a NEGATIVE match rather than an enumeration of known states: the payload shape
+infra/grafana/alerts.yaml:3728: comment-block 24 > 4	# The deliberate COMPLEMENT to zcrypto-capture-venue-not-online, which latches. That rule fires
+infra/grafana/alerts.yaml:3790: comment-block 9 > 4	# Liveness, and deliberately NOT the ship-success gauge: the worker skips the push when the
+infra/grafana/alerts.yaml:3880: comment-block 5 > 4	# NORMALIZED per core, because the two capture boxes differ in core count: dividing load1 by the
+infra/grafana/alerts.yaml:3927: comment-block 29 > 4	# Loki, level LABEL not a text grep -- no regex anywhere in this path (spec 00068 D4). The
+infra/grafana/alerts.yaml:3999: comment-block 15 > 4	# Two per-host canaries that make the ERROR rule above trustworthy (mirror zcrypto-ops-log-pipeline-dead).
+infra/grafana/alerts.yaml:4114: comment-block 5 > 4	# Fleet · Alloy dark (T0079) -- one rule per host, all `critical`. Uniform severity is deliberate:
+infra/grafana/alerts.yaml:4120: comment-block 6 > 4	# --- memory, watched as a ROUTINE and never as a rollout read --------------------------------------
+infra/grafana/alerts.yaml:4133: comment-block 11 > 4	# RSS as a fraction of the CONTAINER limit -- the only number that says "how long until the
+infra/grafana/alerts.yaml:4197: comment-block 6 > 4	# Alloy gets its OWN bar because it genuinely runs near its ceiling and the app daemons do not:
+infra/grafana/alerts.yaml:4253: comment-block 9 > 4	# Read the hourly FLOOR, never a sample -- the segment-rotation sawtooth spans several MiB and
+infra/grafana/alerts.yaml:4286: comment-block 5 > 4	# PROVISIONAL: 64 MiB of floor growth in a day. No real leak has ever been measured on
+infra/grafana/alerts.yaml:4319: comment-block 6 > 4	# `RestartCount` was a bake abort signal read by hand on the host; it has no metric (no
+infra/grafana/alerts.yaml:4376: comment-block 11 > 4	# `{host="nas"}` (spec 00069 D7): the NAS's config.alloy sets
+infra/grafana/alerts.yaml:4593: comment-block 8 > 4	# T0083 mutual watchdog, Grafana half. Owns two failures in one rule: (a) any healthchecks.io
+infra/grafana/alerts.yaml:4693: comment-block 9 > 4	# Either end reporting a stale handshake is the failure -- PersistentKeepalive=25 means a healthy
+infra/grafana/alerts.yaml:4741: comment-block 8 > 4	# min across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
 infra/nas/README.md:7: section 2839 > 2048	## Deploy (Ansible — the `nas` role, T0056)
 infra/nas/README.md:42: section 2842 > 2048	### One-time bootstrap (hand-placed once; not Ansible-managed)
 infra/nas/README.md:68: section 7012 > 2048	## Env-var contract
@@ -654,7 +654,7 @@ infra/runbooks/README.md:5: section 2662 > 2048	## Scope — what belongs here, 
 infra/runbooks/README.md:21: section 2547 > 2048	### [`capture.md`](capture.md) — the venue feed and the archive's hour boundaries
 infra/runbooks/README.md:53: section 2336 > 2048	### [`ops.md`](ops.md) — the nightly archive sweep and the tape-bars dataset
 infra/runbooks/README.md:68: section 2084 > 2048	### [`engine.md`](engine.md) — the trading engine and its order path
-infra/runbooks/README.md:166: section 2169 > 2048	### [`drills-order-path.md`](drills-order-path.md) — induce the fault where money is at stake
+infra/runbooks/README.md:167: section 2169 > 2048	### [`drills-order-path.md`](drills-order-path.md) — induce the fault where money is at stake
 infra/runbooks/capture-daemon.md:17: section 2738 > 2048	### What it means
 infra/runbooks/capture-daemon.md:39: section 3142 > 2048	### What to do
 infra/runbooks/capture-daemon.md:124: section 2933 > 2048	### What to do
@@ -725,7 +725,7 @@ infra/runbooks/observability.md:110: section 2451 > 2048	### What to do
 infra/runbooks/observability.md:158: section 2347 > 2048	### What to do
 infra/runbooks/observability.md:201: section 2113 > 2048	### What to do
 infra/runbooks/observability.md:240: section 2513 > 2048	### What it means
-infra/runbooks/observability.md:262: section 5817 > 2048	### What to do
+infra/runbooks/observability.md:262: section 6444 > 2048	### What to do
 infra/runbooks/observability.md:333: section 3472 > 2048	### The dead-man map
 infra/runbooks/observability.md:339: table-row 317 > 200	`capture`
 infra/runbooks/observability.md:341: table-row 337 > 200	`engine`
@@ -741,7 +741,7 @@ infra/runbooks/ops-node.md:35: section 3027 > 2048	### What to do
 infra/runbooks/ops-node.md:79: section 2197 > 2048	### What to do
 infra/runbooks/ops-node.md:113: section 2378 > 2048	### What it means
 infra/runbooks/ops-node.md:130: section 2399 > 2048	### What to do
-infra/runbooks/ops-node.md:161: section 2230 > 2048	### What it means
+infra/runbooks/ops-node.md:192: section 2230 > 2048	### What it means
 infra/runbooks/ops.md:25: section 3766 > 2048	### What to do
 infra/runbooks/ops.md:163: section 3049 > 2048	### What you are seeing
 infra/runbooks/ops.md:183: section 3620 > 2048	### What to do
