@@ -37,15 +37,17 @@ def test_fetch_ohlc_raises_on_nonempty_error_array():
         fetch_ohlc("XXBTZEUR", 1440, opener=_opener(body))
 
 
-def test_fetch_ohlc_raises_on_transport_error():
+@pytest.mark.parametrize(("pair_key", "interval"), [("XXBTZEUR", 1440), ("XETHZEUR", 60)])
+def test_fetch_ohlc_raises_on_transport_error(pair_key, interval):
     def _raise(url, timeout=None):
         raise urllib.error.URLError("boom")
 
     with pytest.raises(OHLCError) as caught:
-        fetch_ohlc("XXBTZEUR", 1440, opener=_raise)
+        fetch_ohlc(pair_key, interval, opener=_raise)
     assert "transport error fetching OHLC" in str(caught.value)
-    # The IDENTITY, not the phrasing: an operator paged off the cycle must see WHICH pair stalled.
-    assert "XXBTZEUR" in str(caught.value) and "1440" in str(caught.value)
+    # The IDENTITY: a second pair tells interpolation from a hardcoded literal, and `@` pins WHICH
+    # field is which, so a swapped pair and interval cannot still read as a match.
+    assert f"{pair_key}@{interval}" in str(caught.value)
 
 
 def test_fetch_ohlc_raises_on_missing_result_key():
@@ -85,16 +87,17 @@ def _raw_opener(payload: bytes):
 
 
 @pytest.mark.parametrize("payload", [b"\xff", b'{"error":[],"result":{"X":\xc3'])
-def test_fetch_ohlc_contains_a_body_whose_bytes_do_not_decode(payload):
+@pytest.mark.parametrize(("pair_key", "interval"), [("XXBTZEUR", 1440), ("XETHZEUR", 60)])
+def test_fetch_ohlc_contains_a_body_whose_bytes_do_not_decode(payload, pair_key, interval):
     """`UnicodeDecodeError` is a sibling of `JSONDecodeError` under `ValueError`, never a subclass,
     so the decode arm must name it to see a body that does not decode."""
     with pytest.raises(OHLCError) as caught:
-        fetch_ohlc("XXBTZEUR", 1440, opener=_raw_opener(payload))
+        fetch_ohlc(pair_key, interval, opener=_raw_opener(payload))
     assert isinstance(caught.value.__cause__, UnicodeDecodeError)
     # The LABEL, not just the containment: rejoining the two blocks would still raise `OHLCError`
     # -- the wide transport arm catches `ValueError` -- so only this pins the split.
     assert "undecodable or invalid JSON" in str(caught.value)
-    assert "XXBTZEUR" in str(caught.value) and "1440" in str(caught.value)
+    assert f"{pair_key}@{interval}" in str(caught.value)
 
 
 @pytest.mark.parametrize("body", [[], "oops", None, 0])
@@ -156,19 +159,3 @@ def test_fetch_ohlc_contains_a_truncated_body():
         fetch_ohlc("XXBTZEUR", 1440, opener=_reading_opener(exc))
     assert caught.value.__cause__ is exc
     assert "transport error fetching OHLC" in str(caught.value)
-
-
-@pytest.mark.parametrize(("pair_key", "interval"), [("XXBTZEUR", 1440), ("XETHZEUR", 60)])
-def test_fetch_ohlc_names_the_pair_it_was_called_for(pair_key, interval):
-    """A SECOND pair and interval, because every other call in this file passes the same literal.
-
-    Against one fixture an identity pin cannot tell interpolation from a constant: a message
-    hardcoding `XXBTZEUR@1440` satisfies it while naming the wrong pair to a paged operator."""
-
-    def _raise(url, timeout=None):
-        raise urllib.error.URLError("boom")
-
-    with pytest.raises(OHLCError) as caught:
-        fetch_ohlc(pair_key, interval, opener=_raise)
-    assert pair_key in str(caught.value)
-    assert str(interval) in str(caught.value)
