@@ -20,6 +20,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; the conditioning-overlay class was attributed out (trials 45+46 REJECT) (ripe when: a genuinely new B1 hypothesis — not a conditioning overlay on the A2 book — is pre-registered, or the human expands/closes the shared B budget).
+- [T0180 — the prose ratchet's verdict is a tree property no gate sees](T0180-ratchet-verdict-is-a-tree-property-no-gate-sees-it.md) — the tripwire measures the whole tree and runs only in `pre-commit`, so a rebase or a merge can land a red `develop` through a PR gate that cannot see it; landed one on `8e639df0`. The fix is the owner's choice between a CI job and a `pre-push` stage, both of which cost every session.
 
 ### Partially done<a name="partially-done"></a>
 
