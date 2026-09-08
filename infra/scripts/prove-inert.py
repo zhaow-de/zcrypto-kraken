@@ -22,9 +22,24 @@ EXIT_COMMENTS_CHANGED = 3
 EXIT_REFUSED = 4
 
 
-def _is_command(node: ast.AST) -> bool:
+def registered_command_names(main_src: str) -> frozenset[str]:
+    """Names registered by CALL rather than by decorator -- `app.command(name="capture")(capture)`.
+
+    Those functions live in another module and carry no decorator, so a per-file scan cannot see that
+    their docstring is a `--help` body."""
+    names = set()
+    for node in ast.walk(ast.parse(main_src, optimize=0)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Call) and "command" in ast.dump(node.func.func):
+            names.update(arg.id for arg in node.args if isinstance(arg, ast.Name))
+    return frozenset(names)
+
+
+def _is_command(node: ast.AST, registered: frozenset[str]) -> bool:
     # `@app.command()`, `@app.command(name=...)`, `@app.command` all render `command` in the dump.
-    return any("command" in ast.dump(dec) for dec in getattr(node, "decorator_list", []))
+    if any("command" in ast.dump(dec) for dec in getattr(node, "decorator_list", [])):
+        return True
+    # A name collision over-refuses, which is the safe direction for a tool that certifies.
+    return getattr(node, "name", None) in registered
 
 
 def _docstring_index(node: ast.AST) -> bool:
@@ -37,11 +52,11 @@ def _docstring_index(node: ast.AST) -> bool:
     )
 
 
-def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output: bool) -> ast.AST:
+def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output: bool, registered: frozenset[str]) -> ast.AST:
     for node in ast.walk(tree):
         if not isinstance(node, _HOLDS_DOCSTRING) or not _docstring_index(node):
             continue
-        is_output = _is_command(node) or (isinstance(node, ast.Module) and module_doc_is_output)
+        is_output = _is_command(node, registered) or (isinstance(node, ast.Module) and module_doc_is_output)
         if keep_output and is_output:
             continue
         # `or [Pass()]`: a body that was ONLY a docstring becomes empty, and an empty body is a
@@ -50,12 +65,12 @@ def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output:
     return tree
 
 
-def _shape(src: str, *, keep_output: bool) -> str:
+def _shape(src: str, *, keep_output: bool, registered: frozenset[str]) -> str:
     # optimize=0 explicitly: under `-OO` the interpreter discards docstrings before this sees them.
     tree = ast.parse(src, optimize=0)
     module_doc_is_output = any(isinstance(n, ast.Name) and n.id == "__doc__" for n in ast.walk(tree))
     return ast.dump(
-        _strip_docstrings(tree, module_doc_is_output=module_doc_is_output, keep_output=keep_output),
+        _strip_docstrings(tree, module_doc_is_output=module_doc_is_output, keep_output=keep_output, registered=registered),
         include_attributes=False,
         indent=1,
     )
@@ -73,9 +88,12 @@ class Result:
     detail: str
 
 
-def compare(before: str, after: str) -> Result:
-    bare_b, bare_a = _shape(before, keep_output=False), _shape(after, keep_output=False)
-    kept_b, kept_a = _shape(before, keep_output=True), _shape(after, keep_output=True)
+def compare(before: str, after: str, *, registered: frozenset[str] = frozenset()) -> Result:
+    bare_b, bare_a = (
+        _shape(before, keep_output=False, registered=registered),
+        _shape(after, keep_output=False, registered=registered),
+    )
+    kept_b, kept_a = _shape(before, keep_output=True, registered=registered), _shape(after, keep_output=True, registered=registered)
     detail = ""
     if bare_b != bare_a:
         # The differing nodes, not a bare verdict: a reader has to see WHICH construct moved.
@@ -110,11 +128,13 @@ def main(argv: list[str]) -> int:
         return EXIT_USAGE
     base, paths = argv[1], argv[2:]
     root = _repo_root()
+    entry = root / "cli" / "__main__.py"
+    registered = registered_command_names(entry.read_text()) if entry.is_file() else frozenset()
     print(f"after-side tree: {root}")
     worst = EXIT_INERT
     for path in paths:
         try:
-            result = compare(_at_revision(base, path), (root / path).read_text())
+            result = compare(_at_revision(base, path), (root / path).read_text(), registered=registered)
         except (ValueError, OSError, SyntaxError) as exc:
             # One unreadable path must not abort the rest, or a run prints partial results and no summary.
             print(f"{path}: REFUSED -- {exc}")

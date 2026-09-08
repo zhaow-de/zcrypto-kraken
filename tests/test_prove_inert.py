@@ -182,3 +182,18 @@ def test_prose_merely_naming_dunder_doc_does_not_make_a_module_docstring_output(
     before = '"""Prose that mentions __doc__ without using it."""\n\nX = 1\n'
     after = before.replace("Prose that mentions __doc__ without using it.", "Reworded prose.")
     assert not pi.compare(before, after).output_docstring_changed
+
+
+def test_a_command_registered_by_call_is_found_in_the_real_entry_module() -> None:
+    # `capture`, `liquidations` and `liquidations_poll` carry no decorator: they are registered from
+    # `cli/__main__.py`, so a per-file scan cannot see that their docstring is a `--help` body.
+    names = pi.registered_command_names((_ROOT / "cli" / "__main__.py").read_text())
+    assert {"capture", "liquidations", "liquidations_poll"} <= names
+
+
+def test_a_call_registered_command_docstring_is_refused() -> None:
+    before = 'def capture(pair: str) -> None:\n    """Stream the book."""\n    run(pair)\n'
+    after = before.replace("Stream the book.", "Stream the book (Phase 3).")
+    assert pi.compare(before, after, registered=frozenset({"capture"})).output_docstring_changed
+    # Without the registration the same function is an ordinary helper and stays certifiable.
+    assert not pi.compare(before, after).output_docstring_changed
