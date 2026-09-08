@@ -32,12 +32,8 @@ That answers the question this topic was opened to preserve. The undecidability 
 
 The surfaces are left as they stand, deliberately. They already say a 503 does not distinguish the two and route the operator onward in both cases, which is "503 is 503" in operating form; the accept arm's proposal to author one sentence and point at it from three places was not taken, because the ruling's other half was to keep it simple and ship.
 
-**One item below is NOT closed by this ruling and is carried into the PR body rather than lost here**: `infra/runbooks/observability.md` step 1 says nothing about what a `200` means and does not warn that the reading can be up to an hour old — `OnCalendar=*:37:00` against the watchdog's `*:0/5:41`. That follows from the two schedules and not from the decision, so the ruling does not reach it.
+**One item is NOT closed by this ruling and is registered as its own topic, `T0182`**: `infra/runbooks/observability.md` step 1 says nothing about what a `200` means and does not warn that the reading can be up to an hour old — `OnCalendar=*:37:00` against the watchdog's `*:0/5:41`. That follows from the two schedules and not from the decision, so the ruling does not reach it, and a topic being archived is no place for it to live.
 
 ## Suggested next steps
 
-- **The decision is the owner's**: accept that the signal is undecidable and say so plainly on every surface, or add a second signal that separates the two cases. There is no third option that a sentence can deliver, which is what four rounds of rewriting established.
-- If a second signal is wanted, the shape to price first is a probe whose response differs between the two states rather than another reading of the same 503 — and it must be answerable without the repo, since the surface that matters is read on the host while Grafana is unreadable.
-- The runbook step gains the staleness bound its two timers imply, whichever arm is chosen — that follows from the schedules and not from the decision.
-- If undecidability is accepted, the surfaces above take the same sentence, authored once and pointed at from the others.
-- Until then, treat every sentence about what a 503 means as owed to this topic. The branch stopped authoring them deliberately.
+_Superseded by the Resolution above._ The decision this section asked for was made; the two arms it laid out are spent, and the surfaces it proposed editing were deliberately left alone. What survived the ruling is `T0182`, and nothing here is owed.
