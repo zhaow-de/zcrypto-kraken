@@ -29,8 +29,9 @@ PAIR_KEYS: dict[str, str] = {
 
 
 def fetch_ohlc(pair_key: str, interval: int, *, opener=urllib.request.urlopen) -> list[list]:
-    """Kraken answers HTTP 200 with failures carried in the body's `error` array, and puts the rows
-    under a pair-specific key beside `last`."""
+    """Refusals reach the caller only as `OHLCError` for the default opener, an injected one being able
+    to raise outside the mapped set. Kraken answers HTTP 200 with failures carried in the body's
+    `error` array, and puts the rows under a pair-specific key beside `last`."""
     url = f"{_BASE_URL}?pair={pair_key}&interval={interval}"
     # TWO blocks, each wrapping only the statements whose failures its own arm names, so no arm can
     # relabel another's: one enumeration always leaves the next level open, and this closes the class.
