@@ -208,10 +208,12 @@ def test_read_trades_csv_refuses_a_ts_that_is_not_epoch_seconds(tmp_path, name, 
 
 
 def test_read_trades_csv_refuses_a_ts_below_the_epoch_floor(tmp_path):
-    """The floor, at a value only the floor can refuse: 1985 casts and converts happily, so removing
-    the floor ACCEPTS it -- which `-1e300` cannot show, raising out of `from_epoch` either way."""
+    """The floor at its VALUE: one second below it still casts and converts, so only the floor refuses
+    it and any lowering at all accepts it. The row is quarterly-shaped because a 3-field row whose
+    first field is below `_MIN_UNIX_TS` is not "complete" by `_detect_schema`, and dies as a short row
+    before any value check sees it."""
     path = tmp_path / "XBTEUR.csv"
-    path.write_text("100.5,2.0,500000000,b\n101.0,1.0,500000000,s\n")
+    path.write_text("100.5,2.0,999999999,b\n101.0,1.0,999999999,s\n")
 
     with pytest.raises(TickError) as caught:
         read_trades_csv(path)
@@ -219,22 +221,19 @@ def test_read_trades_csv_refuses_a_ts_below_the_epoch_floor(tmp_path):
 
 
 def test_read_trades_csv_bounds_are_the_values_the_constants_name(tmp_path):
-    """Both bounds pinned at their VALUES, and inclusively, or a widened or narrowed one ships green.
+    """Both endpoints accepted at their exact values, and the ceiling refused one second above. The
+    floor's refusing side is `test_read_trades_csv_refuses_a_ts_below_the_epoch_floor`, feeding the
+    second below it -- a copy of that case here would be one pin counted twice, not two."""
 
-    Lowering the floor to 0.0 would accept every 1970-2001 file; tightening the ceiling to 2e9 would
-    refuse everything after 2033. Neither is visible to a test that only feeds absurd values."""
-
-    def _read(text: str):
-        path = tmp_path / f"XBTEUR-{abs(hash(text))}.csv"
+    def _read(name: str, text: str):
+        path = tmp_path / f"XBTEUR-{name}.csv"
         path.write_text(text)
         return read_trades_csv(path)
 
-    with pytest.raises(TickError, match="epoch seconds"):  # 1985, refused only by the floor
-        _read("100.5,2.0,500000000,b\n101.0,1.0,500000000,s\n")
     with pytest.raises(TickError, match="epoch seconds"):  # one second past the ceiling
-        _read("4000000001,100.5,2.0\n4000000001,101.0,1.0\n")
-    assert _read("1000000000,100.5,2.0\n1000000000,101.0,1.0\n").height == 2  # the floor itself
-    assert _read("4000000000,100.5,2.0\n4000000000,101.0,1.0\n").height == 2  # the ceiling itself
+        _read("past-ceiling", "4000000001,100.5,2.0\n4000000001,101.0,1.0\n")
+    assert _read("floor", "1000000000,100.5,2.0\n1000000000,101.0,1.0\n").height == 2
+    assert _read("ceiling", "4000000000,100.5,2.0\n4000000000,101.0,1.0\n").height == 2
 
 
 def test_read_trades_csv_refuses_a_nan_ts_as_nan_not_as_out_of_range(tmp_path):
@@ -243,9 +242,8 @@ def test_read_trades_csv_refuses_a_nan_ts_as_nan_not_as_out_of_range(tmp_path):
     path = tmp_path / "XBTEUR.csv"
     path.write_text("100.5,2.0,nan,b\n101.0,1.0,nan,s\n")
 
-    with pytest.raises(TickError) as caught:
+    with pytest.raises(TickError, match="NaN price/volume/ts"):
         read_trades_csv(path)
-    assert "NaN" in str(caught.value)
 
 
 def test_read_trades_csv_still_reads_a_valid_seconds_file(tmp_path):
