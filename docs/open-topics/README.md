@@ -110,7 +110,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0163 — client order id length is unmeasured](T0163-client-order-id-length-unmeasured.md) — the probe's 18-character truncation comment cannot be squared with its own 27-character ids passing; ripe when a versioned adapter-verification row quotes a minted id as the venue returned it.
 
-- [T0178 — ops unit census drift](T0178-ops-unit-census-drift.md) — six durable files state how many ops timers, textfile writers and log sources there are, and the counts agree with neither the tree nor each other; ripe now, and wants one sweep rather than instance-by-instance fixes.
+- [T0178 — ops unit census drift](T0178-ops-unit-census-drift.md) — durable files across the ops role and its docs state how many timers, textfile writers and log sources there are, and the counts agree with neither the tree nor each other; ripe now, and wants one sweep rather than instance-by-instance fixes.
 
 - [T0179 — the capture hosts' Alloy refusal prescribes a recreate](T0179-capture-alloy-refusal-prescribes-a-recreate.md) — the capture pair's config-drift `fail_msg` tells an operator to recreate the container when the re-run's own handler reloads it; ripe when a Fable-floor session picks it up, or on the next change to `roles/capture/`.
 

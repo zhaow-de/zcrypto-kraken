@@ -2276,7 +2276,7 @@
       "id": 801,
       "type": "timeseries",
       "title": "Keep-alive — HTTP status of the hourly call",
-      "description": "The value IS the HTTP status of the hourly authenticated call this stack makes to itself from the ops host. 200 is healthy. 503 is the instance hibernating: nothing is lost, ingest never stopped, and opening any dashboard wakes it within a minute or two. 0 means nothing answered at all, which is an outage rather than a sleep — work infra/runbooks/observability.md's grafana-cloud-dark section. Anything else (401, 403) means the call's token no longer authenticates, so the call has stopped counting as activity even while it keeps being made.",
+      "description": "The value IS the HTTP status of the hourly authenticated call this stack makes to itself from the ops host. 200 is healthy. 503 is what BOTH a hibernation and a Grafana Cloud outage look like — the call saw a status, not a reason, so read it as either until the vendor's status page says which; a hibernation loses nothing, since ingest never stops, and ends when someone opens a dashboard and waits out the loading. 0 means nothing answered at all, which is an outage rather than a sleep — work infra/runbooks/observability.md's grafana-cloud-dark section. Any other value is a call that did not succeed: the token no longer authenticates, or the request was refused or rate-limited, and the keep-alive has stopped counting as activity even while it keeps being made.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

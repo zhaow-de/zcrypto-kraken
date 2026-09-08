@@ -542,11 +542,11 @@ infra/ansible/roles/ops/tasks/main.yml:566: comment-block 9 > 4	# Only the TIMER
 infra/ansible/roles/ops/tasks/main.yml:582: comment-block 12 > 4	# A NEWLY ADDED timer's unit file was never really written under --check, so systemd cannot
 infra/ansible/roles/ops/tasks/main.yml:607: comment-block 5 > 4	# The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
 infra/ansible/roles/ops/tasks/main.yml:617: comment-block 5 > 4	# T0110: the Alloy block's digest gate skips the config copy on any converge that omits the digest,
-infra/ansible/roles/ops/tasks/main.yml:653: comment-block 5 > 4	# Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
-infra/ansible/roles/ops/tasks/main.yml:666: comment-block 11 > 4	# Alloy mounts /:/host/root:ro for free-disk-space metrics, so running it as a user whose home
-infra/ansible/roles/ops/tasks/main.yml:695: comment-block 7 > 4	# A NAMED group_add entry resolves against the CONTAINER's own /etc/group, not the host's, and
-infra/ansible/roles/ops/tasks/main.yml:731: comment-block 6 > 4	# In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
-infra/ansible/roles/ops/tasks/main.yml:754: comment-block 6 > 4	# Renders straight from the vault (group_vars/observed/vault.yml). no_log + diff: false:
+infra/ansible/roles/ops/tasks/main.yml:654: comment-block 5 > 4	# Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
+infra/ansible/roles/ops/tasks/main.yml:667: comment-block 11 > 4	# Alloy mounts /:/host/root:ro for free-disk-space metrics, so running it as a user whose home
+infra/ansible/roles/ops/tasks/main.yml:696: comment-block 7 > 4	# A NAMED group_add entry resolves against the CONTAINER's own /etc/group, not the host's, and
+infra/ansible/roles/ops/tasks/main.yml:732: comment-block 6 > 4	# In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
+infra/ansible/roles/ops/tasks/main.yml:755: comment-block 6 > 4	# Renders straight from the vault (group_vars/observed/vault.yml). no_log + diff: false:
 infra/ansible/scripts/converge.sh:53: comment-block 6 > 4	# The real pass, RECORDED into a git-tracked log: fleet-pins.md is re-trued from the line this
 infra/ansible/site.yml:131: comment-block 7 > 4	# The window condition is mirrored here character-for-character. A folded scalar keeps both the
 infra/external-systems.md:126: section 8264 > 2048	### Initial setup<a name="initial-setup"></a>
@@ -735,7 +735,7 @@ infra/runbooks/observability.md:348: table-row 256 > 200	`ops`
 infra/runbooks/observability.md:354: section 2593 > 2048	### What to do
 infra/runbooks/observability.md:375: section 3679 > 2048	### What you are seeing
 infra/runbooks/observability.md:388: section 4816 > 2048	### What it means
-infra/runbooks/observability.md:408: section 6797 > 2048	### What to do
+infra/runbooks/observability.md:408: section 7068 > 2048	### What to do
 infra/runbooks/ops-node.md:23: section 2083 > 2048	### What it means
 infra/runbooks/ops-node.md:35: section 3027 > 2048	### What to do
 infra/runbooks/ops-node.md:79: section 2197 > 2048	### What to do

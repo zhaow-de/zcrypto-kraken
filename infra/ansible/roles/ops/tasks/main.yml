@@ -648,8 +648,8 @@
       `ops_alloy_digest` skips the config copy and still exits 0, so the host can serve a stale
       keep-regex indefinitely while every other check passes. Re-run this converge with
       `-e ops_alloy_digest=<currently-running>`: that run copies the file and its handler reloads a
-      RUNNING Alloy, which is all this refusal needs -- if the container is down, starting it reads
-      the new file. Runbook context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
+      RUNNING Alloy, which is all this refusal needs -- if the container is down, its next start reads
+      the new file, which nothing in this play does. Runbook context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
     success_msg: "deployed Alloy config matches the repo"
   # Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
   # copy the file, so asserting first would fail the host, drop it from every later task, and
