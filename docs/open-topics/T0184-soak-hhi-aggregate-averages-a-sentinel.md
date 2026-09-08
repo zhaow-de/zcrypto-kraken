@@ -37,9 +37,32 @@ Fixing it moves a gating verdict: excluding unmeasurable bars from the aggregate
 
 This reverses the topic's original framing. The consumer defect is real and its size is now known, but it is the null series that carries it, so the defect is in what the realized figure is COMPARED AGAINST rather than in the figure itself.
 
+**Five candidate aggregations were measured and adversarially checked; none survives.** Each was scored on the cached series by one analyst and one reader instructed to break it, on a 1-to-5 scale where 5 is clearly right.
+
+| candidate | after the adversarial read | what kills it |
+|---|---|---|
+| drop sentinel bars from each series before aggregating | 3 | 77 splices, 41.31% of windows non-contiguous, and a concentrated live book moves from `inconsistent` to `indeterminate` |
+| average each window over its active bars only | 1.5 | makes the over-concentration arm unfireable: 6.57% of windows pin at HHI's ceiling of exactly 1.0, so the null's p95 IS the ceiling |
+| drop whole windows containing a sentinel | 1 | trades a 13.46% bias for a 36.49% one in the same direction |
+| make the sentinel non-finite | 1 | renders a spurious `inconsistent` with a NaN band and invalid JSON, and all 143 soak tests stay green through it |
+| change nothing | 1 | the offset is measurably not constant, so the note that would make the keep safe cannot be written without computing the corrected number anyway |
+
+The keep's premise is a constant offset, and the bootstrap arm's p5 offset moves from +0.1188 to +0.0478 across dataset prefixes, so it is not one. The first candidate's band widening is the one to see in full: its upper edge moves from 0.663 to 0.921, its widest window spans 180 calendar days against the realized 60, and `effective_n` under the third candidate re-selects itself toward `n/a` as the soak lengthens.
+
+**Three findings reframe the ruling.**
+
+- **The `0.0` was never decided.** It is a one-line formula under *Signature detail* in `docs/plans/00058-soak-check-oos-report.md`, with no rationale and no alternative considered; the owning spec never mentions the empty case. A ruling here is a first ruling, not a reversal, and `00058`, `00059` and `00061` carry no `spec_hash` in the trial registry, so it lands in the spec that owns it.
+- **The non-finite candidate is struck by a decision already on record.** An internal contract violation must abort rather than appear in the verdict column as a data finding.
+- **Trimming the null's warm-up is not the fix.** It removes 4.28% of the bias and moves the realized percentile from 30.55 to 30.75, away from where sentinel removal puts it. Worth doing because 181 bars in which the system cannot hold anything are a null of nothing, but it must not be booked as addressing this defect.
+
+**The dominant problem is not the sentinel.** The null spans 2013-09-10 to 2026-03-31 and pools two different strategies. Its first decile is 50.04% sentinel with an active-bar concentration mean of 0.9584 — a near-single-name book held half the time; its last five deciles run 1.90% to 12.29% sentinel with means from 0.1770 to 0.2749. Only the late era resembles the live series, which is active in 358 of 358 bars. The sentinel has been acting as an accidental down-weight on the early era, and every candidate that removes it un-weights a strategy the engine no longer runs: of the windows above the shipped 95th percentile after that correction, 54.7% begin in the null's first decile and none at all in its second half.
+
+**The realized side is live-reachable, so any fix must be symmetric.** 8.36% of full-basket-era null bars are flat and 53.72% of windows of the realized length contain one. Today's clean realized series is luck, not structure.
+
 ## Suggested next steps
 
 The measurement that fed the decision is done and recorded above; what remains is the ruling and the fix.
 
-- **Rule on the aggregation** (the owner's — it changes a number a go-live decision reads). The recommendation stands and the measurement sharpens where it bites: exclude unmeasurable bars from the mean and from the null series passed to `windowed_null` and `block_bootstrap_null`, with the metric's `effective_n` recomputed over the bars that remain. The null is where the 13.46% sits, and half its windows are affected, so a fix that only guarded the realized mean would change nothing measurable today. The alternative is a conscious keep with the measured bias recorded beside it, which costs a concentration comparison that reads 13% better diversified than the null actually is.
+- **Rule on the null's span before ruling on the aggregation** (the owner's). Every candidate above was scored against a null that pools two strategy eras, and the scores move if the null is restricted to the era that resembles the live system. Measuring that is autonomous and uses the cached series. Until it is answered, an aggregation ruling is being made against a reference the live engine does not correspond to.
+- **Then rule on the aggregation** (the owner's — it changes a number a go-live decision reads). The recommendation stands and the measurement sharpens where it bites: exclude unmeasurable bars from the mean and from the null series passed to `windowed_null` and `block_bootstrap_null`, with the metric's `effective_n` recomputed over the bars that remain. The null is where the 13.46% sits, and half its windows are affected, so a fix that only guarded the realized mean would change nothing measurable today. The alternative is a conscious keep with the measured bias recorded beside it, which costs a concentration comparison that reads 13% better diversified than the null actually is.
 - **Implement with a test that constructs the mixed window** (waits on the ruling): a fixture with active bars and one flat bar, asserting the `hhi` mean equals the mean over the active bars alone and that `effective_n` counts only those — constructed so it fails against today's code — with the all-active and all-flat cases beside it. The measurement says the fixture must exercise the NULL path as well as the realized one, since that is the arm carrying real sentinels.
