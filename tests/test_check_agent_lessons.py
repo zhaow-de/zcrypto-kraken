@@ -37,6 +37,17 @@ def test_no_path_is_refused_not_reported_clean() -> None:
     assert "usage" in done.stderr.lower()
 
 
+def test_an_unreadable_path_refuses_the_same_way_no_path_does(tmp_path: pathlib.Path) -> None:
+    # bash's default passes an unmatched glob through as a literal, so a pattern that found no inbox
+    # arrives here looking like a real path. Exiting 1 put it in the malformed-record class, and the
+    # round's own instruction is that a malformed line is a finding -- so it sends a reader hunting a
+    # bad record inside a file that does not exist.
+    done = _run(str(tmp_path / "no-such-inbox.jsonl"))
+    assert done.returncode == 2, "an unreadable path is a call error, not a bad inbox"
+    assert "cannot read" in done.stderr
+    assert "Traceback" not in done.stderr
+
+
 def test_a_valid_inbox_still_passes(tmp_path: pathlib.Path) -> None:
     # The true positive beside the refusal: a guard that refused every invocation would ship green.
     done = _run(_inbox(tmp_path, OK))

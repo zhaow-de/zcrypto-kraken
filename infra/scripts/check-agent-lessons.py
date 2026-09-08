@@ -36,7 +36,14 @@ def record_errors(rec: object) -> list[str]:
 
 def check(path: str) -> int:
     bad = 0
-    with open(path, encoding="utf-8") as fh:
+    try:
+        fh = open(path, encoding="utf-8")
+    except OSError as exc:
+        # Only the open: a path that vanishes mid-read is a different fault and labelling it "called
+        # me wrong" would be the mislabel this refusal exists to prevent.
+        print(f"cannot read {path}: {exc.strerror}", file=sys.stderr)
+        return 2
+    with fh:
         for n, raw in enumerate(fh, 1):
             line = raw.rstrip("\n")
             try:
@@ -53,8 +60,8 @@ def check(path: str) -> int:
 
 if __name__ == "__main__":
     if not sys.argv[1:]:
-        # Exiting 0 with nothing opened reports a clean this run never measured, and the harvest
-        # reads that as a checked inbox: a glob matching nothing is a wrong path, not an empty one.
+        # Exiting 0 with nothing opened reports a clean this run never measured: a glob matching
+        # nothing is a wrong path, not an empty one.
         print(f"usage: {sys.argv[0]} <inbox.jsonl>...", file=sys.stderr)
         sys.exit(2)
     sys.exit(max(check(p) for p in sys.argv[1:]))
