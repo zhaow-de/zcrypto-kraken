@@ -387,7 +387,7 @@ Grafana Cloud itself is unreadable — the boards, the alert rules, and `infra/s
 
 ### What it means
 
-**The live trade path runs unwatched.** The engine keeps cycling and, if armed, keeps submitting. `zcrypto-engine-dark-with-exposure` — the one rule that pages on an open position while the engine is not reporting — is a Grafana rule and cannot fire; [`engine.md#zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) is unreachable as a signal for the duration. **Its two halves come apart on the host and no single command replaces it**: `exec-status` answers the gate half, and whether money is exposed is read out of the engine's own journal — step 3 below.
+**The live trade path runs unwatched.** The engine keeps cycling and, if armed, keeps submitting. `zcrypto-engine-dark-with-exposure` — the one rule that pages on an open position while the engine is not reporting — is a Grafana rule and cannot fire; [`engine.md#zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) is unreachable as a signal for the duration. **Its two halves come apart on the host and no single command replaces it**: `exec-status` answers the gate half, and whether money is exposed is read out of the engine's own journal — step 4 below.
 
 **Nothing else stops either.** Capture keeps capturing, the ops timers keep running, the archive keeps filling. What is gone is every Grafana instrument at once — including both Grafana-side watchdogs: `zcrypto-hcio-watchdog` cannot report a dead-man being down, and `zcrypto-alloy-dark-*` cannot report a shipper going dark.
 
