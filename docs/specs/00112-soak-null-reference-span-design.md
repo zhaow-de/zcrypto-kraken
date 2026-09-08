@@ -12,7 +12,7 @@ The consequence is a reference the live engine cannot be compared against. The e
 
 **D1. The null's reference span starts at the first bar where every basket asset has a price, and the bars before it are dropped from the null's series.** The soak's null covers the complete-basket era only.
 
-**D2. The cut is applied to the null's OUTPUT, never to the builder's input.** `build_crossfreq_system_fast` still receives the full canonical history, so every lookback is warm at the first retained bar; the retained series is then sliced. Slicing the input instead would restart the system's own warm-up inside the retained window and reintroduce the leading flat run this change exists to remove — the failure mode is the one the change is aimed at, so the distinction is load-bearing rather than stylistic.
+**D2. The cut is applied to the null's OUTPUT, never to the builder's input.** `build_crossfreq_system_fast` still receives the full canonical history, so every lookback of the legs already present is warm at the first retained bar — the newest leg alone warms up from there, as it does in the live engine; the retained series is then sliced. Slicing the input instead would restart the system's own warm-up inside the retained window and reintroduce the leading flat run this change exists to remove — the failure mode is the one the change is aimed at, so the distinction is load-bearing rather than stylistic.
 
 **D3. The cut is derived from the loaded canonical arrays, never written as a date.** It is the first index at which every asset in `CrossfreqSystemConfig().assets` has a finite price. A constant is wrong the day the basket changes, and the basket is expected to change.
 
