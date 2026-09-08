@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -28,16 +29,28 @@ PAIR_KEYS: dict[str, str] = {
 
 
 def fetch_ohlc(pair_key: str, interval: int, *, opener=urllib.request.urlopen) -> list[list]:
-    """Kraken answers HTTP 200 with failures carried in the body's `error` array, and puts the rows
-    under a pair-specific key beside `last`."""
+    """Refusals reach the caller only as `OHLCError` for the default opener, an injected one being able
+    to raise outside the mapped set. Kraken answers HTTP 200 with failures carried in the body's
+    `error` array, and puts the rows under a pair-specific key beside `last`."""
     url = f"{_BASE_URL}?pair={pair_key}&interval={interval}"
+    # TWO blocks, each wrapping only the statements whose failures its own arm names, so no arm can
+    # relabel another's: one enumeration always leaves the next level open, and this closes the class.
+    # The transport arm can be wide because nothing here decodes. `read()` stays INSIDE the `with`:
+    # a real HTTPResponse returns b"" after close, so reading outside it loses the body under a DECODE label.
     try:
         with opener(url, timeout=_TIMEOUT_SECONDS) as response:
-            payload = json.load(response)
-    except (urllib.error.URLError, OSError) as exc:
+            raw = response.read()
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError) as exc:
         raise OHLCError(f"transport error fetching OHLC for {pair_key}@{interval}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise OHLCError(f"invalid JSON from OHLC for {pair_key}@{interval}: {exc}") from exc
+
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise OHLCError(f"undecodable or invalid JSON from OHLC for {pair_key}@{interval}: {exc}") from exc
+
+    # Kraken's contract is a JSON object; anything else valid-but-not-an-object reached `.get` below.
+    if not isinstance(payload, dict):
+        raise OHLCError(f"OHLC response for {pair_key}@{interval} is not a JSON object: {type(payload).__name__}")
 
     errors = payload.get("error") or []
     if errors:
