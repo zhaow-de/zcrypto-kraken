@@ -6,15 +6,22 @@
 # rewrites it (measured 2026-07-24). tests/test_vendored_rrsync_integrity.py is the tripwire.
 exclude: '^infra/nas/rrsync$'
 
+# Every hook is a commit-time hook unless it says otherwise. Without this, installing any other hook
+# type puts all of them in that stage, and the ratchet is the only one worth paying for twice.
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
+        stages: [pre-commit]  # its manifest says pre-push too; two of these five rewrite files
       - id: check-case-conflict
       - id: check-executables-have-shebangs
+        stages: [pre-commit]  # its manifest says pre-push too; two of these five rewrite files
       - id: check-merge-conflict
       - id: check-shebang-scripts-are-executable
+        stages: [pre-commit]  # its manifest says pre-push too; two of these five rewrite files
         exclude: '\.j2$'
       - id: check-toml
       - id: check-yaml
@@ -22,9 +29,11 @@ repos:
         exclude: '^infra/ansible/(group_vars/.*/vault\.yml|host_vars/.*/vault\.yml|vault-password\.sops\.yaml)$'
       - id: debug-statements
       - id: end-of-file-fixer
+        stages: [pre-commit]  # its manifest says pre-push too; two of these five rewrite files
       - id: mixed-line-ending
         args: ["--fix=lf"]
       - id: trailing-whitespace
+        stages: [pre-commit]  # its manifest says pre-push too; two of these five rewrite files
 
   # Local (not the upstream mirror) so there is ONE ruff: the one pinned in pyproject/uv.lock, which
   # dependabot's `uv` ecosystem already tracks -- same reasoning as ansible-lint below. The mirror
@@ -98,6 +107,9 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+        # Also at push: its verdict is a property of the TREE, so a rebase or a merge produces one
+        # nothing has measured, and no CI check evaluates it.
+        stages: [pre-commit, pre-push]
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
