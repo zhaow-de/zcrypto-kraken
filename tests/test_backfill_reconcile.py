@@ -57,6 +57,11 @@ def test_reconcile_series_disjoint_ts_zero_overlap():
     report = reconcile_series(backfill, rest)
 
     assert report["overlap_rows"] == 0
+    # The three fields are not one decision: a rate whose success value is 1.0, and two deviation
+    # measures whose success value is 0.0. All three report agreement that was never measured.
+    assert report["ohlc_match_rate"] is None
+    assert report["volume_rel_diff_max"] is None
+    assert report["vwap_mean_abs_rel_diff"] is None
 
 
 def test_reconcile_dataset_discovers_symbols_and_aggregates_summary(tmp_path):
@@ -83,6 +88,51 @@ def test_reconcile_dataset_skips_series_absent_from_rest_root(tmp_path):
 
     assert report["series"] == {}
     assert report["summary"]["series_count"] == 0
+    assert report["summary"]["min_ohlc_match_rate"] is None  # a minimum over no series, not a perfect one
+
+
+def test_render_markdown_shows_an_unmeasured_series_as_not_available():
+    """A series with no overlap carries `None` in all three measures; the renderer must show that
+    rather than raise on the format spec or print a zero that reads as exact agreement."""
+    report = {
+        "series": {
+            "BTC/EUR/60": {
+                "overlap_rows": 0,
+                "ohlc_exact_match_rows": 0,
+                "ohlc_match_rate": None,
+                "volume_rel_diff_max": None,
+                "vwap_mean_abs_rel_diff": None,
+            }
+        },
+        "summary": {"series_count": 1, "total_overlap_rows": 0, "min_ohlc_match_rate": None},
+    }
+
+    md = render_markdown(report)
+
+    assert "| BTC/EUR/60 | 0 | n/a | 0 | n/a | n/a |" in md
+    assert "Min OHLC match rate: n/a" in md
+
+
+def test_render_markdown_carries_the_numbers_a_populated_run_measures():
+    """The control beside the None case: with real measurements every cell must show the value, so a
+    renderer that answered `n/a` unconditionally could not pass."""
+    report = {
+        "series": {
+            "BTC/EUR/60": {
+                "overlap_rows": 5,
+                "ohlc_exact_match_rows": 4,
+                "ohlc_match_rate": 0.8,
+                "volume_rel_diff_max": 0.125,
+                "vwap_mean_abs_rel_diff": 0.0625,
+            }
+        },
+        "summary": {"series_count": 1, "total_overlap_rows": 5, "min_ohlc_match_rate": 0.8},
+    }
+
+    md = render_markdown(report)
+
+    assert "| BTC/EUR/60 | 5 | 0.8000 | 4 | 0.125000 | 0.062500 |" in md
+    assert "Min OHLC match rate: 0.8000" in md
 
 
 def test_render_markdown_contains_series_table():

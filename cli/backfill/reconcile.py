@@ -17,9 +17,12 @@ def reconcile_series(backfill: pl.DataFrame, rest: pl.DataFrame) -> dict:
         return {
             "overlap_rows": 0,
             "ohlc_exact_match_rows": 0,
-            "ohlc_match_rate": 1.0,
-            "volume_rel_diff_max": 0.0,
-            "vwap_mean_abs_rel_diff": 0.0,
+            # None for all three, though their success values differ -- 1.0 for the rate, 0.0 for the
+            # two deviation measures. Nothing was compared, so neither a perfect rate nor a zero
+            # deviation is a reading anyone may act on.
+            "ohlc_match_rate": None,
+            "volume_rel_diff_max": None,
+            "vwap_mean_abs_rel_diff": None,
         }
 
     match = joined.select(pl.all_horizontal([pl.col(c) == pl.col(f"{c}_rest") for c in _OHLC_COLUMNS]).alias("match"))
@@ -53,11 +56,13 @@ def reconcile_dataset(backfill_root: Path, rest_root: Path, intervals: dict[str,
             continue
         series[f"{symbol}/{label}"] = reconcile_series(read_parquet(bf_path), read_parquet(rest_path))
 
-    match_rates = [s["ohlc_match_rate"] for s in series.values()]
+    match_rates = [s["ohlc_match_rate"] for s in series.values() if s["ohlc_match_rate"] is not None]
     summary = {
         "series_count": len(series),
         "total_overlap_rows": sum(s["overlap_rows"] for s in series.values()),
-        "min_ohlc_match_rate": min(match_rates) if match_rates else 1.0,
+        # None, not 1.0: a minimum over no measured series has no value, and the success value here
+        # would report every series matching exactly.
+        "min_ohlc_match_rate": min(match_rates) if match_rates else None,
     }
     return {"series": series, "summary": summary}
 
@@ -69,18 +74,21 @@ def render_markdown(report: dict) -> str:
         "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name, s in report["series"].items():
+        match_rate = f"{s['ohlc_match_rate']:.4f}" if s["ohlc_match_rate"] is not None else "n/a"
+        volume_diff = f"{s['volume_rel_diff_max']:.6f}" if s["volume_rel_diff_max"] is not None else "n/a"
+        vwap_diff = f"{s['vwap_mean_abs_rel_diff']:.6f}" if s["vwap_mean_abs_rel_diff"] is not None else "n/a"
         lines.append(
-            f"| {name} | {s['overlap_rows']} | {s['ohlc_match_rate']:.4f} | {s['ohlc_exact_match_rows']} | "
-            f"{s['volume_rel_diff_max']:.6f} | {s['vwap_mean_abs_rel_diff']:.6f} |"
+            f"| {name} | {s['overlap_rows']} | {match_rate} | {s['ohlc_exact_match_rows']} | {volume_diff} | {vwap_diff} |"
         )
 
     summary = report["summary"]
+    min_match_rate = f"{summary['min_ohlc_match_rate']:.4f}" if summary["min_ohlc_match_rate"] is not None else "n/a"
     lines += [
         "",
         "## Summary",
         "",
         f"- Series count: {summary['series_count']}",
         f"- Total overlap rows: {summary['total_overlap_rows']}",
-        f"- Min OHLC match rate: {summary['min_ohlc_match_rate']:.4f}",
+        f"- Min OHLC match rate: {min_match_rate}",
     ]
     return "\n".join(lines) + "\n"
