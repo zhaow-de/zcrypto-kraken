@@ -1,5 +1,5 @@
 README.md:48: table-row 233 > 200	`--ship-logs`
-README.md:67: table-row 279 > 200	`--pairs <PAIR>`
+README.md:67: table-row 260 > 200	`--pairs <PAIR>`
 README.md:104: section 17221 > 2048	### `zcrypto engine`<a name="zcrypto-engine"></a>
 README.md:114: table-row 227 > 200	`seed`
 README.md:115: table-row 576 > 200	`run`
