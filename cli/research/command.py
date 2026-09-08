@@ -1,5 +1,4 @@
-"""The `zcrypto research` Typer sub-app: evaluate a committed system over a frozen dataset and,
-optionally, register the trial it produced (spec 00086 D5). Provenance is never caller-supplied --
+"""Provenance is never caller-supplied --
 the fit reads through `ObservedReader` and the block that reader accumulated is what the record
 carries, so what was fitted and what was recorded cannot drift apart."""
 
