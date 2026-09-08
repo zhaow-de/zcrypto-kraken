@@ -15,10 +15,10 @@ _BAR_SCHEMA = {
 
 
 def ticks_to_bars(df: pl.DataFrame, *, interval_minutes: int) -> pl.DataFrame:
-    """Aggregate a tick frame (`cli.tick.read.read_trades_csv`'s) into OHLCV bars sorted by `ts`, in epoch-aligned buckets so that
-    1440-minute bars fall on UTC midnight, matching the canonical OHLCVT convention. An interval with no ticks yields no bar
-    (never gap-filled), and empty input is a normal outcome rather than the `TickError` `read_trades_csv` raises. `vwap` is the
-    true tick-weighted mean, not `cli.backfill.aggregate.aggregate_minutes`' close-price proxy."""
+    """OHLCV bars sorted by `ts`, in epoch-aligned buckets so 1440-minute bars fall on UTC midnight, matching the
+    canonical OHLCVT convention. An interval with no ticks yields no bar (never gap-filled), and empty input is a
+    normal outcome rather than the `TickError` `cli.tick.read.read_trades_csv` raises. `vwap` is the true
+    tick-weighted mean, not `cli.backfill.aggregate.aggregate_minutes`' close-price proxy."""
     if df.height == 0:
         return pl.DataFrame(schema=_BAR_SCHEMA)
 

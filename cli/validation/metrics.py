@@ -51,7 +51,7 @@ def volatility(returns: list[float], *, periods_per_year: int | None = None) -> 
 
 
 def annualized_return(returns: list[float], *, periods_per_year: int) -> float:
-    """Geometric annualized return: prod(1 + r) ** (periods_per_year / n) - 1. Never NaN."""
+    """Geometric annualized return; never NaN."""
     _check_returns(returns, min_len=1)
     _check_periods_per_year(periods_per_year, required=True)
     cumulative = 1.0

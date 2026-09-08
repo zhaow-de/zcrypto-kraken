@@ -66,9 +66,6 @@ class A2Config:
 
 
 def _donchian_signal(prices: list[float], *, window: int, band: float) -> list[float]:
-    """Per-lookback Donchian breakout signal: +1 on a new window-high (channel_position >= band), -1
-    on a new window-low (<= -band), else the prior signal held (0.0 before the first break); it adds
-    no look-ahead, only carrying channel_position's causal state forward. Length len(prices)-1."""
     cp = channel_position(prices, window=window)
     out: list[float] = []
     held = 0.0
@@ -115,9 +112,7 @@ def _asset_directions_a2(
 
 
 def a2_book_returns(prices_by_asset: dict[str, list[float | None]], *, config: A2Config) -> dict:
-    """Assemble the A2 book (docs/specs/00033): per-asset Donchian directions x inverse-vol weights x
-    union-calendar returns -> book_base_returns, then vol_target -> run_backtest. No market gate,
-    unlike a1_book_returns, whose return shape it matches."""
+    """No market gate, unlike `a1_book_returns`, whose return shape it matches."""
     if not isinstance(config, A2Config):
         raise AlphaError(f"config must be an A2Config, got {type(config)!r}")
     _validate_prices_by_asset(prices_by_asset)

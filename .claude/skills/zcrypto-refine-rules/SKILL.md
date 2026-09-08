@@ -56,7 +56,7 @@ Output is a findings table, resolved jointly. A finding that cannot be resolved 
 
 ## Step 4 — Condense
 
-**Load `references/principles.md` now** — the principles there govern every edit in this step. Work the biggest always-loaded offenders first (`wc -c CLAUDE.md .claude/rules/*.md | sort -n`). The protected set's per-edit sign-off applies throughout.
+**Load `references/principles.md` now** — the principles there govern every edit in this step. Work the biggest always-loaded offenders first (`wc -c CLAUDE.md .claude/rules/*.md | sort -n`). The protected set's per-edit sign-off applies throughout. A prose-cleanup worklist over the whole tree excludes `.claude/*` and `docs/specs/*` + `docs/plans/*`; `docs/open-topics/*` keeps `topic-ops`'s shape and is exempt from the ratchet's section bar.
 
 ## Step 5 — Verify
 

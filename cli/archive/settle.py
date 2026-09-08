@@ -47,20 +47,24 @@ FINAL_NAME = re.compile(r"^(\d{2})\.parquet$")
 def settled_hours(*, now: datetime, window_hours: int) -> list[datetime]:
     """The trailing window of hours old enough to be complete on both mirrors, OLDEST first.
 
-    Re-scanned every cycle: an hour that was residual last cycle may be healable this one (a late
-    pull), and the ledger — not this list — is what stops an already-decided hour being re-decided.
+    Re-scanned every cycle: a residual hour may be healable in the next, and the LEDGER — not this list —
+    stops a decided hour being re-decided. Every hour inherits `now`'s offset, so a non-UTC `now` is refused here.
     """
+    if now.tzinfo is None:
+        raise CaptureError(f"refusing to settle hours from {now!r}: a naive `now`, with no offset to check against UTC")
+    if now.utcoffset() != timedelta(0):
+        raise CaptureError(f"refusing to settle hours from {now!r}: a `now` at UTC offset {now.isoformat()[-6:]}, not at UTC")
     newest = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=SETTLE_HOURS)
     return [newest - timedelta(hours=i) for i in reversed(range(window_hours))]
 
 
 def is_late(hour: datetime, *, now: datetime) -> bool:
-    """Past the late deadline (see `LATE_MINT_HOURS`)."""
+    """At or past the late deadline (see `LATE_MINT_HOURS`)."""
     return now - hour >= timedelta(hours=LATE_MINT_HOURS)
 
 
 def hour_path(root: Path, pair: str, kind: str, hour: datetime) -> Path:
-    """`<root>/<BASE>/<QUOTE>/<kind>/<YYYY>/<MM>/<DD>/<HH>.parquet` — the pair spans two levels."""
+    """This hour's final under `root` — the pair spans two directory levels."""
     base, quote = pair.split("/")
     return root / base / quote / kind / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}" / f"{hour:%H}.parquet"
 
@@ -309,8 +313,8 @@ def classify_dark_episode(
     EXACTLY TWO windows, deliberately. With three or more there is no way to tell which gaps are the
     episode's own sputtering and which are healthy traffic separating unrelated incidents, and three
     successive review rounds each constructed a different false `venue_silent` out of multi-gap
-    reasoning. Refusing to classify is the honest answer and costs nothing measurable: all four
-    `both_streams_silent` records in the live ledger carry one window or two, never more.
+    reasoning. Refusing to classify is the honest answer and costs nothing measurable: a `both_streams_silent`
+    record carries one window or two in practice.
     """
     if len(windows) != 2:
         return EpisodeVerdict(UNDETERMINED, 0, 0, 0.0, 0, 0, ())

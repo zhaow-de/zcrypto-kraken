@@ -126,7 +126,7 @@ class GapMonitor:
         return self.gap_seconds(pair, at=at) / window_seconds
 
     def summary(self, pairs: list[str], *, window_seconds: float, at: datetime) -> dict[str, dict]:
-        """Per-pair gap seconds/ratio plus whether each pair currently has an open gap."""
+        """Per-pair gap seconds/ratio; `open` is `start_gap`'s window, not every gap."""
         return {
             pair: {
                 "gap_seconds": self.gap_seconds(pair, at=at),

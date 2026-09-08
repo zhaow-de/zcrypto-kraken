@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -251,17 +253,25 @@ def _part_index(path: Path, *, marker: str = ".part") -> int | None:
 
 
 def _hour_of(hour_dir: Path, hh: str) -> datetime | None:
-    """`.../<YYYY>/<MM>/<DD>` + `"07"` -> that UTC hour; `None` if the path is not one of ours.
-
-    Nothing this writer creates fails to parse, but construction and the rotation path both walk the
-    tree, and a raise from either stops capture for every pair and both kinds — so a stray file is
-    skipped, never fatal.
-    """
+    """`None`, never a raise, for a path that is not one of ours: construction and the rotation path both walk
+    the tree, and a raise from either stops capture for every pair and both kinds — a stray file is skipped,
+    never fatal."""
     day, month, year = hour_dir.name, hour_dir.parent.name, hour_dir.parent.parent.name
     try:
         return datetime(int(year), int(month), int(day), int(hh), tzinfo=UTC)
     except ValueError, OverflowError:
         return None
+
+
+@dataclass(frozen=True)
+class FinalizeOutcome:
+    """A sweep that finalized nothing looks identical to one that had nothing to do, so `failed` is the
+    only thing separating them (T0175). It is read off one fact -- no final on disk after the attempt
+    -- and never off whether one was there before, because an hour can arrive already final and still
+    end with none: an unreadable final is quarantined, and the rebuild that follows can fail."""
+
+    finalized: int
+    failed: tuple[datetime, ...]
 
 
 class SegmentWriter:
@@ -338,14 +348,14 @@ class SegmentWriter:
         self.segments_written = 0
         self.segment_bytes = 0
         self.rows_held = 0
-        self.rows_quarantined = 0
+        self.rows_quarantined = self._load_quarantined()
         self.hour_finalized_early = 0  # hours FINALIZED before our clock said they were over (`_count_if_early`)
         self.ts_past_dated_hour = 0  # oracle-bearing first stamps that opened a part-less hour behind the clock (`_enter_hour`)
         self._recover()
 
     def append(self, event: dict) -> None:
-        """Append one event dict (keys matching `schema`). Rotates the previous hour's segment first
-        if `event["ts"]` has crossed into a new hour."""
+        """Append one event dict (keys matching `schema`); the row may be dropped — an implausible or late
+        `ts`, or a replay already seen — or held pending oracle confirmation."""
         ts = event["ts"]
         if self._implausible(ts):
             if ts != self._last_drop_ts:  # one bad message is one bad ts, however many rows it carries
@@ -403,57 +413,39 @@ class SegmentWriter:
         self._flush_buffer()
         for hour, rows in self._held.items():
             if rows:
-                self._write_part(rows, hour, marker=".held")
-                self.rows_quarantined += len(rows)
+                if self._write_part(rows, hour, marker=".held"):
+                    self.rows_quarantined += len(rows)
+                    self._save_quarantined()
         self._held = {}
         self._held_seen = {}
 
-    def finalize_completed_hours(self, cutoff: datetime) -> int:
-        """INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
-        spills entirely -- on an oracle-bearing writer, finalizing an hour with held rows would
-        floor-lock the hour and strand its quarantine forever (never merged, never redeemed). The
-        only sanctioned caller (the Coinalyze poller) builds writers without an oracle; the guard
-        below makes any future oracle-bearing caller fail fast instead of silently foreclosing rows.
+    def finalize_completed_hours(self, cutoff: datetime) -> FinalizeOutcome:
+        """INTENDED FOR NON-ORACLE WRITERS ONLY: it ignores held spills entirely, so on an oracle-bearing
+        writer finalizing an hour with held rows would floor-lock the hour and strand its quarantine forever
+        (never merged, never redeemed) — such a caller is refused rather than silently foreclosing rows.
 
-        Finalize every hour STRICTLY OLDER than `cutoff` that currently holds a row — the open
-        hour (if any) plus any crash-leftover part-hours the event stream itself has not yet swept.
-        Returns the count of hours this call actually finalized (0 is the correct, idempotent
-        answer once there is nothing left to do). Hours `>= cutoff` are NEVER touched.
+        Finalize every hour STRICTLY OLDER than `cutoff` that currently holds a row — the open hour plus any
+        crash-leftover part-hours the event stream itself has not yet swept. Returns a `FinalizeOutcome`; 0
+        finalized is the correct, idempotent answer once there is nothing left to do. Hours `>= cutoff` are
+        NEVER touched.
 
-        T0046: rotation is event-driven — an hour closes only when the NEXT event for this same
-        (pair, kind) crosses its boundary (`_enter_hour`) — which fits a continuously-emitting
-        stream but stalls indefinitely for a sparse one (a symbol quiet for hours never produces
-        the "next" event that would close it). This is the wall-clock escape hatch: the CALLER
-        decides `cutoff` (see `cli/liquidations/coinalyze.py` for the margin that makes it safe),
-        and this method finalizes anything provably older than it, via the exact same
-        `_finalize_hour`/`_merge_hour` path an ordinary rotation uses. A pair that keeps emitting
-        normally never has an hour cross `cutoff` while still open, so calling this on the live
-        capture daemon's writers would be a no-op in practice — nothing here changes what an
-        ordinary rotation does; it is purely additive.
+        T0046: ordinary rotation is event-driven — an hour closes only when the NEXT event for this same
+        (pair, kind) crosses its boundary (`_enter_hour`) — which stalls indefinitely for a sparse stream.
+        This is the wall-clock escape hatch, and the CALLER owns `cutoff`'s safety margin (see
+        `cli/liquidations/coinalyze.py`).
 
-        Two independent things can be older than `cutoff`:
-
-        1. The open hour (`self._current_hour`) — flushed and merged, then the writer is left with
-           NO open hour (`None`), so the next event re-derives its own hour from scratch exactly
-           like a fresh writer's first event does (`_enter_hour`'s `is None` branch: sweep, open).
-        2. Any OTHER part-hours already on disk — crash leftovers from a previous process that
-           never got swept, because sweeping is deferred to this writer's first event and one may
-           never come for a symbol this sparse.
-
-        Setting `_current_hour` to `None` is new for this class — the ordinary rotation path only
-        ever advances it forward via `_open_hour`, which re-anchors the late-event floor for free
-        as a side effect. With no such call here, this method re-anchors `self._floor` itself for
-        every hour it actually finalizes (a merge this class declines — e.g. the AMBIGUOUS
-        parts-beside-a-final case — does not count, and does not raise the floor). Skipping this
-        would let a late replay for an hour finalized here — arriving while `_current_hour` is
-        still `None` — silently reopen it, and its eventual re-rotation would then read as "parts
-        beside a readable final": the class's own ambiguous, human-only state.
-        """
+        An open hour finalized here is left `None`, so the next event re-derives its own hour exactly like a
+        fresh writer's first one. That skips `_open_hour`, which is what ordinarily re-anchors the late-
+        event floor, so this method re-anchors `self._floor` itself for every hour it actually finalizes (a
+        merge it declines — e.g. the AMBIGUOUS parts-beside-a-final case — does not count). Without that, a
+        late replay could silently reopen an hour finalized here, and its re-rotation would read as that
+        same ambiguous, human-only state."""
         if self._oracle is not None:
             raise CaptureError(
                 "finalize_completed_hours is not supported on oracle-bearing writers (held spills would be stranded)"
             )
         finalized = 0
+        failed: list[datetime] = []
         newest_hour: datetime | None = None
 
         if self._current_hour is not None and self._current_hour < cutoff:
@@ -462,11 +454,22 @@ class SegmentWriter:
             already_final = final_path.exists()
             self._finalize_hour(hour)
             self._current_hour = None
-            if not already_final and final_path.exists():
-                finalized += 1
-                newest_hour = hour
+            if final_path.exists():
+                if not already_final:
+                    finalized += 1
+                    newest_hour = hour
+            else:
+                failed.append(hour)
 
         root = self._base_dir / self._pair / self._kind
+        # A `<HH>.parquet.merging` with no final is an hour whose merge completed and whose commit did
+        # not: its parts are already unlinked, so the parts walk below cannot see it and no sweep will
+        # re-attempt it. Reported every cycle, never rewritten -- `_recover` is what commits it.
+        for merging in sorted(root.rglob("*.parquet.merging")):
+            hour = _hour_of(merging.parent, merging.name.split(".")[0])
+            if hour is not None and hour < cutoff and not merging.with_suffix("").exists():
+                failed.append(hour)
+
         for hour_dir in sorted({path.parent for path in root.rglob("*.part*.parquet")}):
             for hh in sorted({path.name.split(".part")[0] for path in hour_dir.glob("*.part*.parquet")}):
                 hour = _hour_of(hour_dir, hh)
@@ -475,18 +478,20 @@ class SegmentWriter:
                 final_path = hour_dir / f"{hh}.parquet"
                 already_final = final_path.exists()
                 self._merge_hour(hour_dir, hh)
-                if not already_final and final_path.exists():
-                    finalized += 1
-                    newest_hour = hour if newest_hour is None else max(newest_hour, hour)
+                if final_path.exists():
+                    if not already_final:
+                        finalized += 1
+                        newest_hour = hour if newest_hour is None else max(newest_hour, hour)
+                else:
+                    failed.append(hour)
 
         if newest_hour is not None:
             floor = newest_hour + timedelta(hours=1)
             self._floor = floor if self._floor is None else max(self._floor, floor)
-        return finalized
+        return FinalizeOutcome(finalized, tuple(sorted(set(failed))))  # one hour, one entry: both arms can reach it
 
     def _enter_hour(self, hour: datetime) -> None:
-        """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
-        A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
+        """A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
         if self._current_hour is None:
             # Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
             # is the only one that can open an hour behind the wall clock -- from here on `floor` is
@@ -516,8 +521,7 @@ class SegmentWriter:
             self._open_hour(hour)
 
     def _admit(self, event: dict) -> None:
-        """The write path proper: de-dup, advance the stream witness, buffer, flush. The event's
-        hour is already open."""
+        """The write path proper: the caller guarantees the event's hour is already open."""
         if self._dedup_key is not None:
             key = event[self._dedup_key]
             if key in self._seen:
@@ -568,8 +572,9 @@ class SegmentWriter:
             self._max_ts = ts
             self._max_at = _utcnow()
         if len(rows) >= self._flush_rows:
-            self._write_part(rows, hour, marker=".held")
-            self.rows_quarantined += len(rows)
+            if self._write_part(rows, hour, marker=".held"):
+                self.rows_quarantined += len(rows)
+                self._save_quarantined()
             self._held[hour] = []
 
     def _implausible(self, ts: datetime) -> bool:
@@ -628,6 +633,45 @@ class SegmentWriter:
         # Clamped: a clock stepped BACKWARD must only ever make the guard laxer, never tighter.
         elapsed = max(now - self._max_at, timedelta(0))
         return ts > self._max_ts + elapsed + MAX_TS_AHEAD and ts > now + MAX_TS_AHEAD
+
+    def _quarantined_path(self) -> Path:
+        return self._base_dir / self._pair / self._kind / "rows-quarantined.json"
+
+    def _load_quarantined(self) -> int:
+        """The count a previous process left, or 0. NEVER raises -- this runs at construction, before
+        the daemon connects, so anything escaping stops capture on every restart (T0161). Seeding 0
+        where a sibling seeds a count takes the UNLABELLED sum down without reaching zero, which
+        `increase()` reads as a step: a dropped pair or one unreadable file can page once."""
+        try:
+            payload = json.loads(self._quarantined_path().read_text())
+            value = payload["rows_quarantined"] if isinstance(payload, dict) else None
+            return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+        except FileNotFoundError:
+            return 0  # a writer that has never spilled, which is every writer on a fresh tree
+        except Exception:
+            logger.exception(
+                "unreadable quarantine count, seeding 0 pair=%s kind=%s path=%s",
+                self._pair,
+                self._kind,
+                self._quarantined_path(),
+            )
+            return 0
+
+    def _save_quarantined(self) -> None:
+        """Publish the count atomically after a spill. NEVER raises -- the rows are already safe on
+        disk, and losing their COUNT must not cost the daemon that captured them."""
+        path = self._quarantined_path()
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps({"rows_quarantined": self.rows_quarantined}))
+            _replace_durably(tmp, path)
+        except Exception:
+            logger.exception("could not persist the quarantine count pair=%s kind=%s", self._pair, self._kind)
+            try:
+                tmp.unlink(missing_ok=True)  # the cleanup must not raise either: this whole path is best-effort
+            except OSError:
+                pass
 
     def _hour_dir(self, hour: datetime) -> Path:
         return self._base_dir / self._pair / self._kind / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
@@ -702,7 +746,7 @@ class SegmentWriter:
         self._write_part(self._buffer, self._current_hour)
         self._buffer = []
 
-    def _write_part(self, rows: list[dict], hour: datetime, *, marker: str = ".part") -> None:
+    def _write_part(self, rows: list[dict], hour: datetime, *, marker: str = ".part") -> bool:
         hour_dir = self._hour_dir(hour)
         hh = f"{hour:%H}"
         try:
@@ -716,6 +760,7 @@ class SegmentWriter:
             df = pl.DataFrame(rows, schema=self._schema)
             df.write_parquet(tmp_path, compression="zstd")
             _replace_durably(tmp_path, part_path)  # atomic + durable: a kill can never leave a torn part
+            return True
         except Exception:
             # The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
             # (EIO, ENOSPC despite DiskWatermark) away from taking down the single consumer task —
@@ -723,6 +768,7 @@ class SegmentWriter:
             # streams need not be. The dead-man's switch goes red on the watermark breach that
             # normally causes this, and the traceback names the pair.
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)
+            return False
 
     def _count_if_early(self, hour: datetime) -> None:
         """Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
@@ -1008,7 +1054,8 @@ class SegmentWriter:
 
 
 def verify_manifest(path: Path) -> bool:
-    """Recompute `path`'s sha256 and compare it against its `<path>.sha256` sidecar."""
+    """True iff `path`'s bytes hash to the `<path>.sha256` sidecar; a missing or empty sidecar raises
+    `CaptureError`."""
     manifest_path = path.with_name(path.name + ".sha256")
     recorded = manifest_path.read_text().split() if manifest_path.exists() else []
     if not recorded:

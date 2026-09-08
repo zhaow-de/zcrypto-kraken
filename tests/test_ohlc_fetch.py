@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import urllib.error
@@ -36,12 +37,17 @@ def test_fetch_ohlc_raises_on_nonempty_error_array():
         fetch_ohlc("XXBTZEUR", 1440, opener=_opener(body))
 
 
-def test_fetch_ohlc_raises_on_transport_error():
+@pytest.mark.parametrize(("pair_key", "interval"), [("XXBTZEUR", 1440), ("XETHZEUR", 60)])
+def test_fetch_ohlc_raises_on_transport_error(pair_key, interval):
     def _raise(url, timeout=None):
         raise urllib.error.URLError("boom")
 
-    with pytest.raises(OHLCError):
-        fetch_ohlc("XXBTZEUR", 1440, opener=_raise)
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc(pair_key, interval, opener=_raise)
+    assert "transport error fetching OHLC" in str(caught.value)
+    # The IDENTITY: a second pair tells interpolation from a hardcoded literal, and `@` pins WHICH
+    # field is which, so a swapped pair and interval cannot still read as a match.
+    assert f"{pair_key}@{interval}" in str(caught.value)
 
 
 def test_fetch_ohlc_raises_on_missing_result_key():
@@ -71,3 +77,85 @@ def test_the_btc_quoted_legs_carry_the_venues_xbt_spelling():
 
     assert PAIR_KEYS["ETH/BTC"] == "XETHXXBT"
     assert PAIR_KEYS["SOL/BTC"] == "SOLXBT"
+
+
+def _raw_opener(payload: bytes):
+    def _open(url, timeout=None):
+        return io.BytesIO(payload)
+
+    return _open
+
+
+@pytest.mark.parametrize("payload", [b"\xff", b'{"error":[],"result":{"X":\xc3'])
+@pytest.mark.parametrize(("pair_key", "interval"), [("XXBTZEUR", 1440), ("XETHZEUR", 60)])
+def test_fetch_ohlc_contains_a_body_whose_bytes_do_not_decode(payload, pair_key, interval):
+    """`UnicodeDecodeError` is a sibling of `JSONDecodeError` under `ValueError`, never a subclass,
+    so the decode arm must name it to see a body that does not decode."""
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc(pair_key, interval, opener=_raw_opener(payload))
+    assert isinstance(caught.value.__cause__, UnicodeDecodeError)
+    # The LABEL, not just the containment: rejoining the two blocks would still raise `OHLCError`
+    # -- the wide transport arm catches `ValueError` -- so only this pins the split.
+    assert "undecodable or invalid JSON" in str(caught.value)
+    assert f"{pair_key}@{interval}" in str(caught.value)
+
+
+@pytest.mark.parametrize("body", [[], "oops", None, 0])
+def test_fetch_ohlc_contains_valid_json_that_is_not_an_object(body):
+    """Valid JSON that is not an object is refused BY SHAPE, named as such rather than by whatever
+    `.get` would have raised."""
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc("XXBTZEUR", 1440, opener=_opener(body))
+    assert "is not a JSON object" in str(caught.value)
+
+
+def _raising_opener(exc: Exception):
+    def _open(url, timeout=None):
+        raise exc
+
+    return _open
+
+
+def _reading_opener(exc: Exception):
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def read(self, *args):
+            raise exc
+
+    def _open(url, timeout=None):
+        return _Resp(b"")
+
+    return _open
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        http.client.IncompleteRead(b"x" * 12, 42),
+        http.client.BadStatusLine("garbage"),
+        http.client.LineTooLong("header line"),
+        ValueError("opener said no"),
+    ],
+)
+def test_fetch_ohlc_contains_a_failing_opener(exc):
+    """The opener seam is transport: `HTTPException` is neither `OSError` nor `ValueError`, so no
+    arm saw it, and a plain `ValueError` from the opener had no arm either."""
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc("XXBTZEUR", 1440, opener=_raising_opener(exc))
+    assert caught.value.__cause__ is exc
+    assert "transport error fetching OHLC" in str(caught.value)  # the LABEL, or the arms can swap silently
+
+
+def test_fetch_ohlc_contains_a_truncated_body():
+    """`IncompleteRead` from `.read()` is the production-reachable one: a body shorter than its
+    `Content-Length`."""
+    exc = http.client.IncompleteRead(b"x" * 12, 42)
+    with pytest.raises(OHLCError) as caught:
+        fetch_ohlc("XXBTZEUR", 1440, opener=_reading_opener(exc))
+    assert caught.value.__cause__ is exc
+    assert "transport error fetching OHLC" in str(caught.value)

@@ -2,4 +2,4 @@ from __future__ import annotations
 
 
 class CaptureError(Exception):
-    """The capture daemon (WS client, book state, segment writer, or gap monitor) hit a fatal error."""
+    """A refusal raised across the capture package and the archive paths built on it."""

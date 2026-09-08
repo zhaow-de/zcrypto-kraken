@@ -36,7 +36,7 @@ status: open   # one of: open | partial | resolved
 
 A `partial` topic carries a `## Done so far` section between `## Findings so far` and `## Suggested next steps`, recording what landed (link commits/PRs/spec). Its `## Suggested next steps` then lists only the still-open remainder.
 
-**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit — an anchor whose first occurrence sits inside body prose deletes whole sections silently.
+**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit — an anchor whose first occurrence sits inside body prose deletes whole sections silently. A splice — a section moved, merged or removed — is an edit and takes the same anchor count and heading-set check; after any rebase touching the index (a keep-both resolution re-adds a moved bullet), grep each topic id for exactly one link.
 
 ## Partially completing a topic
 
@@ -46,7 +46,7 @@ A topic is partially completed by flipping its front-matter `status: open` → `
 
 - Insert a `## Done so far` section immediately after `## Findings so far`, linking the relevant commits, PRs, and spec that delivered the completed work.
 - Trim `## Suggested next steps` to list only the still-open remainder.
-- In `docs/open-topics/README.md`, move the topic's bullet from `## Open` to the end of the `## Partially done` section (transition order).
+- In `docs/open-topics/README.md`, move the topic's bullet from its category's `### Open` to the end of the same category's `### Partially done` subsection (Index sync below).
 
 A partially completed topic later closes the normal way (see below).
 

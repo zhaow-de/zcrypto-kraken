@@ -75,10 +75,9 @@ def _merge_or_detach(
     symbol: str,
     interval: int,
 ) -> tuple[str, pl.DataFrame, int, int]:
-    """Return `(status, frame_to_write, overlap_bars, gap_bars)`; a seam that does not hold raises `OHLCError` rather
-    than detaching: a failed seam is a data-integrity error, not the HONEST gap `detached` records, and detaching hides it.
-    Sibling: cli/engine/store.py::_reconcile guards the same seam definition under its own policy -- a safety fix here likely applies there too.
-    """
+    """A seam that does not hold raises `OHLCError` rather than detaching: a failed seam is a data-integrity error,
+    not the HONEST gap `detached` records, and detaching hides it. `cli/engine/store.py::_reconcile` guards the same
+    seam definition under its own policy."""
     canonical_tail = canonical["ts"].max()
     rest_head = rest["ts"].min()
 

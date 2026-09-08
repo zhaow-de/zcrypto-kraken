@@ -27,9 +27,7 @@ def _sidecar_by_dataset() -> dict[str, dict[str, str]]:
 
     Some canonical sets are produced by a freeze process this repo does not write, whose manifest
     exposes no per-series hash at all -- leaving `_manifest_sha256s` empty and every consumer of it
-    silently inert. This file is where those sets' hashes live instead. It is OUR format, uniform
-    across sets, so reading it needs none of the per-set manifest knowledge that the manifest
-    shapes would demand.
+    silently inert. This file is where those sets' hashes live instead.
 
     Values are `dataset_hash` (sha256 of the frame's canonical CSV) -- the SAME grade every manifest
     writer vouches and both consumers compare. A byte-grade digest here would be a second,
@@ -65,17 +63,11 @@ def _sidecar_by_dataset() -> dict[str, dict[str, str]]:
 
 
 def sidecar_hash_by_path(dataset: str) -> dict[str, str]:
-    """Committed attestations for `dataset` BOUND TO PATHS, or empty when it has none.
-
-    The path binding is what a manifest cannot give without per-set knowledge of that set's layout,
-    and it is strictly stronger than a membership test: swapping two series inside one set leaves
-    the set of hashes unchanged, so membership passes and a path-bound check does not.
-    """
+    """Committed attestations for `dataset` BOUND TO PATHS, or empty when it has none."""
     return dict(_sidecar_by_dataset().get(dataset, {}))
 
 
 def sidecar_hashes(dataset: str) -> set[str]:
-    """Committed attestations for `dataset`, or an empty set when it has none."""
     return set(_sidecar_by_dataset().get(dataset, {}).values())
 
 
@@ -115,15 +107,9 @@ def _count_files(root: Path) -> int:
 
 
 def _manifest_sha256s(node: object) -> set[str]:
-    """Every per-artifact ``sha256`` value anywhere in a (possibly deeply nested) manifest -- the
-    content hashes the producer vouches for. The hot sets' manifests nest ``series`` by symbol (and
-    by grid for OHLC: ``series[symbol][grid].sha256``; funding is ``series[symbol].sha256``), and
-    each set lays its parquets out differently, so a file path cannot be derived from the manifest
-    keys without per-set knowledge. Instead we attest each fetched parquet's content hash against
-    this set -- catching transfer corruption (the real risk on an append-only, rsync-checksummed
-    channel) without coupling this code to any set's on-disk layout. A manifest-level ``manifest_sha256``
-    (the holdout carries one; it is not a per-parquet hash) is deliberately NOT collected -- the key
-    must be exactly ``sha256``, so a set that exposes no per-parquet hashes yields the empty set."""
+    """Every ``sha256`` string anywhere in a legacy manifest, whatever its shape. A manifest-level
+    ``manifest_sha256`` is NOT collected -- the key must be exactly ``sha256``, so a set that exposes
+    no per-parquet hashes yields the empty set."""
     found: set[str] = set()
     if isinstance(node, dict):
         for key, value in node.items():
@@ -140,10 +126,10 @@ def _manifest_sha256s(node: object) -> set[str]:
 def _attestations_for_set(manifest_dir: Path, set_name: str) -> tuple[set[str], dict[str, str]]:
     """What attests `set_name`: (every vouched hash, the path-bound subset of them).
 
-    A CONFORMANT manifest carries the path as its series key, so it contributes path bindings just
-    as the sidecar does -- which is what closes the residual T0133 parked. A legacy manifest can
-    only contribute membership, because deriving a path from its keys is the per-set knowledge the
-    contract exists to remove; such a set degrades to today's behaviour rather than being refused.
+    A CONFORMANT manifest carries the path as its series key, so it contributes path bindings just as
+    the sidecar does. A legacy manifest can only contribute membership, because deriving a path from
+    its keys is the per-set knowledge the contract exists to remove; such a set degrades rather than
+    being refused. Content hashing targets transfer corruption, the real risk on this channel.
     """
     from cli.data.manifest import ManifestError, read_manifest
 
@@ -164,17 +150,12 @@ def _attestations_for_set(manifest_dir: Path, set_name: str) -> tuple[set[str], 
     return vouched | sidecar_hashes(set_name), by_path
 
 
-def _vouched_for_set(manifest_dir: Path, set_name: str) -> set[str]:
-    return _attestations_for_set(manifest_dir, set_name)[0]
-
-
 def _attestation_failure(set_dir: Path, rel: str, vouched: set[str], by_path: dict[str, str]) -> str | None:
     """Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
 
-    Path-BOUND whenever a committed attestation names this exact path, which membership cannot be:
+    Path-BOUND whenever an attestation names this exact path, which membership cannot be:
     two series swapped inside one set leave the hash SET unchanged, so membership passes on both
-    halves of the swap. Sets attested only by their own manifest fall back to membership, because
-    deriving a path per hash needs the per-set layout knowledge the manifests share no shape for.
+    halves of the swap.
     """
     actual = dataset_hash(read_parquet(set_dir / rel))
     if (expected := by_path.get(rel)) is not None:

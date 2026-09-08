@@ -1,3 +1,5 @@
+"""Combinatorial purged cross-validation splits (docs/specs/00006-cpcv-splitter-design.md)."""
+
 from __future__ import annotations
 
 import math
@@ -22,7 +24,6 @@ def make_groups(n_samples: int, n_groups: int) -> list[tuple[int, int]]:
 
 
 def n_backtest_paths(n_groups: int, n_test_groups: int) -> int:
-    """Number of CPCV backtest paths = C(n_groups - 1, n_test_groups - 1)."""
     if n_groups < 2:
         raise ValidationError(f"n_groups must be >= 2, got {n_groups}")
     if not 1 <= n_test_groups < n_groups:
@@ -55,7 +56,6 @@ def cpcv_splits(
     label_horizon: int = 0,
     embargo: int = 0,
 ) -> list[dict]:
-    """Combinatorial purged cross-validation splits (see docs/specs/00006)."""
     if label_horizon < 0:
         raise ValidationError(f"label_horizon must be >= 0, got {label_horizon}")
     if embargo < 0:

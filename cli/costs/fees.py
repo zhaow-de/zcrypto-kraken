@@ -28,7 +28,7 @@ SPOT_FEE_TIERS: tuple[tuple[float, float, float], ...] = (
 
 
 def spot_fee_rates(thirty_day_volume_usd: float) -> dict:
-    """Maker/taker fee fractions + 1-based tier for a 30-day USD spot volume (Kraken, 2026-07-09 schedule)."""
+    """Maker/taker fee fractions + 1-based tier for a 30-day USD spot volume."""
     if not math.isfinite(thirty_day_volume_usd) or thirty_day_volume_usd < 0:
         raise CostModelError(f"thirty_day_volume_usd must be finite and >= 0, got {thirty_day_volume_usd}")
     idx = 0
@@ -49,7 +49,7 @@ def round_trip_fee(
     taker_open: bool = False,
     taker_close: bool = False,
 ) -> float:
-    """Open+close fee cost on `notional`; each leg is taker if flagged, else maker (default maker-first)."""
+    """Open+close fee on `notional` — each leg is charged on the FULL notional, not half each."""
     for name, value in (("notional", notional), ("maker_rate", maker_rate), ("taker_rate", taker_rate)):
         if not math.isfinite(value) or value < 0:
             raise CostModelError(f"{name} must be finite and >= 0, got {value}")

@@ -22,37 +22,35 @@ README.md:250: section 4383 > 2048	### `zcrypto panel`<a name="zcrypto-panel"></
 README.md:277: section 5439 > 2048	### `zcrypto data`<a name="zcrypto-data"></a>
 README.md:325: section 2406 > 2048	### `zcrypto research`<a name="zcrypto-research"></a>
 README.md:398: table-row 402 > 200	`tracking_band_bps`
-cli/alpha/b1.py:1: file-prose 21.3 > 20
-cli/alpha/b1.py:53: comment-block 17 > 4	"""Walk-forward seasonality gate per return index k (docs/specs/00045 sec"The overlay" 1-2):
-cli/alpha/b1.py:128: comment-block 16 > 4	"""Composition-invariant vol-state scaler per return index k (docs/specs/00045 sec"The overlay"
-cli/alpha/killbar.py:1: file-prose 29.2 > 20
-cli/alpha/killbar.py:28: comment-block 46 > 4	"""The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031), folded to the
-cli/alpha/killbar.py:152: comment-block 5 > 4	"""Isolated whipsaw diagnostic for the short leg (finding-2's whipsaw kill test, docs/specs/00031):
-cli/alpha/killbar.py:183: comment-block 15 > 4	"""Net-of-cost head-to-head verdict: the SPA check the pre-registered `a1_kill_bar`'s SPA leg omits.
-cli/alpha/killbar.py:236: comment-block 18 > 4	"""Benchmark-relative, exposure-aware alternative to `a1_kill_bar`'s worst-slice leg.
+cli/alpha/b1.py:53: comment-block 8 > 4	"""Walk-forward seasonality gate per return index k (docs/specs/00045 sec"The overlay" 1-2):
+cli/alpha/b1.py:119: comment-block 9 > 4	"""Composition-invariant vol-state scaler per return index k (docs/specs/00045 sec"The overlay"
+cli/alpha/killbar.py:28: comment-block 22 > 4	"""The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031): a variant is
+cli/alpha/killbar.py:128: comment-block 5 > 4	"""Isolated whipsaw diagnostic for the short leg (finding-2's whipsaw kill test, docs/specs/00031):
+cli/alpha/killbar.py:159: comment-block 6 > 4	"""Net-of-cost head-to-head SPA verdict, retained as a standalone diagnostic beside
+cli/alpha/killbar.py:203: comment-block 11 > 4	"""Benchmark-relative, exposure-aware worst-slice comparison: `a1_kill_bar`'s worst-slice leg
 cli/archive/command.py:1: comment-block 14 > 4	"""The `zcrypto archive` Typer sub-app (spec 00048 Role A): pull a source tree via rsync-over-ssh
-cli/archive/command.py:1: file-prose 26.6 > 20
+cli/archive/command.py:1: file-prose 26.4 > 20
 cli/archive/command.py:92: comment-block 5 > 4	# StrictHostKeyChecking=yes fails closed: the VPS key must already be in the pinned known_hosts
 cli/archive/command.py:102: comment-block 7 > 4	# --chmod forces the archived tree to the mandated 0775 dirs / 0664 files (spec 00048): the NAS
 cli/archive/command.py:209: comment-block 5 > 4	# The verify cost is best-effort: an unwritable textfile must never preempt the Exit(1)
-cli/archive/command.py:228: comment-block 17 > 4	"""The overlay's append-only audit ledger, and the ONLY state a one-shot reconciler carries.
-cli/archive/command.py:271: comment-block 7 > 4	"""The fleet-dark windows the ledger has ALREADY booked as loss for `pair`'s stream in `hour`.
-cli/archive/command.py:294: comment-block 8 > 4	"""The residual windows `pair`'s own book record already booked as loss for `hour`.
-cli/archive/command.py:314: comment-block 19 > 4	"""One healed book hour's ledger record, with every second attributed EXACTLY once.
-cli/archive/command.py:351: comment-block 11 > 4	"""The exporter's cumulative counters, derived from the WHOLE ledger.
-cli/archive/command.py:408: comment-block 5 > 4	# Inside the dedup, for the same reason `healable` is: an hour ledgered `would_mint` in
-cli/archive/command.py:414: comment-block 8 > 4	# `healable` is the gap rate, and it must exist in DETECT-ONLY -- minting stays off for the
-cli/archive/command.py:430: comment-block 8 > 4	"""Age of the mirror's newest final -- a dead source detected via DATAFLOW, independently of its
-cli/archive/command.py:462: comment-block 5 > 4	# Prometheus's text format spells the non-finite values `+Inf` / `-Inf` / `NaN`; Python's f-string
-cli/archive/command.py:603: comment-block 17 > 4	"""Reconcile the two raw mirrors into the healed overlay.
-cli/archive/command.py:718: comment-block 6 > 4	# A permanent-loss finding is announced ONCE, on the cycle that decides it -- both branches below
-cli/archive/command.py:734: comment-block 7 > 4	# --- total_loss ------------------------------------------------------------------------
-cli/archive/command.py:793: comment-block 16 > 4	# Book each stream its OWN silence window around each intersection, not the
-cli/archive/command.py:911: comment-block 6 > 4	# Primary silence NO secondary update witnessed. Ledgered for visibility and counted
-cli/archive/command.py:1087: comment-block 6 > 4	# Never cache an hour THIS cycle changed. The stored fingerprint is the PRE-pass one, so a
-cli/archive/command.py:1189: comment-block 16 > 4	"""Continuity-replay every canonical book hour (reconciled-first, primary otherwise) through
-cli/archive/command.py:1278: comment-block 5 > 4	# Both surfaces carry the census: the runner parses the log line, an operator reads the echo.
-cli/archive/command.py:1329: comment-block 11 > 4	"""Heal the canonical trade stream to a contiguous, duplicate-free trade_id sequence: detect gaps
+cli/archive/command.py:228: comment-block 14 > 4	"""The overlay's append-only audit ledger, and the ONLY state a one-shot reconciler carries.
+cli/archive/command.py:268: comment-block 7 > 4	"""The fleet-dark windows the ledger has ALREADY booked as loss for `pair`'s stream in `hour`.
+cli/archive/command.py:291: comment-block 8 > 4	"""The residual windows `pair`'s own book record already booked as loss for `hour`.
+cli/archive/command.py:311: comment-block 19 > 4	"""One healed book hour's ledger record, with every second attributed EXACTLY once.
+cli/archive/command.py:348: comment-block 11 > 4	"""The exporter's cumulative counters, derived from the WHOLE ledger.
+cli/archive/command.py:405: comment-block 5 > 4	# Inside the dedup, for the same reason `healable` is: an hour ledgered `would_mint` in
+cli/archive/command.py:411: comment-block 8 > 4	# `healable` is the gap rate, and it must exist in DETECT-ONLY -- minting stays off for the
+cli/archive/command.py:427: comment-block 8 > 4	"""Age of the mirror's newest final -- a dead source detected via DATAFLOW, independently of its
+cli/archive/command.py:458: comment-block 5 > 4	# Prometheus's text format spells the non-finite values `+Inf` / `-Inf` / `NaN`; Python's f-string
+cli/archive/command.py:599: comment-block 17 > 4	"""Reconcile the two raw mirrors into the healed overlay.
+cli/archive/command.py:714: comment-block 6 > 4	# A permanent-loss finding is announced ONCE, on the cycle that decides it -- both branches below
+cli/archive/command.py:730: comment-block 7 > 4	# --- total_loss ------------------------------------------------------------------------
+cli/archive/command.py:789: comment-block 16 > 4	# Book each stream its OWN silence window around each intersection, not the
+cli/archive/command.py:907: comment-block 6 > 4	# Primary silence NO secondary update witnessed. Ledgered for visibility and counted
+cli/archive/command.py:1083: comment-block 6 > 4	# Never cache an hour THIS cycle changed. The stored fingerprint is the PRE-pass one, so a
+cli/archive/command.py:1185: comment-block 16 > 4	"""Continuity-replay every canonical book hour (reconciled-first, primary otherwise) through
+cli/archive/command.py:1274: comment-block 5 > 4	# Both surfaces carry the census: the runner parses the log line, an operator reads the echo.
+cli/archive/command.py:1325: comment-block 11 > 4	"""Heal the canonical trade stream to a contiguous, duplicate-free trade_id sequence: detect gaps
 cli/archive/pull.py:1: file-prose 32.5 > 20
 cli/archive/pull.py:36: comment-block 8 > 4	# Spec 00102 D3. A final is re-hashed in the cycle whose rotation index equals its slice, so every
 cli/archive/pull.py:56: comment-block 11 > 4	"""Walk every final under `root`; hash each against its sidecar, or only a subset.
@@ -62,20 +60,20 @@ cli/archive/reader.py:1: comment-block 12 > 4	"""The canonical read surface (spe
 cli/archive/reader.py:1: file-prose 41.2 > 20
 cli/archive/reader.py:40: comment-block 7 > 4	"""Yield `(pair, hour, path)` for every canonical hour: reconciled-first, primary otherwise.
 cli/archive/reconcile.py:1: comment-block 13 > 4	"""Pure reconciliation logic for spec 00050: cross-stream book-gap detection.
-cli/archive/reconcile.py:1: file-prose 43.6 > 20
-cli/archive/reconcile.py:30: comment-block 17 > 4	"""A window in which the primary stream was silent and the secondary was demonstrably alive.
-cli/archive/reconcile.py:68: comment-block 18 > 4	"""One entry per wire message, in ARRIVAL order: many rows share a `ts` (one row per book level).
-cli/archive/reconcile.py:94: comment-block 8 > 4	# The int64 view reads the column's OWN unit as microseconds while the hour bounds always
-cli/archive/reconcile.py:119: comment-block 5 > 4	"""True iff the secondary has at least one **update** row inside `gap`.
-cli/archive/reconcile.py:130: comment-block 10 > 4	"""`hour_start`/`hour_end` must bound exactly one whole, tz-aware hour.
-cli/archive/reconcile.py:172: comment-block 20 > 4	"""Windows where the primary was silent > `min_gap_seconds` AND the secondary was alive inside.
-cli/archive/reconcile.py:203: comment-block 10 > 4	"""The complement of `find_book_gaps`: primary silence the secondary did NOT witness.
-cli/archive/reconcile.py:263: comment-block 5 > 4	"""Both halves of the primary-silence partition in ONE derivation: (witnessed, unwitnessed).
-cli/archive/reconcile.py:300: comment-block 23 > 4	"""What each gap STILL lacks after the splice — the output, measured, not the input assumed.
-cli/archive/reconcile.py:350: comment-block 12 > 4	"""How much of `spans` lies inside `windows` — the seconds a SECOND record has already booked.
-cli/archive/reconcile.py:378: comment-block 19 > 4	"""Mint the hour as ordered blocks: primary up to each gap, secondary inside it, primary after.
-cli/archive/reconcile.py:423: comment-block 6 > 4	"""The healed hour's trades, plus what changed and what the secondary was missing.
-cli/archive/reconcile.py:437: comment-block 16 > 4	"""Heal a primary trade deficit from the secondary. Row-level union is safe here — and ONLY
+cli/archive/reconcile.py:1: file-prose 43.3 > 20
+cli/archive/reconcile.py:30: comment-block 16 > 4	"""A window in which the primary stream was silent and the secondary was demonstrably alive.
+cli/archive/reconcile.py:67: comment-block 18 > 4	"""One entry per wire message, in ARRIVAL order: many rows share a `ts` (one row per book level).
+cli/archive/reconcile.py:93: comment-block 8 > 4	# The int64 view reads the column's OWN unit as microseconds while the hour bounds always
+cli/archive/reconcile.py:118: comment-block 5 > 4	"""True iff the secondary has at least one **update** row inside `gap`.
+cli/archive/reconcile.py:129: comment-block 10 > 4	"""`hour_start`/`hour_end` must bound exactly one whole, tz-aware hour.
+cli/archive/reconcile.py:171: comment-block 20 > 4	"""Windows where the primary was silent > `min_gap_seconds` AND the secondary was alive inside.
+cli/archive/reconcile.py:202: comment-block 10 > 4	"""The complement of `find_book_gaps`: primary silence the secondary did NOT witness.
+cli/archive/reconcile.py:262: comment-block 5 > 4	"""Both halves of the primary-silence partition in ONE derivation: (witnessed, unwitnessed).
+cli/archive/reconcile.py:299: comment-block 23 > 4	"""What each gap STILL lacks after the splice — the output, measured, not the input assumed.
+cli/archive/reconcile.py:349: comment-block 12 > 4	"""How much of `spans` lies inside `windows` — the seconds a SECOND record has already booked.
+cli/archive/reconcile.py:377: comment-block 18 > 4	"""Mint the hour as ordered blocks: primary up to each gap, secondary inside it, primary after.
+cli/archive/reconcile.py:421: comment-block 6 > 4	"""The healed hour's trades, plus what changed and what the secondary was missing.
+cli/archive/reconcile.py:435: comment-block 16 > 4	"""Heal a primary trade deficit from the secondary. Row-level union is safe here — and ONLY
 cli/archive/scan_cache.py:1: comment-block 47 > 4	"""Per-hour examination fingerprints for the reconcile skip-cache (spec 00097 D4/D5).
 cli/archive/scan_cache.py:1: file-prose 47.5 > 20
 cli/archive/scan_cache.py:94: comment-block 7 > 4	"""The whole-cache invalidation key: everything outside the file-set that can change a VERDICT.
@@ -85,120 +83,115 @@ cli/archive/scan_cache.py:176: comment-block 5 > 4	# isinstance, not duck-typing
 cli/archive/scan_cache.py:192: comment-block 7 > 4	"""Publish the cache atomically. NEVER raises — a failed save degrades to a slow NEXT cycle.
 cli/archive/scan_cache.py:215: comment-block 6 > 4	"""Drop the cache. This one RAISES, unlike its two siblings — deliberately, do not "fix" it.
 cli/archive/settle.py:1: comment-block 17 > 4	"""Which hours are ready to reconcile, and the losses no witness can heal (spec 00050).
-cli/archive/settle.py:1: file-prose 52.8 > 20
+cli/archive/settle.py:1: file-prose 52.2 > 20
 cli/archive/settle.py:48: comment-block 5 > 4	"""The trailing window of hours old enough to be complete on both mirrors, OLDEST first.
-cli/archive/settle.py:69: comment-block 7 > 4	"""`{pair: {hour, ...}}` for every COMMITTED final of `kind` under `root`.
-cli/archive/settle.py:111: comment-block 13 > 4	"""int64-μs view of `stamps`; an int64-μs ndarray passes through, datetimes convert exactly.
-cli/archive/settle.py:132: comment-block 13 > 4	"""int64-μs view of a book segment's `ts` column, refusing any unit but microseconds.
-cli/archive/settle.py:166: comment-block 17 > 4	"""Windows in which NOTHING was recorded — no pair, on either host.
-cli/archive/settle.py:200: comment-block 27 > 4	"""ONE stream's own silence window containing `window` — the fleet-dark intersection.
-cli/archive/settle.py:227: comment-block 8 > 4	# KNOWN LIMITATION -- accepted, do not 'fix' incidentally: `edges` starts at hour_start, so a
-cli/archive/settle.py:240: comment-block 12 > 4	# Consecutive edges partition the hour, so for a POSITIVE-width window only the interval
-cli/archive/settle.py:273: comment-block 6 > 4	"""Why the fleet went dark — TRIAGE ONLY, and deliberately not an input to any booking.
-cli/archive/settle.py:293: comment-block 22 > 4	"""Was this episode the VENUE going quiet, or the fleet failing to record?
-cli/archive/settle.py:366: comment-block 26 > 4	"""`total_loss`: the hour exists on NEITHER mirror, though the stream demonstrably ran both before
-cli/capture/book.py:1: file-prose 35.3 > 20
-cli/capture/book.py:43: comment-block 10 > 4	"""Per-pair L2 book state, rebuilt from a WS v2 snapshot and kept current via updates.
-cli/capture/book.py:62: comment-block 14 > 4	"""Drop everything beyond the subscribed depth, so the book mirrors Kraken's window exactly.
+cli/archive/settle.py:73: comment-block 7 > 4	"""`{pair: {hour, ...}}` for every COMMITTED final of `kind` under `root`.
+cli/archive/settle.py:115: comment-block 13 > 4	"""int64-μs view of `stamps`; an int64-μs ndarray passes through, datetimes convert exactly.
+cli/archive/settle.py:136: comment-block 13 > 4	"""int64-μs view of a book segment's `ts` column, refusing any unit but microseconds.
+cli/archive/settle.py:170: comment-block 17 > 4	"""Windows in which NOTHING was recorded — no pair, on either host.
+cli/archive/settle.py:204: comment-block 27 > 4	"""ONE stream's own silence window containing `window` — the fleet-dark intersection.
+cli/archive/settle.py:231: comment-block 8 > 4	# KNOWN LIMITATION -- accepted, do not 'fix' incidentally: `edges` starts at hour_start, so a
+cli/archive/settle.py:244: comment-block 12 > 4	# Consecutive edges partition the hour, so for a POSITIVE-width window only the interval
+cli/archive/settle.py:277: comment-block 6 > 4	"""Why the fleet went dark — TRIAGE ONLY, and deliberately not an input to any booking.
+cli/archive/settle.py:297: comment-block 22 > 4	"""Was this episode the VENUE going quiet, or the fleet failing to record?
+cli/archive/settle.py:370: comment-block 26 > 4	"""`total_loss`: the hour exists on NEITHER mirror, though the stream demonstrably ran both before
+cli/capture/book.py:1: file-prose 31.2 > 20
+cli/capture/book.py:42: comment-block 5 > 4	"""Per-pair L2 book state, held congruent with Kraken's subscribed depth window (`depth` levels per side);
+cli/capture/book.py:56: comment-block 14 > 4	"""Drop everything beyond the subscribed depth, so the book mirrors Kraken's window exactly.
 cli/capture/desync_recovery.py:1: comment-block 25 > 4	"""Bounded desync-recovery ladder (spec 00072, T0008).
-cli/capture/desync_recovery.py:1: file-prose 45 > 20
+cli/capture/desync_recovery.py:1: file-prose 40.1 > 20
 cli/capture/desync_recovery.py:33: comment-block 5 > 4	# Defaults per spec 00072 D3. NOT fitted to production: `zcrypto_capture_resubscribes_total` reads 0
 cli/capture/desync_recovery.py:69: comment-block 5 > 4	"""Rung 1 has fired (the transition resubscribe). Start the grace clock.
-cli/capture/desync_recovery.py:86: comment-block 19 > 4	"""The pair is in sync again: clear the active ladder, but KEEP the escalation record.
-cli/capture/segment_writer.py:1: file-prose 48 > 20
-cli/capture/segment_writer.py:51: comment-block 5 > 4	# One row per Coinalyze closed 1-min liquidation bucket (spec 00051 OPS-2, T0023 fallback: Binance
-cli/capture/segment_writer.py:66: comment-block 7 > 4	# How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage
-cli/capture/segment_writer.py:75: comment-block 16 > 4	# How many CONSECUTIVE timestamps the guard may refuse before it stands down (see `_implausible`).
-cli/capture/segment_writer.py:93: comment-block 15 > 4	# The one bound that is NEVER stood down and needs no second witness (see `_implausible`).
-cli/capture/segment_writer.py:110: comment-block 10 > 4	# How many witnesses must vouch that an hour has BEGUN before any stream may act on the boundary —
-cli/capture/segment_writer.py:122: comment-block 6 > 4	# The clock witness's handicap: it vouches for hour H only once it reads H's start plus this margin.
-cli/capture/segment_writer.py:132: comment-block 25 > 4	"""Cross-stream corroboration that an hour has genuinely begun (T0037).
-cli/capture/segment_writer.py:163: comment-block 16 > 4	"""Record that `stream` saw a plausible event stamped `ts` (its guard already ran).
-cli/capture/segment_writer.py:203: comment-block 6 > 4	"""`None` if every row of `path` can be read, else the exception the read failed with.
-cli/capture/segment_writer.py:217: comment-block 6 > 4	"""`os.replace` into `dest`, fsyncing the data and then the directory entry.
-cli/capture/segment_writer.py:237: comment-block 10 > 4	"""`"<HH>.part0007.parquet"` -> `7`; `None` if the name is not one of ours.
-cli/capture/segment_writer.py:254: comment-block 6 > 4	"""`.../<YYYY>/<MM>/<DD>` + `"07"` -> that UTC hour; `None` if the path is not one of ours.
-cli/capture/segment_writer.py:268: comment-block 37 > 4	"""Buffers `(pair, kind)` capture events and streams them to hourly zstd-Parquet segments.
-cli/capture/segment_writer.py:361: comment-block 7 > 4	# An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
-cli/capture/segment_writer.py:371: comment-block 7 > 4	# T0037: acting on a boundary — finalizing the live hour because one ts says a new hour
-cli/capture/segment_writer.py:393: comment-block 10 > 4	"""Flush the buffer — and any held rows — to disk (idempotent). Deliberately does **not**
-cli/capture/segment_writer.py:412: comment-block 40 > 4	"""INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
-cli/capture/segment_writer.py:491: comment-block 14 > 4	# Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
-cli/capture/segment_writer.py:537: comment-block 13 > 4	"""Park a row whose hour the oracle has not confirmed. It still advances the stream witness
-cli/capture/segment_writer.py:576: comment-block 45 > 4	"""True only if `ts` is far ahead of BOTH where the stream should have got to by now AND our
-cli/capture/segment_writer.py:649: comment-block 5 > 4	# Seed the de-dup set from the parts a previous process already wrote for this hour. On a
-cli/capture/segment_writer.py:659: comment-block 11 > 4	"""Redeem `hour`'s held-spill files (`<HH>.held####.parquet`) into ordinary parts.
-cli/capture/segment_writer.py:720: comment-block 5 > 4	# The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
-cli/capture/segment_writer.py:728: comment-block 8 > 4	"""Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
-cli/capture/segment_writer.py:753: comment-block 8 > 4	"""Merge the hour's parts into a committed `<HH>.parquet`. Never raises.
-cli/capture/segment_writer.py:776: comment-block 7 > 4	# AMBIGUOUS, and unresolvable from here — the pre-T0036 writer produced BOTH
-cli/capture/segment_writer.py:798: comment-block 5 > 4	# Isolation invariant (spec 00069 D5): the commit above already succeeded and
-cli/capture/segment_writer.py:816: comment-block 10 > 4	"""Stream `inputs` into `<HH>.parquet.merging`, atomically. False if nothing could be read.
-cli/capture/segment_writer.py:843: comment-block 13 > 4	"""Publish an interrupted-or-fresh `<HH>.parquet.merging` as the hour's committed final.
-cli/capture/segment_writer.py:862: comment-block 7 > 4	"""True if every row of `path` decodes; else quarantine it and return False.
-cli/capture/segment_writer.py:876: comment-block 5 > 4	"""Rename an unreadable file aside, **never delete it**: it is evidence, and rows may still
-cli/capture/segment_writer.py:897: comment-block 7 > 4	"""Finish what a previous process left mid-merge, and read off disk which hours are closed.
-cli/capture/segment_writer.py:934: comment-block 7 > 4	# `_commit` hashes these bytes, unlinks the parts they came from and renames them
-cli/capture/segment_writer.py:949: comment-block 6 > 4	# Which hours are closed. A `<HH>.parquet` is one, by the invariant. So is a `.merging` file
-cli/capture/segment_writer.py:962: comment-block 7 > 4	# An hour that has not happened cannot have been committed: a future-dated segment is
-cli/capture/segment_writer.py:989: comment-block 8 > 4	"""Write `<HH>.parquet.sha256` from `source`'s bytes — atomically and durably, so a kill can
-cli/capture/ws_client.py:1: file-prose 34.2 > 20
-cli/capture/ws_client.py:39: comment-block 5 > 4	"""Build a WS v2 `subscribe` request for `channel` (`"book"` or `"trade"`) over `symbols`.
-cli/capture/ws_client.py:54: comment-block 5 > 4	"""Build a WS v2 `unsubscribe` request for `channel` over `symbols` — the inverse of
-cli/capture/ws_client.py:89: comment-block 6 > 4	# Kraken pushes this automatically on connect and on every trading-engine state change
-cli/capture/ws_client.py:110: comment-block 10 > 4	"""Exponential backoff delay (seconds) for the `attempt`-th (0-indexed) reconnect, capped at `max_delay`.
-cli/capture/ws_client.py:129: comment-block 6 > 4	"""Thin async client for Kraken's public WS v2 feed: subscribes `book` (at `depth`) + `trade`
-cli/capture/ws_client.py:199: comment-block 5 > 4	# A failed connection *attempt* — e.g. InvalidStatus on the HTTP 503 Kraken's
-cli/capture/ws_client.py:220: comment-block 10 > 4	"""Drop the live connection so `stream()` rebuilds it — the recovery ladder's last rung.
-cli/capture/ws_client.py:237: comment-block 6 > 4	"""Route a `subscribe`/`unsubscribe` reply back to the waiter that asked for it (T0102).
-cli/capture/ws_client.py:257: comment-block 6 > 4	"""Send the `subscribe` once the `unsubscribe` is acknowledged — or once the wait times out.
-cli/capture/ws_client.py:272: comment-block 5 > 4	# IDENTITY, not None-ness. A reconnect inside the ack window installs a NEW socket and
-cli/capture/ws_client.py:289: comment-block 11 > 4	"""Force a fresh `book` snapshot for one pair to recover from a checksum desync without
+cli/capture/desync_recovery.py:86: comment-block 6 > 4	"""The pair is in sync again: clear the active ladder, but KEEP the escalation record.
+cli/capture/segment_writer.py:1: file-prose 45.1 > 20
+cli/capture/segment_writer.py:53: comment-block 5 > 4	# One row per Coinalyze closed 1-min liquidation bucket (spec 00051 OPS-2, T0023 fallback: Binance
+cli/capture/segment_writer.py:68: comment-block 7 > 4	# How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage
+cli/capture/segment_writer.py:77: comment-block 16 > 4	# How many CONSECUTIVE timestamps the guard may refuse before it stands down (see `_implausible`).
+cli/capture/segment_writer.py:95: comment-block 15 > 4	# The one bound that is NEVER stood down and needs no second witness (see `_implausible`).
+cli/capture/segment_writer.py:112: comment-block 10 > 4	# How many witnesses must vouch that an hour has BEGUN before any stream may act on the boundary —
+cli/capture/segment_writer.py:124: comment-block 6 > 4	# The clock witness's handicap: it vouches for hour H only once it reads H's start plus this margin.
+cli/capture/segment_writer.py:134: comment-block 25 > 4	"""Cross-stream corroboration that an hour has genuinely begun (T0037).
+cli/capture/segment_writer.py:165: comment-block 16 > 4	"""Record that `stream` saw a plausible event stamped `ts` (its guard already ran).
+cli/capture/segment_writer.py:205: comment-block 6 > 4	"""`None` if every row of `path` can be read, else the exception the read failed with.
+cli/capture/segment_writer.py:219: comment-block 6 > 4	"""`os.replace` into `dest`, fsyncing the data and then the directory entry.
+cli/capture/segment_writer.py:239: comment-block 10 > 4	"""`"<HH>.part0007.parquet"` -> `7`; `None` if the name is not one of ours.
+cli/capture/segment_writer.py:278: comment-block 37 > 4	"""Buffers `(pair, kind)` capture events and streams them to hourly zstd-Parquet segments.
+cli/capture/segment_writer.py:371: comment-block 7 > 4	# An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
+cli/capture/segment_writer.py:381: comment-block 7 > 4	# T0037: acting on a boundary — finalizing the live hour because one ts says a new hour
+cli/capture/segment_writer.py:403: comment-block 10 > 4	"""Flush the buffer — and any held rows — to disk (idempotent). Deliberately does **not**
+cli/capture/segment_writer.py:423: comment-block 20 > 4	"""INTENDED FOR NON-ORACLE WRITERS ONLY: it ignores held spills entirely, so on an oracle-bearing
+cli/capture/segment_writer.py:496: comment-block 14 > 4	# Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
+cli/capture/segment_writer.py:541: comment-block 13 > 4	"""Park a row whose hour the oracle has not confirmed. It still advances the stream witness
+cli/capture/segment_writer.py:581: comment-block 45 > 4	"""True only if `ts` is far ahead of BOTH where the stream should have got to by now AND our
+cli/capture/segment_writer.py:693: comment-block 5 > 4	# Seed the de-dup set from the parts a previous process already wrote for this hour. On a
+cli/capture/segment_writer.py:703: comment-block 11 > 4	"""Redeem `hour`'s held-spill files (`<HH>.held####.parquet`) into ordinary parts.
+cli/capture/segment_writer.py:765: comment-block 5 > 4	# The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
+cli/capture/segment_writer.py:774: comment-block 8 > 4	"""Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
+cli/capture/segment_writer.py:799: comment-block 8 > 4	"""Merge the hour's parts into a committed `<HH>.parquet`. Never raises.
+cli/capture/segment_writer.py:822: comment-block 7 > 4	# AMBIGUOUS, and unresolvable from here — the pre-T0036 writer produced BOTH
+cli/capture/segment_writer.py:844: comment-block 5 > 4	# Isolation invariant (spec 00069 D5): the commit above already succeeded and
+cli/capture/segment_writer.py:862: comment-block 10 > 4	"""Stream `inputs` into `<HH>.parquet.merging`, atomically. False if nothing could be read.
+cli/capture/segment_writer.py:889: comment-block 13 > 4	"""Publish an interrupted-or-fresh `<HH>.parquet.merging` as the hour's committed final.
+cli/capture/segment_writer.py:908: comment-block 7 > 4	"""True if every row of `path` decodes; else quarantine it and return False.
+cli/capture/segment_writer.py:922: comment-block 5 > 4	"""Rename an unreadable file aside, **never delete it**: it is evidence, and rows may still
+cli/capture/segment_writer.py:943: comment-block 7 > 4	"""Finish what a previous process left mid-merge, and read off disk which hours are closed.
+cli/capture/segment_writer.py:980: comment-block 7 > 4	# `_commit` hashes these bytes, unlinks the parts they came from and renames them
+cli/capture/segment_writer.py:995: comment-block 6 > 4	# Which hours are closed. A `<HH>.parquet` is one, by the invariant. So is a `.merging` file
+cli/capture/segment_writer.py:1008: comment-block 7 > 4	# An hour that has not happened cannot have been committed: a future-dated segment is
+cli/capture/segment_writer.py:1035: comment-block 8 > 4	"""Write `<HH>.parquet.sha256` from `source`'s bytes — atomically and durably, so a kill can
+cli/capture/ws_client.py:1: file-prose 33.5 > 20
+cli/capture/ws_client.py:51: comment-block 5 > 4	"""Build a WS v2 `unsubscribe` request for `channel` over `symbols` — the inverse of
+cli/capture/ws_client.py:86: comment-block 6 > 4	# Kraken pushes this automatically on connect and on every trading-engine state change
+cli/capture/ws_client.py:107: comment-block 10 > 4	"""Exponential backoff delay (seconds) for the `attempt`-th (0-indexed) reconnect, capped at `max_delay`.
+cli/capture/ws_client.py:126: comment-block 6 > 4	"""Thin async client for Kraken's public WS v2 feed: subscribes `book` (at `depth`) + `trade`
+cli/capture/ws_client.py:196: comment-block 5 > 4	# A failed connection *attempt* — e.g. InvalidStatus on the HTTP 503 Kraken's
+cli/capture/ws_client.py:217: comment-block 10 > 4	"""Drop the live connection so `stream()` rebuilds it — the recovery ladder's last rung.
+cli/capture/ws_client.py:234: comment-block 6 > 4	"""Route a `subscribe`/`unsubscribe` reply back to the waiter that asked for it (T0102).
+cli/capture/ws_client.py:254: comment-block 6 > 4	"""Send the `subscribe` once the `unsubscribe` is acknowledged — or once the wait times out.
+cli/capture/ws_client.py:269: comment-block 5 > 4	# IDENTITY, not None-ness. A reconnect inside the ack window installs a NEW socket and
+cli/capture/ws_client.py:286: comment-block 11 > 4	"""Force a fresh `book` snapshot for one pair to recover from a checksum desync without
 cli/costs/calibrate.py:1: comment-block 15 > 4	"""The captured-spread calibration query, committed as runnable code (T0014, spec 00085 D5).
-cli/costs/calibrate.py:1: file-prose 32.8 > 20
+cli/costs/calibrate.py:1: file-prose 32 > 20
 cli/costs/calibrate.py:49: comment-block 7 > 4	# A file's hour interval is [HH:00:00, HH+1:00:00); keep files that OVERLAP the window rather
-cli/costs/calibrate.py:71: comment-block 6 > 4	"""Scan every `<BASE>/<QUOTE>/panel-1s/**` pair under `panel_root` and compute the mean
-cli/data/manifest.py:1: comment-block 11 > 4	"""The manifest contract (spec 00099): one shape, so no consumer needs per-set knowledge.
-cli/data/manifest.py:1: file-prose 21 > 20
-cli/data/manifest.py:57: comment-block 7 > 4	"""sha256 over the member hashes, in ascending lexicographic order OF THE SERIES KEY.
-cli/data/manifest.py:121: comment-block 6 > 4	"""The digest that identifies this set. One accessor, so no caller carries a dataset name.
-cli/data/manifest.py:133: comment-block 5 > 4	"""The attested content hashes, read from `series` EXPLICITLY.
-cli/data/manifest.py:252: comment-block 13 > 4	"""Rewrite one dataset's legacy manifest into the contract, from the parquets on disk.
-cli/data/manifest.py:309: comment-block 5 > 4	# The WHOLE legacy document, `series` included. The per-series rows are where the evidence that
-cli/data/sync.py:1: file-prose 26.3 > 20
-cli/data/sync.py:26: comment-block 12 > 4	"""The committed per-series attestations, keyed by dataset.
-cli/data/sync.py:68: comment-block 6 > 4	"""Committed attestations for `dataset` BOUND TO PATHS, or empty when it has none.
-cli/data/sync.py:118: comment-block 9 > 4	"""Every per-artifact ``sha256`` value anywhere in a (possibly deeply nested) manifest -- the
-cli/data/sync.py:141: comment-block 7 > 4	"""What attests `set_name`: (every vouched hash, the path-bound subset of them).
-cli/data/sync.py:172: comment-block 7 > 4	"""Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
-cli/data/sync.py:189: comment-block 6 > 4	"""Re-hash what a push is about to transmit, and refuse content nothing attests.
-cli/data/sync.py:200: comment-block 5 > 4	# Fail closed, and MORE readily than the fetch side: this is the permanent direction. A
-cli/engine/cycle.py:1: comment-block 15 > 4	"""The shadow cycle core (spec 00041 SS the cycle core): `run_cycle` drives one 4h boundary
-cli/engine/cycle.py:1: file-prose 36.4 > 20
-cli/engine/cycle.py:77: comment-block 9 > 4	# The engine's per-cycle hook (spec 00069 D5/T4): `run()` installs this UNCONDITIONALLY -- it no
-cli/engine/cycle.py:126: comment-block 8 > 4	"""The dead-man's-switch ping (spec 00042): once a completion artifact lands, GET
-cli/engine/cycle.py:220: comment-block 5 > 4	"""The pairs whose raw tail still lacks a bar the boundary invariant expects (not yet
-cli/engine/cycle.py:237: comment-block 5 > 4	"""Refresh the store, then settle-verify: a pair whose raw 4h tail lacks the cycle_ts - 4h bar
-cli/engine/cycle.py:291: comment-block 17 > 4	"""The builder-input contraction (spec 00094 D2) -- ONE implementation, three consumers: this
-cli/engine/cycle.py:326: comment-block 9 > 4	"""Base-keyed ten in, symbol-keyed twelve out (spec 00094 D1): each model base carries its value
-cli/engine/cycle.py:345: comment-block 16 > 4	"""A journaled record's `final_targets` in the CURRENT symbol key space: schema 2 as-is, schema 1
-cli/engine/cycle.py:421: comment-block 11 > 4	"""Intended orders: delta = target - previous target (the most recent successful record's; flat
-cli/engine/cycle.py:467: comment-block 18 > 4	"""Journal this boundary's venue-truth evidence FIRST (00089 D7), before any target computation
-cli/engine/cycle.py:514: comment-block 8 > 4	"""The venue's book narrowed to the model's BASE key space over the /EUR legs.
-cli/engine/cycle.py:585: comment-block 26 > 4	"""Run one shadow cycle at the 4h boundary `cycle_ts` (spec 00041 SS the cycle core, steps 1-8).
-cli/engine/cycle.py:640: comment-block 28 > 4	# The forming row's close per model base, journaled onto the record below so drift is measurable
-cli/engine/cycle.py:678: comment-block 5 > 4	# The book's sleeve composition at the same forming row: which of the three fixed-1/3 sleeves
-cli/engine/cycle.py:686: comment-block 5 > 4	# Did any §10 whole-book limit actually move that book (T0121). Wrapped because it is telemetry
-cli/engine/cycle.py:715: comment-block 7 > 4	# T0150: the other two terms a drift measurement needs. NAV is journaled because it sets
-cli/engine/execgate.py:1: file-prose 35.1 > 20
-cli/engine/execgate.py:78: comment-block 8 > 4	"""The single predicate every submission must pass.
-cli/engine/execgate.py:107: comment-block 18 > 4	"""Presence of one control file. The arm file fails closed by reading ABSENT on any
-cli/engine/execgate.py:142: comment-block 5 > 4	# Valid iff `now` is at or after the cached reading AND within the bound -- NOT just
-cli/engine/execgate.py:154: comment-block 12 > 4	# A reader that RETURNS garbage is as dangerous as one that raises: `venue.ok` on a None
-cli/engine/execgate.py:176: comment-block 6 > 4	# The second half of the arming backstop. The Ansible role refuses a CONVERGE that would
-cli/engine/execgate.py:234: comment-block 10 > 4	"""Latch `reduce_only` for this process. Written unconditionally on every engine start.
+cli/costs/calibrate.py:75: comment-block 5 > 4	"""The mean effective-spread table over `[window_start, window_end]`, plus its provenance; refused if no
+cli/data/manifest.py:1: comment-block 10 > 4	"""The manifest contract (spec 00099): one shape, so no consumer needs per-set knowledge.
+cli/data/manifest.py:56: comment-block 5 > 4	"""sha256 over the member hashes, in ascending lexicographic order OF THE SERIES KEY.
+cli/data/manifest.py:118: comment-block 6 > 4	"""The digest that identifies this set. One accessor, so no caller carries a dataset name.
+cli/data/manifest.py:130: comment-block 5 > 4	"""The attested content hashes, read from `series` EXPLICITLY.
+cli/data/manifest.py:242: comment-block 13 > 4	"""Rewrite one dataset's legacy manifest into the contract, from the parquets on disk.
+cli/data/manifest.py:299: comment-block 5 > 4	# The WHOLE legacy document, `series` included. The per-series rows are where the evidence that
+cli/data/sync.py:1: file-prose 22.4 > 20
+cli/data/sync.py:26: comment-block 10 > 4	"""The committed per-series attestations, keyed by dataset.
+cli/data/sync.py:127: comment-block 7 > 4	"""What attests `set_name`: (every vouched hash, the path-bound subset of them).
+cli/data/sync.py:154: comment-block 6 > 4	"""Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
+cli/data/sync.py:170: comment-block 6 > 4	"""Re-hash what a push is about to transmit, and refuse content nothing attests.
+cli/data/sync.py:181: comment-block 5 > 4	# Fail closed, and MORE readily than the fetch side: this is the permanent direction. A
+cli/engine/command.py:1735: comment-mass 855 > 528	"""Close every open position and sell every non-EUR balance at market, account-wide.
+cli/engine/cycle.py:1: comment-block 6 > 4	"""The shadow cycle core (spec 00041 SS the cycle core). Aware-UTC everywhere: naive datetimes are rejected at
+cli/engine/cycle.py:1: file-prose 32.9 > 20
+cli/engine/cycle.py:68: comment-block 9 > 4	# The engine's per-cycle hook (spec 00069 D5/T4): `run()` installs this UNCONDITIONALLY -- it no
+cli/engine/cycle.py:203: comment-block 5 > 4	"""The pairs whose raw tail still lacks a bar the boundary invariant expects (not yet
+cli/engine/cycle.py:220: comment-block 5 > 4	"""Refresh the store, then settle-verify: a pair whose raw 4h tail lacks the cycle_ts - 4h bar
+cli/engine/cycle.py:274: comment-block 17 > 4	"""The builder-input contraction (spec 00094 D2) -- ONE implementation, three consumers: this
+cli/engine/cycle.py:309: comment-block 9 > 4	"""Base-keyed ten in, symbol-keyed twelve out (spec 00094 D1): each model base carries its value
+cli/engine/cycle.py:328: comment-block 16 > 4	"""A journaled record's `final_targets` in the CURRENT symbol key space: schema 2 as-is, schema 1
+cli/engine/cycle.py:404: comment-block 7 > 4	"""Intended orders against the most recent successful record's targets (flat 0 only when none exists).
+cli/engine/cycle.py:446: comment-block 18 > 4	"""Journal this boundary's venue-truth evidence FIRST (00089 D7), before any target computation
+cli/engine/cycle.py:493: comment-block 8 > 4	"""The venue's book narrowed to the model's BASE key space over the /EUR legs.
+cli/engine/cycle.py:564: comment-block 8 > 4	"""Run one shadow cycle at the 4h boundary `cycle_ts` (spec 00041 SS the cycle core).
+cli/engine/cycle.py:601: comment-block 28 > 4	# The forming row's close per model base, journaled onto the record below so drift is measurable
+cli/engine/cycle.py:639: comment-block 5 > 4	# The book's sleeve composition at the same forming row: which of the three fixed-1/3 sleeves
+cli/engine/cycle.py:647: comment-block 5 > 4	# Did any §10 whole-book limit actually move that book (T0121). Wrapped because it is telemetry
+cli/engine/cycle.py:676: comment-block 7 > 4	# T0150: the other two terms a drift measurement needs. NAV is journaled because it sets
+cli/engine/execgate.py:1: file-prose 31.5 > 20
+cli/engine/execgate.py:78: comment-block 6 > 4	"""The single predicate every submission must pass.
+cli/engine/execgate.py:105: comment-block 7 > 4	"""Presence of one control file. The arm file fails closed by reading ABSENT on any doubt; the kill
+cli/engine/execgate.py:129: comment-block 5 > 4	# Valid iff `now` is at or after the cached reading AND within the bound -- NOT just
+cli/engine/execgate.py:141: comment-block 12 > 4	# A reader that RETURNS garbage is as dangerous as one that raises: `venue.ok` on a None
+cli/engine/execgate.py:163: comment-block 6 > 4	# The second half of the arming backstop. The Ansible role refuses a CONVERGE that would
+cli/engine/execgate.py:221: comment-block 10 > 4	"""Latch `reduce_only` for this process. Written unconditionally on every engine start.
 cli/engine/executor.py:1: comment-block 22 > 4	"""The single venue-mutating module (spec 00090, the D4 walk test's anchor): every place this
-cli/engine/executor.py:1: file-prose 41.4 > 20
+cli/engine/executor.py:1: file-prose 41.3 > 20
 cli/engine/executor.py:68: comment-block 5 > 4	# A liveness bound on this process's OWN bookkeeping, not a trading behaviour: how long a cancel or
 cli/engine/executor.py:85: comment-block 9 > 4	# The write-once record of when this engine's realized series began, in the control-file directory
 cli/engine/executor.py:97: comment-block 10 > 4	# The terminal order events the execution engine can MINT rather than receive. Past
@@ -226,147 +219,133 @@ cli/engine/executor.py:819: comment-block 32 > 4	"""The startup reconciliation s
 cli/engine/executor.py:867: comment-block 45 > 4	"""One ledgered row against the venue truth the reconciled order carries.
 cli/engine/executor.py:960: comment-block 24 > 4	"""The rows the sweep above cannot reach (spec 00100 D16): every ledgered row this engine
 cli/engine/executor.py:997: comment-block 19 > 4	"""One closed row against the venue's own figure: does the venue still report the quantity
-cli/engine/executor.py:1081: comment-block 5 > 4	# Live balances spell the free-cash currency `EUR` -- measured against the live engine
-cli/engine/executor.py:1243: comment-block 5 > 4	"""D10's classification, taken at intent start off the venue truth this intent was resolved
-cli/engine/executor.py:1285: comment-block 9 > 4	"""The resting price for this intent's side and mode, or None when no usable touch is known.
-cli/engine/executor.py:1311: comment-block 5 > 4	"""D8's sizing-time half of the plan-notional cap, and the only place a `qty` intent meets
-cli/engine/executor.py:1329: comment-block 5 > 4	"""Size, build and submit ONE order through the chokepoint. Returns
-cli/engine/executor.py:1349: comment-block 5 > 4	# `make_qty` REFUSES a quantity that rounds to zero, and it is called outside the try above.
-cli/engine/executor.py:1417: comment-block 8 > 4	"""Two callers, not two universally-reachable ones: the venue's synchronous post-only
-cli/engine/executor.py:1426: comment-block 7 > 4	# A cancel is already out, so this order is over either way -- but WHY it is out decides
-cli/engine/executor.py:1463: comment-block 5 > 4	"""Every order after the first, sized to `target_qty - filled`. Quantity conservation is the
-cli/engine/executor.py:1485: comment-block 6 > 4	"""Move to `phase`, arming the venue-answer deadline for the two phases that wait on one and
-cli/engine/executor.py:1527: comment-block 12 > 4	"""The 4-hourly boundary alert's one call into the executor, made after that boundary's
-cli/engine/executor.py:1551: comment-block 29 > 4	"""Write the first-fill birth record, once, at the first boundary that can WITNESS the
-cli/engine/executor.py:1628: comment-block 20 > 4	"""Score the most recently CLOSED ISO week and latch the kill switch when its realized mean
-cli/engine/executor.py:1702: comment-block 8 > 4	# NOT "does the oldest surviving boundary carry a fill". That question passes whenever
-cli/engine/executor.py:1717: comment-block 9 > 4	# `>=`, never `>`: a first fill landing exactly ON the Monday boundary -- what an
-cli/engine/executor.py:1736: comment-block 5 > 4	# NAV sets both halves of the comparison (a target is `weight * nav / close`, and the
-cli/engine/executor.py:1760: comment-block 13 > 4	"""Latch the execution kill switch: create the kill file, pull everything the Cache reports
-cli/engine/executor.py:1817: comment-block 31 > 4	"""A trip must leave NOTHING working at the venue: the in-flight order AND everything else
-cli/engine/executor.py:1871: comment-block 19 > 4	"""The three fill-time divergences, checked in this order and BEFORE the fill is dispatched
-cli/engine/executor.py:1918: comment-block 6 > 4	"""The fill that is about to trip the switch still gets its forensic row. It HAPPENED at the
-cli/engine/executor.py:1950: comment-block 23 > 4	"""The post-terminal reconciliation: what this intent's fills say this engine's OWN position
-cli/engine/executor.py:2024: comment-block 27 > 4	# This terminal was MINTED by the execution engine, not sent by the venue: past its
-cli/engine/executor.py:2056: comment-block 5 > 4	# Deliberately does NOT set `phase = "resting"`. The submission paths already did, and
-cli/engine/executor.py:2107: comment-block 14 > 4	"""Three verdicts, and telling them apart is the whole safety of this branch.
-cli/engine/executor.py:2137: comment-block 5 > 4	"""A cancel WE asked for writes its row terminal here -- the mid-rest revoke, the time-box
-cli/engine/executor.py:2168: comment-block 5 > 4	# Spec 00108 D5. This arm runs for ANY venue-originated cancel or expiry while the
-cli/engine/executor.py:2186: comment-block 39 > 4	"""The row state a non-fill event writes, read off the VENUE's own order.
-cli/engine/executor.py:2244: comment-block 32 > 4	"""Events from `events.order.EXTERNAL` (spec 00098 D1): the delivery path for orders this
-cli/engine/executor.py:2323: comment-block 28 > 4	"""The live view of the fill that just went into the ledger row -- same event, same numbers.
-cli/engine/executor.py:2364: comment-block 11 > 4	"""Realized PnL over every instrument this process has traded, EUR only.
-cli/engine/executor.py:2405: comment-block 6 > 4	# `commission` is optional on the event, and a fee-less fill still gets its row: the
-cli/engine/executor.py:2418: comment-block 21 > 4	"""An event for an order that is not the one in flight: an order this process superseded, one
-cli/engine/executor.py:2460: comment-block 7 > 4	# Both completion tests carry a one-lot-step tolerance, because both compare a SUM of
-cli/engine/executor.py:2593: comment-block 15 > 4	"""An ambiguous outcome ends the WHOLE plan, not just its intent (owner ruling).
+cli/engine/executor.py:1089: comment-block 5 > 4	# Live balances spell the free-cash currency `EUR` -- measured against the live engine
+cli/engine/executor.py:1251: comment-block 5 > 4	"""D10's classification, taken at intent start off the venue truth this intent was resolved
+cli/engine/executor.py:1293: comment-block 9 > 4	"""The resting price for this intent's side and mode, or None when no usable touch is known.
+cli/engine/executor.py:1319: comment-block 5 > 4	"""D8's sizing-time half of the plan-notional cap, and the only place a `qty` intent meets
+cli/engine/executor.py:1337: comment-block 5 > 4	"""Size, build and submit ONE order through the chokepoint. Returns
+cli/engine/executor.py:1357: comment-block 5 > 4	# `make_qty` REFUSES a quantity that rounds to zero, and it is called outside the try above.
+cli/engine/executor.py:1425: comment-block 8 > 4	"""Two callers, not two universally-reachable ones: the venue's synchronous post-only
+cli/engine/executor.py:1434: comment-block 7 > 4	# A cancel is already out, so this order is over either way -- but WHY it is out decides
+cli/engine/executor.py:1471: comment-block 5 > 4	"""Every order after the first, sized to `target_qty - filled`. Quantity conservation is the
+cli/engine/executor.py:1493: comment-block 6 > 4	"""Move to `phase`, arming the venue-answer deadline for the two phases that wait on one and
+cli/engine/executor.py:1535: comment-block 12 > 4	"""The 4-hourly boundary alert's one call into the executor, made after that boundary's
+cli/engine/executor.py:1559: comment-block 29 > 4	"""Write the first-fill birth record, once, at the first boundary that can WITNESS the
+cli/engine/executor.py:1636: comment-block 20 > 4	"""Score the most recently CLOSED ISO week and latch the kill switch when its realized mean
+cli/engine/executor.py:1710: comment-block 8 > 4	# NOT "does the oldest surviving boundary carry a fill". That question passes whenever
+cli/engine/executor.py:1725: comment-block 9 > 4	# `>=`, never `>`: a first fill landing exactly ON the Monday boundary -- what an
+cli/engine/executor.py:1744: comment-block 5 > 4	# NAV sets both halves of the comparison (a target is `weight * nav / close`, and the
+cli/engine/executor.py:1768: comment-block 13 > 4	"""Latch the execution kill switch: create the kill file, pull everything the Cache reports
+cli/engine/executor.py:1825: comment-block 31 > 4	"""A trip must leave NOTHING working at the venue: the in-flight order AND everything else
+cli/engine/executor.py:1879: comment-block 19 > 4	"""The three fill-time divergences, checked in this order and BEFORE the fill is dispatched
+cli/engine/executor.py:1926: comment-block 6 > 4	"""The fill that is about to trip the switch still gets its forensic row. It HAPPENED at the
+cli/engine/executor.py:1958: comment-block 23 > 4	"""The post-terminal reconciliation: what this intent's fills say this engine's OWN position
+cli/engine/executor.py:2032: comment-block 27 > 4	# This terminal was MINTED by the execution engine, not sent by the venue: past its
+cli/engine/executor.py:2064: comment-block 5 > 4	# Deliberately does NOT set `phase = "resting"`. The submission paths already did, and
+cli/engine/executor.py:2115: comment-block 14 > 4	"""Three verdicts, and telling them apart is the whole safety of this branch.
+cli/engine/executor.py:2145: comment-block 5 > 4	"""A cancel WE asked for writes its row terminal here -- the mid-rest revoke, the time-box
+cli/engine/executor.py:2176: comment-block 5 > 4	# Spec 00108 D5. This arm runs for ANY venue-originated cancel or expiry while the
+cli/engine/executor.py:2194: comment-block 39 > 4	"""The row state a non-fill event writes, read off the VENUE's own order.
+cli/engine/executor.py:2252: comment-block 32 > 4	"""Events from `events.order.EXTERNAL` (spec 00098 D1): the delivery path for orders this
+cli/engine/executor.py:2331: comment-block 28 > 4	"""The live view of the fill that just went into the ledger row -- same event, same numbers.
+cli/engine/executor.py:2372: comment-block 11 > 4	"""Realized PnL over every instrument this process has traded, EUR only.
+cli/engine/executor.py:2413: comment-block 6 > 4	# `commission` is optional on the event, and a fee-less fill still gets its row: the
+cli/engine/executor.py:2426: comment-block 21 > 4	"""An event for an order that is not the one in flight: an order this process superseded, one
+cli/engine/executor.py:2468: comment-block 7 > 4	# Both completion tests carry a one-lot-step tolerance, because both compare a SUM of
+cli/engine/executor.py:2599: comment-block 15 > 4	"""An ambiguous outcome ends the WHOLE plan, not just its intent (owner ruling).
 cli/engine/flatten.py:1: comment-block 28 > 4	"""`zcrypto engine flatten` -- the red button (spec 00106).
-cli/engine/flatten.py:1: file-prose 30.7 > 20
+cli/engine/flatten.py:1: file-prose 30.4 > 20
 cli/engine/flatten.py:66: comment-block 5 > 4	# The rung-1 leverage, and the only value ever accepted live from this repo (probes 4c/4d in
 cli/engine/flatten.py:76: comment-block 5 > 4	# The basket legs Kraken spells two ways, which are exactly the legs `read_open_orders` cannot see
 cli/engine/flatten.py:122: comment-block 7 > 4	"""Every request with its parameters and every answer verbatim -- the journal's spine.
 cli/engine/flatten.py:166: comment-block 6 > 4	"""A quantization step, which must be positive to be one.
-cli/engine/flatten.py:185: comment-block 7 > 4	"""The keyword arguments as the journal records them: a nautilus enum by its string form, every
-cli/engine/flatten.py:196: comment-block 21 > 4	"""The orders resting at the venue that the adapter can resolve an instrument for -- NOT every
-cli/engine/flatten.py:252: comment-block 5 > 4	# `None` read as "no positions" is the one shape that CONFIRMS ITSELF: `build_plan` shows no
-cli/engine/flatten.py:316: comment-block 7 > 4	"""The three constraints a sized order needs, required on THIS pair only. Validating the whole
-cli/engine/flatten.py:365: comment-block 5 > 4	# `_required` rejects only `None` and `_as_float` only the non-finite, so a zero would flow
-cli/engine/flatten.py:423: comment-block 9 > 4	"""One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
-cli/engine/flatten.py:541: comment-block 6 > 4	"""The committed per-symbol notional floor, or None when it does not apply to this pair.
-cli/engine/flatten.py:557: comment-block 8 > 4	"""The reference price at the venue's tick, or None where the floor leaves nothing of it.
-cli/engine/flatten.py:574: comment-block 6 > 4	"""`size_order`'s verdict on one quantity -- the engine's own arithmetic, floors and all.
-cli/engine/flatten.py:596: comment-block 9 > 4	"""`flat` / `dust` / `residual` for one non-EUR free spot balance.
-cli/engine/flatten.py:613: comment-block 8 > 4	"""One leg's order quantity and whether it is sent at all.
-cli/engine/flatten.py:672: comment-block 13 > 4	"""Every leg, sized, with its reference price -- and every book read taken HERE, before the
-cli/engine/flatten.py:734: comment-block 7 > 4	"""What an operator reads before typing the word. Estimates stay in each leg's own quote
-cli/engine/flatten.py:771: comment-block 9 > 4	"""Present or refuse. Without it, the engine's next start re-opens what this sweep closes; the
-cli/engine/flatten.py:800: comment-block 11 > 4	"""The typed word, read from the controlling terminal and NEVER from stdin: a pipe or a heredoc
-cli/engine/flatten.py:857: comment-block 13 > 4	"""`FLT-<basic ISO-8601 UTC>-<n>`. Inside the id SHAPE Kraken has already accepted from this
-cli/engine/flatten.py:878: comment-block 14 > 4	"""One MARKET IOC order. The quantity is minted at the precision the venue's own lot step
-cli/engine/flatten.py:936: comment-block 19 > 4	"""Never raises: a rejection is journaled and the sweep continues, and is never retried.
-cli/engine/flatten.py:980: comment-block 16 > 4	"""A POST-WRITE read whose answer nothing but the journal consumes: run it, or name the failure
-cli/engine/flatten.py:1004: comment-block 12 > 4	"""From the account-wide cancel to the final snapshot. Re-runnable: a second run finds less to
-cli/engine/flatten.py:1072: comment-block 9 > 4	"""Everything in the final snapshot that says the account is not flat.
-cli/engine/flatten.py:1131: comment-block 5 > 4	"""ISO-8601 BASIC form: an operator types this path mid-incident, and the extended form's `:`
-cli/engine/flatten.py:1161: comment-block 5 > 4	# The condition this fallback exists for is routinely the SAME one that broke the
-cli/engine/flatten.py:1173: comment-block 12 > 4	"""`echo`, with a stdout that can go away.
-cli/engine/flatten.py:1209: comment-block 6 > 4	"""The whole button. Returns the process exit code; raises nothing.
-cli/engine/gate_cache.py:1: comment-block 30 > 4	"""The gate-export scoring cache primitives (spec 00060): fingerprints, load/save, and the
-cli/engine/gate_cache.py:1: file-prose 43.1 > 20
-cli/engine/gate_cache.py:58: comment-block 9 > 4	# The replay entry points (spec 00065 D1). Coverage is DERIVED from these by _replay_code_paths()
-cli/engine/gate_cache.py:76: comment-block 9 > 4	"""The files a dotted `cli.*` module name can live in, under `repo_root`. Non-`cli` names
-cli/engine/gate_cache.py:90: comment-block 7 > 4	# ANCESTOR PACKAGES (spec 00065 D10, added at review). Importing `cli.engine.command` EXECUTES
-cli/engine/gate_cache.py:113: comment-block 14 > 4	"""The `cli.*` modules `module_path` imports. Best-effort BY DESIGN (D6): a file that cannot be
-cli/engine/gate_cache.py:150: comment-block 26 > 4	"""The transitive `cli.*` import closure of `_REPLAY_ROOTS` (spec 00065) -- the
-cli/engine/gate_cache.py:178: comment-block 5 > 4	# Seed with the roots AND their own ancestor packages. Without this the D10 ancestor rule
-cli/engine/gate_cache.py:196: comment-block 20 > 4	"""sha256 over the source bytes of the modules that determine a replay's result, the effective
-cli/engine/gate_cache.py:231: comment-block 6 > 4	"""sha256 over everything a replay verdict depends on from the journal side: every journaled
-cli/engine/gate_cache.py:259: comment-block 6 > 4	"""The cycle's permanent re-verification slice, in [0, _ROTATION_SLICES) (D2). sha256 over the
-cli/engine/gate_cache.py:277: comment-block 8 > 4	"""`entries` maps a cycle's cycle_ts to its (evidence_fingerprint, CycleOutcome, verified_at)
-cli/engine/instruments.py:1: comment-block 30 > 4	"""The engine's venue instrument map, the committed costmin constant, the pure order-sizing
-cli/engine/instruments.py:1: file-prose 47 > 20
-cli/engine/instruments.py:42: comment-block 5 > 4	# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
-cli/engine/instruments.py:49: comment-block 11 > 4	# Committed, not read live (spec 00089 D5a, measured): the installed nautilus-trader 1.230.0
-cli/engine/instruments.py:89: comment-block 7 > 4	"""Floor `value` down to the nearest multiple of `step`, exact under float equality.
-cli/engine/instruments.py:112: comment-block 10 > 4	"""Quantize `target_qty`/`reference_price` to the venue's `lot_step`/`tick_size`, then check
-cli/engine/instruments.py:136: comment-block 8 > 4	"""EUR-denominate one symbol's `qty * price` notional, quote-aware: an `/EUR` leg needs no
+cli/engine/flatten.py:191: comment-block 21 > 4	"""The orders resting at the venue that the adapter can resolve an instrument for -- NOT every
+cli/engine/flatten.py:247: comment-block 5 > 4	# `None` read as "no positions" is the one shape that CONFIRMS ITSELF: `build_plan` shows no
+cli/engine/flatten.py:311: comment-block 7 > 4	"""The three constraints a sized order needs, required on THIS pair only. Validating the whole
+cli/engine/flatten.py:360: comment-block 5 > 4	# `_required` rejects only `None` and `_as_float` only the non-finite, so a zero would flow
+cli/engine/flatten.py:418: comment-block 9 > 4	"""One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
+cli/engine/flatten.py:536: comment-block 6 > 4	"""The committed per-symbol notional floor, or None when it does not apply to this pair.
+cli/engine/flatten.py:552: comment-block 8 > 4	"""The reference price at the venue's tick, or None where the floor leaves nothing of it.
+cli/engine/flatten.py:569: comment-block 6 > 4	"""`size_order`'s verdict on one quantity -- the engine's own arithmetic, floors and all.
+cli/engine/flatten.py:591: comment-block 9 > 4	"""`flat` / `dust` / `residual` for one non-EUR free spot balance.
+cli/engine/flatten.py:608: comment-block 8 > 4	"""One leg's order quantity and whether it is sent at all.
+cli/engine/flatten.py:667: comment-block 13 > 4	"""Every leg, sized, with its reference price -- and every book read taken HERE, before the
+cli/engine/flatten.py:729: comment-block 7 > 4	"""What an operator reads before typing the word. Estimates stay in each leg's own quote
+cli/engine/flatten.py:766: comment-block 9 > 4	"""Present or refuse. Without it, the engine's next start re-opens what this sweep closes; the
+cli/engine/flatten.py:795: comment-block 11 > 4	"""The typed word, read from the controlling terminal and NEVER from stdin: a pipe or a heredoc
+cli/engine/flatten.py:852: comment-block 13 > 4	"""`FLT-<basic ISO-8601 UTC>-<n>`. Inside the id SHAPE Kraken has already accepted from this
+cli/engine/flatten.py:873: comment-block 14 > 4	"""One MARKET IOC order. The quantity is minted at the precision the venue's own lot step
+cli/engine/flatten.py:931: comment-block 19 > 4	"""Never raises: a rejection is journaled and the sweep continues, and is never retried.
+cli/engine/flatten.py:975: comment-block 16 > 4	"""A POST-WRITE read whose answer nothing but the journal consumes: run it, or name the failure
+cli/engine/flatten.py:999: comment-block 12 > 4	"""From the account-wide cancel to the final snapshot. Re-runnable: a second run finds less to
+cli/engine/flatten.py:1067: comment-block 9 > 4	"""Everything in the final snapshot that says the account is not flat.
+cli/engine/flatten.py:1126: comment-block 5 > 4	"""ISO-8601 BASIC form: an operator types this path mid-incident, and the extended form's `:`
+cli/engine/flatten.py:1156: comment-block 5 > 4	# The condition this fallback exists for is routinely the SAME one that broke the
+cli/engine/flatten.py:1168: comment-block 12 > 4	"""`echo`, with a stdout that can go away.
+cli/engine/flatten.py:1204: comment-block 6 > 4	"""The whole button. Returns the process exit code; raises nothing.
+cli/engine/gate_cache.py:1: comment-block 8 > 4	"""Gate-export scoring-cache primitives (spec 00060): the two fingerprints, load/save, and the `GateCache`
+cli/engine/gate_cache.py:1: file-prose 35.1 > 20
+cli/engine/gate_cache.py:36: comment-block 9 > 4	# The replay entry points (spec 00065 D1). Coverage is DERIVED from these by _replay_code_paths()
+cli/engine/gate_cache.py:54: comment-block 9 > 4	"""The files a dotted `cli.*` module name can live in, under `repo_root`. Non-`cli` names
+cli/engine/gate_cache.py:68: comment-block 7 > 4	# ANCESTOR PACKAGES (spec 00065 D10, added at review). Importing `cli.engine.command` EXECUTES
+cli/engine/gate_cache.py:118: comment-block 26 > 4	"""The transitive `cli.*` import closure of `_REPLAY_ROOTS` (spec 00065) -- the
+cli/engine/gate_cache.py:146: comment-block 5 > 4	# Seed with the roots AND their own ancestor packages. Without this the D10 ancestor rule
+cli/engine/gate_cache.py:164: comment-block 9 > 4	"""sha256 over the source bytes of `_replay_code_paths()`, the effective config, the replay path
+cli/engine/gate_cache.py:188: comment-block 5 > 4	"""sha256 over the journal side of a replay verdict: each journaled SnapshotEntry in FULL, in canonical
+cli/engine/gate_cache.py:215: comment-block 6 > 4	"""The cycle's permanent re-verification slice, in [0, _ROTATION_SLICES) (D2). sha256 over the
+cli/engine/gate_cache.py:233: comment-block 8 > 4	"""`entries` maps a cycle's cycle_ts to its (evidence_fingerprint, CycleOutcome, verified_at)
+cli/engine/instruments.py:1: comment-block 12 > 4	"""The engine's venue instrument map, the committed costmin constant, and the pure sizing and FX terms (spec
+cli/engine/instruments.py:1: file-prose 35 > 20
+cli/engine/instruments.py:24: comment-block 5 > 4	# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
+cli/engine/instruments.py:31: comment-block 11 > 4	# Committed, not read live (spec 00089 D5a, measured): the installed nautilus-trader 1.230.0
+cli/engine/instruments.py:71: comment-block 7 > 4	"""Floor `value` down to the nearest multiple of `step`, exact under float equality.
+cli/engine/instruments.py:94: comment-block 6 > 4	"""The `ordermin` and `costmin` checks run on the POST-floor numbers -- a target that clears `ordermin`
 cli/engine/node.py:1: comment-block 7 > 4	"""The node wrapper (spec 00041 SS the node wrapper): pure 4h-boundary arithmetic, the
-cli/engine/node.py:1: file-prose 41 > 20
+cli/engine/node.py:1: file-prose 39.2 > 20
 cli/engine/node.py:59: comment-block 5 > 4	# The client-order-id tag, a venue-visible identifier: registration stamps it into `strategy_id`
 cli/engine/node.py:66: comment-block 5 > 4	# The identity nautilus stamps on an order this process did not submit: reconciliation adopts a
 cli/engine/node.py:96: comment-block 5 > 4	"""The restart-inside-a-passable-window rule: return B = most_recent_boundary(now) iff no
 cli/engine/node.py:112: comment-block 5 > 4	"""Invoke run_cycle, catching and logging any exception -- the node must survive; an
 cli/engine/node.py:167: comment-block 26 > 4	"""The thin strategy owning ONLY timer arithmetic and the probe executor's wiring: on_start
 cli/engine/node.py:195: comment-block 10 > 4	"""`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
-cli/engine/node.py:297: comment-block 16 > 4	"""The observer's whole configuration: the external order identity, and nothing else.
-cli/engine/node.py:322: comment-block 22 > 4	"""The second order stream (spec 00098 D1, 00100 D2): registered under the venue's external
-cli/engine/node.py:346: comment-block 5 > 4	"""`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
-cli/engine/node.py:412: comment-block 17 > 4	"""Every knob explicit (all five are library defaults) because all five are load-bearing here.
-cli/engine/node.py:439: comment-block 15 > 4	"""The Kraken data client. The adapter loads the venue's instrument universe itself on connect;
-cli/engine/node.py:462: comment-block 5 > 4	"""The trade key and secret read from the environment, or None when either is absent or empty.
-cli/engine/node.py:489: comment-block 25 > 4	# Matched literally against the loaded instrument's `quote_currency.code`, which for
-cli/engine/node.py:524: comment-block 11 > 4	"""The assembled builder: trader identity, logging, the two exec-engine knobs, the Kraken data
-cli/engine/node.py:573: comment-block 8 > 4	"""Assemble (never run here) the production-shape shadow LiveNode: the builder's clients
-cli/engine/soak.py:282: comment-block 7 > 4	"""Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
-cli/engine/soak.py:536: comment-block 7 > 4	"""Roll per-metric verdicts into a multiplicity-aware summary: judging N discriminating metrics at `band`
-cli/engine/soak.py:585: comment-block 6 > 4	"""Reconcile two per-metric null verdicts (spec 00061 D1) -- pure: two labels in, a `DualVerdict` out. An
-cli/engine/soak.py:760: comment-block 8 > 4	"""Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
-cli/engine/soak.py:955: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
-cli/engine/soak.py:984: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
-cli/engine/soak.py:1260: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
-cli/engine/soak.py:1390: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
-cli/engine/soak.py:1532: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
-cli/engine/venuestate.py:1: comment-block 43 > 4	"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this
-cli/engine/venuestate.py:1: file-prose 41.9 > 20
-cli/engine/venuestate.py:61: comment-block 5 > 4	"""One symbol's venue-quoted order constraints, evidence -- not live-precision, hence float.
-cli/engine/venuestate.py:114: comment-block 8 > 4	"""Read the twelve `INSTRUMENT_IDS` legs from `cache` and freeze them into a `VenueState`.
-cli/engine/venuestate.py:155: comment-block 7 > 4	"""Per `INSTRUMENT_IDS` symbol (never `state.instruments`, so a hand-built state missing a
-cli/features/derivatives.py:1: comment-block 13 > 4	"""Derivatives-positioning features over Binance USDT-M perpetuals, mapped to Kraken spot bases by
-cli/features/derivatives.py:1: file-prose 41.1 > 20
-cli/features/derivatives.py:31: comment-block 6 > 4	"""As-of forward fill onto a decision grid: out[k] is the value of the latest source row with
-cli/features/derivatives.py:55: comment-block 12 > 4	"""Trailing z-score of the funding print at k over the inclusive window ending at k:
-cli/features/derivatives.py:84: comment-block 10 > 4	"""Run length of consecutive same-sign funding prints ending at k, counting the print at k --
-cli/features/derivatives.py:111: comment-block 10 > 4	"""Sum of the funding prints in the inclusive window ending at k -- what a position held across
-cli/features/derivatives.py:137: comment-block 11 > 4	"""Map the substrate's `0.0` open-interest placeholders to None; pass everything else through.
-cli/features/derivatives.py:152: comment-block 10 > 4	"""Log ratio of consecutive open-interest levels: log(levels[k] / levels[k-1]), same length as
-cli/features/derivatives.py:177: comment-block 12 > 4	"""Trailing z-score of the open-interest level at k over the inclusive window ending at k:
-cli/features/derivatives.py:206: comment-block 10 > 4	"""Past return of the open-interest level over `lookback` bars: levels[k] / levels[k-lookback]
-cli/features/derivatives.py:240: comment-block 7 > 4	"""Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
-cli/features/derivatives.py:261: comment-block 8 > 4	"""Coverage of one column inside one calendar year: how many rows carried a reading, how many
-cli/features/derivatives.py:277: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
+cli/engine/node.py:297: comment-block 14 > 4	"""`order_id_tag` is left unset DELIBERATELY. A tag is appended to the id -- measured, a tag "EXT" yields
+cli/engine/node.py:320: comment-block 22 > 4	"""The second order stream (spec 00098 D1, 00100 D2): registered under the venue's external
+cli/engine/node.py:344: comment-block 5 > 4	"""`Strategy` is a pyo3 class, so construction hands `__new__` this subclass's own
+cli/engine/node.py:410: comment-block 17 > 4	"""Every knob explicit (all five are library defaults) because all five are load-bearing here.
+cli/engine/node.py:437: comment-block 15 > 4	"""The Kraken data client. The adapter loads the venue's instrument universe itself on connect;
+cli/engine/node.py:460: comment-block 5 > 4	"""The trade key and secret read from the environment, or None when either is absent or empty.
+cli/engine/node.py:486: comment-block 25 > 4	# Matched literally against the loaded instrument's `quote_currency.code`, which for
+cli/engine/soak.py:279: comment-block 7 > 4	"""Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
+cli/engine/soak.py:528: comment-block 7 > 4	"""Roll per-metric verdicts into a multiplicity-aware summary: judging N discriminating metrics at `band`
+cli/engine/soak.py:577: comment-block 6 > 4	"""Reconcile two per-metric null verdicts (spec 00061 D1) -- pure: two labels in, a `DualVerdict` out. An
+cli/engine/soak.py:749: comment-block 8 > 4	"""Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
+cli/engine/soak.py:944: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
+cli/engine/soak.py:973: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
+cli/engine/soak.py:1249: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
+cli/engine/soak.py:1379: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
+cli/engine/soak.py:1521: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
+cli/engine/venuestate.py:1: comment-block 26 > 4	"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this spec that
+cli/engine/venuestate.py:1: file-prose 33.3 > 20
+cli/engine/venuestate.py:44: comment-block 5 > 4	"""One symbol's venue-quoted order constraints, evidence -- not live-precision, hence float.
+cli/engine/venuestate.py:95: comment-block 5 > 4	"""Raises `EngineError` on a structural read failure -- an `INSTRUMENT_IDS` symbol's instrument absent from
+cli/engine/venuestate.py:133: comment-block 7 > 4	"""Per `INSTRUMENT_IDS` symbol (never `state.instruments`, so a hand-built state missing a
+cli/features/derivatives.py:1: comment-block 19 > 4	"""Derivatives-positioning features over Binance USDT-M perpetuals, mapped to Kraken spot bases by
+cli/features/derivatives.py:1: file-prose 31 > 20
+cli/features/derivatives.py:37: comment-block 5 > 4	"""As-of forward fill onto a decision grid, using only source rows at or before each grid stamp
+cli/features/derivatives.py:80: comment-block 5 > 4	"""Run length of consecutive same-sign funding prints ending at k, counting the print at k --
+cli/features/derivatives.py:122: comment-block 8 > 4	"""Map the substrate's `0.0` open-interest placeholders to None; pass everything else through.
+cli/features/derivatives.py:199: comment-block 5 > 4	"""Carry Binance's ratio columns through under `binperp_` names. No arithmetic and no
+cli/features/derivatives.py:218: comment-block 7 > 4	"""Coverage of one column inside one calendar year; the stamps are None for both when the year
+cli/features/derivatives.py:233: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
 cli/features/volatility.py:1: file-prose 20.8 > 20
-cli/liquidations/coinalyze.py:1: comment-block 22 > 4	"""Coinalyze REST liquidation-history poller (`zcrypto liquidations-poll`, spec 00051 OPS-2): the
-cli/liquidations/coinalyze.py:1: file-prose 33.2 > 20
-cli/liquidations/coinalyze.py:58: comment-block 5 > 4	# Load-bearing (verified live 2026-07-15, stable over 150s): SegmentWriter's dedup keeps the FIRST
-cli/liquidations/coinalyze.py:64: comment-block 8 > 4	# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
-cli/liquidations/coinalyze.py:74: comment-block 11 > 4	# T0046: most of the funding basket's symbols liquidate rarely, so `SegmentWriter`'s event-driven
-cli/liquidations/coinalyze.py:102: comment-block 6 > 4	"""Newest persisted bucket start (epoch s) per coin, read from the segment tree at startup.
-cli/liquidations/coinalyze.py:133: comment-block 10 > 4	"""GET Coinalyze's `/v1/liquidation-history` for `symbols` (one batched call) over `[frm, to]`
-cli/liquidations/coinalyze.py:167: comment-block 15 > 4	"""One poll cycle: fetch `coins`' batched Coinalyze symbols over the last 30h and append every
-cli/liquidations/coinalyze.py:241: comment-block 5 > 4	"""Isolation invariant (spec 00069 D5): by the time this runs, `_poll_once`'s real work --
-cli/liquidations/coinalyze.py:286: comment-block 5 > 4	# A malformed bucket (null l/s, missing t, non-dict entry) raises TypeError/KeyError/
-cli/liquidations/coinalyze.py:310: comment-block 5 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
-cli/liquidations/coinalyze.py:322: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
+cli/liquidations/coinalyze.py:1: comment-block 6 > 4	"""The Coinalyze REST poller (spec 00051 OPS-2) that replaced the Binance forceOrder WS recorder that Binance geo-fences from every
+cli/liquidations/coinalyze.py:1: file-prose 25.5 > 20
+cli/liquidations/coinalyze.py:43: comment-block 5 > 4	# Load-bearing (verified live 2026-07-15, stable over 150s): SegmentWriter's dedup keeps the FIRST
+cli/liquidations/coinalyze.py:49: comment-block 8 > 4	# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
+cli/liquidations/coinalyze.py:59: comment-block 11 > 4	# T0046: most of the funding basket's symbols liquidate rarely, so `SegmentWriter`'s event-driven
+cli/liquidations/coinalyze.py:248: comment-block 5 > 4	# A malformed bucket (null l/s, missing t, non-dict entry) raises TypeError/KeyError/
+cli/liquidations/coinalyze.py:297: comment-block 5 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
+cli/liquidations/coinalyze.py:309: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
 cli/ohlc/reach.py:1: comment-block 7 > 4	"""REST reach-round: carry the canonical OHLC basket forward from Kraken's public OHLC endpoint.
 cli/panel/materialize.py:1: comment-block 17 > 4	"""Hour materializer + watermarked sweep for the 1s L2 panel (spec 00052 D3/D4/D5/D6).
 cli/panel/materialize.py:1: file-prose 36.3 > 20
@@ -379,36 +358,35 @@ cli/panel/materialize.py:231: comment-block 5 > 4	"""The newest hour with an exi
 cli/panel/materialize.py:262: comment-block 5 > 4	#: distinct pairs present in the archive whose quote has no entry in `NOTIONALS_BY_QUOTE`
 cli/panel/materialize.py:281: comment-block 21 > 4	"""Sweep canonical book hours (reconciled-first, spec 00052 D3) into the panel, per-pair
 cli/portfolio/crossfreq.py:1: comment-block 11 > 4	"""Cross-frequency combination primitives — 00038 §Construction items 1 and 4.
-cli/portfolio/crossfreq.py:1: file-prose 31.6 > 20
+cli/portfolio/crossfreq.py:1: file-prose 30.4 > 20
 cli/portfolio/crossfreq.py:22: comment-block 16 > 4	"""Hold each daily position across the intraday bars inside its (daily_ts[k], daily_ts[k+1]] interval.
-cli/portfolio/crossfreq.py:73: comment-block 8 > 4	"""Compound intraday returns within each calendar day, govern the day series, broadcast per-bar.
+cli/portfolio/crossfreq.py:73: comment-block 6 > 4	"""Per-bar multipliers from the governor run at daily cadence on each day's COMPOUNDED return.
 cli/portfolio/crossfreq_system.py:1: comment-block 35 > 4	"""Cross-frequency system builder — the adopted deployable P1 system (registry record 44) as one
-cli/portfolio/crossfreq_system.py:1: file-prose 24.8 > 20
+cli/portfolio/crossfreq_system.py:1: file-prose 24.7 > 20
 cli/portfolio/crossfreq_system.py:181: comment-block 5 > 4	"""The synthetic forming-bar close appended to a grid. Any valid price works — forming-interval
 cli/portfolio/crossfreq_system.py:210: comment-block 18 > 4	"""The §10 whole-book ceilings on the already per-asset-capped book, at their §10 defaults.
 cli/portfolio/crossfreq_system.py:376: comment-block 8 > 4	# --- the fast path ------------------------------------------------------------------------------
 cli/portfolio/crossfreq_system.py:399: comment-block 5 > 4	"""out[t] = statistics.stdev(values[t-lookback:t]) — bit-identically — for every t whose trailing
-cli/portfolio/crossfreq_system.py:520: comment-block 5 > 4	"""The B sleeve on the (extended) daily grid: dynamic_inverse_vol_basket -> equity -> sma_gate
-cli/portfolio/crossfreq_system.py:544: comment-block 6 > 4	"""a1_book_returns(...)["asset_positions"] for the fixed record-44 A1 configuration
-cli/portfolio/crossfreq_system.py:627: comment-block 25 > 4	"""The equivalence-gated fast path: same signature, same result type, same values as
+cli/portfolio/crossfreq_system.py:543: comment-block 6 > 4	"""a1_book_returns(...)["asset_positions"] for the fixed record-44 A1 configuration
+cli/portfolio/crossfreq_system.py:626: comment-block 25 > 4	"""The equivalence-gated fast path: same signature, same result type, same values as
 cli/portfolio/record43_book.py:1: comment-block 84 > 4	"""Re-derivation of registry record 43's stage-1 book — the incumbent record 44's ADOPT is measured
-cli/portfolio/record43_book.py:1: file-prose 31.4 > 20
+cli/portfolio/record43_book.py:1: file-prose 31.3 > 20
 cli/portfolio/record43_book.py:177: comment-block 5 > 4	"""The registered feed map's second grid: BTC forward-filled, every other asset's Nones kept.
 cli/portfolio/record43_book.py:200: comment-block 5 > 4	"""Per-bar (net-of-cost return, turnover) for a per-asset position book, starting flat.
 cli/portfolio/record43_book.py:221: comment-block 6 > 4	"""Per-bar turnover of a per-asset position book, starting flat (bar 0 charged full entry).
-cli/portfolio/record43_book.py:240: comment-block 7 > 4	"""B sleeve on the DAILY calendar: (per-asset positions, own net-of-cost series).
-cli/portfolio/record43_book.py:276: comment-block 5 > 4	"""A1-lf weekly v0.12 held positions, one book per rebalance offset (7 of them).
-cli/portfolio/record43_book.py:297: comment-block 5 > 4	"""Trial 34's recorded book — the mean of the 7 offsets' net-of-cost SERIES, not of positions.
-cli/portfolio/record43_book.py:307: comment-block 5 > 4	"""A2 sleeve on the 4h calendar: (equal-weight per-asset mean of the three arms, arm Sharpes).
-cli/portfolio/record43_book.py:346: comment-block 6 > 4	"""Rolling inverse-vol sleeve weights: (weights, warm-up bars, zero-vol fallback bars).
-cli/portfolio/record43_book.py:374: comment-block 8 > 4	"""Governor day ordinals for the 4h return bars: dense ranks of each bar's CLOSE date.
-cli/portfolio/record43_book.py:387: comment-block 9 > 4	"""The registered cost-stress axis: the x1.0 book's own ungoverned net, charged the EXTRA
-cli/portfolio/record43_book.py:401: comment-block 6 > 4	"""A stress axis re-costed at `cost_multiplier` and RE-GOVERNED through the daily cadence.
-cli/portfolio/record43_book.py:425: comment-block 8 > 4	"""Record 44's book on the same stress axis, from the committed builder — no knobs, frozen config.
-cli/portfolio/record43_book.py:471: comment-block 7 > 4	"""Narrow a bracket whose ends have opposite `diff_at` signs to `refine_to` wide.
-cli/portfolio/record43_book.py:498: comment-block 18 > 4	"""A census of the 43-vs-44 ordering across per-side cost — the measurement record 44's ADOPT
-cli/portfolio/record43_book.py:595: comment-block 7 > 4	"""Trial 43's stage-1 figures, keyed by their registry names, plus the `qa` block.
-cli/portfolio/record43_book.py:637: comment-block 6 > 4	# ---- expand the daily sleeves to 4h on CLOSE-TIME boundaries ----
+cli/portfolio/record43_book.py:240: comment-block 6 > 4	"""B sleeve on the DAILY calendar: (per-asset positions, own net-of-cost series — basket gross,
+cli/portfolio/record43_book.py:275: comment-block 5 > 4	"""A1-lf weekly v0.12 held positions, one book per rebalance offset (7 of them).
+cli/portfolio/record43_book.py:296: comment-block 5 > 4	"""Trial 34's recorded book — the mean of the 7 offsets' net-of-cost SERIES, not of positions.
+cli/portfolio/record43_book.py:306: comment-block 5 > 4	"""A2 sleeve on the 4h calendar: (equal-weight per-asset mean of the three arms, arm Sharpes).
+cli/portfolio/record43_book.py:345: comment-block 6 > 4	"""Rolling inverse-vol sleeve weights: (weights, warm-up bars, zero-vol fallback bars).
+cli/portfolio/record43_book.py:373: comment-block 8 > 4	"""Governor day ordinals for the 4h return bars: dense ranks of each bar's CLOSE date.
+cli/portfolio/record43_book.py:386: comment-block 9 > 4	"""The registered cost-stress axis: the x1.0 book's own ungoverned net, charged the EXTRA
+cli/portfolio/record43_book.py:400: comment-block 6 > 4	"""A stress axis re-costed at `cost_multiplier` and RE-GOVERNED through the daily cadence.
+cli/portfolio/record43_book.py:424: comment-block 8 > 4	"""Record 44's book on the same stress axis, from the committed builder — no knobs, frozen config.
+cli/portfolio/record43_book.py:470: comment-block 7 > 4	"""Narrow a bracket whose ends straddle a positive-to-negative `diff_at` flip to `refine_to` wide.
+cli/portfolio/record43_book.py:497: comment-block 18 > 4	"""A census of the 43-vs-44 ordering across per-side cost — the measurement record 44's ADOPT
+cli/portfolio/record43_book.py:594: comment-block 7 > 4	"""Trial 43's stage-1 figures, keyed by their registry names, plus the `qa` block.
+cli/portfolio/record43_book.py:636: comment-block 6 > 4	# ---- expand the daily sleeves to 4h on CLOSE-TIME boundaries ----
 cli/snapshot/register.py:15: comment-block 5 > 4	"""Assemble a structured, content-hashed snapshot dict. Deterministic given a fixed `fetched_at`.
 cli/snapshot/register.py:31: comment-block 8 > 4	# The three ways a selected pair changes identity underneath us -- T0025's trigger, as a check the
 cli/snapshot/register.py:43: comment-block 7 > 4	"""Reasons this snapshot must stop a reference-data sweep, one string each; empty means clean.
@@ -422,12 +400,6 @@ cli/trades/backfill.py:145: comment-block 10 > 4	# The book sibling of a trades 
 cli/trades/backfill.py:267: comment-block 5 > 4	# No trades final for a settled hour, and a book final that SPANS it: the signature of a
 cli/universe/rules.py:9: comment-block 7 > 4	# effective-spread bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`, so this and the volume floor
 cli/universe/rules.py:55: comment-block 5 > 4	"""Apply the master plan §3 mechanical selection rule to each `cli.snapshot` `PairSnapshot`.
-cli/xcheck/binance.py:1: file-prose 20.1 > 20
-cli/xcheck/binance.py:18: comment-block 6 > 4	"""Map a canonical `"BASE/QUOTE"` symbol to its Binance ticker (e.g. `"BTC/EUR"` -> `"BTCEUR"`).
-cli/xcheck/binance.py:32: comment-block 6 > 4	"""GET Binance's public daily klines for `pair` and return the raw kline rows.
-cli/xcheck/binance.py:53: comment-block 8 > 4	"""Fetch daily klines for `pair` via `fetch_fn` and parse into a canonical `{ts, close}` frame.
-cli/xcheck/binance.py:81: comment-block 7 > 4	"""Cross-check a canonical Kraken daily frame against a Binance daily-closes frame on their `ts` overlap.
-cli/xcheck/binance.py:117: comment-block 9 > 4	"""Cross-check each `symbol`'s Kraken daily series under `kraken_root` against Binance.
 docs/iterations-history-phase6.md:801: changelog-entry 7 > 5	## 2026-09-06 — T0173 resolved: the operator instructions the topology doc was holding, and `fetch_public`'s three refusals
 docs/open-topics/T0018-phase6-build-sequence.md:68: table-row 208 > 200	`00089`
 docs/open-topics/T0018-phase6-build-sequence.md:69: table-row 291 > 200	`00094`
@@ -447,14 +419,14 @@ docs/reference/adapter-verification/2.0.0rc4.dev20260825.md:41: section 2306 > 2
 docs/reference/adapter-verification/2.0.0rc4.dev20260825.md:53: section 2729 > 2048	## Owed checks not discharged by this pass
 docs/reference/capture-era-data-hygiene-map.md:18: table-row 279 > 200	Canonical trades
 docs/reference/capture-era-data-hygiene-map.md:20: table-row 427 > 200	Book / panel, ranks > 10
-docs/reference/capture-era-data-hygiene-map.md:23: section 10153 > 2048	## Structural windows (era-dependent)
+docs/reference/capture-era-data-hygiene-map.md:23: section 10143 > 2048	## Structural windows (era-dependent)
 docs/reference/capture-era-data-hygiene-map.md:27: table-row 449 > 200	**2026-07-08 13:00 → 07-09 00:00** — launch day
 docs/reference/capture-era-data-hygiene-map.md:28: table-row 471 > 200	**07-09 → 07-14 04:00:42** — desync-heal era
 docs/reference/capture-era-data-hygiene-map.md:29: table-row 468 > 200	**07-14 04:00:42 → secondary bring-up (~07-14 evening; exact moment unrecorded)**
 docs/reference/capture-era-data-hygiene-map.md:31: table-row 905 > 200	**2026-07-27 07:01:04 → 07:04:22** — Kraken venue outage
 docs/reference/capture-era-data-hygiene-map.md:32: table-row 1891 > 200	**2026-08-06 07:01:02 → 07:18:18** — Kraken venue outage
 docs/reference/capture-era-data-hygiene-map.md:33: table-row 2008 > 200	**2026-08-20 07:01:04 → 07:10:16** — Kraken venue outage
-docs/reference/capture-era-data-hygiene-map.md:34: table-row 3180 > 200	**2026-09-03 07:01:01.946946 → 07:04:00.668272** — Kraken venue outage
+docs/reference/capture-era-data-hygiene-map.md:34: table-row 3170 > 200	**2026-09-03 07:01:01.946946 → 07:04:00.668272** — Kraken venue outage
 docs/reference/captured-spread-calibration.md:28: section 3080 > 2048	## Provenance
 docs/reference/captured-spread-calibration.md:37: section 2757 > 2048	## Two things to know before you quote a spread number
 docs/reference/captured-spread-calibration.md:53: section 2339 > 2048	## Caveats
@@ -465,6 +437,12 @@ docs/reference/data-catalog-full.md:115: section 2201 > 2048	### Canonical trade
 docs/reference/data-catalog-full.md:123: section 3095 > 2048	### L2 primitive panel (`l2-panel/`, since 2026-07-08 capture start; accruing hourly)
 docs/reference/data-catalog-full.md:131: section 3001 > 2048	### Tape-bars — 15m OHLCV from the captured trade tape (`tape-bars/`, since 2026-07-08; daily finals)
 docs/reference/data-catalog.md:26: section 6111 > 2048	## Dataset
+docs/reference/docstring-pass-method.md:13: section 2722 > 2048	## What the pass pays on
+docs/reference/docstring-pass-method.md:38: section 2752 > 2048	## What the record does support
+docs/reference/docstring-pass-method.md:52: section 2114 > 2048	## The gate
+docs/reference/docstring-pass-method.md:77: section 3911 > 2048	## Standing procedures
+docs/reference/docstring-pass-method.md:101: section 2795 > 2048	## Failure modes: what the prose claims
+docs/reference/docstring-pass-method.md:117: section 3002 > 2048	## Failure modes: what the instruments report
 docs/reference/drill-log.md:9: section 4240 > 2048	## 2026-08-31 — J′ — pass
 docs/reference/drill-log.md:13: section 6747 > 2048	## 2026-08-31 — K — pass
 docs/reference/drill-log.md:17: section 3857 > 2048	## 2026-08-31 — O — pass
@@ -478,16 +456,16 @@ docs/reference/drill-log.md:45: section 15357 > 2048	## 2026-08-31 — R — pas
 docs/reference/drill-log.md:49: section 2952 > 2048	## 2026-09-01 — C′-fail — pass
 docs/reference/drill-log.md:55: section 3317 > 2048	## 2026-09-02 — N — pass
 docs/reference/drill-log.md:59: section 6280 > 2048	## 2026-09-04 — P — pass
-docs/reference/fleet-pins.md:12: section 2301 > 2048	## Current pins
+docs/reference/fleet-pins.md:12: section 2269 > 2048	## Current pins
 docs/reference/fleet-pins.md:27: table-row 475 > 200	agentboard
 docs/reference/fleet.md:5: section 4014 > 2048	## Hosts
 docs/reference/fleet.md:11: table-row 352 > 200	`zcrypto-ops`
 docs/reference/fleet.md:12: table-row 371 > 200	`nas`
 docs/reference/fleet.md:13: table-row 487 > 200	`zaccess`
-docs/reference/fleet.md:26: section 4389 > 2048	## Services and instruments
+docs/reference/fleet.md:26: section 4423 > 2048	## Services and instruments
 docs/reference/fleet.md:31: table-row 492 > 200	`zcrypto-engine`
 docs/reference/fleet.md:33: table-row 246 > 200	`grafana-alloy`
-docs/reference/fleet.md:34: table-row 277 > 200	ops timers
+docs/reference/fleet.md:34: table-row 311 > 200	ops timers
 docs/reference/fleet.md:35: table-row 501 > 200	capture/engine timers
 docs/reference/fleet.md:37: table-row 301 > 200	gate export
 docs/reference/fleet.md:38: table-row 274 > 200	Caddy (mTLS edge)
@@ -495,11 +473,10 @@ docs/reference/fleet.md:40: table-row 278 > 200	socket-proxyd relays
 docs/reference/fleet.md:41: table-row 227 > 200	agentboard (G2)
 docs/reference/fleet.md:42: table-row 231 > 200	access probe timers
 docs/reference/kraken-snapshot-register.md:42: section 4032 > 2048	## Endpoint-reported fee ladder, borrow rate & margin bands
-docs/reference/kraken-snapshot-register.md:113: section 5138 > 2048	## Re-confirmation log
+docs/reference/kraken-snapshot-register.md:113: section 3660 > 2048	## Re-confirmation log
 docs/reference/kraken-snapshot-register.md:122: table-row 327 > 200	#0 (Phase 0, iter-002)
 docs/reference/kraken-snapshot-register.md:123: table-row 427 > 200	#1 (monthly, 2026-08-04)
-docs/reference/kraken-snapshot-register.md:124: table-row 2729 > 200	#2 (monthly, 2026-09-04)
-docs/reference/multi-agent-protocol.md:36: section 2151 > 2048	## The hourly tick
+docs/reference/kraken-snapshot-register.md:124: table-row 1265 > 200	#2 (monthly, 2026-09-04)
 docs/reference/sleeve-composition-ledger.md:1: section 2160 > 2048	# Sleeve composition ledger
 docs/reference/sleeve-composition-ledger.md:13: section 2619 > 2048	### 2026-08-22 — B and A1 re-arm; the one-sleeve era ends
 docs/reference/symbol-corporate-action-ledger.md:18: section 2498 > 2048	## Corporate actions
@@ -515,7 +492,6 @@ infra/ansible/roles/access_ops/tasks/main.yml:4: comment-block 5 > 4	# The G1 re
 infra/ansible/roles/access_ops/tasks/main.yml:77: comment-block 5 > 4	# Idempotency is keyed on the pinned version being present under nvm's CURRENT node, not on a
 infra/ansible/roles/access_ops/tasks/main.yml:103: comment-block 10 > 4	# Rendered ahead of the unit that ExecStarts it and notifying nothing on purpose: a changed script
 infra/ansible/roles/base/tasks/main.yml:1: comment-block 8 > 4	# Fleet policy, pinned in config (spec 00050, spec 00051, .claude/rules/fleet-deploys.md): no two
-infra/ansible/roles/base/tasks/main.yml:104: comment-block 6 > 4	# Never logrotate a live docker json log: `copytruncate` truncates a file dockerd holds open,
 infra/ansible/roles/capture/files/zcrypto-clock-offset.sh:2: comment-block 7 > 4	# Installed by the `capture` role at /usr/local/sbin/zcrypto-clock-offset, so a hand-edit there is
 infra/ansible/roles/capture/tasks/main.yml:2: comment-block 5 > 4	# Deploys the capture daemon: renders the compose file and the systemd unit, and lets the unit's own
 infra/ansible/roles/capture/tasks/main.yml:199: comment-block 8 > 4	# The CLI's own Loki push credentials for the CAPTURE container (spec 00068 D5), distinct from the
@@ -540,14 +516,13 @@ infra/ansible/roles/engine/tasks/main.yml:391: comment-block 8 > 4	# Store deliv
 infra/ansible/roles/nas/tasks/main.yml:52: comment-block 5 > 4	# In its OWN directory, which is what compose.yaml bind-mounts. A single-file bind mount binds the
 infra/ansible/roles/nas/tasks/main.yml:119: comment-block 19 > 4	# The hot/ hub push channel (spec 00056 D2/D4): the ONE write path into custody. The workstation
 infra/ansible/roles/nas/tasks/main.yml:158: comment-block 5 > 4	# No rrsync-only login shell here, unlike ops: DSM accepts ONLY its own built-in shells and refuses
-infra/ansible/roles/nas/tasks/main.yml:164: comment-block 5 > 4	# The inbound hot-push forced command lands on zcrypto-data, the m2m data user, NOT the admin
-infra/ansible/roles/nas/tasks/main.yml:176: comment-block 5 > 4	# Render-only report: an unflagged converge lands files and says which changed, and nothing
-infra/ansible/roles/nas/tasks/main.yml:197: comment-block 8 > 4	# The apply: flag-gated END-OF-ROLE tasks, deliberately NOT a notify/handler pair. A notify consumed
-infra/ansible/roles/nas/tasks/main.yml:218: comment-block 5 > 4	# Restarts Alloy so it re-reads the config.alloy THIS converge deployed: the config dir is
+infra/ansible/roles/nas/tasks/main.yml:175: comment-block 5 > 4	# Render-only report: an unflagged converge lands files and says which changed, and nothing
+infra/ansible/roles/nas/tasks/main.yml:196: comment-block 8 > 4	# The apply: flag-gated END-OF-ROLE tasks, deliberately NOT a notify/handler pair. A notify consumed
+infra/ansible/roles/nas/tasks/main.yml:217: comment-block 5 > 4	# Restarts Alloy so it re-reads the config.alloy THIS converge deployed: the config dir is
 infra/ansible/roles/ops/defaults/main.yml:37: comment-block 5 > 4	# Fleet users and groups (spec 00057): the machine-to-machine data user runs the data containers,
 infra/ansible/roles/ops/defaults/main.yml:57: comment-block 5 > 4	# The nightly verify-replay checkpoint (spec 00078 D9): the per-hour raw facts that let the sweep
-infra/ansible/roles/ops/defaults/main.yml:102: comment-block 8 > 4	# OPS-5 (spec 00054 D2): the overlay writer's knobs. DETECT-ONLY is this role's default, and the
-infra/ansible/roles/ops/defaults/main.yml:113: comment-block 5 > 4	# The --mint flip (spec 00050 Task 12's last step). DEFAULT FALSE: minting writes healed hours into
+infra/ansible/roles/ops/defaults/main.yml:107: comment-block 8 > 4	# OPS-5 (spec 00054 D2): the overlay writer's knobs. DETECT-ONLY is this role's default, and the
+infra/ansible/roles/ops/defaults/main.yml:118: comment-block 5 > 4	# The --mint flip (spec 00050 Task 12's last step). DEFAULT FALSE: minting writes healed hours into
 infra/ansible/roles/ops/tasks/main.yml:1: comment-block 5 > 4	# The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
 infra/ansible/roles/ops/tasks/main.yml:23: comment-block 9 > 4	# The zcrypto CLI's own Loki push creds for the ops-node LIQUIDATIONS container (spec 00068 D5/T6)
 infra/ansible/roles/ops/tasks/main.yml:57: comment-block 19 > 4	# --- T0058: the NAS custody export, mounted READ-ONLY over NFS. Replaces the retired hourly
@@ -562,16 +537,16 @@ infra/ansible/roles/ops/tasks/main.yml:370: comment-block 5 > 4	# spec 00082 D1 
 infra/ansible/roles/ops/tasks/main.yml:384: comment-block 15 > 4	# The overlay tree arrived here under the NOW-REMOVED NAS pull (spec 00054 D2) via `rsync -a`, which
 infra/ansible/roles/ops/tasks/main.yml:407: comment-block 7 > 4	# The overlay-writer runner (OPS-5, spec 00054 D2; re-plumbed by T0058): archive-pull.sh.j2
 infra/ansible/roles/ops/tasks/main.yml:444: comment-block 5 > 4	# --- T0083: the Grafana-availability pinger gating the zcrypto-grafana-watchdog dead-man --------
-infra/ansible/roles/ops/tasks/main.yml:489: comment-block 6 > 4	# OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
-infra/ansible/roles/ops/tasks/main.yml:522: comment-block 9 > 4	# Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
-infra/ansible/roles/ops/tasks/main.yml:538: comment-block 12 > 4	# A NEWLY ADDED timer's unit file was never really written under --check, so systemd cannot
-infra/ansible/roles/ops/tasks/main.yml:563: comment-block 5 > 4	# The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
-infra/ansible/roles/ops/tasks/main.yml:573: comment-block 5 > 4	# T0110: the Alloy block's digest gate skips the config copy on any converge that omits the digest,
-infra/ansible/roles/ops/tasks/main.yml:609: comment-block 5 > 4	# Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
-infra/ansible/roles/ops/tasks/main.yml:622: comment-block 11 > 4	# Alloy mounts /:/host/root:ro for free-disk-space metrics, so running it as a user whose home
-infra/ansible/roles/ops/tasks/main.yml:651: comment-block 7 > 4	# A NAMED group_add entry resolves against the CONTAINER's own /etc/group, not the host's, and
-infra/ansible/roles/ops/tasks/main.yml:687: comment-block 6 > 4	# In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
-infra/ansible/roles/ops/tasks/main.yml:710: comment-block 6 > 4	# Renders straight from the vault (group_vars/observed/vault.yml). no_log + diff: false:
+infra/ansible/roles/ops/tasks/main.yml:533: comment-block 6 > 4	# OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
+infra/ansible/roles/ops/tasks/main.yml:566: comment-block 9 > 4	# Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
+infra/ansible/roles/ops/tasks/main.yml:582: comment-block 12 > 4	# A NEWLY ADDED timer's unit file was never really written under --check, so systemd cannot
+infra/ansible/roles/ops/tasks/main.yml:607: comment-block 5 > 4	# The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
+infra/ansible/roles/ops/tasks/main.yml:617: comment-block 5 > 4	# T0110: the Alloy block's digest gate skips the config copy on any converge that omits the digest,
+infra/ansible/roles/ops/tasks/main.yml:654: comment-block 5 > 4	# Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
+infra/ansible/roles/ops/tasks/main.yml:667: comment-block 11 > 4	# Alloy mounts /:/host/root:ro for free-disk-space metrics, so running it as a user whose home
+infra/ansible/roles/ops/tasks/main.yml:696: comment-block 7 > 4	# A NAMED group_add entry resolves against the CONTAINER's own /etc/group, not the host's, and
+infra/ansible/roles/ops/tasks/main.yml:732: comment-block 6 > 4	# In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
+infra/ansible/roles/ops/tasks/main.yml:755: comment-block 6 > 4	# Renders straight from the vault (group_vars/observed/vault.yml). no_log + diff: false:
 infra/ansible/scripts/converge.sh:53: comment-block 6 > 4	# The real pass, RECORDED into a git-tracked log: fleet-pins.md is re-trued from the line this
 infra/ansible/site.yml:131: comment-block 7 > 4	# The window condition is mirrored here character-for-character. A folded scalar keeps both the
 infra/external-systems.md:126: section 8264 > 2048	### Initial setup<a name="initial-setup"></a>
@@ -602,53 +577,53 @@ infra/grafana/alerts.yaml:1512: comment-block 20 > 4	# The degrading-primary det
 infra/grafana/alerts.yaml:1659: comment-block 8 > 4	# --- Ops node (spec 00054): the timer jobs, the logs pipeline, and the host itself ---------------
 infra/grafana/alerts.yaml:1675: comment-block 8 > 4	# The dead-man for the ops node's overlay-WRITER cycle. The unit and metric names are
 infra/grafana/alerts.yaml:1745: comment-block 7 > 4	# OK, not Alerting: the dead-man rule above already owns "the cycle stopped running/succeeding
-infra/grafana/alerts.yaml:1853: comment-block 11 > 4	# SUPERSEDES `Ops · verify-replay non-zero exit` (uid zcrypto-ops-verify-replay-exit-nonzero):
-infra/grafana/alerts.yaml:1911: comment-block 6 > 4	# Mode (iii): the sweep itself did not complete, regardless of what it found -- a crashed
-infra/grafana/alerts.yaml:2005: comment-block 24 > 4	# The incremental sweep (spec 00078) replays hours it has never seen unconditionally and drains
-infra/grafana/alerts.yaml:2093: comment-block 5 > 4	# The ONLY durable report of this event. A settled day that stayed unpublished until the
-infra/grafana/alerts.yaml:2143: comment-block 5 > 4	# Deliberately LAST_PUBLISH, not last_success. The unhealed path exits 0 by design, so a
-infra/grafana/alerts.yaml:2231: comment-block 10 > 4	# Scoped to host="ops": infra/ansible/roles/ops/files/config.alloy sets
-infra/grafana/alerts.yaml:2280: comment-block 32 > 4	# Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the parse
-infra/grafana/alerts.yaml:2364: comment-block 18 > 4	# The canary that closes the ERROR-logs rule's green-when-blind gap for the Alloy-fed half of
-infra/grafana/alerts.yaml:2433: comment-block 9 > 4	# The liquidations poller is the ONLY ops workload that bypasses Alloy entirely (direct-ship,
-infra/grafana/alerts.yaml:2494: comment-block 17 > 4	# Covers the `zcrypto-*` units, which `zcrypto-ops-log-pipeline-dead` above cannot: a parse
-infra/grafana/alerts.yaml:2561: comment-block 19 > 4	# The journal-scoped companion to the canary above, which is scoped to `container="alloy"` and
-infra/grafana/alerts.yaml:2624: comment-block 14 > 4	# ---- Capture hosts (zcrypto = primary + engine, zcrypto-red = secondary) --------------------
-infra/grafana/alerts.yaml:2645: comment-block 5 > 4	# The unbackfillable L2 spool (/var/lib/zcrypto-capture) is on the root fs, which is why the
-infra/grafana/alerts.yaml:2691: comment-block 7 > 4	# The capture VPSes run unattended-upgrades with Automatic-Reboot "false" (T0027, spec 00071):
-infra/grafana/alerts.yaml:2947: comment-block 13 > 4	# Recovery from a checksum desync is a BOUNDED LADDER (`cli/capture/desync_recovery.py`):
-infra/grafana/alerts.yaml:2998: comment-block 10 > 4	# The second half of T0008's trigger, self-evaluating. The desync rate this was written against
-infra/grafana/alerts.yaml:3051: comment-block 12 > 4	# The recovery ladder's resubscribe leg has an alert for how OFTEN it runs (above) and this one
-infra/grafana/alerts.yaml:3104: comment-block 10 > 4	# The blackout class: every pair on a host silent at once while the WS reports connected, the
-infra/grafana/alerts.yaml:3132: comment-block 12 > 4	# 120 s. The pending period is NOT free here: the gauge is scraped every 60 s
-infra/grafana/alerts.yaml:3148: comment-block 17 > 4	# OK, and it is the SAME blindness class as noDataState above rather than a relaxation. When the
-infra/grafana/alerts.yaml:3166: comment-block 8 > 4	# 0s, and it is arithmetic rather than impatience: a pending period is added directly to the
-infra/grafana/alerts.yaml:3202: comment-block 10 > 4	# The single-stuck-stream class, which nothing else catches: one pair has stopped delivering
-infra/grafana/alerts.yaml:3230: comment-block 20 > 4	# 300 s -- roughly twenty times the natural per-pair maximum, and ~10x the daemon's own
-infra/grafana/alerts.yaml:3284: comment-block 9 > 4	# A breached watermark does not merely warn: cli/capture/command.py's book and trade handlers
-infra/grafana/alerts.yaml:3314: comment-block 11 > 4	# 0s, and it is arithmetic rather than impatience. The pending period is NOT free on this rule:
-infra/grafana/alerts.yaml:3342: comment-block 8 > 4	# Held rows spilled to a `.held` sidecar for an hour the oracle never CONFIRMED (spec 00103 D6).
-infra/grafana/alerts.yaml:3382: comment-block 5 > 4	# --- The hour-rotation residuals (T0037, spec 00103) -------------------------------------------
-infra/grafana/alerts.yaml:3395: comment-block 14 > 4	# T0037's residual (a) made visible (spec 00103 D1/D2/D3). Two streams each taking a
-infra/grafana/alerts.yaml:3450: comment-block 16 > 4	# T0037's past-dated residual (spec 00109 D1, which narrows spec 00103 D5's predicate). The
-infra/grafana/alerts.yaml:3508: comment-block 22 > 4	# CRITICAL, and not because a drifting clock is itself an emergency. Spec 00103 D1b makes this
-infra/grafana/alerts.yaml:3614: comment-block 33 > 4	# Deliberately a NEGATIVE match rather than an enumeration of known states: the payload shape
-infra/grafana/alerts.yaml:3685: comment-block 24 > 4	# The deliberate COMPLEMENT to zcrypto-capture-venue-not-online, which latches. That rule fires
-infra/grafana/alerts.yaml:3747: comment-block 9 > 4	# Liveness, and deliberately NOT the ship-success gauge: the worker skips the push when the
-infra/grafana/alerts.yaml:3837: comment-block 5 > 4	# NORMALIZED per core, because the two capture boxes differ in core count: dividing load1 by the
-infra/grafana/alerts.yaml:3884: comment-block 29 > 4	# Loki, level LABEL not a text grep -- no regex anywhere in this path (spec 00068 D4). The
-infra/grafana/alerts.yaml:3956: comment-block 15 > 4	# Two per-host canaries that make the ERROR rule above trustworthy (mirror zcrypto-ops-log-pipeline-dead).
-infra/grafana/alerts.yaml:4071: comment-block 5 > 4	# Fleet · Alloy dark (T0079) -- one rule per host, all `critical`. Uniform severity is deliberate:
-infra/grafana/alerts.yaml:4077: comment-block 6 > 4	# --- memory, watched as a ROUTINE and never as a rollout read --------------------------------------
-infra/grafana/alerts.yaml:4090: comment-block 11 > 4	# RSS as a fraction of the CONTAINER limit -- the only number that says "how long until the
-infra/grafana/alerts.yaml:4154: comment-block 6 > 4	# Alloy gets its OWN bar because it genuinely runs near its ceiling and the app daemons do not:
-infra/grafana/alerts.yaml:4210: comment-block 9 > 4	# Read the hourly FLOOR, never a sample -- the segment-rotation sawtooth spans several MiB and
-infra/grafana/alerts.yaml:4243: comment-block 5 > 4	# PROVISIONAL: 64 MiB of floor growth in a day. No real leak has ever been measured on
-infra/grafana/alerts.yaml:4276: comment-block 6 > 4	# `RestartCount` was a bake abort signal read by hand on the host; it has no metric (no
-infra/grafana/alerts.yaml:4333: comment-block 11 > 4	# `{host="nas"}` (spec 00069 D7): the NAS's config.alloy sets
-infra/grafana/alerts.yaml:4550: comment-block 8 > 4	# T0083 mutual watchdog, Grafana half. Owns two failures in one rule: (a) any healthchecks.io
-infra/grafana/alerts.yaml:4650: comment-block 9 > 4	# Either end reporting a stale handshake is the failure -- PersistentKeepalive=25 means a healthy
-infra/grafana/alerts.yaml:4698: comment-block 8 > 4	# min across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
+infra/grafana/alerts.yaml:1896: comment-block 11 > 4	# SUPERSEDES `Ops · verify-replay non-zero exit` (uid zcrypto-ops-verify-replay-exit-nonzero):
+infra/grafana/alerts.yaml:1954: comment-block 6 > 4	# Mode (iii): the sweep itself did not complete, regardless of what it found -- a crashed
+infra/grafana/alerts.yaml:2048: comment-block 24 > 4	# The incremental sweep (spec 00078) replays hours it has never seen unconditionally and drains
+infra/grafana/alerts.yaml:2136: comment-block 5 > 4	# The ONLY durable report of this event. A settled day that stayed unpublished until the
+infra/grafana/alerts.yaml:2186: comment-block 5 > 4	# Deliberately LAST_PUBLISH, not last_success. The unhealed path exits 0 by design, so a
+infra/grafana/alerts.yaml:2274: comment-block 10 > 4	# Scoped to host="ops": infra/ansible/roles/ops/files/config.alloy sets
+infra/grafana/alerts.yaml:2323: comment-block 32 > 4	# Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the parse
+infra/grafana/alerts.yaml:2407: comment-block 18 > 4	# The canary that closes the ERROR-logs rule's green-when-blind gap for the Alloy-fed half of
+infra/grafana/alerts.yaml:2476: comment-block 9 > 4	# The liquidations poller is the ONLY ops workload that bypasses Alloy entirely (direct-ship,
+infra/grafana/alerts.yaml:2537: comment-block 17 > 4	# Covers the `zcrypto-*` units, which `zcrypto-ops-log-pipeline-dead` above cannot: a parse
+infra/grafana/alerts.yaml:2604: comment-block 19 > 4	# The journal-scoped companion to the canary above, which is scoped to `container="alloy"` and
+infra/grafana/alerts.yaml:2667: comment-block 14 > 4	# ---- Capture hosts (zcrypto = primary + engine, zcrypto-red = secondary) --------------------
+infra/grafana/alerts.yaml:2688: comment-block 5 > 4	# The unbackfillable L2 spool (/var/lib/zcrypto-capture) is on the root fs, which is why the
+infra/grafana/alerts.yaml:2734: comment-block 7 > 4	# The capture VPSes run unattended-upgrades with Automatic-Reboot "false" (T0027, spec 00071):
+infra/grafana/alerts.yaml:2990: comment-block 13 > 4	# Recovery from a checksum desync is a BOUNDED LADDER (`cli/capture/desync_recovery.py`):
+infra/grafana/alerts.yaml:3041: comment-block 10 > 4	# The second half of T0008's trigger, self-evaluating. The desync rate this was written against
+infra/grafana/alerts.yaml:3094: comment-block 12 > 4	# The recovery ladder's resubscribe leg has an alert for how OFTEN it runs (above) and this one
+infra/grafana/alerts.yaml:3147: comment-block 10 > 4	# The blackout class: every pair on a host silent at once while the WS reports connected, the
+infra/grafana/alerts.yaml:3175: comment-block 12 > 4	# 120 s. The pending period is NOT free here: the gauge is scraped every 60 s
+infra/grafana/alerts.yaml:3191: comment-block 17 > 4	# OK, and it is the SAME blindness class as noDataState above rather than a relaxation. When the
+infra/grafana/alerts.yaml:3209: comment-block 8 > 4	# 0s, and it is arithmetic rather than impatience: a pending period is added directly to the
+infra/grafana/alerts.yaml:3245: comment-block 10 > 4	# The single-stuck-stream class, which nothing else catches: one pair has stopped delivering
+infra/grafana/alerts.yaml:3273: comment-block 20 > 4	# 300 s -- roughly twenty times the natural per-pair maximum, and ~10x the daemon's own
+infra/grafana/alerts.yaml:3327: comment-block 9 > 4	# A breached watermark does not merely warn: cli/capture/command.py's book and trade handlers
+infra/grafana/alerts.yaml:3357: comment-block 11 > 4	# 0s, and it is arithmetic rather than impatience. The pending period is NOT free on this rule:
+infra/grafana/alerts.yaml:3385: comment-block 8 > 4	# Held rows spilled to a `.held` sidecar for an hour the oracle never CONFIRMED (spec 00103 D6).
+infra/grafana/alerts.yaml:3425: comment-block 5 > 4	# --- The hour-rotation residuals (T0037, spec 00103) -------------------------------------------
+infra/grafana/alerts.yaml:3438: comment-block 14 > 4	# T0037's residual (a) made visible (spec 00103 D1/D2/D3). Two streams each taking a
+infra/grafana/alerts.yaml:3493: comment-block 16 > 4	# T0037's past-dated residual (spec 00109 D1, which narrows spec 00103 D5's predicate). The
+infra/grafana/alerts.yaml:3551: comment-block 22 > 4	# CRITICAL, and not because a drifting clock is itself an emergency. Spec 00103 D1b makes this
+infra/grafana/alerts.yaml:3657: comment-block 33 > 4	# Deliberately a NEGATIVE match rather than an enumeration of known states: the payload shape
+infra/grafana/alerts.yaml:3728: comment-block 24 > 4	# The deliberate COMPLEMENT to zcrypto-capture-venue-not-online, which latches. That rule fires
+infra/grafana/alerts.yaml:3790: comment-block 9 > 4	# Liveness, and deliberately NOT the ship-success gauge: the worker skips the push when the
+infra/grafana/alerts.yaml:3880: comment-block 5 > 4	# NORMALIZED per core, because the two capture boxes differ in core count: dividing load1 by the
+infra/grafana/alerts.yaml:3927: comment-block 29 > 4	# Loki, level LABEL not a text grep -- no regex anywhere in this path (spec 00068 D4). The
+infra/grafana/alerts.yaml:3999: comment-block 15 > 4	# Two per-host canaries that make the ERROR rule above trustworthy (mirror zcrypto-ops-log-pipeline-dead).
+infra/grafana/alerts.yaml:4114: comment-block 5 > 4	# Fleet · Alloy dark (T0079) -- one rule per host, all `critical`. Uniform severity is deliberate:
+infra/grafana/alerts.yaml:4120: comment-block 6 > 4	# --- memory, watched as a ROUTINE and never as a rollout read --------------------------------------
+infra/grafana/alerts.yaml:4133: comment-block 11 > 4	# RSS as a fraction of the CONTAINER limit -- the only number that says "how long until the
+infra/grafana/alerts.yaml:4197: comment-block 6 > 4	# Alloy gets its OWN bar because it genuinely runs near its ceiling and the app daemons do not:
+infra/grafana/alerts.yaml:4253: comment-block 9 > 4	# Read the hourly FLOOR, never a sample -- the segment-rotation sawtooth spans several MiB and
+infra/grafana/alerts.yaml:4286: comment-block 5 > 4	# PROVISIONAL: 64 MiB of floor growth in a day. No real leak has ever been measured on
+infra/grafana/alerts.yaml:4319: comment-block 6 > 4	# `RestartCount` was a bake abort signal read by hand on the host; it has no metric (no
+infra/grafana/alerts.yaml:4376: comment-block 11 > 4	# `{host="nas"}` (spec 00069 D7): the NAS's config.alloy sets
+infra/grafana/alerts.yaml:4593: comment-block 8 > 4	# T0083 mutual watchdog, Grafana half. Owns two failures in one rule: (a) any healthchecks.io
+infra/grafana/alerts.yaml:4693: comment-block 9 > 4	# Either end reporting a stale handshake is the failure -- PersistentKeepalive=25 means a healthy
+infra/grafana/alerts.yaml:4741: comment-block 8 > 4	# min across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
 infra/nas/README.md:7: section 2839 > 2048	## Deploy (Ansible — the `nas` role, T0056)
 infra/nas/README.md:42: section 2842 > 2048	### One-time bootstrap (hand-placed once; not Ansible-managed)
 infra/nas/README.md:68: section 7012 > 2048	## Env-var contract
@@ -679,11 +654,11 @@ infra/runbooks/README.md:5: section 2662 > 2048	## Scope — what belongs here, 
 infra/runbooks/README.md:21: section 2547 > 2048	### [`capture.md`](capture.md) — the venue feed and the archive's hour boundaries
 infra/runbooks/README.md:53: section 2336 > 2048	### [`ops.md`](ops.md) — the nightly archive sweep and the tape-bars dataset
 infra/runbooks/README.md:68: section 2084 > 2048	### [`engine.md`](engine.md) — the trading engine and its order path
-infra/runbooks/README.md:166: section 2169 > 2048	### [`drills-order-path.md`](drills-order-path.md) — induce the fault where money is at stake
+infra/runbooks/README.md:167: section 2169 > 2048	### [`drills-order-path.md`](drills-order-path.md) — induce the fault where money is at stake
 infra/runbooks/capture-daemon.md:17: section 2738 > 2048	### What it means
 infra/runbooks/capture-daemon.md:39: section 3142 > 2048	### What to do
 infra/runbooks/capture-daemon.md:124: section 2933 > 2048	### What to do
-infra/runbooks/capture-daemon.md:155: section 3238 > 2048	### What it means
+infra/runbooks/capture-daemon.md:155: section 3430 > 2048	### What it means
 infra/runbooks/capture-daemon.md:164: table-row 210 > 200	`desync recovery: pair=… still desynced after bounded retries -- forcing a full reconnect`
 infra/runbooks/capture-daemon.md:168: table-row 206 > 200	`WS reconnect still failing after N consecutive attempts`
 infra/runbooks/capture-daemon.md:170: table-row 456 > 200	`an uncommitted merge is in the way …` / `an interrupted merge beside a committed final — left untouched …` / `parts beside a readable final — ambiguous, left untouched …` / `merge failed …`
@@ -693,7 +668,7 @@ infra/runbooks/capture.md:107: table-row 372 > 200	**(a) two bogus stamps in one
 infra/runbooks/capture.md:108: table-row 361 > 200	**(b) a clock leading over five minutes, plus one bogus stamp**
 infra/runbooks/capture.md:109: table-row 388 > 200	**past-dated first stamp**
 infra/runbooks/capture.md:113: section 2704 > 2048	### What to do
-infra/runbooks/capture.md:173: section 8295 > 2048	### What it means
+infra/runbooks/capture.md:173: section 8287 > 2048	### What it means
 infra/runbooks/drills-order-path.md:9: section 5172 > 2048	## Standing rules — these bind every section below
 infra/runbooks/drills-order-path.md:20: section 2599 > 2048	## How every bound on this page was derived
 infra/runbooks/drills-order-path.md:203: section 2271 > 2048	### Must fire
@@ -750,8 +725,8 @@ infra/runbooks/observability.md:110: section 2451 > 2048	### What to do
 infra/runbooks/observability.md:158: section 2347 > 2048	### What to do
 infra/runbooks/observability.md:201: section 2113 > 2048	### What to do
 infra/runbooks/observability.md:240: section 2513 > 2048	### What it means
-infra/runbooks/observability.md:262: section 5817 > 2048	### What to do
-infra/runbooks/observability.md:333: section 3479 > 2048	### The dead-man map
+infra/runbooks/observability.md:262: section 6444 > 2048	### What to do
+infra/runbooks/observability.md:333: section 3472 > 2048	### The dead-man map
 infra/runbooks/observability.md:339: table-row 317 > 200	`capture`
 infra/runbooks/observability.md:341: table-row 337 > 200	`engine`
 infra/runbooks/observability.md:342: table-row 220 > 200	`nas`
@@ -766,7 +741,7 @@ infra/runbooks/ops-node.md:35: section 3027 > 2048	### What to do
 infra/runbooks/ops-node.md:79: section 2197 > 2048	### What to do
 infra/runbooks/ops-node.md:113: section 2378 > 2048	### What it means
 infra/runbooks/ops-node.md:130: section 2399 > 2048	### What to do
-infra/runbooks/ops-node.md:161: section 2230 > 2048	### What it means
+infra/runbooks/ops-node.md:192: section 2230 > 2048	### What it means
 infra/runbooks/ops.md:25: section 3766 > 2048	### What to do
 infra/runbooks/ops.md:163: section 3049 > 2048	### What you are seeing
 infra/runbooks/ops.md:183: section 3620 > 2048	### What to do
@@ -838,7 +813,7 @@ infra/scripts/kraken-order-semantics-probe.py:1515: comment-block 16 > 4	"""Whet
 infra/scripts/kraken-order-semantics-probe.py:1540: comment-block 6 > 4	"""Cancel everything this harness submitted that the Cache does not report closed, then
 infra/scripts/kraken-order-semantics-probe.py:1578: comment-block 6 > 4	"""The exec client, in the production engine's own shape: MARGIN spot account reporting in
 infra/scripts/kraken-order-semantics-probe.py:1608: comment-block 8 > 4	"""The assembled node, with the probe strategy attached.
-infra/scripts/kraken-order-semantics-probe.py:2181: comment-block 5 > 4	# The only thing that arms faulthandler here: a native abort -- a Rust panic in the adapter, or
+infra/scripts/kraken-order-semantics-probe.py:2183: comment-block 5 > 4	# The only thing that arms faulthandler here: a native abort -- a Rust panic in the adapter, or
 infra/scripts/mint-with-vaulted-key.sh:2: comment-block 15 > 4	# Runs the fixture minter with the vaulted Kraken trade credential in its environment and nothing
 infra/scripts/mutate-probe.sh:2: comment-block 9 > 4	# The mutate -> measure -> restore cycle with its traps closed (spec 00082 D4). It refuses a dirty
 infra/scripts/ops-postverify.sh:41: comment-block 5 > 4	# tape-bars (spec 00087). days_gap catches a day that fell out of the re-scan window unpublished,
@@ -870,6 +845,7 @@ infra/scripts/ops_daily.py:1384: comment-block 6 > 4	"""The operands of the shap
 infra/scripts/ops_daily.py:1407: comment-block 6 > 4	"""Peel what changes WHO runs a command, never what it does; report the host an ssh retargets to.
 infra/scripts/ops_daily.py:1441: comment-block 8 > 4	"""Which tier a runbook step falls in. Default-deny: unrecognised is PREPARED, always.
 infra/scripts/probe-with-vaulted-key.sh:2: comment-block 12 > 4	# Runs the order-semantics probe harness with the vaulted Kraken trade credential in its environment
+infra/scripts/prose-tripwire.py:2: comment-block 17 > 4	"""Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long
 infra/scripts/prune-host-images.py:1: comment-block 17 > 4	"""Remove the Docker images a fleet host no longer needs, keeping every digest the pins file records.
 infra/scripts/prune-host-images.py:55: comment-block 5 > 4	"""The pins file cannot serve as the authority -- refuse rather than compute a keep-set.
 infra/scripts/prune-host-images.py:145: comment-block 6 > 4	"""The `## Current pins` table of the pins file, as rows.
@@ -896,9 +872,9 @@ tests/test_archive_reconcile_command.py:1256: comment-block 7 > 4	"""An UNRECOGN
 tests/test_archive_reconcile_command.py:1396: comment-block 5 > 4	"""The net under the fingerprint model. The audit re-examines a hour the cache called settled; if
 tests/test_archive_reconcile_command.py:1513: comment-block 6 > 4	"""The cache degrades SILENTLY -- `complete` demands every tree-wide pair on both mirrors, so a
 tests/test_archive_replay.py:1: comment-block 6 > 4	"""`cli/archive/replay.py` — the canonical book continuity-replay driver (spec 00051 OPS-3) and its CLI.
-tests/test_archive_replay.py:277: comment-block 12 > 4	"""`result.output` with ANSI styling removed -- read output through this, never raw.
-tests/test_archive_replay.py:322: comment-block 5 > 4	# The CLI's root callback runs `cli.logging.config.configure`, which sets `propagate = False` on
-tests/test_archive_replay.py:350: comment-block 7 > 4	"""Neither summary surface present.
+tests/test_archive_replay.py:300: comment-block 12 > 4	"""`result.output` with ANSI styling removed -- read output through this, never raw.
+tests/test_archive_replay.py:345: comment-block 5 > 4	# The CLI's root callback runs `cli.logging.config.configure`, which sets `propagate = False` on
+tests/test_archive_replay.py:373: comment-block 7 > 4	"""Neither summary surface present.
 tests/test_archive_replay_incremental.py:440: comment-block 5 > 4	"""Plant a lie in one checkpoint row: the thing the audit exists to catch.
 tests/test_archive_replay_incremental.py:465: comment-block 7 > 4	"""Plant a lie in the checkpoint; the audit must catch it (spec D6: "its own proof is mandatory").
 tests/test_archive_replay_incremental.py:491: comment-block 7 > 4	"""A lie in the identity itself — checkpoint corruption, or overlay bit rot the manifest sweep
@@ -912,23 +888,23 @@ tests/test_archive_scan_cache.py:290: comment-block 7 > 4	"""`RecursionError` is
 tests/test_archive_scan_cache.py:429: comment-block 7 > 4	"""`already_minted` is the one per-hour verdict input outside the mirrors.
 tests/test_archive_scan_cache.py:469: comment-block 5 > 4	"""The overlay term's blind spot, pinned so the backstop is not mistaken for a replacement.
 tests/test_archive_settle.py:1: file-prose 21 > 20
-tests/test_archive_settle.py:204: comment-block 6 > 4	# --- total_loss must not fire on a legitimately EMPTY trades hour ---------------------------------
-tests/test_archive_settle.py:250: comment-block 8 > 4	# --- the gap-rate signal must exist in DETECT-ONLY, or its alert is a decoration ------------------
-tests/test_archive_settle.py:338: comment-block 5 > 4	# --- the venue-silence discriminator (spec 00096) -------------------------------------------------
-tests/test_archive_settle.py:507: comment-block 5 > 4	# The survivor of a per-gap dominance rule: 600 s dark, 1,000 s of PERFECTLY HEALTHY traffic on
-tests/test_archive_settle.py:536: comment-block 6 > 4	# --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------
-tests/test_archive_settle.py:624: comment-block 7 > 4	# --- `us_view`: the column-unit guard the hot loop leans on ---------------------------------------
+tests/test_archive_settle.py:243: comment-block 6 > 4	# --- total_loss must not fire on a legitimately EMPTY trades hour ---------------------------------
+tests/test_archive_settle.py:289: comment-block 8 > 4	# --- the gap-rate signal must exist in DETECT-ONLY, or its alert is a decoration ------------------
+tests/test_archive_settle.py:377: comment-block 5 > 4	# --- the venue-silence discriminator (spec 00096) -------------------------------------------------
+tests/test_archive_settle.py:546: comment-block 5 > 4	# The survivor of a per-gap dominance rule: 600 s dark, 1,000 s of PERFECTLY HEALTHY traffic on
+tests/test_archive_settle.py:575: comment-block 6 > 4	# --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------
+tests/test_archive_settle.py:663: comment-block 7 > 4	# --- `us_view`: the column-unit guard the hot loop leans on ---------------------------------------
 tests/test_benchmark_dynamic_basket.py:1: file-prose 28.6 > 20
 tests/test_capture_gap_monitor.py:234: comment-block 7 > 4	# --- T0032(c): a probe that CANNOT MEASURE must not read as healthy ------------------------------
 tests/test_capture_prune.py:1: comment-block 5 > 4	"""Segment retention on the capture hosts (spec 00050 D8 — closes T0032's retention half).
-tests/test_capture_segment_writer.py:1: file-prose 31 > 20
-tests/test_capture_segment_writer.py:67: comment-block 7 > 4	"""Pin `_utcnow()` an hour ahead of the events the tests feed, so an ordinary event is plausible and only
-tests/test_capture_segment_writer.py:681: comment-block 5 > 4	# A stray DIRECTORY, not a stray file. `__init__` walks the whole tree and hands every
-tests/test_capture_segment_writer.py:896: comment-block 5 > 4	# The clock is the sole witness for a stream's first event — at a cold start, and after an outage longer
-tests/test_capture_segment_writer.py:1498: comment-block 6 > 4	# The T0037 truncation re-attacked through the oracle itself: a garbage burst on stream A stands its
-tests/test_capture_segment_writer.py:1789: comment-block 5 > 4	# Residual (c) — the past-dated fabrication (spec 00103 D5, narrowed by spec 00109 D1): a process's FIRST
-tests/test_capture_segment_writer.py:1809: comment-block 6 > 4	# Spec 00109 D1: a mid-hour restart whose FIRST event is a replayed pre-restart print opens the PREVIOUS
-tests/test_capture_segment_writer.py:1859: comment-block 5 > 4	# Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an hour's
+tests/test_capture_segment_writer.py:1: file-prose 29.2 > 20
+tests/test_capture_segment_writer.py:75: comment-block 7 > 4	"""Pin `_utcnow()` an hour ahead of the events the tests feed, so an ordinary event is plausible and only
+tests/test_capture_segment_writer.py:689: comment-block 5 > 4	# A stray DIRECTORY, not a stray file. `__init__` walks the whole tree and hands every
+tests/test_capture_segment_writer.py:904: comment-block 5 > 4	# The clock is the sole witness for a stream's first event — at a cold start, and after an outage longer
+tests/test_capture_segment_writer.py:1509: comment-block 6 > 4	# The T0037 truncation re-attacked through the oracle itself: a garbage burst on stream A stands its
+tests/test_capture_segment_writer.py:1800: comment-block 5 > 4	# Residual (c) — the past-dated fabrication (spec 00103 D5, narrowed by spec 00109 D1): a process's FIRST
+tests/test_capture_segment_writer.py:1820: comment-block 6 > 4	# Spec 00109 D1: a mid-hour restart whose FIRST event is a replayed pre-restart print opens the PREVIOUS
+tests/test_capture_segment_writer.py:1870: comment-block 5 > 4	# Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an hour's
 tests/test_capture_ws_client.py:403: comment-block 6 > 4	# --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
 tests/test_code_prose_citations.py:1: comment-block 6 > 4	"""Guard for `.claude/rules/prose.md`'s resolvable-citation rule.
 tests/test_code_prose_citations.py:1: file-prose 22.4 > 20
@@ -954,9 +930,9 @@ tests/test_data_rebuild.py:275: comment-block 6 > 4	"""A manifest that EXISTS bu
 tests/test_data_rebuild.py:332: comment-block 5 > 4	"""T0093: the volume floor is a TRAILING 30-day median, so it is only meaningful if the dataset
 tests/test_data_rebuild.py:592: comment-block 9 > 4	"""A dataset this node can REBUILD is one it AUTHORS, so it must also be publishable.
 tests/test_derivatives_funding.py:239: comment-block 5 > 4	"""The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
-tests/test_derivatives_funding.py:257: comment-block 7 > 4	"""Spec 00110 D7 rules the funding features' input a constant-interval print series, resting that
-tests/test_derivatives_oi.py:387: comment-block 5 > 4	"""The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
-tests/test_derivatives_oi.py:436: comment-block 6 > 4	"""Spec 00110 D5's venue-hole counts, pinned so a substrate re-fetch cannot move them silently.
+tests/test_derivatives_funding.py:258: comment-block 7 > 4	"""Spec 00110 D7 rules the funding features' input a constant-interval print series, resting that
+tests/test_derivatives_oi.py:434: comment-block 5 > 4	"""The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
+tests/test_derivatives_oi.py:483: comment-block 6 > 4	"""Spec 00110 D5's venue-hole counts, pinned so a substrate re-fetch cannot move them silently.
 tests/test_docker_build_context.py:1: comment-block 6 > 4	"""Every `COPY` source in the Dockerfile must survive `.dockerignore`.
 tests/test_drill_log.py:1: file-prose 28.9 > 20
 tests/test_e1b_order_visibility_probe.py:1: file-prose 20.5 > 20
@@ -986,7 +962,7 @@ tests/test_engine_data_socket.py:1: file-prose 20.3 > 20
 tests/test_engine_data_socket.py:30: comment-block 11 > 4	# The peers the child can script, by mode:
 tests/test_engine_data_socket.py:182: comment-block 6 > 4	"""The second true positive, and the one that pins spec 00101 D1's load-bearing claim: what A
 tests/test_engine_execgate.py:474: comment-block 6 > 4	"""A record that cannot be read cannot SHOW any version was verified, so it must yield the
-tests/test_engine_executor.py:1: file-prose 23 > 20
+tests/test_engine_executor.py:1: file-prose 22.9 > 20
 tests/test_engine_executor.py:335: comment-block 8 > 4	"""Move the held position the way a fill does, with the library's own `Position` doing the
 tests/test_engine_executor.py:353: comment-block 7 > 4	"""One order by id across the whole index, open or closed, and None for an id it does not
 tests/test_engine_executor.py:738: comment-block 8 > 4	"""`on_timer`'s catch-all is a backstop for the unforeseen, not a mechanism any test may lean on:
@@ -994,41 +970,41 @@ tests/test_engine_executor.py:882: comment-block 5 > 4	# `instrument.make_price`
 tests/test_engine_executor.py:935: comment-block 5 > 4	"""`size_order` FLOORS to the venue step and what reaches the order factory is that floored
 tests/test_engine_executor.py:1192: comment-block 7 > 4	"""`_start_intent` guards its two Cache reads separately and this cache refuses exactly the
 tests/test_engine_executor.py:1312: comment-block 5 > 4	"""The LIVE spelling: production's free-cash read resolves on the `ZEUR`-then-`EUR` fallback's
-tests/test_engine_executor.py:1479: comment-block 15 > 4	"""A REAL `OrderFilled`, carrying every field the executor's fill row reads in the venue's own
-tests/test_engine_executor.py:1510: comment-block 7 > 4	"""Deliver a fill the way the venue does: the Cache position moves FIRST, then the strategy sees
-tests/test_engine_executor.py:1523: comment-block 7 > 4	"""Run a real order through a real engine and read the Cache from inside the strategy's own event
-tests/test_engine_executor.py:1618: comment-block 7 > 4	"""By the time a handler is dispatched an order event, the Cache has already applied it -- the
-tests/test_engine_executor.py:1683: comment-block 7 > 4	"""The whole write-ahead path, driven with a REAL `LiquiditySide` member: a plain-string fake
-tests/test_engine_executor.py:1707: comment-block 8 > 4	"""`_liquidity` sits on the write-ahead path, where a raise costs the fill its row, and it reads
-tests/test_engine_executor.py:2233: comment-block 9 > 4	"""The publish reads a THREE-part condition -- `_active` set, phase `resting`, `placed_at`
-tests/test_engine_executor.py:2473: comment-block 8 > 4	"""The pair that can tell reading the `reconciliation` flag from ignoring it: the same event
-tests/test_engine_executor.py:2494: comment-block 5 > 4	"""`_on_rejected` reads the venue's error text to decide a rejection is a positive verdict; a
-tests/test_engine_executor.py:2514: comment-block 5 > 4	"""The deliberate exception to the rule above: a reconciled fill is the venue's own report
-tests/test_engine_executor.py:2883: comment-block 8 > 4	"""Spec 00090 D5 across a restart: an adopted order left resting must still have an appender, and
-tests/test_engine_executor.py:3036: comment-block 5 > 4	"""A REAL `LimitOrder` resting at the venue, driven to ACCEPTED by the library's own events.
-tests/test_engine_executor.py:3067: comment-block 5 > 4	"""Deliver an event on the external topic the way the venue does: the order the Cache holds takes
-tests/test_engine_executor.py:3082: comment-block 6 > 4	"""The matched clean path end to end, and the pin on the DELEGATION ORDER: the trip runs FIRST,
-tests/test_engine_executor.py:3218: comment-block 9 > 4	"""The ruled map, written from `validate_exec_record`'s own state names -- `_store` would refuse a
-tests/test_engine_executor.py:3252: comment-block 7 > 4	"""A row that is COMPLETE may not be un-said by a later terminal ack: completion is inferred from
-tests/test_engine_executor.py:3277: comment-block 8 > 4	"""Where reading the ORDER and reading the event's NAME part company, on the live trade path.
-tests/test_engine_executor.py:3331: comment-block 11 > 4	"""A terminal the execution engine minted for itself is not a venue outcome, so it writes no venue
-tests/test_engine_executor.py:3366: comment-block 5 > 4	"""A Cache whose `order()` refuses the way the real one does from INSIDE an order-event handler:
-tests/test_engine_executor.py:3394: comment-block 8 > 4	"""A Cache read that RAISES must cost the row its terminal state and nothing else.
-tests/test_engine_executor.py:3466: comment-block 6 > 4	"""A previous process's ledgered row plus the cache order reconciliation left behind for it, with
-tests/test_engine_executor.py:3495: comment-block 9 > 4	"""The dead-band, and the arm that must produce NOTHING: the ledgered figure is a sum of per-fill
-tests/test_engine_executor.py:3637: comment-block 11 > 4	"""A row a previous process CLOSED on `_FINISHED_QTY`, plus the venue order left behind for it,
-tests/test_engine_executor.py:3675: comment-block 9 > 4	"""The one correction that lands on a FINISHED order, which `open_submitted_rows` cannot show
-tests/test_engine_executor.py:3741: comment-block 6 > 4	"""One REAL `LimitOrder` per `OrderStatus` the library defines, driven there by the library's own
-tests/test_engine_executor.py:3842: comment-block 10 > 4	"""The ONE map both row-state paths write through -- the startup reconciliation and the live
-tests/test_engine_executor.py:3869: comment-block 5 > 4	"""Spec 00098's D7 meeting D1, the sequence where a mis-mirror costs money: the sweep repairs the
-tests/test_engine_executor.py:3942: comment-block 5 > 4	"""A ledger failure may never cost the trip, which is why `_record_trip_fill`'s own `try` is
-tests/test_engine_executor.py:4701: comment-block 8 > 4	"""The retention prune turns the true positive into a latched false kill, and this is that
-tests/test_engine_executor.py:4746: comment-block 5 > 4	"""The outer catch's own defect, constructed rather than assumed: `validate_exec_record` checks a
-tests/test_engine_executor.py:4765: comment-block 11 > 4	"""The missing-file path, which is NOT the same event as "the series has not started".
-tests/test_engine_executor.py:4817: comment-block 6 > 4	"""The CAPTURE end of the scoping, driven through production because the three
-tests/test_engine_executor.py:4906: comment-block 6 > 4	"""Production hands `ProbeExecutor` a nautilus `Strategy` and every test here hands it
-tests/test_engine_executor.py:5013: comment-block 8 > 4	"""The two accessors the fill path takes off a commission -- `float(...)` for the amount and
-tests/test_engine_executor.py:5102: comment-block 6 > 4	"""`_nautilus_standins` is the entire reach of the guard above, and
+tests/test_engine_executor.py:1519: comment-block 15 > 4	"""A REAL `OrderFilled`, carrying every field the executor's fill row reads in the venue's own
+tests/test_engine_executor.py:1550: comment-block 7 > 4	"""Deliver a fill the way the venue does: the Cache position moves FIRST, then the strategy sees
+tests/test_engine_executor.py:1563: comment-block 7 > 4	"""Run a real order through a real engine and read the Cache from inside the strategy's own event
+tests/test_engine_executor.py:1658: comment-block 7 > 4	"""By the time a handler is dispatched an order event, the Cache has already applied it -- the
+tests/test_engine_executor.py:1723: comment-block 7 > 4	"""The whole write-ahead path, driven with a REAL `LiquiditySide` member: a plain-string fake
+tests/test_engine_executor.py:1747: comment-block 8 > 4	"""`_liquidity` sits on the write-ahead path, where a raise costs the fill its row, and it reads
+tests/test_engine_executor.py:2273: comment-block 9 > 4	"""The publish reads a THREE-part condition -- `_active` set, phase `resting`, `placed_at`
+tests/test_engine_executor.py:2513: comment-block 8 > 4	"""The pair that can tell reading the `reconciliation` flag from ignoring it: the same event
+tests/test_engine_executor.py:2534: comment-block 5 > 4	"""`_on_rejected` reads the venue's error text to decide a rejection is a positive verdict; a
+tests/test_engine_executor.py:2554: comment-block 5 > 4	"""The deliberate exception to the rule above: a reconciled fill is the venue's own report
+tests/test_engine_executor.py:2923: comment-block 8 > 4	"""Spec 00090 D5 across a restart: an adopted order left resting must still have an appender, and
+tests/test_engine_executor.py:3076: comment-block 5 > 4	"""A REAL `LimitOrder` resting at the venue, driven to ACCEPTED by the library's own events.
+tests/test_engine_executor.py:3107: comment-block 5 > 4	"""Deliver an event on the external topic the way the venue does: the order the Cache holds takes
+tests/test_engine_executor.py:3122: comment-block 6 > 4	"""The matched clean path end to end, and the pin on the DELEGATION ORDER: the trip runs FIRST,
+tests/test_engine_executor.py:3258: comment-block 9 > 4	"""The ruled map, written from `validate_exec_record`'s own state names -- `_store` would refuse a
+tests/test_engine_executor.py:3292: comment-block 7 > 4	"""A row that is COMPLETE may not be un-said by a later terminal ack: completion is inferred from
+tests/test_engine_executor.py:3317: comment-block 8 > 4	"""Where reading the ORDER and reading the event's NAME part company, on the live trade path.
+tests/test_engine_executor.py:3371: comment-block 11 > 4	"""A terminal the execution engine minted for itself is not a venue outcome, so it writes no venue
+tests/test_engine_executor.py:3406: comment-block 5 > 4	"""A Cache whose `order()` refuses the way the real one does from INSIDE an order-event handler:
+tests/test_engine_executor.py:3434: comment-block 8 > 4	"""A Cache read that RAISES must cost the row its terminal state and nothing else.
+tests/test_engine_executor.py:3506: comment-block 6 > 4	"""A previous process's ledgered row plus the cache order reconciliation left behind for it, with
+tests/test_engine_executor.py:3535: comment-block 9 > 4	"""The dead-band, and the arm that must produce NOTHING: the ledgered figure is a sum of per-fill
+tests/test_engine_executor.py:3677: comment-block 11 > 4	"""A row a previous process CLOSED on `_FINISHED_QTY`, plus the venue order left behind for it,
+tests/test_engine_executor.py:3715: comment-block 9 > 4	"""The one correction that lands on a FINISHED order, which `open_submitted_rows` cannot show
+tests/test_engine_executor.py:3781: comment-block 6 > 4	"""One REAL `LimitOrder` per `OrderStatus` the library defines, driven there by the library's own
+tests/test_engine_executor.py:3882: comment-block 10 > 4	"""The ONE map both row-state paths write through -- the startup reconciliation and the live
+tests/test_engine_executor.py:3909: comment-block 5 > 4	"""Spec 00098's D7 meeting D1, the sequence where a mis-mirror costs money: the sweep repairs the
+tests/test_engine_executor.py:3982: comment-block 5 > 4	"""A ledger failure may never cost the trip, which is why `_record_trip_fill`'s own `try` is
+tests/test_engine_executor.py:4741: comment-block 8 > 4	"""The retention prune turns the true positive into a latched false kill, and this is that
+tests/test_engine_executor.py:4786: comment-block 5 > 4	"""The outer catch's own defect, constructed rather than assumed: `validate_exec_record` checks a
+tests/test_engine_executor.py:4805: comment-block 11 > 4	"""The missing-file path, which is NOT the same event as "the series has not started".
+tests/test_engine_executor.py:4857: comment-block 6 > 4	"""The CAPTURE end of the scoping, driven through production because the three
+tests/test_engine_executor.py:4946: comment-block 6 > 4	"""Production hands `ProbeExecutor` a nautilus `Strategy` and every test here hands it
+tests/test_engine_executor.py:5053: comment-block 8 > 4	"""The two accessors the fill path takes off a commission -- `float(...)` for the amount and
+tests/test_engine_executor.py:5142: comment-block 6 > 4	"""`_nautilus_standins` is the entire reach of the guard above, and
 tests/test_engine_feeders.py:275: comment-block 5 > 4	"""Cycle 1: sleeves agree, governor off. Cycle 2: sleeves cancel, governor halves.
 tests/test_engine_feeders.py:341: comment-block 6 > 4	"""The non-degenerate case: `limited` < `capped`, so the two shares differ.
 tests/test_engine_feeders.py:848: comment-block 6 > 4	# --- schema 2: the twelve-symbol journal, through the REAL builder ---------------------------------
@@ -1101,11 +1077,11 @@ tests/test_engine_metrics.py:1517: comment-block 7 > 4	"""`unmatched` is the dis
 tests/test_engine_metrics.py:1600: comment-block 5 > 4	"""The monitoring-gap discharge, read by VALUE: the sink writes the ledger BEFORE any gauge, so
 tests/test_engine_metrics.py:1748: comment-block 5 > 4	# --- this file's own stub node is a restatement of LiveNode / LiveNodeHandle ---------------------
 tests/test_engine_node.py:359: comment-block 5 > 4	"""The venue-visible identity is pinned at the value the engine holds today -- the id before
-tests/test_engine_node.py:745: comment-block 12 > 4	# Each banned text mapped to the cli/ paths allowed to carry it and how many times; every entry is
-tests/test_engine_node.py:765: comment-block 5 > 4	"""No file under cli/ carries any of the widener texts, anywhere: the engine's
-tests/test_engine_node.py:783: comment-block 8 > 4	"""The observer's OWN id is the tagless string the library reserves: `StrategyId` requires
-tests/test_engine_node.py:1339: comment-block 5 > 4	# Nothing in the node configuration selects instruments: the Kraken data client loads the venue's
-tests/test_engine_node.py:1623: comment-block 6 > 4	# A native abort prints a stack only while faulthandler is armed, and nothing sets
+tests/test_engine_node.py:784: comment-block 12 > 4	# Each banned text mapped to the cli/ paths allowed to carry it and how many times; every entry is
+tests/test_engine_node.py:804: comment-block 5 > 4	"""No file under cli/ carries any of the widener texts, anywhere: the engine's
+tests/test_engine_node.py:822: comment-block 8 > 4	"""The observer's OWN id is the tagless string the library reserves: `StrategyId` requires
+tests/test_engine_node.py:1378: comment-block 5 > 4	# Nothing in the node configuration selects instruments: the Kraken data client loads the venue's
+tests/test_engine_node.py:1662: comment-block 6 > 4	# A native abort prints a stack only while faulthandler is armed, and nothing sets
 tests/test_engine_soak.py:294: comment-block 5 > 4	"""All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
 tests/test_engine_soak.py:2174: comment-block 5 > 4	"""A CycleRecord whose 240 SnapshotEntry hash-verifies against (h4_ts, closes) -- the data
 tests/test_engine_soak.py:2410: comment-block 5 > 4	"""A clean segment whose records flip from schema 1 (base-keyed "BTC") to schema 2 (symbol-keyed
@@ -1114,11 +1090,11 @@ tests/test_engine_soak_command.py:40: comment-block 5 > 4	"""3 contiguous cycles
 tests/test_engine_soak_command.py:536: comment-block 5 > 4	"""5 contiguous cycles from 2026-07-16 00:00 whose journaled records flip from schema 1
 tests/test_engine_soak_command.py:588: comment-block 6 > 4	"""A soak report over a window that straddles the deploy runs to a rendered report instead of
 tests/test_engine_stub_fidelity.py:1: comment-block 40 > 4	"""Every test double in the engine suite, classified: what it stands in for, and how the standing-in
-tests/test_engine_stub_fidelity.py:1: file-prose 30.6 > 20
+tests/test_engine_stub_fidelity.py:1: file-prose 30.5 > 20
 tests/test_engine_stub_fidelity.py:50: comment-block 8 > 4	# What the walk must still find per module, so a walker that stops seeing a whole SHAPE of double
 tests/test_engine_stub_fidelity.py:120: comment-block 5 > 4	# The red button drives the venue's HTTP client directly rather than the node, so all but one of
-tests/test_engine_stub_fidelity.py:237: comment-block 9 > 4	"""The test doubles a walk can find without being told, in a parsed tree.
-tests/test_engine_stub_fidelity.py:283: comment-block 8 > 4	"""The branch's own floor, and the only one it has.
+tests/test_engine_stub_fidelity.py:238: comment-block 9 > 4	"""The test doubles a walk can find without being told, in a parsed tree.
+tests/test_engine_stub_fidelity.py:284: comment-block 8 > 4	"""The branch's own floor, and the only one it has.
 tests/test_engine_tracking.py:1: comment-block 10 > 4	"""The tracking module's arithmetic, and the `engine tracking-report` end-to-end true-positive.
 tests/test_engine_tracking.py:1: file-prose 21 > 20
 tests/test_engine_tracking.py:500: comment-block 7 > 4	# One large taker fill beside nine tiny maker ones is a taker-heavy book; a count-weighted
@@ -1126,7 +1102,7 @@ tests/test_engine_tracking.py:779: comment-block 5 > 4	"""A journal slice and th
 tests/test_engine_tracking.py:807: comment-block 6 > 4	"""A mount-free journal of one record per entry in `schema_versions`, on consecutive boundaries.
 tests/test_engine_tracking.py:941: comment-block 5 > 4	# And the realized half must reproduce the book it was HANDED, week for week. Fed the floor
 tests/test_engine_tracking.py:1162: comment-block 7 > 4	"""`drift_bps` -- the operand the kill switch trips on -- must come from the journaled NAV.
-tests/test_engine_venuestate.py:39: comment-block 8 > 4	"""A REAL `CurrencyPair` at one leg's precisions -- what `Cache.instrument()` hands back.
+tests/test_engine_venuestate.py:42: comment-block 8 > 4	"""A REAL `CurrencyPair` at one leg's precisions -- what `Cache.instrument()` hands back.
 tests/test_error_paths_are_logged.py:117: comment-block 7 > 4	"""The widened catch must not swallow either: click renders usage errors and `typer.Exit` as
 tests/test_features_derivatives.py:1: file-prose 28.5 > 20
 tests/test_features_derivatives.py:39: comment-block 5 > 4	"""Pins spec D5's null semantics: a null source value REPLACES the carry, it is not skipped.
@@ -1143,27 +1119,27 @@ tests/test_features_validate.py:1: file-prose 25 > 20
 tests/test_gap_distribution.py:1: comment-block 5 > 4	"""TDD for `infra/scripts/gap_distribution.py` — the Task-12 (spec 00050) instrument that pins
 tests/test_git_mv_guard.py:1: comment-block 10 > 4	"""Spec 00082: the PostToolUse[Bash] git-mv guard.
 tests/test_git_mv_guard.py:175: comment-block 5 > 4	"""`cd <dir>;git mv` -- no space before the separator, which a shell accepts and people write.
-tests/test_infra_alert_rules.py:1: file-prose 30 > 20
-tests/test_infra_alert_rules.py:74: comment-block 12 > 4	# --- A dead-man that cannot announce its own recovery -------------------------------------------
-tests/test_infra_alert_rules.py:194: comment-block 6 > 4	# --- A shipped metric that nothing watches ------------------------------------------------------
-tests/test_infra_alert_rules.py:281: comment-block 5 > 4	# The execution safety envelope's unwatched families; armed, kill_tripped and
-tests/test_infra_alert_rules.py:291: comment-block 6 > 4	# A gating INPUT, not the venue alert itself: the underlying condition already pages from the
-tests/test_infra_alert_rules.py:316: comment-block 11 > 4	# The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
-tests/test_infra_alert_rules.py:518: comment-block 5 > 4	"""Replays nightly-gauge histories through the rule's OWN window and `for:` (read from
-tests/test_infra_alert_rules.py:712: comment-block 5 > 4	# Path-agnostic across the runbook directory -- the procedures live in per-subsystem files and the
-tests/test_infra_alert_rules.py:857: comment-block 7 > 4	"""The cross-pair `min by (host)` IS this rule: the minimum across pairs is what distinguishes
-tests/test_infra_alert_rules.py:879: comment-block 9 > 4	"""`execErrState: OK` on these two ALONE, and it is the same blindness class as their
-tests/test_infra_alert_rules.py:912: comment-block 5 > 4	# Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` over synthetic records,
-tests/test_infra_alert_rules.py:961: comment-block 6 > 4	# --- Grafana's template parser is stricter than Go's ------------------------------------------
-tests/test_infra_alert_rules.py:983: comment-block 5 > 4	# --- the venue pair: a latch that cannot self-resolve, plus the recurrence signal that can --------
-tests/test_infra_alert_rules.py:1110: comment-block 6 > 4	"""Read the FLOOR not a sample (the rotation sawtooth spans MiB), compare across a 24 h band
-tests/test_infra_alert_rules.py:1277: comment-block 5 > 4	"""`ops_alloy_memory_limit` is not overridden outside `roles/ops/defaults/main.yml`, the only
-tests/test_infra_alert_rules.py:1339: comment-block 7 > 4	"""A runbook citing a section in another runbook must cite one that exists.
-tests/test_infra_alert_rules.py:1357: comment-block 6 > 4	# --- the engine dark WITH exposure open: the two-node conjunction IS the rule --------------------
-tests/test_infra_alert_rules.py:1413: comment-block 7 > 4	"""Evaluation timestamps at which the rule is FIRING, over one `(position, scrape)` history.
-tests/test_infra_alert_rules.py:1497: comment-block 5 > 4	# The two controls: each replays the TRUE POSITIVE through a defective form of one node and
-tests/test_infra_alert_rules.py:1577: comment-block 8 > 4	# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not error --
-tests/test_infra_alloy_series.py:1: file-prose 33.5 > 20
+tests/test_infra_alert_rules.py:1: file-prose 29.4 > 20
+tests/test_infra_alert_rules.py:74: comment-block 11 > 4	# --- A dead-man that cannot announce its own recovery -------------------------------------------
+tests/test_infra_alert_rules.py:298: comment-block 6 > 4	# --- A shipped metric that nothing watches ------------------------------------------------------
+tests/test_infra_alert_rules.py:385: comment-block 5 > 4	# The execution safety envelope's unwatched families; armed, kill_tripped and
+tests/test_infra_alert_rules.py:395: comment-block 6 > 4	# A gating INPUT, not the venue alert itself: the underlying condition already pages from the
+tests/test_infra_alert_rules.py:420: comment-block 11 > 4	# The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
+tests/test_infra_alert_rules.py:622: comment-block 5 > 4	"""Replays nightly-gauge histories through the rule's OWN window and `for:` (read from
+tests/test_infra_alert_rules.py:816: comment-block 5 > 4	# Path-agnostic across the runbook directory -- the procedures live in per-subsystem files and the
+tests/test_infra_alert_rules.py:961: comment-block 7 > 4	"""The cross-pair `min by (host)` IS this rule: the minimum across pairs is what distinguishes
+tests/test_infra_alert_rules.py:983: comment-block 9 > 4	"""`execErrState: OK` on these two ALONE, and it is the same blindness class as their
+tests/test_infra_alert_rules.py:1016: comment-block 5 > 4	# Both bars come from a linear fit in `infra/scripts/bench-ledger-scan.py` over synthetic records,
+tests/test_infra_alert_rules.py:1065: comment-block 6 > 4	# --- Grafana's template parser is stricter than Go's ------------------------------------------
+tests/test_infra_alert_rules.py:1087: comment-block 5 > 4	# --- the venue pair: a latch that cannot self-resolve, plus the recurrence signal that can --------
+tests/test_infra_alert_rules.py:1214: comment-block 6 > 4	"""Read the FLOOR not a sample (the rotation sawtooth spans MiB), compare across a 24 h band
+tests/test_infra_alert_rules.py:1381: comment-block 5 > 4	"""`ops_alloy_memory_limit` is not overridden outside `roles/ops/defaults/main.yml`, the only
+tests/test_infra_alert_rules.py:1443: comment-block 7 > 4	"""A runbook citing a section in another runbook must cite one that exists.
+tests/test_infra_alert_rules.py:1461: comment-block 6 > 4	# --- the engine dark WITH exposure open: the two-node conjunction IS the rule --------------------
+tests/test_infra_alert_rules.py:1517: comment-block 7 > 4	"""Evaluation timestamps at which the rule is FIRING, over one `(position, scrape)` history.
+tests/test_infra_alert_rules.py:1601: comment-block 5 > 4	# The two controls: each replays the TRUE POSITIVE through a defective form of one node and
+tests/test_infra_alert_rules.py:1681: comment-block 8 > 4	# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not error --
+tests/test_infra_alloy_series.py:1: file-prose 33.4 > 20
 tests/test_infra_alloy_series.py:128: comment-block 6 > 4	# ADMITTED by the NAS keep-regex but NOT published there any more: these families publish from ops
 tests/test_infra_alloy_series.py:138: comment-block 7 > 4	# Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
 tests/test_infra_alloy_series.py:212: comment-block 6 > 4	# spec 00087: the tape-bars materializer's gauges. Admitted today only by the
@@ -1181,19 +1157,18 @@ tests/test_infra_continuity.py:464: comment-block 7 > 4	"""End-to-end wiring pin
 tests/test_infra_continuity.py:517: comment-block 5 > 4	"""The `tail` column in every slot at once: 2 on the refused stream, where the depth is the
 tests/test_infra_continuity.py:560: comment-block 5 > 4	"""00079/D4's distinguishability on a MIXED tree, which is where it has to work: a contaminated
 tests/test_infra_shell_templates_render.py:1: comment-block 6 > 4	"""Every shell template must render, through Ansible's own engine, to valid bash.
-tests/test_infra_tape_bars_template.py:1: comment-block 5 > 4	"""Guard: `tape-bars.sh.j2` renders to the ops materializer's shell script, pinned against the real
 tests/test_infra_unattended_upgrades.py:1: comment-block 7 > 4	"""The unattended-upgrades auto-reboot flip (spec 00071 D4, T0027).
-tests/test_infra_verify_replay_template.py:1: file-prose 24.1 > 20
-tests/test_infra_verify_replay_template.py:78: comment-block 6 > 4	"""spec 00077 D5 -- the dead-man ping gates on run_ok, not on the exit code.
-tests/test_infra_verify_replay_template.py:89: comment-block 5 > 4	"""`set -u` without `pipefail`: `docker run | tee` reports tee's status, so every failure
-tests/test_infra_verify_replay_template.py:102: comment-block 7 > 4	"""The checkpoint needs a `:rw` mount; NOTHING this sweep reads may get one.
-tests/test_infra_verify_replay_template.py:124: comment-block 6 > 4	"""The template's own `sed -n <expr> "$replay_log" | tail -1`, over the whole captured log.
-tests/test_infra_verify_replay_template.py:160: comment-block 7 > 4	# One production-shaped log: a currently-failing hour, both census twins (echoed then logged), both
-tests/test_infra_verify_replay_template.py:217: comment-block 7 > 4	"""Invoke the real CLI and return `(result, the log lines it ACTUALLY emitted)`.
-tests/test_infra_verify_replay_template.py:236: comment-block 6 > 4	"""The template's own seds, run over lines in the CLI's REAL format, so wording drift on either
-tests/test_infra_verify_replay_template.py:332: comment-block 6 > 4	"""Return `run(docker_stub, seed) -> (rc, textfile)`: writes `seed` as the previous run's
-tests/test_infra_verify_replay_template.py:365: comment-block 5 > 4	"""failed_hours carries forward when the run breaks; run_ok is 0 exactly when the summary does
-tests/test_infra_verify_replay_template.py:415: comment-block 7 > 4	"""The census series are gated on the SUMMARY, exactly like `failed_hours` -- never on whether a
+tests/test_infra_verify_replay_template.py:1: file-prose 24 > 20
+tests/test_infra_verify_replay_template.py:77: comment-block 6 > 4	"""spec 00077 D5 -- the dead-man ping gates on run_ok, not on the exit code.
+tests/test_infra_verify_replay_template.py:88: comment-block 5 > 4	"""`set -u` without `pipefail`: `docker run | tee` reports tee's status, so every failure
+tests/test_infra_verify_replay_template.py:101: comment-block 7 > 4	"""The checkpoint needs a `:rw` mount; NOTHING this sweep reads may get one.
+tests/test_infra_verify_replay_template.py:123: comment-block 6 > 4	"""The template's own `sed -n <expr> "$replay_log" | tail -1`, over the whole captured log.
+tests/test_infra_verify_replay_template.py:159: comment-block 7 > 4	# One production-shaped log: a currently-failing hour, both census twins (echoed then logged), both
+tests/test_infra_verify_replay_template.py:216: comment-block 7 > 4	"""Invoke the real CLI and return `(result, the log lines it ACTUALLY emitted)`.
+tests/test_infra_verify_replay_template.py:235: comment-block 6 > 4	"""The template's own seds, run over lines in the CLI's REAL format, so wording drift on either
+tests/test_infra_verify_replay_template.py:331: comment-block 6 > 4	"""Return `run(docker_stub, seed) -> (rc, textfile)`: writes `seed` as the previous run's
+tests/test_infra_verify_replay_template.py:364: comment-block 5 > 4	"""failed_hours carries forward when the run breaks; run_ok is 0 exactly when the summary does
+tests/test_infra_verify_replay_template.py:414: comment-block 7 > 4	"""The census series are gated on the SUMMARY, exactly like `failed_hours` -- never on whether a
 tests/test_internal_terms_not_operator_visible.py:1: comment-block 13 > 4	"""Internal development vocabulary must not reach a surface an operator sees at runtime (T0096).
 tests/test_internal_terms_not_operator_visible.py:1: file-prose 21.4 > 20
 tests/test_internal_terms_not_operator_visible.py:86: comment-block 5 > 4	"""`echo`/`printf` to stdout or stderr, including the `# HELP` text of textfile exporters.
@@ -1221,7 +1196,7 @@ tests/test_kraken_fixture_mint.py:677: comment-block 6 > 4	"""No default binds t
 tests/test_kraken_fixture_mint.py:718: comment-block 6 > 4	"""A read made in a different MODE than the reader this mints for answers a different question.
 tests/test_kraken_fixture_mint.py:862: comment-block 5 > 4	"""The plan the operator approves and the orders that go out must be the same set.
 tests/test_logging_ship_handler.py:1: file-prose 21.1 > 20
-tests/test_mutate_probe.py:262: comment-block 6 > 4	"""Start a cycle, wait until the probe is genuinely running, then signal the whole process group.
+tests/test_mutate_probe.py:271: comment-block 6 > 4	"""Start a cycle, wait until the probe is genuinely running, then signal the whole process group.
 tests/test_nautilus_adapter.py:1: file-prose 26.5 > 20
 tests/test_nautilus_adapter.py:34: comment-block 7 > 4	"""The interpreter under test runs exactly the wheel `pyproject.toml` names.
 tests/test_nautilus_adapter.py:45: comment-block 8 > 4	"""The gate's version input on the production path, with nothing injected.
@@ -1231,9 +1206,9 @@ tests/test_panel_command.py:1: comment-block 5 > 4	"""TDD for `cli/panel/command
 tests/test_panel_command.py:173: comment-block 9 > 4	"""The generation guard read the meta file, not the tree it describes — so `rm panel-meta.json`
 tests/test_panel_command.py:200: comment-block 6 > 4	"""The hole the manifest check could not see, and the one the planned regeneration creates. The
 tests/test_panel_materialize.py:1: file-prose 22.6 > 20
-tests/test_panel_materialize.py:298: comment-block 5 > 4	# T0066 / spec 00052 D6 correction: an hour is heal-complete only after the reconciler's H+6h
-tests/test_panel_materialize.py:551: comment-block 10 > 4	# --- T0104: the staleness marker -----------------------------------------------------------------
-tests/test_panel_materialize.py:722: comment-block 9 > 4	"""The gap the resumed-run test above cannot see. That one crosses hours in SEPARATE processes,
+tests/test_panel_materialize.py:313: comment-block 5 > 4	# T0066 / spec 00052 D6 correction: an hour is heal-complete only after the reconciler's H+6h
+tests/test_panel_materialize.py:566: comment-block 10 > 4	# --- T0104: the staleness marker -----------------------------------------------------------------
+tests/test_panel_materialize.py:737: comment-block 9 > 4	"""The gap the resumed-run test above cannot see. That one crosses hours in SEPARATE processes,
 tests/test_panel_regenerate.py:1: file-prose 24.6 > 20
 tests/test_panel_regenerate.py:44: comment-block 9 > 4	# The stub logs to CALL_LOG alongside systemctl: `systemctl start …timer` prints nothing, so an
 tests/test_panel_regenerate.py:193: comment-block 5 > 4	# It must refuse AT the sizing step rather than wander on to the next gate. Combined into one

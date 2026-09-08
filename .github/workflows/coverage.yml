@@ -37,3 +37,12 @@ jobs:
           fail-on-error: false
         env:
           COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+      # The prose ratchet's verdict is a property of the TREE, and on a `pull_request` event
+      # actions/checkout resolves `refs/pull/N/merge` -- the test merge of the head into the base,
+      # which is the same tree a server-side `gh pr merge --merge` creates. That tree exists nowhere
+      # a local hook can reach it, so this step is the only thing that measures it. Invoked through
+      # pre-commit's push stage rather than by calling the script, so it cannot drift from what the
+      # `pre-push` hook runs. `always()`: a red suite must not hide a red ratchet, and vice versa.
+      - name: Prose ratchet on the merge result
+        if: always()
+        run: uv run pre-commit run --hook-stage pre-push --all-files

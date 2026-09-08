@@ -127,7 +127,7 @@ def rederive_record44_legs(
     var_trials: float,
 ) -> dict:
     """Every re-derivable leg of record 44's benchmark-relative basis, keyed by its registry name — the own-series
-    `cost_stress_*` and `maxdd*` legs are not among them; `worst_slice_relative` carries the full diagnostic because the
+    `cost_stress_*` and `maxdd*` legs are not among them; `worst_slice_relative` carries the summary diagnostic, the per-slice table dropped, because the
     registered `worst_slice_relative_pass: 1` is a bare flag whose numbers live only in record 44's free-text notes."""
     config = CrossfreqSystemConfig()
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)

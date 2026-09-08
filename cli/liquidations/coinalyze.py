@@ -1,25 +1,9 @@
-"""Coinalyze REST liquidation-history poller (`zcrypto liquidations-poll`, spec 00051 OPS-2): the
-T0023 fallback for the shelved Binance forceOrder WS recorder (`cli.liquidations.recorder`), which
-Binance geo-fences from every egress we own. Polls the documented `/v1/liquidation-history` endpoint
-every `COINALYZE_POLL_SECONDS` for the funding basket's 10 USDT perps, ingesting only 1-min buckets
-Coinalyze has PROVEN closed (see `poll_cycle`), and writes them through the same `SegmentWriter` the
-recorder uses -- one writer per coin, `kind="liquidations-1m"` -- so the existing NAS replication
-channel and dead-man wiring (same data dir) carry over unchanged.
-
-Overlap-safety invariant (do not "optimize" away): each cycle still re-fetches the whole 30 h
-catch-up window, and THREE mechanisms keep the overlap safe. First, a per-coin bucket watermark
-(primed from the on-disk segment tree at startup, advanced in memory on each submit) filters
-re-submissions at source, before they ever reach a writer. Second and third, the writer's own
-defenses remain intact behind it: SegmentWriter's dedup (`_seen`) covers the currently-OPEN hour,
-and re-submissions into already-FINALIZED hours are dropped by the writer's late-event floor
-(`_current_hour`/`_floor` in `cli/capture/segment_writer.py`). Narrowing the window or touching
-the floor logic must preserve all of this -- and a `dropping replayed event` line that still
-fires is now a genuine anomaly, not steady-state noise. What holds that claim is
-`tests/test_liquidations_coinalyze.py::test_poll_cycle_second_cycle_is_silent_no_dedup_drops`.
-In production the line logs at INFO (spec 00107 D4, for the capture writer's reconnect bursts), so a
-runtime-only watermark regression is read out of the raw logs rather than announcing itself -- and
-costs no data, because the writer's dedup and its late-event floor still hold behind the watermark.
-"""
+"""The Coinalyze REST poller (spec 00051 OPS-2) that replaced the Binance forceOrder WS recorder that Binance geo-fences from every
+egress we own, writing through the same `SegmentWriter` and data dir so NAS replication and the dead-man carry over. Overlap
+safety is an invariant, not an optimization target: the whole-window re-fetch each cycle is made safe by the bucket watermark,
+`SegmentWriter`'s dedup over the open hour and its late-event floor over finalized ones TOGETHER, so narrowing the window or
+touching the floor must preserve all three. `dropping replayed event` is then a real anomaly, and it logs at INFO (spec 00107
+D4), so a watermark regression that exists only at runtime is read out of the raw logs."""
 
 from __future__ import annotations
 
@@ -39,6 +23,7 @@ import typer
 from prometheus_client import Counter, Gauge
 
 from cli.capture.command import single_instance_lock
+from cli.capture.errors import CaptureError
 from cli.capture.gap_monitor import DiskWatermark, ping_healthcheck
 from cli.capture.segment_writer import LIQ_AGG_SCHEMA, SegmentWriter
 from cli.liquidations.errors import LiquidationsError
@@ -99,12 +84,8 @@ _SEGMENT_FILE_RE = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/(\d{2})\.(?:parquet|par
 
 
 def prime_bucket_watermarks(data_dir: Path, coins: list[str]) -> dict[str, int]:
-    """Newest persisted bucket start (epoch s) per coin, read from the segment tree at startup.
-
-    Fail-open per coin: a coin with no (readable) data is simply absent, so its whole catch-up
-    window re-submits once and the writer's dedup/floor absorb it -- exactly the pre-watermark
-    behavior, once.
-    """
+    """Fail-open per coin: one whose data is missing, unreadable or without a usable `ts` is absent from the
+    result, so its whole window re-submits once and the writer's defenses absorb it."""
     marks: dict[str, int] = {}
     for coin in coins:
         by_hour: dict[tuple[str, ...], list[Path]] = {}
@@ -125,21 +106,15 @@ def prime_bucket_watermarks(data_dir: Path, coins: list[str]) -> dict[str, int]:
 
 
 def symbol_for(coin: str) -> str:
-    """`"BTC"` -> `"BTCUSDT_PERP.A"` -- Coinalyze's symbol for the coin's Binance USDT perp."""
+    """Coinalyze names a coin's Binance USDT perp this way."""
     return f"{coin}USDT_PERP.A"
 
 
 def fetch_liquidation_history(api_key: str, symbols: list[str], frm: int, to: int, *, opener=urllib.request.urlopen) -> list[dict]:
-    """GET Coinalyze's `/v1/liquidation-history` for `symbols` (one batched call) over `[frm, to]`
-    (unix seconds, inclusive on both ends). Returns the parsed `[{"symbol", "history": [...]}]`
-    list. Raises `LiquidationsError` on a transport/HTTP failure, malformed JSON, or a non-list
-    response body -- nothing is ever returned unless the whole fetch succeeds.
-
-    The API key travels as the `api_key` header (never the URL, and never logged) via a `Request`
-    object -- plain `urlopen(url, timeout=...)` has no way to attach headers. `urllib` capitalizes
-    the header name it stores (`Api_key`); harmless, since HTTP header names are case-insensitive
-    on the wire.
-    """
+    """`frm` and `to` are unix seconds, inclusive at both ends, and nothing is returned unless the whole
+    fetch succeeds. The key travels as a header -- never the URL, never logged -- which is why this
+    builds a `Request` rather than calling `urlopen(url)`; `urllib` stores the name capitalized, and
+    HTTP header names are case-insensitive, so that is not a bug to fix."""
     symbols_csv = ",".join(symbols)
     url = f"{_BASE_URL}?symbols={symbols_csv}&interval=1min&from={frm}&to={to}&convert_to_usd=true"
     request = urllib.request.Request(url, headers={"api_key": api_key})
@@ -164,21 +139,10 @@ def poll_cycle(
     now: datetime | None = None,
     opener=urllib.request.urlopen,
 ) -> int:
-    """One poll cycle: fetch `coins`' batched Coinalyze symbols over the last 30h and append every
-    PROVEN-closed 1-min bucket to its coin's writer. Returns the number of rows submitted to a
-    writer (SegmentWriter's own `dedup_key` -- not this count -- is what absorbs a re-polled
-    overlapping window; see the module docstring).
-
-    `watermarks` (coin -> newest submitted bucket start, epoch s) filters re-submissions at source:
-    a proven-closed bucket at or below its coin's mark is skipped before the writer, and the dict is
-    mutated in place -- a coin's mark advances only on a successful `writer.append`. `None` (the
-    default) disables filtering entirely, reproducing the pre-watermark behavior.
-
-    Raises `LiquidationsError` (propagated from `fetch_liquidation_history`) on any fetch failure,
-    BEFORE a single row is appended -- a failed cycle writes nothing, and the caller's next cycle
-    simply retries (the 30h re-fetch window covers the gap). A response entry naming a symbol with
-    no corresponding writer is skipped defensively, never fatal.
-    """
+    """Only buckets Coinalyze has proven closed are appended; the count returned is submissions, not rows kept,
+    since the writer's `dedup_key` absorbs the re-polled overlap. `watermarks` is mutated in place, a coin's
+    mark advancing only on a successful append, and `None` disables the filter. A fetch failure raises
+    before any row is appended; a later raise leaves earlier rows buffered."""
     now = now or datetime.now(UTC)
     now_s = int(now.timestamp())
     frm = now_s - _CATCHUP_WINDOW_SECONDS
@@ -222,8 +186,8 @@ def poll_cycle(
 
 
 class _PollMetrics:
-    """The poller's counters/gauge (spec 00069 D5, T5): `_run()` builds one of these only when
-    ZCRYPTO_METRICS_PORT is set and threads it through every `_poll_once` call."""
+    """Built only when ZCRYPTO_METRICS_PORT is set (spec 00069 D5), so every metrics call is a no-op
+    against `None` when it is not."""
 
     def __init__(self, registry) -> None:
         self.polls_total = Counter("zcrypto_liquidations_polls_total", "Poll cycles by outcome.", ["outcome"], registry=registry)
@@ -238,11 +202,9 @@ class _PollMetrics:
 
 
 def _record_outcome(metrics: _PollMetrics | None, *, ok: bool, api_error: bool = False) -> None:
-    """Isolation invariant (spec 00069 D5): by the time this runs, `_poll_once`'s real work --
-    the fetch, every `writer.append`, and the finalize sweep -- has already completed (or, on a
-    failure, been correctly abandoned); a raising metrics update must never abort the poll cycle
-    or affect its return value. Mirrors `ping_healthcheck`'s wrap-and-log. `metrics` is None
-    whenever ZCRYPTO_METRICS_PORT is unset, making every call here a no-op."""
+    """Isolation invariant (spec 00069 D5): every call site runs after the cycle's real work has
+    completed or been abandoned, so a raising metrics update must never change what the cycle did or
+    what it returns -- the same wrap-and-log `ping_healthcheck` uses."""
     if metrics is None:
         return
     try:
@@ -262,10 +224,10 @@ def _poll_once(
     bucket_watermarks: dict[str, int],
     metrics: _PollMetrics | None = None,
 ) -> bool:
-    """Run one cycle's watermark check + fetch/write; returns whether it fully succeeded (the
-    dead-man ping's gate). A watermark probe that raises, a breach, or a `LiquidationsError` from
-    `poll_cycle` are all treated the same way: log a warning, write nothing more, return False so
-    the caller withholds the ping -- and the loop keeps going, retrying next cycle."""
+    """Returns whether one cycle fully succeeded — the dead-man ping's gate. A step's failure is logged and
+    returns False so the caller withholds the ping, and the loop keeps going; a reported sweep failure lets
+    the remaining writers finish first. The escapes, both by design: the finalize sweep's `CaptureError` re-
+    raise, and the `KeyboardInterrupt` `_run` maps SIGTERM to."""
     try:
         watermark.check()
     except Exception:
@@ -294,8 +256,33 @@ def _poll_once(
     # T0046: close any hour old enough that nothing recoverable can still arrive for it (see
     # _FINALIZE_LAG_SECONDS) -- the sparse-symbol writers that a genuine event never rotates.
     finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
-    for writer in writers.values():
-        writer.finalize_completed_hours(finalize_cutoff)
+    swept_ok = True
+    for coin, writer in writers.items():
+        try:
+            outcome = writer.finalize_completed_hours(finalize_cutoff)
+        except CaptureError:
+            raise  # the oracle guard: a fail-fast this must not turn into an unbounded retry
+        except Exception:
+            # A raise is unexpected here -- the sweep reports rather than raises -- so it ends the cycle
+            # rather than borrowing `_merge_hour`'s "Never raises"; the REPORTED failure below is the
+            # one that lets every remaining writer finish its sweep first.
+            logger.exception("Coinalyze finalize sweep failed for %s -- retrying next cycle", coin)
+            _record_outcome(metrics, ok=False)
+            return False
+        if outcome.failed:
+            # T0175: the write under the sweep swallows its own errors, so this is the only signal that
+            # an hour was lost. Every other writer still gets its sweep -- what a failure costs is the
+            # dead-man ping, which the caller withholds on a False, not this cycle's remaining work.
+            logger.error(
+                "Coinalyze finalize left %d hour(s) unwritten for %s: %s -- withholding the dead-man ping",
+                len(outcome.failed),
+                coin,
+                ", ".join(f"{hour:%Y-%m-%dT%H}" for hour in outcome.failed),
+            )
+            swept_ok = False
+    if not swept_ok:
+        _record_outcome(metrics, ok=False)
+        return False
     _record_outcome(metrics, ok=True)
     return True
 

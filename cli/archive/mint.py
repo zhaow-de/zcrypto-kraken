@@ -38,11 +38,13 @@ def ledger_append(root: Path, record: dict) -> None:
 
 
 def _check_hour(hour: datetime) -> datetime:
-    """Return the hour's EXCLUSIVE end boundary, refusing anything that is not an exact UTC hour: the
-    path is formatted straight from `hour`, so a stray 09:30 would publish half an hour under the
-    09:00 file's name, which promises the whole of it."""
+    """Return the hour's EXCLUSIVE end boundary, refusing a naive `hour`, one off the hour, or one at a
+    non-zero offset: the path is formatted from `hour`'s wall clock, so 09:30 would publish half an
+    hour under the 09:00 name, and 09:00 at `-08:00` would publish 17:00-18:00 UTC under it."""
     if hour.tzinfo is None or hour != hour.replace(minute=0, second=0, microsecond=0):
         raise CaptureError(f"refusing to mint {hour!r}: not an exact UTC hour boundary")
+    if hour.utcoffset() != timedelta(0):
+        raise CaptureError(f"refusing to mint {hour!r}: an exact hour at UTC offset {hour.isoformat()[-6:]}, not at UTC")
     return hour + timedelta(hours=1)
 
 

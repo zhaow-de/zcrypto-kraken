@@ -63,9 +63,11 @@ prometheus.exporter.unix "host" {
   rootfs_path = "/host/root"
 
   textfile {
-    // The five timers' textfiles (archive-pull, panel-materialize, tape-bars, verify-replay,
-    // verified-replay), written since OPS-3/OPS-4 into ops_textfile_dir but scraped by nothing
-    // until this task. alloy-compose.yaml.j2 mounts that host directory read-only at this exact
+    // The timers' textfiles -- archive-pull, panel-materialize, tape-bars, verify-replay,
+    // verified-replay, grafana-keepalive from roles/ops, and zaccess-probe-ops from access_ops,
+    // which runs in the same play and writes here too. No count: every one this file carried went
+    // stale at the next writer, and a list is its own length.
+    // alloy-compose.yaml.j2 mounts that host directory read-only at this exact
     // container path -- literal "/textfile", exactly like the NAS's, not a templated
     // ops_textfile_dir -- because this string names the CONTAINER's view of the mount, not the
     // host path.
@@ -198,7 +200,7 @@ prometheus.remote_write "grafana" {
     // this host's copy carries host="ops", so the two are distinguishable in Grafana.
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_mtime_seconds|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|zcrypto_tapebars_.*|hc_check_up|hc_checks_down_total|zcrypto_liquidations_polls_total|zcrypto_liquidations_api_errors_total|zcrypto_liquidations_last_success_timestamp_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_cycle_timestamp_seconds|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|zaccess_wireguard_handshake_age_seconds|zaccess_tls_not_after_seconds"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_mtime_seconds|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|zcrypto_tapebars_.*|zcrypto_grafana_keepalive_.*|hc_check_up|hc_checks_down_total|zcrypto_liquidations_polls_total|zcrypto_liquidations_api_errors_total|zcrypto_liquidations_last_success_timestamp_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_cycle_timestamp_seconds|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|zaccess_wireguard_handshake_age_seconds|zaccess_tls_not_after_seconds"
       action        = "keep"
     }
   }

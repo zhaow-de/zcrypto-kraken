@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
@@ -217,6 +217,59 @@ def test_minting_a_datetime_that_is_not_an_exact_utc_hour_is_rejected(tmp_path):
             schema=BOOK_SCHEMA,
             tool_version="test",
         )
+
+
+def test_minting_an_hour_at_a_non_zero_utc_offset_is_rejected(tmp_path):
+    """T0177's imagined future caller, constructed: `replace(minute=0, ...)` preserves `tzinfo`, so an
+    hour exact in ITS OWN zone passed a check whose name and message both say UTC."""
+    # `+05:30` is 09:00 there and 03:30 UTC -- `f"{hour:%H}"` formats the wall clock, so this would
+    # publish the 03:30-04:30 UTC span under 09.parquet, which promises the whole of 09:00-10:00 UTC.
+    ist = timezone(timedelta(hours=5, minutes=30))
+    with pytest.raises(CaptureError, match="05:30"):
+        mint_hour(
+            tmp_path,
+            "BTC/EUR",
+            "book",
+            H.astimezone(UTC).replace(tzinfo=ist),
+            _blocks(),
+            gaps_healed=[],
+            residual_gaps=[],
+            schema=BOOK_SCHEMA,
+            tool_version="test",
+        )
+
+
+def test_a_non_utc_hour_is_refused_before_anything_reaches_the_tree(tmp_path):
+    """The claim T0177 makes about THIS path: no wrong-hour file name is minted here. Read off DISK,
+    never inferred from the raise -- a refusal that fires after a partial write is no defence."""
+    # `-08:00`: 09:00 there is 17:00 UTC, so this would put an eight-hour lie in the one place a
+    # final states which hour it covers.
+    pacific = timezone(timedelta(hours=-8))
+    with pytest.raises(CaptureError, match="08:00"):
+        mint_hour(
+            tmp_path,
+            "BTC/EUR",
+            "book",
+            H.astimezone(UTC).replace(tzinfo=pacific),
+            _blocks(),
+            gaps_healed=[],
+            residual_gaps=[],
+            schema=BOOK_SCHEMA,
+            tool_version="test",
+        )
+
+    assert not list(tmp_path.rglob("*.parquet")), "no final"
+    assert not list(tmp_path.rglob("*.sha256")), "no sidecar"
+    assert not list(tmp_path.rglob("*.tmp")), "no partial"
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == [], "nothing at all was published"
+
+
+def test_a_utc_hour_still_mints_and_still_returns_the_exclusive_end(tmp_path):
+    """The true positive: the arm refuses non-UTC offsets only, never the hours production passes."""
+    path = _mint(tmp_path)
+
+    assert path == _hour_dir(tmp_path) / "09.parquet"
+    assert path.exists()
 
 
 # --- the frame contract -------------------------------------------------------------------------

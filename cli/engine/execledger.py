@@ -90,7 +90,9 @@ def _read_existing(path: Path) -> dict:
 
 
 def _cycle_ts_from_path(path: Path) -> datetime:
-    """The inverse of `exec_record_path`: day dir + `-<HH>` suffix -> the boundary datetime (UTC)."""
+    """The inverse of `exec_record_path`; an unparseable day dir or trailing hour token raises ValueError, but
+    the `exec-` prefix is not checked -- `cycle-<HH>.json` parses too, so the caller's `exec-*` glob is what
+    selects the family."""
     day = datetime.strptime(path.parent.name, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     hour = int(path.stem.rsplit("-", 1)[-1])
     return day + timedelta(hours=hour)
@@ -122,8 +124,7 @@ def _load_or_new(path: Path, verdict: GateVerdict, evaluated_at: datetime) -> di
 
 
 def _store(path: Path, doc: dict) -> Path:
-    """Validate then write via `.tmp` sibling + `os.replace` (the `_write_prom_textfile` pattern in
-    `cli/engine/command.py`), so a reader never sees a partial record and a mutator can never
+    """Writes atomically, so a reader never sees a partial record, and validates first, so a mutator can never
     persist a record that would refuse its own next read."""
     validate_exec_record(doc)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,8 +141,9 @@ def write_exec_record(journal_dir: Path, cycle_ts: datetime, verdict: GateVerdic
 
 
 def append_submitted_row(journal_dir: Path, cycle_ts: datetime, row: dict, *, verdict: GateVerdict, evaluated_at: datetime) -> Path:
-    """The write-ahead call: creates the boundary's v2 record from `verdict` when absent, appends
-    `row` when present. Raises on any failure -- the caller refuses the submission."""
+    """The write-ahead call: `verdict` is required on every call -- it creates the boundary's record when
+    absent and re-stamps `level`/`reasons`/`inputs` when present. A raise means the caller refuses the
+    submission."""
     path = exec_record_path(journal_dir, cycle_ts)
     doc = _load_or_new(path, verdict, evaluated_at)
     doc["submitted"].append(row)
@@ -157,8 +159,7 @@ def update_submitted_row(
     event: dict | None = None,
     add_filled_qty: float = 0.0,
 ) -> None:
-    """Appends `event` to the row's `events`, sets `state`, adds to `filled_qty`. Never creates a
-    record -- raises EngineError when the record or the row is absent."""
+    """Never creates a record -- raises EngineError when the record or the row is absent."""
     path = exec_record_path(journal_dir, cycle_ts)
     if not path.exists():
         raise EngineError(f"exec record absent: {path}")
@@ -192,9 +193,8 @@ def update_plan_intent(
     reasons: tuple[str, ...] = (),
     filled_qty: float = 0.0,
 ) -> None:
-    """Sets `outcome`/`reasons`/`filled_qty` on the `index`-matching element of `plan_id`'s
-    `intents`. Never creates a record -- raises EngineError when the record, the plan entry, or the
-    intent is absent."""
+    """`index` is matched as a FIELD of each intent, never a list position. Never creates a record -- raises
+    EngineError when the record, the plan entry, or the intent is absent."""
     path = exec_record_path(journal_dir, cycle_ts)
     if not path.exists():
         raise EngineError(f"exec record absent: {path}")
@@ -213,7 +213,7 @@ def update_plan_intent(
 
 
 def _day_dirs(journal_dir: Path, now: datetime) -> list[Path]:
-    """The current and previous UTC day dirs, in that order."""
+    """`now` must be UTC: its date names the day dir."""
     today = now.date()
     return [Path(journal_dir) / d.isoformat() for d in (today, today - timedelta(days=1))]
 
