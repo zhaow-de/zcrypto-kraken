@@ -66,7 +66,7 @@ def _utc_now() -> datetime:
 
 
 def _parse_float(value: str) -> float | None:
-    """Parse a metrics float, mapping any absent form -- bare empty or quoted-empty `""` -- to null.
+    """An absent form -- bare empty or quoted-empty `""` -- maps to null.
 
     Early Vision metrics leave the ancillary ratio columns — never the OI columns — absent, and a missing one must not discard the
     row's OI reading; a present-but-non-numeric value still raises through `float`."""
@@ -79,9 +79,7 @@ def _day_url(perp: str, day: datetime) -> str:
 
 
 def _get_bytes(url: str, *, opener) -> bytes:
-    """GET `url`, retrying 5xx and connection-level blips with backoff and raising `DerivativesError` when they run out.
-
-    A non-5xx status -- 404 included -- is a definitive answer the caller acts on (404 = not published / not listed),
+    """A non-5xx status -- 404 included -- is a definitive answer the caller acts on (404 = not published / not listed),
     so it is re-raised immediately and never retried."""
     last_exc: Exception | None = None
     for attempt in range(1, _MAX_RETRIES + 1):
@@ -106,9 +104,7 @@ def _get_bytes(url: str, *, opener) -> bytes:
 
 
 def fetch_oi_day(perp: str, day: datetime, *, opener=urllib.request.urlopen) -> list[list] | None:
-    """Fetch and checksum-verify one daily Binance Vision metrics dump for `perp` on `day`.
-
-    Returns `None` when the day 404s (before the perp's metrics listing, or not yet published), otherwise one
+    """`None` when the day 404s (before the perp's metrics listing, or not yet published), otherwise one
     `[create_time_ms, *_FLOAT_COLUMNS]` row per data line; a checksum mismatch or any parse failure raises `DerivativesError`."""
     zip_url = _day_url(perp, day)
     try:
@@ -176,7 +172,7 @@ def backfill_oi(
     clock=_utc_now,
     opener=urllib.request.urlopen,
 ) -> pl.DataFrame:
-    """Backfill `perp`'s OI-metrics history from `start` up to (excluding) `now`'s day, whose file is still incomplete.
+    """`now`'s own day is excluded, its file still being incomplete.
 
     `now` (default `clock()`) fixes the end boundary, so one shared value gives every symbol of a midnight-crossing run
     the same last day; leading 404s are skipped, trailing ones tolerated to `_MAX_TRAILING_LAG_DAYS`, an interior one raises."""
@@ -247,9 +243,7 @@ def build_oi_substrate(
     opener=urllib.request.urlopen,
     resume: bool = False,
 ) -> dict:
-    """Backfill each perp's OI series into `out_root/<PERP>/oi.parquet` and write a manifest over the full set.
-
-    One `clock()` read fixes the end boundary for every symbol, so a midnight-crossing run gives them all the same last
+    """One `clock()` read fixes the end boundary for every symbol, so a midnight-crossing run gives them all the same last
     day; `resume=True` reuses an `oi.parquet` already present in `out_root`, letting an interrupted backfill finish."""
     now = clock()
     end_boundary = datetime(now.year, now.month, now.day, tzinfo=UTC)
@@ -280,5 +274,4 @@ def build_oi_substrate(
 
 
 def read_oi_series(out_root: Path, perp: str) -> pl.DataFrame:
-    """Read `perp`'s OI series written by `build_oi_substrate` back into a frame."""
     return read_parquet(out_root / perp / "oi.parquet")

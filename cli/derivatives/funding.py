@@ -48,8 +48,7 @@ def _month_url(perp: str, year: int, month: int) -> str:
 
 
 def _get_bytes(url: str, *, opener) -> bytes:
-    """GET `url` with the injected opener, retrying transient transport failures before raising
-    `DerivativesError`. `HTTPError` subclasses `URLError`, so the bare re-raise is what keeps a 404
+    """`HTTPError` subclasses `URLError`, so the bare re-raise is what keeps a 404
     — which the caller reads off `.code` — out of the retry loop."""
     last_exc: Exception | None = None
     for attempt in range(1, _MAX_RETRIES + 1):
@@ -67,8 +66,7 @@ def _get_bytes(url: str, *, opener) -> bytes:
 
 
 def fetch_funding_month(perp: str, year: int, month: int, *, opener=urllib.request.urlopen) -> list[list] | None:
-    """Fetch and checksum-verify one monthly Binance Vision fundingRate dump for `perp`, parsing
-    each data row to `[calc_time_ms, interval_hours, rate]`. Returns `None` when the month 404s —
+    """Each data row parses to `[calc_time_ms, interval_hours, rate]`. `None` when the month 404s —
     before the perp's listing, or not yet published."""
     zip_url = _month_url(perp, year, month)
     try:
@@ -127,10 +125,9 @@ def backfill_funding(
     clock=_utc_now,
     opener=urllib.request.urlopen,
 ) -> pl.DataFrame:
-    """Backfill `perp`'s funding-rate history from `start` to the last complete month — `clock()`'s
-    own month is incomplete and is dropped. The leading run of 404s predates this perp's listing and
-    is skipped; a 404 once data has begun is a hole in a listed series and raises
-    `DerivativesError`."""
+    """The last complete month is the bound: `clock()`'s own month is incomplete and is dropped. The
+    leading run of 404s predates this perp's listing and is skipped; a 404 once data has begun is a
+    hole in a listed series and raises `DerivativesError`."""
     now = clock()
     end_exclusive = (now.year, now.month)
 
@@ -172,9 +169,6 @@ def build_funding_substrate(
     clock=_utc_now,
     opener=urllib.request.urlopen,
 ) -> dict:
-    """Backfill each perp's funding series to `out_root/<PERP>/funding.parquet`, then write the
-    `cli.data.manifest` document over them to `out_root/manifest.json` — the CDN base URL and
-    `clock()` as its provenance — and return it."""
     series: dict[str, dict] = {}
     for perp in perps.values():
         frame = backfill_funding(perp, clock=clock, opener=opener)
@@ -189,5 +183,4 @@ def build_funding_substrate(
 
 
 def read_funding_series(out_root: Path, perp: str) -> pl.DataFrame:
-    """Read `perp`'s funding series written by `build_funding_substrate` back into a frame."""
     return read_parquet(out_root / perp / "funding.parquet")
