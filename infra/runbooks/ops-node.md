@@ -164,16 +164,16 @@ A **warning** Grafana alert (`Ops · Grafana keep-alive stopped running`): `time
 
 The threshold tolerates one skipped tick. A healthy value sawtooths from about 0 up to 3600, one missed hour peaks near 7200, and the timer carries no `Persistent=`, so a converge landing on `:37` legitimately skips a slot. Two consecutive misses are not a schedule artefact.
 
-**`noDataState: Alerting` is deliberate**: no series at all means the host is down, its Alloy is dark, the unit has never run since the textfile was last cleared, the role has not yet been converged onto the host, or **the timer is firing and the runner is exiting before it writes because no token was rendered** — each of which is the alarm rather than an absence of one. That last one is the likeliest right after a first converge, and it is the only one where the unit runs, succeeds and leaves no file.
+**`noDataState: Alerting` is deliberate**: no series at all means the host is down, its Alloy is dark, the unit has never run since the textfile was last cleared, the role has not yet been converged onto the host, or **the timer is firing and the runner is exiting before it writes because no token was rendered** — each of which is the alarm rather than an absence of one. It is the only one of the five where the unit runs, succeeds and leaves no file.
 
-**That last cause makes the push order load-bearing.** Until an ops converge installs the units and the first scrape lands, this rule has no series and will page within `for: 5m` of being pushed, asserting a run that never happened. Push it after the metric's first record, or accept one self-healing page knowingly; `fleet-deploys.md` states the rule and this is a case of it.
+**The un-converged cause makes the push order load-bearing.** Until an ops converge installs the units and the first scrape lands, this rule has no series and will page within `for: 5m` of being pushed, asserting a run that never happened. Push it after the metric's first record, or accept one self-healing page knowingly; `fleet-deploys.md` states the rule and this is a case of it.
 
 ### What to do
 
 1. **Read the timer and the unit on the host.** `ssh hp`, then `sudo systemctl list-timers zcrypto-grafana-keepalive.timer --all` for its last and next elapse, and `sudo systemctl status zcrypto-grafana-keepalive.service` for the last run's result.
 2. **Read the file the rule reads.** `grep zcrypto_grafana_keepalive /var/lib/zcrypto-ops/textfile/grafana-keepalive.prom`. An absent file with the timer enabled means the runner is exiting before it writes, which it does when its token is missing — the secrets file is rendered only when `grafana_ro_token` is defined, so a converge that ran without the vault variable leaves the unit exiting 0 and silent.
 3. **A present file with a stale stamp** means the unit is not being started: check the timer is enabled, and that the last converge did not leave it masked or the calendar edited on the host.
-4. **`sudo journalctl -u zcrypto-grafana-keepalive.service --since -6h --no-pager | wc -l`**, and read the count before anything else. It tells you whether systemd started the unit at all, which separates a timer that never fired from a unit that started and did not finish. The runner prints nothing of its own, so the count is very nearly the whole signal.
+4. **Read the journal, and prove you read something**: `sudo journalctl -u zcrypto-grafana-keepalive.service --since -6h --no-pager | wc -l` first, then the same without `wc` — an unprivileged `journalctl -u` prints `-- No entries --` under a hint to rerun with `sudo`, which is a permissions artifact and not an idle unit. The runner prints nothing of its own, so the lines you get are systemd's own record of the starts.
 
 ### Retire when
 
