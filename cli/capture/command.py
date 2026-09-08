@@ -118,6 +118,12 @@ def _default_pairs(universe_path: Path) -> list[str]:
             len(dropped),
             ", ".join(dropped),
         )
+    # A daemon with no pairs connects, subscribes to nothing, and keeps the dead-man green (T0185): an
+    # empty list is refused like a missing file, never returned.
+    if not pairs:
+        raise CaptureError(
+            f"{universe_path} yields no pair to capture — its `selected` names no /EUR-quoted symbol; pass --pairs explicitly"
+        )
     return pairs
 
 

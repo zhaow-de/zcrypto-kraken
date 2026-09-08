@@ -45,6 +45,32 @@ def test_default_pairs_raises_clear_error_on_malformed_universe_file(tmp_path):
         _default_pairs(universe_path)
 
 
+def test_default_pairs_refuses_an_empty_universe(tmp_path):
+    universe_path = tmp_path / "point-in-time-universe.json"
+    universe_path.write_text(json.dumps({"selected": []}))
+    with pytest.raises(CaptureError, match="yields no pair"):
+        _default_pairs(universe_path)
+
+
+def test_default_pairs_refuses_a_universe_with_no_eur_quoted_symbol(tmp_path, caplog):
+    universe_path = tmp_path / "point-in-time-universe.json"
+    universe_path.write_text(json.dumps({"selected": ["ETH/BTC", "SOL/BTC"]}))
+    with caplog.at_level("ERROR"):
+        with pytest.raises(CaptureError, match="yields no pair"):
+            _default_pairs(universe_path)
+    # The diagnostic that says WHY nothing is left must survive the refusal that follows it.
+    assert any("ETH/BTC" in r.message and "SOL/BTC" in r.message for r in caplog.records)
+
+
+def test_default_pairs_all_eur_quoted_returns_every_symbol_without_logging(tmp_path, caplog):
+    """The populated control: a guard that refused here, or logged, would refuse or log everywhere."""
+    universe_path = tmp_path / "point-in-time-universe.json"
+    universe_path.write_text(json.dumps({"selected": ["BTC/EUR", "ETH/EUR"]}))
+    with caplog.at_level("ERROR"):
+        assert _default_pairs(universe_path) == ["BTC/EUR", "ETH/EUR"]
+    assert [r.message for r in caplog.records if r.levelname == "ERROR"] == []
+
+
 @pytest.mark.skipif(not _REPO_UNIVERSE.exists(), reason="generated (gitignored) universe JSON absent — see docs/universe/*.md")
 def test_default_pairs_from_local_universe_file():
     # A local sanity check on the real generated universe file when present: 12 selected symbols,
