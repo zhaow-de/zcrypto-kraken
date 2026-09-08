@@ -21,6 +21,14 @@ EXIT_USAGE = 2
 EXIT_COMMENTS_CHANGED = 3
 EXIT_REFUSED = 4
 
+# The codes are an interface, so their NUMBERS cannot carry severity -- 3 is not worse than 1. A run
+# aggregates by this order, or a code change alongside a comment change reports as a comment change.
+_SEVERITY = (EXIT_INERT, EXIT_COMMENTS_CHANGED, EXIT_REFUSED, EXIT_CODE_CHANGED)
+
+
+def worse(left: int, right: int) -> int:
+    return max(left, right, key=_SEVERITY.index)
+
 
 def registered_command_names(main_src: str) -> frozenset[str]:
     """Names registered by CALL rather than by decorator -- `app.command(name="capture")(capture)`.
@@ -34,9 +42,18 @@ def registered_command_names(main_src: str) -> frozenset[str]:
     return frozenset(names)
 
 
+def _names_a_typer_hook(dec: ast.AST) -> bool:
+    """`.command` or `.callback` on the decorator itself -- a group callback's docstring is its help.
+
+    Matched on the attribute, not on the dump: a bare `@app.callback()` names neither in its keywords,
+    and `invoke_without_command=True` merely happens to contain the substring."""
+    node = dec.func if isinstance(dec, ast.Call) else dec
+    return isinstance(node, ast.Attribute) and node.attr in ("command", "callback")
+
+
 def _is_command(node: ast.AST, registered: frozenset[str]) -> bool:
     # `@app.command()`, `@app.command(name=...)`, `@app.command` all render `command` in the dump.
-    if any("command" in ast.dump(dec) for dec in getattr(node, "decorator_list", [])):
+    if any(_names_a_typer_hook(dec) for dec in getattr(node, "decorator_list", [])):
         return True
     # A name collision over-refuses, which is the safe direction for a tool that certifies.
     return getattr(node, "name", None) in registered
@@ -138,7 +155,7 @@ def main(argv: list[str]) -> int:
         except (ValueError, OSError, SyntaxError) as exc:
             # One unreadable path must not abort the rest, or a run prints partial results and no summary.
             print(f"{path}: REFUSED -- {exc}")
-            worst = max(worst, EXIT_REFUSED)
+            worst = worse(worst, EXIT_REFUSED)
             continue
         if not result.ast_inert:
             verdict, code = "CODE CHANGED", EXIT_CODE_CHANGED
@@ -151,7 +168,7 @@ def main(argv: list[str]) -> int:
         print(f"{path}: {verdict}")
         if result.detail:
             print(result.detail)
-        worst = max(worst, code)
+        worst = worse(worst, code)
     print(f"{len(paths)} file(s) compared against {base}, exit {worst}")
     return worst
 

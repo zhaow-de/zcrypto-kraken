@@ -197,3 +197,28 @@ def test_a_call_registered_command_docstring_is_refused() -> None:
     assert pi.compare(before, after, registered=frozenset({"capture"})).output_docstring_changed
     # Without the registration the same function is an ordinary helper and stays certifiable.
     assert not pi.compare(before, after).output_docstring_changed
+
+
+def test_a_code_change_outranks_a_comment_change_across_paths(tmp_path: pathlib.Path) -> None:
+    # The exit codes are an interface, so their NUMBERS cannot carry severity: aggregating by max()
+    # made a run with one code change and one comment change exit 3, which a caller treating 0-or-3
+    # as prose-only would certify.
+    repo = _repo(tmp_path, "X = 1\n")
+    (repo / "b.py").write_text("Y = 1  # keep\n")
+    subprocess.run(["git", "-C", str(repo), "add", "b.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "b"], check=True)
+    (repo / "m.py").write_text("X = 2\n")  # code changed
+    (repo / "b.py").write_text("Y = 1\n")  # comment changed
+    for order in (("m.py", "b.py"), ("b.py", "m.py")):
+        done = _cli(repo, "HEAD", *order)
+        assert done.returncode == 1, f"{order}: {done.stdout}"
+
+
+def test_a_group_callback_docstring_is_program_output() -> None:
+    # A Typer group callback's docstring is the group's `--help` body. Matched on the attribute, not
+    # on the decorator's dump: a bare `@app.callback()` mentions neither `command` nor a keyword.
+    before = 'def main() -> None:\n    """Group help."""\n    pass\n'
+    after = before.replace("Group help.", "Reworded group help.")
+    assert not pi.compare(before, after).output_docstring_changed
+    decorated = "@app.callback()\n" + before
+    assert pi.compare(decorated, "@app.callback()\n" + after).output_docstring_changed
