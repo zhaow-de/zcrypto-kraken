@@ -11,10 +11,7 @@ _TIMEOUT_SECONDS = 15
 
 
 def fetch_public(method: str) -> dict:
-    """GET a Kraken public reference-data endpoint and return its `result` dict, raising `SnapshotError`
-    on a transport or JSON failure, on a non-empty `error` array, which Kraken carries inside HTTP 200,
-    on a body that is not a JSON object at all, on a body carrying no `result`, and on a `result` that
-    is not itself an object."""
+    """Kraken carries a non-empty `error` array inside HTTP 200, so a failure need not be a failed request."""
     url = f"{_BASE_URL}/{method}"
     try:
         with urllib.request.urlopen(url, timeout=_TIMEOUT_SECONDS) as response:

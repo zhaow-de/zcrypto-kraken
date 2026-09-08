@@ -42,8 +42,7 @@ _TOKEN_PUNCTUATION = "(),;:+'\"`[]<>"
 
 
 def run_ref_path_candidates(run_ref: str) -> list[str]:
-    """The path-like tokens in a free-text `run_ref`, in order; absolute and `..` tokens are dropped because provenance means a
-    path inside the repo, and `.` segments are stripped so this and `tests/test_trial_registry_provenance.py`, which feeds the
+    """Absolute and `..` tokens are dropped because provenance means a path inside the repo, and `.` segments are stripped so this and `tests/test_trial_registry_provenance.py`, which feeds the
     same tokens to `git ls-files`, accept the same spellings — the registry being append-only, a record that passed the append
     guard and failed that test could never be repaired."""
     out: list[str] = []
@@ -121,7 +120,7 @@ def _assert_finite(value, path: str) -> None:
 
 
 def validate_caller_fields(f: dict, *, check_run_ref_provenance: bool = True) -> None:
-    """Validate the caller-supplied half of a record; `check_run_ref_provenance` is off only for stored-record re-validation,
+    """`check_run_ref_provenance` is off only for stored-record re-validation,
     because the registry is append-only and records written before the guard existed must keep loading."""
     supplied_owned = [k for k in _STORE_OWNED if k in f]
     if supplied_owned:
@@ -158,7 +157,6 @@ def _is_relative_posix_path(value) -> bool:
 
 
 def _validate_datasets_shape(datasets, where: str) -> None:
-    """Pure FORM check of the observed-datasets block — no disk access, no allowlist knowledge."""
     if type(datasets) is not dict or not datasets:
         raise RegistryCorruptionError(f"{where}: datasets must be a non-empty dict")
     for name, block in datasets.items():

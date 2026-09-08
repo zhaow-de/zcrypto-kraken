@@ -2,10 +2,7 @@ from __future__ import annotations
 
 
 def aggregate_minutes(minute_rows: list[list], interval_secs: int) -> list[list]:
-    """Aggregate 1-minute OHLCVT rows into `interval_secs`-cadence bars with a reconstructed vwap.
-
-    `vwap` is a close-price proxy (the dumps carry no vwap); a bucket with no rows produces no bar — `cli.ohlc.qa` reports gaps.
-    """
+    """`vwap` is a reconstruction proxy: the dumps carry no vwap."""
     if not minute_rows:
         return []
 

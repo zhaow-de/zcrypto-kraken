@@ -12,7 +12,7 @@ def _canonical_json(obj: dict) -> str:
 
 
 def build_snapshot(assetpairs_result: dict, assets_result: dict, symbols: list[str], fetched_at: str) -> dict:
-    """Assemble a structured, content-hashed snapshot dict. Deterministic given a fixed `fetched_at`.
+    """Deterministic given a fixed `fetched_at`.
 
     Embeds the raw AssetPairs/Assets results verbatim (so the snapshot is self-contained) alongside
     `raw_sha256`, a hash over just those raw results (not `fetched_at`), for reproducibility.
@@ -76,7 +76,6 @@ def _alias_ledger(universe: list[dict]) -> list[tuple[str, str]]:
 
 
 def render_markdown(snapshot: dict) -> str:
-    """Render the candidate-basket table + alias ledger + provenance for `snapshot`."""
     universe = snapshot["universe"]
     lines = [
         f"**Fetched at:** {snapshot['fetched_at']} (UTC)",

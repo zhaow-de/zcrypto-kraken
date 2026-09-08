@@ -10,9 +10,7 @@ _ALIAS = {"BTC": "XBT", "DOGE": "XDG"}
 
 
 def dump_pair_name(symbol: str) -> str:
-    """Map a canonical `"BASE/QUOTE"` symbol to its Kraken OHLCVT dump altname.
-
-    `cli/trades/rest.py` derives the REST `/Trades` altname from this too, so despite the name never specialise it for
+    """`cli/trades/rest.py` derives the REST `/Trades` altname from this too, so despite the name never specialise it for
     a dump-only quirk — that consumer has no local signal if you do."""
     try:
         base, quote = symbol.split("/")
@@ -40,9 +38,7 @@ def _numeric_values(r: list) -> tuple:
 
 
 def read_minute_rows(source_dir: Path, symbol: str) -> list[list]:
-    """Read and merge `symbol`'s 1-minute OHLCVT rows from the base dump and the quarterly updates.
-
-    The base dump is authoritative over its whole ts range — quarterlies are staler and can disagree on volume/trades
+    """The base dump is authoritative over its whole ts range — quarterlies are staler and can disagree on volume/trades
     at a shared ts — so a quarterly row is kept only past the base's last ts, and the same-ts dedup below is defensive."""
     alt = dump_pair_name(symbol)
     base_zip = source_dir / "Kraken_OHLCVT.zip"

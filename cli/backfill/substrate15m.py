@@ -28,7 +28,6 @@ _PRICE_COLUMNS = ["open", "high", "low", "close"]
 
 
 def build_15m_substrate(source_dir: Path, symbols: list[str], out_root: Path, *, fetched_at: str) -> dict:
-    """Build the full-history 15m substrate — `backfill_basket` at the `"15"` interval, verbatim."""
     return backfill_basket(source_dir, symbols, ["15"], out_root, fetched_at)
 
 
@@ -38,8 +37,8 @@ def _pair_parquet(root: Path, symbol: str, label: str) -> pl.DataFrame:
 
 
 def qa_15m(out_root: Path, symbols: list[str]) -> dict:
-    """Gap/density QA over each pair's written `15.parquet`, a pure read that modifies nothing; `density_by_year` clips the
-    first and last year's ideal-grid denominator to the series span, so a mid-year start does not dilute its year."""
+    """`density_by_year` clips the first and last year's ideal-grid denominator to the series span, so a mid-year start
+    does not dilute its year."""
     report: dict = {}
     for symbol in symbols:
         frame = _pair_parquet(out_root, symbol, "15")
@@ -69,10 +68,10 @@ def qa_15m(out_root: Path, symbols: list[str]) -> dict:
 
 
 def reconcile_15m_vs_ticks(out_root: Path, tick_zip: Path, symbol_csvs: dict[str, str], window: tuple[datetime, datetime]) -> dict:
-    """Independent tick-derived check of the 15m substrate over `window` — half-open, tz-aware UTC and 900-s-aligned so tick
-    buckets and bar stamps share the grid — for each canonical `"BASE/QUOTE"` in `symbol_csvs`, mapped to its CSV member
-    inside `tick_zip`. Each symbol's `reconcile` dict gains `coverage_pct`, its joined `n_intervals` over the canonical bars
-    in-window, because `reconcile` inner-joins and would otherwise silently drop the bars no tick bucket covered."""
+    """`window` is half-open, tz-aware UTC and 900-s-aligned, so tick buckets and bar stamps share the grid.
+
+    Each symbol's `reconcile` dict gains `coverage_pct`, its joined `n_intervals` over the canonical bars in-window,
+    because `reconcile` inner-joins and would otherwise silently drop the bars no tick bucket covered."""
     start, end = window
     report: dict = {}
     for symbol, member in symbol_csvs.items():

@@ -1,7 +1,4 @@
-"""Master-plan §10's drawdown-governance ladder as a pure returns overlay; semantics: docs/specs/00034-drawdown-governor-design.md.
-
-Bar t's multiplier is fixed from the GOVERNED path through t-1 (the live book sees only its own equity) — no look-ahead.
-A flat book's drawdown is frozen, so the terminal rung re-arms after restart_after bars with the HWM reset, never on recovery."""
+"""Master-plan §10's drawdown-governance ladder as a pure returns overlay; semantics: docs/specs/00034-drawdown-governor-design.md."""
 
 from __future__ import annotations
 
@@ -66,7 +63,7 @@ def _validate(returns: list[float], config: GovernorConfig) -> None:
 
 
 def drawdown_governor(returns: list[float], *, config: GovernorConfig = GovernorConfig()) -> GovernorResult:
-    """Apply the §10 governor to a (net-of-cost) returns series; see the module docstring for semantics."""
+    """`returns` must be net of cost."""
     _validate(returns, config)
     multipliers: list[float] = []
     governed: list[float] = []

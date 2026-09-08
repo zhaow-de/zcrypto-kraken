@@ -10,10 +10,7 @@ _OHLC_COLUMNS = ["open", "high", "low", "close"]
 
 
 def reconcile_series(backfill: pl.DataFrame, rest: pl.DataFrame) -> dict:
-    """Compare a backfill-reconstructed series against its v0 REST counterpart over the `ts` overlap.
-
-    OHLC and volume share REST's Kraken source and should match; `vwap` is a reconstruction proxy, so it is only reported.
-    """
+    """OHLC and volume share REST's Kraken source and should match; `vwap` is a reconstruction proxy, so it is only reported."""
     joined = backfill.join(rest, on="ts", how="inner", suffix="_rest")
     overlap_rows = joined.height
     if overlap_rows == 0:
@@ -42,9 +39,7 @@ def reconcile_series(backfill: pl.DataFrame, rest: pl.DataFrame) -> dict:
 
 
 def reconcile_dataset(backfill_root: Path, rest_root: Path, intervals: dict[str, int]) -> dict:
-    """Reconcile every `backfill_root/{symbol}/{label}.parquet` series against its v0 REST counterpart at `rest_root`,
-    skipping a series that has none; `intervals` supplies the labels to look for (e.g. `cli.ohlc.qa.INTERVAL_SECONDS`).
-    """
+    """`intervals` supplies the labels to look for (e.g. `cli.ohlc.qa.INTERVAL_SECONDS`)."""
     entries = sorted(
         (str(path.parent.relative_to(backfill_root)), label, path)
         for label in intervals
@@ -68,7 +63,6 @@ def reconcile_dataset(backfill_root: Path, rest_root: Path, intervals: dict[str,
 
 
 def render_markdown(report: dict) -> str:
-    """Render a reconcile `report` (as returned by `reconcile_dataset`) as a Markdown table + summary."""
     lines = ["# OHLCVT Backfill Reconciliation Report", ""]
     lines += [
         "| Series | Overlap rows | OHLC match rate | OHLC exact matches | Volume rel diff max | Vwap mean abs rel diff |",

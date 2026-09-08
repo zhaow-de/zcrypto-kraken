@@ -387,10 +387,10 @@ cli/portfolio/record43_book.py:470: comment-block 7 > 4	"""Narrow a bracket whos
 cli/portfolio/record43_book.py:497: comment-block 18 > 4	"""A census of the 43-vs-44 ordering across per-side cost — the measurement record 44's ADOPT
 cli/portfolio/record43_book.py:594: comment-block 7 > 4	"""Trial 43's stage-1 figures, keyed by their registry names, plus the `qa` block.
 cli/portfolio/record43_book.py:636: comment-block 6 > 4	# ---- expand the daily sleeves to 4h on CLOSE-TIME boundaries ----
-cli/snapshot/register.py:15: comment-block 5 > 4	"""Assemble a structured, content-hashed snapshot dict. Deterministic given a fixed `fetched_at`.
+cli/snapshot/register.py:15: comment-block 5 > 4	"""Deterministic given a fixed `fetched_at`.
 cli/snapshot/register.py:31: comment-block 8 > 4	# The three ways a selected pair changes identity underneath us -- T0025's trigger, as a check the
 cli/snapshot/register.py:43: comment-block 7 > 4	"""Reasons this snapshot must stop a reference-data sweep, one string each; empty means clean.
-cli/snapshot/register.py:105: comment-block 5 > 4	# The ⏱ cost facts. Rendered as base tier + ladder depth rather than the full ladders: the
+cli/snapshot/register.py:104: comment-block 5 > 4	# The ⏱ cost facts. Rendered as base tier + ladder depth rather than the full ladders: the
 cli/trades/backfill.py:1: comment-block 14 > 4	"""Orchestration for spec 00053 Task 4: heal the canonical trade stream.
 cli/trades/backfill.py:1: file-prose 24.3 > 20
 cli/trades/backfill.py:81: comment-block 5 > 4	# A book final's mere EXISTENCE proves only that at least one book event landed somewhere in the

@@ -14,7 +14,6 @@ from cli.ohlc.qa import INTERVAL_SECONDS
 
 
 def backfill_pair(source_dir: Path, symbol: str, intervals: list[str]) -> dict[str, pl.DataFrame]:
-    """Reconstruct canonical OHLCVT frames for `symbol`, keyed by interval label."""
     rows = read_minute_rows(source_dir, symbol)
     return {interval: to_frame(aggregate_minutes(rows, INTERVAL_SECONDS[interval])) for interval in intervals}
 
@@ -26,7 +25,6 @@ def backfill_basket(
     out_root: Path,
     fetched_at: str,
 ) -> dict:
-    """Backfill every symbol x interval into `out_root` as canonical Parquet plus the `manifest.json` it returns."""
     series: dict[str, dict] = {}
     for symbol in symbols:
         frames = backfill_pair(source_dir, symbol, intervals)
