@@ -59,7 +59,7 @@ fi
 # half-written one is scraped as garbage.
 tmp="$PROM.tmp"
 {
-  printf '# HELP zcrypto_grafana_keepalive_status HTTP status of the last hourly authenticated Grafana call. 200 healthy; 503 is what BOTH hibernation and a Grafana Cloud outage look like, which this call cannot tell apart; 0 is no answer at all; any other value is a call that did not succeed.\n'
+  printf '# HELP zcrypto_grafana_keepalive_status HTTP status of the last hourly authenticated Grafana call. 200 healthy; 503 is what BOTH hibernation and a Grafana Cloud outage look like and this call cannot tell them apart, so read the vendor status page; 0 is no answer at all; any other value is a call that did not succeed.\n'
   printf '# TYPE zcrypto_grafana_keepalive_status gauge\n'
   printf 'zcrypto_grafana_keepalive_status %s\n' "$code"
   printf '# HELP zcrypto_grafana_keepalive_duration_seconds Total time of that request. A wake-up answers slowly, so seconds here is the other half of the hibernation signature.\n'
