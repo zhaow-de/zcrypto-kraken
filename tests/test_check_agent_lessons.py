@@ -43,7 +43,7 @@ def test_an_unreadable_path_refuses_the_same_way_no_path_does(tmp_path: pathlib.
     # round's own instruction is that a malformed line is a finding -- so it sends a reader hunting a
     # bad record inside a file that does not exist.
     done = _run(str(tmp_path / "no-such-inbox.jsonl"))
-    assert done.returncode == 2, "an unreadable path is a call error, not a bad inbox"
+    assert done.returncode == 2, "the checker could not read it, so no record in it is malformed"
     assert "cannot read" in done.stderr
     # WHICH path and WHY: the round globs several inboxes, so a refusal naming neither leaves an
     # operator to work out which one failed.
@@ -71,6 +71,26 @@ def test_an_unreadable_file_does_not_strand_the_paths_after_it(tmp_path: pathlib
     done = _run(str(first), str(second))
     assert "b.jsonl" in done.stdout, "the inbox after the unreadable one must still be checked"
     assert "kind must be one of" in done.stdout
+
+
+def test_two_records_spliced_onto_one_physical_line_are_one_line(tmp_path: pathlib.Path) -> None:
+    # `str.splitlines()` breaks on NEL, LS and PS where iterating the file does not, so a splice that
+    # put two records on one line read as two clean ones and the file was certified. The tool's whole
+    # output is `path:line`, so it has to agree with the file about where the lines are.
+    path = tmp_path / "zcrypto-bravo.jsonl"
+    path.write_text(json.dumps(OK) + chr(0x85) + json.dumps(OK) + "\n", encoding="utf-8")
+    done = _run(str(path))
+    assert done.returncode == 1, "one physical line carrying two records is not a record"
+    assert ":1:" in done.stdout, "and the coordinate must be the line the file actually has"
+
+
+def test_an_unreadable_path_outranks_a_bad_record(tmp_path: pathlib.Path) -> None:
+    # `max()` over the per-path codes. This is also why an exit-code mutation cannot serve as a
+    # control for the cases that assert stdout: it does not move what they read.
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text(json.dumps({**OK, "kind": "bogus"}) + "\n")
+    done = _run(str(tmp_path / "gone.jsonl"), str(bad))
+    assert done.returncode == 2
 
 
 def test_a_valid_inbox_still_passes(tmp_path: pathlib.Path) -> None:

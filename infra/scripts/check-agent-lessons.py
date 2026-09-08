@@ -4,6 +4,7 @@ Refuses prose, blank lines and extra keys: an inbox is a harvest input for the r
 not a story board.
 """
 
+import io
 import json
 import sys
 
@@ -40,14 +41,15 @@ def check(path: str) -> int:
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
     except (OSError, UnicodeDecodeError) as exc:
-        # Acquiring the text, not examining it: nothing was read AS a record, so nothing here can be
-        # a malformed one. The decode has to be caught at this step -- raised inside the loop it
-        # escaped the generator `max` consumes, leaving every later path on the command line
-        # unopened while the exit code said a record was bad.
+        # Acquiring the text, not examining it: nothing was read AS a record, so nothing here can be a
+        # malformed one. Caught any later, the decode escapes `check` and strands the paths after this.
         reason = exc.strerror if isinstance(exc, OSError) else str(exc)
         print(f"cannot read {path}: {reason}", file=sys.stderr)
         return 2
-    for n, line in enumerate(text.splitlines(), 1):
+    # `io.StringIO`, not `splitlines()`: the latter breaks on NEL, LS and PS, so the tool would
+    # disagree with the file about where its lines are -- certifying a splice, and shifting coordinates.
+    for n, raw in enumerate(io.StringIO(text), 1):
+        line = raw.rstrip("\n")
         try:
             rec = json.loads(line)
         except json.JSONDecodeError as exc:
