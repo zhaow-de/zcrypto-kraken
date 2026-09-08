@@ -75,3 +75,110 @@ def test_the_entry_point_refuses_with_no_arguments() -> None:
     done = subprocess.run([sys.executable, str(_SCRIPT)], capture_output=True, text=True, cwd=_ROOT)
     assert done.returncode == 2
     assert "usage" in done.stderr.lower()
+
+
+COMMAND = '''"""Module docstring, ordinary prose."""
+
+
+@app.command(name="capture")
+def capture(pair: str) -> None:
+    """Stream the venue's book for PAIR."""
+    run(pair)
+
+
+def helper(x: int) -> int:
+    """An ordinary helper's contract."""
+    return x
+'''
+
+
+def test_a_command_docstring_is_program_output_and_is_refused() -> None:
+    # A Typer command's docstring IS its `--help` body, which `operator-facing-text.md` puts in scope.
+    after = COMMAND.replace('"""Stream the venue\'s book for PAIR."""', '"""Stream the venue\'s book for PAIR (Phase 3)."""')
+    result = pi.compare(COMMAND, after)
+    assert result.ast_inert  # the code really is unchanged
+    assert result.output_docstring_changed, "a --help body changed and must not be certified prose-only"
+
+
+def test_an_ordinary_helper_docstring_beside_it_is_still_inert() -> None:
+    after = COMMAND.replace('"""An ordinary helper\'s contract."""', '"""Reworded contract."""')
+    result = pi.compare(COMMAND, after)
+    assert result.ast_inert
+    assert not result.output_docstring_changed
+
+
+def test_a_module_docstring_is_refused_when_the_module_hands_it_to_argparse() -> None:
+    before = '"""Tool description, printed by argparse."""\n\nP = ArgumentParser(description=__doc__)\n'
+    after = before.replace("Tool description, printed by argparse.", "Reworded description.")
+    assert pi.compare(before, after).output_docstring_changed
+    # ... and a module that never mentions __doc__ keeps its docstring as prose.
+    plain = '"""Just prose."""\n\nX = 1\n'
+    assert not pi.compare(plain, plain.replace("Just prose.", "Reworded")).output_docstring_changed
+
+
+def test_module_and_async_docstrings_are_stripped() -> None:
+    # Dropping either from _HOLDS_DOCSTRING leaves the commonest edit in the repo reading as a change.
+    mod = '"""One."""\nX = 1\n'
+    assert pi.compare(mod, '"""Two."""\nX = 1\n').ast_inert
+    coro = 'async def f():\n    """One."""\n    return 1\n'
+    assert pi.compare(coro, 'async def f():\n    """Two."""\n    return 1\n').ast_inert
+
+
+def test_a_leading_non_string_expression_is_not_treated_as_a_docstring() -> None:
+    # The isinstance(..., str) guard: a bare leading constant is a statement, not prose.
+    before = "def f():\n    42\n    return 1\n"
+    after = "def f():\n    return 1\n"
+    assert not pi.compare(before, after).ast_inert
+
+
+def _repo(tmp_path: pathlib.Path, body: str) -> pathlib.Path:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for k, v in (("user.email", "t@t"), ("user.name", "t")):
+        subprocess.run(["git", "-C", str(tmp_path), "config", k, v], check=True)
+    (tmp_path / "m.py").write_text(body)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "m.py"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "base"], check=True)
+    return tmp_path
+
+
+def _cli(cwd: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(_SCRIPT), *args], capture_output=True, text=True, cwd=cwd)
+
+
+def test_the_entry_point_exits_zero_on_a_prose_only_pair(tmp_path: pathlib.Path) -> None:
+    repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
+    (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')
+    done = _cli(repo, "HEAD", "m.py")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "m.py: INERT" in done.stdout
+
+
+def test_the_entry_point_exits_nonzero_on_a_code_change(tmp_path: pathlib.Path) -> None:
+    repo = _repo(tmp_path, "def f():\n    return 1\n")
+    (repo / "m.py").write_text("def f():\n    return 2\n")
+    done = _cli(repo, "HEAD", "m.py")
+    assert done.returncode == 1, done.stdout
+    assert "CODE CHANGED" in done.stdout
+
+
+def test_the_entry_point_refuses_a_revision_it_cannot_read(tmp_path: pathlib.Path) -> None:
+    repo = _repo(tmp_path, "X = 1\n")
+    done = _cli(repo, "no-such-rev", "m.py")
+    assert done.returncode != 0, done.stdout
+    assert "cannot read" in done.stdout
+
+
+def test_the_entry_point_does_not_certify_a_comment_only_change(tmp_path: pathlib.Path) -> None:
+    # `# noqa` is a comment the gate reads, so a changed comment stream is not certifiable prose.
+    repo = _repo(tmp_path, "X = 1  # noqa: E501\n")
+    (repo / "m.py").write_text("X = 1\n")
+    done = _cli(repo, "HEAD", "m.py")
+    assert done.returncode == 3, done.stdout
+    assert "COMMENTS CHANGED" in done.stdout
+
+
+def test_prose_merely_naming_dunder_doc_does_not_make_a_module_docstring_output() -> None:
+    # The detection is a USE of the name, not a substring: this file's own docstring names it.
+    before = '"""Prose that mentions __doc__ without using it."""\n\nX = 1\n'
+    after = before.replace("Prose that mentions __doc__ without using it.", "Reworded prose.")
+    assert not pi.compare(before, after).output_docstring_changed
