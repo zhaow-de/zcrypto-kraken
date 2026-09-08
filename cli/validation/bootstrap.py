@@ -1,3 +1,5 @@
+"""Stationary block bootstrap resampling (docs/specs/00009-stationary-bootstrap-design.md)."""
+
 from __future__ import annotations
 
 import math

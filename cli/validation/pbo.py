@@ -1,3 +1,5 @@
+"""Probability of Backtest Overfitting via CSCV (docs/specs/00008-pbo-design.md)."""
+
 from __future__ import annotations
 
 import math
