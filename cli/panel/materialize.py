@@ -2,18 +2,12 @@
 
 Walks one canonical book hour (`canonical_segments`, reconciled-first) through an `OrderBook`,
 sampling `cli.panel.primitives.sample_row` at each second boundary, then publishes the wide panel
-frame as an hourly zstd Parquet final (the `cli/archive/mint.py` atomic-write pattern: tmp in the
-destination dir -> `os.replace` -> fsync, sidecar minted from the tmp bytes before the publishing
-rename). Per spec 00052 D3 (corrected 2026-07-15): Kraken snapshots arrive on subscribe, not once
-per capture hour, so ~96% of real hours open with plain updates -- `materialize_hour` therefore
+frame as an hourly zstd Parquet final. Per spec 00052 D3: Kraken snapshots arrive on subscribe, not once
+per capture hour, so an hour can open with plain updates -- `materialize_hour` therefore
 threads `OrderBook` state across hours (carry-in/carry-out) rather than rebuilding fresh every hour,
 and `write_state`/`load_state` persist the end-of-hour book as a `<HH>.state.json` sidecar so a
-sweep can resume in O(1) from the watermark hour's state. `materialize()` sweeps the canonical
-archive, per-pair watermarked at the newest existing panel hour, isolating one bad hour into
-`MaterializeResult.errors` rather than aborting the sweep -- the same isolation contract as
-`cli.archive.replay.verify_replay` -- while an hour that cannot anchor to prior state (no snapshot,
-no carried book) is isolated separately into `MaterializeResult.hours_unanchored`, an honest gap
-rather than a failure.
+sweep can resume in O(1) from the watermark hour's state. `materialize()` sweeps the canonical archive, per-pair
+watermarked at the newest existing panel hour.
 """
 
 from __future__ import annotations
@@ -48,19 +42,17 @@ SECONDS_PER_HOUR = 3600
 # lets the panel derive from the un-healed primary, and because the panel watermark is monotone with
 # no re-mint invalidation, that stale hour becomes permanent. So `materialize` waits until
 # `now >= hour_start + PANEL_SETTLE` before taking an hour -- H+6h (the reconciler's max mint) plus a
-# 1h pull/visibility buffer. The cost is ~7h of panel freshness, which no current consumer needs.
+# 1h pull/visibility buffer.
 PANEL_SETTLE = timedelta(hours=7)
 
 # Cumulative-depth price levels the panel reports (mirrors `primitives._DEPTH_LEVELS` -- kept as its
 # own constant here since that name is module-private and this is generation metadata, not math).
 K_LEVELS: tuple[int, int, int] = (1, 5, 10)
 
-# 2 (T0104): `stale_seconds` joined PANEL_SCHEMA. A column addition is a GENERATION change under
-# spec 00052 D5 -- polars raises `SchemaError: extra column in file outside of expected schema` on
-# any multi-hour scan mixing 19- and 20-column hours, EVEN when the query touches only old columns,
-# so the documented calibration read over `panel-1s/**/*.parquet` would break the moment one new
-# hour landed. The bump makes `_check_generation` refuse until the tree is regenerated, which is
-# what D5 already prescribes -- a loud stop instead of a silently unreadable panel.
+# A column addition is a GENERATION change under spec 00052 D5: a multi-hour scan across a schema
+# change raises `SchemaError: extra column in file outside of expected schema`. The bump makes
+# `_check_generation` refuse until the tree is regenerated -- a loud stop instead of a silently
+# unreadable panel.
 SCHEMA_VERSION = 2
 
 
@@ -84,12 +76,11 @@ def materialize_hour(
     An hour opening with `type == "snapshot"` always (re)builds a FRESH `OrderBook` -- `book` (any
     carried-in state) is ignored, since the snapshot is itself a fresh anchor. An hour opening with
     an update instead continues from the carried `book`, sampling from second 0 with that state; if
-    no `book` was carried (`book is None`), the hour cannot anchor and this raises `PanelError` --
-    the sweep (`materialize`) categorizes that as `hours_unanchored`, an honest gap, not an error.
+    no `book` was carried (`book is None`), the hour cannot anchor and this raises `PanelError`.
     Returns `(frame, book, last_msg_ts)`: the sampled frame, the end-of-hour book state, and the
     time of the last message applied -- all three for the caller to persist (`write_state`) and carry
     into the next hour. `last_msg_ts` is threaded rather than recomputed per hour because a blackout
-    can span an hour boundary (the 2026-07-13 event began at 06:59:59.69), and a within-hour counter
+    can span an hour boundary, and a within-hour counter
     would silently restart at exactly the moment the number matters most (T0104).
 
     Samples at each second boundary `hour+0s .. hour+3599s`: the row at boundary T reflects the book
@@ -103,16 +94,14 @@ def materialize_hour(
 
     The grid is [hour+0s, hour+3599s]: the hour's final fractional second (messages after
     :59:59.0) has no boundary in this file and is deliberately unsampled -- the next hour
-    re-anchors on its own snapshot or the carried state (which includes this hour's final fractional-second messages via the trailing drain), so nothing is lost; magnitude
-    ~1s/3600s (review M1).
+    re-anchors on its own snapshot or the carried state (which includes this hour's final fractional-second messages via the trailing drain), so nothing is lost.
     """
     frame = pl.read_parquet(path)
     messages = regroup_messages(frame)
     if messages and messages[0]["type"] == "snapshot":
-        book = OrderBook(pair, depth)  # a snapshot always resets state, carried-in or not
+        book = OrderBook(pair, depth)
     elif book is None:
         raise PanelError(f"{pair} hour {hour.isoformat()} opens with an update and carries no anchoring book state: {path}")
-    # else: continue on the carried `book` -- this hour's rows sample from second 0 with that state.
 
     rows: list[dict] = []
     msg_idx = 0
@@ -134,7 +123,7 @@ def materialize_hour(
         if row is not None:
             row["ts"] = boundary
             rows.append(row)
-    # Review C1 (critical): messages in the hour's final fractional second (ts > :59:59.0, still in
+    # Messages in the hour's final fractional second (ts > :59:59.0, still in
     # THIS hour's file) have no sampling boundary above -- but they MUST reach the carried-out book,
     # or every update-opening successor starts stale and the panel silently drifts from reality at
     # each boundary. Applied, never sampled, never counted into `updates` -- the grid stays [0,3599].
@@ -157,12 +146,12 @@ def write_hour(panel_root: Path, pair: str, hour: datetime, frame: pl.DataFrame)
     publishes it, so a kill anywhere in here leaves no final at all and the next run simply
     overwrites the torn tmp. On an OVERWRITE (a regeneration -- the watermarked sweep never
     overwrites) there is a brief new-sidecar/old-final window where verify_manifest fails; the
-    panel is regenerable, so a regen re-run heals it (review M3).
+    panel is regenerable, so a regen re-run heals it.
     """
     d = _pair_dir(panel_root, pair) / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
     d.mkdir(parents=True, exist_ok=True)
     final = d / f"{hour:%H}.parquet"
-    # PID-suffixed tmps (review I1): mint.py's fixed tmp names are safe only single-process; here a
+    # PID-suffixed tmps: mint.py's fixed tmp names are safe only single-process; here a
     # timer run and a manual CLI run may materialize the same newest hour concurrently, and a SHARED
     # tmp lets writer A rename what writer B is mid-truncating -- publishing a torn final that the
     # watermark then skips forever. Unique tmps restore last-writer-wins of complete, identical bytes.
@@ -282,11 +271,9 @@ def materialize(
     watermarked (D6): only hours strictly newer than `panel_watermark` are materialized, and hours
     at-or-below it are counted `hours_skipped`.
 
-    Settle gate (spec 00052 D6 correction / T0066): an hour is only taken once `now - hour >= settle`
-    (`PANEL_SETTLE`, 7h) -- long enough for the reconciler's H+6h max mint to have healed it, so the
-    reconciled-first read is heal-complete. A newer, not-yet-settled hour is counted `hours_unsettled`
-    and left for a future sweep; because the watermark never advances onto it, the un-healed primary is
-    never permanently captured. `now` is injectable for testing (defaults to the wall clock).
+    Settle gate (`PANEL_SETTLE`): a not-yet-settled hour is counted `hours_unsettled` and left for a
+    future sweep, and the watermark never advances onto it. `now` is injectable for testing (defaults
+    to the wall clock).
 
     Threads `OrderBook` state across hours, per pair (D3 correction): a fresh sweep resumes a pair's
     book from `load_state` at its watermark hour; within the sweep, a hour that is NOT exactly the
@@ -341,10 +328,8 @@ def materialize(
             hours_skipped += 1
             continue
 
-        # Settle gate (T0066): defer an hour that is not yet heal-complete. Newer hours are also
-        # unsettled, so the pair simply stops advancing here; the watermark holds and a later sweep
-        # takes this hour once the reconciler has had until H+6h to heal it. Left BEFORE the gap/anchor
-        # bookkeeping so a deferred hour touches none of it (it is re-processed cleanly next sweep).
+        # Left BEFORE the gap/anchor bookkeeping so a deferred hour touches none of it (it is
+        # re-processed cleanly next sweep).
         if now - hour < settle:
             hours_unsettled += 1
             continue
@@ -375,7 +360,7 @@ def materialize(
             unanchored_run[seg_pair] = False
             continue
 
-        # State BEFORE parquet (review M1): the watermark counts only the parquet, so a crash
+        # State BEFORE parquet: the watermark counts only the parquet, so a crash
         # between the writes leaves the parquet unpublished (next run re-materializes, overwriting
         # the orphan state) rather than a watermark hour whose missing sidecar would spuriously
         # unanchor its successor.
@@ -422,7 +407,7 @@ def write_meta(panel_root: Path) -> Path:
         "code_ref": _code_ref(),
     }
     path = panel_root / "panel-meta.json"
-    # Atomic like everything else in this module (review M5): a kill mid-write must not leave a
+    # Atomic like everything else in this module: a kill mid-write must not leave a
     # truncated meta for the CLI's generation check to choke on.
     tmp = path.with_name(f"panel-meta.json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(meta, indent=1) + "\n")
