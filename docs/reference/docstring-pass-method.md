@@ -10,13 +10,13 @@ For every sentence: **would it be false or pointless after the next change to wh
 
 Prose says only what the code cannot — a decision, an invariant the types do not hold, a refusal's reason.
 
-## What the pass pays on, and what predicts it
+## What the pass pays on
 
 **This is the page to read first.**
 
 The pass pays on **narration**: sentences restating the code, restating a fact a named test already pins, or reproducing a figure from a report. Repeated argument folded to a single home is narration's most legible form and the single most productive edit on record — six docstrings framing the same two input series collapsed into one module docstring, supplying 68.7% of one batch's whole reduction (`cli/features/derivatives.py`, measured at `e96054eb`). It is an instance, not the mechanism.
 
-**Repetition does not predict yield, and mass may.** Every column below is measured at that package's **own** base — the parent of the merge that cut it, which is not one shared revision. Raw docstring chars (`clean=False`), 8-gram shingles repeated in ≥3 docstrings:
+**Repetition does not predict yield, and mass may.** Every column but the last is measured at that package's **own** base — the parent of the merge that cut it, which is not one shared revision. `outcome` is a delta and needs both ends: base to that package's own cut merge. It moves if the far end moves, which is why the end is named too — `cli/alpha` reads −48.37% at its cut and −48.32% at `e96054eb`. Raw docstring chars (`clean=False`), 8-gram shingles repeated in ≥3 docstrings:
 
 | package | own base | docs | raw mass | shingles | tripwire rows | outcome |
 |---|---|---:|---:|---:|---:|---:|
@@ -45,7 +45,9 @@ The damage half, which is the useful half.
 
 **Flagged prose that has already survived a pass is not backlog.** One package went through twice, across 17 of its 21 files, and still carries 163 tripwire rows and 159,418 raw docstring chars (`clean=False`, at `e96054eb`) — 9.2× that whole four-package batch at the same revision. Its four never-opened files carry zero rows between them. A row count cannot tell a cold reader whether a row is a conscious keep or the load-bearing shape the pass is worst at. **Count rows in files the pass has never opened; check that with `git log --merges` over the pass's own branches, never from memory.**
 
-**Stopping is a valid outcome, but it is reported by its reason, per package.** At one stop, 14 packages had never been opened: 10 carried zero tripwire rows and zero shingles, and 4 carried rows — 10, 7, 4 and 2. Two of those four were excluded on risk and two on cost, the latter holding 3,378 raw chars between them. **State the count and the disposition; do not convert mass into an expected yield**, which needs the rate this document says is not established. A stop reported as "nothing is left" is stronger than the evidence, will not survive a reader's own `grep`, and hides the cost of what was deliberately left.
+**Stopping is a valid outcome, but it is reported by its reason, per package, with the mass on both sides.** At one stop, 14 packages had never been opened. Four carried tripwire rows — 10, 7, 4 and 2 — of which two were excluded on risk and two on cost, the latter holding 3,378 raw chars. The remaining ten carried zero rows and zero shingles, and they hold **18,946 raw chars between them at `e96054eb`, 5.6× the pair excluded on cost**; four individually exceed the 2,231 base mass of the package that went on to yield −0.99%.
+
+**No disposition was recorded for those ten, and the detector that grouped them is the one this document says does not order outcomes.** In this record zero rows is consistent with −13.72% and with −0.99% — the fourth-best outcome of six and the worst. So that stop rests on a group nobody examined, and the only mass it quoted was the small side that supported leaving. **State the count and the disposition for every group, and give the mass of the group you are declining as well as the one you inspected. Do not convert mass into an expected yield**, which needs the rate this document says is not established. A stop reported as "nothing is left" is stronger than the evidence, will not survive a reader's own `grep`, and hides the cost of what was deliberately left.
 
 ## The gate
 
@@ -78,7 +80,7 @@ What actually produced this file's material was not the cadence floor of one who
 
 **Run it before RESTORING, not only before cutting.** A restoration is a claim landing in the tree and takes the same proof as a cut.
 
-**Sweep for the clause you are KEEPING, not only the one you are cutting.** In `cli/validation` at `e96054eb`, three docstrings were cut to a third of their size with `never NaN` preserved verbatim in each, while the same clause stood in six places across that package — every one already asserted by a named test. A rewrite decides what survives as much as what goes, and the surviving clause never gets the sweep.
+**Sweep for the clause you are KEEPING, not only the one you are cutting.** In `cli/validation` at `e96054eb`, three docstrings were cut with `never NaN` preserved verbatim in each, while the same clause stood in six places across that package — every one already asserted by a named test. A rewrite decides what survives as much as what goes, and the surviving clause never gets the sweep.
 
 **Sweep the argument, not just the ruling.** When a fix argues from uniformity or from "the only path to X", run that argument across the package before landing it. An argument justifying more edits than the fix makes is either incomplete or wrong.
 
@@ -86,7 +88,7 @@ What actually produced this file's material was not the cadence floor of one who
 
 **Check the length of the docstrings the batch rewrote, and do not rewrap a line whose length is not the finding.** A rewritten docstring can exceed the wrap target with nothing to catch it; a reflow with no word changed is still an edit that pushed two blocks a line longer and made a ratchet absorb the growth. Run the length sweep as the batch's last step, before any baseline is regenerated.
 
-**With a prose ratchet: keep `--check-baseline`'s classification BEFORE `--write-baseline`.** The re-record rewrites the baseline to match the tree, so afterwards the check reports zeroes and what it absorbed is unrecoverable. (`prose.md` owns the rest: condense to the bar, never to the tool's threshold.) A section split invented to reach a number is the defect a recorded keep was refusing.
+**A green `--check-baseline` does not mean a row is the right size.** It absorbs an oversized offender silently, matching it against the smallest recorded value at least as large, so a row can grow within its own record and report nothing. To rule on the rows themselves, regenerate the baseline into a scratch path and diff it against the committed one. **And keep `--check-baseline`'s classification BEFORE `--write-baseline`.** The re-record rewrites the baseline to match the tree, so afterwards the check reports zeroes and what it absorbed is unrecoverable. (`prose.md` owns the rest: condense to the bar, never to the tool's threshold.) A section split invented to reach a number is the defect a recorded keep was refusing.
 
 **A prose ratio can be satisfied by writing more code.** One file left a prose-density bar without losing a
 sentence: a commit added two code lines while the prose stayed at fourteen, and the file came to rest at exactly
@@ -120,7 +122,7 @@ An instrument reports independently of the thing it describes, and every one of 
 
 **A filter that fails open returns the unfiltered set, and the answer keeps the right shape.** An exclusion meant to drop one already-finished package from a survey of fifteen matched nothing: the result listed fifteen names, right type, about the right length, with the excluded package's hits still in the total. It reports a true count of the wrong set — the mode above wearing a tool's clothes. **Print the excluded set beside the kept set**; an empty exclusion is invisible in the kept set alone, and a set operation belongs where the comparison is explicit rather than in shell pattern matching.
 
-**Serials, versions and short numeric ids collide with data** (`agent-ops.md` owns the rule). A five-digit spec serial grepped across a repo full of floats returned three confident hits that were a quantity, a drawdown and a timestamp; taking the counts would have inverted the ruling.
+**Serials, versions and short numeric ids collide with data, so a hit count is not a reference count.** A five-digit spec serial grepped across a repo full of floats returned three confident hits that were a quantity, a drawdown and a timestamp; taking the counts would have inverted the ruling.
 
 **A review is a producer, not an authority over a measurement** (`agent-ops.md` owns the two-producers rule). When a dispatched review's figure contradicts a measured one, report both and name which is yours: deferring once would have shipped a fix that closed three symptoms and left the real defect untouched.
 
