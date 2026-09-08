@@ -1,6 +1,5 @@
-"""The concordance core (spec 00040 SS the concordance core): replay a journaled cycle through the
-committed builder, compare the recomputed targets against the journaled ones, and evaluate the
-ratified 4h Stage-6a gate over a run of journaled+replayed cycles."""
+"""The concordance core (spec 00040 SS the concordance core): journaled cycle evidence replayed through the
+committed builder and scored against the ratified 4h Stage-6a gate."""
 
 from __future__ import annotations
 

@@ -20,7 +20,7 @@ MARGIN_RATES: dict[str, tuple[float, float]] = {
 
 
 def margin_rate(base: str, *, band: str = "high") -> float:
-    """The low/high per-open-and-rollover margin rate fraction for `base`."""
+    """A fraction, not bps; an unknown `base` or a `band` outside low/high is refused."""
     if band not in ("low", "high"):
         raise CostModelError(f"band must be 'low' or 'high', got {band!r}")
     if base not in MARGIN_RATES:
@@ -30,7 +30,7 @@ def margin_rate(base: str, *, band: str = "high") -> float:
 
 
 def margin_carry(notional: float, hold_hours: float, rate: float) -> float:
-    """Margin carry = notional * rate * (1 opening + floor(hold_hours / 4) rollovers)."""
+    """Rollovers are floored onto an unconditional opening charge, so a hold under 4 h pays that charge alone."""
     for name, value in (("notional", notional), ("hold_hours", hold_hours), ("rate", rate)):
         if not math.isfinite(value) or value < 0:
             raise CostModelError(f"{name} must be finite and >= 0, got {value}")

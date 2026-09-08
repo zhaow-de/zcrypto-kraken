@@ -62,3 +62,50 @@ def test_the_index_has_one_title_and_no_blockquote_line():
     quoted = [n for n, line in enumerate(lines, 1) if line.startswith(">")]
     assert titles == [1], f"the topic index has H1 lines other than its title: {titles}"
     assert not quoted, f"blockquote lines in the topic index: {quoted}"
+
+
+# --- each topic has exactly one bullet in the index ------------------------------------------------
+# A rebase that keeps both sides of an index conflict re-adds the bullet the other side had moved, so a
+# topic reads twice. A link inside another bullet's description is a cross-reference, not a bullet.
+
+_BULLET_ID = re.compile(r"^- \[(T\d{4})[^\]]*\]\(")
+
+
+def duplicate_bullets(text: str) -> list[str]:
+    """Every index line whose leading link repeats a topic an earlier bullet already led with."""
+    first: dict[str, int] = {}
+    defects: list[str] = []
+    for n, line in enumerate(text.split("\n"), 1):
+        m = _BULLET_ID.match(line)
+        if not m:
+            continue
+        tid = m.group(1)
+        if tid in first:
+            defects.append(f"line {n}: {tid} has a second bullet (first at line {first[tid]})")
+        first.setdefault(tid, n)
+    return defects
+
+
+_ANY_TOPIC_ITEM = re.compile(r"^\s*[-*+] .*\]\((?:archive/)?T\d{4}-")
+
+
+def test_the_index_has_one_bullet_per_topic():
+    text = (TOPICS / "README.md").read_text()
+    assert duplicate_bullets(text) == []
+    admitted = {m.group(1) for m in (_BULLET_ID.match(line) for line in text.split("\n")) if m}
+    assert admitted == {p.name[:5] for p in OPEN_TOPICS + ARCHIVED}, "a topic file with no bullet, or a bullet with no file"
+    unhandled = [n for n, line in enumerate(text.split("\n"), 1) if _ANY_TOPIC_ITEM.match(line) and not _BULLET_ID.match(line)]
+    assert not unhandled, f"list items linking a topic in a shape the checker does not read: {unhandled}"
+
+
+def test_duplicate_bullets_names_a_second_bullet_and_ignores_a_cross_reference():
+    """A topic with two bullets is named once, at the second; a link to it inside another bullet's text is not a bullet."""
+    planted = "\n".join(
+        [
+            "# index",
+            "- [T0001 — a](archive/T0001-a.md) — resolved.",
+            "- [T0002 — b](archive/T0002-b.md) — resolved with [T0001](archive/T0001-a.md) beside it.",
+            "- [T0001 — a](archive/T0001-a.md) — resolved again.",
+        ]
+    )
+    assert duplicate_bullets(planted) == ["line 4: T0001 has a second bullet (first at line 2)"]

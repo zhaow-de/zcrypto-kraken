@@ -380,7 +380,7 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
 
 
 def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
-    """The venue's own ledger against the engine's journal: the rollover cost, and what went unmatched."""
+    """An unmatched venue trade FAILS the comparison; an unknown row type is only counted."""
     journaled = {f.trade_id for f in fills}
     matched = 0
     unmatched: list[str] = []

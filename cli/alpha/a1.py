@@ -81,10 +81,8 @@ class A1Config:
 
 
 def _map_to_union_index(own_ts: list, own_values: list[float], union_ts: list) -> list[float | None]:
-    """Remap a per-move series from an asset's own gap-compressed calendar onto the union return index, adding no look-ahead.
-
-    `own_values[j]` is the causal value for the move `own_ts[j] -> own_ts[j+1]`; union period k takes it iff `union_ts[k]` and
-    `union_ts[k+1]` are adjacent in `own_ts` — the asset was present for both endpoints of that exact move — else None."""
+    """Remap an asset's per-move series (`own_values[j]` spans `own_ts[j] -> own_ts[j+1]`) onto the union
+    return index, adding no look-ahead; None where the two union endpoints are not adjacent in `own_ts`."""
     own_pos = {ts: j for j, ts in enumerate(own_ts)}
     mapped: list[float | None] = []
     for k in range(len(union_ts) - 1):
@@ -157,7 +155,6 @@ def _asset_directions(
 
 
 def _asset_returns(prices: list[float | None]) -> list[float | None]:
-    """Per-asset union-calendar returns: ret[t] = prices[t+1]/prices[t]-1 iff both present, else None."""
     return [
         (prices[t + 1] / prices[t] - 1) if prices[t] is not None and prices[t + 1] is not None else None
         for t in range(len(prices) - 1)
@@ -165,8 +162,7 @@ def _asset_returns(prices: list[float | None]) -> list[float | None]:
 
 
 def _inverse_vol_weights(prices_by_asset: dict[str, list[float | None]], *, lookback: int) -> list[dict[str, float]]:
-    """Per-period renormalized inverse-vol weights over a union calendar, qualifying exactly as `dynamic_inverse_vol_basket`
-    does (`test_inverse_vol_weights_reduces_to_basket` holds the two in sync); weights rather than a combined return series, so
+    """Per-period renormalized inverse-vol weights over a union calendar; weights rather than a combined return series, so
     `a1_book_returns` can apply per-asset directions before combining. Trusts an already-validated, equal-length, non-empty
     `prices_by_asset`."""
     length = len(next(iter(prices_by_asset.values())))
@@ -229,9 +225,6 @@ def _validate_btc_prices(btc_prices: list[float], prices_by_asset: dict[str, lis
 
 
 def a1_book_returns(prices_by_asset: dict[str, list[float | None]], btc_prices: list[float], *, config: A1Config) -> dict:
-    """Assemble the A1 book (docs/specs/00031): per-asset directions x inverse-vol/BTC-only weights x
-    union-calendar returns -> book_base_returns, then vol_target -> run_backtest. Returns
-    {book_base_returns, vol_target_positions, asset_positions, net_returns, metrics}."""
     if not isinstance(config, A1Config):
         raise AlphaError(f"config must be an A1Config, got {type(config)!r}")
     _validate_prices_by_asset(prices_by_asset)

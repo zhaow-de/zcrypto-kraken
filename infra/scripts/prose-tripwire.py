@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
-"""Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long sections, long changelog entries.
-Usage: prose-tripwire.py [--since REV | --write-baseline PATH | --check-baseline PATH] [PATH ...] — default scope the TRACKED cli/ tests/ infra/ (py sh yml yaml) and docs/reference/ docs/universe/ infra/runbooks/ docs/iterations-history*.md docs/open-topics/*.md infra/**/README.md infra/external-systems.md README.md; never docs/specs/ docs/plans/ docs/research/ docs/open-topics/archive/ docs/reference/ops-journal/.
-An offender's identity in the baseline is its path, its kind and its anchor — a block's first line, or a row's or heading's first cell, whitespace-normalised — never its line number, which every edit above it moves — a path change re-keys every offender in the file and an edit to a block's first line re-keys that block, so a rename or a retouched opening line is re-recorded, not edited."""
+"""Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long
+sections, long changelog entries.
+
+Usage: prose-tripwire.py [--since REV | --write-baseline PATH | --check-baseline PATH] [PATH ...]
+Default scope is the TRACKED cli/ tests/ infra/ (py sh yml yaml) plus docs/reference/,
+docs/universe/, infra/runbooks/, docs/iterations-history*.md, docs/open-topics/*.md,
+infra/**/README.md, infra/external-systems.md and README.md; never docs/specs/, docs/plans/,
+docs/research/, docs/open-topics/archive/ or docs/reference/ops-journal/.
+
+An offender's identity in the baseline is its path, its kind and its anchor — a block's first line,
+or a row's or heading's first cell, whitespace-normalised — never its line number, which every edit
+above it moves. A path change re-keys every offender in the file and an edit to a block's first line
+re-keys that block, so a rename or a retouched opening line is re-recorded, not edited.
+
+Run --check-baseline and keep its classification BEFORE --write-baseline: the re-record rewrites the
+baseline to match the tree, so afterwards the check reports four zeroes and what it absorbed is lost.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +32,10 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 COMMENT_BLOCK_LINES = 4
+# The same four lines measured in characters, at the width `ruff.toml` lets a line reach. The line
+# count alone is blind to a block re-wrapped onto one long line, and nothing else measures it: this
+# repo's ruff selects only `I`, so no line-length rule runs over the tree.
+COMMENT_BLOCK_CHARS = 528
 FILE_PROSE_PERCENT = 20
 # Code lines below which the percentage reports a file's size rather than its prose: one class statement
 # under its one-sentence docstring is already half its file, whatever the sentence says.
@@ -26,7 +44,12 @@ TABLE_ROW_CHARS = 200
 SECTION_BYTES = 2048
 CHANGELOG_BULLETS = 5
 
-KINDS = ("comment-block", "file-prose", "table-row", "section", "changelog-entry")
+# Every uppercase int constant above this line, which is what every bar is today: `--help` advertises exactly these,
+# and a bar of any other type would need adding here and to the test that pins this set.
+THRESHOLDS = tuple(name for name, value in list(globals().items()) if name.isupper() and type(value) is int)
+
+KINDS = ("comment-block", "comment-mass", "file-prose", "table-row", "section", "changelog-entry")
+
 CODE_ROOTS = ("cli", "tests", "infra")
 CODE_SUFFIXES = (".py", ".sh", ".yml", ".yaml")
 DOC_ROOTS = ("docs/reference", "docs/universe", "infra/runbooks")
@@ -146,16 +169,22 @@ def hash_blocks(src: str) -> list[Block]:
     return [Block(s, e, _anchor(text[s - 1])) for s, e in _runs(marked)]
 
 
-def _block_offenders(path: str, blocks: list[Block]) -> list[Offender]:
-    return [
-        Offender(path, b.start, "comment-block", b.end - b.start + 1, COMMENT_BLOCK_LINES, b.anchor)
-        for b in blocks
-        if b.end - b.start + 1 > COMMENT_BLOCK_LINES
-    ]
+def _block_offenders(path: str, blocks: list[Block], text: list[str]) -> list[Offender]:
+    """At most one offender per block, so a block over both bars is not counted twice."""
+    out = []
+    for b in blocks:
+        lines = b.end - b.start + 1
+        if lines > COMMENT_BLOCK_LINES:
+            out.append(Offender(path, b.start, "comment-block", lines, COMMENT_BLOCK_LINES, b.anchor))
+            continue
+        mass = sum(len(line) for line in text[b.start - 1 : b.end])
+        if mass > COMMENT_BLOCK_CHARS:
+            out.append(Offender(path, b.start, "comment-mass", mass, COMMENT_BLOCK_CHARS, b.anchor))
+    return out
 
 
 def python_offenders(path: str, src: str) -> list[Offender]:
-    out = _block_offenders(path, python_blocks(src))
+    out = _block_offenders(path, python_blocks(src), src.splitlines())
     measured = measure_python(src)
     if measured and measured[0] and measured[2] >= FILE_PROSE_FLOOR and measured[1] * 100 > FILE_PROSE_PERCENT * measured[0]:
         percent = round(100 * measured[1] / measured[0], 1)
@@ -219,7 +248,7 @@ def offenders_for(path: str, src: str) -> list[Offender]:
     if suffix == ".py":
         found = python_offenders(path, src)
     elif suffix in (".sh", ".yml", ".yaml"):
-        found = _block_offenders(path, hash_blocks(src))
+        found = _block_offenders(path, hash_blocks(src), src.splitlines())
     elif suffix == ".md":
         found = markdown_offenders(path, src, bool(_CHANGELOG.fullmatch(os.path.basename(path))))
     else:
@@ -323,10 +352,8 @@ def _line(o: Offender) -> str:
 
 
 def baseline_text(offenders: list[Offender]) -> str:
-    """The report line plus a tab and the anchor, one per offender, sorted -- generated, never hand-edited.
-
-    An empty anchor leaves the tab off, so no line ends in whitespace a formatting hook would strip.
-    """
+    """Generated, never hand-edited; an anchorless offender leaves the tab off, so no line ends in
+    whitespace a formatting hook would strip."""
     return "".join(_line(o) + (f"\t{o.anchor}" if o.anchor else "") + "\n" for o in sorted(offenders))
 
 
@@ -345,9 +372,15 @@ def read_baseline(path: str) -> dict[tuple[str, str, str], list[float]]:
     return known
 
 
+def _absorbable(rows: dict[tuple[str, str, str], list[float]], o: Offender) -> list[tuple[float, tuple[str, str, str]]]:
+    """The rows a rewritten block could have come from: its own path and kind, no smaller than it, and
+    smallest first — its first caller spends `[0]`, so the tightest row is the one consumed."""
+    return sorted((m, key) for key, pool in rows.items() if key[0] == o.path and key[1] == o.kind for m in pool if m >= o.measured)
+
+
 def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]):
-    """New: nothing recorded under its key that it could have grown from -- `new_since`'s rule, so a keep may shrink but never grow.
-    Grown: a smaller recorded value under the same key, which it consumes. Retired: recorded values nothing matched."""
+    """A keep may shrink but never grow, and a rewrite re-keys itself because the anchor is the block's
+    first line -- which is why a retired row of the same path and kind can still claim it."""
     new, grown = [], []
     for o in new_since(offenders, known):
         pool = known.get(o.key, [])
@@ -357,7 +390,22 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
             grown.append((o, max(smaller)))
         else:
             new.append(o)
-    return new, grown, sum(len(pool) for pool in known.values())
+    # What each offender COULD have come from is read from the retired rows as they stood before any of
+    # them was matched: consuming left to right would otherwise leave the last offender naming one row
+    # as a fact when every permutation is an equally valid assignment.
+    retired = {key: list(pool) for key, pool in known.items()}
+    rewritten, still_new = [], []
+    for o in new:
+        candidates = _absorbable(known, o)
+        if candidates:
+            was, key = candidates[0]
+            known[key].remove(was)
+            # Every candidate could be this block's own row: the anchor that identified it is exactly what
+            # the rewrite changed. Name one size only when one size could have been the source.
+            rewritten.append((o, sorted({m for m, _ in _absorbable(retired, o)})))
+        else:
+            still_new.append(o)
+    return still_new, grown, rewritten, sum(len(pool) for pool in known.values())
 
 
 def render(offenders: list[Offender]) -> str:
@@ -368,18 +416,8 @@ def render(offenders: list[Offender]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    thresholds = " ".join(
-        f"{name}={globals()[name]}"
-        for name in (
-            "COMMENT_BLOCK_LINES",
-            "FILE_PROSE_PERCENT",
-            "FILE_PROSE_FLOOR",
-            "TABLE_ROW_CHARS",
-            "SECTION_BYTES",
-            "CHANGELOG_BULLETS",
-        )
-    )
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0], epilog=f"thresholds: {thresholds}")
+    thresholds = " ".join(f"{name}={globals()[name]}" for name in THRESHOLDS)
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].replace("\n", " "), epilog=f"thresholds: {thresholds}")
     parser.add_argument("paths", nargs="*", help="files or directories to scan; default: the repo's live prose")
     parser.add_argument("--since", metavar="REV", help="report only offenders absent at REV")
     parser.add_argument("--write-baseline", metavar="PATH", help="write today's offenders to PATH as the ratchet's baseline")
@@ -399,12 +437,15 @@ def main(argv: list[str] | None = None) -> int:
         if not os.path.isfile(args.check_baseline):
             print(f"{args.check_baseline}: no such baseline -- write one with --write-baseline", file=sys.stderr)
             return 2
-        new, grown, retired = against_baseline(offenders, read_baseline(args.check_baseline))
+        new, grown, rewritten, retired = against_baseline(offenders, read_baseline(args.check_baseline))
         for o in new:
             print(_line(o))
         for o, was in grown:
             print(f"grown: {_line(o)} recorded {was:.10g}")
-        print(f"new: {len(new)} grown: {len(grown)} retired: {retired}")
+        for o, sizes in rewritten:
+            recorded = f"{sizes[0]:.10g}" if len(sizes) == 1 else "one of " + ", ".join(f"{m:.10g}" for m in sizes)
+            print(f"rewritten: {_line(o)} recorded {recorded}")
+        print(f"new: {len(new)} grown: {len(grown)} rewritten: {len(rewritten)} retired: {retired}")
         if new or grown:
             print(f"cut what is listed above, or record it as a keep with --write-baseline {args.check_baseline}", file=sys.stderr)
             return 1

@@ -1,3 +1,5 @@
+"""Probability of Backtest Overfitting via CSCV (docs/specs/00008-pbo-design.md)."""
+
 from __future__ import annotations
 
 import math
@@ -15,7 +17,7 @@ def pbo(
     n_splits: int = 16,
     metric: Callable[[list[float]], float] = statistics.mean,
 ) -> dict:
-    """Probability of Backtest Overfitting via CSCV (see docs/specs/00008). Never returns NaN."""
+    """Probability of Backtest Overfitting via CSCV; never NaN."""
     if not isinstance(n_splits, int) or n_splits < 2 or n_splits % 2 != 0:
         raise ValidationError(f"n_splits must be an even integer >= 2, got {n_splits!r}")
     if not perf_matrix:

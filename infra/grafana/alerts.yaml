@@ -1803,6 +1803,49 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-ops-grafana-keepalive-stale
+    title: "Ops · Grafana keep-alive stopped running"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # last_RUN, not last_success: last_success advances only on a 200, so a staleness rule on it
+      # would page through a Grafana Cloud hibernation -- the event this instrument exists to
+      # observe, not a fault in the service this rule watches. The timer is hourly at :37 and carries
+      # no Persistent=, so a healthy value peaks near 3600 and one converge-skipped tick near 7200.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - zcrypto_grafana_keepalive_last_run_timestamp_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [9000]}  # 2.5 h -- one skipped hourly tick tolerated
+    noDataState: Alerting  # no series at all = the host, Alloy, or the timer is gone. That IS the alarm.
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The hourly Grafana keep-alive on the ops host has not completed a run in over 2.5 hours. Its timer is not firing, its unit is failing, or it is exiting early because its token is missing -- check the timer and the unit on that host. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-grafana-keepalive-stale"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "803"
+      unit: "seconds since the keep-alive last completed a run"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-ops-verified-replay-exit-nonzero
     title: "Ops · verified-replay non-zero exit"
     ruleGroup: zcrypto-ops

@@ -22,7 +22,7 @@ data_app = typer.Typer(
 
 
 def _abort(message: str) -> typer.Exit:
-    """A clean one-line error (logged, no traceback) + exit code 1. Usage: `raise _abort(...)`."""
+    """Usage: `raise _abort(...)` -- it RETURNS the exception."""
     logger.error(message)
     return typer.Exit(code=1)
 
@@ -49,7 +49,7 @@ def fetch(
 
 @data_app.command()
 def push() -> None:
-    """Push this node's authored sets to the configured push_dest (never the rw NFS mount)."""
+    """Push this node's authored sets to the configured push_dest -- by convention never the rw NFS mount."""
     try:
         cfg = load_config()
         dest = resolve_push_dest(cfg)

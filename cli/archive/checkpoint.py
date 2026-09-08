@@ -92,9 +92,8 @@ def load_checkpoint(state_dir: Path) -> dict[tuple[str, datetime], CheckpointRow
 
 
 def save_checkpoint(state_dir: Path, rows: Iterable[CheckpointRow]) -> None:
-    """Publish `rows` to `state_dir/checkpoint.parquet` atomically: a `.tmp` in the same directory,
-    then `os.replace` (`mint.py`'s idiom), so a failed write never corrupts what was already
-    published. An empty `rows` is a no-op — a zero-row file would shadow a good checkpoint — and every
+    """Publish `rows` to `state_dir/checkpoint.parquet` atomically, so a failed write never corrupts
+    what was already published. An empty `rows` is a no-op — a zero-row file would shadow a good checkpoint — and every
     `OSError`, `state_dir`'s own creation included, is raised as `CheckpointWriteError`."""
     rows = list(rows)
     if not rows:

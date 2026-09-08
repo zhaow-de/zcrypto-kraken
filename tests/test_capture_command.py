@@ -13,10 +13,11 @@ import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
+from cli.capture import segment_writer
 from cli.capture.book import OrderBook
 from cli.capture.command import _default_pairs, _parse_ts, resolve_universe_path, single_instance_lock
 from cli.capture.errors import CaptureError
-from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, SegmentWriter, verify_manifest
+from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
 
 runner = CliRunner()
 
@@ -544,3 +545,81 @@ def test_capture_refuses_to_start_beside_another_writer(tmp_path, monkeypatch):
     assert isinstance(result.exception, CaptureError)
     assert "already writing" in str(result.exception)
     assert not list(tmp_path.rglob("*.parquet"))  # and it wrote nothing on its way out
+
+
+# --- the venue's timestamp is normalised to UTC at the parse boundary -------------------------------
+
+
+def _book_event_at(stamp: str) -> dict:
+    return {
+        "ts": _parse_ts(stamp),
+        "symbol": "BTC/EUR",
+        "type": "update",
+        "side": "bid",
+        "price": 100.0,
+        "qty": 1.0,
+        "checksum": 42,
+    }
+
+
+def _parquets_under(root: Path) -> list[str]:
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*.parquet"))
+
+
+def test_parse_ts_normalises_an_offset_stamp_to_utc():
+    """An offset stamp returns the same instant in UTC, so its hour floors to the UTC hour.
+
+    The instant holds either way -- aware comparisons compare instants, which is why `_implausible`
+    cannot see this -- so the offset and the floor are what discriminate."""
+    ts = _parse_ts("2026-07-08T17:45:00+05:30")
+    assert ts == datetime(2026, 7, 8, 12, 15, tzinfo=timezone.utc)
+    assert ts.utcoffset() == timedelta(0)
+    assert segment_writer._hour_start(ts) == datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
+
+
+def test_an_offset_stamped_event_is_written_under_the_utc_hour(tmp_path):
+    """The one that matters: where the row LANDS, read off the tree, not off a return value.
+
+    `-08:00` puts the instant in the NEXT day, so a wall-clock answer misfiles by directory as well
+    as by name -- and both spellings are one instant, so only the tree separates them."""
+    writer = SegmentWriter(tmp_path, "BTC/EUR", "book", BOOK_SCHEMA)
+    writer.append(_book_event_at("2026-07-08T17:30:00-08:00"))
+    writer.close()
+    assert _parquets_under(tmp_path) == ["BTC/EUR/book/2026/07/09/01.part0000.parquet"]
+
+
+def test_a_z_stamped_event_is_unchanged_in_instant_tz_and_destination(tmp_path):
+    """The true positive: today's stamps keep today's behaviour, byte-for-byte in destination."""
+    ts = _parse_ts("2026-07-08T17:30:00Z")
+    assert ts == datetime(2026, 7, 8, 17, 30, tzinfo=timezone.utc)
+    assert ts.utcoffset() == timedelta(0)
+
+    writer = SegmentWriter(tmp_path, "BTC/EUR", "book", BOOK_SCHEMA)
+    writer.append(_book_event_at("2026-07-08T17:30:00Z"))
+    writer.close()
+    assert _parquets_under(tmp_path) == ["BTC/EUR/book/2026/07/08/17.part0000.parquet"]
+
+
+def test_the_hour_oracle_confirms_the_utc_hour_of_an_offset_stamp():
+    """The invisible half: the same stamp also witnesses the confirmation quorum.
+
+    A HALF-hour offset is what discriminates — flooring a whole-hour-offset wall clock lands on the
+    same INSTANT as flooring UTC, so `-08:00` moves the file name but not this."""
+    oracle = HourOracle()
+    oracle.observe(("BTC/EUR", "book"), _parse_ts("2026-07-08T17:45:00+05:30"))
+    assert oracle.confirmed_hour() == datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
+
+
+def test_parse_ts_refuses_a_stamp_it_cannot_represent_in_utc():
+    """`astimezone` raises OverflowError within its own offset of the datetime domain edges.
+
+    Untyped it would leave `_parse_ts` and end the consumer task; the refusal buys diagnosis, not
+    availability — capture stops either way, but as the documented `CaptureError`."""
+    for raw in ("0001-01-01T00:00:00+05:30", "9999-12-31T23:59:59-08:00"):
+        with pytest.raises(CaptureError) as caught:
+            _parse_ts(raw)
+        assert isinstance(caught.value.__cause__, OverflowError)  # the CONVERSION arm
+    with pytest.raises(CaptureError) as caught:
+        _parse_ts("not-a-timestamp")
+    assert isinstance(caught.value.__cause__, ValueError)  # the PARSE arm -- so the check above discriminates
+    assert _parse_ts("9999-12-31T23:59:59Z").year == 9999  # the same edge in UTC is representable and kept

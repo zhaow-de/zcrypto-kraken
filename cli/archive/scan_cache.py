@@ -192,7 +192,7 @@ def save_cache(reconciled_root: Path, entries: dict[str, CacheEntry], *, salt: s
     """Publish the cache atomically. NEVER raises — a failed save degrades to a slow NEXT cycle.
 
     `checkpoint.py`'s idiom in full, including its cleanup of the partial `.tmp` a failed write
-    leaves behind. It diverges in one deliberate place: `checkpoint.py` raises a typed error, this
+    leaves behind. It diverges deliberately: `checkpoint.py` raises a typed error, this
     logs and returns. A checkpoint is the product; this cache is an optimization, so letting an
     ENOSPC/EROFS out of here would turn a completed, correct reconcile cycle into rc=1.
     """

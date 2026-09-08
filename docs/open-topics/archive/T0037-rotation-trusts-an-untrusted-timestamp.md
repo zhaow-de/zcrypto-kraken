@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: "both capture rows' rollback operands in docs/reference/fleet-pins.md name a digest whose revision (the file's Full digests list) carries the narrowed past-dated predicate in cli/capture/segment_writer.py: for each operand's revision, git show <rev>:cli/capture/segment_writer.py | grep -qF 'and not self._parts_for(self._hour_dir(hour)' passes"
+status: resolved
 ---
 
 # Hour rotation trusts an untrusted timestamp, so one bad stamp closes the hour early
@@ -116,4 +115,10 @@ Three alert rules and five runbook entries ship with them, including the `bogus-
 
 **The rollout that discharges the DETECTION clause of the three items above has a fixed order, and this is the only place it is scheduled — spec `00109` D7.** The past-dated rule's absolute-value form must not be pushed to Grafana until BOTH capture hosts run an image carrying the narrowed predicate, because `zcrypto-red` carries a standing benign count and an absolute-value rule pushed over it latches a CRITICAL on the capture pair, clearable only by restarting live capture. `.claude/rules/fleet-deploys.md` carries the imperative where the pushing agent meets it, with the repo-state check, the freshness qualifier and the escape hatch. Stage 1 — re-pin both hosts, push, read — is in `## Done so far`; what remains:
 
-- **Stage 2 — retire the constraint.** When both capture rows' **rollback operands** also carry the narrowed predicate — until then a rollback re-pins to an image with the wide one and re-arms the hazard with nothing on any surface saying so — remove the landing-order bullet from `.claude/rules/fleet-deploys.md`. That file is protected, so the edit takes the same explicit sign-off its other per-edit changes do.
+## Resolution
+
+Resolved 2026-09-07 by C7, the capture rollout that carried T0161's fix to both hosts. Stage 2 — the last open item — is discharged: `.claude/rules/fleet-deploys.md`'s `grafana-push.sh` landing-order bullet is deleted in this PR on the owner's explicit per-edit sign-off for that protected file, because its condition can no longer arise. Both capture rows' rollback operands are now `ac6172b9ffb2`, revision `4925e060`, and `git show 4925e060:cli/capture/segment_writer.py | grep -qF 'and not self._parts_for(self._hour_dir(hour)'` passes, with each row's `since` matching that host's current container start — so a rollback can no longer re-pin a capture host to the wide predicate, and no rule needs reverting to make an alert push safe.
+
+The four residual detectors, read by value on both hosts after the primary's restart (`infra/scripts/grafana-query.py`, `(no series)` treated as FAIL): `zcrypto_capture_ts_past_dated_hour_total` 0 and 0; `zcrypto_capture_hour_finalized_early_total` 0 and 0; `zcrypto_clock_offset_seconds` −2e-09 and −8.89e-06 against a 10 s bar; `zcrypto_clock_synchronised` 1 and 1.
+
+The three residuals under `## Suggested next steps` stay accepted design limits and carry no deferred action: each names the detector signal that reveals it, all of them live on both hosts, and the knob that would close each one starves a legitimate case. That section is kept as the record of what is accepted and what watches it.

@@ -54,18 +54,9 @@ def seasonality_gates(arm_noc_returns: list[float], union_ts: list[datetime], *,
     1 = favorable (update stamp), 0 = hold. Lists are indexed on the return index; position k
     applies to the move close[k] -> close[k+1], executed at the decision boundary union_ts[k] + 4h.
 
-    - Slot key (F3): cell = (hour, weekday) of the DECISION BOUNDARY union_ts[k] + 4h, never of the
-      bar-start stamp -- 6 hours x 7 days = 42 purely calendar cells.
-    - Completion-time rule (F7): the gate table for calendar year Y is trained on exactly the
-      returns whose interval closes at or before Y-01-01T00:00Z, where a return's interval close is
-      its decision boundary union_ts[j] + 4h (so the Dec-31 20:00 stamp, closing Jan-1 00:00, IS in
-      year Y+1's training set; the first stamp of Y+1, closing Jan-1 04:00, is NOT).
-    - Fold assignment: return k is gated by the table of year(union_ts[k]) (the bar-start stamp's
-      year). The New-Year boundary-crossing stamp (ts Dec-31 20:00, boundary Jan-1 00:00) is thus
-      gated by the OLD year's table -- its own return sits exactly on the new year's training cut,
-      so gating it with the new table would be a one-stamp self-leak.
-    - Estimation rule (fixed): a cell is favorable iff the summed train net-of-cost return is > 0
-      AND the cell has >= min_cell_obs train observations; thin cells default OPEN (1).
+    Fold assignment is by year(union_ts[k]), so the New-Year boundary-crossing stamp is gated by the
+    OLD year's table: its own return sits exactly on the new year's training cut, and the new table
+    would be a one-stamp self-leak.
     """
     if not isinstance(config, B1Config):
         raise AlphaError(f"config must be a B1Config, got {type(config)!r}")
@@ -129,15 +120,8 @@ def vol_state_scale(
     4-5): vol_scale_high (0.5) when the boundary's vol state exceeds vol_state_threshold (1.5),
     else 1.0. Active from the start of the series (unfitted -- only the gates have burn-in, F2).
 
-    At each decision boundary T = union_ts[k] + 4h, per asset: realized vol = sample stdev of the
-    log returns between consecutive qualifying closes in the trailing vol_lookback_bars 15m window
-    (bar-START stamps; a bar qualifies iff ts + 900s <= T, fully closed at decision time -- F7),
-    divided by the rolling median of the asset's OWN measure over its prior vol_median_lookback
-    boundaries (own-normalization makes listings step-free -- F4). The boundary state is the mean
-    of the per-asset states over assets with data. Edge cases (F7): an asset with fewer than
-    vol_median_lookback own defined PRIOR boundary measures contributes a neutral state (1.0); an
-    asset with fewer than min_vol_bars bars in the window contributes nothing that boundary; no
-    qualifying asset -> the boundary state is neutral. Runtime assertion (F8): the substrate's last
+    Dividing each asset's vol by the rolling median of its OWN measure makes listings step-free (F4).
+    Runtime assertion (F8): the substrate's last
     close must reach the last decision boundary, else a refreshed substrate with a shorter cut
     would silently un-condition the tail.
     """
@@ -180,10 +164,6 @@ def vol_state_scale(
 
 
 def condition_positions(asset_positions: dict[str, list[float]], gates: list[int], scales: list[float]) -> dict[str, list[float]]:
-    """Hold-through conditioning (docs/specs/00045 sec"The overlay" 3): at a favorable stamp
-    (gate 1) every asset's conditioned position is its ensemble target times the vol scale; at an
-    unfavorable stamp (gate 0) it carries its PREVIOUS conditioned position verbatim -- no trade,
-    no turnover, never a forced flat. Books start flat: the held value before any update is 0.0."""
     if not isinstance(asset_positions, dict) or not asset_positions:
         raise AlphaError("asset_positions must be a non-empty dict of asset -> positions")
     if len(scales) != len(gates):
@@ -218,8 +198,6 @@ def per_year_gated_counts(gates: list[int], union_ts: list[datetime]) -> dict[in
 
 
 def per_year_scaled_counts(scales: list[float], union_ts: list[datetime]) -> dict[int, int]:
-    """Engagement helper (docs/specs/00045 F2): down-scaled (scale != 1.0) stamp count per fold
-    year, keyed by year(union_ts[k]); zero counts included."""
     if len(scales) != len(union_ts) - 1:
         raise AlphaError(f"scales must have len(union_ts) - 1 = {len(union_ts) - 1} entries, got {len(scales)}")
     counts: dict[int, int] = {}

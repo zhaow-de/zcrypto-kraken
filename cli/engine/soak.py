@@ -28,8 +28,7 @@ def structural_metrics(
     long_cap: float = 0.20,
     short_cap: float = 0.10,
 ) -> dict[str, list[float]]:
-    """Per-bar gross, net, active_frac, turnover, hhi and cap_breach over a series of asset->weight
-    dicts, each bar keyed by the same asset set."""
+    """Every bar must carry the same asset set -- `active_frac` divides by that bar's own key count."""
     gross: list[float] = []
     net: list[float] = []
     active_frac: list[float] = []
@@ -69,8 +68,8 @@ def structural_metrics(
 
 
 def governor_engaged_daily(mult: list[float], day_index: list[int]) -> list[float]:
-    """Roll a per-bar governor multiplier series up to one flag per distinct `day_index` day, in
-    first-appearance order: 1.0 if any of that day's bars has mult < 1.0, else 0.0."""
+    """One flag per distinct `day_index` day, kept in first-appearance order: the nulls built from it slice
+    contiguous windows and blocks."""
     engaged_by_day: dict[int, bool] = {}
     for m, day in zip(mult, day_index):
         engaged = engaged_by_day.get(day, False) or m < 1.0
@@ -106,9 +105,8 @@ class RealizedSeries:
 
 
 def select_clean_segment(records: list[CycleRecord]) -> list[CycleRecord]:
-    """Sort `records` by cycle_ts and return the longest run of consecutive records 4h apart, each on a 4h
-    grid boundary; ties keep the FIRST longest run. Success/failure filtering is the caller's job -- this
-    only handles boundary contiguity."""
+    """The longest 4h-contiguous run of grid-boundary records, ties keeping the FIRST. Success/failure
+    filtering is the caller's job -- this only handles boundary contiguity."""
     if not records:
         return []
     ordered = sorted(records, key=lambda r: r.cycle_ts)
@@ -142,9 +140,8 @@ def _snapshot_240(record: CycleRecord) -> SnapshotEntry:
 
 
 def _chain_consistent(scored_ts: list[datetime], closes_by_asset: dict[str, dict[datetime, float]]) -> bool:
-    """True iff consecutive SCORED cycles chain: each asset's exit price at T_i is the same store entry as
-    its entry price at T_next (closes[a][T_i] == closes[a][T_next - 4h]), which holds trivially while the
-    scored sequence is 4h-contiguous and breaks on a gap in it."""
+    """True iff consecutive SCORED cycles chain -- vacuous while the scored sequence is 4h-contiguous, so what
+    it actually detects is a gap in it."""
     for i in range(len(scored_ts) - 1):
         t_i = scored_ts[i]
         start_of_next = scored_ts[i + 1] - timedelta(hours=4)
@@ -330,8 +327,7 @@ class NullSystem:
 
 
 def _canonical_present(canonical_dir: Path) -> bool:
-    """True iff the frozen canonical dataset looks present at `canonical_dir`, probed by BTC's 240 store file
-    alone."""
+    """A one-file probe: presence, never completeness -- `_load_canonical` reads every model leg on that alone."""
     return (canonical_dir / "BTC" / "EUR" / "240.parquet").exists()
 
 
@@ -351,9 +347,8 @@ def _load_canonical(
 def build_null(
     canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, fee: float = 0.006, path: str = "fast"
 ) -> NullSystem:
-    """Load the frozen canonical, rebuild the SAME strategy, and derive the live-cost-convention null the
-    realized series is judged against. `path` (spec 00061 D5) selects the builder, "fast" or the "verified"
-    daily oracle spot replay -- the same choice `concordance.replay_cycle` offers."""
+    """`path` (spec 00061 D5) selects the builder, "fast" or the "verified" daily oracle spot replay -- the
+    same choice `concordance.replay_cycle` offers."""
     daily_prices, daily_ts, h4_prices, h4_ts = _load_canonical(canonical_dir)
     if path == "fast":
         result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
@@ -431,9 +426,6 @@ def block_bootstrap_null(
 
 @dataclass(frozen=True)
 class MetricVerdict:
-    """One live metric value judged against its null distribution: the band zone `live` fell in (see
-    `metric_verdict`), the null's own summary, and `live`'s percentile rank within it."""
-
     verdict: str  # "consistent" | "weakly-consistent" | "inconsistent" | "n/a"
     live: float
     median: float
@@ -634,7 +626,6 @@ class SelfTestReport:
 
 
 def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
-    """Return the JSON object in `registry_path` (JSON-lines) whose `trial_id == trial_id`."""
     with registry_path.open() as f:
         for line in f:
             line = line.strip()
@@ -659,10 +650,8 @@ def _instrument_expectations(registry_path: Path) -> dict[str, int]:
 def instrument_self_check(
     canonical_dir: Path, registry_path: Path, config: CrossfreqSystemConfig = CrossfreqSystemConfig()
 ) -> tuple[bool | None, str]:
-    """Rebuild the frozen strategy over the full canonical history (`_load_canonical`, as `build_null` does)
-    and assert its `governor_engaged_bars`/`cap_breach_bars` EXACTLY match record 47's registry values.
-    Returns (None, 'canonical absent') without building anything where the canonical has no data -- a skip,
-    not a failure."""
+    """Asserts EXACT equality with record 47's registry values. Returns `(None, 'canonical absent')` where the
+    canonical has no data -- a skip, not a failure."""
     if not _canonical_present(canonical_dir):
         return None, "canonical absent"
 
@@ -865,10 +854,10 @@ def self_tests(
     config: CrossfreqSystemConfig = CrossfreqSystemConfig(),
     path: str = "fast",
 ) -> SelfTestReport:
-    """Run the instrument, identity and reconcile self-tests plus the plausibility scan into a `SelfTestReport`.
-    Identity replays the NEWEST record, the journaled cycle closest to the live edge; no records at all, or a
-    replay raising `EngineError`, skips it (`identity_ok=None`) rather than failing it. `path` (spec 00061 D5)
-    reaches `identity_self_check` only -- `instrument_self_check` always reproduces record 47 via the fast path."""
+    """Identity replays the NEWEST record, the journaled cycle closest to the live edge; no records at all, or
+    a replay raising `EngineError`, skips it (`identity_ok=None`) rather than failing it. `path` (spec 00061
+    D5) reaches `identity_self_check` only -- `instrument_self_check` always reproduces record 47 via the
+    fast path."""
     messages: list[str] = []
 
     instrument_ok, instrument_msg = instrument_self_check(canonical_dir, registry_path, config=config)

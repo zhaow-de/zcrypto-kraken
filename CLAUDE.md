@@ -4,7 +4,7 @@
 
 `zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script. Vocabulary: "observability" means the Grafana Cloud telemetry stack, never the healthchecks.io dead-man switches — those are a separate, independent failure domain.
 
-**Sessions.** Four named Claude Code sessions share this repo (`docs/reference/multi-agent-protocol.md`): `zcrypto-main` coordinates and holds the PR, topic, memory and memo-token authorities; `zcrypto-alex` and `zcrypto-bravo` are payload sessions bound by that doc's payload contract; `zcrypto-zebra` is the owner's own and is never assigned. `ListAgents` prints which one you are.
+**Sessions.** Four named Claude Code sessions share this repo (`docs/reference/multi-agent-protocol.md`): `zcrypto-marco` coordinates and holds the PR, topic, memory and memo-token authorities; `zcrypto-alex` and `zcrypto-bravo` are payload sessions bound by that doc's payload contract; `zcrypto-zebra` is the owner's own and is never assigned. `ListAgents` prints which one you are.
 
 ## Repository layout
 
@@ -48,7 +48,7 @@ Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
 **The pre-PR full-suite run is CI's — do not duplicate it locally.** `.github/workflows/coverage.yml` runs the whole suite on every PR into `develop` and a failing suite fails that check. Locally run the tests the diff can reach, targeting one with `uv run pytest path::test` while iterating. The full run takes ~19 minutes with both local data sources present.
 
-**Except what CI cannot run.** Tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage: `tests/test_costmin_drift.py` is COSTMIN's only guard against venue-side drift, sits on the live trade path, and skips in CI.
+**Except what CI cannot run.** Tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage — a full-suite run from a scratch worktree skips them silently, since the datasets under `data/` live only in the main checkout: a local full-suite claim names which of them were present, and a worktree run symlinks them in first and unlinks them before removal (`agent-ops.md`'s snapshot bullet): `tests/test_costmin_drift.py` is COSTMIN's only guard against venue-side drift, sits on the live trade path, and skips in CI.
 
 **A network-gated test is not data-gated** — one that reaches a live venue endpoint runs in CI, where it is a flake source, and skips silently if the venue ever blocks the runner. Gate such a test on the explicit opt-in `ZCRYPTO_LIVE_VENUE_TESTS=1` rather than on reachability, so a skip is a decision and never an outage read as coverage; with the flag set, every venue answer short of the expected one fails.
 

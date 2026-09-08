@@ -44,7 +44,6 @@ class CycleStages:
 
 
 def stage_grosses(sleeve_positions: dict[str, dict[str, float]]) -> dict[str, float]:
-    """Gross (sum of absolute positions) for each sleeve."""
     return {name: sum(abs(v) for v in book.values()) for name, book in sleeve_positions.items()}
 
 
@@ -259,7 +258,6 @@ def _ratio(value: float) -> str:
 
 
 def _render_decompose(payload: dict) -> str:
-    """Fixed-width attribution table: one line per cycle, a median line, then the summary."""
     header = (
         f"{'cycle':<16} {'B':>8} {'A1':>8} {'A2':>8} {'combined':>8} {'ratio':>5} "
         f"{'capped':>8} {'limited':>8} {'mult':>5} {'final':>8} {'act':>3} {'cap?':>4}"
@@ -448,7 +446,6 @@ def _bps(value: float) -> str:
 
 
 def _render_accumulation(payload: dict) -> str:
-    """Per-NAV drift summary and the per-week table, stamped with the minimums' fetch date."""
     navs = payload["navs"]
     lines = [
         "Accumulation drift floor: what the venue's order minimums cost at each portfolio size",

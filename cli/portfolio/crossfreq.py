@@ -70,13 +70,11 @@ def expand_daily_positions(daily_positions: dict[str, list[float]], daily_ts: li
 def daily_cadence_governor(
     intraday_returns: list[float], day_index: list[int], *, config: GovernorConfig = GovernorConfig()
 ) -> list[float]:
-    """Compound intraday returns within each calendar day, govern the day series, broadcast per-bar.
+    """Per-bar multipliers from the governor run at daily cadence on each day's COMPOUNDED return.
 
-    day_index[j] is the calendar-day ordinal of intraday return bar j (non-decreasing, contiguous —
-    consecutive values step by 0 or 1; a union calendar never has day gaps, and a gap would silently
-    compress calendar time out of the governor's cooldown/re-arm windows, so it is rejected).
-    day_return[d] = prod(1 + r_j for j in day d) - 1; the unchanged drawdown_governor runs on that
-    day series; bar j gets its own day's multiplier.
+    `day_index[j]` is bar j's calendar-day ordinal, non-decreasing and contiguous; a gap is
+    rejected — it would silently compress calendar time out of the governor's cooldown and
+    re-arm windows.
     """
     if not isinstance(intraday_returns, list) or not intraday_returns:
         raise PortfolioError(f"intraday_returns must be a non-empty list, got {intraday_returns!r}")

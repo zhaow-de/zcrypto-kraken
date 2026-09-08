@@ -128,6 +128,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled) and [`zcrypto-ops-archive-pull-exit-nonzero`](ops-node.md#zcrypto-ops-archive-pull-exit-nonzero) — ALERT, one section serving both uids: the overlay-writer cycle stalled, or exited non-zero.
 - [`zcrypto-trade-backfill-stale`](ops-node.md#zcrypto-trade-backfill-stale) and [`zcrypto-trade-backfill-exit-nonzero`](ops-node.md#zcrypto-trade-backfill-exit-nonzero) — ALERT, one section serving both uids: the daily trade-tape healing step went stale, or exited non-zero.
 - [`zcrypto-ops-verified-replay-stale`](ops-node.md#zcrypto-ops-verified-replay-stale) and [`zcrypto-ops-verified-replay-exit-nonzero`](ops-node.md#zcrypto-ops-verified-replay-exit-nonzero) — ALERT, one section serving both uids: the daily verified-path replay of the engine journal went stale, or exited non-zero.
+- [`zcrypto-ops-grafana-keepalive-stale`](ops-node.md#zcrypto-ops-grafana-keepalive-stale) — ALERT: the hourly Grafana keep-alive on the ops host has stopped completing runs.
 - [`zcrypto-ops-panel-exit-nonzero`](ops-node.md#zcrypto-ops-panel-exit-nonzero) — ALERT: the last hourly L2 panel materialize errored.
 - [`zcrypto-ops-load-high`](ops-node.md#zcrypto-ops-load-high) — ALERT: the ops node's 1-minute load average is above 20.
 - [`zcrypto-ops-error-logs`](ops-node.md#zcrypto-ops-error-logs) — ALERT: an ERROR or CRITICAL line from the ops node.

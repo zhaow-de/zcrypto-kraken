@@ -1,7 +1,6 @@
-"""The journal contract (spec 00040): a versioned per-cycle record — the input-snapshot manifest (per pair x grid:
-bar count, first/last ts, content hash, file path), the computed newest-row final_targets, and cycle timing/provenance.
-A record failing validate_record is a journal-validation error, which the gate classifies as a failed cycle rather than
-replaying it silently (cli.engine.concordance.evaluate_gate)."""
+"""The journal contract (spec 00040): a versioned per-cycle record. A record failing validate_record is a
+journal-validation error, which the gate classifies as a failed cycle rather than replaying it silently
+(cli.engine.concordance.evaluate_gate)."""
 
 from __future__ import annotations
 
@@ -68,8 +67,7 @@ def _as_positive_float(value: object) -> float:
 
 
 def _epoch_seconds(ts: datetime) -> int:
-    """Whole-second UTC epoch time for a bar-start stamp; a naive datetime is treated as already-UTC (this repo's
-    bar-timestamp convention)."""
+    """A naive bar-start stamp is treated as already-UTC (this repo's bar-timestamp convention)."""
     aware = ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
     return int(aware.astimezone(timezone.utc).timestamp())
 
@@ -86,15 +84,13 @@ def snapshot_content_hash(ts: list[datetime], closes: list[float | None]) -> str
 
 
 def _is_symbol_key(key: str) -> bool:
-    """True for a full-symbol key ("BTC/EUR"), false for a bare base key ("BTC")."""
     return "/" in key
 
 
 def validate_record(record: CycleRecord) -> None:
-    """Raise EngineJournalError on any schema violation or on a snapshot that peeks: per pair, the last "240" stamp must equal
-    cycle_ts - 4h and the last "1440" stamp (the last midnight <= cycle_ts) - 1 day, so the node must have dropped Kraken REST's
-    trailing in-progress candle. Keying is schema-aware over final_targets AND the snapshot pair fields -- base keys at schema 1,
-    full symbols at schema 2 -- and wrong keying is refused, never silently normalized."""
+    """Raise EngineJournalError on any schema violation or on a snapshot that peeks -- the node must have
+    dropped Kraken REST's trailing in-progress candle. Wrong keying for the record's schema is refused over
+    final_targets AND the snapshot pair fields, never silently normalized."""
     if record.schema_version not in _LOADABLE_SCHEMA_VERSIONS:
         raise EngineJournalError(
             f"unsupported schema_version {record.schema_version!r} (loadable: {sorted(_LOADABLE_SCHEMA_VERSIONS)})"
@@ -207,7 +203,6 @@ def validate_record(record: CycleRecord) -> None:
 
 
 def to_json(record: CycleRecord) -> str:
-    """Serialize a CycleRecord to JSON; every datetime as an ISO-8601 UTC string."""
     payload = {
         "schema_version": record.schema_version,
         "cycle_ts": record.cycle_ts.isoformat(),

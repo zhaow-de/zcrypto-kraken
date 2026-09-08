@@ -119,8 +119,8 @@ class HashScope(str, Enum):
 def _write_pull_textfile(path: Path, *, channel: str, result: VerifyResult, verify_seconds: float) -> None:
     """This run's verify cost as textfile-collector gauges, one FILE per channel (spec 00102 D4): five
     pulls share the collector directory on the NAS, and a shared file would carry whichever ran last.
-    tmp + os.replace, the gate export's idiom, so a scrape never reads a partial file. `files_walked` is
-    `checked` -- the denominator that makes `files_hashed` readable, and the series that grows."""
+    Published atomically, so a scrape never reads a partial file. `files_walked` is `checked` --
+    the denominator that makes `files_hashed` readable, and the series that grows."""
     label = f'{{channel="{channel}"}}'
     lines = [
         "# HELP zcrypto_archive_pull_verify_seconds wall time spent hashing pulled segments against their sidecars this cycle",
@@ -232,14 +232,11 @@ def _load_ledger(root: Path) -> list[dict]:
 
     Read line by line off the handle rather than `read_text().splitlines()`: the latter holds the
     whole file as one string AND a list of every line before the first record exists, so peak memory
-    carried both on top of the dicts. Measured at 1,000,000 records on a fixture keyed like the writer's, peak RSS 1428 -> 1217 MiB at
-    `--repeats 1` -- both legs under the benchmark's own regime (same imports, load plus totals),
-    because a lean "before" against a harness "after" is not a before/after of this change. The
-    default `--repeats 3` reports ~1231, about 1% higher, since a second load re-allocates against
-    the first's fragmentation
-    (`infra/scripts/bench-ledger-scan.py`). The RETURN TYPE stays a list on purpose -- the caller
-    appends this cycle's own records to it, reads its length three times and re-queries it per
-    pair-hour, so a generator breaks at the first append and, were those patched away, would then
+    carried both on top of the dicts. Measured with `infra/scripts/bench-ledger-scan.py`.
+
+    The RETURN TYPE stays a list on purpose -- the caller appends this cycle's own records to it,
+    reads its length three times and re-queries it per pair-hour, so a generator breaks at the
+    first append and, were those patched away, would then
     book zero on every re-read instead.
     """
     path = root / "reconcile-ledger.jsonl"
@@ -452,9 +449,8 @@ def _write_textfile(
     hours_skipped: int,
     ledger_scan_seconds: float,
 ) -> None:
-    """Publish `reconcile.prom` atomically: a textfile is scraped in place, so a half-written one is
-    scraped as garbage. Temp in the SAME directory (so the rename is a same-filesystem `os.replace`),
-    then rename over the destination -- a scrape sees the old file or the new one, never half of one.
+    """Publish `reconcile.prom` atomically: a textfile is scraped in place, so a half-written one would
+    be scraped as garbage; a scrape sees the old file or the new one, never half of one.
     """
     lines: list[str] = []
 
