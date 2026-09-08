@@ -221,7 +221,7 @@ class TestASubstitutedFieldIsRefused:
         chk = _load(_CHECKER, "chk_harvest")
         assert chk.check(str(stored)) == 1
         # WHICH refusal: a later one this fixture happens to trip would keep this green with the arm gone.
-        assert "must be one line" in capsys.readouterr().out
+        assert "what must be one line" in capsys.readouterr().out
 
     def test_a_legitimate_one_line_lesson_still_writes(self, checkout: pathlib.Path) -> None:
         """The true positive: the guard must not refuse the records it exists to protect."""
