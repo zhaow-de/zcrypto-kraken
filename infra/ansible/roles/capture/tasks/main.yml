@@ -64,6 +64,15 @@
          if capture_local_compose_raw.content is defined else [] }}
   when: inventory_hostname not in groups['engine_host']
 
+# T0185: an empty CAPTURE_PAIRS makes the entrypoint omit --pairs (infra/docker/Dockerfile)
+- name: refuse an empty capture pair list
+  ansible.builtin.assert:
+    that: capture_pairs | length > 0
+    fail_msg: >-
+      capture_pairs is empty — the container would start without --pairs and fall back to the universe
+      file's EUR-quoted symbols, dropping the BTC-quoted legs. Set capture_pairs in
+      group_vars/capture_host/vars.yml before converging.
+
 - name: probe — the primary's deployed pair list (pair-add order; fail-CLOSED on unreachable, a new pair is the hazard)
   ansible.builtin.slurp:
     src: /opt/zcrypto-capture/compose.yaml
