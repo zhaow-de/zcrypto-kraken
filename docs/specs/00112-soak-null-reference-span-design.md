@@ -18,33 +18,33 @@ The consequence is a reference the live engine cannot be compared against. The e
 
 **D4. The realized series is untouched, and so is the per-bar sentinel.** `structural_metrics` keeps returning `0.0` for a bar with no book; this change alters which null bars are judged, not what any bar means. Whether the surviving sentinels should be averaged is a separate open decision in `T0184`, deliberately not settled here.
 
-**D5. The report states the span the null covers.** A verdict compared against a different reference than last quarter's run must say so on its own face, or two runs are silently incomparable.
+**D5. The report states the span the null covers, on both its faces, with the no-book bar count beside it.** A verdict compared against a different reference than last quarter's run must say so on its own face, or two runs are silently incomparable — and `--json` is a face, so the payload carries the same disclosure as the text or an archived comparison stays silently incomparable while the page says otherwise. Beside the span the block states how many bars carry `structural_metrics`' no-book sentinel, for the null's retained span and for the realized window: `T0184`'s open aggregation question turns on whether the realized side carries one, and that is a line to read rather than a measurement to re-run.
 
 **D6. The cost is recorded, not hidden: the null's sample falls by two thirds, and with it the horizon before the gate becomes unusable.** `metric_verdict` returns `n/a` once `effective_n < 3`, and `effective_n` is the null's bar count over the realized length, so a shorter null reaches that cutoff at a shorter soak.
 
 ## The measured basis
 
-Every figure below was produced by a command at write time, from the tree at this branch's tip, and re-derives from the cached per-bar series or from the canonical dataset. They drift when either changes.
+Every figure below was produced by a command at write time, from the tree at this branch's tip. The null's figures re-derive from the canonical dataset in the repo and drift when it changes; the realized series' gross figures re-derive only on the engine host, as the paragraph on them says.
 
 **The basket completes on 2021-12-21, and AVAX is the binding leg.** `_load_canonical(data/ohlc-full)` yields 4582 daily and 27338 four-hourly stamps; the first daily index at which all ten legs carry a price is 3020 and the first four-hourly index is 17971, both 2021-12-21. The per-asset first stamps run BTC 2013-09-10, LTC 2013-09-14, ETH 2015-08-07, XRP 2017-05-18, ADA 2018-09-28, LINK 2019-09-25, DOGE 2019-12-19, DOT 2020-08-18, SOL 2021-06-17, AVAX 2021-12-21. These match `docs/reference/data-catalog-full.md`'s own per-symbol table.
 
-**What the cut does to the null**, at the realized window length of 358 bars:
+**What the cut does to the null**, at the realized window length of 358 bars. Every era-matched cell is taken at one cut, the h4 index D3's rule yields on today's canonical, 17971 — a column whose cells came from different cuts would be internally inconsistent by a few bars and read as a rounding artefact:
 
 | | full span | era-matched |
 |---|---|---|
 | null bars | 27337 | 9366 |
 | flat bars | 13.46% | 8.36% |
 | concentration mean | 0.323623 | 0.240745 |
-| band p95 | 0.663393 | 0.400653 |
-| band width | 0.542712 | 0.284267 |
+| band p95 | 0.663393 | 0.400618 |
+| band width | 0.542713 | 0.284228 |
 | `effective_n` | 76.360 | 26.162 |
 | the live reading's percentile | 30.55 | 44.47 |
 
-**The verdict cutoff is far away but nearer than it was.** `metric_verdict` returns `n/a` at `effective_n < 3`, so era-matching leaves 8.7 times the cutoff. Expressed as a horizon, the full-span null reaches the cutoff at a realized length of 9112 bars, about 4.2 years of live running, and the era-matched null at 3122 bars, about 1.4 years.
+**The verdict cutoff is far away but nearer than it was.** `metric_verdict` returns `n/a` at `effective_n < 3`, so era-matching leaves 8.7 times the cutoff. Expressed as a horizon, the full-span null reaches the cutoff at a realized length of 9113 bars, about 4.2 years of live running, and the era-matched null at 3123 bars, about 1.4 years. The test is strict, so 9112 and 3122 still render a verdict.
 
-**The realized series needs nothing.** It spans 2026-07-11 to 2026-09-08, entirely inside the complete-basket era, and carries no flat bar: 358 scored bars, smallest gross exposure 0.0124, against a branch that fires at 1e-12.
+**The realized series needs nothing.** It spans 2026-07-11 to 2026-09-08, entirely inside the complete-basket era, and carries no flat bar: 358 scored bars, smallest gross exposure 0.0124, against a branch that fires at 1e-12. The span and the bar count re-derive here — `select_clean_segment` over `/mnt/zhao-crypto/engine-journal` returns one segment of 359 records, 2026-07-11T00:00 to 2026-09-08T16:00, and the last cycle never scores. The two gross figures do not: they were measured against the engine host's price store, which `docs/reference/fleet.md` records as replicated nowhere and the workstation's copy as the retired pre-VPS state, ending inside this window. The era-matched percentile cell above inherits that dependency through the realized concentration mean it is computed against.
 
-**This changes the reference more than the aggregation question does, and in the opposite direction.** The best aggregation candidate moves the band's p95 from 0.663393 to 0.921380 on the full span; the cut moves it to 0.400653. Applying that candidate on top of the cut gives 0.473955, so the widening it was criticised for shrinks from 38.9% to 18.3% of the base it acts on.
+**This changes the reference more than the aggregation question does, and in the opposite direction.** The best aggregation candidate moves the band's p95 from 0.663393 to 0.921380 on the full span; the cut moves it to 0.400618. Applying that candidate on top of the cut gives 0.473948, so the widening it was criticised for shrinks from 38.9% to 18.3% of the base it acts on.
 
 ## Out of scope
 
