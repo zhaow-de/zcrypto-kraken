@@ -6,15 +6,37 @@
 # rewrites it (measured 2026-07-24). tests/test_vendored_rrsync_integrity.py is the tripwire.
 exclude: '^infra/nas/rrsync$'
 
+# Every hook is a commit-time hook unless it says otherwise. Removing this line puts 13 of the 18
+# into the push stage — the five below pin themselves out of it — and the ratchet is the only one
+# worth paying for twice.
+# The push stage needs `pre-commit install --hook-type pre-push`, which is per-clone: a fresh clone
+# has none until it is re-run, and these declarations are the tracked half of that arrangement.
+# The generated hook execs the MAIN CHECKOUT's `.venv/bin/python` by absolute path, shared by every
+# worktree. Delete that venv and, while `pre-commit` is absent from PATH as it is here, every push
+# fails in milliseconds naming neither this file nor `uv sync`; install it on PATH instead and pushes
+# silently run a different, unpinned pre-commit.
+# A push that succeeds is not evidence any hook ran. pre-commit skips the push stage outright when
+# every commit is already reachable from a remote-tracking ref of that remote — and the hooks measure
+# the tree you are STANDING in, not the ref you are pushing.
+default_stages: [pre-commit]
+
 repos:
+  # Five hooks below pin `stages: [pre-commit]`. Their upstream manifest declares
+  # `[pre-commit, pre-push, manual]`, which outranks `default_stages`, and two of the five REWRITE
+  # files — at push they would edit the working tree mid-push. Counterfactual, measured through
+  # pre-commit's own API: the push stage resolves to 1 hook with the pins, 6 without, 18 without
+  # these and `default_stages` both. `tests/test_pre_push_stage.py` holds it at 1.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
+        stages: [pre-commit]
       - id: check-case-conflict
       - id: check-executables-have-shebangs
+        stages: [pre-commit]
       - id: check-merge-conflict
       - id: check-shebang-scripts-are-executable
+        stages: [pre-commit]
         exclude: '\.j2$'
       - id: check-toml
       - id: check-yaml
@@ -22,9 +44,11 @@ repos:
         exclude: '^infra/ansible/(group_vars/.*/vault\.yml|host_vars/.*/vault\.yml|vault-password\.sops\.yaml)$'
       - id: debug-statements
       - id: end-of-file-fixer
+        stages: [pre-commit]
       - id: mixed-line-ending
         args: ["--fix=lf"]
       - id: trailing-whitespace
+        stages: [pre-commit]
 
   # Local (not the upstream mirror) so there is ONE ruff: the one pinned in pyproject/uv.lock, which
   # dependabot's `uv` ecosystem already tracks -- same reasoning as ansible-lint below. The mirror
@@ -98,6 +122,9 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+        # Also at push: its verdict is a property of the TREE, so a rebase or a merge produces one
+        # nothing has measured, and no CI check evaluates it.
+        stages: [pre-commit, pre-push]
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
