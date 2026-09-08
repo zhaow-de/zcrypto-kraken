@@ -233,6 +233,15 @@ def test_crosscheck_dataset_skips_a_symbol_whose_parquet_is_absent(tmp_path):
 # --- render_markdown ---
 
 
+def test_summary_over_no_series_reports_no_deviation_and_renders_it(tmp_path):
+    """A maximum over no series has no value; 0.0 would say every series matched exactly. The
+    renderer must show that the way it already shows an absent correlation."""
+    report = crosscheck_dataset(tmp_path / "empty", [], fetch_fn=lambda pair, *, limit=1000: [])
+
+    assert report["summary"]["max_abs_rel_diff_overall"] is None
+    assert "Max abs rel diff overall: n/a" in render_markdown(report)
+
+
 def test_render_markdown_contains_series_row_and_summary(tmp_path):
     root = tmp_path / "ohlc-full"
     write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / "BTC" / "EUR" / "1440.parquet")
