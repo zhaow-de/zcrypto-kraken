@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import subprocess
@@ -62,13 +63,13 @@ def test_default_pairs_refuses_a_universe_with_no_eur_quoted_symbol(tmp_path, ca
     assert any("ETH/BTC" in r.message and "SOL/BTC" in r.message for r in caplog.records)
 
 
-def test_default_pairs_all_eur_quoted_returns_every_symbol_without_logging(tmp_path, caplog):
+def test_default_pairs_all_eur_quoted_returns_every_symbol_with_no_record_at_error_or_above(tmp_path, caplog):
     """The populated control: a guard that refused here, or logged, would refuse or log everywhere."""
     universe_path = tmp_path / "point-in-time-universe.json"
     universe_path.write_text(json.dumps({"selected": ["BTC/EUR", "ETH/EUR"]}))
     with caplog.at_level("ERROR"):
         assert _default_pairs(universe_path) == ["BTC/EUR", "ETH/EUR"]
-    assert [r.message for r in caplog.records if r.levelname == "ERROR"] == []
+    assert [r.message for r in caplog.records if r.levelno >= logging.ERROR] == []
 
 
 @pytest.mark.skipif(not _REPO_UNIVERSE.exists(), reason="generated (gitignored) universe JSON absent — see docs/universe/*.md")
