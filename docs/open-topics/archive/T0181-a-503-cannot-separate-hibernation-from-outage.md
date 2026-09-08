@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # A 503 cannot separate a hibernation from a Grafana Cloud outage, and the keep-alive has no second signal
@@ -23,6 +23,16 @@ The surfaces that stand incomplete, each needing a claim nobody can currently au
 - **No surface anywhere states the experiment's decision rule** — what observation would end it, in which direction. The changelog said a recurrence refutes; that clause is deleted, because a recurrence does not say which event produced it either.
 
 **The dashboard-probe answer is unfalsifiable from here and should not be adopted on its appeal.** It is tempting to say a hibernation ends when someone opens a dashboard and an outage does not. It has no recorded support at all: the only measured hibernation in this repo, recorded in `docs/reference/ops-journal/2026-09.md`'s 2026-09-07 entry for the event of 2026-09-06, states that the stack woke on an API probe, not on a dashboard. And it cannot be tested, because testing it needs an outage nobody can arrange. A claim that cannot be falsified is not a disambiguator.
+
+## Resolution
+
+**The owner ruled the accept arm on 2026-09-08: no second signal.** In their words — *"no need to separate, 503 is 503. And in theory, if our hourly keep-alive ping does its job, we should be able to eliminate the hibernation. let's keep it simple."*
+
+That answers the question this topic was opened to preserve. The undecidability is accepted rather than engineered around, and the decision rule the topic reported no surface stated is the owner's own sentence: if the keep-alive works, hibernations stop happening. It is a rule the metric can carry, because it turns on whether 503s recur at all rather than on telling two causes apart.
+
+The surfaces are left as they stand, deliberately. They already say a 503 does not distinguish the two and route the operator onward in both cases, which is "503 is 503" in operating form; the accept arm's proposal to author one sentence and point at it from three places was not taken, because the ruling's other half was to keep it simple and ship.
+
+**One item below is NOT closed by this ruling and is carried into the PR body rather than lost here**: `infra/runbooks/observability.md` step 1 says nothing about what a `200` means and does not warn that the reading can be up to an hour old — `OnCalendar=*:37:00` against the watchdog's `*:0/5:41`. That follows from the two schedules and not from the decision, so the ruling does not reach it.
 
 ## Suggested next steps
 
