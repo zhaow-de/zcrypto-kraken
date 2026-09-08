@@ -93,6 +93,15 @@ def test_an_unreadable_path_outranks_a_bad_record(tmp_path: pathlib.Path) -> Non
     assert done.returncode == 2
 
 
+def test_a_bad_record_before_an_unreadable_path_still_exits_2(tmp_path: pathlib.Path) -> None:
+    # The other order. With only the unreadable-first case pinned, rewriting the aggregation to the
+    # first non-zero code passes -- and which of 1 and 2 comes back is this branch's whole subject.
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text(json.dumps({**OK, "kind": "bogus"}) + "\n")
+    done = _run(str(bad), str(tmp_path / "gone.jsonl"))
+    assert done.returncode == 2
+
+
 def test_a_valid_inbox_still_passes(tmp_path: pathlib.Path) -> None:
     # The true positive beside the refusal: a guard that refused every invocation would ship green.
     done = _run(_inbox(tmp_path, OK))

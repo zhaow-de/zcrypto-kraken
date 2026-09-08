@@ -46,8 +46,9 @@ def check(path: str) -> int:
         reason = exc.strerror if isinstance(exc, OSError) else str(exc)
         print(f"cannot read {path}: {reason}", file=sys.stderr)
         return 2
-    # `io.StringIO`, not `splitlines()`: the latter breaks on NEL, LS and PS, so the tool would
-    # disagree with the file about where its lines are -- certifying a splice, and shifting coordinates.
+    # `io.StringIO`, not `splitlines()`, which breaks on separators file iteration does not, leaving
+    # the tool disagreeing with the file about its own lines. Equivalent only while the open stays in
+    # universal-newline mode: under `newline=""` a lone CR survives and collapses an inbox to one line.
     for n, raw in enumerate(io.StringIO(text), 1):
         line = raw.rstrip("\n")
         try:
