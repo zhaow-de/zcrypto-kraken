@@ -20,7 +20,7 @@ disable_created_metrics()
 
 
 def find_ship_handler() -> LokiShipHandler | None:
-    """The live `--ship-logs` handler (`cli/logging/config.py` marks it `_zcrypto_owned`), or `None` -- `cli/__main__.py`'s
+    """The live `--ship-logs` handler (`cli/logging/config.py` marks it `_zcrypto_owned`) -- `cli/__main__.py`'s
     root callback configures logging before any subcommand body, so `None` is opt-out, never not-yet-configured."""
     for h in logging.getLogger("zcrypto").handlers:
         if isinstance(h, LokiShipHandler) and getattr(h, "_zcrypto_owned", False):
@@ -40,7 +40,7 @@ def build_registry() -> CollectorRegistry:
 
 def metrics_port_from_env() -> int | None:
     """`ZCRYPTO_METRICS_PORT` unset, empty or non-integer means no exporter: ansible renders it unguarded, so a typo must
-    never stop the daemon it is attached to -- a bad value logs one ERROR and returns `None`, never raises (spec 00069 D5)."""
+    never stop the daemon it is attached to."""
     raw = os.environ.get(METRICS_PORT_ENV_VAR)
     if not raw:
         return None
@@ -52,7 +52,7 @@ def metrics_port_from_env() -> int | None:
 
 
 def start_metrics_server(port: int, registry: CollectorRegistry) -> bool:
-    """Start the `/metrics` HTTP server for `registry`: True = serving, False = failed, logged as one ERROR and never raised,
+    """True = serving, False = failed, logged as one ERROR and never raised,
     because telemetry may never kill a daemon (spec 00069 D5) -- `start_http_server` binds before spawning its thread, so a
     False leaks nothing. `addr="0.0.0.0"` is required, not lax: bridge-networked containers get published-port traffic on
     eth0, never loopback, and the security boundary is the host-side compose publish `127.0.0.1:<port>:<port>`."""
@@ -65,7 +65,7 @@ def start_metrics_server(port: int, registry: CollectorRegistry) -> bool:
 
 
 class LogshipCollector:
-    """Exposes a live `LokiShipHandler`'s counters as scrape-time series; with no handler (`--ship-logs` off) `collect()`
+    """with no handler (`--ship-logs` off) `collect()`
     yields NOTHING -- an absent family is honest, a published zero would falsely claim log shipping runs (spec 00069 D5)."""
 
     def __init__(self, handler: LokiShipHandler | None) -> None:
@@ -75,8 +75,7 @@ class LogshipCollector:
         handler = self._handler
         if handler is None:
             return
-        # The worker's own lock (`cli/logging/ship.py`) -- a scrape racing it sees one consistent snapshot, never a
-        # partially-updated mix of old and new values.
+        # The worker's own lock -- a scrape racing it sees one consistent snapshot.
         with handler._ring_lock:
             dropped = handler.dropped_total
             shipped = handler.shipped_lines_total
@@ -86,14 +85,13 @@ class LogshipCollector:
             "zcrypto_logship_dropped_lines_total", "Log lines dropped by the Loki ship handler.", value=dropped
         )
         yield CounterMetricFamily("zcrypto_logship_shipped_lines_total", "Log lines successfully shipped to Loki.", value=shipped)
-        # Liveness only, published from startup: last_success is stale whenever logging is quiet, and a discarded batch still
-        # advances this gauge -- "is anything reaching Loki?" is dropped_lines_total's question, not this one.
+        # Liveness only, published from startup: last_success is stale whenever logging is quiet -- "is anything reaching Loki?" is dropped_lines_total's question, not this one.
         yield GaugeMetricFamily(
             "zcrypto_logship_last_cycle_timestamp_seconds",
             "Unix timestamp of the last log-shipping cycle the worker completed -- idle, shipped, or batch discarded.",
             value=last_cycle,
         )
-        if last_success is not None:  # absent until the first success -- see the class docstring
+        if last_success is not None:
             yield GaugeMetricFamily(
                 "zcrypto_logship_last_success_timestamp_seconds",
                 "Unix timestamp of the last successful Loki ship.",
