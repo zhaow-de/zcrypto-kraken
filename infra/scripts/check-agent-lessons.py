@@ -4,6 +4,7 @@ Refuses prose, blank lines and extra keys: an inbox is a harvest input for the r
 not a story board.
 """
 
+import io
 import json
 import sys
 
@@ -36,20 +37,35 @@ def record_errors(rec: object) -> list[str]:
 
 def check(path: str) -> int:
     bad = 0
-    with open(path, encoding="utf-8") as fh:
-        for n, raw in enumerate(fh, 1):
-            line = raw.rstrip("\n")
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError as exc:
-                print(f"{path}:{n}: not a JSON record ({exc.msg})")
-                bad += 1
-                continue
-            for problem in record_errors(rec):
-                print(f"{path}:{n}: {problem}")
-                bad += 1
+    try:
+        # Universal-newline mode is load-bearing: `newline=""` lets a lone CR collapse an inbox to one line.
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        # Acquiring the text, not examining it: nothing was read AS a record, so nothing here can be a
+        # malformed one. Caught any later, the decode escapes `check` and strands the paths after this.
+        reason = exc.strerror if isinstance(exc, OSError) else str(exc)
+        print(f"cannot read {path}: {reason}", file=sys.stderr)
+        return 2
+    # `io.StringIO` iterates the text exactly as iterating the file object would; `splitlines()` breaks
+    # on separators that iteration does not, leaving the tool disagreeing with the file about its lines.
+    for n, raw in enumerate(io.StringIO(text), 1):
+        line = raw.rstrip("\n")
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError as exc:
+            print(f"{path}:{n}: not a JSON record ({exc.msg})")
+            bad += 1
+            continue
+        for problem in record_errors(rec):
+            print(f"{path}:{n}: {problem}")
+            bad += 1
     return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    sys.exit(max(check(p) for p in sys.argv[1:]) if sys.argv[1:] else 0)
+    if not sys.argv[1:]:
+        # Exiting 0 with nothing opened reports a clean this run never measured.
+        print(f"usage: {sys.argv[0]} <inbox.jsonl>...", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(max(check(p) for p in sys.argv[1:]))
