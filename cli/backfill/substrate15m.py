@@ -81,7 +81,8 @@ def reconcile_15m_vs_ticks(out_root: Path, tick_zip: Path, symbol_csvs: dict[str
 
         result = reconcile(tick_bars, canonical, tol=_ACCEPTANCE_TOL)
         result["canonical_bars_in_window"] = canonical.height
-        result["coverage_pct"] = 100.0 * result["n_intervals"] / canonical.height if canonical.height else 100.0
+        # None, not 100.0: with no canonical bars in the window there is nothing to cover.
+        result["coverage_pct"] = 100.0 * result["n_intervals"] / canonical.height if canonical.height else None
         report[symbol] = result
     return report
 
@@ -138,8 +139,11 @@ def seam_15m_to_1h(out_root: Path, canonical_root: Path, symbols: list[str], win
             "n_volume_mismatch": n_volume_mismatch,
             "n_volume_bitexact": int(flags["volume_bitexact"].sum()),
             "n_count_mismatch": n_count_mismatch,
-            "max_price_rel_diff": float(flags["price_rel_diff"].max()) if joined.height else 0.0,
-            "max_volume_rel_diff": float(flags["volume_rel_diff"].max()) if joined.height else 0.0,
-            "all_match": bool(hourly.height == canonical.height == joined.height and n_matched == joined.height),
+            # None, not 0.0: a maximum over an empty join has no value, and zero deviation reads as
+            # exact agreement. `all_match` needs the join to be non-empty for the same reason --
+            # every equality below it holds at zero.
+            "max_price_rel_diff": float(flags["price_rel_diff"].max()) if joined.height else None,
+            "max_volume_rel_diff": float(flags["volume_rel_diff"].max()) if joined.height else None,
+            "all_match": bool(joined.height and hourly.height == canonical.height == joined.height and n_matched == joined.height),
         }
     return report

@@ -76,7 +76,8 @@ def test_reconcile_loose_band_absorbs_a_small_diff_that_misses_the_strict_tol():
     assert report["pct_within_tol_loose"] == 100.0
 
 
-def test_reconcile_zero_overlap_reports_vacuous_full_match():
+def test_reconcile_zero_overlap_reports_no_percentage_rather_than_a_perfect_one():
+    """With nothing joined there is no ratio to report, and 100.0 would say every interval agreed."""
     tick_bars = _bars(3)
     disjoint_ts = [datetime.fromtimestamp(BASE_TS + (100 + i) * HOUR, tz=UTC) for i in range(3)]
     ohlcvt_bars = _bars(3).with_columns(pl.Series("ts", disjoint_ts, dtype=pl.Datetime("us", "UTC")))
@@ -84,7 +85,8 @@ def test_reconcile_zero_overlap_reports_vacuous_full_match():
     report = reconcile(tick_bars, ohlcvt_bars)
 
     assert report["n_intervals"] == 0
-    assert report["pct_within_tol"] == 100.0
+    assert report["pct_within_tol"] is None
+    assert report["pct_within_tol_loose"] is None
     assert report["worst_mismatches"] == []
 
 

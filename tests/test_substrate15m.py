@@ -179,6 +179,38 @@ def test_seam_15m_to_1h_reproduces_canonical_hourly_in_window(tmp_path):
     assert entry["all_match"] is True
 
 
+def test_seam_15m_to_1h_on_a_window_that_joins_nothing_reports_no_deviation_and_no_match(tmp_path):
+    """An empty join has no maximum deviation and nothing to have matched; 0.0 and True would say the
+    two sources agreed exactly."""
+    out_root = tmp_path / "ohlc-15m"
+    canonical_root = tmp_path / "ohlc-full"
+    _seam_fixture(out_root, canonical_root)
+
+    far = BASE_TS + 400 * 3600
+    report = seam_15m_to_1h(out_root, canonical_root, ["BTC/EUR"], (_dt(far), _dt(far + 7200)))
+
+    entry = report["BTC/EUR"]
+    assert entry["n_joined"] == 0
+    assert entry["max_price_rel_diff"] is None
+    assert entry["max_volume_rel_diff"] is None
+    assert entry["all_match"] is False
+
+
+def test_reconcile_15m_vs_ticks_with_no_canonical_bars_reports_no_coverage(tmp_path):
+    """Coverage is a ratio over the canonical bars in the window; with none there is no ratio, and
+    100.0 would claim the window was fully covered."""
+    out_root = tmp_path / "ohlc-15m"
+    _write_15m_parquet(out_root, "BTC/EUR", _canonical_15m_rows())
+    tick_zip = _make_tick_zip(tmp_path)
+
+    far = BASE_TS + 400 * 3600
+    report = reconcile_15m_vs_ticks(out_root, tick_zip, {"BTC/EUR": "XBTEUR.csv"}, (_dt(far), _dt(far + 7200)))
+
+    entry = report["BTC/EUR"]
+    assert entry["canonical_bars_in_window"] == 0
+    assert entry["coverage_pct"] is None
+
+
 def test_seam_15m_to_1h_flags_price_and_volume_mismatches(tmp_path):
     out_root = tmp_path / "ohlc-15m"
     canonical_root = tmp_path / "ohlc-full"
