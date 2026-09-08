@@ -725,7 +725,7 @@ infra/runbooks/observability.md:110: section 2451 > 2048	### What to do
 infra/runbooks/observability.md:158: section 2347 > 2048	### What to do
 infra/runbooks/observability.md:201: section 2113 > 2048	### What to do
 infra/runbooks/observability.md:240: section 2513 > 2048	### What it means
-infra/runbooks/observability.md:262: section 6551 > 2048	### What to do
+infra/runbooks/observability.md:262: section 6444 > 2048	### What to do
 infra/runbooks/observability.md:333: section 3472 > 2048	### The dead-man map
 infra/runbooks/observability.md:339: table-row 317 > 200	`capture`
 infra/runbooks/observability.md:341: table-row 337 > 200	`engine`
