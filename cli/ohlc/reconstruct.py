@@ -4,7 +4,7 @@ import polars as pl
 
 
 def fill_gaps(frame: pl.DataFrame, interval_secs: int) -> pl.DataFrame:
-    """Insert a synthetic bar — the prior close in every price column, zero volume and count — at each missing grid point.
+    """Insert a synthetic bar at each missing grid point.
 
     `frame` is `cli.ohlc.dataset.to_frame`'s canonical schema, ascending with every `ts` on the `interval_secs` grid.
     """

@@ -22,37 +22,35 @@ README.md:250: section 4383 > 2048	### `zcrypto panel`<a name="zcrypto-panel"></
 README.md:277: section 5439 > 2048	### `zcrypto data`<a name="zcrypto-data"></a>
 README.md:325: section 2406 > 2048	### `zcrypto research`<a name="zcrypto-research"></a>
 README.md:398: table-row 402 > 200	`tracking_band_bps`
-cli/alpha/b1.py:1: file-prose 21.3 > 20
-cli/alpha/b1.py:53: comment-block 17 > 4	"""Walk-forward seasonality gate per return index k (docs/specs/00045 sec"The overlay" 1-2):
-cli/alpha/b1.py:128: comment-block 16 > 4	"""Composition-invariant vol-state scaler per return index k (docs/specs/00045 sec"The overlay"
-cli/alpha/killbar.py:1: file-prose 29.2 > 20
-cli/alpha/killbar.py:28: comment-block 46 > 4	"""The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031), folded to the
-cli/alpha/killbar.py:152: comment-block 5 > 4	"""Isolated whipsaw diagnostic for the short leg (finding-2's whipsaw kill test, docs/specs/00031):
-cli/alpha/killbar.py:183: comment-block 15 > 4	"""Net-of-cost head-to-head verdict: the SPA check the pre-registered `a1_kill_bar`'s SPA leg omits.
-cli/alpha/killbar.py:236: comment-block 18 > 4	"""Benchmark-relative, exposure-aware alternative to `a1_kill_bar`'s worst-slice leg.
+cli/alpha/b1.py:53: comment-block 8 > 4	"""Walk-forward seasonality gate per return index k (docs/specs/00045 sec"The overlay" 1-2):
+cli/alpha/b1.py:119: comment-block 9 > 4	"""Composition-invariant vol-state scaler per return index k (docs/specs/00045 sec"The overlay"
+cli/alpha/killbar.py:28: comment-block 22 > 4	"""The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031): a variant is
+cli/alpha/killbar.py:128: comment-block 5 > 4	"""Isolated whipsaw diagnostic for the short leg (finding-2's whipsaw kill test, docs/specs/00031):
+cli/alpha/killbar.py:159: comment-block 6 > 4	"""Net-of-cost head-to-head SPA verdict, retained as a standalone diagnostic beside
+cli/alpha/killbar.py:203: comment-block 11 > 4	"""Benchmark-relative, exposure-aware worst-slice comparison: `a1_kill_bar`'s worst-slice leg
 cli/archive/command.py:1: comment-block 14 > 4	"""The `zcrypto archive` Typer sub-app (spec 00048 Role A): pull a source tree via rsync-over-ssh
-cli/archive/command.py:1: file-prose 26.6 > 20
+cli/archive/command.py:1: file-prose 26.4 > 20
 cli/archive/command.py:92: comment-block 5 > 4	# StrictHostKeyChecking=yes fails closed: the VPS key must already be in the pinned known_hosts
 cli/archive/command.py:102: comment-block 7 > 4	# --chmod forces the archived tree to the mandated 0775 dirs / 0664 files (spec 00048): the NAS
 cli/archive/command.py:209: comment-block 5 > 4	# The verify cost is best-effort: an unwritable textfile must never preempt the Exit(1)
-cli/archive/command.py:228: comment-block 17 > 4	"""The overlay's append-only audit ledger, and the ONLY state a one-shot reconciler carries.
-cli/archive/command.py:271: comment-block 7 > 4	"""The fleet-dark windows the ledger has ALREADY booked as loss for `pair`'s stream in `hour`.
-cli/archive/command.py:294: comment-block 8 > 4	"""The residual windows `pair`'s own book record already booked as loss for `hour`.
-cli/archive/command.py:314: comment-block 19 > 4	"""One healed book hour's ledger record, with every second attributed EXACTLY once.
-cli/archive/command.py:351: comment-block 11 > 4	"""The exporter's cumulative counters, derived from the WHOLE ledger.
-cli/archive/command.py:408: comment-block 5 > 4	# Inside the dedup, for the same reason `healable` is: an hour ledgered `would_mint` in
-cli/archive/command.py:414: comment-block 8 > 4	# `healable` is the gap rate, and it must exist in DETECT-ONLY -- minting stays off for the
-cli/archive/command.py:430: comment-block 8 > 4	"""Age of the mirror's newest final -- a dead source detected via DATAFLOW, independently of its
-cli/archive/command.py:462: comment-block 5 > 4	# Prometheus's text format spells the non-finite values `+Inf` / `-Inf` / `NaN`; Python's f-string
-cli/archive/command.py:603: comment-block 17 > 4	"""Reconcile the two raw mirrors into the healed overlay.
-cli/archive/command.py:718: comment-block 6 > 4	# A permanent-loss finding is announced ONCE, on the cycle that decides it -- both branches below
-cli/archive/command.py:734: comment-block 7 > 4	# --- total_loss ------------------------------------------------------------------------
-cli/archive/command.py:793: comment-block 16 > 4	# Book each stream its OWN silence window around each intersection, not the
-cli/archive/command.py:911: comment-block 6 > 4	# Primary silence NO secondary update witnessed. Ledgered for visibility and counted
-cli/archive/command.py:1087: comment-block 6 > 4	# Never cache an hour THIS cycle changed. The stored fingerprint is the PRE-pass one, so a
-cli/archive/command.py:1189: comment-block 16 > 4	"""Continuity-replay every canonical book hour (reconciled-first, primary otherwise) through
-cli/archive/command.py:1278: comment-block 5 > 4	# Both surfaces carry the census: the runner parses the log line, an operator reads the echo.
-cli/archive/command.py:1329: comment-block 11 > 4	"""Heal the canonical trade stream to a contiguous, duplicate-free trade_id sequence: detect gaps
+cli/archive/command.py:228: comment-block 14 > 4	"""The overlay's append-only audit ledger, and the ONLY state a one-shot reconciler carries.
+cli/archive/command.py:268: comment-block 7 > 4	"""The fleet-dark windows the ledger has ALREADY booked as loss for `pair`'s stream in `hour`.
+cli/archive/command.py:291: comment-block 8 > 4	"""The residual windows `pair`'s own book record already booked as loss for `hour`.
+cli/archive/command.py:311: comment-block 19 > 4	"""One healed book hour's ledger record, with every second attributed EXACTLY once.
+cli/archive/command.py:348: comment-block 11 > 4	"""The exporter's cumulative counters, derived from the WHOLE ledger.
+cli/archive/command.py:405: comment-block 5 > 4	# Inside the dedup, for the same reason `healable` is: an hour ledgered `would_mint` in
+cli/archive/command.py:411: comment-block 8 > 4	# `healable` is the gap rate, and it must exist in DETECT-ONLY -- minting stays off for the
+cli/archive/command.py:427: comment-block 8 > 4	"""Age of the mirror's newest final -- a dead source detected via DATAFLOW, independently of its
+cli/archive/command.py:458: comment-block 5 > 4	# Prometheus's text format spells the non-finite values `+Inf` / `-Inf` / `NaN`; Python's f-string
+cli/archive/command.py:599: comment-block 17 > 4	"""Reconcile the two raw mirrors into the healed overlay.
+cli/archive/command.py:714: comment-block 6 > 4	# A permanent-loss finding is announced ONCE, on the cycle that decides it -- both branches below
+cli/archive/command.py:730: comment-block 7 > 4	# --- total_loss ------------------------------------------------------------------------
+cli/archive/command.py:789: comment-block 16 > 4	# Book each stream its OWN silence window around each intersection, not the
+cli/archive/command.py:907: comment-block 6 > 4	# Primary silence NO secondary update witnessed. Ledgered for visibility and counted
+cli/archive/command.py:1083: comment-block 6 > 4	# Never cache an hour THIS cycle changed. The stored fingerprint is the PRE-pass one, so a
+cli/archive/command.py:1185: comment-block 16 > 4	"""Continuity-replay every canonical book hour (reconciled-first, primary otherwise) through
+cli/archive/command.py:1274: comment-block 5 > 4	# Both surfaces carry the census: the runner parses the log line, an operator reads the echo.
+cli/archive/command.py:1325: comment-block 11 > 4	"""Heal the canonical trade stream to a contiguous, duplicate-free trade_id sequence: detect gaps
 cli/archive/pull.py:1: file-prose 32.5 > 20
 cli/archive/pull.py:36: comment-block 8 > 4	# Spec 00102 D3. A final is re-hashed in the cycle whose rotation index equals its slice, so every
 cli/archive/pull.py:56: comment-block 11 > 4	"""Walk every final under `root`; hash each against its sidecar, or only a subset.
@@ -62,20 +60,20 @@ cli/archive/reader.py:1: comment-block 12 > 4	"""The canonical read surface (spe
 cli/archive/reader.py:1: file-prose 41.2 > 20
 cli/archive/reader.py:40: comment-block 7 > 4	"""Yield `(pair, hour, path)` for every canonical hour: reconciled-first, primary otherwise.
 cli/archive/reconcile.py:1: comment-block 13 > 4	"""Pure reconciliation logic for spec 00050: cross-stream book-gap detection.
-cli/archive/reconcile.py:1: file-prose 43.6 > 20
-cli/archive/reconcile.py:30: comment-block 17 > 4	"""A window in which the primary stream was silent and the secondary was demonstrably alive.
-cli/archive/reconcile.py:68: comment-block 18 > 4	"""One entry per wire message, in ARRIVAL order: many rows share a `ts` (one row per book level).
-cli/archive/reconcile.py:94: comment-block 8 > 4	# The int64 view reads the column's OWN unit as microseconds while the hour bounds always
-cli/archive/reconcile.py:119: comment-block 5 > 4	"""True iff the secondary has at least one **update** row inside `gap`.
-cli/archive/reconcile.py:130: comment-block 10 > 4	"""`hour_start`/`hour_end` must bound exactly one whole, tz-aware hour.
-cli/archive/reconcile.py:172: comment-block 20 > 4	"""Windows where the primary was silent > `min_gap_seconds` AND the secondary was alive inside.
-cli/archive/reconcile.py:203: comment-block 10 > 4	"""The complement of `find_book_gaps`: primary silence the secondary did NOT witness.
-cli/archive/reconcile.py:263: comment-block 5 > 4	"""Both halves of the primary-silence partition in ONE derivation: (witnessed, unwitnessed).
-cli/archive/reconcile.py:300: comment-block 23 > 4	"""What each gap STILL lacks after the splice — the output, measured, not the input assumed.
-cli/archive/reconcile.py:350: comment-block 12 > 4	"""How much of `spans` lies inside `windows` — the seconds a SECOND record has already booked.
-cli/archive/reconcile.py:378: comment-block 19 > 4	"""Mint the hour as ordered blocks: primary up to each gap, secondary inside it, primary after.
-cli/archive/reconcile.py:423: comment-block 6 > 4	"""The healed hour's trades, plus what changed and what the secondary was missing.
-cli/archive/reconcile.py:437: comment-block 16 > 4	"""Heal a primary trade deficit from the secondary. Row-level union is safe here — and ONLY
+cli/archive/reconcile.py:1: file-prose 43.3 > 20
+cli/archive/reconcile.py:30: comment-block 16 > 4	"""A window in which the primary stream was silent and the secondary was demonstrably alive.
+cli/archive/reconcile.py:67: comment-block 18 > 4	"""One entry per wire message, in ARRIVAL order: many rows share a `ts` (one row per book level).
+cli/archive/reconcile.py:93: comment-block 8 > 4	# The int64 view reads the column's OWN unit as microseconds while the hour bounds always
+cli/archive/reconcile.py:118: comment-block 5 > 4	"""True iff the secondary has at least one **update** row inside `gap`.
+cli/archive/reconcile.py:129: comment-block 10 > 4	"""`hour_start`/`hour_end` must bound exactly one whole, tz-aware hour.
+cli/archive/reconcile.py:171: comment-block 20 > 4	"""Windows where the primary was silent > `min_gap_seconds` AND the secondary was alive inside.
+cli/archive/reconcile.py:202: comment-block 10 > 4	"""The complement of `find_book_gaps`: primary silence the secondary did NOT witness.
+cli/archive/reconcile.py:262: comment-block 5 > 4	"""Both halves of the primary-silence partition in ONE derivation: (witnessed, unwitnessed).
+cli/archive/reconcile.py:299: comment-block 23 > 4	"""What each gap STILL lacks after the splice — the output, measured, not the input assumed.
+cli/archive/reconcile.py:349: comment-block 12 > 4	"""How much of `spans` lies inside `windows` — the seconds a SECOND record has already booked.
+cli/archive/reconcile.py:377: comment-block 18 > 4	"""Mint the hour as ordered blocks: primary up to each gap, secondary inside it, primary after.
+cli/archive/reconcile.py:421: comment-block 6 > 4	"""The healed hour's trades, plus what changed and what the secondary was missing.
+cli/archive/reconcile.py:435: comment-block 16 > 4	"""Heal a primary trade deficit from the secondary. Row-level union is safe here — and ONLY
 cli/archive/scan_cache.py:1: comment-block 47 > 4	"""Per-hour examination fingerprints for the reconcile skip-cache (spec 00097 D4/D5).
 cli/archive/scan_cache.py:1: file-prose 47.5 > 20
 cli/archive/scan_cache.py:94: comment-block 7 > 4	"""The whole-cache invalidation key: everything outside the file-set that can change a VERDICT.
@@ -85,27 +83,27 @@ cli/archive/scan_cache.py:176: comment-block 5 > 4	# isinstance, not duck-typing
 cli/archive/scan_cache.py:192: comment-block 7 > 4	"""Publish the cache atomically. NEVER raises — a failed save degrades to a slow NEXT cycle.
 cli/archive/scan_cache.py:215: comment-block 6 > 4	"""Drop the cache. This one RAISES, unlike its two siblings — deliberately, do not "fix" it.
 cli/archive/settle.py:1: comment-block 17 > 4	"""Which hours are ready to reconcile, and the losses no witness can heal (spec 00050).
-cli/archive/settle.py:1: file-prose 52.8 > 20
+cli/archive/settle.py:1: file-prose 52.2 > 20
 cli/archive/settle.py:48: comment-block 5 > 4	"""The trailing window of hours old enough to be complete on both mirrors, OLDEST first.
-cli/archive/settle.py:69: comment-block 7 > 4	"""`{pair: {hour, ...}}` for every COMMITTED final of `kind` under `root`.
-cli/archive/settle.py:111: comment-block 13 > 4	"""int64-μs view of `stamps`; an int64-μs ndarray passes through, datetimes convert exactly.
-cli/archive/settle.py:132: comment-block 13 > 4	"""int64-μs view of a book segment's `ts` column, refusing any unit but microseconds.
-cli/archive/settle.py:166: comment-block 17 > 4	"""Windows in which NOTHING was recorded — no pair, on either host.
-cli/archive/settle.py:200: comment-block 27 > 4	"""ONE stream's own silence window containing `window` — the fleet-dark intersection.
-cli/archive/settle.py:227: comment-block 8 > 4	# KNOWN LIMITATION -- accepted, do not 'fix' incidentally: `edges` starts at hour_start, so a
-cli/archive/settle.py:240: comment-block 12 > 4	# Consecutive edges partition the hour, so for a POSITIVE-width window only the interval
-cli/archive/settle.py:273: comment-block 6 > 4	"""Why the fleet went dark — TRIAGE ONLY, and deliberately not an input to any booking.
-cli/archive/settle.py:293: comment-block 22 > 4	"""Was this episode the VENUE going quiet, or the fleet failing to record?
-cli/archive/settle.py:366: comment-block 26 > 4	"""`total_loss`: the hour exists on NEITHER mirror, though the stream demonstrably ran both before
-cli/capture/book.py:1: file-prose 35.3 > 20
-cli/capture/book.py:43: comment-block 10 > 4	"""Per-pair L2 book state, rebuilt from a WS v2 snapshot and kept current via updates.
-cli/capture/book.py:62: comment-block 14 > 4	"""Drop everything beyond the subscribed depth, so the book mirrors Kraken's window exactly.
+cli/archive/settle.py:73: comment-block 7 > 4	"""`{pair: {hour, ...}}` for every COMMITTED final of `kind` under `root`.
+cli/archive/settle.py:115: comment-block 13 > 4	"""int64-μs view of `stamps`; an int64-μs ndarray passes through, datetimes convert exactly.
+cli/archive/settle.py:136: comment-block 13 > 4	"""int64-μs view of a book segment's `ts` column, refusing any unit but microseconds.
+cli/archive/settle.py:170: comment-block 17 > 4	"""Windows in which NOTHING was recorded — no pair, on either host.
+cli/archive/settle.py:204: comment-block 27 > 4	"""ONE stream's own silence window containing `window` — the fleet-dark intersection.
+cli/archive/settle.py:231: comment-block 8 > 4	# KNOWN LIMITATION -- accepted, do not 'fix' incidentally: `edges` starts at hour_start, so a
+cli/archive/settle.py:244: comment-block 12 > 4	# Consecutive edges partition the hour, so for a POSITIVE-width window only the interval
+cli/archive/settle.py:277: comment-block 6 > 4	"""Why the fleet went dark — TRIAGE ONLY, and deliberately not an input to any booking.
+cli/archive/settle.py:297: comment-block 22 > 4	"""Was this episode the VENUE going quiet, or the fleet failing to record?
+cli/archive/settle.py:370: comment-block 26 > 4	"""`total_loss`: the hour exists on NEITHER mirror, though the stream demonstrably ran both before
+cli/capture/book.py:1: file-prose 31.2 > 20
+cli/capture/book.py:42: comment-block 5 > 4	"""Per-pair L2 book state, held congruent with Kraken's subscribed depth window (`depth` levels per side);
+cli/capture/book.py:56: comment-block 14 > 4	"""Drop everything beyond the subscribed depth, so the book mirrors Kraken's window exactly.
 cli/capture/desync_recovery.py:1: comment-block 25 > 4	"""Bounded desync-recovery ladder (spec 00072, T0008).
-cli/capture/desync_recovery.py:1: file-prose 45 > 20
+cli/capture/desync_recovery.py:1: file-prose 40.1 > 20
 cli/capture/desync_recovery.py:33: comment-block 5 > 4	# Defaults per spec 00072 D3. NOT fitted to production: `zcrypto_capture_resubscribes_total` reads 0
 cli/capture/desync_recovery.py:69: comment-block 5 > 4	"""Rung 1 has fired (the transition resubscribe). Start the grace clock.
-cli/capture/desync_recovery.py:86: comment-block 19 > 4	"""The pair is in sync again: clear the active ladder, but KEEP the escalation record.
-cli/capture/segment_writer.py:1: file-prose 46.3 > 20
+cli/capture/desync_recovery.py:86: comment-block 6 > 4	"""The pair is in sync again: clear the active ladder, but KEEP the escalation record.
+cli/capture/segment_writer.py:1: file-prose 45.1 > 20
 cli/capture/segment_writer.py:53: comment-block 5 > 4	# One row per Coinalyze closed 1-min liquidation bucket (spec 00051 OPS-2, T0023 fallback: Binance
 cli/capture/segment_writer.py:68: comment-block 7 > 4	# How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage
 cli/capture/segment_writer.py:77: comment-block 16 > 4	# How many CONSECUTIVE timestamps the guard may refuse before it stands down (see `_implausible`).
@@ -117,87 +115,81 @@ cli/capture/segment_writer.py:165: comment-block 16 > 4	"""Record that `stream` 
 cli/capture/segment_writer.py:205: comment-block 6 > 4	"""`None` if every row of `path` can be read, else the exception the read failed with.
 cli/capture/segment_writer.py:219: comment-block 6 > 4	"""`os.replace` into `dest`, fsyncing the data and then the directory entry.
 cli/capture/segment_writer.py:239: comment-block 10 > 4	"""`"<HH>.part0007.parquet"` -> `7`; `None` if the name is not one of ours.
-cli/capture/segment_writer.py:256: comment-block 6 > 4	"""`.../<YYYY>/<MM>/<DD>` + `"07"` -> that UTC hour; `None` if the path is not one of ours.
-cli/capture/segment_writer.py:281: comment-block 37 > 4	"""Buffers `(pair, kind)` capture events and streams them to hourly zstd-Parquet segments.
-cli/capture/segment_writer.py:374: comment-block 7 > 4	# An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
-cli/capture/segment_writer.py:384: comment-block 7 > 4	# T0037: acting on a boundary — finalizing the live hour because one ts says a new hour
-cli/capture/segment_writer.py:406: comment-block 10 > 4	"""Flush the buffer — and any held rows — to disk (idempotent). Deliberately does **not**
-cli/capture/segment_writer.py:426: comment-block 40 > 4	"""INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
-cli/capture/segment_writer.py:520: comment-block 14 > 4	# Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
-cli/capture/segment_writer.py:566: comment-block 13 > 4	"""Park a row whose hour the oracle has not confirmed. It still advances the stream witness
-cli/capture/segment_writer.py:606: comment-block 45 > 4	"""True only if `ts` is far ahead of BOTH where the stream should have got to by now AND our
-cli/capture/segment_writer.py:718: comment-block 5 > 4	# Seed the de-dup set from the parts a previous process already wrote for this hour. On a
-cli/capture/segment_writer.py:728: comment-block 11 > 4	"""Redeem `hour`'s held-spill files (`<HH>.held####.parquet`) into ordinary parts.
-cli/capture/segment_writer.py:790: comment-block 5 > 4	# The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
-cli/capture/segment_writer.py:799: comment-block 8 > 4	"""Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
-cli/capture/segment_writer.py:824: comment-block 8 > 4	"""Merge the hour's parts into a committed `<HH>.parquet`. Never raises.
-cli/capture/segment_writer.py:847: comment-block 7 > 4	# AMBIGUOUS, and unresolvable from here — the pre-T0036 writer produced BOTH
-cli/capture/segment_writer.py:869: comment-block 5 > 4	# Isolation invariant (spec 00069 D5): the commit above already succeeded and
-cli/capture/segment_writer.py:887: comment-block 10 > 4	"""Stream `inputs` into `<HH>.parquet.merging`, atomically. False if nothing could be read.
-cli/capture/segment_writer.py:914: comment-block 13 > 4	"""Publish an interrupted-or-fresh `<HH>.parquet.merging` as the hour's committed final.
-cli/capture/segment_writer.py:933: comment-block 7 > 4	"""True if every row of `path` decodes; else quarantine it and return False.
-cli/capture/segment_writer.py:947: comment-block 5 > 4	"""Rename an unreadable file aside, **never delete it**: it is evidence, and rows may still
-cli/capture/segment_writer.py:968: comment-block 7 > 4	"""Finish what a previous process left mid-merge, and read off disk which hours are closed.
-cli/capture/segment_writer.py:1005: comment-block 7 > 4	# `_commit` hashes these bytes, unlinks the parts they came from and renames them
-cli/capture/segment_writer.py:1020: comment-block 6 > 4	# Which hours are closed. A `<HH>.parquet` is one, by the invariant. So is a `.merging` file
-cli/capture/segment_writer.py:1033: comment-block 7 > 4	# An hour that has not happened cannot have been committed: a future-dated segment is
-cli/capture/segment_writer.py:1060: comment-block 8 > 4	"""Write `<HH>.parquet.sha256` from `source`'s bytes — atomically and durably, so a kill can
-cli/capture/ws_client.py:1: file-prose 34.2 > 20
-cli/capture/ws_client.py:39: comment-block 5 > 4	"""Build a WS v2 `subscribe` request for `channel` (`"book"` or `"trade"`) over `symbols`.
-cli/capture/ws_client.py:54: comment-block 5 > 4	"""Build a WS v2 `unsubscribe` request for `channel` over `symbols` — the inverse of
-cli/capture/ws_client.py:89: comment-block 6 > 4	# Kraken pushes this automatically on connect and on every trading-engine state change
-cli/capture/ws_client.py:110: comment-block 10 > 4	"""Exponential backoff delay (seconds) for the `attempt`-th (0-indexed) reconnect, capped at `max_delay`.
-cli/capture/ws_client.py:129: comment-block 6 > 4	"""Thin async client for Kraken's public WS v2 feed: subscribes `book` (at `depth`) + `trade`
-cli/capture/ws_client.py:199: comment-block 5 > 4	# A failed connection *attempt* — e.g. InvalidStatus on the HTTP 503 Kraken's
-cli/capture/ws_client.py:220: comment-block 10 > 4	"""Drop the live connection so `stream()` rebuilds it — the recovery ladder's last rung.
-cli/capture/ws_client.py:237: comment-block 6 > 4	"""Route a `subscribe`/`unsubscribe` reply back to the waiter that asked for it (T0102).
-cli/capture/ws_client.py:257: comment-block 6 > 4	"""Send the `subscribe` once the `unsubscribe` is acknowledged — or once the wait times out.
-cli/capture/ws_client.py:272: comment-block 5 > 4	# IDENTITY, not None-ness. A reconnect inside the ack window installs a NEW socket and
-cli/capture/ws_client.py:289: comment-block 11 > 4	"""Force a fresh `book` snapshot for one pair to recover from a checksum desync without
+cli/capture/segment_writer.py:278: comment-block 37 > 4	"""Buffers `(pair, kind)` capture events and streams them to hourly zstd-Parquet segments.
+cli/capture/segment_writer.py:371: comment-block 7 > 4	# An hour that is already closed — a `<HH>.parquet` for it is on disk. A reconnect's
+cli/capture/segment_writer.py:381: comment-block 7 > 4	# T0037: acting on a boundary — finalizing the live hour because one ts says a new hour
+cli/capture/segment_writer.py:403: comment-block 10 > 4	"""Flush the buffer — and any held rows — to disk (idempotent). Deliberately does **not**
+cli/capture/segment_writer.py:423: comment-block 20 > 4	"""INTENDED FOR NON-ORACLE WRITERS ONLY: it ignores held spills entirely, so on an oracle-bearing
+cli/capture/segment_writer.py:496: comment-block 14 > 4	# Spec 00109 D1, T0037's past-dated residual. On an ORACLE-BEARING writer the first event
+cli/capture/segment_writer.py:541: comment-block 13 > 4	"""Park a row whose hour the oracle has not confirmed. It still advances the stream witness
+cli/capture/segment_writer.py:581: comment-block 45 > 4	"""True only if `ts` is far ahead of BOTH where the stream should have got to by now AND our
+cli/capture/segment_writer.py:693: comment-block 5 > 4	# Seed the de-dup set from the parts a previous process already wrote for this hour. On a
+cli/capture/segment_writer.py:703: comment-block 11 > 4	"""Redeem `hour`'s held-spill files (`<HH>.held####.parquet`) into ordinary parts.
+cli/capture/segment_writer.py:765: comment-block 5 > 4	# The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
+cli/capture/segment_writer.py:774: comment-block 8 > 4	"""Count an hour finalized before our own clock said it was over (spec 00103 D1/D2) — the
+cli/capture/segment_writer.py:799: comment-block 8 > 4	"""Merge the hour's parts into a committed `<HH>.parquet`. Never raises.
+cli/capture/segment_writer.py:822: comment-block 7 > 4	# AMBIGUOUS, and unresolvable from here — the pre-T0036 writer produced BOTH
+cli/capture/segment_writer.py:844: comment-block 5 > 4	# Isolation invariant (spec 00069 D5): the commit above already succeeded and
+cli/capture/segment_writer.py:862: comment-block 10 > 4	"""Stream `inputs` into `<HH>.parquet.merging`, atomically. False if nothing could be read.
+cli/capture/segment_writer.py:889: comment-block 13 > 4	"""Publish an interrupted-or-fresh `<HH>.parquet.merging` as the hour's committed final.
+cli/capture/segment_writer.py:908: comment-block 7 > 4	"""True if every row of `path` decodes; else quarantine it and return False.
+cli/capture/segment_writer.py:922: comment-block 5 > 4	"""Rename an unreadable file aside, **never delete it**: it is evidence, and rows may still
+cli/capture/segment_writer.py:943: comment-block 7 > 4	"""Finish what a previous process left mid-merge, and read off disk which hours are closed.
+cli/capture/segment_writer.py:980: comment-block 7 > 4	# `_commit` hashes these bytes, unlinks the parts they came from and renames them
+cli/capture/segment_writer.py:995: comment-block 6 > 4	# Which hours are closed. A `<HH>.parquet` is one, by the invariant. So is a `.merging` file
+cli/capture/segment_writer.py:1008: comment-block 7 > 4	# An hour that has not happened cannot have been committed: a future-dated segment is
+cli/capture/segment_writer.py:1035: comment-block 8 > 4	"""Write `<HH>.parquet.sha256` from `source`'s bytes — atomically and durably, so a kill can
+cli/capture/ws_client.py:1: file-prose 33.5 > 20
+cli/capture/ws_client.py:51: comment-block 5 > 4	"""Build a WS v2 `unsubscribe` request for `channel` over `symbols` — the inverse of
+cli/capture/ws_client.py:86: comment-block 6 > 4	# Kraken pushes this automatically on connect and on every trading-engine state change
+cli/capture/ws_client.py:107: comment-block 10 > 4	"""Exponential backoff delay (seconds) for the `attempt`-th (0-indexed) reconnect, capped at `max_delay`.
+cli/capture/ws_client.py:126: comment-block 6 > 4	"""Thin async client for Kraken's public WS v2 feed: subscribes `book` (at `depth`) + `trade`
+cli/capture/ws_client.py:196: comment-block 5 > 4	# A failed connection *attempt* — e.g. InvalidStatus on the HTTP 503 Kraken's
+cli/capture/ws_client.py:217: comment-block 10 > 4	"""Drop the live connection so `stream()` rebuilds it — the recovery ladder's last rung.
+cli/capture/ws_client.py:234: comment-block 6 > 4	"""Route a `subscribe`/`unsubscribe` reply back to the waiter that asked for it (T0102).
+cli/capture/ws_client.py:254: comment-block 6 > 4	"""Send the `subscribe` once the `unsubscribe` is acknowledged — or once the wait times out.
+cli/capture/ws_client.py:269: comment-block 5 > 4	# IDENTITY, not None-ness. A reconnect inside the ack window installs a NEW socket and
+cli/capture/ws_client.py:286: comment-block 11 > 4	"""Force a fresh `book` snapshot for one pair to recover from a checksum desync without
 cli/costs/calibrate.py:1: comment-block 15 > 4	"""The captured-spread calibration query, committed as runnable code (T0014, spec 00085 D5).
-cli/costs/calibrate.py:1: file-prose 32.5 > 20
+cli/costs/calibrate.py:1: file-prose 32 > 20
 cli/costs/calibrate.py:49: comment-block 7 > 4	# A file's hour interval is [HH:00:00, HH+1:00:00); keep files that OVERLAP the window rather
-cli/costs/calibrate.py:75: comment-block 6 > 4	"""Scan every `<BASE>/<QUOTE>/panel-1s/**` pair under `panel_root` and compute the mean
-cli/data/manifest.py:1: comment-block 11 > 4	"""The manifest contract (spec 00099): one shape, so no consumer needs per-set knowledge.
-cli/data/manifest.py:1: file-prose 21 > 20
-cli/data/manifest.py:57: comment-block 7 > 4	"""sha256 over the member hashes, in ascending lexicographic order OF THE SERIES KEY.
-cli/data/manifest.py:121: comment-block 6 > 4	"""The digest that identifies this set. One accessor, so no caller carries a dataset name.
-cli/data/manifest.py:133: comment-block 5 > 4	"""The attested content hashes, read from `series` EXPLICITLY.
-cli/data/manifest.py:252: comment-block 13 > 4	"""Rewrite one dataset's legacy manifest into the contract, from the parquets on disk.
-cli/data/manifest.py:309: comment-block 5 > 4	# The WHOLE legacy document, `series` included. The per-series rows are where the evidence that
-cli/data/sync.py:1: file-prose 26.6 > 20
-cli/data/sync.py:26: comment-block 12 > 4	"""The committed per-series attestations, keyed by dataset.
-cli/data/sync.py:68: comment-block 6 > 4	"""Committed attestations for `dataset` BOUND TO PATHS, or empty when it has none.
-cli/data/sync.py:118: comment-block 9 > 4	"""Every per-artifact ``sha256`` value anywhere in a (possibly deeply nested) manifest -- the
-cli/data/sync.py:141: comment-block 7 > 4	"""What attests `set_name`: (every vouched hash, the path-bound subset of them).
-cli/data/sync.py:172: comment-block 7 > 4	"""Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
-cli/data/sync.py:189: comment-block 6 > 4	"""Re-hash what a push is about to transmit, and refuse content nothing attests.
-cli/data/sync.py:200: comment-block 5 > 4	# Fail closed, and MORE readily than the fetch side: this is the permanent direction. A
+cli/costs/calibrate.py:75: comment-block 5 > 4	"""The mean effective-spread table over `[window_start, window_end]`, plus its provenance; refused if no
+cli/data/manifest.py:1: comment-block 10 > 4	"""The manifest contract (spec 00099): one shape, so no consumer needs per-set knowledge.
+cli/data/manifest.py:56: comment-block 5 > 4	"""sha256 over the member hashes, in ascending lexicographic order OF THE SERIES KEY.
+cli/data/manifest.py:118: comment-block 6 > 4	"""The digest that identifies this set. One accessor, so no caller carries a dataset name.
+cli/data/manifest.py:130: comment-block 5 > 4	"""The attested content hashes, read from `series` EXPLICITLY.
+cli/data/manifest.py:242: comment-block 13 > 4	"""Rewrite one dataset's legacy manifest into the contract, from the parquets on disk.
+cli/data/manifest.py:299: comment-block 5 > 4	# The WHOLE legacy document, `series` included. The per-series rows are where the evidence that
+cli/data/sync.py:1: file-prose 22.4 > 20
+cli/data/sync.py:26: comment-block 10 > 4	"""The committed per-series attestations, keyed by dataset.
+cli/data/sync.py:127: comment-block 7 > 4	"""What attests `set_name`: (every vouched hash, the path-bound subset of them).
+cli/data/sync.py:154: comment-block 6 > 4	"""Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
+cli/data/sync.py:170: comment-block 6 > 4	"""Re-hash what a push is about to transmit, and refuse content nothing attests.
+cli/data/sync.py:181: comment-block 5 > 4	# Fail closed, and MORE readily than the fetch side: this is the permanent direction. A
 cli/engine/command.py:1735: comment-mass 855 > 528	"""Close every open position and sell every non-EUR balance at market, account-wide.
-cli/engine/cycle.py:1: comment-block 15 > 4	"""The shadow cycle core (spec 00041 SS the cycle core): `run_cycle` drives one 4h boundary
-cli/engine/cycle.py:1: file-prose 36.4 > 20
-cli/engine/cycle.py:77: comment-block 9 > 4	# The engine's per-cycle hook (spec 00069 D5/T4): `run()` installs this UNCONDITIONALLY -- it no
-cli/engine/cycle.py:126: comment-block 8 > 4	"""The dead-man's-switch ping (spec 00042): once a completion artifact lands, GET
-cli/engine/cycle.py:220: comment-block 5 > 4	"""The pairs whose raw tail still lacks a bar the boundary invariant expects (not yet
-cli/engine/cycle.py:237: comment-block 5 > 4	"""Refresh the store, then settle-verify: a pair whose raw 4h tail lacks the cycle_ts - 4h bar
-cli/engine/cycle.py:291: comment-block 17 > 4	"""The builder-input contraction (spec 00094 D2) -- ONE implementation, three consumers: this
-cli/engine/cycle.py:326: comment-block 9 > 4	"""Base-keyed ten in, symbol-keyed twelve out (spec 00094 D1): each model base carries its value
-cli/engine/cycle.py:345: comment-block 16 > 4	"""A journaled record's `final_targets` in the CURRENT symbol key space: schema 2 as-is, schema 1
-cli/engine/cycle.py:421: comment-block 11 > 4	"""Intended orders: delta = target - previous target (the most recent successful record's; flat
-cli/engine/cycle.py:467: comment-block 18 > 4	"""Journal this boundary's venue-truth evidence FIRST (00089 D7), before any target computation
-cli/engine/cycle.py:514: comment-block 8 > 4	"""The venue's book narrowed to the model's BASE key space over the /EUR legs.
-cli/engine/cycle.py:585: comment-block 26 > 4	"""Run one shadow cycle at the 4h boundary `cycle_ts` (spec 00041 SS the cycle core, steps 1-8).
-cli/engine/cycle.py:640: comment-block 28 > 4	# The forming row's close per model base, journaled onto the record below so drift is measurable
-cli/engine/cycle.py:678: comment-block 5 > 4	# The book's sleeve composition at the same forming row: which of the three fixed-1/3 sleeves
-cli/engine/cycle.py:686: comment-block 5 > 4	# Did any §10 whole-book limit actually move that book (T0121). Wrapped because it is telemetry
-cli/engine/cycle.py:715: comment-block 7 > 4	# T0150: the other two terms a drift measurement needs. NAV is journaled because it sets
-cli/engine/execgate.py:1: file-prose 35.1 > 20
-cli/engine/execgate.py:78: comment-block 8 > 4	"""The single predicate every submission must pass.
-cli/engine/execgate.py:107: comment-block 18 > 4	"""Presence of one control file. The arm file fails closed by reading ABSENT on any
-cli/engine/execgate.py:142: comment-block 5 > 4	# Valid iff `now` is at or after the cached reading AND within the bound -- NOT just
-cli/engine/execgate.py:154: comment-block 12 > 4	# A reader that RETURNS garbage is as dangerous as one that raises: `venue.ok` on a None
-cli/engine/execgate.py:176: comment-block 6 > 4	# The second half of the arming backstop. The Ansible role refuses a CONVERGE that would
-cli/engine/execgate.py:234: comment-block 10 > 4	"""Latch `reduce_only` for this process. Written unconditionally on every engine start.
+cli/engine/cycle.py:1: comment-block 6 > 4	"""The shadow cycle core (spec 00041 SS the cycle core). Aware-UTC everywhere: naive datetimes are rejected at
+cli/engine/cycle.py:1: file-prose 32.9 > 20
+cli/engine/cycle.py:68: comment-block 9 > 4	# The engine's per-cycle hook (spec 00069 D5/T4): `run()` installs this UNCONDITIONALLY -- it no
+cli/engine/cycle.py:203: comment-block 5 > 4	"""The pairs whose raw tail still lacks a bar the boundary invariant expects (not yet
+cli/engine/cycle.py:220: comment-block 5 > 4	"""Refresh the store, then settle-verify: a pair whose raw 4h tail lacks the cycle_ts - 4h bar
+cli/engine/cycle.py:274: comment-block 17 > 4	"""The builder-input contraction (spec 00094 D2) -- ONE implementation, three consumers: this
+cli/engine/cycle.py:309: comment-block 9 > 4	"""Base-keyed ten in, symbol-keyed twelve out (spec 00094 D1): each model base carries its value
+cli/engine/cycle.py:328: comment-block 16 > 4	"""A journaled record's `final_targets` in the CURRENT symbol key space: schema 2 as-is, schema 1
+cli/engine/cycle.py:404: comment-block 7 > 4	"""Intended orders against the most recent successful record's targets (flat 0 only when none exists).
+cli/engine/cycle.py:446: comment-block 18 > 4	"""Journal this boundary's venue-truth evidence FIRST (00089 D7), before any target computation
+cli/engine/cycle.py:493: comment-block 8 > 4	"""The venue's book narrowed to the model's BASE key space over the /EUR legs.
+cli/engine/cycle.py:564: comment-block 8 > 4	"""Run one shadow cycle at the 4h boundary `cycle_ts` (spec 00041 SS the cycle core).
+cli/engine/cycle.py:601: comment-block 28 > 4	# The forming row's close per model base, journaled onto the record below so drift is measurable
+cli/engine/cycle.py:639: comment-block 5 > 4	# The book's sleeve composition at the same forming row: which of the three fixed-1/3 sleeves
+cli/engine/cycle.py:647: comment-block 5 > 4	# Did any §10 whole-book limit actually move that book (T0121). Wrapped because it is telemetry
+cli/engine/cycle.py:676: comment-block 7 > 4	# T0150: the other two terms a drift measurement needs. NAV is journaled because it sets
+cli/engine/execgate.py:1: file-prose 31.5 > 20
+cli/engine/execgate.py:78: comment-block 6 > 4	"""The single predicate every submission must pass.
+cli/engine/execgate.py:105: comment-block 7 > 4	"""Presence of one control file. The arm file fails closed by reading ABSENT on any doubt; the kill
+cli/engine/execgate.py:129: comment-block 5 > 4	# Valid iff `now` is at or after the cached reading AND within the bound -- NOT just
+cli/engine/execgate.py:141: comment-block 12 > 4	# A reader that RETURNS garbage is as dangerous as one that raises: `venue.ok` on a None
+cli/engine/execgate.py:163: comment-block 6 > 4	# The second half of the arming backstop. The Ansible role refuses a CONVERGE that would
+cli/engine/execgate.py:221: comment-block 10 > 4	"""Latch `reduce_only` for this process. Written unconditionally on every engine start.
 cli/engine/executor.py:1: comment-block 22 > 4	"""The single venue-mutating module (spec 00090, the D4 walk test's anchor): every place this
 cli/engine/executor.py:1: file-prose 41.3 > 20
 cli/engine/executor.py:68: comment-block 5 > 4	# A liveness bound on this process's OWN bookkeeping, not a trading behaviour: how long a cancel or
@@ -291,25 +283,23 @@ cli/engine/flatten.py:1126: comment-block 5 > 4	"""ISO-8601 BASIC form: an opera
 cli/engine/flatten.py:1156: comment-block 5 > 4	# The condition this fallback exists for is routinely the SAME one that broke the
 cli/engine/flatten.py:1168: comment-block 12 > 4	"""`echo`, with a stdout that can go away.
 cli/engine/flatten.py:1204: comment-block 6 > 4	"""The whole button. Returns the process exit code; raises nothing.
-cli/engine/gate_cache.py:1: comment-block 30 > 4	"""The gate-export scoring cache primitives (spec 00060): fingerprints, load/save, and the
-cli/engine/gate_cache.py:1: file-prose 43.1 > 20
-cli/engine/gate_cache.py:58: comment-block 9 > 4	# The replay entry points (spec 00065 D1). Coverage is DERIVED from these by _replay_code_paths()
-cli/engine/gate_cache.py:76: comment-block 9 > 4	"""The files a dotted `cli.*` module name can live in, under `repo_root`. Non-`cli` names
-cli/engine/gate_cache.py:90: comment-block 7 > 4	# ANCESTOR PACKAGES (spec 00065 D10, added at review). Importing `cli.engine.command` EXECUTES
-cli/engine/gate_cache.py:113: comment-block 14 > 4	"""The `cli.*` modules `module_path` imports. Best-effort BY DESIGN (D6): a file that cannot be
-cli/engine/gate_cache.py:150: comment-block 26 > 4	"""The transitive `cli.*` import closure of `_REPLAY_ROOTS` (spec 00065) -- the
-cli/engine/gate_cache.py:178: comment-block 5 > 4	# Seed with the roots AND their own ancestor packages. Without this the D10 ancestor rule
-cli/engine/gate_cache.py:196: comment-block 20 > 4	"""sha256 over the source bytes of the modules that determine a replay's result, the effective
-cli/engine/gate_cache.py:231: comment-block 6 > 4	"""sha256 over everything a replay verdict depends on from the journal side: every journaled
-cli/engine/gate_cache.py:259: comment-block 6 > 4	"""The cycle's permanent re-verification slice, in [0, _ROTATION_SLICES) (D2). sha256 over the
-cli/engine/gate_cache.py:277: comment-block 8 > 4	"""`entries` maps a cycle's cycle_ts to its (evidence_fingerprint, CycleOutcome, verified_at)
-cli/engine/instruments.py:1: comment-block 30 > 4	"""The engine's venue instrument map, the committed costmin constant, the pure order-sizing
-cli/engine/instruments.py:1: file-prose 47 > 20
-cli/engine/instruments.py:42: comment-block 5 > 4	# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
-cli/engine/instruments.py:49: comment-block 11 > 4	# Committed, not read live (spec 00089 D5a, measured): the installed nautilus-trader 1.230.0
-cli/engine/instruments.py:89: comment-block 7 > 4	"""Floor `value` down to the nearest multiple of `step`, exact under float equality.
-cli/engine/instruments.py:112: comment-block 10 > 4	"""Quantize `target_qty`/`reference_price` to the venue's `lot_step`/`tick_size`, then check
-cli/engine/instruments.py:136: comment-block 8 > 4	"""EUR-denominate one symbol's `qty * price` notional, quote-aware: an `/EUR` leg needs no
+cli/engine/gate_cache.py:1: comment-block 8 > 4	"""Gate-export scoring-cache primitives (spec 00060): the two fingerprints, load/save, and the `GateCache`
+cli/engine/gate_cache.py:1: file-prose 35.1 > 20
+cli/engine/gate_cache.py:36: comment-block 9 > 4	# The replay entry points (spec 00065 D1). Coverage is DERIVED from these by _replay_code_paths()
+cli/engine/gate_cache.py:54: comment-block 9 > 4	"""The files a dotted `cli.*` module name can live in, under `repo_root`. Non-`cli` names
+cli/engine/gate_cache.py:68: comment-block 7 > 4	# ANCESTOR PACKAGES (spec 00065 D10, added at review). Importing `cli.engine.command` EXECUTES
+cli/engine/gate_cache.py:118: comment-block 26 > 4	"""The transitive `cli.*` import closure of `_REPLAY_ROOTS` (spec 00065) -- the
+cli/engine/gate_cache.py:146: comment-block 5 > 4	# Seed with the roots AND their own ancestor packages. Without this the D10 ancestor rule
+cli/engine/gate_cache.py:164: comment-block 9 > 4	"""sha256 over the source bytes of `_replay_code_paths()`, the effective config, the replay path
+cli/engine/gate_cache.py:188: comment-block 5 > 4	"""sha256 over the journal side of a replay verdict: each journaled SnapshotEntry in FULL, in canonical
+cli/engine/gate_cache.py:215: comment-block 6 > 4	"""The cycle's permanent re-verification slice, in [0, _ROTATION_SLICES) (D2). sha256 over the
+cli/engine/gate_cache.py:233: comment-block 8 > 4	"""`entries` maps a cycle's cycle_ts to its (evidence_fingerprint, CycleOutcome, verified_at)
+cli/engine/instruments.py:1: comment-block 12 > 4	"""The engine's venue instrument map, the committed costmin constant, and the pure sizing and FX terms (spec
+cli/engine/instruments.py:1: file-prose 35 > 20
+cli/engine/instruments.py:24: comment-block 5 > 4	# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
+cli/engine/instruments.py:31: comment-block 11 > 4	# Committed, not read live (spec 00089 D5a, measured): the installed nautilus-trader 1.230.0
+cli/engine/instruments.py:71: comment-block 7 > 4	"""Floor `value` down to the nearest multiple of `step`, exact under float equality.
+cli/engine/instruments.py:94: comment-block 6 > 4	"""The `ordermin` and `costmin` checks run on the POST-floor numbers -- a target that clears `ordermin`
 cli/engine/node.py:1: comment-block 7 > 4	"""The node wrapper (spec 00041 SS the node wrapper): pure 4h-boundary arithmetic, the
 cli/engine/node.py:1: file-prose 39.2 > 20
 cli/engine/node.py:59: comment-block 5 > 4	# The client-order-id tag, a venue-visible identifier: registration stamps it into `strategy_id`
@@ -325,35 +315,30 @@ cli/engine/node.py:410: comment-block 17 > 4	"""Every knob explicit (all five ar
 cli/engine/node.py:437: comment-block 15 > 4	"""The Kraken data client. The adapter loads the venue's instrument universe itself on connect;
 cli/engine/node.py:460: comment-block 5 > 4	"""The trade key and secret read from the environment, or None when either is absent or empty.
 cli/engine/node.py:486: comment-block 25 > 4	# Matched literally against the loaded instrument's `quote_currency.code`, which for
-cli/engine/soak.py:282: comment-block 7 > 4	"""Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
-cli/engine/soak.py:536: comment-block 7 > 4	"""Roll per-metric verdicts into a multiplicity-aware summary: judging N discriminating metrics at `band`
-cli/engine/soak.py:585: comment-block 6 > 4	"""Reconcile two per-metric null verdicts (spec 00061 D1) -- pure: two labels in, a `DualVerdict` out. An
-cli/engine/soak.py:760: comment-block 8 > 4	"""Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
-cli/engine/soak.py:955: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
-cli/engine/soak.py:984: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
-cli/engine/soak.py:1260: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
-cli/engine/soak.py:1390: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
-cli/engine/soak.py:1532: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
-cli/engine/venuestate.py:1: comment-block 43 > 4	"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this
-cli/engine/venuestate.py:1: file-prose 41.9 > 20
-cli/engine/venuestate.py:61: comment-block 5 > 4	"""One symbol's venue-quoted order constraints, evidence -- not live-precision, hence float.
-cli/engine/venuestate.py:114: comment-block 8 > 4	"""Read the twelve `INSTRUMENT_IDS` legs from `cache` and freeze them into a `VenueState`.
-cli/engine/venuestate.py:155: comment-block 7 > 4	"""Per `INSTRUMENT_IDS` symbol (never `state.instruments`, so a hand-built state missing a
-cli/features/derivatives.py:1: comment-block 13 > 4	"""Derivatives-positioning features over Binance USDT-M perpetuals, mapped to Kraken spot bases by
-cli/features/derivatives.py:1: file-prose 41.1 > 20
-cli/features/derivatives.py:31: comment-block 6 > 4	"""As-of forward fill onto a decision grid: out[k] is the value of the latest source row with
-cli/features/derivatives.py:55: comment-block 12 > 4	"""Trailing z-score of the funding print at k over the inclusive window ending at k:
-cli/features/derivatives.py:84: comment-block 10 > 4	"""Run length of consecutive same-sign funding prints ending at k, counting the print at k --
-cli/features/derivatives.py:111: comment-block 10 > 4	"""Sum of the funding prints in the inclusive window ending at k -- what a position held across
-cli/features/derivatives.py:137: comment-block 11 > 4	"""Map the substrate's `0.0` open-interest placeholders to None; pass everything else through.
-cli/features/derivatives.py:152: comment-block 10 > 4	"""Log ratio of consecutive open-interest levels: log(levels[k] / levels[k-1]), same length as
-cli/features/derivatives.py:177: comment-block 12 > 4	"""Trailing z-score of the open-interest level at k over the inclusive window ending at k:
-cli/features/derivatives.py:206: comment-block 10 > 4	"""Past return of the open-interest level over `lookback` bars: levels[k] / levels[k-lookback]
-cli/features/derivatives.py:240: comment-block 7 > 4	"""Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
-cli/features/derivatives.py:261: comment-block 8 > 4	"""Coverage of one column inside one calendar year: how many rows carried a reading, how many
-cli/features/derivatives.py:277: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
+cli/engine/soak.py:279: comment-block 7 > 4	"""Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
+cli/engine/soak.py:528: comment-block 7 > 4	"""Roll per-metric verdicts into a multiplicity-aware summary: judging N discriminating metrics at `band`
+cli/engine/soak.py:577: comment-block 6 > 4	"""Reconcile two per-metric null verdicts (spec 00061 D1) -- pure: two labels in, a `DualVerdict` out. An
+cli/engine/soak.py:749: comment-block 8 > 4	"""Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
+cli/engine/soak.py:944: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
+cli/engine/soak.py:973: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
+cli/engine/soak.py:1249: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
+cli/engine/soak.py:1379: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
+cli/engine/soak.py:1521: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
+cli/engine/venuestate.py:1: comment-block 26 > 4	"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this spec that
+cli/engine/venuestate.py:1: file-prose 33.3 > 20
+cli/engine/venuestate.py:44: comment-block 5 > 4	"""One symbol's venue-quoted order constraints, evidence -- not live-precision, hence float.
+cli/engine/venuestate.py:95: comment-block 5 > 4	"""Raises `EngineError` on a structural read failure -- an `INSTRUMENT_IDS` symbol's instrument absent from
+cli/engine/venuestate.py:133: comment-block 7 > 4	"""Per `INSTRUMENT_IDS` symbol (never `state.instruments`, so a hand-built state missing a
+cli/features/derivatives.py:1: comment-block 19 > 4	"""Derivatives-positioning features over Binance USDT-M perpetuals, mapped to Kraken spot bases by
+cli/features/derivatives.py:1: file-prose 31 > 20
+cli/features/derivatives.py:37: comment-block 5 > 4	"""As-of forward fill onto a decision grid, using only source rows at or before each grid stamp
+cli/features/derivatives.py:80: comment-block 5 > 4	"""Run length of consecutive same-sign funding prints ending at k, counting the print at k --
+cli/features/derivatives.py:122: comment-block 8 > 4	"""Map the substrate's `0.0` open-interest placeholders to None; pass everything else through.
+cli/features/derivatives.py:199: comment-block 5 > 4	"""Carry Binance's four ratio columns through under `binperp_` names. No arithmetic and no
+cli/features/derivatives.py:218: comment-block 7 > 4	"""Coverage of one column inside one calendar year; the stamps are None for both when the year
+cli/features/derivatives.py:233: comment-block 12 > 4	"""Per-year coverage of one column, so a trial can see WHERE a column is missing rather than
 cli/features/volatility.py:1: file-prose 20.8 > 20
-cli/liquidations/coinalyze.py:1: comment-block 6 > 4	"""The Coinalyze REST poller (spec 00051 OPS-2) that replaced the Binance forceOrder WS recorder Binance geo-fences from every
+cli/liquidations/coinalyze.py:1: comment-block 6 > 4	"""The Coinalyze REST poller (spec 00051 OPS-2) that replaced the Binance forceOrder WS recorder that Binance geo-fences from every
 cli/liquidations/coinalyze.py:1: file-prose 25.5 > 20
 cli/liquidations/coinalyze.py:43: comment-block 5 > 4	# Load-bearing (verified live 2026-07-15, stable over 150s): SegmentWriter's dedup keeps the FIRST
 cli/liquidations/coinalyze.py:49: comment-block 8 > 4	# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
@@ -373,36 +358,35 @@ cli/panel/materialize.py:231: comment-block 5 > 4	"""The newest hour with an exi
 cli/panel/materialize.py:262: comment-block 5 > 4	#: distinct pairs present in the archive whose quote has no entry in `NOTIONALS_BY_QUOTE`
 cli/panel/materialize.py:281: comment-block 21 > 4	"""Sweep canonical book hours (reconciled-first, spec 00052 D3) into the panel, per-pair
 cli/portfolio/crossfreq.py:1: comment-block 11 > 4	"""Cross-frequency combination primitives — 00038 §Construction items 1 and 4.
-cli/portfolio/crossfreq.py:1: file-prose 31.6 > 20
+cli/portfolio/crossfreq.py:1: file-prose 30.4 > 20
 cli/portfolio/crossfreq.py:22: comment-block 16 > 4	"""Hold each daily position across the intraday bars inside its (daily_ts[k], daily_ts[k+1]] interval.
-cli/portfolio/crossfreq.py:73: comment-block 8 > 4	"""Compound intraday returns within each calendar day, govern the day series, broadcast per-bar.
+cli/portfolio/crossfreq.py:73: comment-block 6 > 4	"""Per-bar multipliers from the governor run at daily cadence on each day's COMPOUNDED return.
 cli/portfolio/crossfreq_system.py:1: comment-block 35 > 4	"""Cross-frequency system builder — the adopted deployable P1 system (registry record 44) as one
-cli/portfolio/crossfreq_system.py:1: file-prose 24.8 > 20
+cli/portfolio/crossfreq_system.py:1: file-prose 24.7 > 20
 cli/portfolio/crossfreq_system.py:181: comment-block 5 > 4	"""The synthetic forming-bar close appended to a grid. Any valid price works — forming-interval
 cli/portfolio/crossfreq_system.py:210: comment-block 18 > 4	"""The §10 whole-book ceilings on the already per-asset-capped book, at their §10 defaults.
 cli/portfolio/crossfreq_system.py:376: comment-block 8 > 4	# --- the fast path ------------------------------------------------------------------------------
 cli/portfolio/crossfreq_system.py:399: comment-block 5 > 4	"""out[t] = statistics.stdev(values[t-lookback:t]) — bit-identically — for every t whose trailing
-cli/portfolio/crossfreq_system.py:520: comment-block 5 > 4	"""The B sleeve on the (extended) daily grid: dynamic_inverse_vol_basket -> equity -> sma_gate
-cli/portfolio/crossfreq_system.py:544: comment-block 6 > 4	"""a1_book_returns(...)["asset_positions"] for the fixed record-44 A1 configuration
-cli/portfolio/crossfreq_system.py:627: comment-block 25 > 4	"""The equivalence-gated fast path: same signature, same result type, same values as
+cli/portfolio/crossfreq_system.py:543: comment-block 6 > 4	"""a1_book_returns(...)["asset_positions"] for the fixed record-44 A1 configuration
+cli/portfolio/crossfreq_system.py:626: comment-block 25 > 4	"""The equivalence-gated fast path: same signature, same result type, same values as
 cli/portfolio/record43_book.py:1: comment-block 84 > 4	"""Re-derivation of registry record 43's stage-1 book — the incumbent record 44's ADOPT is measured
-cli/portfolio/record43_book.py:1: file-prose 31.4 > 20
+cli/portfolio/record43_book.py:1: file-prose 31.3 > 20
 cli/portfolio/record43_book.py:177: comment-block 5 > 4	"""The registered feed map's second grid: BTC forward-filled, every other asset's Nones kept.
 cli/portfolio/record43_book.py:200: comment-block 5 > 4	"""Per-bar (net-of-cost return, turnover) for a per-asset position book, starting flat.
 cli/portfolio/record43_book.py:221: comment-block 6 > 4	"""Per-bar turnover of a per-asset position book, starting flat (bar 0 charged full entry).
-cli/portfolio/record43_book.py:240: comment-block 7 > 4	"""B sleeve on the DAILY calendar: (per-asset positions, own net-of-cost series).
-cli/portfolio/record43_book.py:276: comment-block 5 > 4	"""A1-lf weekly v0.12 held positions, one book per rebalance offset (7 of them).
-cli/portfolio/record43_book.py:297: comment-block 5 > 4	"""Trial 34's recorded book — the mean of the 7 offsets' net-of-cost SERIES, not of positions.
-cli/portfolio/record43_book.py:307: comment-block 5 > 4	"""A2 sleeve on the 4h calendar: (equal-weight per-asset mean of the three arms, arm Sharpes).
-cli/portfolio/record43_book.py:346: comment-block 6 > 4	"""Rolling inverse-vol sleeve weights: (weights, warm-up bars, zero-vol fallback bars).
-cli/portfolio/record43_book.py:374: comment-block 8 > 4	"""Governor day ordinals for the 4h return bars: dense ranks of each bar's CLOSE date.
-cli/portfolio/record43_book.py:387: comment-block 9 > 4	"""The registered cost-stress axis: the x1.0 book's own ungoverned net, charged the EXTRA
-cli/portfolio/record43_book.py:401: comment-block 6 > 4	"""A stress axis re-costed at `cost_multiplier` and RE-GOVERNED through the daily cadence.
-cli/portfolio/record43_book.py:425: comment-block 8 > 4	"""Record 44's book on the same stress axis, from the committed builder — no knobs, frozen config.
-cli/portfolio/record43_book.py:471: comment-block 7 > 4	"""Narrow a bracket whose ends have opposite `diff_at` signs to `refine_to` wide.
-cli/portfolio/record43_book.py:498: comment-block 18 > 4	"""A census of the 43-vs-44 ordering across per-side cost — the measurement record 44's ADOPT
-cli/portfolio/record43_book.py:595: comment-block 7 > 4	"""Trial 43's stage-1 figures, keyed by their registry names, plus the `qa` block.
-cli/portfolio/record43_book.py:637: comment-block 6 > 4	# ---- expand the daily sleeves to 4h on CLOSE-TIME boundaries ----
+cli/portfolio/record43_book.py:240: comment-block 6 > 4	"""B sleeve on the DAILY calendar: (per-asset positions, own net-of-cost series — basket gross,
+cli/portfolio/record43_book.py:275: comment-block 5 > 4	"""A1-lf weekly v0.12 held positions, one book per rebalance offset (7 of them).
+cli/portfolio/record43_book.py:296: comment-block 5 > 4	"""Trial 34's recorded book — the mean of the 7 offsets' net-of-cost SERIES, not of positions.
+cli/portfolio/record43_book.py:306: comment-block 5 > 4	"""A2 sleeve on the 4h calendar: (equal-weight per-asset mean of the three arms, arm Sharpes).
+cli/portfolio/record43_book.py:345: comment-block 6 > 4	"""Rolling inverse-vol sleeve weights: (weights, warm-up bars, zero-vol fallback bars).
+cli/portfolio/record43_book.py:373: comment-block 8 > 4	"""Governor day ordinals for the 4h return bars: dense ranks of each bar's CLOSE date.
+cli/portfolio/record43_book.py:386: comment-block 9 > 4	"""The registered cost-stress axis: the x1.0 book's own ungoverned net, charged the EXTRA
+cli/portfolio/record43_book.py:400: comment-block 6 > 4	"""A stress axis re-costed at `cost_multiplier` and RE-GOVERNED through the daily cadence.
+cli/portfolio/record43_book.py:424: comment-block 8 > 4	"""Record 44's book on the same stress axis, from the committed builder — no knobs, frozen config.
+cli/portfolio/record43_book.py:470: comment-block 7 > 4	"""Narrow a bracket whose ends straddle a positive-to-negative `diff_at` flip to `refine_to` wide.
+cli/portfolio/record43_book.py:497: comment-block 18 > 4	"""A census of the 43-vs-44 ordering across per-side cost — the measurement record 44's ADOPT
+cli/portfolio/record43_book.py:594: comment-block 7 > 4	"""Trial 43's stage-1 figures, keyed by their registry names, plus the `qa` block.
+cli/portfolio/record43_book.py:636: comment-block 6 > 4	# ---- expand the daily sleeves to 4h on CLOSE-TIME boundaries ----
 cli/snapshot/register.py:15: comment-block 5 > 4	"""Assemble a structured, content-hashed snapshot dict. Deterministic given a fixed `fetched_at`.
 cli/snapshot/register.py:31: comment-block 8 > 4	# The three ways a selected pair changes identity underneath us -- T0025's trigger, as a check the
 cli/snapshot/register.py:43: comment-block 7 > 4	"""Reasons this snapshot must stop a reference-data sweep, one string each; empty means clean.
@@ -466,7 +450,7 @@ docs/reference/drill-log.md:45: section 15357 > 2048	## 2026-08-31 — R — pas
 docs/reference/drill-log.md:49: section 2952 > 2048	## 2026-09-01 — C′-fail — pass
 docs/reference/drill-log.md:55: section 3317 > 2048	## 2026-09-02 — N — pass
 docs/reference/drill-log.md:59: section 6280 > 2048	## 2026-09-04 — P — pass
-docs/reference/fleet-pins.md:12: section 2325 > 2048	## Current pins
+docs/reference/fleet-pins.md:12: section 2269 > 2048	## Current pins
 docs/reference/fleet-pins.md:27: table-row 475 > 200	agentboard
 docs/reference/fleet.md:5: section 4014 > 2048	## Hosts
 docs/reference/fleet.md:11: table-row 352 > 200	`zcrypto-ops`
@@ -855,7 +839,7 @@ infra/scripts/ops_daily.py:1384: comment-block 6 > 4	"""The operands of the shap
 infra/scripts/ops_daily.py:1407: comment-block 6 > 4	"""Peel what changes WHO runs a command, never what it does; report the host an ssh retargets to.
 infra/scripts/ops_daily.py:1441: comment-block 8 > 4	"""Which tier a runbook step falls in. Default-deny: unrecognised is PREPARED, always.
 infra/scripts/probe-with-vaulted-key.sh:2: comment-block 12 > 4	# Runs the order-semantics probe harness with the vaulted Kraken trade credential in its environment
-infra/scripts/prose-tripwire.py:2: comment-block 14 > 4	"""Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long
+infra/scripts/prose-tripwire.py:2: comment-block 17 > 4	"""Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long
 infra/scripts/prune-host-images.py:1: comment-block 17 > 4	"""Remove the Docker images a fleet host no longer needs, keeping every digest the pins file records.
 infra/scripts/prune-host-images.py:55: comment-block 5 > 4	"""The pins file cannot serve as the authority -- refuse rather than compute a keep-set.
 infra/scripts/prune-host-images.py:145: comment-block 6 > 4	"""The `## Current pins` table of the pins file, as rows.
@@ -898,12 +882,12 @@ tests/test_archive_scan_cache.py:290: comment-block 7 > 4	"""`RecursionError` is
 tests/test_archive_scan_cache.py:429: comment-block 7 > 4	"""`already_minted` is the one per-hour verdict input outside the mirrors.
 tests/test_archive_scan_cache.py:469: comment-block 5 > 4	"""The overlay term's blind spot, pinned so the backstop is not mistaken for a replacement.
 tests/test_archive_settle.py:1: file-prose 21 > 20
-tests/test_archive_settle.py:215: comment-block 6 > 4	# --- total_loss must not fire on a legitimately EMPTY trades hour ---------------------------------
-tests/test_archive_settle.py:261: comment-block 8 > 4	# --- the gap-rate signal must exist in DETECT-ONLY, or its alert is a decoration ------------------
-tests/test_archive_settle.py:349: comment-block 5 > 4	# --- the venue-silence discriminator (spec 00096) -------------------------------------------------
-tests/test_archive_settle.py:518: comment-block 5 > 4	# The survivor of a per-gap dominance rule: 600 s dark, 1,000 s of PERFECTLY HEALTHY traffic on
-tests/test_archive_settle.py:547: comment-block 6 > 4	# --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------
-tests/test_archive_settle.py:635: comment-block 7 > 4	# --- `us_view`: the column-unit guard the hot loop leans on ---------------------------------------
+tests/test_archive_settle.py:243: comment-block 6 > 4	# --- total_loss must not fire on a legitimately EMPTY trades hour ---------------------------------
+tests/test_archive_settle.py:289: comment-block 8 > 4	# --- the gap-rate signal must exist in DETECT-ONLY, or its alert is a decoration ------------------
+tests/test_archive_settle.py:377: comment-block 5 > 4	# --- the venue-silence discriminator (spec 00096) -------------------------------------------------
+tests/test_archive_settle.py:546: comment-block 5 > 4	# The survivor of a per-gap dominance rule: 600 s dark, 1,000 s of PERFECTLY HEALTHY traffic on
+tests/test_archive_settle.py:575: comment-block 6 > 4	# --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------
+tests/test_archive_settle.py:663: comment-block 7 > 4	# --- `us_view`: the column-unit guard the hot loop leans on ---------------------------------------
 tests/test_benchmark_dynamic_basket.py:1: file-prose 28.6 > 20
 tests/test_capture_gap_monitor.py:234: comment-block 7 > 4	# --- T0032(c): a probe that CANNOT MEASURE must not read as healthy ------------------------------
 tests/test_capture_prune.py:1: comment-block 5 > 4	"""Segment retention on the capture hosts (spec 00050 D8 — closes T0032's retention half).

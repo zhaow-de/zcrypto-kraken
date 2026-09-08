@@ -4,8 +4,7 @@ from cli.features._validate import _validate_prices, _validate_window
 
 
 def channel_position(prices: list[float], *, window: int) -> list[float]:
-    """Donchian channel position in [-1, +1]: with hi/lo = max/min(prices[k-window+1:k+1]),
-    pos[k] = 2*(prices[k]-lo)/(hi-lo) - 1 (+1 at the channel high, -1 at the low). Flat window
+    """Donchian channel position in [-1, +1], +1 at the channel high and -1 at the low. Flat window
     (hi==lo) and warm-up (k<window-1) -> 0.0. Length len(prices)-1; uses only prices[<= k]."""
     _validate_prices(prices)
     _validate_window("window", window)

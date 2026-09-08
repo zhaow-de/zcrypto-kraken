@@ -23,10 +23,8 @@ def _sign(x: float) -> float:
 
 
 def trend_agreement(prices: list[float], *, lookbacks: list[int]) -> list[float]:
-    """Per-asset multi-horizon trend agreement: agreement[k] = mean(sign(momentum(prices,
-    lookback=L)[k]) for L in lookbacks), in [-1, +1] (+1 every horizon up, -1 every horizon down, 0
-    split or all warm-up). Reuses momentum, so causality is inherited: agreement[k] uses only
-    prices[<= k]. Length len(prices)-1."""
+    """Per-asset multi-horizon trend agreement in [-1, +1]: +1 every horizon up, -1 every horizon
+    down, 0 split or all warm-up. Reuses momentum, so causality is inherited. Length len(prices)-1."""
     _validate_prices(prices)
     _validate_lookbacks(lookbacks)
     momenta = [momentum(prices, lookback=lb) for lb in lookbacks]

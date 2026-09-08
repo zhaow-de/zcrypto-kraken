@@ -25,7 +25,8 @@ def a1_kill_bar(
     decisive_start: int = 0,
     n_resamples: int = 1000,
 ) -> dict:
-    """The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031): a variant is archived unless ALL hold: its DSR clears DSR_PASS_THRESHOLD at
+    """The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031): a variant is
+    archived unless ALL hold: its DSR clears DSR_PASS_THRESHOLD at
     its trial count, SPA says it beats the benchmark on the decisive window, it survives 1.5x cost
     stress, and its worst regime slice does not underperform the benchmark's own worst slice.
 

@@ -120,7 +120,8 @@ def vol_state_scale(
     4-5): vol_scale_high (0.5) when the boundary's vol state exceeds vol_state_threshold (1.5),
     else 1.0. Active from the start of the series (unfitted -- only the gates have burn-in, F2).
 
-    Dividing each asset's vol by the rolling median of its OWN measure makes listings step-free (F4). Runtime assertion (F8): the substrate's last
+    Dividing each asset's vol by the rolling median of its OWN measure makes listings step-free (F4).
+    Runtime assertion (F8): the substrate's last
     close must reach the last decision boundary, else a refreshed substrate with a shorter cut
     would silently un-condition the tail.
     """

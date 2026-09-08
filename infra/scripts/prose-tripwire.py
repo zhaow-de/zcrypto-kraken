@@ -12,6 +12,9 @@ An offender's identity in the baseline is its path, its kind and its anchor — 
 or a row's or heading's first cell, whitespace-normalised — never its line number, which every edit
 above it moves. A path change re-keys every offender in the file and an edit to a block's first line
 re-keys that block, so a rename or a retouched opening line is re-recorded, not edited.
+
+Run --check-baseline and keep its classification BEFORE --write-baseline: the re-record rewrites the
+baseline to match the tree, so afterwards the check reports four zeroes and what it absorbed is lost.
 """
 
 from __future__ import annotations
