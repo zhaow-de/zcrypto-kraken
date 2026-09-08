@@ -2,7 +2,11 @@ name: Prose ratchet on develop
 
 # DETECTIVE, not preventive, and deliberately so. The PR step measures `merge(head, base-at-run-time)`;
 # with `strict: false` a PR may merge against a base that has advanced since its run, so the merge
-# result can differ from what was measured. That happened three times in the last twenty-five merges.
+# result can differ from what was measured. Measured over the last twenty-five merges into develop:
+# three of them (#433, #436, #445). Derivation, anchored on run START because checkout resolves the
+# merge ref seconds after the job begins -- for each merged PR take `gh run list --workflow=coverage.yml
+# --branch <head> --limit 1 -q '.[0].startedAt'` against `gh pr list --state merged --base develop
+# --limit 25 -q '.[].mergedAt'`, and count the PRs with another merge landing strictly between. It drifts.
 # `strict: true` would prevent it and would stale every open PR on each merge, which is why the base
 # protection sets it false on purpose. This job prevents nothing: it collapses the window in which a
 # red `develop` goes unnoticed from hours to about a minute, and a red `develop` only bites when
