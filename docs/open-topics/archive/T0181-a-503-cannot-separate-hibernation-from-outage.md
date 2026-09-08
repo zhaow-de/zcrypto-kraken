@@ -18,7 +18,7 @@ The stakes are not only editorial. `infra/runbooks/observability.md`'s `grafana-
 
 The surfaces that stand incomplete, each needing a claim nobody can currently author:
 
-- **`infra/runbooks/observability.md` step 1** routes a 503 and a `0` onward but says nothing about a `200`, and does not warn that the reading can be roughly an hour stale — the keep-alive timer runs `*:37` while the watchdog probe runs `*:0/5:41`, so the two disagree about how fresh "now" is.
+- **`infra/runbooks/observability.md`'s step 1 as it then stood** routed a 503 and a `0` onward but said nothing about a `200`, and never warned that the reading can be roughly an hour stale — the keep-alive timer runs `*:37` while the watchdog probe runs `*:0/5:41`, so the two disagree about how fresh "now" is.
 - **`infra/grafana/fleet-health-dashboard.json` panel 801** carries a clause importing the metric's own 503 reading, which crosses the rule stated in `infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2`'s own comment: the HELP lines are the one home for what values mean, and other surfaces report and point rather than restate.
 - **No surface anywhere states the experiment's decision rule** — what observation would end it, in which direction. The changelog said a recurrence refutes; that clause is deleted, because a recurrence does not say which event produced it either.
 
@@ -32,8 +32,8 @@ That answers the question this topic was opened to preserve. The undecidability 
 
 The surfaces are left as they stand, deliberately. They already say a 503 does not distinguish the two and route the operator onward in both cases, which is "503 is 503" in operating form; the accept arm's proposal to author one sentence and point at it from three places was not taken, because the ruling's other half was to keep it simple and ship.
 
-**One item the ruling did not reach was fixed in the same PR**: `infra/runbooks/observability.md` step 1 said nothing about what a `200` means and never warned that the reading can be an hour old — `OnCalendar=*:37:00` against the watchdog's `*:0/5:41`. That followed from the two schedules rather than from this decision, so the ruling left it standing; the owner's answer was that a one-clause fix resolves it on the spot, and step 1 now carries both.
+**The item the ruling did not reach was removed rather than answered**: the step that said nothing about a `200`, and never warned its reading could be an hour old, no longer exists. Asked why the section needed it, the owner had it deleted — every state it could observe routed onward, so it ended nothing and changed no action, and the four rounds spent making it correctly say nothing were the evidence. No sentence about a `200` is owed anywhere, because there is no step to owe it.
 
 ## Suggested next steps
 
-_Superseded by the Resolution above._ The decision this section asked for was made; the two arms it laid out are spent, and the surfaces it proposed editing were deliberately left alone but for step 1's one-clause fix, which the same PR carries. Nothing here is owed.
+_Superseded by the Resolution above._ The decision this section asked for was made; the two arms it laid out are spent, and the surfaces it proposed editing were left alone — one of them deleted outright. Nothing here is owed.
