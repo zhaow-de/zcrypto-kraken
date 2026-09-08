@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ---
 
 # The soak report averages a specified HHI sentinel as though it were a measurement
@@ -26,10 +26,20 @@ Fixing it moves a gating verdict: excluding unmeasurable bars from the aggregate
 - The meaning-preserving fix is to exclude out-of-range bars from the aggregate rather than average them, which leaves the specified sentinel untouched and changes only what the consumer does with it.
 - This is `T0183`'s general form applied to a consumer: a sentinel still produces that family's failure the moment something aggregates it without knowing it is one. The question at this site is not what the empty branch returns but whether every consumer knows the value is out of range.
 
+## Done so far
+
+**The bias is measured, and it sits in the null, not the realized series.** Method: the repo's own `select_clean_segment`, `realized_series`, `build_null`, `structural_metrics` and `windowed_null`, so the bars counted are the bars `analyze_soak` scores. Journal read from the NAS replica mounted at `/mnt/zhao-crypto/engine-journal`, proved byte-identical to the engine host's authoritative copy by a digest over every `cycle-*.json`; price store pulled from the engine host, which has no replica; null built from `data/ohlc-full`. The journal covers 2026-07-11 to 2026-09-08.
+
+- **Realized: the mixed window does not occur.** 359 records, one clean segment, 358 scored bars, none with `gross <= 1e-12`. The smallest gross observed is 0.0124 and the median 0.0563, so the live series is ten orders of magnitude clear of the branch. Both means agree to full precision at 0.218789155877, and the realized figure carries no bias today.
+- **Null: 3680 of 27337 bars are sentinels, 13.46% of them.** They are structural rather than scattered — a 181-bar leading run where the system holds nothing, then 77 further runs, the longest 337 bars.
+- **The null's concentration mean is 0.323623297632 as shipped and 0.373965003480 over its active bars**, a downward bias of 13.46% relative. `windowed_null` at the realized length of 358 draws 26980 window statistics, of which 13305 — 49.31% — contain at least one sentinel bar; that distribution's mean is 0.325167903 as shipped against 0.370518180 sentinel-free.
+- **The verdict barely moves at today's realized value, and that is a coincidence of where it sits.** The realized mean falls at the 30.55th percentile of the shipped windowed null and the 29.99th of the sentinel-free one. It is far below both, so the shift does not change its standing; a realized value nearer the null's centre would not be so lucky.
+
+This reverses the topic's original framing. The consumer defect is real and its size is now known, but it is the null series that carries it, so the defect is in what the realized figure is COMPARED AGAINST rather than in the figure itself.
+
 ## Suggested next steps
 
-Decomposed by what feeds the decision and what waits on it.
+The measurement that fed the decision is done and recorded above; what remains is the ruling and the fix.
 
-- **Measure whether the mixed window occurs, and how much it moves the figure** (autonomous — feeds the decision). Over a soak journal that `soak-check` actually reads — a pulled VPS journal via `--journal-dir` is the read-only input — count the bars with `gross <= 1e-12` inside windows that also carry active bars, and compute the `hhi` mean with and without them. A decision about a gating metric needs the size of the bias, not the existence of the branch. Paste the counts and both means into this file.
-- **Rule on the aggregation** (the owner's — it changes a number a go-live decision reads). The recommendation on record: exclude unmeasurable bars from the mean and from the null series passed to `windowed_null` and `block_bootstrap_null`, with the metric's `effective_n` recomputed over the bars that remain, so the sentinel is honoured everywhere the per-bar list is consumed. The alternative is a conscious keep with the measured bias recorded beside it.
-- **Implement with a test that constructs the mixed window** (waits on the ruling): a fixture with active bars and one flat bar, asserting the `hhi` mean equals the mean over the active bars alone and that `effective_n` counts only those — constructed so it fails against today's code — with the all-active and all-flat cases beside it.
+- **Rule on the aggregation** (the owner's — it changes a number a go-live decision reads). The recommendation stands and the measurement sharpens where it bites: exclude unmeasurable bars from the mean and from the null series passed to `windowed_null` and `block_bootstrap_null`, with the metric's `effective_n` recomputed over the bars that remain. The null is where the 13.46% sits, and half its windows are affected, so a fix that only guarded the realized mean would change nothing measurable today. The alternative is a conscious keep with the measured bias recorded beside it, which costs a concentration comparison that reads 13% better diversified than the null actually is.
+- **Implement with a test that constructs the mixed window** (waits on the ruling): a fixture with active bars and one flat bar, asserting the `hhi` mean equals the mean over the active bars alone and that `effective_n` counts only those — constructed so it fails against today's code — with the all-active and all-flat cases beside it. The measurement says the fixture must exercise the NULL path as well as the realized one, since that is the arm carrying real sentinels.
