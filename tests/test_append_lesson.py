@@ -183,3 +183,37 @@ class TestTheValidatorIsTheCheckers:
         monkeypatch.setattr(al, "_CHECKER", fake / "check-agent-lessons.py")
         assert al.run(_argv(), cwd=checkout, now=NOW) == 1
         assert not _inbox(checkout).exists()
+
+
+class TestASubstitutedFieldIsRefused:
+    """A backticked symbol name in a DOUBLE-quoted shell argument runs as command substitution.
+
+    The output is spliced into the field, so what lands is multi-line and every other check passes:
+    it is a non-empty string of the right type. A newline is the tell no legitimate field carries."""
+
+    SPLICED = "derive the list from CHANGELOG.md\nCLAUDE.md\ncli\ndocs/ output rather than typing it"
+
+    # `session` is deliberately absent: a newline there is already refused by the session-name check,
+    # with its own exit code, so including it here would credit this guard with an existing refusal.
+    @pytest.mark.parametrize("field", ["what", "why", "branch"])
+    def test_a_field_carrying_substituted_output_refuses(self, checkout: pathlib.Path, capsys, field: str) -> None:
+        inbox = _inbox(checkout)
+        inbox.write_text("")
+        before = inbox.stat().st_size
+        assert al.run(_argv(**{field: self.SPLICED}), cwd=checkout, now=NOW) == 1
+        assert inbox.stat().st_size == before
+        err = capsys.readouterr().err
+        assert field in err
+        assert "single-quote" in err  # the refusal must say what to do, not only what is wrong
+
+    def test_a_cite_carrying_substituted_output_refuses(self, checkout: pathlib.Path, capsys) -> None:
+        assert al.run(_argv(cites="cli/tick/read.py\nCLAUDE.md"), cwd=checkout, now=NOW) == 1
+        assert "single-quote" in capsys.readouterr().err
+
+    def test_a_legitimate_one_line_lesson_still_writes(self, checkout: pathlib.Path) -> None:
+        """The true positive: the guard must not refuse the records it exists to protect."""
+        assert (
+            al.run(_argv(what="backticks in a double-quoted arg run", why="so pass prose single-quoted"), cwd=checkout, now=NOW)
+            == 0
+        )
+        assert json.loads(_inbox(checkout).read_text())["what"] == "backticks in a double-quoted arg run"
