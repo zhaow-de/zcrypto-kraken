@@ -9,10 +9,10 @@ import sys
 
 REQUIRED = {"ts", "session", "branch", "kind", "cites", "what", "why"}
 KINDS = {"self-correction", "rule-deviation", "rule-feedback", "skill-feedback", "miscount"}
-# A newline is what a command substitution leaves behind, and no hand-written field carries one: a
-# backticked symbol name inside a DOUBLE-quoted shell argument runs, and its output is spliced in --
-# which every other check accepts, being a non-empty string of the right type.
-_SUBSTITUTION = "%s contains a newline: a shell substitution ran inside your argument -- single-quote it"
+# A lesson field is one line. A newline in one means something else wrote it -- most often a command
+# substitution splicing multi-line output in, since a backticked symbol name inside a DOUBLE-quoted
+# shell argument runs -- and every other check accepts the result, being a non-empty string.
+_ONE_LINE = "%s must be one line, but contains a newline (if a shell substitution ran in your argument, single-quote it)"
 
 
 def record_errors(rec: object) -> list[str]:
@@ -25,12 +25,12 @@ def record_errors(rec: object) -> list[str]:
     if not isinstance(rec["cites"], list) or not all(isinstance(c, str) and c for c in rec["cites"]):
         out.append("cites must be a list of non-empty strings")
     elif any("\n" in c for c in rec["cites"]):
-        out.append(_SUBSTITUTION % "a cite")
+        out.append(_ONE_LINE % "a cite")
     for key in ("ts", "session", "branch", "what", "why"):
         if not isinstance(rec[key], str) or not rec[key].strip():
             out.append(f"{key} must be a non-empty string")
         elif "\n" in rec[key]:
-            out.append(_SUBSTITUTION % key)
+            out.append(_ONE_LINE % key)
     return out
 
 

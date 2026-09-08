@@ -193,9 +193,10 @@ class TestASubstitutedFieldIsRefused:
 
     SPLICED = "derive the list from CHANGELOG.md\nCLAUDE.md\ncli\ndocs/ output rather than typing it"
 
-    # `session` is deliberately absent: a newline there is already refused by the session-name check,
-    # with its own exit code, so including it here would credit this guard with an existing refusal.
-    @pytest.mark.parametrize("field", ["what", "why", "branch"])
+    # `session` IS in the arm: this commit moved that refusal. The parent's validator passed a
+    # newline-bearing session through to the name check at `append-lesson.py:76`; `record_errors`
+    # now runs first, so the arm below is what refuses it and the name check never sees it.
+    @pytest.mark.parametrize("field", ["what", "why", "branch", "session"])
     def test_a_field_carrying_substituted_output_refuses(self, checkout: pathlib.Path, capsys, field: str) -> None:
         inbox = _inbox(checkout)
         inbox.write_text("")
@@ -209,6 +210,17 @@ class TestASubstitutedFieldIsRefused:
     def test_a_cite_carrying_substituted_output_refuses(self, checkout: pathlib.Path, capsys) -> None:
         assert al.run(_argv(cites="cli/tick/read.py\nCLAUDE.md"), cwd=checkout, now=NOW) == 1
         assert "single-quote" in capsys.readouterr().err
+
+    def test_the_harvest_refuses_a_stored_record_too(self, tmp_path: pathlib.Path) -> None:
+        """The arm the whole argument rests on: a bare append bypasses the writer entirely, so the
+        refusal has to hold when `check()` reads a file it did not write."""
+        stored = tmp_path / "zcrypto-x.jsonl"
+        rec = dict(
+            ts="2026-09-08T00:00:00Z", session="zcrypto-x", branch="fix/x", kind="miscount", cites=[], what="a\nb", why="fine"
+        )
+        stored.write_text(json.dumps(rec) + "\n")
+        chk = _load(_CHECKER, "chk_harvest")
+        assert chk.check(str(stored)) == 1
 
     def test_a_legitimate_one_line_lesson_still_writes(self, checkout: pathlib.Path) -> None:
         """The true positive: the guard must not refuse the records it exists to protect."""
