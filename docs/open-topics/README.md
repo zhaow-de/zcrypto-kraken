@@ -123,6 +123,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0188 — the soak report's identity check counts a NaN comparison as made and passed](T0188-soak-identity-check-counts-a-nan-comparison-as-passed.md) — a NaN `diff` is False against both `worst_diff` and `tol`, so `realized_internals` increments `compared` and still reports spec `00059` D2's window-wide identity as held; the finiteness refusal lives in `validate_record`, which this path runs on the rebuild's own record and never on the scored records it compares, so only the writer's discipline stands between. Disjoint from the `compared == 0` arm that answers `None`, and distinct from `T0183`'s family — an unmeasurable comparison counted as measured, not an empty branch returning the success value. Ripe now.
 
+- [T0191 — the zero-price refusal's comment inverts its own consequence](T0191-flatten-zero-price-comment-inverts-its-own-consequence.md) — the red button's comment says a carried zero silently sends nothing; measured, it sends more.
+
 - [T0192 — the week-boundary tracking fixture cannot tell its refusal arms apart](T0192-tracking-fixture-cannot-tell-its-refusal-arms-apart.md) — the test that pins a first fill landing exactly on the Monday boundary as unscored passes on either of `_score_closed_week`'s two refusal arms, held apart only by a four-minute clock margin; the week-start arm it exists for is the one that stops a healthy engine's kill file latching, and pinning it takes an assertion that moves the AST. Ripe now.
 
 ### Partially done<a name="partially-done-1"></a>
