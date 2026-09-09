@@ -391,22 +391,39 @@ def test_a_replay_closure_member_is_refused_rather_than_certified() -> None:
     """A prose-only edit to a file `replay_fingerprint` digests is not inert: it changes the gate's cache key."""
     done = _cli(_ROOT, "HEAD", "cli/engine/flatten.py")
     assert done.returncode == pi.EXIT_REFUSED, done.stdout + done.stderr
-    assert "cold replay" in done.stdout, done.stdout
+    assert "digests this file" in done.stdout, done.stdout
 
 
-def test_the_closure_is_read_repo_relative_so_a_worktree_is_not_a_foreign_tree() -> None:
-    """Absolute paths would never match: this tool runs from worktrees whose root is not the installed package's."""
-    closure = pi.replay_closure_relpaths()
-    assert closure is not None
-    assert {"cli/engine/flatten.py", "cli/engine/executor.py"} <= closure
-    assert not [path for path in closure if path.startswith("/")]
-    assert "tests/test_prove_inert.py" not in closure
+def test_the_closure_is_read_in_both_spellings_against_the_tree_it_describes() -> None:
+    """Absolute answers what THIS fingerprint reads; repo-relative answers it for a checkout that is not this one."""
+    closure = pi.replay_closure()
+    assert not isinstance(closure, str), closure
+    absolute, relative, closure_root = closure
+    assert {"cli/engine/flatten.py", "cli/engine/executor.py"} <= relative
+    assert closure_root / "cli" / "engine" / "flatten.py" in absolute
+    assert not [path for path in relative if path.startswith("/")]
+    assert "tests/test_prove_inert.py" not in relative
 
 
-def test_nothing_is_certified_when_the_closure_cannot_be_read(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unknown membership refuses: exit 0 is a licence, so the tool must not spend it on a set it could not read."""
+def test_nothing_is_certified_when_the_closure_cannot_be_read(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unknown membership refuses, and NAMES its cause: nobody can fix an invocation the refusal never described."""
     repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
     (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')
     monkeypatch.chdir(repo)
-    monkeypatch.setattr(pi, "replay_closure_relpaths", lambda: None)
+    monkeypatch.setattr(pi, "replay_closure", lambda: "ModuleNotFoundError: no module named 'cli'")
+    assert pi.main(["prove-inert.py", "HEAD", "m.py"]) == pi.EXIT_REFUSED
+    assert "ModuleNotFoundError" in capsys.readouterr().out
+
+
+def test_a_member_of_another_checkouts_closure_is_refused_by_its_relative_spelling(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The installed package can be a DIFFERENT checkout; that tree digests the same relative paths, unseen here."""
+    repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
+    (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')
+    monkeypatch.chdir(repo)
+    elsewhere = pathlib.Path("/somewhere/else")
+    monkeypatch.setattr(pi, "replay_closure", lambda: (frozenset({elsewhere / "m.py"}), frozenset({"m.py"}), elsewhere))
     assert pi.main(["prove-inert.py", "HEAD", "m.py"]) == pi.EXIT_REFUSED

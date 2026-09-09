@@ -12,8 +12,8 @@ exit 4  REFUSED -- a docstring that is program output changed, a path could not 
 may have stopped seeing it, and 4 says the claim cannot be made from here at all. A docstring is often
 program OUTPUT -- a Typer command's is its `--help` body, and scripts hand it to argparse.
 
-INERT means no observable effect, not an unchanged shape: `replay_fingerprint` digests whole files, so a
-docstring edited in one changes the gate's cache key and buys a cold replay -- refused here, never certified."""
+An effect carried by a file's raw BYTES is invisible to these arms: `replay_fingerprint` digests whole files,
+so that set is refused, never certified. Run this through `uv run` -- unread, it refuses every file instead."""
 
 import ast
 import difflib
@@ -194,18 +194,25 @@ def compare(before: str, after: str, *, output_names: frozenset[str] = frozenset
     )
 
 
-def replay_closure_relpaths() -> frozenset[str] | None:
-    """Repo-relative paths whose raw bytes `replay_fingerprint` digests, or None when that set cannot be
-    read. Repo-relative, never absolute: this tool runs from worktrees whose root is not the installed
-    package's. The closure is imported rather than restated -- a copy here would drift the day it matters."""
+def replay_closure() -> tuple[frozenset[pathlib.Path], frozenset[str], pathlib.Path] | str:
+    """The paths whose bytes `replay_fingerprint` digests -- absolute and repo-relative -- and the tree they
+    describe, or a string saying why they could not be read: only a named cause tells an operator whether to
+    fix their invocation or the tree. The tree is the INSTALLED package's, usually but not necessarily the one
+    being judged. Every failure is caught, since one escaping here exits 1, this tool's own CODE CHANGED."""
     try:
         from cli.engine.gate_cache import _REPO_ROOT, _replay_code_paths
-    except Exception:
-        return None
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
     try:
-        return frozenset(str(path.relative_to(_REPO_ROOT)) for path in _replay_code_paths())
-    except OSError, ValueError:
-        return None
+        digested = _replay_code_paths()
+        # BOTH spellings: the absolute paths are the bytes THIS fingerprint reads; the repo-relative ones
+        # cover an installed package that is a different checkout, whose own fingerprint digests the same
+        # relative paths where this one cannot see them.
+        absolute = frozenset(path.resolve() for path in digested)
+        relative = frozenset(str(path.relative_to(_REPO_ROOT)) for path in digested)
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return absolute, relative, _REPO_ROOT
 
 
 def _repo_root() -> pathlib.Path:
@@ -258,18 +265,25 @@ def main(argv: list[str]) -> int:
     print(f"after-side tree: {root}")
     if unscanned:
         print(f"WARNING: {unscanned} file(s) could not be scanned for docstring readers")
-    closure = replay_closure_relpaths()
+    closure = replay_closure()
+    absolute: frozenset[pathlib.Path] = frozenset()
+    relative: frozenset[str] = frozenset()
+    unreadable: str | None = None
+    if isinstance(closure, str):
+        unreadable = f"the replay closure could not be read ({closure}); run this through `uv run`"
+    else:
+        absolute, relative, closure_root = closure
+        print(f"replay closure describes: {closure_root}")
     worst = EXIT_INERT
     for path in paths:
-        # Ahead of the arms, because a clean shape is exactly what makes this file's edit look free.
-        relative = str(pathlib.PurePosixPath(path))
-        if closure is None or relative in closure:
-            reason = (
-                "the replay fingerprint digests this file's raw bytes -- a docstring edit here buys a cold replay"
-                if closure is not None
-                else "the replay closure could not be read, so no file can be shown to sit outside it"
-            )
-            print(f"{path}: REFUSED -- {reason}")
+        # Ahead of the arms, because a clean shape is exactly what makes such a file's edit look free.
+        if unreadable is not None:
+            print(f"{path}: REFUSED -- {unreadable}")
+            worst = worse(worst, EXIT_REFUSED)
+            continue
+        if (root / path).resolve() in absolute or str(pathlib.PurePosixPath(path)) in relative:
+            # Membership, never a diagnosis: the arms never ran, so nothing here knows what changed.
+            print(f"{path}: REFUSED -- `replay_fingerprint` digests this file, so any byte of it rebuilds the gate cache")
             worst = worse(worst, EXIT_REFUSED)
             continue
         try:
