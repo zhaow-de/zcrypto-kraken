@@ -375,6 +375,23 @@ def test_soak_check_voids_when_the_null_cannot_discriminate(tmp_path, monkeypatc
     assert any("null retains 2 bars" in r and "L=2" in r for r in payload["void_reasons"]), payload["void_reasons"]
 
 
+def test_soak_check_short_null_reason_does_not_fire_on_an_empty_realized_window(tmp_path, monkeypatch):
+    """The `L > 0` arm, on a store that closed the realized window to nothing: every `effective_n` is 0.0
+    there for the REALIZED side's reason, so without the arm a healthy 40-bar null is blamed for it."""
+    _patch_config(monkeypatch, tmp_path)
+    _patch_canonical_pipeline(monkeypatch)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, {d - timedelta(hours=8): 100.0, d - timedelta(hours=4): 105.0})
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(app, _soak_args(journal_dir, store_dir, tmp_path / "fake-canonical", json_out))
+
+    assert result.exit_code == 0, result.output
+    reasons = json.loads(json_out.read_text())["void_reasons"]
+    assert any("L=0 < floor" in r for r in reasons), reasons  # the fixture really did close the window
+    assert not any("null retains" in r for r in reasons), reasons
+
+
 def test_soak_report_degrades_when_the_canonical_is_missing_a_leg(tmp_path, monkeypatch):
     """State (a): a canonical carrying only the leg `_canonical_present` probes. Nothing is stubbed, so
     the real `_load_canonical` probe runs -- without it the run dies on a `FileNotFoundError` out of
