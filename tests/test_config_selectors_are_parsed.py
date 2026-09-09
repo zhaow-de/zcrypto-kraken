@@ -18,8 +18,8 @@ TESTS = Path(__file__).resolve().parent
 # A hand-edited artifact we do not control the shape of. Fixtures a test writes itself are fair game
 # for a substring check -- it knows exactly what it wrote.
 _HAZARD = "infra"
-# Declare an exception on the line above the check, or anywhere inside a multi-line one:
-# `# config-selector-ok: <why>`.
+# Declare an exception on the line above the comparison or within the comparison's own lines -- on a
+# wrapped check that is the operand lines, not `assert (` or the closing `)`: `# config-selector-ok: <why>`.
 _MARKER = "config-selector-ok:"
 
 
