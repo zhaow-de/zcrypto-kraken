@@ -95,7 +95,7 @@ EOF
 
 If pre-commit reformats during the commit, re-stage and re-commit (NEVER `--no-verify`).
 
-Before pushing, dispatch a review subagent on the fix commit and amend its `Reviewed-by:` trailer — mandatory for every Claude-authored commit, no trivial-fix exception (`.claude/rules/commit-messages.md`).
+Before pushing, dispatch a review subagent on the fix commit and land the branch's review record on HEAD with its `Reviewed-by:` trailer — mandatory for every Claude-authored branch, no trivial-fix exception (`.claude/rules/commit-messages.md`).
 
 #### 2d. Push + wait for CI + merge
 
