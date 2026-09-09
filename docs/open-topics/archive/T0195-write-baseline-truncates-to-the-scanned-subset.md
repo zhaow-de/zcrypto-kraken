@@ -58,7 +58,7 @@ thousands of already-accepted blocks as `new` offenders.
   hand. Shares its baseline-integrity family with [[T0189]] (a shrink licenses silent regrowth to
   the old ceiling) and neither topic pointed at the other until now: T0189's shrink-without-lowering
   defect and this topic's stale-anchor-still-absorbed defect are two ways the same `_absorbable()`
-  fallback hides drift, and the merge-remedy option below, if built as scan-and-preserve-untouched,
+  fallback hides drift, and the merge remedy weighed at the time, if built as scan-and-preserve-untouched,
   would compound T0189's problem rather than fix it -- a change to one needs the other in view.
 
 ## Resolution

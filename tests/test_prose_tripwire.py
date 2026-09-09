@@ -959,3 +959,22 @@ class TestAScopedWriteBaselineWillNotTruncateTheRest:
         """A first write discards nothing, which is what every scoped call in this file relies on."""
         assert tw.main(["--write-baseline", "fresh.txt", "cli/one.py"]) == 0
         assert [r.split(":")[0] for r in (repo / "fresh.txt").read_text().splitlines()] == ["cli/one.py"]
+
+    def test_an_unscoped_write_reports_the_keeps_it_drops_rather_than_refusing(self, repo: Path, capsys) -> None:
+        """The remedy the refusal prescribes is itself narrowing when a recorded file has left the
+        worktree, so it says so and writes -- refusing here would dead-end the only route left."""
+        (repo / "cli" / "two.py").unlink()  # still in the index; `default_paths` scans what is on disk
+
+        assert tw.main(["--write-baseline", "base.txt"]) == 0
+
+        assert [r.split(":")[0] for r in (repo / "base.txt").read_text().splitlines()] == ["cli/one.py"]
+        assert "cli/two.py" in capsys.readouterr().err  # WHICH keep went with the write
+
+    def test_a_target_that_is_not_a_baseline_is_refused_rather_than_parsed(self, repo: Path, capsys) -> None:
+        """A mistyped target is prose, not rows; it is refused whole rather than raising mid-parse."""
+        before = (repo / "cli" / "one.py").read_text()
+
+        assert tw.main(["--write-baseline", "cli/one.py", "cli/one.py"]) == 2
+
+        assert (repo / "cli" / "one.py").read_text() == before
+        assert "not a baseline" in capsys.readouterr().err
