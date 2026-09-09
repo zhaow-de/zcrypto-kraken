@@ -468,7 +468,9 @@ def test_soak_report_degrades_when_a_leg_carries_no_price(tmp_path, monkeypatch)
     assert result.exit_code == 0, out
     assert "REALIZED-SERIES WINDOW" in out
     reasons = json.loads(json_out.read_text())["void_reasons"]
-    assert any("null unavailable" in r and "'XRP'" in r for r in reasons), reasons
+    # The refusal NARROWS to the legs absent at every index. Naming the whole basket would contain
+    # 'XRP' too, so the priced leg's absence from the text is what tells the two apart.
+    assert any("null unavailable" in r and "'XRP'" in r and "'BTC'" not in r for r in reasons), reasons
 
 
 def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, monkeypatch):
