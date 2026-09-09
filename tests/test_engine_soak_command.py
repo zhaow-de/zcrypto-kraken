@@ -144,7 +144,7 @@ def _mk_fake_null(n: int = 40) -> NullSystem:
 
 
 def _patch_canonical_pipeline(
-    monkeypatch, *, available: bool = True, reason: str = "", identity_ok: bool = True, cap_consistent: bool = True
+    monkeypatch, *, available: bool = True, reason: str = "", identity_ok: bool | None = True, cap_consistent: bool = True
 ) -> None:
     """Stub the canonical-present branch of `soak_report` so a command test needs no real frozen
     canonical dataset or trial registry: `_canonical_present` always True, `build_null`/`self_tests`
@@ -236,8 +236,8 @@ def test_soak_check_json_includes_internals_and_disclosures(tmp_path, monkeypatc
 def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
     """The D2/D3-vs-D7 void distinction, wired at the `soak_report` level: `available=True` with
     `identity_ok=False` or `cap_consistent=False` VOIDS the run (the instrument is lying about
-    alignment); `available=False` DEGRADES (governor_engagement/cap_breach read "n/a") but never
-    voids on its own."""
+    alignment); `identity_ok=None` (the identity unmeasured) does not, and `available=False`
+    DEGRADES (governor_engagement/cap_breach read "n/a") but never voids on its own."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {
@@ -268,6 +268,17 @@ def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     payload = json.loads(identity_out.read_text())
     assert any("identity mismatch" in r for r in payload["void_reasons"])
+
+    # `identity_ok=None` is the identity UNMEASURED -- no journaled target was compared against the
+    # rebuild. Only a ran-and-failed proof voids, so this one must not, while `cap_consistent=False`
+    # below still does from the same available rebuild.
+    _patch_canonical_pipeline(monkeypatch, identity_ok=None)
+    unmeasured_out = tmp_path / "identity-unmeasured.json"
+    result = runner.invoke(app, [*common_args, "--json", str(unmeasured_out)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(unmeasured_out.read_text())
+    assert payload["internals"]["identity_ok"] is None
+    assert not any("identity mismatch" in r for r in payload["void_reasons"])
 
     _patch_canonical_pipeline(monkeypatch, cap_consistent=False)
     cap_out = tmp_path / "cap.json"

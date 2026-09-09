@@ -676,7 +676,7 @@ def test_a_non_trade_non_rollover_row_is_neither_matched_nor_unmatched(tmp_path)
     # is not reported as a type this reader could not place either.
     p = _export(tmp_path, ['"L6","Q1","2026-08-31 00:00:00","deposit","","currency","ZEUR","500.0","0.0","1350.0"'])
     out = reconcile_ledger(read_ledger_export(p), [])
-    assert out["status"] == "ok" and out["matched"] == 0 and out["unmatched"] == []
+    assert out["status"] == "insufficient-data" and out["matched"] == 0 and out["unmatched"] == []
     assert out["ignored"] == {}
 
 
@@ -696,14 +696,15 @@ def test_a_row_type_this_reader_places_nowhere_is_counted_by_type(tmp_path):
     )
     out = reconcile_ledger(read_ledger_export(p), [])
     assert out["ignored"] == {"margin": 2, "settled": 1}  # the withdrawal is known-irrelevant
-    assert out["status"] == "ok" and out["matched"] == 0 and out["unmatched"] == []
+    assert out["status"] == "insufficient-data" and out["matched"] == 0 and out["unmatched"] == []
 
 
-def test_a_header_only_export_says_it_read_no_rows(tmp_path):
-    # Otherwise "read 0 rows" and "read 400 rows, none of them trades" are the same clean bill: a
-    # rollover total that is confidently zero reads exactly like a window with no rollovers.
+def test_a_header_only_export_reads_no_rows_and_decides_nothing(tmp_path):
+    # "ok" here would be a clean bill over a comparison that never happened, indistinguishable from an
+    # export whose every trade row matched; `n_rows` separates it from one carrying no trade rows.
     empty = reconcile_ledger(read_ledger_export(_export(tmp_path, [])), [])
-    assert empty["n_rows"] == 0 and empty["status"] == "ok" and empty["rollover_fees_eur"] == pytest.approx(0.0)
+    assert empty["n_rows"] == 0
+    assert empty["status"] == "insufficient-data" and empty["rollover_fees_eur"] == pytest.approx(0.0)
 
 
 def test_the_row_count_is_every_row_read_not_only_the_consumed_ones(tmp_path):
@@ -1084,15 +1085,15 @@ def test_a_failed_reconciliation_withdraws_the_proposed_rate_from_the_payload(tm
     assert "1" in cost["basis"] and "no rate proposed" in cost["basis"]  # the unmatched count, named
 
 
-def test_an_export_that_reconciles_reports_the_rollover_cost_and_exits_zero(tmp_path, mixed_schema_fixture):
+def test_a_rollover_only_export_exits_zero_and_keeps_the_proposed_rate(tmp_path, mixed_schema_fixture):
     # The negative the FAILED tests need: a block that always failed, or a proposal always withdrawn,
-    # would pass both tests above.
+    # would pass both tests above. Only a FAILED match moves either, never a no-trade-row export.
     p = _export(tmp_path, ['"L1","R1","2026-08-31 00:00:00","rollover","","currency","ZEUR","-0.12","0.12","900.0"'])
     argv = _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p))
     run = _invoke(mixed_schema_fixture, argv)
     assert run.exit_code == 0, run.stdout
     payload = json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)
-    assert payload["reconciliation"]["status"] == "ok"
+    assert payload["reconciliation"]["status"] == "insufficient-data"
     assert payload["reconciliation"]["rollover_fees_eur"] == pytest.approx(0.12)
     assert payload["cost"]["proposed_fee_per_side"] is not None
     # The cost a fill can never carry is printed, and so is how much was read to find it.
