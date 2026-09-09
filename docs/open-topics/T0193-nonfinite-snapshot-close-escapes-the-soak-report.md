@@ -20,9 +20,9 @@ The neighbouring question is where the refusal should live at all. `_validate_gr
 
 ## Findings so far
 
-- Measured on `synthetic_grids(220)` with one NaN close injected at six placements — first, middle and last bar of both the daily and the 4h grid: all six raise `ValueError: cannot convert NaN to integer ratio` from `build_crossfreq_system_fast`, and the verified builder raises `AlphaError` on the same input.
+- Measured on `synthetic_grids(220)` with one NaN close injected at six placements — first, middle and last bar of both the daily and the 4h grid: all six raise `ValueError: cannot convert NaN to integer ratio` from `build_crossfreq_system_fast`, and the verified builder refuses the same input with the written message `prices must be None or finite positive numbers, got nan` — `AlphaError` at the three 4h placements, `BenchmarkError` at the three daily ones, neither of which is a `PortfolioError`.
 - The exception classes: `class PortfolioError(Exception)` (`cli/portfolio/errors.py:1`), `class EngineError(Exception)` (`cli/engine/errors.py:1`). Neither is in `ValueError`'s ancestry.
-- It is `T0188`'s subject — non-finite handling in `realized_internals` — arriving from the other side: `T0188` is a silent pass over an unmeasurable comparison, this is a loud escape past a contract that promised degradation. `T0188`'s spec `00113` excludes this deliberately and names it here, because closing the silent-pass defect does not answer this fork.
+- It is `T0188`'s subject — non-finite handling in `realized_internals` — arriving from the other side: `T0188` was a silent pass over an unmeasurable comparison and is closed, this is a loud escape past a contract that promised degradation and is not. Its spec `00113` excluded this deliberately and names it here, because closing the silent-pass defect does not answer this fork.
 
 ## Suggested next steps
 

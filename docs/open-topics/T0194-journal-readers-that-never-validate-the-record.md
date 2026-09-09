@@ -14,11 +14,11 @@ So the finiteness and schema guarantees `validate_record` provides are a propert
 
 A record reaching a consumer by a route that skips `validate_record` carries no guarantee about its `final_targets`, its snapshot metadata, or its optional `nav`/`held`/`closes` beyond the two hand-placed coercions above. What stands between the fleet and that today is the WRITER: `cli/engine/cycle.py:686` validates before journaling, so an artifact this engine wrote is guarded — and an artifact arriving by any other route is not.
 
-`T0188` is one measured consequence: `cli/engine/soak.py:1658` loads every record with a bare `from_json` and `realized_internals` compares their journaled `final_targets` against a rebuilt row, so an unvalidated non-finite value produced a wrong answer in the soak report. That is closed at the comparison by spec `00113`, deliberately without widening here.
+`T0188` is one measured consequence: `cli/engine/soak.py:1679` loads every record with a bare `from_json` and `realized_internals` compares their journaled `final_targets` against a rebuilt row, so an unvalidated non-finite value produced a wrong answer in the soak report. Spec `00113` closed that at the comparison — a non-finite `diff` is counted unmeasurable rather than compared, and voids the run — deliberately without widening here, so the read still carries no guarantee and every other consumer of those records is where this topic left it.
 
 ## Findings so far
 
-- **The census.** `validate_record` has exactly four production call sites: `cli/engine/concordance.py:78`, `cli/engine/cycle.py:686` (the writer), `cli/engine/feeders.py:84`, and `cli/engine/soak.py:824` — the last on `latest_record` alone, never on the scored records it compares against.
+- **The census.** `validate_record` has exactly four production call sites: `cli/engine/concordance.py:78`, `cli/engine/cycle.py:686` (the writer), `cli/engine/feeders.py:84`, and `cli/engine/soak.py:825` — the last on `latest_record` alone, never on the scored records it compares against.
 - The readers are not enumerated anywhere, so "several callers" in `journal.py`'s comments is a claim about a set nobody has listed.
 - Moving validation into the read would reverse a documented design decision rather than fill a gap, and its blast radius is every consumer of a journal artifact on the live trade path: an artifact that loads today would start raising.
 
