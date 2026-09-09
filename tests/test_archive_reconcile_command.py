@@ -41,7 +41,7 @@ def _write(root: Path, pair: str, kind: str, hour: datetime, frame: pl.DataFrame
 
 
 def _book(pair: str, hour: datetime, rows: list[tuple[float, str]]) -> pl.DataFrame:
-    """rows = [(offset_seconds, type)] — one wire message per row."""
+    """`rows` is [(offset_seconds, type)]; rows sharing an offset are the levels of one wire message."""
     return pl.DataFrame(
         {
             "ts": [hour + timedelta(seconds=o) for o, _ in rows],
@@ -295,8 +295,8 @@ def test_an_hour_absent_from_both_mirrors_is_a_total_loss(tmp_path, monkeypatch)
 
 
 def test_the_hours_before_a_pairs_first_capture_are_not_a_total_loss(tmp_path, monkeypatch):
-    """Adding a pair to the universe must not page 46 permanent-loss alarms for the hours of the
-    window that predate its first capture — nor book them into a counter that cannot be walked back."""
+    """Adding a pair to the universe must not page a permanent-loss alarm for every hour of the
+    window that predates its first capture — nor book them into a counter that cannot be walked back."""
     pri, sec, rec = _roots(tmp_path)
     for hour in (H, H + timedelta(hours=1)):
         _healthy(pri, sec, hour, pairs=("BTC/EUR",))
@@ -526,7 +526,7 @@ def test_a_corrupt_ledger_line_exits_one_and_never_under_counts(tmp_path, monkey
 def test_a_non_monotonic_source_segment_is_reported_not_sorted(tmp_path, monkeypatch):
     """`_message_ts` refuses out-of-order input rather than sorting it (L2 rows carry absolute
     quantities). The command must turn that into one ledgered failure + exit 1, not a crash that
-    abandons the other 47 hours of the window."""
+    abandons every remaining hour of the window."""
     pri, sec, rec = _roots(tmp_path)
     _healthy(pri, sec, H)
     _healthy(pri, sec, H + timedelta(hours=1))
