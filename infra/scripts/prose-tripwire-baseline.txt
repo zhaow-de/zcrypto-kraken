@@ -262,7 +262,7 @@ cli/engine/flatten.py:166: comment-block 6 > 4	"""A quantization step, which mus
 cli/engine/flatten.py:191: comment-block 21 > 4	"""The orders resting at the venue that the adapter can resolve an instrument for -- NOT every
 cli/engine/flatten.py:247: comment-block 5 > 4	# `None` read as "no positions" is the one shape that CONFIRMS ITSELF: `build_plan` shows no
 cli/engine/flatten.py:311: comment-block 7 > 4	"""The three constraints a sized order needs, required on THIS pair only. Validating the whole
-cli/engine/flatten.py:360: comment-block 5 > 4	# `_required` rejects only `None` and `_as_float` only the non-finite, so a zero would flow
+cli/engine/flatten.py:360: comment-block 5 > 4	# `_required` rejects only `None` and `_as_float` only a non-number or a non-finite one, so a
 cli/engine/flatten.py:418: comment-block 9 > 4	"""One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
 cli/engine/flatten.py:536: comment-block 6 > 4	"""The committed per-symbol notional floor, or None when it does not apply to this pair.
 cli/engine/flatten.py:552: comment-block 8 > 4	"""The reference price at the venue's tick, or None where the floor leaves nothing of it.
@@ -318,12 +318,12 @@ cli/engine/node.py:486: comment-block 25 > 4	# Matched literally against the loa
 cli/engine/soak.py:291: comment-block 7 > 4	"""Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
 cli/engine/soak.py:594: comment-block 7 > 4	"""Roll per-metric verdicts into a multiplicity-aware summary: judging N discriminating metrics at `band`
 cli/engine/soak.py:643: comment-block 6 > 4	"""Reconcile two per-metric null verdicts (spec 00061 D1) -- pure: two labels in, a `DualVerdict` out. An
-cli/engine/soak.py:815: comment-block 8 > 4	"""Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
-cli/engine/soak.py:1019: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
-cli/engine/soak.py:1048: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
-cli/engine/soak.py:1330: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
-cli/engine/soak.py:1482: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
-cli/engine/soak.py:1644: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
+cli/engine/soak.py:816: comment-block 8 > 4	"""Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
+cli/engine/soak.py:1039: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
+cli/engine/soak.py:1068: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
+cli/engine/soak.py:1350: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
+cli/engine/soak.py:1502: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
+cli/engine/soak.py:1665: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
 cli/engine/venuestate.py:1: comment-block 26 > 4	"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this spec that
 cli/engine/venuestate.py:1: file-prose 33.3 > 20
 cli/engine/venuestate.py:44: comment-block 5 > 4	"""One symbol's venue-quoted order constraints, evidence -- not live-precision, hence float.
@@ -1081,12 +1081,12 @@ tests/test_engine_node.py:822: comment-block 8 > 4	"""The observer's OWN id is t
 tests/test_engine_node.py:1378: comment-block 5 > 4	# Nothing in the node configuration selects instruments: the Kraken data client loads the venue's
 tests/test_engine_node.py:1662: comment-block 6 > 4	# A native abort prints a stack only while faulthandler is armed, and nothing sets
 tests/test_engine_soak.py:308: comment-block 5 > 4	"""All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
-tests/test_engine_soak.py:2565: comment-block 5 > 4	"""A CycleRecord whose 240 SnapshotEntry hash-verifies against (h4_ts, closes) -- the data
-tests/test_engine_soak.py:2828: comment-block 5 > 4	"""A clean segment whose records flip from schema 1 (base-keyed "BTC") to schema 2 (symbol-keyed
-tests/test_engine_soak.py:2921: comment-block 5 > 4	"""The null and the realized series are judged metric against metric and `structural_metrics`
+tests/test_engine_soak.py:2580: comment-block 5 > 4	"""A CycleRecord whose 240 SnapshotEntry hash-verifies against (h4_ts, closes) -- the data
+tests/test_engine_soak.py:2894: comment-block 5 > 4	"""A clean segment whose records flip from schema 1 (base-keyed "BTC") to schema 2 (symbol-keyed
+tests/test_engine_soak.py:2987: comment-block 5 > 4	"""The null and the realized series are judged metric against metric and `structural_metrics`
 tests/test_engine_soak_command.py:43: comment-block 5 > 4	"""3 contiguous cycles at 00:00, 04:00, 08:00 on 2026-07-16 (single asset BTC, final_targets
-tests/test_engine_soak_command.py:752: comment-block 5 > 4	"""5 contiguous cycles from 2026-07-16 00:00 whose journaled records flip from schema 1
-tests/test_engine_soak_command.py:804: comment-block 6 > 4	"""A soak report over a window that straddles the deploy runs to a rendered report instead of
+tests/test_engine_soak_command.py:771: comment-block 5 > 4	"""5 contiguous cycles from 2026-07-16 00:00 whose journaled records flip from schema 1
+tests/test_engine_soak_command.py:823: comment-block 6 > 4	"""A soak report over a window that straddles the deploy runs to a rendered report instead of
 tests/test_engine_stub_fidelity.py:1: comment-block 40 > 4	"""Every test double in the engine suite, classified: what it stands in for, and how the standing-in
 tests/test_engine_stub_fidelity.py:1: file-prose 30.5 > 20
 tests/test_engine_stub_fidelity.py:50: comment-block 8 > 4	# What the walk must still find per module, so a walker that stops seeing a whole SHAPE of double
