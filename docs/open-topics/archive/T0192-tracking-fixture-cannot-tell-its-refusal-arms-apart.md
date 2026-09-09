@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # The week-boundary tracking fixture cannot tell its refusal arms apart
@@ -22,7 +22,17 @@ Driven both ways on `docs/docstrings-tests-engine-executor-rerun` at `e1f52258`,
 
 The docstring is truthful as it stands: `e1f52258` rewrote it to claim only the outcome its assertions pin. This is a test that could pin more, not a false claim left standing.
 
+## Resolution
+
+Both steps landed on `test/t0192-pin-the-week-boundary-refusal-arm`, in `test(engine): the week-boundary fixture reaches the arm it is named for`.
+
+The cause was the fixture, not the assertions: `_BOUNDARY_RAMP_FILLS`' first fill is `_TRACK_MONDAY` while the shared `_MINT_AT` is twelve hours before it, so the mint ran against a journal holding no fill, no birth record was written, and the birth arm refused the week before the week-start arm could be reached. `_RAMP_MINT_AT` -- the first boundary after this ramp's own first fill, which is what `_mint_birth` documents the mint to mean -- lets the birth arm pass, and the week-start arm is what refuses.
+
+One assertion pins it, reading the birth record's content rather than its existence. `mutate-probe.sh` narrowing `>=` to `>` in `_score_closed_week` is now KILLED, the kill-trip guard firing on `2026-W37 tracked 2118.2 bps of NAV ... outside the 120.0 bps band`; the same mutation left this test green before. The docstring names the arm again.
+
 ## Suggested next steps
+
+_(none — resolved.)_ The original steps, both done:
 
 - Add one assertion naming the arm — on the mint-refusal warning, or on `(exec_dir(tmp_path) / FIRST_FILL_FILE).exists()`, which is the shape the sibling `test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held` already uses. It cannot ride a docstring pass: it moves the AST, which falsifies that branch's prose-only proof, so it takes its own branch and its own review.
 - With the arm pinned, the docstring may name it again.
