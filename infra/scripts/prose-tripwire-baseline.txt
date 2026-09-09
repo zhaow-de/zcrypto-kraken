@@ -348,14 +348,13 @@ cli/liquidations/coinalyze.py:297: comment-block 5 > 4	# Opt-in exporter (spec 0
 cli/liquidations/coinalyze.py:309: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
 cli/ohlc/reach.py:1: comment-block 7 > 4	"""REST reach-round: carry the canonical OHLC basket forward from Kraken's public OHLC endpoint.
 cli/panel/materialize.py:1: comment-block 11 > 4	"""Hour materializer + watermarked sweep for the 1s L2 panel (spec 00052 D3/D4/D5/D6).
-cli/panel/materialize.py:1: file-prose 32.9 > 20
+cli/panel/materialize.py:1: file-prose 32.6 > 20
 cli/panel/materialize.py:39: comment-block 7 > 4	# T0066 / spec 00052 D6 correction: an hour being "settled" (its canonical final is committed +
-cli/panel/materialize.py:73: comment-block 26 > 4	"""Replay one canonical hour into the 1s-grid wide primitive panel, threading `OrderBook` state
-cli/panel/materialize.py:142: comment-block 9 > 4	"""Publish `frame` as `pair`'s hour, atomically, with a `.sha256` sidecar.
-cli/panel/materialize.py:176: comment-block 5 > 4	"""Persist `book`'s end-of-hour state as `<HH>.state.json`, next to the hour's parquet, for O(1)
-cli/panel/materialize.py:218: comment-block 5 > 4	"""The newest hour with an existing panel final for `pair`, or None if it holds none yet.
-cli/panel/materialize.py:246: comment-block 5 > 4	#: distinct pairs present in the archive whose quote has no entry in `NOTIONALS_BY_QUOTE`
-cli/panel/materialize.py:265: comment-block 19 > 4	"""Sweep canonical book hours (reconciled-first, spec 00052 D3) into the panel, per-pair
+cli/panel/materialize.py:73: comment-block 25 > 4	"""Replay one canonical hour into the 1s-grid wide primitive panel, threading `OrderBook` state
+cli/panel/materialize.py:141: comment-block 9 > 4	"""Publish `frame` as `pair`'s hour, atomically, with a `.sha256` sidecar.
+cli/panel/materialize.py:175: comment-block 5 > 4	"""Persist `book`'s end-of-hour state as `<HH>.state.json`, next to the hour's parquet, for O(1)
+cli/panel/materialize.py:244: comment-block 5 > 4	#: distinct pairs present in the archive whose quote has no entry in `NOTIONALS_BY_QUOTE`
+cli/panel/materialize.py:263: comment-block 19 > 4	"""Sweep canonical book hours (reconciled-first, spec 00052 D3) into the panel, per-pair
 cli/portfolio/crossfreq.py:1: comment-block 11 > 4	"""Cross-frequency combination primitives — 00038 §Construction items 1 and 4.
 cli/portfolio/crossfreq.py:1: file-prose 30.4 > 20
 cli/portfolio/crossfreq.py:22: comment-block 16 > 4	"""Hold each daily position across the intraday bars inside its (daily_ts[k], daily_ts[k+1]] interval.
@@ -751,8 +750,8 @@ infra/runbooks/order-semantics-verification.md:170: section 2093 > 2048	## 4. Cr
 infra/runbooks/order-semantics-verification.md:239: table-row 237 > 200	4b
 infra/runbooks/order-semantics-verification.md:342: section 2339 > 2048	### 7.4 Write it up
 infra/runbooks/order-semantics-verification.md:362: section 2620 > 2048	## 8. If something is left resting
-infra/scripts/bench-ledger-scan.py:1: file-prose 23.1 > 20
-infra/scripts/bench-ledger-scan.py:2: comment-block 24 > 4	"""How long does the reconcile ledger take to scan, at sizes the live one has not reached?
+infra/scripts/bench-ledger-scan.py:1: file-prose 22.6 > 20
+infra/scripts/bench-ledger-scan.py:2: comment-block 23 > 4	"""How long does the reconcile ledger take to scan, at sizes the live one has not reached?
 infra/scripts/continuity.py:1: comment-block 21 > 4	"""Exit-bar gap measurement from SEGMENT-TIMESTAMP CONTINUITY.
 infra/scripts/continuity.py:1: file-prose 33 > 20
 infra/scripts/continuity.py:41: comment-block 9 > 4	# MIN_POOL tolerates only ONE outage-scale interval. From two similar outages upward the pool clears
@@ -848,8 +847,7 @@ infra/scripts/prove-inert.py:2: comment-block 11 > 4	"""Prove a change is prose-
 infra/scripts/prune-host-images.py:1: comment-block 17 > 4	"""Remove the Docker images a fleet host no longer needs, keeping every digest the pins file records.
 infra/scripts/prune-host-images.py:55: comment-block 5 > 4	"""The pins file cannot serve as the authority -- refuse rather than compute a keep-set.
 infra/scripts/prune-host-images.py:145: comment-block 6 > 4	"""The `## Current pins` table of the pins file, as rows.
-infra/scripts/prune-host-images.py:171: comment-block 5 > 4	# A row stranded BELOW the block -- separated by a stray blank line, an HTML comment, one
-infra/scripts/prune-host-images.py:228: comment-block 5 > 4	"""Every digest the file says must survive on `host`, mapped to the rows that say so.
+infra/scripts/prune-host-images.py:227: comment-block 5 > 4	"""Every digest the file says must survive on `host`, mapped to the rows that say so.
 infra/scripts/workspace-transport.sh:2: comment-block 23 > 4	# Transports the full working environment between the workstation and the ops node so work continues
 infra/scripts/workspace-transport.sh:260: comment-block 5 > 4	# ~/.claude/ moves except machine-local runtime, caches and auth material. Excludes are ANCHORED to
 tests/conftest.py:1: file-prose 29.6 > 20
@@ -896,15 +894,15 @@ tests/test_archive_settle.py:662: comment-block 7 > 4	# --- `us_view`: the colum
 tests/test_benchmark_dynamic_basket.py:1: file-prose 28.6 > 20
 tests/test_capture_gap_monitor.py:234: comment-block 7 > 4	# --- T0032(c): a probe that CANNOT MEASURE must not read as healthy ------------------------------
 tests/test_capture_prune.py:1: comment-block 5 > 4	"""Segment retention on the capture hosts (spec 00050 D8 — closes T0032's retention half).
-tests/test_capture_segment_writer.py:1: file-prose 29.2 > 20
+tests/test_capture_segment_writer.py:1: file-prose 29.1 > 20
 tests/test_capture_segment_writer.py:75: comment-block 7 > 4	"""Pin `_utcnow()` an hour ahead of the events the tests feed, so an ordinary event is plausible and only
 tests/test_capture_segment_writer.py:689: comment-block 5 > 4	# A stray DIRECTORY, not a stray file. `__init__` walks the whole tree and hands every
-tests/test_capture_segment_writer.py:904: comment-block 5 > 4	# The clock is the sole witness for a stream's first event — at a cold start, and after an outage longer
-tests/test_capture_segment_writer.py:1509: comment-block 6 > 4	# The T0037 truncation re-attacked through the oracle itself: a garbage burst on stream A stands its
-tests/test_capture_segment_writer.py:1800: comment-block 5 > 4	# Residual (c) — the past-dated fabrication (spec 00103 D5, narrowed by spec 00109 D1): a process's FIRST
-tests/test_capture_segment_writer.py:1820: comment-block 6 > 4	# Spec 00109 D1: a mid-hour restart whose FIRST event is a replayed pre-restart print opens the PREVIOUS
-tests/test_capture_segment_writer.py:1870: comment-block 5 > 4	# Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an hour's
-tests/test_capture_ws_client.py:403: comment-block 6 > 4	# --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
+tests/test_capture_segment_writer.py:902: comment-block 5 > 4	# The clock is the sole witness for a stream's first event — at a cold start, and after an outage longer
+tests/test_capture_segment_writer.py:1507: comment-block 6 > 4	# The T0037 truncation re-attacked through the oracle itself: a garbage burst on stream A stands its
+tests/test_capture_segment_writer.py:1798: comment-block 5 > 4	# Residual (c) — the past-dated fabrication (spec 00103 D5, narrowed by spec 00109 D1): a process's FIRST
+tests/test_capture_segment_writer.py:1818: comment-block 6 > 4	# Spec 00109 D1: a mid-hour restart whose FIRST event is a replayed pre-restart print opens the PREVIOUS
+tests/test_capture_segment_writer.py:1868: comment-block 5 > 4	# Why `.part`-absence is a sound test for "never captured" (spec 00109 D1): `_commit` unlinks an hour's
+tests/test_capture_ws_client.py:398: comment-block 6 > 4	# --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
 tests/test_code_prose_citations.py:1: comment-block 6 > 4	"""Guard for `.claude/rules/prose.md`'s resolvable-citation rule.
 tests/test_code_prose_citations.py:1: file-prose 22.4 > 20
 tests/test_config_selectors_are_parsed.py:1: comment-block 8 > 4	"""No test may pull a value out of a hand-edited config file by substring.
@@ -914,16 +912,16 @@ tests/test_continuity_overlay.py:87: comment-block 7 > 4	"""A canonical/overlay 
 tests/test_continuity_overlay.py:145: comment-block 11 > 4	"""The value under `field` on the row starting with `prefix`, located by CHARACTER RANGE from the
 tests/test_continuity_overlay.py:197: comment-block 7 > 4	"""The silence threshold is derived per pair from that pair's own spacing, so a `0.0000%` can mean
 tests/test_converge_sh.py:69: comment-block 8 > 4	"""Controlling pty attached (so the tty gate opens) but stdin is a PIPE carrying the reply.
-tests/test_dashboards_cover_metrics.py:1: comment-block 12 > 4	"""Guard: when an alert fires, the operator must be able to open a picture of what moved -- and the
-tests/test_dashboards_cover_metrics.py:1: file-prose 25.3 > 20
-tests/test_dashboards_cover_metrics.py:37: comment-block 6 > 4	# `host` LABEL VALUE -> the config.alloy that renders that host's keep-regex. The two capture hosts
-tests/test_dashboards_cover_metrics.py:51: comment-block 6 > 4	# Where a producer LIVES -> the hosts that run it, so an unscoped rule over an app family can still
-tests/test_dashboards_cover_metrics.py:72: comment-block 7 > 4	# --- Deliberate exclusions ----------------------------------------------------------------------
-tests/test_dashboards_cover_metrics.py:142: comment-block 6 > 4	"""The `host` label values `family`'s selectors name in `expr`, or None when any occurrence of
+tests/test_dashboards_cover_metrics.py:1: comment-block 11 > 4	"""Guard: when an alert fires, the operator must be able to open a picture of what moved -- and the
+tests/test_dashboards_cover_metrics.py:1: file-prose 25.1 > 20
+tests/test_dashboards_cover_metrics.py:36: comment-block 6 > 4	# `host` LABEL VALUE -> the config.alloy that renders that host's keep-regex. The two capture hosts
+tests/test_dashboards_cover_metrics.py:50: comment-block 6 > 4	# Where a producer LIVES -> the hosts that run it, so an unscoped rule over an app family can still
+tests/test_dashboards_cover_metrics.py:71: comment-block 5 > 4	# --- Deliberate exclusions ----------------------------------------------------------------------
+tests/test_dashboards_cover_metrics.py:139: comment-block 6 > 4	"""The `host` label values `family`'s selectors name in `expr`, or None when any occurrence of
 tests/test_dashboards_cover_metrics.py:209: comment-block 8 > 4	# --- What this repo publishes ---------------------------------------------------------------------
-tests/test_dashboards_cover_metrics.py:518: comment-block 7 > 4	# A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
-tests/test_dashboards_cover_metrics.py:543: comment-block 8 > 4	# `merge` and `joinByField` combine one frame per series, and Grafana suffixes the value column
-tests/test_dashboards_cover_metrics.py:680: comment-block 6 > 4	"""Where a panel draws per-series thresholds, the charted series' bar must equal its rule's.
+tests/test_dashboards_cover_metrics.py:516: comment-block 7 > 4	# A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
+tests/test_dashboards_cover_metrics.py:541: comment-block 8 > 4	# `merge` and `joinByField` combine one frame per series, and Grafana suffixes the value column
+tests/test_dashboards_cover_metrics.py:678: comment-block 6 > 4	"""Where a panel draws per-series thresholds, the charted series' bar must equal its rule's.
 tests/test_data_manifest.py:290: comment-block 5 > 4	# --- every writer, one contract --------------------------------------------------------------------
 tests/test_data_rebuild.py:245: comment-block 6 > 4	"""A missing `manifest.json` must fail closed, never emit `ohlc_dataset_hash: ""` (T0094).
 tests/test_data_rebuild.py:275: comment-block 6 > 4	"""A manifest that EXISTS but cannot be read is the same defect as an absent one (T0094).
@@ -932,7 +930,7 @@ tests/test_data_rebuild.py:592: comment-block 9 > 4	"""A dataset this node can R
 tests/test_derivatives_funding.py:239: comment-block 5 > 4	"""The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
 tests/test_derivatives_funding.py:258: comment-block 7 > 4	"""Spec 00110 D7 rules the funding features' input a constant-interval print series, resting that
 tests/test_derivatives_oi.py:434: comment-block 5 > 4	"""The canonical root of a derivatives substrate: the NFS hot mount, else a promoted local copy.
-tests/test_derivatives_oi.py:483: comment-block 6 > 4	"""Spec 00110 D5's venue-hole counts, pinned so a substrate re-fetch cannot move them silently.
+tests/test_derivatives_oi.py:484: comment-block 6 > 4	"""Spec 00110 D5's venue-hole counts, pinned so a substrate re-fetch cannot move them silently.
 tests/test_docker_build_context.py:1: comment-block 6 > 4	"""Every `COPY` source in the Dockerfile must survive `.dockerignore`.
 tests/test_drill_log.py:1: file-prose 28.9 > 20
 tests/test_e1b_order_visibility_probe.py:1: file-prose 20.5 > 20
@@ -998,37 +996,37 @@ tests/test_engine_executor.py:3781: comment-block 6 > 4	"""One REAL `LimitOrder`
 tests/test_engine_executor.py:3882: comment-block 10 > 4	"""The ONE map both row-state paths write through -- the startup reconciliation and the live
 tests/test_engine_executor.py:3909: comment-block 5 > 4	"""Spec 00098's D7 meeting D1, the sequence where a mis-mirror costs money: the sweep repairs the
 tests/test_engine_executor.py:3982: comment-block 5 > 4	"""A ledger failure may never cost the trip, which is why `_record_trip_fill`'s own `try` is
-tests/test_engine_executor.py:4741: comment-block 8 > 4	"""The retention prune turns the true positive into a latched false kill, and this is that
-tests/test_engine_executor.py:4786: comment-block 5 > 4	"""The outer catch's own defect, constructed rather than assumed: `validate_exec_record` checks a
-tests/test_engine_executor.py:4805: comment-block 11 > 4	"""The missing-file path, which is NOT the same event as "the series has not started".
-tests/test_engine_executor.py:4857: comment-block 6 > 4	"""The CAPTURE end of the scoping, driven through production because the three
-tests/test_engine_executor.py:4946: comment-block 6 > 4	"""Production hands `ProbeExecutor` a nautilus `Strategy` and every test here hands it
-tests/test_engine_executor.py:5053: comment-block 8 > 4	"""The two accessors the fill path takes off a commission -- `float(...)` for the amount and
-tests/test_engine_executor.py:5142: comment-block 6 > 4	"""`_nautilus_standins` is the entire reach of the guard above, and
+tests/test_engine_executor.py:4744: comment-block 8 > 4	"""The retention prune turns the true positive into a latched false kill, and this is that
+tests/test_engine_executor.py:4793: comment-block 5 > 4	"""The outer catch's own defect, constructed rather than assumed: `validate_exec_record` checks a
+tests/test_engine_executor.py:4812: comment-block 11 > 4	"""The missing-file path, which is NOT the same event as "the series has not started".
+tests/test_engine_executor.py:4864: comment-block 6 > 4	"""The CAPTURE end of the scoping, driven through production because the three
+tests/test_engine_executor.py:4953: comment-block 6 > 4	"""Production hands `ProbeExecutor` a nautilus `Strategy` and every test here hands it
+tests/test_engine_executor.py:5060: comment-block 8 > 4	"""The two accessors the fill path takes off a commission -- `float(...)` for the amount and
+tests/test_engine_executor.py:5149: comment-block 6 > 4	"""`_nautilus_standins` is the entire reach of the guard above, and
 tests/test_engine_feeders.py:275: comment-block 5 > 4	"""Cycle 1: sleeves agree, governor off. Cycle 2: sleeves cancel, governor halves.
 tests/test_engine_feeders.py:341: comment-block 6 > 4	"""The non-degenerate case: `limited` < `capped`, so the two shares differ.
 tests/test_engine_feeders.py:848: comment-block 6 > 4	# --- schema 2: the twelve-symbol journal, through the REAL builder ---------------------------------
 tests/test_engine_feeders.py:889: comment-block 6 > 4	"""The REPORT path must score a cycle under the same NAV the engine's trip does.
-tests/test_engine_flatten.py:92: comment-block 5 > 4	"""Answers from a script and records every call; `raises` maps a method name to an exception the
-tests/test_engine_flatten.py:680: comment-block 5 > 4	"""The other axis of the same contradiction: an estimate multiplied out of the raw balance sits
+tests/test_engine_flatten.py:311: comment-block 5 > 4	"""Zero or negative fails `read_book_price`'s own `price <= 0.0` check, refused by name before
+tests/test_engine_flatten.py:682: comment-block 5 > 4	"""The other axis of the same contradiction: an estimate multiplied out of the raw balance sits
 tests/test_engine_flatten.py:1432: comment-block 7 > 4	"""The submitted objects are the library's own types and the call binds against the real
 tests/test_engine_flatten.py:1521: comment-block 5 > 4	"""Unreachable from `margin_legs`/`spot_legs`, the only two places a `Leg` is built, so this
 tests/test_engine_flatten.py:1570: comment-block 5 > 4	"""An echo that starts raising the moment `trigger()` says so, and remembers what landed before
-tests/test_engine_flatten.py:1694: comment-block 6 > 4	"""`BLIND_ORDER_READ_LEGS` is frozen text; recomputing it here keeps a basket change from
-tests/test_engine_flatten.py:1712: comment-block 6 > 4	"""Exit 0 is the one answer that ends an incident, and it is derived from a read blind to an
-tests/test_engine_flatten.py:1940: comment-block 5 > 4	"""`write_journal` dumps with `default=str`, a net that would quietly stringify a value nobody
-tests/test_engine_flatten.py:2008: comment-block 5 > 4	"""Pre-write a display failure aborts cleanly: unguarded it is an `OSError` out of a function
-tests/test_engine_flatten.py:2028: comment-block 5 > 4	"""Post-write a display failure may cost neither the exit code nor the journal: the cancel and
-tests/test_engine_flatten.py:2047: comment-block 6 > 4	"""`write_journal`'s last act may not be able to raise: the two failures arrive together on an
-tests/test_engine_flatten.py:2155: comment-block 6 > 4	"""The refusal goes through `_abort`, which LOGS and never echoes, so the log record is the only
-tests/test_engine_flatten.py:2217: comment-block 5 > 4	"""The loop is the command's job and nothing below it can supply one: every one of the client's
-tests/test_engine_flatten.py:2231: comment-block 5 > 4	"""Both parametrizations are needed: a body hardcoding `execute=False` sends nothing on an
-tests/test_engine_flatten.py:2305: comment-block 7 > 4	"""Every call this module makes needs a running loop, and each of the seven raises before
-tests/test_engine_flatten.py:2326: comment-block 5 > 4	"""The half no introspection can reach: `iscoroutinefunction` is False, so only a call inside a
-tests/test_engine_flatten.py:2353: comment-block 6 > 4	"""Driven against the library's own `OrderBook`, so nothing here restates the venue's shape:
-tests/test_engine_flatten.py:2419: comment-block 9 > 4	"""(label, stub instance, real class, plumbing) for every double in this file that stands in for
-tests/test_engine_flatten.py:2443: comment-block 6 > 4	"""A stub MISSING something production reads goes red the first time a test runs it; a stub
-tests/test_engine_flatten.py:2472: comment-block 5 > 4	"""`tests/test_engine_stub_fidelity.py`'s table is what CLAIMS the guard above covers a stub,
+tests/test_engine_flatten.py:1693: comment-block 6 > 4	"""`BLIND_ORDER_READ_LEGS` is frozen text; recomputing it here keeps a basket change from
+tests/test_engine_flatten.py:1711: comment-block 6 > 4	"""Exit 0 is the one answer that ends an incident, and it is derived from a read blind to an
+tests/test_engine_flatten.py:1938: comment-block 5 > 4	"""`write_journal` dumps with `default=str`, a net that would quietly stringify a value nobody converted;
+tests/test_engine_flatten.py:2006: comment-block 5 > 4	"""Pre-write a display failure aborts cleanly: unguarded it is an `OSError` out of a function
+tests/test_engine_flatten.py:2026: comment-block 5 > 4	"""Post-write a display failure may cost neither the exit code nor the journal: the cancel and
+tests/test_engine_flatten.py:2045: comment-block 6 > 4	"""`write_journal`'s last act may not be able to raise: the two failures arrive together on an
+tests/test_engine_flatten.py:2152: comment-block 6 > 4	"""The refusal goes through `_abort`, which LOGS and never echoes, so the log record is the only
+tests/test_engine_flatten.py:2213: comment-block 5 > 4	"""The loop is the command's job and nothing below it can supply one: every one of the client's
+tests/test_engine_flatten.py:2227: comment-block 5 > 4	"""Both parametrizations are needed: a body hardcoding `execute=False` sends nothing on an
+tests/test_engine_flatten.py:2300: comment-block 7 > 4	"""Every call this module makes needs a running loop, and each of the seven raises before
+tests/test_engine_flatten.py:2321: comment-block 5 > 4	"""The half no introspection can reach: `iscoroutinefunction` is False, so only a call inside a
+tests/test_engine_flatten.py:2348: comment-block 6 > 4	"""Driven against the library's own `OrderBook`, so nothing here restates the venue's shape:
+tests/test_engine_flatten.py:2414: comment-block 9 > 4	"""(label, stub instance, real class, plumbing) for every double in this file that stands in for
+tests/test_engine_flatten.py:2438: comment-block 6 > 4	"""A stub MISSING something production reads goes red the first time a test runs it; a stub
+tests/test_engine_flatten.py:2467: comment-block 5 > 4	"""`tests/test_engine_stub_fidelity.py`'s table is what CLAIMS the guard above covers a stub,
 tests/test_engine_gate_cache.py:1: file-prose 22.8 > 20
 tests/test_engine_gate_cache.py:119: comment-block 5 > 4	# replay_cycle reconciles the freshly read data against entry.n_bars/first_ts/last_ts and
 tests/test_engine_gate_cache.py:138: comment-block 5 > 4	"""`_record()`'s default snapshots with exactly one field of `entries[index]` replaced, via
@@ -1111,15 +1109,15 @@ tests/test_features_derivatives.py:66: comment-block 6 > 4	"""The look-ahead gua
 tests/test_features_derivatives.py:83: comment-block 7 > 4	"""Planted signal (spec 00110 D10) under D7's pinned window: inclusive trailing window ending at k,
 tests/test_features_derivatives.py:124: comment-block 8 > 4	"""The window half of the same guard: `_validate_window` must be CALLED, by both windowed forms.
 tests/test_features_derivatives.py:139: comment-block 6 > 4	"""The causality guard for the three funding features (spec 00110 D2/D10), in the only form that bites.
-tests/test_features_derivatives.py:197: comment-block 6 > 4	"""`oi_levels_from_raw` is a step a caller has to remember, and these three assertions are what
-tests/test_features_derivatives.py:249: comment-block 14 > 4	"""Spec 00110 D5: no imputation. A null in, a null out -- never 0.0, never a trailing mean.
-tests/test_features_derivatives.py:290: comment-block 7 > 4	"""The shape that motivated D6: an overall null rate reads as a nuisance while one year is
-tests/test_features_derivatives.py:324: comment-block 6 > 4	"""`coverage_by_year`'s EARLIEST/LATEST contract, on the only input shape that can refute the
+tests/test_features_derivatives.py:198: comment-block 6 > 4	"""`oi_levels_from_raw` is a step a caller has to remember, and these three assertions are what
+tests/test_features_derivatives.py:250: comment-block 14 > 4	"""Spec 00110 D5: no imputation. A null in, a null out -- never 0.0, never a trailing mean.
+tests/test_features_derivatives.py:291: comment-block 7 > 4	"""The shape that motivated D6: an overall null rate reads as a nuisance while one year is
+tests/test_features_derivatives.py:325: comment-block 6 > 4	"""`coverage_by_year`'s EARLIEST/LATEST contract, on the only input shape that can refute the
 tests/test_features_validate.py:1: file-prose 25 > 20
 tests/test_gap_distribution.py:1: comment-block 5 > 4	"""TDD for `infra/scripts/gap_distribution.py` — the Task-12 (spec 00050) instrument that pins
 tests/test_git_mv_guard.py:1: comment-block 10 > 4	"""Spec 00082: the PostToolUse[Bash] git-mv guard.
 tests/test_git_mv_guard.py:175: comment-block 5 > 4	"""`cd <dir>;git mv` -- no space before the separator, which a shell accepts and people write.
-tests/test_infra_alert_rules.py:1: file-prose 29.4 > 20
+tests/test_infra_alert_rules.py:1: file-prose 29.1 > 20
 tests/test_infra_alert_rules.py:74: comment-block 11 > 4	# --- A dead-man that cannot announce its own recovery -------------------------------------------
 tests/test_infra_alert_rules.py:298: comment-block 6 > 4	# --- A shipped metric that nothing watches ------------------------------------------------------
 tests/test_infra_alert_rules.py:385: comment-block 5 > 4	# The execution safety envelope's unwatched families; armed, kill_tripped and
@@ -1136,9 +1134,9 @@ tests/test_infra_alert_rules.py:1214: comment-block 6 > 4	"""Read the FLOOR not 
 tests/test_infra_alert_rules.py:1381: comment-block 5 > 4	"""`ops_alloy_memory_limit` is not overridden outside `roles/ops/defaults/main.yml`, the only
 tests/test_infra_alert_rules.py:1443: comment-block 7 > 4	"""A runbook citing a section in another runbook must cite one that exists.
 tests/test_infra_alert_rules.py:1461: comment-block 6 > 4	# --- the engine dark WITH exposure open: the two-node conjunction IS the rule --------------------
-tests/test_infra_alert_rules.py:1517: comment-block 7 > 4	"""Evaluation timestamps at which the rule is FIRING, over one `(position, scrape)` history.
-tests/test_infra_alert_rules.py:1601: comment-block 5 > 4	# The two controls: each replays the TRUE POSITIVE through a defective form of one node and
-tests/test_infra_alert_rules.py:1681: comment-block 8 > 4	# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not error --
+tests/test_infra_alert_rules.py:1519: comment-block 7 > 4	"""Evaluation timestamps at which the rule is FIRING, over one `(position, scrape)` history.
+tests/test_infra_alert_rules.py:1603: comment-block 5 > 4	# The two controls: each replays the TRUE POSITIVE through a defective form of one node and
+tests/test_infra_alert_rules.py:1747: comment-block 8 > 4	# Grafana Cloud's free tier retains 14 days of metrics AND logs. A query past that does not error --
 tests/test_infra_alloy_series.py:1: file-prose 33.4 > 20
 tests/test_infra_alloy_series.py:128: comment-block 6 > 4	# ADMITTED by the NAS keep-regex but NOT published there any more: these families publish from ops
 tests/test_infra_alloy_series.py:138: comment-block 7 > 4	# Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
@@ -1209,12 +1207,12 @@ tests/test_panel_materialize.py:1: file-prose 22.6 > 20
 tests/test_panel_materialize.py:313: comment-block 5 > 4	# T0066 / spec 00052 D6 correction: an hour is heal-complete only after the reconciler's H+6h
 tests/test_panel_materialize.py:566: comment-block 10 > 4	# --- T0104: the staleness marker -----------------------------------------------------------------
 tests/test_panel_materialize.py:737: comment-block 9 > 4	"""The gap the resumed-run test above cannot see. That one crosses hours in SEPARATE processes,
-tests/test_panel_regenerate.py:1: file-prose 24.6 > 20
+tests/test_panel_regenerate.py:1: file-prose 24.4 > 20
 tests/test_panel_regenerate.py:44: comment-block 9 > 4	# The stub logs to CALL_LOG alongside systemctl: `systemctl start …timer` prints nothing, so an
-tests/test_panel_regenerate.py:193: comment-block 5 > 4	# It must refuse AT the sizing step rather than wander on to the next gate. Combined into one
-tests/test_panel_regenerate.py:272: comment-block 8 > 4	"""Controlling pty attached (so the tty gate opens) but stdin is a PIPE carrying the reply.
-tests/test_panel_regenerate.py:349: comment-block 5 > 4	"""Render through ANSIBLE's templar, not a bare jinja2.Environment.
-tests/test_panel_regenerate.py:400: comment-block 5 > 4	# (c) The completion line must be captured BEFORE the timer is restarted. The timer is
+tests/test_panel_regenerate.py:194: comment-block 5 > 4	# It must refuse AT the sizing step rather than wander on to the next gate. Combined into one
+tests/test_panel_regenerate.py:273: comment-block 8 > 4	"""Controlling pty attached (so the tty gate opens) but stdin is a PIPE carrying the reply.
+tests/test_panel_regenerate.py:350: comment-block 5 > 4	"""Render through ANSIBLE's templar, not a bare jinja2.Environment.
+tests/test_panel_regenerate.py:399: comment-block 5 > 4	# (c) The completion line must be captured BEFORE the timer is restarted. The timer is
 tests/test_portfolio_crossfreq.py:1: file-prose 23.2 > 20
 tests/test_prune_host_images.py:184: comment-block 5 > 4	# --------------------------------------------------------------------------------------------
 tests/test_prune_host_images.py:259: comment-block 5 > 4	# --------------------------------------------------------------------------------------------
