@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # `--write-baseline` truncates the whole baseline to whatever paths are scanned
@@ -58,19 +58,13 @@ thousands of already-accepted blocks as `new` offenders.
   hand. Shares its baseline-integrity family with [[T0189]] (a shrink licenses silent regrowth to
   the old ceiling) and neither topic pointed at the other until now: T0189's shrink-without-lowering
   defect and this topic's stale-anchor-still-absorbed defect are two ways the same `_absorbable()`
-  fallback hides drift, and the merge-remedy option below, if built as scan-and-preserve-untouched,
+  fallback hides drift, and the merge remedy weighed at the time, if built as scan-and-preserve-untouched,
   would compound T0189's problem rather than fix it -- a change to one needs the other in view.
 
-## Suggested next steps
+## Resolution
 
-- **Make the destructive path harder to reach by accident.** Options to weigh, not a decision made
-  here: `--write-baseline` could refuse (or warn loudly) when given an explicit `paths` list
-  narrower than what the existing baseline file already covers; or the flag could default to a
-  merge (scan the given paths, keep every other path's existing rows untouched) with a separate,
-  explicitly-named flag for a full, deliberate regeneration.
-- **This is a guard-construction fix** (a tool that judges the tree, guarding the prose ratchet), so
-  it takes the same construction proof `agent-ops.md` requires of any such guard before it ships: a
-  fixture where the truncation defect and the corrected behaviour differ, and a true-positive
-  fixture (a legitimate full-tree `--write-baseline` run) that must still pass.
-- **Cannot ride a prose-only branch.** `prose-tripwire.py` is code, and any fix to this changes its
-  AST -- it needs its own branch and its own review, not a fold-in to a docs-kind batch.
+`--write-baseline` refuses when its target already records a path the scan does not cover, naming how many and the first of them, and writes nothing. A first write to a target that holds no baseline, and an unscoped write, are unchanged.
+
+Refusing rather than merging is the ruling this topic asked for and it is the one [[T0189]] forces: the merge option — scan the given paths, preserve every other path's rows — would carry forward exactly the stale, oversized rows T0189 exists to stop licensing. A refusal preserves nothing and licenses nothing, so T0189's ceiling question is untouched, and the `_absorbable()` stale-anchor blind spot recorded above stays with T0189, which is open and names it.
+
+Measured on `develop` at the fix, the figure re-derived rather than reused: the committed baseline is 1229 lines there. Against a scratch copy of it, `--write-baseline <copy> tests/test_cli.py` exits 0 and leaves 0 lines on the pre-fix tool, and exits 2 leaving 1229 on the fixed one.

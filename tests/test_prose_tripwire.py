@@ -914,3 +914,67 @@ def test_the_pre_commit_hook_runs_the_check_against_the_committed_baseline() -> 
     assert _BASELINE in hook["entry"]
     assert hook["always_run"] is True and hook["pass_filenames"] is False
     assert (_REPO / _BASELINE).is_file(), "the hook names a baseline that is not committed"
+
+
+class TestAScopedWriteBaselineWillNotTruncateTheRest:
+    """`--write-baseline` opens its target truncating, so a scoped scan replaces every other file's
+    recorded keeps with nothing. It refuses instead of writing (T0195)."""
+
+    @pytest.fixture
+    def repo(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        subprocess.run([*_GIT, "init", "-q"], check=True)
+        (tmp_path / "cli").mkdir()
+        n = tw.COMMENT_BLOCK_LINES + 1
+        for name in ("one.py", "two.py"):
+            (tmp_path / "cli" / name).write_text(_py([f"# {name}"] * n, 6 * n))
+            subprocess.run([*_GIT, "add", "-f", f"cli/{name}"], check=True)
+        assert tw.main(["--write-baseline", "base.txt"]) == 0
+        recorded = (tmp_path / "base.txt").read_text().splitlines()
+        assert len(recorded) == 2, recorded  # the selection, asserted before anything depends on it
+        return tmp_path
+
+    def test_a_scoped_write_over_a_broader_baseline_refuses_and_leaves_it_whole(self, repo: Path, capsys) -> None:
+        before = (repo / "base.txt").read_text()
+
+        assert tw.main(["--write-baseline", "base.txt", "cli/one.py"]) == 2
+
+        assert (repo / "base.txt").read_text() == before, "the baseline was rewritten by a refused run"
+        assert "cli/two.py" in capsys.readouterr().err  # WHICH keep the write would have dropped
+
+    def test_an_unscoped_write_still_rewrites_the_whole_baseline(self, repo: Path) -> None:
+        """The true positive: refusing every write would be an always-refusing guard shipping green."""
+        (repo / "cli" / "one.py").write_text("x = 1\n")
+
+        assert tw.main(["--write-baseline", "base.txt"]) == 0
+
+        assert [r.split(":")[0] for r in (repo / "base.txt").read_text().splitlines()] == ["cli/two.py"]
+
+    def test_a_scoped_write_covering_every_recorded_path_is_written(self, repo: Path) -> None:
+        """Nothing is lost when the scan spans the baseline, so the shape itself is not the defect."""
+        assert tw.main(["--write-baseline", "base.txt", "cli/one.py", "cli/two.py"]) == 0
+        assert len((repo / "base.txt").read_text().splitlines()) == 2
+
+    def test_a_scoped_write_to_a_baseline_that_does_not_exist_yet_is_written(self, repo: Path) -> None:
+        """A first write discards nothing, which is what every scoped call in this file relies on."""
+        assert tw.main(["--write-baseline", "fresh.txt", "cli/one.py"]) == 0
+        assert [r.split(":")[0] for r in (repo / "fresh.txt").read_text().splitlines()] == ["cli/one.py"]
+
+    def test_an_unscoped_write_reports_the_keeps_it_drops_rather_than_refusing(self, repo: Path, capsys) -> None:
+        """The remedy the refusal prescribes is itself narrowing when a recorded file has left the
+        worktree, so it says so and writes -- refusing here would dead-end the only route left."""
+        (repo / "cli" / "two.py").unlink()  # still in the index; `default_paths` scans what is on disk
+
+        assert tw.main(["--write-baseline", "base.txt"]) == 0
+
+        assert [r.split(":")[0] for r in (repo / "base.txt").read_text().splitlines()] == ["cli/one.py"]
+        assert "cli/two.py" in capsys.readouterr().err  # WHICH keep went with the write
+
+    def test_a_target_that_is_not_a_baseline_is_refused_rather_than_parsed(self, repo: Path, capsys) -> None:
+        """A mistyped target is prose, not rows; it is refused whole rather than raising mid-parse."""
+        before = (repo / "cli" / "one.py").read_text()
+
+        assert tw.main(["--write-baseline", "cli/one.py", "cli/one.py"]) == 2
+
+        assert (repo / "cli" / "one.py").read_text() == before
+        assert "not a baseline" in capsys.readouterr().err

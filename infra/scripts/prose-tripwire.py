@@ -430,6 +430,23 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     offenders = scan(paths)
     if args.write_baseline:
+        # The mode below is `w`, so a recorded path this scan does not cover is not preserved -- it
+        # is dropped. Scoped, that is the caller's own list truncating the rest and it refuses.
+        # Unscoped it is the TREE that no longer carries the file, which is the sanctioned re-record
+        # after a `git rm`, so it reports and writes: refusing there dead-ends the only remedy left.
+        dropped: list[str] = []
+        if os.path.isfile(args.write_baseline):
+            try:
+                dropped = sorted({key[0] for key in read_baseline(args.write_baseline)} - set(paths))
+            except ValueError, IndexError:
+                print(f"{args.write_baseline}: not a baseline this tool wrote -- refusing to overwrite it", file=sys.stderr)
+                return 2
+        if dropped:
+            covered = f"{args.write_baseline} records {len(dropped)} path(s) this scan does not cover -- {dropped[0]} first"
+            if args.paths:
+                print(f"{covered}, and a scoped write would discard their keeps. Re-run with no path list.", file=sys.stderr)
+                return 2
+            print(f"{covered}; their keeps go with this write, which is right only if those files are gone.", file=sys.stderr)
         with open(args.write_baseline, "w", encoding="utf-8") as fh:
             fh.write(baseline_text(offenders))
         return 0
