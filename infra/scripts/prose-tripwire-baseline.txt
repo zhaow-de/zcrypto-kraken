@@ -1,13 +1,13 @@
 README.md:48: table-row 233 > 200	`--ship-logs`
 README.md:67: table-row 234 > 200	`--pairs <PAIR>`
-README.md:104: section 17598 > 2048	### `zcrypto engine`<a name="zcrypto-engine"></a>
+README.md:104: section 17562 > 2048	### `zcrypto engine`<a name="zcrypto-engine"></a>
 README.md:114: table-row 227 > 200	`seed`
 README.md:115: table-row 576 > 200	`run`
 README.md:116: table-row 338 > 200	`cycle [--at ISO_TS] [--replace]`
 README.md:117: table-row 417 > 200	`replay [--date YYYY-MM-DD] [--path fast\
 README.md:118: table-row 319 > 200	`report [--journal-dir <PATH>]`
 README.md:119: table-row 2106 > 200	`gate-export --textfile <PATH> [--journal-dir <PATH>] [--healthcheck-url <URL>] [--lag-fail-seconds <SECS>] [--cache <PATH>]`
-README.md:120: table-row 3290 > 200	`soak-check [--journal-dir <PATH>] [--store-dir <PATH>] [--canonical-dir <PATH>] [--registry <PATH>] [--fee-per-side <RATE>] [--band <FLOAT>] [--floor <N>] [--null windows\
+README.md:120: table-row 3256 > 200	`soak-check [--journal-dir <PATH>] [--store-dir <PATH>] [--canonical-dir <PATH>] [--registry <PATH>] [--fee-per-side <RATE>] [--band <FLOAT>] [--floor <N>] [--null windows\
 README.md:121: table-row 1152 > 200	`decompose [--journal-dir <PATH>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]`
 README.md:122: table-row 1387 > 200	`accum-replay [--journal-dir <PATH>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--minimums <PATH>] [--nav <EUR>]… [--json]`
 README.md:123: table-row 3636 > 200	`tracking-report [--journal-dir <PATH>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--nav <EUR>] [--gate-from YYYY-Www] [--minimums <PATH>] [--simulated-fills] [--ledger-export <PATH>] [--json]`
@@ -322,8 +322,8 @@ cli/engine/soak.py:813: comment-block 8 > 4	"""Recover each SCORED cycle's gover
 cli/engine/soak.py:1008: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
 cli/engine/soak.py:1037: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
 cli/engine/soak.py:1313: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
-cli/engine/soak.py:1467: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
-cli/engine/soak.py:1629: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
+cli/engine/soak.py:1465: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
+cli/engine/soak.py:1627: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
 cli/engine/venuestate.py:1: comment-block 26 > 4	"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this spec that
 cli/engine/venuestate.py:1: file-prose 33.3 > 20
 cli/engine/venuestate.py:44: comment-block 5 > 4	"""One symbol's venue-quoted order constraints, evidence -- not live-precision, hence float.
@@ -429,7 +429,7 @@ docs/reference/capture-era-data-hygiene-map.md:34: table-row 3170 > 200	**2026-0
 docs/reference/captured-spread-calibration.md:28: section 3080 > 2048	## Provenance
 docs/reference/captured-spread-calibration.md:37: section 2757 > 2048	## Two things to know before you quote a spread number
 docs/reference/captured-spread-calibration.md:53: section 2339 > 2048	## Caveats
-docs/reference/data-catalog-full.md:9: section 3540 > 2048	### `ohlc-full`
+docs/reference/data-catalog-full.md:9: section 3550 > 2048	### `ohlc-full`
 docs/reference/data-catalog-full.md:68: section 3871 > 2048	### `ohlc-reach`
 docs/reference/data-catalog-full.md:85: section 4143 > 2048	### `derivatives-oi`
 docs/reference/data-catalog-full.md:117: section 2201 > 2048	### Canonical trades — healed (`capture-reconciled/…/trades/`, since 2026-07-08; daily)
