@@ -308,7 +308,7 @@ def test_the_real_tree_reads_run_flattens_docstring() -> None:
 
 def test_a_relocated_comment_is_not_the_same_comment_stream() -> None:
     # Same text, same order: only its position relative to the statement it annotates moved, which is
-    # what `tests/test_config_selectors_are_parsed.py` reads when it looks two lines above a node.
+    # what `tests/test_config_selectors_are_parsed.py` reads above the comparison it exempts.
     before = "x = 1\n# marker\nassert x\ny = 2\n"
     after = "x = 1\nassert x\n# marker\ny = 2\n"
     result = pi.compare(before, after)
