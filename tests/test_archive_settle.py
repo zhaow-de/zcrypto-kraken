@@ -57,7 +57,7 @@ def test_the_settle_boundary_is_inclusive_at_exactly_h_plus_two():
 
 def test_a_now_at_a_non_zero_utc_offset_is_refused():
     """The propagation boundary: this function preserves whatever offset `now` carries, so every hour
-    it yields would reach the reconciler -- and its nine ledger writes -- stamped in the wrong zone."""
+    it yields would reach the reconciler -- and every ledger write -- stamped in the wrong zone."""
     for offset, rendered in ((timedelta(hours=5, minutes=30), "+05:30"), (timedelta(hours=-8), "-08:00")):
         with pytest.raises(CaptureError, match=re.escape(rendered)):
             settled_hours(now=H.astimezone(UTC).replace(tzinfo=timezone(offset)), window_hours=48)
@@ -264,7 +264,6 @@ def test_absent_trades_hour_is_not_a_loss_when_the_book_hour_proves_the_stream_w
 
 
 def test_absent_trades_hour_IS_a_loss_when_the_book_hour_is_also_gone() -> None:
-    """Both streams absent for the hour = the stream really was dark. That is a genuine hole."""
     available = {H - timedelta(hours=1), H + timedelta(hours=1)}
     book_hours = {H - timedelta(hours=1), H + timedelta(hours=1)}  # book ALSO missing hour H
 
