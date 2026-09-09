@@ -14,7 +14,7 @@ above it moves. A path change re-keys every offender in the file and an edit to 
 re-keys that block, so a rename or a retouched opening line is re-recorded, not edited.
 
 Run --check-baseline and keep its classification BEFORE --write-baseline: the re-record rewrites the
-baseline to match the tree, so afterwards the check reports four zeroes and what it absorbed is lost.
+baseline to match the tree, so afterwards every counter reads zero and what it absorbed is lost.
 """
 
 from __future__ import annotations
@@ -429,8 +429,9 @@ def _retired_line(path: str, kind: str, measured: float, anchor: str) -> str:
 
 
 def _clamped(text: str) -> str:
-    """One row per line, so no continuation can wear a marker or lack one -- the anchor is arbitrary
-    repo prose and the path is not sanitisable, so neither can be trusted to keep a line short."""
+    """Bound to `_report_width`, because an anchor is arbitrary repo prose and a path is not
+    sanitisable, so neither can be trusted to keep a line short. A bound is not a promise about any
+    particular terminal: below the budget a line still wraps, and a continuation carries no marker."""
     return text if len(text) <= _report_width else text[: _report_width - 3].rstrip() + "..."
 
 
@@ -448,15 +449,25 @@ def main(argv: list[str] | None = None) -> int:
     epilog = (
         f"thresholds: {thresholds}\n"
         "--check-baseline marks every line: `fail` blocks the commit, `note` does not; with no mode "
-        "flag every line printed is an offender and the exit is 1, so nothing is marked there. "
-        "A `note shrunk` is a keep that got smaller while its recorded size stayed put, so the row "
-        "licenses the way back -- bank it with --write-baseline or the ceiling stands."
+        "flag every line printed is an offender and the exit is 1, so nothing is marked there.\n"
+        "A `fail shrunk` is a keep that got SMALLER than the size its row records. It blocks, because "
+        "until the row comes down with the block it licenses the way back -- re-record with "
+        "--write-baseline in the same commit. A cut is the one failure this gate asks you to bank "
+        "rather than undo."
     )
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].replace("\n", " "), epilog=epilog)
+    parser = argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        epilog=epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("paths", nargs="*", help="files or directories to scan; default: the repo's live prose")
     parser.add_argument("--since", metavar="REV", help="report only offenders absent at REV")
     parser.add_argument("--write-baseline", metavar="PATH", help="write today's offenders to PATH as the ratchet's baseline")
-    parser.add_argument("--check-baseline", metavar="PATH", help="fail only on an offender PATH does not record")
+    parser.add_argument(
+        "--check-baseline",
+        metavar="PATH",
+        help="fail on an offender PATH records neither at its size nor larger, and on one it records LARGER",
+    )
     args = parser.parse_args(argv)
     try:
         paths = expand_paths(args.paths) if args.paths else default_paths()
@@ -520,6 +531,8 @@ def main(argv: list[str] | None = None) -> int:
         if subprocess.run(["git", "rev-parse", "--verify", "--quiet", args.since], capture_output=True).returncode != 0:
             print(f"{args.since}: not a revision this repository knows", file=sys.stderr)
             return 2
+        # `--since` reports what is NEW against a revision, so a shrink there is an improvement to
+        # skip rather than a ceiling to bank: the two modes answer different questions on purpose.
         offenders, _shrunk_against_rev = new_since(offenders, baseline(args.since, paths))
     offenders.sort()
     print(render(offenders))
