@@ -92,8 +92,8 @@ def materialize_hour(
     snapshot lands" (spec 00052 D3/Risks) with no special-casing: before the snapshot is ingested
     both sides are empty, so every pre-snapshot boundary is already skipped by the general rule.
 
-    The grid is [hour+0s, hour+3599s] -- the trailing drain below carries the final fractional
-    second's messages into the next hour instead.
+    The grid is [hour+0s, hour+3599s] -- the trailing drain below folds the final fractional
+    second's messages into the returned book state instead, for the caller to carry forward.
     """
     frame = pl.read_parquet(path)
     messages = regroup_messages(frame)

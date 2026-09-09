@@ -111,7 +111,7 @@ def test_ops_metrics_port_and_publish_land_on_the_liquidations_service():
 
 
 def test_engine_logship_guard_moves_environment_and_entrypoint_together():
-    # The riskiest edit in the branch: `environment:` un-nested out of the
+    # The riskiest edit this test guards: `environment:` un-nested out of the
     # logship guard on the TRADE-KEY host. ZCRYPTO_METRICS_PORT (spec 00069 D6, unguarded) must
     # stay present either way; --ship-logs/ZCRYPTO_LOG_HOST must appear only with the token.
     without_token = _render(ENGINE_TEMPLATE, ENGINE_CONTEXT)["services"]["engine"]

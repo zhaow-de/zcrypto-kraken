@@ -207,7 +207,7 @@ def panel_families() -> dict[str, frozenset[str]]:
 
 
 # --- What this repo publishes ---------------------------------------------------------------------
-# Four publication mechanisms (patterns): the three numbered below plus _RECONCILE_EMIT. Eight
+# Four publication mechanisms (patterns), numbered below. Eight
 # canaries in `test_the_publisher_scan_still_finds_each_source_kind` -- one per discovery path,
 # not one per mechanism (see that test's own comment).
 #
