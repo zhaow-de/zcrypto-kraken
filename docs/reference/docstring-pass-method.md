@@ -152,10 +152,10 @@ An instrument reports independently of the thing it describes, and every one of 
 
 ## Tooling
 
-Small, disposable scripts, kept beside the pass rather than committed as machinery:
+Two of the pass's tools are committed, and each is named by its filename here and everywhere — "the prover" now resolves to either. `infra/scripts/docstring-gate.py` compares a file against the batch base on the three arms and drives the mutations that show they bite. `infra/scripts/prove-inert.py` returns the per-file prose-only verdict and the exit code that carries it.
 
-- the two-instrument comparison against the batch base — stripped-AST dump plus per-scope non-docstring statement counts, and the COMMENT stream;
-- the instrument prover, which mutates each parser-selected anchor and requires every arm to bite;
+The rest stay disposable, kept beside the pass rather than committed as machinery:
+
 - the batch self-check: docstring mass before/after with its unit named, and tripwire rows before/after, emitted from one invocation at one revision;
 - a repetition detector, useful for *finding* a fold to make and useless for predicting whether a package will yield.
 

@@ -438,9 +438,9 @@ docs/reference/data-catalog.md:26: section 6111 > 2048	## Dataset
 docs/reference/docstring-pass-method.md:13: section 2722 > 2048	## What the pass pays on
 docs/reference/docstring-pass-method.md:38: section 2752 > 2048	## What the record does support
 docs/reference/docstring-pass-method.md:52: section 2161 > 2048	## The gate
-docs/reference/docstring-pass-method.md:96: section 3911 > 2048	## Standing procedures
-docs/reference/docstring-pass-method.md:120: section 2795 > 2048	## Failure modes: what the prose claims
-docs/reference/docstring-pass-method.md:136: section 3002 > 2048	## Failure modes: what the instruments report
+docs/reference/docstring-pass-method.md:95: section 3911 > 2048	## Standing procedures
+docs/reference/docstring-pass-method.md:119: section 2795 > 2048	## Failure modes: what the prose claims
+docs/reference/docstring-pass-method.md:135: section 3002 > 2048	## Failure modes: what the instruments report
 docs/reference/drill-log.md:9: section 4240 > 2048	## 2026-08-31 — J′ — pass
 docs/reference/drill-log.md:13: section 6747 > 2048	## 2026-08-31 — K — pass
 docs/reference/drill-log.md:17: section 3857 > 2048	## 2026-08-31 — O — pass
