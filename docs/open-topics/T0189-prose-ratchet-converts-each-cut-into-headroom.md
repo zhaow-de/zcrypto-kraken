@@ -10,12 +10,12 @@ status: open
 
 ## Why this matters
 
-The ratchet exists to make prose decrease monotonically. Each cutting batch quietly raises the ceiling the ratchet will accept afterwards, in exactly the files that batch worked hardest on — the cut is real, but the guard against its undoing is weakened by the same edit. A later regrowth to the old size is then invisible to the commit gate, which is the one check that runs on every commit.
+The ratchet exists to make prose decrease monotonically. Each cutting batch quietly widens the gap between the tree and the ceiling the ratchet still accepts — the ceiling does not move, the tree drops away from it — in exactly the files that batch worked hardest on — the cut is real, but the guard against its undoing is weakened by the same edit. A later regrowth to the old size is then invisible to the commit gate, which is the one check that runs on every commit.
 
 ## Findings so far
 
 - Measured twice, on the same entries both times: after PR #459, and again on `chore/prose-batch-c`. `cli/universe/rules.py:9` shrank 7 → 5 and still trips, so it reports `rewritten:`; `:55` shrank to 4 and no longer trips, so it reports `retired:`. Exit 0 on both runs.
-- The reporting is honest — `rewritten:` and `retired:` name what happened. What is missing is any consequence: neither reduces the recorded ceiling, and neither fails.
+- Two of the three cases are at least reported: `rewritten:` and `retired:` name what happened, and what is missing there is any consequence — neither reduces the recorded ceiling, and neither fails. The third is silent. `new_since` consumes a baseline entry per offender, taking an exact size match first and otherwise the smallest recorded size at least as large, and says nothing when the entry it consumed was the larger one — so a shrink can spend a bigger ceiling with no line printed at all.
 - `prose.md` offers two dispositions when the hook names a block — cut it, or keep it consciously and re-record the baseline with `--write-baseline` in the same commit. Neither disposition covers this case, because here the hook does not name anything: the tree got better and the baseline silently got looser.
 
 ## Suggested next steps

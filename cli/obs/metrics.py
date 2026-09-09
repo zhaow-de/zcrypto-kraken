@@ -85,13 +85,13 @@ class LogshipCollector:
             "zcrypto_logship_dropped_lines_total", "Log lines dropped by the Loki ship handler.", value=dropped
         )
         yield CounterMetricFamily("zcrypto_logship_shipped_lines_total", "Log lines successfully shipped to Loki.", value=shipped)
+        # Liveness only, published from startup: last_success is stale whenever logging is quiet --
+        # "is anything reaching Loki?" is dropped_lines_total's question, not this one.
         yield GaugeMetricFamily(
             "zcrypto_logship_last_cycle_timestamp_seconds",
             "Unix timestamp of the last log-shipping cycle the worker completed -- idle, shipped, or batch discarded.",
             value=last_cycle,
         )
-        # Liveness only: last_success is stale whenever logging is quiet; dropped_lines_total answers
-        # whether anything is reaching Loki.
         if last_success is not None:
             yield GaugeMetricFamily(
                 "zcrypto_logship_last_success_timestamp_seconds",
