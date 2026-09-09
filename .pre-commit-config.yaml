@@ -105,27 +105,6 @@ repos:
         pass_filenames: false
         always_run: true
 
-  # A RATCHET, not a bar: the committed baseline holds today's offenders as conscious keeps and this
-  # fails on an offender the file's recorded rows of that kind cannot cover — each current offender
-  # must consume a distinct recorded row at least as large, so a file's offenders of one kind never
-  # rise in count or in total MEASURED VALUE. That value is the kind's own unit, so a `comment-block`
-  # is conserved in lines and not in characters: a recorded block rewritten the same length in far
-  # longer lines passes, because a block over the line bar is never measured against the character
-  # one. A block whose first line changed re-keys itself, so it is matched against those rows rather
-  # than reported new. The baseline is generated
-  # (`--write-baseline`) and regenerated at every rebase — never hand-edited.
-  - repo: local
-    hooks:
-      - id: prose-tripwire
-        name: prose measured against the sizes the baseline records
-        entry: uv run python infra/scripts/prose-tripwire.py --check-baseline infra/scripts/prose-tripwire-baseline.txt
-        language: system
-        pass_filenames: false
-        always_run: true
-        # Also at push: its verdict is a property of the TREE, so a rebase or a merge produces one
-        # nothing has measured, and no CI check evaluates it.
-        stages: [pre-commit, pre-push]
-
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
     hooks:

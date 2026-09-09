@@ -62,7 +62,7 @@ The obvious repairs are worse. Dropping the fill, or swapping the docstring for 
 
 **Prove the instruments bite, with every mutant anchor selected by a parser** — the statement arm from an AST node after the docstring `Expr`, the comparison arm from an `ast.Compare` outside every docstring span, the comment arm from a real `COMMENT` token. A regex anchor flips comparisons *inside docstrings*, the dump correctly does not move, and the arm reports a false BLIND.
 
-The two instruments disagree about what a comment is, and both are right: a docstring is not a `#` comment, so adding one leaves the COMMENT stream identical — while a prose tripwire's `comment-block` kind counts docstrings, so it moves once the block crosses its own line bar.
+A docstring is not a `#` comment, so adding one leaves the COMMENT stream identical — which is why the gate's comment arm cannot see a docstring appear or go.
 
 ### The per-file prose-only verdict
 
@@ -106,17 +106,7 @@ What actually produced this file's material was not the cadence floor of one who
 
 **A figure carries its revision, its unit and its denominator in the same sentence as itself** — three axes of one rule, and each has produced a wrong number here. *Revision*: a package measured at a shared revision that post-dated its own cut reported the output of that cut as its input. *Unit*: raw (`clean=False`), cleaned and whitespace-collapsed mass are 159,418, 151,843 and 151,661 for one package. *Denominator*: 95 characters given back is +0.55% of surviving mass or 1.82% of the reduction, and a decision to keep running turns on the second. Each is right about something and wrong where it stands, and a numeral audit sees none of them. Report the per-package delta of every round, correction rounds included, positive included.
 
-**Check the length of the docstrings the batch rewrote, and do not rewrap a line whose length is not the finding.** A rewritten docstring can exceed the wrap target with nothing to catch it; a reflow with no word changed is still an edit that pushed two blocks a line longer and made a ratchet absorb the growth. Run the length sweep as the batch's last step, before any baseline is regenerated.
-
-**A green `--check-baseline` does not mean a row is the right size.** It absorbs an oversized offender silently, matching it against the smallest recorded value at least as large, so a row can grow within its own record and report nothing. To rule on the rows themselves, regenerate the baseline into a scratch path and diff it against the committed one. **And keep `--check-baseline`'s classification BEFORE `--write-baseline`.** The re-record rewrites the baseline to match the tree, so afterwards the check reports zeroes and what it absorbed is unrecoverable. (`prose.md` owns the rest: condense to the bar, never to the tool's threshold.) A section split invented to reach a number is the defect a recorded keep was refusing.
-
-**A prose ratio can be satisfied by writing more code.** One file left a prose-density bar without losing a
-sentence: a commit added two code lines while the prose stayed at fourteen, and the file came to rest at exactly
-the threshold — where the next comment line pushed it back over and reddened the integration branch. A ratio is
-not a measure of prose; check the numerator, and treat a file sitting on the bar as re-reddening the next time
-anyone writes a comment in it.
-
-**A ratchet's verdict is a property of the TREE, not of a commit** (`T0180`). A rebase runs no pre-commit hook, and CI may run none either, so a green that every commit on a branch honestly earned can be invalid the moment those commits are replayed or merged — a branch that recorded a baseline mid-way and then outgrew it lands red with nothing downstream to notice. Re-run the check on the final tip after any rebase, and on the integration branch after any merge.
+**Check the length of the docstrings the batch rewrote, and do not rewrap a line whose length is not the finding.** A rewritten docstring can exceed the wrap target with nothing to catch it, and a reflow with no word changed is still an edit. Run the length sweep as the batch's last step.
 
 ## Failure modes: what the prose claims
 
@@ -158,7 +148,7 @@ Two of the pass's tools are committed, and this document names each by its filen
 
 The rest stay disposable, kept beside the pass rather than committed as machinery:
 
-- the batch self-check: docstring mass before/after with its unit named, and tripwire rows before/after, emitted from one invocation at one revision;
+- the batch self-check: docstring mass before/after with its unit named, emitted from one invocation at one revision;
 - a repetition detector, useful for *finding* a fold to make and useless for predicting whether a package will yield.
 
 **Write them into an isolated subdirectory with the repo path pinned, never into a shared scratchpad under a generic name.** Two sessions both wrote `mass.py`; the file one of them read was the other's.

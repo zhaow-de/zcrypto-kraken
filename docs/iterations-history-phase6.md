@@ -904,3 +904,11 @@ ______________________________________________________________________
 - `infra/scripts/prose-tripwire.py --check-baseline` marks every line it prints — `fail` for what blocks the commit, `note` for what does not — and bounds each line's length, so an operator reads a marker rather than judging by indentation that a wrapped line destroys.
 - A retired row is named rather than counted, so a recorded keep whose block no longer trips can be found and removed instead of sitting in the baseline licensing a future regrowth; at the gate it appears only on a run that already fails for another reason, because pre-commit discards a passing hook's output, so run `--check-baseline` by hand to see it on a tree that passes.
 - The committed baseline was re-recorded, lowering the ten ceilings that stood above their blocks' current size; an agent reading the ratchet's verdict is now reading the tree rather than the high-water mark of passes since.
+
+## 2026-09-09 — the prose apparatus is replaced by one correctness rule
+
+- The commit gate no longer measures prose length. `.claude/rules/prose.md` opens with the rule that replaces it: a statement gets its place only if a reader would do something differently without it, and if it stays it has to be correct — so a block is cut or kept on what it changes for a reader, never on how long it is.
+- Pruning now prefers the cut over the condense. Condensing writes a new sentence, a new sentence is a new claim, and claims written to fit a budget have shipped false here.
+- Nothing runs at the push stage, and CI runs no ratchet on the merge result; `tests/test_pre_push_stage.py` now asserts the stage is empty, so an upstream manifest widening a hook into it still reddens.
+- A review is recorded once per branch in the PR body rather than per commit, and `infra/scripts/amend-reviewed-by.sh` runs only on HEAD — amending mid-range rewrote hashes and bought a CI cycle to record a fact the PR body already carried.
+- `infra/scripts/review-trailer-audit.sh` now asks whether the branch carries a review record at all, and says plainly that it cannot check the reviewer was a different agent: a trailer names a model, and author and reviewer are routinely the same model.
