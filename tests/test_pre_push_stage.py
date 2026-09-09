@@ -1,4 +1,4 @@
-"""The push stage is the ratchet alone, resolved through pre-commit rather than read off the YAML.
+"""No hook runs at push, resolved through pre-commit rather than read off the YAML.
 
 An upstream manifest can widen a hook's stages without this repo's config changing a byte, which is
 how five hooks — two of them rewriters — reached the push stage in the first place."""
@@ -17,5 +17,5 @@ def _pre_push_hook_ids() -> list[str]:
     return sorted(hook.id for hook in all_hooks(config, Store()) if "pre-push" in hook.stages)
 
 
-def test_the_push_stage_is_the_ratchet_alone() -> None:
-    assert _pre_push_hook_ids() == ["prose-tripwire"]
+def test_no_hook_reaches_the_push_stage() -> None:
+    assert _pre_push_hook_ids() == []

@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # The prose ratchet converts every cut into silent headroom
@@ -31,7 +31,10 @@ The ratchet exists to make prose decrease monotonically. Each cutting batch drop
 
 **The enumeration, measured on develop at this branch's base**, and it closes: 1229 rows = 1214 at their observed size + 10 shrunk + 3 rewritten + 2 retired. develop's own copy of the tool cannot show the 10, because the column that separates a shrink from a silent absorption is this branch's.
 
-## Suggested next steps
+## Resolution
 
-- **The `rewritten` arm still licenses regrowth, and it is this topic's own defect.** A shrink whose first line ALSO changed re-keys the block, so `_absorbable` absorbs it as `note rewritten` at exit 0, the old larger row stays, and the block can grow back to it without failing. Probed in-process: a plain shrink 8→6 exits 1, the same shrink with a reworded opening line exits 0, and a regrowth 6→8 under the new anchor exits 0. That is the commonest shape a prose pass produces — condensing a block's opening sentence — so the arm matters more than the one already closed. It cannot simply fail, because then every legitimate reword of a recorded block's first line would.
-- **Whether the report's line budget or its marker scheme should change.** `_clamped` bounds a line to `_report_width`, which does not make it fit a given terminal: below that width a row still wraps, and the continuation can read as marked -- a `note retired:` row renders a second row beginning `fail closed,...`. Measured over the committed rows, the marker-bearing continuation appears at twelve widths between 20 and 260, including 103–107. The guard asserts only the bound, which is what holds.
+**Dropped, not fixed.** The apparatus this topic describes — `infra/scripts/prose-tripwire.py`, its generated baseline, the pre-commit hook and the CI job that measured the merge tree — was deleted in PR #483. Both remainders describe behaviour that no longer exists: there is no `rewritten` arm left to close, and no line budget or marker scheme left to decide. Nothing here was repaired and nothing was measured away.
+
+What stands in its place is one rule in `.claude/rules/prose.md`: a statement gets its place only if a reader would do something differently without it, and if it stays it has to be correct. The size bars went with the tool that enforced them.
+
+The enforcement that did land before the removal is not wasted: it corrected two statements in `.claude/rules/prose.md` that were false and survive the deletion. And the finding history on that work — five rounds, each carrying the same defect class, every one a claim quantifying over a set nobody had enumerated — is part of what argued for removing a size proxy in favour of a correctness rule.

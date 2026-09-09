@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # amend-reviewed-by.sh <commit-ish> "<reviewer model name>"
-# Lands ONE `Reviewed-by:` trailer on ONE commit, HEAD or any ancestor, so a review's trailer lands
-# the turn it returns (.claude/rules/commit-messages.md). Each refusal below rewrites nothing, prints
-# its reason, and exits with its own code.
+# Lands ONE `Reviewed-by:` trailer on ONE commit, the turn the review returns
+# (.claude/rules/commit-messages.md). Two callers, and the target differs: a branch's review record
+# goes on HEAD, while `zcrypto-plan-review`'s loop lands each reviewer's trailer on the commit whose
+# tree that reviewer actually read, which may be an ancestor by the time the report returns. An ancestor
+# is therefore accepted, not refused. Each refusal below rewrites nothing, prints its reason, and
+# exits with its own code.
 set -euo pipefail
 target_ish="${1:?usage: $0 <commit-ish> \"<model name>\"}"
 model="${2:?usage: $0 <commit-ish> \"<model name>\"}"
