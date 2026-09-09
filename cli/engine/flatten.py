@@ -357,11 +357,11 @@ async def read_book_price(client: Any, rec: Recorder, constraints: PairConstrain
         raise FlattenUnreachable(f"{what}: the {'bid' if side == 'SELL' else 'ask'} side is empty")
     price = _as_float(_required(levels[0], "price", what), "price", what)
     if price <= 0.0:
-        # `_required` rejects only `None` and `_as_float` only the non-finite, so a zero would flow
-        # into `plan.prices` and make every notional read as nothing -- below every `costmin`, so
-        # `size_leg` lists every basket leg as dust and `judge_final`, one predicate at the same
-        # price, agrees: the account reported flat at exit 0 with the whole spot book still held.
-        # Refused here, the leg degrades to unpriced, which is the direction that SELLS it.
+        # `_required` rejects only `None` and `_as_float` only a non-number or a non-finite one, so a
+        # finite zero arrives here unrefused -- and never reaches a notional: `_tick_floored` maps it to
+        # None one step on, which DISABLES the costmin floor, so a leg listed `dust_below_venue_minimum`
+        # at a real price is sized on the quantity floor alone and SENT. Refusing changes no send; it
+        # buys the operator a named, logged unreachable in place of a silently unpriced leg.
         raise FlattenUnreachable(f"{what}: the top of the {'bid' if side == 'SELL' else 'ask'} side is {price!r}, not a price")
     return price
 
