@@ -5,11 +5,15 @@ exit 0  INERT -- the only verdict that licenses the words *prose-only*
 exit 1  CODE CHANGED -- the stripped shape or a scope's statement count moved
 exit 2  a usage error, which is this text
 exit 3  COMMENTS CHANGED -- a comment's text, column, the line it sits above, or its distance moved
-exit 4  REFUSED -- a docstring that is program output changed, or a path could not be read
+exit 4  REFUSED -- a docstring that is program output changed, a path could not be read, or the file is one
+        whose raw bytes `replay_fingerprint` digests, where these arms cannot prove no observable effect
 
 3 and 4 are verdicts to act on, never a run to retry: 3 says a guard that reads a comment's position
 may have stopped seeing it, and 4 says the claim cannot be made from here at all. A docstring is often
-program OUTPUT -- a Typer command's is its `--help` body, and scripts hand it to argparse."""
+program OUTPUT -- a Typer command's is its `--help` body, and scripts hand it to argparse.
+
+INERT means no observable effect, not an unchanged shape: `replay_fingerprint` digests whole files, so a
+docstring edited in one changes the gate's cache key and buys a cold replay -- refused here, never certified."""
 
 import ast
 import difflib
@@ -190,6 +194,20 @@ def compare(before: str, after: str, *, output_names: frozenset[str] = frozenset
     )
 
 
+def replay_closure_relpaths() -> frozenset[str] | None:
+    """Repo-relative paths whose raw bytes `replay_fingerprint` digests, or None when that set cannot be
+    read. Repo-relative, never absolute: this tool runs from worktrees whose root is not the installed
+    package's. The closure is imported rather than restated -- a copy here would drift the day it matters."""
+    try:
+        from cli.engine.gate_cache import _REPO_ROOT, _replay_code_paths
+    except Exception:
+        return None
+    try:
+        return frozenset(str(path.relative_to(_REPO_ROOT)) for path in _replay_code_paths())
+    except OSError, ValueError:
+        return None
+
+
 def _repo_root() -> pathlib.Path:
     done = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if done.returncode != 0:
@@ -240,8 +258,20 @@ def main(argv: list[str]) -> int:
     print(f"after-side tree: {root}")
     if unscanned:
         print(f"WARNING: {unscanned} file(s) could not be scanned for docstring readers")
+    closure = replay_closure_relpaths()
     worst = EXIT_INERT
     for path in paths:
+        # Ahead of the arms, because a clean shape is exactly what makes this file's edit look free.
+        relative = str(pathlib.PurePosixPath(path))
+        if closure is None or relative in closure:
+            reason = (
+                "the replay fingerprint digests this file's raw bytes -- a docstring edit here buys a cold replay"
+                if closure is not None
+                else "the replay closure could not be read, so no file can be shown to sit outside it"
+            )
+            print(f"{path}: REFUSED -- {reason}")
+            worst = worse(worst, EXIT_REFUSED)
+            continue
         try:
             result = compare(_at_revision(base, path), (root / path).read_text(), output_names=output_names)
         except (ValueError, OSError, SyntaxError) as exc:

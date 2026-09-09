@@ -843,7 +843,7 @@ infra/scripts/ops_daily.py:1407: comment-block 6 > 4	"""Peel what changes WHO ru
 infra/scripts/ops_daily.py:1441: comment-block 8 > 4	"""Which tier a runbook step falls in. Default-deny: unrecognised is PREPARED, always.
 infra/scripts/probe-with-vaulted-key.sh:2: comment-block 12 > 4	# Runs the order-semantics probe harness with the vaulted Kraken trade credential in its environment
 infra/scripts/prose-tripwire.py:2: comment-block 17 > 4	"""Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long
-infra/scripts/prove-inert.py:2: comment-block 11 > 4	"""Prove a change is prose-only: the same code shape, with the comment stream reported separately.
+infra/scripts/prove-inert.py:2: comment-block 15 > 4	"""Prove a change is prose-only: the same code shape, with the comment stream reported separately.
 infra/scripts/prune-host-images.py:1: comment-block 17 > 4	"""Remove the Docker images a fleet host no longer needs, keeping every digest the pins file records.
 infra/scripts/prune-host-images.py:55: comment-block 5 > 4	"""The pins file cannot serve as the authority -- refuse rather than compute a keep-set.
 infra/scripts/prune-host-images.py:145: comment-block 6 > 4	"""The `## Current pins` table of the pins file, as rows.
