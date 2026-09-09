@@ -530,16 +530,25 @@ def main(argv: list[str] | None = None) -> int:
             # Flushed first: pre-commit merges the two streams into one pipe, where stdout is block
             # buffered and stderr is not, so an unflushed note arrives before the lines it names.
             sys.stdout.flush()
-            if new or grown:
-                print(
-                    f"cut the lines marked `fail new` or `fail grown`, or record them as keeps with "
-                    f"--write-baseline {args.check_baseline}",
-                    file=sys.stderr,
-                )
+            # One measured route per sentence, printed only for the arms that fired, because every
+            # attempt to write one sentence true of all of them has been false of one.
+            print(
+                f"cut the block to the size after its `>` and the line goes; or record the tree as it stands "
+                f"with --write-baseline {args.check_baseline}",
+                file=sys.stderr,
+            )
+            if grown:
+                print("a `fail grown` also clears by cutting back to the size after `recorded`", file=sys.stderr)
             if shrunk:
                 print(
-                    f"re-record the lines marked `fail shrunk` with --write-baseline {args.check_baseline} in this "
-                    "commit -- a cut is banked, not undone, and cutting one further only fails at the smaller size",
+                    "a `fail shrunk` block already sits under its row: a cut that stops above the `>` size fails "
+                    "again there, and only a cut to that size or smaller drops the row",
+                    file=sys.stderr,
+                )
+            if shrunk and (new or grown):
+                print(
+                    "--write-baseline rewrites the whole file, so make every cut first: a line still marked `fail` "
+                    "when you run it is banked as a keep instead",
                     file=sys.stderr,
                 )
             return 1

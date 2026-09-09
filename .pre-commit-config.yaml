@@ -117,7 +117,7 @@ repos:
   - repo: local
     hooks:
       - id: prose-tripwire
-        name: prose over an unrecorded bar, or a keep under its recorded size
+        name: prose measured against the sizes the baseline records
         entry: uv run python infra/scripts/prose-tripwire.py --check-baseline infra/scripts/prose-tripwire-baseline.txt
         language: system
         pass_filenames: false

@@ -941,6 +941,15 @@ def test_the_pre_commit_hook_runs_the_check_against_the_committed_baseline() -> 
     assert (_REPO / _BASELINE).is_file(), "the hook names a baseline that is not committed"
 
 
+def test_the_pre_commit_hook_name_is_pinned_because_nothing_else_checks_it() -> None:
+    """The headline pre-commit prints. Two wrong ones shipped on this branch before anything read it,
+    and no test can check that a sentence is true -- so pin the bytes and make a change a decision."""
+    config = yaml.safe_load((_REPO / ".pre-commit-config.yaml").read_text())
+    hooks = [h for repo in config["repos"] if repo["repo"] == "local" for h in repo["hooks"]]
+    hook = next(h for h in hooks if h["id"] == "prose-tripwire")
+    assert hook["name"] == "prose measured against the sizes the baseline records"
+
+
 class TestAScopedWriteBaselineWillNotTruncateTheRest:
     """`--write-baseline` opens its target truncating, so a scoped scan replaces every other file's
     recorded keeps with nothing. It refuses instead of writing (T0195)."""
@@ -1100,10 +1109,10 @@ class TestAShrinkSpendsItsCeilingInTheOpen:
         assert retired[0].endswith("...") and len(retired[0]) < len(long_first)
 
 
-class TestAnOffenderRowIsBoundedToTheBudget:
-    """`_clamped` bounds an offender row to `_report_width`, which is all these assertions claim: it
-    does not make a row fit a given terminal, so where a wrap falls -- and whether a continuation
-    reads as marked -- is the open half of T0189 rather than a property pinned here."""
+class TestARetiredRowIsClampedToTheBudget:
+    """Both assertions drive `_retired_line`, so what they pin is `_clamped`'s truncation over the
+    committed corpus -- not a row on any given terminal. Below the budget a row still wraps, and that
+    half is T0189's open design question rather than a property pinned here."""
 
     def test_no_row_in_the_committed_baseline_renders_past_the_budget(self) -> None:
         rows = tw.read_baseline(str(_REPO / _BASELINE))
@@ -1142,6 +1151,6 @@ class TestTheFailureNoteArrivesAfterTheLinesItNames:
         ).stdout.splitlines()
 
         assert any(line.startswith("fail new: fresh.py") for line in merged), merged
-        note = next(i for i, line in enumerate(merged) if line.startswith("cut the lines marked"))
+        note = next(i for i, line in enumerate(merged) if line.startswith("cut the block"))
         first_fail = next(i for i, line in enumerate(merged) if line.startswith("fail "))
         assert note > first_fail, f"the note arrived at {note}, before the lines at {first_fail}: {merged}"
