@@ -615,7 +615,7 @@ class TestTheCommandLine:
         with pytest.raises(SystemExit) as exc:
             tw.main(["--help"])
         assert exc.value.code == 0
-        text = "".join(capsys.readouterr().out.split())  # argparse wraps the epilog and breaks long words
+        text = "".join(capsys.readouterr().out.split())  # whitespace-insensitive: a formatter change is M-1's test, not this one
         for name in tw.THRESHOLDS:
             assert f"{name}={getattr(tw, name)}" in text
         # THRESHOLDS derives itself, so iterating it cannot notice an omission: pin the set instead.
@@ -625,8 +625,22 @@ class TestTheCommandLine:
         """One assertion per test: a regression here and in the thresholds must redden separately."""
         with pytest.raises(SystemExit):
             tw.main(["--help"])
-        text = " ".join(capsys.readouterr().out.split())  # argparse re-wraps the description to $COLUMNS
+        text = " ".join(capsys.readouterr().out.split())  # whitespace-insensitive, as above
         assert "long changelog entries." in text
+
+    def test_the_description_wraps_to_the_terminal(self, capsys, monkeypatch) -> None:
+        """`_RawEpilogFormatter`'s wrapping half: a fully raw formatter runs it past the terminal."""
+        monkeypatch.setenv("COLUMNS", "60")
+        with pytest.raises(SystemExit):
+            tw.main(["--help"])
+        opening = next(line for line in capsys.readouterr().out.splitlines() if "Flag prose over" in line)
+        assert len(opening) <= 60, opening
+
+    def test_the_epilog_keeps_the_break_before_the_shrink_contract(self, capsys) -> None:
+        """`_RawEpilogFormatter`'s raw half: reflowing runs the thresholds into the marker contract."""
+        with pytest.raises(SystemExit):
+            tw.main(["--help"])
+        assert "\nA `fail shrunk` is a keep" in capsys.readouterr().out
 
 
 def _commit(*paths: str) -> None:
@@ -1086,10 +1100,10 @@ class TestAShrinkSpendsItsCeilingInTheOpen:
         assert retired[0].endswith("...") and len(retired[0]) < len(long_first)
 
 
-class TestEveryLineTheCheckEmitsIsBounded:
-    """`_clamped` bounds a line to `_report_width`; it does not promise a row on any given terminal.
-    Below the budget a line still wraps and the continuation carries no marker -- whether the budget
-    or the marker scheme should change is the open half of T0189, not something asserted here."""
+class TestAnOffenderRowIsBoundedToTheBudget:
+    """`_clamped` bounds an offender row to `_report_width`, which is all these assertions claim: it
+    does not make a row fit a given terminal, so where a wrap falls -- and whether a continuation
+    reads as marked -- is the open half of T0189 rather than a property pinned here."""
 
     def test_no_row_in_the_committed_baseline_renders_past_the_budget(self) -> None:
         rows = tw.read_baseline(str(_REPO / _BASELINE))

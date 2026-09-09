@@ -442,6 +442,16 @@ def render(offenders: list[Offender]) -> str:
     return "\n".join(lines)
 
 
+class _RawEpilogFormatter(argparse.HelpFormatter):
+    """Wrap single-line text and leave the rest alone: the epilog's own breaks hold the thresholds
+    apart from the marker contract, while the description is one sentence that should reflow."""
+
+    def _fill_text(self, text: str, width: int, indent: str) -> str:
+        if "\n" not in text:
+            return super()._fill_text(text, width, indent)
+        return "".join(indent + line for line in text.splitlines(keepends=True))
+
+
 def main(argv: list[str] | None = None) -> int:
     thresholds = " ".join(f"{name}={globals()[name]}" for name in THRESHOLDS)
     # The epilog rather than the module docstring: that block sits at its own recorded ceiling, and
@@ -458,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__.split("\n\n")[0].replace("\n", " "),
         epilog=epilog,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=_RawEpilogFormatter,
     )
     parser.add_argument("paths", nargs="*", help="files or directories to scan; default: the repo's live prose")
     parser.add_argument("--since", metavar="REV", help="report only offenders absent at REV")
@@ -501,8 +511,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{args.check_baseline}: no such baseline -- write one with --write-baseline", file=sys.stderr)
             return 2
         new, grown, rewritten, shrunk, retired = against_baseline(offenders, read_baseline(args.check_baseline))
-        # `fail` marks what blocks the commit and nothing else does, and `_clamped` keeps every line
-        # to one row, so a continuation can neither wear the marker nor be mistaken for lacking it.
+        # `fail` marks what blocks the commit and nothing else does.
         for o in new:
             print(_clamped(f"fail new: {_line(o)}"))
         for o, was in grown:
@@ -521,10 +530,18 @@ def main(argv: list[str] | None = None) -> int:
             # Flushed first: pre-commit merges the two streams into one pipe, where stdout is block
             # buffered and stderr is not, so an unflushed note arrives before the lines it names.
             sys.stdout.flush()
-            print(
-                f"cut the lines marked `fail`, or record them as keeps with --write-baseline {args.check_baseline}",
-                file=sys.stderr,
-            )
+            if new or grown:
+                print(
+                    f"cut the lines marked `fail new` or `fail grown`, or record them as keeps with "
+                    f"--write-baseline {args.check_baseline}",
+                    file=sys.stderr,
+                )
+            if shrunk:
+                print(
+                    f"re-record the lines marked `fail shrunk` with --write-baseline {args.check_baseline} in this "
+                    "commit -- a cut is banked, not undone, and cutting one further only fails at the smaller size",
+                    file=sys.stderr,
+                )
             return 1
         return 0
     if args.since:

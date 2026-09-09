@@ -6,7 +6,7 @@ status: partial
 
 ## Context — what
 
-`infra/scripts/prose-tripwire.py --check-baseline` fails only on an offender the baseline does not record **at that size or larger**. So the baseline's recorded size is a ceiling, not a fact about the tree: when a cutting pass shrinks a recorded offender, the entry keeps the old, larger size and thereafter licenses regrowth all the way back to it without failing. The run exits 0 either way, and nothing asks whether the ceiling should come down with the block.
+A size recorded in `infra/scripts/prose-tripwire-baseline.txt` is a ceiling, not a fact about the tree: when a pass shrinks a recorded offender, the row keeps the old, larger size and thereafter licenses regrowth all the way back to it. `--check-baseline` originally absorbed every shape of that at exit 0 and asked nothing; it now fails a shrink whose block kept its first line, so what this topic still covers is the shrink that re-keys its block by rewording that line.
 
 ## Why this matters
 
@@ -27,7 +27,7 @@ The ratchet exists to make prose decrease monotonically. Each cutting batch drop
 
 **The ceilings were banked in the same branch**, which is what actually lowered them: ten rows standing above their blocks' size came down and two whose blocks no longer trip were dropped.
 
-**What enforcement costs, measured rather than assumed.** Against the 34 files queued in the cleanup, 6 carry baseline rows and 29 rows between them — but that is evidence about the queue, and the ten shrinks actually standing on develop sit in six other files, none of them queued, accumulated over 44 commits by authors who were not running a cleanup pass. So the real cost is not scoped to cutting passes: **every branch that cuts prose must now re-record the whole generated baseline**, a scoped write is refused by design, and two such branches conflict irreconcilably — the only resolution is re-running `--write-baseline` on the merged tree, never a textual merge. A base-advance race that used to exit 0 now reds the post-merge run.
+**What enforcement costs.** The ten shrinks standing on develop sit in six different files, so the cost is not confined to a cleanup pass — a shrink arrives from ordinary editing, and every branch that cuts prose must now re-record the whole generated baseline. A scoped write is refused by design and an unscoped one names on stderr the recorded paths its scan did not cover, so nothing is dropped in silence; two such branches conflict irreconcilably, and the only resolution is re-running `--write-baseline` on the merged tree rather than merging that file textually. A base-advance race that used to exit 0 now reds the post-merge run.
 
 **The enumeration, measured on develop at this branch's base**, and it closes: 1229 rows = 1214 at their observed size + 10 shrunk + 3 rewritten + 2 retired. develop's own copy of the tool cannot show the 10, because the column that separates a shrink from a silent absorption is this branch's.
 
