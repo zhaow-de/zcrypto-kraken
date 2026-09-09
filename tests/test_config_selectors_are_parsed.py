@@ -19,7 +19,7 @@ TESTS = Path(__file__).resolve().parent
 # for a substring check -- it knows exactly what it wrote.
 _HAZARD = "infra"
 # Declare an exception on the line above the comparison or within the comparison's own lines:
-# `# config-selector-ok: <why>`. `test_the_exemption_window_is_the_comparisons_own` pins every position.
+# `# config-selector-ok: <why>`. `test_the_exemption_window_is_the_comparisons_own` pins it.
 _MARKER = "config-selector-ok:"
 
 
@@ -297,11 +297,16 @@ _WINDOW_HEAD = '\ndef t():\n    s = (REPO / "infra/m.yml").read_text()\n'
         ("above a wrapped assert", "    # config-selector-ok: why\n    assert (\n        name\n        in s\n    )\n", False),
         ("on the wrapped assert's line", "    assert (  # config-selector-ok: why\n        name\n        in s\n    )\n", True),
         ("between the operands", "    assert (\n        name\n        # config-selector-ok: why\n        in s\n    )\n", True),
-        ("on the closing paren", "    assert (\n        name\n        in s\n        # config-selector-ok: why\n    )\n", False),
+        (
+            "on its own line below the comparison",
+            "    assert (\n        name\n        in s\n        # config-selector-ok: why\n    )\n",
+            False,
+        ),
+        ("trailing on the closing paren", "    assert (\n        name\n        in s\n    )  # config-selector-ok: why\n", False),
     ],
 )
 def test_the_exemption_window_is_the_comparisons_own(position: str, body: str, exempted: bool) -> None:
-    """The window is the line above the comparison plus the comparison's own lines, at every position."""
+    """The window is the line above the comparison plus the comparison's own lines."""
     assert bool(_violations(_WINDOW_HEAD + body)) is not exempted, position
 
 
