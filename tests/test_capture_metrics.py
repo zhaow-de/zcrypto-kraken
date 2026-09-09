@@ -64,9 +64,9 @@ def _families(collector: CaptureCollector) -> dict:
 
 
 class _FakeClient:
-    """Yields one correctly-in-sync book snapshot + one trade, then hangs -- the same end-to-end
-    wiring fixture `tests/test_capture_command.py` uses, duplicated locally (small, self-contained,
-    one file's worth of test fixtures) rather than reached into another test module."""
+    """Yields one correctly-in-sync book snapshot + one trade, then hangs, carrying the additive
+    counters `CaptureCollector` reads -- where the same-named double in `tests/test_capture_command.py`
+    carries a `resubscribed` list instead."""
 
     last_instance = None
 
