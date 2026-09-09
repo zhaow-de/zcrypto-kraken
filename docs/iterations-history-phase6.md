@@ -890,6 +890,6 @@ ______________________________________________________________________
 ## 2026-09-09 — a prose-only claim is proved by a tool, and its verdicts are named where prose passes are run
 
 - `infra/scripts/prove-inert.py` run with no arguments prints the exit-code contract, and `docs/reference/docstring-pass-method.md` states what each verdict costs, so a session about to call a diff prose-only reads a comment-stream verdict or a refusal as something to act on rather than as a failed run to retry.
-- The tool's comment stream carries each comment's column, its own text, the line it sits above and its distance from that line, so an agent reading exit 3 re-checks the guard that reads a comment's position rather than re-reading the diff.
+- An agent reading exit 3 re-checks the guard that reads a comment's position rather than re-reading the diff.
 - The tool stops certifying a scope whose docstring was its whole body once a `pass` replaces it, the `errors.py` shape, so a prose pass that produces one reports that change rather than quoting a clean verdict — and a deleted `pass` no longer reads as inert.
 - The tool reads `cli/__main__.py` for commands registered by a call, taking the function from a bare name, a keyword argument or an attribute, so a Typer command's `--help` body is refused rather than certified.
