@@ -13,7 +13,8 @@ A heading candidate is any run of three or more `#`, indented, blockquoted or li
 nests its findings under a `### Findings` title writes them as `####`, and a parser keyed on exactly
 `### ` absorbs every one of them into the previous body. Exit 0 on success. Exit 2 when any candidate
 fails the shape below: those are listed under `## Unparsed` in OUT.md and MUST be read — an unparsed
-finding is a finding, not noise (a bare section title lands there too). Two reports naming one line two
+finding is a finding, not noise (a bare section title lands there too, as does a malformed one- or
+two-hash finding, at MALFORMED below). Two reports naming one line two
 ways are two keys — the safe direction, the fixer reads both — and the script does not try to merge them.
 A fenced block is body whatever it contains (fence-closing rules are at BLOCKQUOTE/OPENER/CLOSER below),
 and a fence still open at end of file is surfaced under `## Unparsed`, since everything after it was read
