@@ -362,10 +362,35 @@ def test_a_docstring_read_through_a_bare_name_is_output() -> None:
     assert pi.docstring_reader_names("assert flatten.run_flatten.__doc__\n") == frozenset({"run_flatten"})
 
 
-def test_a_tree_it_cannot_list_is_refused(tmp_path: pathlib.Path) -> None:
-    """A listing that fails under-collects the names every refusal is driven by, so it refuses."""
-    with pytest.raises(SystemExit, match="cannot list the tree"):
+def test_a_tree_it_cannot_list_is_refused(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A listing that fails under-collects the names every refusal is driven by, so it refuses -- and the
+    CODE is the claim: REFUSED, never the 1 that would tell a caller the diff was read and moved."""
+    with pytest.raises(SystemExit) as raised:
         pi.output_names_in(tmp_path)
+    assert raised.value.code == pi.EXIT_REFUSED
+    assert "cannot list the tree" in capsys.readouterr().err
+
+
+def test_a_cwd_outside_any_repo_is_a_usage_error_not_a_code_change(tmp_path: pathlib.Path) -> None:
+    """The shape this setup produces routinely: a scratch worktree is removed while a shell still sits in
+    it. The operator fixes that by moving, so it is EXIT_USAGE with the contract printed -- and never 1,
+    which an agent reading WHICH code fired would record as CODE CHANGED for a file never compared."""
+    done = _cli(tmp_path, "HEAD", "cli/engine/flatten.py")
+    assert done.returncode == pi.EXIT_USAGE, done.stdout + done.stderr
+    assert "not inside a git worktree" in done.stderr, done.stderr
+    assert "exit 0  INERT" in done.stderr, "the contract is what EXIT_USAGE prints"
+
+
+def test_a_closure_read_from_another_checkout_is_refused_rather_than_judged(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The third resolution base. `replay_closure` reads the INSTALLED package's root; if that is a second
+    clone whose closure has grown, a member of the judged tree sits outside `relative` and can reach INERT.
+    Refused instead, so the guard covers all three bases rather than two."""
+    monkeypatch.setattr(pi, "replay_closure", lambda: (frozenset({"cli/engine/flatten.py"}), pathlib.Path("/nonexistent-checkout")))
+    monkeypatch.chdir(_ROOT)
+    assert pi.main(["prove-inert.py", "HEAD", "cli/engine/flatten.py"]) == pi.EXIT_USAGE
+    assert "not the tree being judged" in capsys.readouterr().err
 
 
 def test_a_file_it_cannot_parse_is_counted_not_skipped(tmp_path: pathlib.Path) -> None:

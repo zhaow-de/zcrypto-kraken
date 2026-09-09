@@ -218,7 +218,9 @@ def replay_closure() -> tuple[frozenset[str], pathlib.Path] | str:
 def _repo_root() -> pathlib.Path:
     done = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if done.returncode != 0:
-        raise SystemExit("prove-inert: not inside a git worktree")
+        print("prove-inert: not inside a git worktree\n", file=sys.stderr)
+        print(__doc__, file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
     return pathlib.Path(done.stdout.strip())
 
 
@@ -243,7 +245,8 @@ def output_names_in(root: pathlib.Path) -> tuple[frozenset[str], int]:
     listed = subprocess.run(["git", "-C", str(root), "ls-files", "*.py"], capture_output=True, text=True)
     if listed.returncode != 0:
         # A short listing silently under-refuses, which is the one direction a certifier must not fail in.
-        raise SystemExit(f"prove-inert: cannot list the tree: {listed.stderr.strip()}")
+        print(f"prove-inert: cannot list the tree: {listed.stderr.strip()}", file=sys.stderr)
+        raise SystemExit(EXIT_REFUSED)
     for rel in listed.stdout.split():
         try:
             names |= docstring_reader_names((root / rel).read_text())
@@ -261,7 +264,7 @@ def main(argv: list[str]) -> int:
         return EXIT_USAGE
     base, paths = argv[1], argv[2:]
     root = _repo_root()
-    # Lexical membership, `git show`'s cwd and `root / path` agree only here, and exit 0 is a licence.
+    # Lexical membership, `git show`'s cwd and the after side agree only here, and exit 0 is a licence.
     if pathlib.Path.cwd() != root:
         print(f"prove-inert: run from the repo root ({root}), not {pathlib.Path.cwd()}\n", file=sys.stderr)
         print(__doc__, file=sys.stderr)
@@ -277,6 +280,11 @@ def main(argv: list[str]) -> int:
         unreadable = f"the replay closure could not be read ({closure}); it needs an importable `cli` -- try `uv run`"
     else:
         relative, closure_root = closure
+        # The third base: a second checkout's closure may have grown past the imported one.
+        if closure_root != root and (root / "cli" / "engine" / "gate_cache.py").is_file():
+            print(f"prove-inert: `cli` imports from {closure_root}, not the tree being judged ({root})\n", file=sys.stderr)
+            print(__doc__, file=sys.stderr)
+            return EXIT_USAGE
         print(f"replay closure describes: {closure_root} ({len(relative)} files)")
     worst = EXIT_INERT
     for path in paths:
