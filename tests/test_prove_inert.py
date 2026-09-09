@@ -258,7 +258,6 @@ def test_a_group_callback_docstring_is_program_output() -> None:
 
 
 def test_the_entry_point_exits_four_on_a_changed_command_docstring(tmp_path: pathlib.Path) -> None:
-    # The refusal existed but nothing drove it through `main`, so downgrading it to INERT passed.
     repo = _repo(tmp_path, '@app.command()\ndef go() -> None:\n    """Old help."""\n    pass\n')
     (repo / "m.py").write_text('@app.command()\ndef go() -> None:\n    """New help."""\n    pass\n')
     done = _cli(repo, "HEAD", "m.py")

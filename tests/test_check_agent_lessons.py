@@ -94,9 +94,7 @@ def test_an_unreadable_path_outranks_a_bad_record(tmp_path: pathlib.Path) -> Non
 
 
 def test_a_bad_record_before_an_unreadable_path_still_exits_2(tmp_path: pathlib.Path) -> None:
-    # The other order. With only the unreadable-first case pinned, the EAGER first-non-zero rewrite
-    # -- `next((c for c in list(...) if c), 0)` -- passes. The lazy spelling is already dead, stopping
-    # before it opens the later path. Which of 1 and 2 comes back is this branch's whole subject.
+    # The other order: `max()` over the per-path codes must return the same verdict regardless of check order.
     bad = tmp_path / "bad.jsonl"
     bad.write_text(json.dumps({**OK, "kind": "bogus"}) + "\n")
     done = _run(str(bad), str(tmp_path / "gone.jsonl"))
