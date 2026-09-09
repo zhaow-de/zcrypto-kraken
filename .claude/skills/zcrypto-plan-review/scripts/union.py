@@ -13,14 +13,13 @@ A heading candidate is any run of three or more `#`, indented, blockquoted or li
 nests its findings under a `### Findings` title writes them as `####`, and a parser keyed on exactly
 `### ` absorbs every one of them into the previous body. Exit 0 on success. Exit 2 when any candidate
 fails the shape below: those are listed under `## Unparsed` in OUT.md and MUST be read — an unparsed
-finding is a finding, not noise (a bare section title lands there too, as does a finding written at one or
-two hashes). Two reports naming one line two
+finding is a finding, not noise (a bare section title lands there too, as does a malformed one- or
+two-hash finding, at MALFORMED below). Two reports naming one line two
 ways are two keys — the safe direction, the fixer reads both — and the script does not try to merge them.
-A fenced block is body whatever it contains — fences follow CommonMark (backtick or tilde, closed only by
-the same character at the same length or longer inside the same blockquote or list item as the opener, or
-by the end of that container; tabs count four columns) and a fence still open at end of file is surfaced under
-`## Unparsed`, since everything after it was read as body; a blockquoted heading is a heading; a sub-heading inside
-a finding is surfaced under `## Unparsed` without closing that finding's body.
+A fenced block is body whatever it contains (fence-closing rules are at BLOCKQUOTE/OPENER/CLOSER below),
+and a fence still open at end of file is surfaced under `## Unparsed`, since everything after it was read
+as body; a blockquoted heading is a heading; a sub-heading inside a finding is surfaced under `## Unparsed`
+without closing that finding's body.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Each arm of the docstring gate is seen to move on the edit it exists to catch and to hold on a docstring-only one, and both subcommands are seen to fail as well as to pass."""
+"""The docstring gate's arm split and subcommand behavior are driven here against real edits, not re-derived by hand -- `docs/reference/docstring-pass-method.md` records why two independent hand-derivations already lost the same arm."""
 
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ def test_deleting_a_pass_beside_a_docstring_moves_only_the_statement_arm():
 
 
 def test_replacing_a_sole_docstring_with_pass_moves_only_the_statement_arm():
-    """The same collision from the other side, and the shape that reached merged work: a class whose
-    docstring is its whole body becomes `class E(Exception): pass`."""
+    """The same collision from the other side: a class whose docstring is its whole body becomes
+    `class E(Exception): pass`."""
     assert _moved('class E(Exception):\n    """d."""\n', "class E(Exception):\n    pass\n") == {"stmt"}
 
 
