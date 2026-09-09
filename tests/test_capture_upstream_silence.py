@@ -69,9 +69,8 @@ def test_a_backward_clock_step_cannot_produce_negative_gap():
 
 
 def test_silence_does_not_gate_the_dead_man_in_this_iteration():
-    """A DELIBERATE negative (spec 00073 D3): silence must not gate the healthchecks.io ping, which
-    `is_healthy()` withholds for every pair at once.
-    """
+    """A DELIBERATE negative: `is_healthy()` withholds the ping for every pair at once, so gating it
+    on one pair's silence would withhold it for all."""
     m = GapMonitor()
     m.start_silence("BTC/EUR", at=T0)
     assert m.is_healthy(["BTC/EUR"]) is True, (
