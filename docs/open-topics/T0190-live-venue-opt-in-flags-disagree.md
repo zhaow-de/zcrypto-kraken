@@ -2,7 +2,7 @@
 status: partial
 ---
 
-# Three flags gate the live-venue tests, `CLAUDE.md` documents one, and only one fails on an outage
+# Three flags gate the live-venue tests and `CLAUDE.md` documents one
 
 ## Context — what
 
@@ -20,7 +20,9 @@ Measured with `git grep -hoE 'ZCRYPTO_[A-Z0-9_]+' -- cli/ tests/ infra/ | sort -
 
 **The name divergence defeats the rule as written.** An agent doing what `CLAUDE.md` says — set `ZCRYPTO_LIVE_VENUE_TESTS=1`, run the suite — gets the two undocumented tests **silently skipped**. A skip is indistinguishable from a pass in a summary line, so the run reads as coverage of a venue contract nobody exercised. That is the precise outcome the rule exists to prevent, arriving through the rule being followed.
 
-**The semantic divergence is the sharper half and survives even a correct flag.** `CLAUDE.md` requires that with the flag set, an unreachable venue **fails**. Only `ZCRYPTO_LIVE_VENUE_TESTS`' readers implement that arm. The other two are `skipif` alone, so setting their own flag and losing the venue still yields a skip — an outage read as coverage, which is the same defect one layer in. `test_e1b_order_visibility_probe.py:146` states the principle in its own comment (*"a skip on an unreachable venue reads as coverage"*) and then does not implement the failing half.
+**There is no semantic divergence — this topic claimed one and it is false.** The original text held that only `ZCRYPTO_LIVE_VENUE_TESTS`' readers fail on an unreachable venue while the other two skip. Measured, every one of them fails: `unshare -rn env ZCRYPTO_VENUE_CONTRACT=1 uv run pytest tests/test_engine_flatten.py::test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_await` gives **1 failed** with a DNS `RuntimeError`, not a skip, and `ZCRYPTO_E1B_LIVE=1` on the e1b sweep likewise fails where the unset flag skips. Every `skipif` in the class keys on the FLAG, never on reachability, so with the flag set an unreachable venue raises rather than skipping. `test_e1b_order_visibility_probe.py:146`'s comment — *"Gated on a variable, never on reachability"* — describes what the code does; the claim read it as an unfulfilled aspiration.
+
+The claim was written by reading the `skipif` rather than running it, and it survived into this file because the surrounding argument about the names is correct. What remains is the name divergence alone.
 
 ## Findings so far
 
@@ -33,6 +35,5 @@ Measured with `git grep -hoE 'ZCRYPTO_[A-Z0-9_]+' -- cli/ tests/ infra/ | sort -
 - **Decided by the owner, 2026-09-09: one flag covers the class.** `ZCRYPTO_LIVE_VENUE_TESTS` is the opt-in for every venue-reaching test, including the order-placing probe — no second flag on blast-radius grounds, because the granularity buys nothing a reader can act on. So `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` are renames, not a design question, and `CLAUDE.md`'s sentence already names the surviving flag and needs no change.
 
 ## Suggested next steps
-- **Give every flag in the class the failing arm**, so that with the flag set an unreachable venue fails rather than skips. That is the half `CLAUDE.md` already requires and two of three readers omit.
+- **Rename the two divergent literals** to `ZCRYPTO_LIVE_VENUE_TESTS`: `tests/test_engine_flatten.py`'s `_VENUE_CONTRACT_OPT_IN` and `tests/test_e1b_order_visibility_probe.py`'s `LIVE_OPT_IN`. Both surrounding comments interpolate the constant, so nothing else in either file changes, and `CLAUDE.md` needs no edit — the owner's ruling already names the surviving flag.
 - **The guard, and its degeneracy.** A test asserting that every `skipif`/`skip` gate in `tests/` keyed on a venue opt-in also carries a fail-when-set arm — constructed so that removing the arm from any one of them turns it red, with a gate that legitimately has no venue dependency passing beside it. A guard that only enumerates today's three flag names goes stale the moment a fourth is added; key it on the shape, not the list.
-- **Then reconcile `CLAUDE.md`'s sentence with whatever lands**, in the same change — the rule names one flag today and would name the wrong set the moment a second is sanctioned.
