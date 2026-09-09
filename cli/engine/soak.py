@@ -737,12 +737,12 @@ def identity_self_check(record, snapshot_reader, *, tol: float = 1e-6, path: str
     """Recompute `record`'s newest-row targets via `replay_cycle` and compare them against
     `record.final_targets`, per asset, within `tol`; `path` (spec 00061 D5) selects the builder. A replay
     failure is deliberately NOT caught -- `self_tests` turns it into identity_ok=None, distinct from this
-    function's own only failure, a genuine value mismatch."""
+    function's own failure: a value mismatch, or a difference that was not finite (spec 00113 D8)."""
     replayed = replay_cycle(record, snapshot_reader, path=path)
     mismatches = [
         f"{asset}: replayed={replayed.get(asset)!r} recorded={value!r}"
         for asset, value in record.final_targets.items()
-        if asset not in replayed or abs(replayed[asset] - value) > tol
+        if asset not in replayed or not math.isfinite(replayed[asset] - value) or abs(replayed[asset] - value) > tol
     ]
     if mismatches:
         return False, "identity mismatch: " + "; ".join(mismatches)

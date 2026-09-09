@@ -870,6 +870,17 @@ def test_identity_self_check_pass_and_fail(monkeypatch):
     assert ok2 is False
 
 
+def test_identity_self_check_refuses_a_comparison_it_could_not_make(monkeypatch):
+    """A replayed target that is not a number makes the difference non-finite, so the pair is collected
+    and the check refuses -- where the `> tol` bar alone reads it as agreement (spec 00113 D8). The
+    finite asset beside it must stay out of the message, or the arm refuses everything."""
+    rec = types.SimpleNamespace(final_targets={"BTC": 0.12, "ETH": -0.05})
+    monkeypatch.setattr(soak, "replay_cycle", lambda r, reader, path="fast": {"BTC": float("nan"), "ETH": -0.05})
+    ok, msg = identity_self_check(rec, snapshot_reader=None, tol=1e-6)
+    assert ok is False, msg
+    assert "replayed=nan" in msg and "ETH" not in msg
+
+
 def test_plausibility_flags_implausible_forward_return():
     realized = types.SimpleNamespace(implausible=True, gross=[0.1, 0.2], chain_ok=True)
     null = types.SimpleNamespace(net_live=[0.01, -0.02], reconcile_ok=True)
