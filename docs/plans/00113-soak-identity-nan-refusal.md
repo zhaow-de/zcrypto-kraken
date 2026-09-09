@@ -14,7 +14,7 @@
 
 - The refusal goes at the comparison in `cli/engine/soak.py`. Do **not** add `validate_record` to any read path — that is `T0194` and out of scope (spec `## Out of scope`).
 - Do **not** catch `ValueError` in `realized_internals` or `soak_report`, and do not add a finiteness check to `_validate_grid` — that is `T0193` and out of scope, because it carries an unanswered design question.
-- Do not touch `cap_consistent` or its `breach` comparison, nor `_chain_consistent` (`:159`) or `instrument_self_check` (`:729`), which compare with `!=` and so already refuse a NaN. Spec D8's enumeration puts `identity_self_check` (`:745`) in scope beside `realized_internals` and nothing else in this file.
+- Do not touch, in this file: the `breach` bar at either of its sites (`:317`, `:849`), whose operands are `apply_position_caps` output and its own input and so are finite by construction; `_net_live_from_result`'s `reconcile_ok` identity (`:320`), whose `<= 1e-9` is False on a non-finite difference, so its `all(...)` is False and the verdict refuses; and `_chain_consistent` (`:159`) and `instrument_self_check` (`:729`), which compare with `!=`, True on a NaN, and so refuse already. Spec D8's enumeration puts `identity_self_check` (`:745`) in scope beside `realized_internals` and nothing else in this file.
 - `compared` keeps its present meaning: comparisons actually made. A non-finite `diff` increments `unmeasurable` instead (spec D2).
 - The unmeasurable check is evaluated **before** the `compared == 0` arm (spec D4). Reversing the order makes the all-NaN window report `None`, which does not void.
 - The defect fixture is NaN-ONLY (spec D7): the journaled target is `float("nan")` and every other value matches the rebuilt row exactly. A fixture that also mismatches by magnitude passes under the defect for the wrong reason — so the one non-NaN fixture the plan carries, the `float("inf")` target that tells finiteness-keying from NaN-keying (spec `## The measured basis`), discriminates on `identity_unmeasurable` alone; the `identity_ok` assertion beside it is a shape check the defect also satisfies, and pins nothing.
@@ -213,14 +213,22 @@ It must select every `test_realized_internals_*` test and deselect none of them 
 
 Five mutations, one probe run each, same control. All five must report KILLED, and the control must FAIL in each, which is how the probe proves it is measuring — it widens `tol` so `test_realized_internals_shift_breaks_identity`'s mismatch stops being detected.
 
-`mutate-probe.sh` discards the probe command's output in all three of its phases (`:99`, `:106`, `:111`) and prints its verdict alone, so KILLED plus the proven control is all it observes — the assertion text `commit-messages.md` wants in the body comes from one scratch worktree, not from the probe: `git worktree add --detach ../wt-00113-probe HEAD`, then in it, per mutation, the same `sed -i`, `uv run pytest tests/test_engine_soak.py -k realized_internals -q` read foreground, and `git checkout -- cli/engine/soak.py` before the next. Remove it with `git worktree remove ../wt-00113-probe` when the five are read; it needs no dataset symlink, since every test in this `-k` set but `test_realized_internals_on_real_journal` builds its own fixture and that one is gated on a mount a worktree still sees.
+`mutate-probe.sh` discards the probe command's output in all three of its phases (`:99`, `:106`, `:111`) and prints its verdict alone, so KILLED plus the proven control is all it observes. The assertion text `commit-messages.md` wants in the body therefore comes from the probe command's OWN redirect, which the script's `>/dev/null 2>&1` cannot reach: every probe below is wrapped as `sh -c '… > "<log>" 2>&1'`, and `sh -c` exits with the wrapped command's status, so the verdict is unchanged. A scratch worktree is deliberately NOT the mechanism — a second checkout puts the mutation and the measurement in different trees with nothing in the body saying which one the assertion came from, and every command aiming it is a `git checkout --` steered by a cwd that resets between calls (`agent-ops.md`).
+
+Each log holds its own probe's LAST phase, which is the mutation's: the phases run baseline (`:99`), control (`:106`), mutation (`:111`), each overwriting, and `restore` runs no probe. So the control's failure text is not kept — `mutate-probe.sh`'s own verdict line is what attests it. The wrapper belongs on every mutate-probe invocation in this plan, each with its own log name: the five probes below and Task 3 Step 6's.
+
+Create the log directory once first. `.tmp/` is gitignored, so the logs leave the tree clean for the next probe's own dirty-tree refusal:
+
+```bash
+mkdir -p "$(git rev-parse --show-toplevel)/.tmp"
+```
 
 ```bash
 infra/scripts/mutate-probe.sh \
   --file cli/engine/soak.py \
   --control 's/if diff > tol:/if diff > tol * 1e12:/' \
   --mutation 's/^    if unmeasurable:$/    if False:/' \
-  -- uv run pytest tests/test_engine_soak.py -k realized_internals -q
+  -- sh -c 'uv run pytest tests/test_engine_soak.py -k realized_internals -q > "$(git rev-parse --show-toplevel)/.tmp/00113-arm.log" 2>&1'
 ```
 
 Deletes the arm under proof, which is Step 5's ordering decision: the all-NaN window falls through to `identity_ok = None` and the first window's `assert ri.identity_ok is False` fires.
@@ -230,7 +238,7 @@ infra/scripts/mutate-probe.sh \
   --file cli/engine/soak.py \
   --control 's/if diff > tol:/if diff > tol * 1e12:/' \
   --mutation 's/^    if unmeasurable:$/    if unmeasurable and not compared:/' \
-  -- uv run pytest tests/test_engine_soak.py -k realized_internals -q
+  -- sh -c 'uv run pytest tests/test_engine_soak.py -k realized_internals -q > "$(git rev-parse --show-toplevel)/.tmp/00113-narrowed.log" 2>&1'
 ```
 
 Narrows the arm to the reading Step 5's own comment invites. The all-NaN window still passes under it; only Step 1's mixed window kills it, on `assert mixed.identity_ok is False`. If this one reports SURVIVED, the mixed window is not discriminating and the fixture is the thing to fix.
@@ -240,7 +248,7 @@ infra/scripts/mutate-probe.sh \
   --file cli/engine/soak.py \
   --control 's/if diff > tol:/if diff > tol * 1e12:/' \
   --mutation 's/if not math.isfinite(diff):/if math.isnan(diff):/' \
-  -- uv run pytest tests/test_engine_soak.py -k realized_internals -q
+  -- sh -c 'uv run pytest tests/test_engine_soak.py -k realized_internals -q > "$(git rev-parse --show-toplevel)/.tmp/00113-isnan.log" 2>&1'
 ```
 
 Narrows D2's keying from finiteness to a NaN test, which is the claim the spec calls load-bearing and the reason Step 1 carries a third window at all. The fragment matches once after Step 4 (`grep -c "if not math.isfinite(diff):" cli/engine/soak.py` is `0` on this branch's base and `1` once Step 4 lands). Only the infinite window kills it, on `assert infinite.identity_unmeasurable == 1`: under `math.isnan` an infinite journaled target counts as compared again and reports a magnitude mismatch, which is the reclassification spec `00113` D2 rejects. Without this run the third window is asserted and never shown to bite, and the commit body would claim proof for the ordering arm alone.
@@ -250,7 +258,7 @@ infra/scripts/mutate-probe.sh \
   --file cli/engine/soak.py \
   --control 's/if diff > tol:/if diff > tol * 1e12:/' \
   --mutation 's/unmeasurable += 1/unmeasurable = 1/' \
-  -- uv run pytest tests/test_engine_soak.py -k realized_internals -q
+  -- sh -c 'uv run pytest tests/test_engine_soak.py -k realized_internals -q > "$(git rev-parse --show-toplevel)/.tmp/00113-count.log" 2>&1'
 ```
 
 Turns the count into a flag, which is what the `--json` payload publishes. Only Step 1's mixed window kills it, on `assert mixed.identity_unmeasurable == 2` — every other window has exactly one unmeasurable pair, where a count and a flag read alike.
@@ -260,7 +268,7 @@ infra/scripts/mutate-probe.sh \
   --file cli/engine/soak.py \
   --control 's/if diff > tol:/if diff > tol * 1e12:/' \
   --mutation 's/if not unmeasurable_detail:/if True:/' \
-  -- uv run pytest tests/test_engine_soak.py -k realized_internals -q
+  -- sh -c 'uv run pytest tests/test_engine_soak.py -k realized_internals -q > "$(git rev-parse --show-toplevel)/.tmp/00113-first.log" 2>&1'
 ```
 
 Makes the detail's coordinate the LAST pair the loop could not compare instead of the first, which is what "at/after" claims. Only the mixed window kills it, on the `cycle=` assertion naming `nan_rec`'s stamp. Both fragments match once after Step 4, and both mutants keep the block's shape, so the red is the assertion's and not a parse error.
@@ -312,12 +320,12 @@ Expected: FAIL on `assert any("identity unmeasurable" in r for r in payload["voi
 
 ```python
             if internals.available and internals.identity_ok is False:
-                # Both can hold at once; the unmeasurable case is the weaker claim and names the
-                # reason, which then carries `identity_detail` -- the worst measured diff beside the
-                # count -- because `render_report` renders these reasons and never that field, so the
-                # displaced mismatch would otherwise reach the JSON reader alone (spec 00113 D6).
+                # Both can hold at once; the unmeasurable case is the weaker claim and names the reason, which
+                # then carries `identity_detail` -- `render_report` renders these reasons and never that field,
+                # so the displaced mismatch would otherwise reach the JSON reader alone (spec 00113 D6).
+                # Parenthesised because that renderer joins reasons with `; ` and the detail carries one.
                 void_reasons.append(
-                    f"realized-internals identity unmeasurable; {internals.identity_detail}"
+                    f"realized-internals identity unmeasurable ({internals.identity_detail})"
                     if internals.identity_unmeasurable
                     else "realized-internals identity mismatch"
                 )
@@ -404,14 +412,15 @@ git commit
 The probe runs after the commit, for Task 1 Step 8's reason — `mutate-probe.sh` refuses a dirty worktree — and the verdict lands by `git commit --amend`. `--collect-only` the filter first: `uv run pytest --collect-only -q tests/test_engine_soak.py -k identity_self_check` selects 2 on this branch's base and 3 with the new test.
 
 ```bash
+mkdir -p "$(git rev-parse --show-toplevel)/.tmp"
 infra/scripts/mutate-probe.sh \
   --file cli/engine/soak.py \
   --control 's/abs(replayed\[asset\] - value) > tol/abs(replayed[asset] - value) > tol * 1e12/' \
   --mutation 's/ or not math.isfinite(replayed\[asset\] - value)//' \
-  -- uv run pytest tests/test_engine_soak.py -k identity_self_check -q
+  -- sh -c 'uv run pytest tests/test_engine_soak.py -k identity_self_check -q > "$(git rev-parse --show-toplevel)/.tmp/00113-selfcheck.log" 2>&1'
 ```
 
-Deletes the arm under proof; the new test's `assert ok is False` fires. The control widens the magnitude bar past `test_identity_self_check_pass_and_fail`'s `2e-6` mismatch, so that test's `assert ok2 is False` fails and the harness is proven to bite. Both expressions match once after Step 3. The assertion text is read the way Task 1 Step 8 sets out, in a scratch worktree at this task's own commit.
+Deletes the arm under proof; the new test's `assert ok is False` fires. The control widens the magnitude bar past `test_identity_self_check_pass_and_fail`'s `2e-6` mismatch, so that test's `assert ok2 is False` fails and the harness is proven to bite. Both expressions match once after Step 3. The assertion text is read from `.tmp/00113-selfcheck.log`, the redirect Task 1 Step 8 sets out — the probe's own run, in this checkout.
 
 ---
 
@@ -424,7 +433,7 @@ Deletes the arm under proof; the new test's `assert ok is False` fires. The cont
 
 - [ ] **Step 1: Resolve T0188 through the `topic-ops` skill**
 
-Load `.claude/skills/topic-ops/SKILL.md` and follow it: `status: resolved`, a `## Resolution` naming the commits and what each decision landed as, `git mv` into `docs/open-topics/archive/`, and the index bullet moved to the same category's `### Resolved` with its link repointed at `archive/`. Its `## Suggested next steps` bullets are answered, in their own order, by spec `00113` D1 (where the refusal belongs), D7 (the guard's fixture and its degeneracy) and D2/D3/D5 (what a partly-NaN window answers, and what the detail then carries), with D6 as the consequence for the void reason — say which, so the archived file records the answers rather than the questions. Its `## Findings so far` clears `cap_consistent` alone; D8 is what swept the rest of the file, so the `## Resolution` names `identity_self_check` as the second instance this branch closed and the two `!=` comparisons as non-members.
+Load `.claude/skills/topic-ops/SKILL.md` and follow it: `status: resolved`, a `## Resolution` naming the commits and what each decision landed as, `git mv` into `docs/open-topics/archive/`, and the index bullet moved to the same category's `### Resolved` with its link repointed at `archive/`. Its `## Suggested next steps` bullets are answered, in their own order, by spec `00113` D1 (where the refusal belongs), D7 (the guard's fixture and its degeneracy) and D2/D3/D5 (what a partly-NaN window answers, and what the detail then carries), with D6 as the consequence for the void reason — say which, so the archived file records the answers rather than the questions. Its `## Findings so far` clears `cap_consistent` alone; D8 is what swept the rest of the file, so the `## Resolution` names `identity_self_check` as the second instance this branch closed and D8's non-members — the two `!=` comparisons and `reconcile_ok`'s `<=` bar — as the rest of the sweep.
 
 In the same edit that moves the index bullet, rewrite its TEXT as the outcome — what the arm now answers and which void reason it emits — and drop its closing "Ripe now.". `docs/open-topics/README.md:124` states the defect in the present tense today, and every bullet already under a `### Resolved` heading reads as its outcome instead; `topic-ops` prescribes the move and the repointed link, not the wording, so the plan is the only place this can land.
 
