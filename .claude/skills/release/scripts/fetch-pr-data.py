@@ -9,12 +9,10 @@ from datetime import datetime
 
 session_id = sys.argv[1] if len(sys.argv) > 1 else "default"
 
-# Get version
 version_result = subprocess.run(["cz", "version", "--project"], capture_output=True, text=True)
 new_version = version_result.stdout.strip()
 release_date = datetime.now().strftime("%Y-%m-%d")
 
-# Get last tag date from main
 tag_result = subprocess.run(
     ["git", "describe", "--tags", "--abbrev=0", "origin/main"],
     capture_output=True,
@@ -27,7 +25,6 @@ if last_tag:
     tag_date_result = subprocess.run(["git", "log", "-1", "--format=%aI", last_tag], capture_output=True, text=True)
     last_tag_date = datetime.fromisoformat(tag_date_result.stdout.strip())
 
-# Get all merged PRs targeting develop
 result = subprocess.run(
     [
         "gh",
@@ -47,7 +44,6 @@ result = subprocess.run(
 )
 prs = json.loads(result.stdout)
 
-# Filter PRs merged after the last tag
 filtered_prs = []
 for pr in prs:
     merged_at = pr.get("mergedAt")
@@ -57,7 +53,6 @@ for pr in prs:
             filtered_prs.append(pr)
 
 
-# Parse conventional commit title
 def parse_title(title):
     match = re.match(r"^(\w+)(?:\(([^)]+)\))?:\s*(.*)$", title)
     if match:
@@ -79,7 +74,6 @@ TYPE_MAP = {
     "build": "CI/Build",
 }
 
-# Prepare PR data for Claude to process
 pr_data = []
 for pr in filtered_prs:
     parsed = parse_title(pr["title"])
@@ -96,7 +90,6 @@ for pr in filtered_prs:
         }
     )
 
-# Save to temp file for Claude to read
 output = {
     "version": new_version,
     "release_date": release_date,
