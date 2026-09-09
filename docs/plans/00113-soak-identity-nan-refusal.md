@@ -17,7 +17,7 @@
 - Do not touch `cap_consistent` or its `breach` comparison.
 - `compared` keeps its present meaning: comparisons actually made. A non-finite `diff` increments `unmeasurable` instead (spec D2).
 - The unmeasurable check is evaluated **before** the `compared == 0` arm (spec D4). Reversing the order makes the all-NaN window report `None`, which does not void.
-- The defect fixture is NaN-ONLY (spec D7): the journaled target is `float("nan")` and every other value matches the rebuilt row exactly. A fixture that also mismatches by magnitude passes under the defect for the wrong reason — so the one non-NaN fixture the plan carries, the `float("inf")` target that tells finiteness-keying from NaN-keying (spec `## The measured basis`), asserts on `identity_unmeasurable` and never on `identity_ok`, which the defect already drives `False` there.
+- The defect fixture is NaN-ONLY (spec D7): the journaled target is `float("nan")` and every other value matches the rebuilt row exactly. A fixture that also mismatches by magnitude passes under the defect for the wrong reason — so the one non-NaN fixture the plan carries, the `float("inf")` target that tells finiteness-keying from NaN-keying (spec `## The measured basis`), discriminates on `identity_unmeasurable` alone; the `identity_ok` assertion beside it is a shape check the defect also satisfies, and pins nothing.
 - `cli/engine/soak.py` is inside `replay_fingerprint`'s import closure, so any change here invalidates the gate cache and the next run pays a cold replay. Expected for a code fix; do not treat it as a regression.
 
 ---
@@ -25,7 +25,7 @@
 ### Task 1: The unmeasurable arm in `realized_internals`
 
 **Files:**
-- Modify: `cli/engine/soak.py` — the `RealizedInternals` dataclass (~`:756-765`), the `except` branch's construction (~`:828-837`), the comparison loop (~`:853-884`), and the return (~`:888-898`)
+- Modify: `cli/engine/soak.py` — the `RealizedInternals` dataclass (~`:756-765`), `realized_internals`' own docstring clause on `identity_ok` (~`:820-821`), the `except` branch's construction (~`:828-837`), the comparison loop (~`:853-884`), and the return (~`:888-898`)
 - Test: `tests/test_engine_soak.py` — the `# --- realized_internals ---` section that begins at `:2561`, plus the four `RealizedInternals(` construction sites Step 3 enumerates
 - Test: `tests/test_engine_soak_command.py` — `_fake_realized_internals` inside `_patch_canonical_pipeline` (`:161`), whose stub construction at `:191` is the fifth test-side site
 
@@ -62,6 +62,7 @@ def test_realized_internals_refuses_an_identity_it_could_not_measure(monkeypatch
     assert ri.identity_ok is False, ri.identity_detail
     assert ri.identity_unmeasurable == 1
     assert "unmeasurable" in ri.identity_detail and "BTC" in ri.identity_detail
+    assert "journaled=nan" in ri.identity_detail  # both operands, since the arm never says which went non-finite
 
     # `compared == 0` holds above too, so that window alone cannot tell the arm from the narrower
     # `if unmeasurable and not compared:`. Here one comparison IS made and agrees, and the refusal
@@ -89,22 +90,24 @@ Expected: FAIL on the first window's `assert ri.identity_ok is False` with `iden
 - [ ] **Step 3: Add the field to `RealizedInternals`, and thread it through every construction site**
 
 ```python
-    identity_ok: bool | None  # None = no journaled target was compared, so the identity went unmeasured
+    identity_ok: bool | None  # None = nothing compared and none unmeasurable; any unmeasurable pair answers False (spec 00113 D4)
     identity_unmeasurable: int  # pairs whose |diff| was not finite: counted, never compared (spec 00113 D2)
     identity_detail: str
 ```
 
-The dataclass carries no field defaults and this field takes none either: a producer that omits the count is a `TypeError` at construction, where a defaulted `0` would sit silently beside an `identity_ok=False` and make Task 2's branch read it as a mismatch. The cost is that every existing construction site changes in this task. The family is `grep -rn "RealizedInternals(" cli/ tests/ infra/` — seven sites, five of them in tests, none of them inside Step 6's `-k realized_internals` selection:
+The `identity_ok` comment is rewritten, not re-emitted: after Step 5, `None` requires `compared == 0` **and** `unmeasurable == 0`, so the old sentence would be false from the moment this task lands — and it is the sentence Task 3 Step 2 corrects downstream in `T0183`.
+
+The dataclass carries no field defaults and this field takes none either: a producer that omits the count is a `TypeError` at construction, where a defaulted `0` would sit silently beside an `identity_ok=False` and make Task 2's branch read it as a mismatch. The cost is that every existing construction site changes in this task. The family is `grep -rn "RealizedInternals(" cli/ tests/ infra/` — seven sites, five of them in tests, none of them selected by the `-k realized_internals` filter, which is why Step 6 runs both files whole:
 
 | Site | What to pass |
 | --- | --- |
 | `cli/engine/soak.py:828` — the `except (EngineError, PortfolioError)` branch | `identity_unmeasurable=0`, beside `identity_ok=False` |
 | `cli/engine/soak.py:890` — the successful return | `identity_unmeasurable=unmeasurable` (Step 5) |
-| `tests/test_engine_soak.py:1150` — `_mk_internals`, the helper 13 tests call | `identity_unmeasurable=0` |
+| `tests/test_engine_soak.py:1150` — `_mk_internals`, the helper 11 tests call | `identity_unmeasurable=0` |
 | `tests/test_engine_soak.py:1496` | `identity_unmeasurable=0` |
 | `tests/test_engine_soak.py:1862` | `identity_unmeasurable=0` |
 | `tests/test_engine_soak.py:1935` | `identity_unmeasurable=0` |
-| `tests/test_engine_soak_command.py:191` — `_fake_realized_internals`, inside the `_patch_canonical_pipeline` helper 12 tests call | `identity_unmeasurable=identity_unmeasurable`, from a new `identity_unmeasurable: int = 0` keyword parameter added beside `identity_ok`, threaded exactly as `identity_ok` already is — Task 2 sets it |
+| `tests/test_engine_soak_command.py:191` — `_fake_realized_internals`, inside the `_patch_canonical_pipeline` helper 9 tests call | `identity_unmeasurable=identity_unmeasurable`, from a new `identity_unmeasurable: int = 0` keyword parameter added beside `identity_ok`, threaded exactly as `identity_ok` already is — Task 2 sets it |
 
 `tests/test_engine_soak_command.py:252`'s full-dict `payload["internals"]` equality does **not** change here: the payload gains its key in Task 2, not in this task.
 
@@ -131,7 +134,9 @@ Replace the inner loop's body **from `compared += 1` onward** — the `a not in 
             if not math.isfinite(diff):
                 unmeasurable += 1
                 if not unmeasurable_detail:
-                    unmeasurable_detail = f"cycle={t!r} asset={a!r}"
+                    # Both operands, because this arm never decides which one went non-finite and the
+                    # rebuilt side is not provably finite either (spec 00113 D1, D5).
+                    unmeasurable_detail = f"cycle={t!r} asset={a!r} journaled={value!r} rebuilt={row[a]!r}"
                 continue
             compared += 1
             if diff >= worst_diff:
@@ -160,6 +165,8 @@ Note the `compared += 1` moved BELOW the `diff` computation; it was above it bef
 One `if unmeasurable:` decides the verdict (D3) and the detail (D5) together, so the two cannot disagree — and the line the Step-8 mutations rewrite matches exactly once in the file, which a second `if unmeasurable:` guarding the detail separately would break.
 
 Pass `identity_unmeasurable=unmeasurable` in the successful return.
+
+And extend `realized_internals`' own contract sentence at `:820-821` — "`identity_ok` is spec 00059 D2's window-wide check that the rebuilt row equals the journaled `final_targets` to `tol`" — with ", and refuses when a `diff` was not finite (spec 00113 D2)". Three sentences in this file state `identity_ok`'s contract and the family is exactly those three: this one; the field comment Step 3 rewrites (`:763`); and the dataclass docstring at `:757` ("spec 00059 D2's window-wide proof that each resolved row is that cycle's own"), which states the field's PURPOSE rather than its arms and is left alone. Outside the family: `soak_report`'s gate list at `:1645` names `identity_ok` without saying what `False` means, and `SelfTestReport.identity_ok` (`:685`) belongs to a different class.
 
 - [ ] **Step 6: Run both files and confirm the true positive is still green**
 
@@ -287,19 +294,20 @@ git commit
 
 **Files:**
 - Modify: `docs/open-topics/T0188-soak-identity-check-counts-a-nan-comparison-as-passed.md`, `docs/open-topics/README.md`
-- Modify: `docs/open-topics/T0183-reconciliation-reports-perfect-on-an-empty-set.md`, `docs/open-topics/T0194-journal-readers-that-never-validate-the-record.md` — two live topics carrying claims this change falsifies
+- Modify: `docs/open-topics/T0183-reconciliation-reports-perfect-on-an-empty-set.md`, `docs/open-topics/T0193-nonfinite-snapshot-close-escapes-the-soak-report.md`, `docs/open-topics/T0194-journal-readers-that-never-validate-the-record.md` — three live topics carrying claims this change falsifies
 - Modify: `docs/iterations-history-phase6.md`
 
 - [ ] **Step 1: Resolve T0188 through the `topic-ops` skill**
 
 Load `.claude/skills/topic-ops/SKILL.md` and follow it: `status: resolved`, a `## Resolution` naming the commits and what each decision landed as, `git mv` into `docs/open-topics/archive/`, and the index bullet moved to the same category's `### Resolved` with its link repointed at `archive/`. Its `## Suggested next steps` bullets are answered, in their own order, by spec `00113` D1 (where the refusal belongs), D7 (the guard's fixture and its degeneracy) and D2/D3/D5 (what a partly-NaN window answers, and what the detail then carries), with D6 as the consequence for the void reason — say which, so the archived file records the answers rather than the questions.
 
-- [ ] **Step 2: Re-tense the two topics this change falsifies**
+- [ ] **Step 2: Re-tense the three topics this change falsifies**
 
-Neither is `T0188`, and neither is archived here — the edits are prose corrections in files that stay open:
+None is `T0188`, and none is archived here — the edits are prose corrections in files that stay open. The family is `grep -rn "T0188" docs/` less the `00113` spec/plan pair: five live-file hits — `T0183:53`, `T0193:25` and `T0194:17`, one bullet each below; `README.md:124`, which Step 1's archive move already carries; and `docs/iterations-history-phase6.md:889`, a point-in-time changelog entry that correctly keeps its wording. The `T0183:93` bullet carries no `T0188` token — it is the same `identity_ok` contract sentence Task 1 Step 3 rewrites at its source:
 
-- `docs/open-topics/T0183-reconciliation-reports-perfect-on-an-empty-set.md:53` reads "A non-finite `diff` renders the same string with comparisons counted, which is `T0188` — a different defect … and not this topic's to fix". After this branch the string is no longer the same and the comparisons are no longer counted: re-tense it to the outcome and repoint the link at `archive/`.
+- `docs/open-topics/T0183-reconciliation-reports-perfect-on-an-empty-set.md:53` reads "A non-finite `diff` renders the same string with comparisons counted, which is `T0188` — a different defect … and not this topic's to fix". After this branch the string is no longer the same and the comparisons are no longer counted: re-tense it to the outcome, keeping the bare `T0188` citation — `grep -rn "T0188-soak-identity" docs/` returns `README.md:124` as the only markdown link to the topic file, so no bullet here repoints one.
 - The same file's table row at `:93` states `identity_ok`'s range as "`bool | None` — `None` when no `(record, asset)` pair was compared". Correct it to name the new arm as well: `False` when any pair was unmeasurable.
+- `docs/open-topics/T0193-nonfinite-snapshot-close-escapes-the-soak-report.md:25` reads "`T0188` is a silent pass over an unmeasurable comparison, this is a loud escape past a contract that promised degradation" — present tense about a defect this branch closes, in a topic that stays open and whose own fork is the one spec `00113` parks. Re-tense it to the outcome, keeping the citation (`prose.md`); the sentence's point — that the two arrive at `realized_internals` from opposite sides — survives the re-tensing.
 - `docs/open-topics/T0194-journal-readers-that-never-validate-the-record.md:17` already reads "That is closed at the comparison by spec `00113`" while nothing had landed — a completed-work sentence ahead of the step that makes it true (`prose.md`). Re-tense it to name what closed it.
 
 - [ ] **Step 3: The changelog entry**
