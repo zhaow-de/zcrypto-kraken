@@ -19,6 +19,7 @@ from cli.engine.soak import (
     RealizedSeries,
     SelfTestReport,
     SoakError,
+    _basket_complete_index,
     _chain_consistent,
     _instrument_expectations,
     _net_live_from_result,
@@ -373,6 +374,18 @@ def test_net_live_reconcile_false_on_inconsistent_result():
     assert ok is False
 
 
+def test_net_live_reconcile_false_on_a_cap_breach_count_disagreement():
+    # The reconstruction and the builder's own count compute ONE quantity, so a disagreement is broken
+    # code, not a data state -- it lands in reconcile_ok, which voids the run at exit 1.
+    n = 4
+    B = A1 = A2 = [0.30, 0.10, -0.50, 0.05, 0.0]
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
+    assert r.cap_breach_bars == 2  # the fixture really clips, so the tamper moves a number the code recomputes
+    r.cap_breach_bars += 1
+    _net_live, ok, _cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is False
+
+
 def test_net_live_reconciles_when_a_whole_book_limit_binds():
     """The live-cost reconstruction must rerun the builder's WHOLE shaping chain: ten assets at the
     20% long cap give gross 2.0 (past the 1.5x soft cap) and net 1.5 (past the +1.0 band), so
@@ -450,6 +463,166 @@ def test_block_bootstrap_deterministic_and_centered():
     assert abs(sum(a) / len(a) - sum(s) / len(s)) < 0.01  # bootstrap mean ≈ series mean
 
 
+def test_basket_complete_index_is_the_first_all_present_bar():
+    # SOL's pre-entry bars spell absence both ways: a check testing only `is not None` reads bar 0's NaN as a price.
+    prices = {
+        "BTC": [10.0, 11.0, 12.0, 13.0],
+        "ETH": [20.0, 21.0, 22.0, 23.0],
+        "SOL": [float("nan"), None, 32.0, 33.0],
+    }
+    assert _basket_complete_index(prices, ("BTC", "ETH", "SOL")) == 2
+
+
+def test_basket_complete_index_ignores_a_later_hole():
+    prices = {
+        "BTC": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+        "ETH": [None, None, 22.0, 23.0, 24.0, 25.0],
+        "SOL": [30.0, 31.0, 32.0, 33.0, None, 35.0],
+    }
+    assert _basket_complete_index(prices, ("BTC", "ETH", "SOL")) == 2
+
+
+def test_basket_complete_index_refuses_a_basket_never_complete():
+    prices = {"BTC": [10.0, 11.0], "ETH": [20.0, 21.0], "SOL": [None, None]}
+    with pytest.raises(SoakError, match="SOL"):
+        _basket_complete_index(prices, ("BTC", "ETH", "SOL"))
+
+
+def test_basket_complete_index_refuses_an_asset_missing_from_prices():
+    prices = {"BTC": [10.0, 11.0], "ETH": [20.0, 21.0]}
+    with pytest.raises(SoakError, match="SOL"):
+        _basket_complete_index(prices, ("BTC", "ETH", "SOL"))
+
+
+def test_basket_complete_index_is_zero_when_all_present_from_the_start():
+    prices = {"BTC": [10.0, 11.0], "ETH": [20.0, 21.0]}
+    assert _basket_complete_index(prices, ("BTC", "ETH")) == 0
+
+
+def _canonical_panels(n_h4: int, *, late: str | None = None, late_from: int = 0, n_daily: int = 4):
+    """The four values a stubbed `_load_canonical` returns, keyed like `select_model_inputs`' output. The
+    daily panel is complete from index 0 on every leg, so only the h4 grid moves the cut; `late` carries no
+    h4 price before `late_from`, which is where `build_null`'s cut then lands."""
+    assets = CrossfreqSystemConfig().assets
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    h4_ts = [base + timedelta(hours=4 * i) for i in range(n_h4)]
+    daily_ts = [base + timedelta(days=i) for i in range(n_daily)]
+    h4 = {a: [100.0 + i for i in range(n_h4)] for a in assets}
+    if late is not None:
+        h4[late] = [None] * late_from + h4[late][late_from:]
+    daily = {a: [100.0 + i for i in range(n_daily)] for a in assets}
+    return daily, daily_ts, h4, h4_ts
+
+
+def _stub_late_basket(monkeypatch, *, n: int, cut: int, sleeve: list[float] | None = None):
+    """`build_null`'s two inputs stubbed: a single-asset result over `n` completed bars, and a canonical whose
+    'XRP' leg is unpriced on the h4 grid before `cut`. The sleeve values are distinct per bar, so an assertion
+    on a retained bar's weight cannot pass by every bar carrying the same number."""
+    sleeve = sleeve if sleeve is not None else [0.01 * (k + 1) for k in range(n + 1)]
+    fake = _fake_result(
+        n_periods=n,
+        sleeve_B=sleeve,
+        sleeve_A1=sleeve,
+        sleeve_A2=sleeve,
+        multipliers=[1.0] * (n + 1),
+        governed_net=[0.001 * k for k in range(n)],
+    )
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _canonical_panels(n + 1, late="XRP", late_from=cut))
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+    return fake
+
+
+def test_build_null_drops_bars_before_the_basket_completes(monkeypatch):
+    n, cut = 8, 3
+    fake = _stub_late_basket(monkeypatch, n=n, cut=cut)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.n_periods == n - cut
+    assert ns.weights[0]["BTC/EUR"] == fake.final_targets["BTC"][cut]
+
+
+def test_build_null_cuts_every_parallel_series_to_the_same_length(monkeypatch):
+    """The desynchronisation guard: every per-bar list is cut with the SAME index. Slicing some and not
+    others misattributes a governor day or a clipped bar to a neighbour and nothing downstream can see it."""
+    n, cut = 8, 3
+    _stub_late_basket(monkeypatch, n=n, cut=cut)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.n_periods == n - cut  # the fixture really cut, so equal lengths are not the uncut length
+    assert {
+        len(ns.weights),
+        len(ns.net_live),
+        len(ns.multipliers),
+        len(ns.day_index),
+        len(ns.governed_net),
+        len(ns.cap_breach),
+    } == {ns.n_periods}
+
+
+def test_build_null_recomputes_cap_breach_bars_over_retained_bars(monkeypatch):
+    n, cut = 6, 3
+    sleeve = [0.30, 0.05, 0.05, 0.05, 0.30, 0.05, 0.0]  # past the +0.20 cap on bar 0 and on bar 4
+    fake = _stub_late_basket(monkeypatch, n=n, cut=cut, sleeve=sleeve)
+    assert fake.cap_breach_bars == 2  # the builder's own count, over every bar it built
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.cap_breach == [0.0, 1.0, 0.0]
+    assert ns.cap_breach_bars == 1
+
+
+def test_build_null_refuses_a_canonical_that_retains_no_bars(monkeypatch):
+    # The late leg's first price is the last h4 bar: an empty null whose reference span would name the
+    # whole canonical, printed above the void gate where nothing downstream catches it.
+    n = 5
+    _stub_late_basket(monkeypatch, n=n, cut=n)
+
+    with pytest.raises(SoakError, match=f"index {n}"):
+        soak.build_null(Path("unused-canonical"))
+
+
+def test_build_null_keeps_everything_when_the_basket_is_complete_from_bar_zero(monkeypatch):
+    n = 8
+    fake = _stub_late_basket(monkeypatch, n=n, cut=0)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.n_periods == n
+    assert ns.weights[0]["BTC/EUR"] == fake.final_targets["BTC"][0]
+    assert len(ns.net_live) == n and len(ns.cap_breach) == n
+    assert ns.cap_breach_bars == fake.cap_breach_bars
+
+
+def test_build_null_reference_span_ends_at_the_last_scored_bar(monkeypatch):
+    """The h4 grid carries one bar more than the builder scores, so a span closed on its last entry would
+    postdate every verdict the null produced."""
+    n, cut = 8, 3
+    _stub_late_basket(monkeypatch, n=n, cut=cut)
+    _, _, _, h4_ts = soak._load_canonical(Path("unused-canonical"))
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.reference_span == (h4_ts[cut], h4_ts[n - 1])
+    assert ns.reference_span[1] != h4_ts[-1]  # never the forming bar the null never scored
+    assert ns.reference_span[1] != h4_ts[ns.n_periods - 1]  # never the retained COUNT read as an index
+
+
+def test_build_null_carries_a_cap_breach_disagreement_into_reconcile_ok(monkeypatch):
+    n = 4
+    B = A1 = A2 = [0.30, 0.10, -0.50, 0.05, 0.0]
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
+    fake.cap_breach_bars += 1
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _canonical_panels(n + 1))
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.reconcile_ok is False  # refused through the self-test, so build_null still returns
+    assert ns.n_periods == n
+
+
 @pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
 def test_build_null_on_real_canonical():
     from cli.engine.soak import build_null
@@ -461,7 +634,15 @@ def test_build_null_on_real_canonical():
     assert len(ns.governed_net) == ns.n_periods
     assert ns.cap_breach_bars >= 0
     assert len(ns.cap_breach) == ns.n_periods
-    assert sum(ns.cap_breach) == ns.cap_breach_bars
+
+    # The cut over a real panel, read back off the loader rather than written as an index or a date, which
+    # the basket's next change falsifies: every leg is priced at the first retained bar, one is not before it.
+    _daily_prices, _daily_ts, h4_prices, h4_ts = soak._load_canonical(Path("data/ohlc-full"))
+    k = len(h4_ts) - 1 - ns.n_periods  # the builder's n_periods is len(h4_ts) - 1, so this is the cut
+    assert k > 0
+    assets = CrossfreqSystemConfig().assets
+    assert all(h4_prices[a][k] is not None and math.isfinite(h4_prices[a][k]) for a in assets)
+    assert any(h4_prices[a][k - 1] is None or not math.isfinite(h4_prices[a][k - 1]) for a in assets)
 
 
 def test_build_null_path_selects_builder(monkeypatch, tmp_path):
@@ -469,18 +650,20 @@ def test_build_null_path_selects_builder(monkeypatch, tmp_path):
     # and both builders, and prove 'fast' calls build_crossfreq_system_fast, 'verified' calls
     # build_crossfreq_system, and an unknown path raises rather than silently defaulting.
     calls = []
-    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: ({}, [], {}, []))
+    # A cut-0 panel, so the basket refusal above the `path` branch cannot preempt the bogus-path refusal
+    # this test names; and n_periods >= 1, so the cut retains a bar and `build_null` reaches the assertion.
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _canonical_panels(2))
 
     def _stub_result():
         return types.SimpleNamespace(
-            final_targets={"BTC": [1.0]},
-            governed_net=[],
-            multipliers=[1.0],
-            sleeve_positions={"B": {"BTC": [0.0]}, "A1": {"BTC": [0.0]}, "A2": {"BTC": [0.0]}},
+            final_targets={"BTC": [1.0, 1.0]},
+            governed_net=[0.0],
+            multipliers=[1.0, 1.0],
+            sleeve_positions={"B": {"BTC": [0.0, 0.0]}, "A1": {"BTC": [0.0, 0.0]}, "A2": {"BTC": [0.0, 0.0]}},
             cap_breach_bars=0,
             governor_engaged_bars=0,
-            day_index=[0],
-            n_periods=0,
+            day_index=[0, 0],
+            n_periods=1,
         )
 
     def _mk_fake(tag):
@@ -1448,6 +1631,98 @@ def test_render_report_banner_and_vocabulary_lock():
         assert m in text  # the 5 gating rows
 
 
+def test_report_states_the_null_reference_span():
+    """Two runs judged against different references are told apart only by what the page itself says the
+    reference was, so the span renders on a run that reaches a verdict."""
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    first, last = datetime(2021, 12, 21, tzinfo=UTC), datetime(2026, 3, 31, 16, tzinfo=UTC)
+    null = replace(_mk_null(nw, [0.001] * 200), reference_span=(first, last))
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert "NULL REFERENCE SPAN" in text
+    assert "complete-basket era" in text  # the span is a cut, not the canonical's whole extent
+    assert "retained bars  : 200" in text
+    assert f"first bar      : {first.isoformat()}" in text
+    assert f"last  bar      : {last.isoformat()}" in text
+    assert text.index("NULL REFERENCE SPAN") < text.index("STRUCTURAL FINGERPRINT")
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+
+
+def test_report_names_the_absent_null_reference():
+    """A void run still says which reference it would have judged against -- here, none."""
+    rs = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+
+    text = render_report(None, rs, None, None, void_reasons=["canonical absent — null unavailable"], band=0.90)
+
+    assert "NULL REFERENCE SPAN" in text
+    assert "no null reference available" in text
+
+
+def test_report_renders_a_null_whose_reference_span_is_absent():
+    """A `NullSystem` built outside `build_null` carries no stamps: the counts above them still print and
+    the render does not raise on `None[0]`."""
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 200, [0.001] * 200)
+    assert null.reference_span is None
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert "retained bars  : 200" in text
+    assert "no-book bars   : 0 of 200" in text
+    assert "realized no-book bars : 0 of 6" in text
+    assert "no null reference stamps available" in text
+    assert "first bar" not in text and "last  bar" not in text
+
+
+def test_report_counts_no_book_bars_in_both_series():
+    """The two counts are read off two different series: a block computing both from one of them prints a
+    count and a total that belong to the other. Both faces are asserted on the one fixture whose counts
+    differ from each other and from zero, which is what pins them as values rather than as placeholders."""
+    nw = [{"BTC": 0.0, "ETH": 0.0}] * 2 + [{"BTC": 0.15, "ETH": 0.15}] * 3
+    rw = [{"BTC": 0.0, "ETH": 0.0}] + [{"BTC": 0.15, "ETH": 0.15}] * 5
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 5)
+    void_reasons = ["L=6 < floor=30"]
+
+    text = render_report(None, realized, null, None, void_reasons=void_reasons, band=0.90)
+    payload = soak._json_payload(
+        None, realized, null, None, void_reasons=void_reasons, band=0.90, now=datetime(2026, 7, 20, tzinfo=UTC)
+    )
+
+    assert "no-book bars   : 2 of 5" in text
+    assert "realized no-book bars : 1 of 6" in text
+    assert payload["null_reference"]["no_book_bars"] == 2
+    assert payload["null_reference"]["retained_bars"] == 5
+    assert payload["null_reference"]["total_bars"] == 5
+    assert payload["realized_no_book_bars"] == 1
+    assert payload["realized_total_bars"] == 6
+
+
+def test_payload_totals_are_read_off_the_series_their_counts_were_counted_over():
+    """A count without its own denominator is not a rate, and `n_periods` is a second source for the null's:
+    the payload's total is the length `_no_book_bars` counted over, so a total taken from `n_periods` instead
+    reports a span the count was never measured against."""
+    nw = [{"BTC": 0.0, "ETH": 0.0}] * 2 + [{"BTC": 0.15, "ETH": 0.15}] * 3
+    null = replace(_mk_null(nw, [0.001] * 5), n_periods=4)
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+
+    payload = soak._json_payload(
+        None, realized, null, None, void_reasons=["L=6 < floor=30"], band=0.90, now=datetime(2026, 7, 20, tzinfo=UTC)
+    )
+
+    assert payload["null_reference"]["total_bars"] == 5
+    assert payload["null_reference"]["retained_bars"] == 4
+
+
 def test_render_report_store_bound_window_warns_naming_both_bounds(tmp_path):
     """End-to-end on a real truncated store: the warning must fire, name the store's last usable
     bar AND the journal's last cycle, and say how many cycles the gap cost."""
@@ -2228,6 +2503,22 @@ def test_json_payload_dual_none_in_windows_only_mode():
     assert payload["pnl"]["pnl_verdict"]["dual"] is None
 
 
+def test_json_payload_survives_an_absent_realized_series():
+    """The empty-journal path renders and then builds a payload with every input `None`; an unguarded read
+    of `realized.weights` there raises past `cli.engine.command`, which catches `EngineError` alone."""
+    void_reasons = ["no journaled cycles found"]
+
+    text = render_report(None, None, None, None, void_reasons=void_reasons, band=0.90)
+    payload = soak._json_payload(
+        None, None, None, None, void_reasons=void_reasons, band=0.90, now=datetime(2026, 7, 20, tzinfo=UTC)
+    )
+
+    assert payload["null_reference"] is None
+    assert payload["realized_no_book_bars"] is None
+    assert "no null reference available" in text
+    assert "realized no-book bars" not in text
+
+
 # --- _verdict_payload: degraded verdict JSON, zero vs null ---------------------------------------------
 
 
@@ -2635,7 +2926,7 @@ def test_build_null_casts_its_book_onto_the_live_symbol_space(monkeypatch):
     n = 3
     B = A1 = A2 = [0.09, 0.12, 0.06, 0.0]
     fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
-    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: ({}, [], {}, []))
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _canonical_panels(n + 1))  # cut 0: nothing moves
     monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
 
     ns = soak.build_null(Path("unused-canonical"))

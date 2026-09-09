@@ -51,6 +51,8 @@ Dataset root `data/ohlc-full/` (gitignored); `basket_sha256` `70c2728e0badf7015f
 | XRP/EUR | 240 | 19423 | 2017-05-18 | 2026-03-31 | `7cd898a849056dab…` |
 | XRP/EUR | 60 | 77653 | 2017-05-18 | 2026-03-31 | `71cb1883a64062fd…` |
 
+**The basket's ten `/EUR` legs are all present only from 2021-12-21, AVAX the last to enter** — so a cross-sectional statistic computed over the full span measures a universe that is still growing, not the basket, for every bar before that date.
+
 #### QA (coverage / gaps over the reconstructed grid)
 
 - Series: 36  ·  total gaps: 7807  ·  min coverage: 90.5465623863223

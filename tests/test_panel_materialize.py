@@ -522,7 +522,7 @@ def test_write_meta_writes_the_generation_manifest(tmp_path: Path) -> None:
 
 
 def test_meta_k_levels_match_the_primitive_depth_ladder():
-    # Review M4: K_LEVELS is generation METADATA for panel-meta.json while primitives._DEPTH_LEVELS
+    # K_LEVELS is generation METADATA for panel-meta.json while primitives._DEPTH_LEVELS
     # is the math; two sources of truth must not drift or the meta silently lies about the columns.
     from cli.panel import primitives
     from cli.panel.materialize import K_LEVELS
@@ -531,7 +531,7 @@ def test_meta_k_levels_match_the_primitive_depth_ladder():
 
 
 def test_final_fractional_second_messages_reach_the_carried_book(tmp_path: Path) -> None:
-    """Review C1: a message at :59:59.5 has no sampling boundary in its own hour, but it MUST be in
+    """A message at :59:59.5 has no sampling boundary in its own hour, but it MUST be in
     the carried-out state -- otherwise every update-opening successor starts stale and the panel
     silently drifts at each hour boundary."""
     primary = tmp_path / "primary"

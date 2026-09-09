@@ -16,7 +16,7 @@ from cli.engine.concordance import HashMismatchError, replay_cycle
 from cli.engine.cycle import _MODEL_SYMBOLS, _expand_to_basket, select_model_inputs, symbol_keyed_targets
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, validate_record
-from cli.engine.store import BASKET, GRID_INTERVALS, read_store_series
+from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system, build_crossfreq_system_fast
 from cli.portfolio.crossfreq_system import apply_whole_book_limits
 from cli.risk.limits import apply_position_caps
@@ -65,6 +65,14 @@ def structural_metrics(
         "hhi": hhi,
         "cap_breach": cap_breach,
     }
+
+
+def _no_book_bars(weights_by_bar: list[dict[str, float]]) -> tuple[int, int]:
+    """Bars holding no book at all, and the total they are out of -- read off `structural_metrics`' own
+    hhi sentinel rather than a second spelling of its gross test, and shared by the text report and the
+    JSON payload, so neither count can disagree with the branch it reports or with the other face."""
+    hhi = structural_metrics(weights_by_bar)["hhi"]
+    return sum(1 for h in hhi if h == 0.0), len(hhi)
 
 
 def governor_engaged_daily(mult: list[float], day_index: list[int]) -> list[float]:
@@ -277,14 +285,16 @@ def realized_series(
     )
 
 
-def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[list[float], bool, list[float]]:
+def _net_live_from_result(
+    result, *, fee_builder: float, fee: float, long_cap: float = 0.20, short_cap: float = 0.10
+) -> tuple[list[float], bool, list[float]]:
     """Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
     turnover, not on the limited book's own -- so the governor's turnover bias cancels in the realized-vs-null
     comparison. `combined` is rebuilt from `result.sleeve_positions` in the builder's own `third = 1 / 3` form
-    and `capped` from it (dividing `final_targets` by a disengaged 0.0 multiplier is undefined), so the returned
-    `cap_breach` cannot disagree with `cap_breach_bars` on a rounding bit; like that count, it stops at the
-    PER-ASSET caps. `limited` is that book through `apply_whole_book_limits`, the book the builder itself costs
-    and multiplies -- stopping at the caps diverges the moment a whole-book limit binds."""
+    and `capped` from it (dividing `final_targets` by a disengaged 0.0 multiplier is undefined), so a returned
+    `cap_breach` disagreeing with `cap_breach_bars` is broken code and lands in `reconcile_ok`; like that count,
+    it stops at the PER-ASSET caps. `limited` is that book through `apply_whole_book_limits`, the book the builder
+    itself costs and multiplies -- stopping at the caps diverges the moment a whole-book limit binds."""
     n = result.n_periods
     assets = tuple(result.final_targets)
     sleeves = result.sleeve_positions
@@ -293,12 +303,10 @@ def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[li
         a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n + 1)]
         for a in assets
     }
-    capped = apply_position_caps(combined)
+    capped = apply_position_caps(combined, long_cap=long_cap, short_cap=short_cap)
     limited = apply_whole_book_limits(capped)
     mult = result.multipliers
     final_targets = result.final_targets
-
-    reconcile_ok = all(abs(mult[k] * limited[a][k] - final_targets[a][k]) <= 1e-9 for a in assets for k in range(n + 1))
 
     net_live: list[float] = []
     for k in range(n):
@@ -308,17 +316,23 @@ def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[li
 
     cap_breach = [1.0 if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) else 0.0 for k in range(n)]
 
+    reconcile_ok = (
+        all(abs(mult[k] * limited[a][k] - final_targets[a][k]) <= 1e-9 for a in assets for k in range(n + 1))
+        and sum(cap_breach) == result.cap_breach_bars
+    )
+
     return net_live, reconcile_ok, cap_breach
 
 
 @dataclass(frozen=True)
 class NullSystem:
     """The backtest reference the realized series is judged against: the same strategy rebuilt over the full
-    frozen canonical history, its P&L recast onto the live cost convention."""
+    frozen canonical history, its P&L recast onto the live cost convention, its per-bar series cut to the bars
+    from which every basket leg carries a price (spec 00112 D1)."""
 
     weights: list[dict[str, float]]  # final_targets transposed to per-bar dicts, completed bars only (n_periods)
     net_live: list[float]  # n_periods
-    multipliers: list[float]  # n_periods (sliced from the n_periods+1 result)
+    multipliers: list[float]  # n_periods
     day_index: list[int]  # n_periods
     assets: tuple[str, ...]
     reconcile_ok: bool
@@ -326,11 +340,12 @@ class NullSystem:
     governed_net: list[float]  # n_periods
     cap_breach: list[float]  # n_periods; 1.0 on a bar where the pre-cap book was clipped
     cap_breach_bars: int
+    reference_span: tuple[datetime, datetime] | None = None  # first and last RETAINED bar; None outside `build_null`
 
 
 def _canonical_present(canonical_dir: Path) -> bool:
-    """A one-file probe: presence, never completeness -- `_load_canonical` reads every model leg on that alone."""
-    return (canonical_dir / "BTC" / "EUR" / "240.parquet").exists()
+    """A one-file probe: presence, never completeness -- `_load_canonical` refuses whatever else the tree is missing."""
+    return _store_path(canonical_dir, "BTC/EUR", 240).exists()
 
 
 def _load_canonical(
@@ -338,12 +353,34 @@ def _load_canonical(
 ) -> tuple[dict[str, list[float | None]], list[datetime], dict[str, list[float | None]], list[datetime]]:
     """The canonical's daily and 4h MODEL panels -- `select_model_inputs`' ten base-keyed `/EUR` legs on their own calendar
     (spec 00094 D2), the grid the live engine itself builds on -- read here so `build_null` and `instrument_self_check`
-    cannot drift apart. Only the ten are READ: `_canonical_present` probes `BTC/EUR` alone, so reading the `/BTC` legs
-    would abort a ten-leg canonical tree on a FileNotFoundError, which no handler degrades into a refusal."""
+    cannot drift apart. Only the ten are READ, and the probe below covers exactly those: `read_store_series` is a bare
+    `read_parquet`, so an unprobed missing leg raises `FileNotFoundError`, which no handler degrades into a refusal."""
+    missing = [
+        f"{symbol}@{interval}"
+        for symbol in _MODEL_SYMBOLS
+        for interval in GRID_INTERVALS
+        if not _store_path(canonical_dir, symbol, interval).exists()
+    ]
+    if missing:
+        raise SoakError(f"canonical {canonical_dir} is missing {', '.join(missing)}")
     raw = {(a, iv): read_store_series(canonical_dir, a, iv) for a in _MODEL_SYMBOLS for iv in GRID_INTERVALS}
     daily_ts, daily_prices = select_model_inputs({a: raw[(a, 1440)] for a in _MODEL_SYMBOLS})
     h4_ts, h4_prices = select_model_inputs({a: raw[(a, 240)] for a in _MODEL_SYMBOLS})
     return daily_prices, daily_ts, h4_prices, h4_ts
+
+
+def _basket_complete_index(prices: dict[str, list[float | None]], assets: tuple[str, ...]) -> int:
+    """The first index at which every basket asset carries a finite price, derived per call because the basket
+    changes and a constant would not (spec 00112 D3)."""
+    # `.get`, not `[]`: an asset with no key is absent at every index, so a missing one reaches the
+    # refusal below instead of raising KeyError out of a helper nobody catches.
+    series = {a: prices.get(a, []) for a in assets}
+    for k in range(min((len(s) for s in series.values()), default=0)):
+        if all(s[k] is not None and math.isfinite(s[k]) for s in series.values()):
+            return k
+    absent = sorted(a for a, s in series.items() if not any(v is not None and math.isfinite(v) for v in s))
+    # Empty `absent` is the disjoint case -- each asset priced somewhere, never all at one index -- so name the basket.
+    raise SoakError(f"basket never complete: no index prices all of {absent or sorted(assets)}")
 
 
 def build_null(
@@ -352,6 +389,12 @@ def build_null(
     """`path` (spec 00061 D5) selects the builder, "fast" or the "verified" daily oracle spot replay -- the
     same choice `concordance.replay_cycle` offers."""
     daily_prices, daily_ts, h4_prices, h4_ts = _load_canonical(canonical_dir)
+    # Before the builder, not after: a leg present but empty pads to an all-None column, on which
+    # `build_crossfreq_system_fast` raises a bare `ValueError` no handler degrades. The daily index is
+    # discarded -- the null carries no series on a daily bar -- and taken for its refusal alone, since
+    # the builder is handed both grids and dies on either.
+    cut = _basket_complete_index(h4_prices, config.assets)
+    _basket_complete_index(daily_prices, config.assets)
     if path == "fast":
         result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
     elif path == "verified":
@@ -359,26 +402,36 @@ def build_null(
     else:
         raise SoakError(f"path must be 'fast' or 'verified', got {path!r}")
 
-    net_live, reconcile_ok, cap_breach = _net_live_from_result(result, fee_builder=config.cost_per_side, fee=fee)
+    net_live, reconcile_ok, cap_breach = _net_live_from_result(
+        result, fee_builder=config.cost_per_side, fee=fee, long_cap=config.long_cap, short_cap=config.short_cap
+    )
     n = result.n_periods
+    if cut >= n:
+        raise SoakError(f"basket completes at h4 index {cut}, past the last scored bar {n - 1}: the null retains no bars")
     # The null's book is cast onto the LIVE key space (spec 00094 D1) by `_expand_to_basket`, the two `/BTC`
     # legs at exactly 0.0: zero legs leave gross/net/turnover/hhi untouched, but active_frac is
     # n_active/len(weights), so a ten-wide null against a twelve-wide realized series would bias every
     # active_frac comparison by the ratio of the two universes.
-    weights = [_expand_to_basket({a: series[k] for a, series in result.final_targets.items()}) for k in range(n)]
+    weights = [_expand_to_basket({a: series[k] for a, series in result.final_targets.items()}) for k in range(cut, n)]
     assets = tuple(BASKET)
+
+    # The builder saw the whole history (spec 00112 D2), so the legs already present are warm at the first retained bar.
+    cap_breach = cap_breach[cut:]
 
     return NullSystem(
         weights=weights,
-        net_live=net_live,
-        multipliers=list(result.multipliers[:n]),
-        day_index=list(result.day_index[:n]),
+        net_live=net_live[cut:],
+        multipliers=list(result.multipliers[cut:n]),
+        day_index=list(result.day_index[cut:n]),
         assets=assets,
         reconcile_ok=reconcile_ok,
-        n_periods=n,
-        governed_net=result.governed_net,
+        n_periods=n - cut,
+        governed_net=list(result.governed_net[cut:n]),
         cap_breach=cap_breach,
-        cap_breach_bars=result.cap_breach_bars,
+        cap_breach_bars=int(sum(cap_breach)),
+        # `h4_ts[n - 1]`, never `h4_ts[-1]`: the grid carries one bar more than the builder scores, so its
+        # last entry is the forming bar, and a span closed on it would postdate every verdict below.
+        reference_span=(h4_ts[cut], h4_ts[n - 1]),
     )
 
 
@@ -438,6 +491,11 @@ class MetricVerdict:
     width: float  # hi - lo
 
 
+# Null observations per window below which a band cannot discriminate. Shared by every site that tests
+# `effective_n` against it, so a verdict, the disclosure explaining it and the short-null void cannot disagree.
+_MIN_EFFECTIVE_N = 3
+
+
 def metric_verdict(
     live: float,
     null_values: list[float],
@@ -447,9 +505,9 @@ def metric_verdict(
     domain: tuple[float, float] | None = None,
 ) -> MetricVerdict:
     """Judge `live` against `null_values` on a two-sided band: the outer `band` interval bounds "inconsistent"
-    on EITHER side -- too-low is a bug tell too -- the inner half-width interval bounds "consistent", and the
-    two edges between them "weakly-consistent". A band that cannot discriminate is "n/a" wherever `live` falls:
-    zero width, `effective_n < 3`, under two null values, or covering the whole of `domain` when one is given."""
+    on EITHER side -- too-low is a bug tell too -- the inner half-width interval bounds "consistent", and the two
+    edges between them "weakly-consistent". A band that cannot discriminate is "n/a" wherever `live` falls: zero
+    width, `effective_n` under `_MIN_EFFECTIVE_N`, under two null values, or covering all of `domain` when given."""
     if len(null_values) < 2:
         return MetricVerdict(
             verdict="n/a", live=live, median=live, lo=live, hi=live, percentile=50.0, effective_n=effective_n, width=0.0
@@ -471,7 +529,7 @@ def metric_verdict(
     eps = 1e-12
     full_range = domain is not None and lo <= domain[0] + eps and hi >= domain[1] - eps
 
-    if width == 0.0 or effective_n < 3 or full_range:
+    if width == 0.0 or effective_n < _MIN_EFFECTIVE_N or full_range:
         verdict = "n/a"
     elif inner_lo <= live <= inner_hi:
         verdict = "consistent"
@@ -488,13 +546,19 @@ def metric_verdict(
 def _full_range_disclosure(
     name: str, verdict: MetricVerdict, domain: tuple[float, float] | None, *, effective_verdict: str | None = None
 ) -> str | None:
-    """The disclosure naming a band that spans the FULL `domain`, or `None`: `width > 0` and `effective_n >= 3`
-    isolate this "n/a" from `metric_verdict`'s other two triggers, and `effective_verdict` -- the label actually
-    rendered, which under a reconciliation (spec 00061 D1) can discriminate where the raw windowed verdict did
-    not -- must be "n/a" too, or the line would contradict the verdict printed beside it."""
+    """The disclosure naming a band that spans the FULL `domain`, or `None`: `width > 0` and an `effective_n` at
+    `_MIN_EFFECTIVE_N` or above isolate this "n/a" from `metric_verdict`'s other two triggers, and `effective_verdict`
+    -- the label actually rendered, which under a reconciliation (spec 00061 D1) can discriminate where the raw
+    windowed verdict did not -- must be "n/a" too, or the line would contradict the verdict printed beside it."""
     if effective_verdict is None:
         effective_verdict = verdict.verdict
-    if domain is None or verdict.verdict != "n/a" or verdict.width <= 0.0 or verdict.effective_n < 3 or effective_verdict != "n/a":
+    if (
+        domain is None
+        or verdict.verdict != "n/a"
+        or verdict.width <= 0.0
+        or verdict.effective_n < _MIN_EFFECTIVE_N
+        or effective_verdict != "n/a"
+    ):
         return None
     return (
         f"{name}: the null band spans the full [{domain[0]:g},{domain[1]:g}] range at this window "
@@ -846,7 +910,7 @@ def plausibility_checks(realized, null) -> list[str]:
     if realized.chain_ok is False:
         messages.append("realized: chain_ok is False (forward join integrity broken)")
     if not null.reconcile_ok:
-        messages.append("null: reconcile_ok is False (live-cost reconstruction diverged)")
+        messages.append("null: reconcile_ok is False (live-cost reconstruction or cap-breach count diverged)")
     return messages
 
 
@@ -915,7 +979,7 @@ class SoakAnalysis:
     panel: PanelSummary  # summarize_panel over the discriminating (non-"n/a") gating verdicts
     null_gov_rate: float | None  # backtest CONTEXT: fraction of null days governor-engaged; None over no null days
     null_cap_rate: float | None  # backtest CONTEXT: cap_breach_bars / n_periods; None over no null periods
-    d4_gap_bps: float  # mean(governed_net - net_live) over frozen history, in bps (x1e4)
+    d4_gap_bps: float  # mean(governed_net - net_live) over the null's complete-basket era, in bps (x1e4)
     d4_active: bool | None  # governor engaged anywhere in the null (any mult < 1); None over no null periods
     pnl_mean: float  # realized interior mean net/cycle
     pnl_cum: float  # realized compounded cumulative net over ALL bars: prod(1+net)-1
@@ -968,7 +1032,7 @@ def _judge_dual(
     # `effective_n` is computed ONCE by the caller and passed unchanged into BOTH calls, never recomputed
     # per-null: `block_bootstrap_null` wraps circularly, so with window > len(null_series) it fabricates a
     # full-size distribution where `windowed_null` returns [] -- sharing the windowed null's tiny effective_n
-    # is what makes `metric_verdict`'s `effective_n < 3` guard fire for the bootstrap verdict too.
+    # is what makes `metric_verdict`'s `_MIN_EFFECTIVE_N` guard fire for the bootstrap verdict too.
     bootstrap_v = metric_verdict(live, bootstrap_values, band=band, effective_n=effective_n, domain=domain)
     return windowed_v, reconcile_verdicts(windowed_v.verdict, bootstrap_v.verdict)
 
@@ -1265,7 +1329,7 @@ def render_report(
 ) -> str:
     """Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
     is absent, `realized` too when the journal is empty or `realized_series` raised `SoakError`; the report then
-    stops at the NO VERDICT line, with the window block and self-tests still rendered above it, and
+    stops at the NO VERDICT line, with the window block, the null-reference block and self-tests above it, and
     `null_mode`/`path` (spec 00061 D4/D5) are stated up front even so, since a void run still reflects a choice a
     re-run would want to reproduce. A non-empty `void_reasons` suppresses every section below the gate, so an
     untrustworthy run never prints a per-metric conclusion, while the STORE-BOUND WINDOW warning sits ABOVE that
@@ -1302,6 +1366,28 @@ def render_report(
             lines.append("     Everything below is a read on a STALE window, not on the journal's current")
             lines.append("     extent. Re-run against a store that covers the journal before reading it as")
             lines.append("     the present state of the evidence.")
+    lines.append("")
+
+    lines.append("NULL REFERENCE SPAN")
+    if null is not None:
+        null_flat, null_bars = _no_book_bars(null.weights)
+        lines.append("  reference      : the canonical's complete-basket era, not its whole extent")
+        lines.append("  no-book bar    : held nothing at all -- its hhi reads 0, a sentinel not a measurement")
+        lines.append(f"  retained bars  : {null.n_periods}")
+        lines.append(f"  no-book bars   : {null_flat} of {null_bars}")
+        # A null built anywhere but `build_null` carries no stamps; the lines above read none of them.
+        if null.reference_span is not None:
+            lines.append(f"  first bar      : {null.reference_span[0].isoformat()}")
+            lines.append(f"  last  bar      : {null.reference_span[1].isoformat()}")
+        else:
+            lines.append("  no null reference stamps available")
+    else:
+        lines.append("  no null reference available")
+    # Under `realized` alone, not its cycle_ts: a no-book bar in the LIVE window biases the reading itself
+    # rather than only the reference, so the count survives a window the store closed to nothing.
+    if realized is not None:
+        realized_flat, realized_bars = _no_book_bars(realized.weights)
+        lines.append(f"  realized no-book bars : {realized_flat} of {realized_bars}")
     lines.append("")
 
     lines.append("SELF-TESTS")
@@ -1424,9 +1510,8 @@ def _json_payload(
 ) -> dict:
     """Every number the report renders, as a `json.dumps`-able dict -- the machine-readable twin of
     `render_report`'s text, plus the raw `RealizedInternals` diagnostics the vocabulary-locked text cannot
-    carry. `null` is accepted to mirror `render_report`'s signature but contributes nothing; every
-    null-derived number already lives in `analysis`. `internals` is `None` exactly when `analysis` is."""
-    del null
+    carry. `null` contributes the reference span, its retained bars and its no-book count, which exist nowhere
+    else; every other null-derived number lives in `analysis`. `internals` is `None` exactly when `analysis` is."""
     payload: dict = {
         "generated_at": now.isoformat(),
         "band": band,
@@ -1468,6 +1553,27 @@ def _json_payload(
         }
     else:
         payload["provenance"] = None
+
+    # Two payloads archived across a change of reference otherwise carry identical `provenance` blocks and
+    # different bands, with nothing saying the null moved.
+    if null is None:
+        payload["null_reference"] = None
+    else:
+        null_flat, null_bars = _no_book_bars(null.weights)
+        payload["null_reference"] = {
+            "retained_bars": null.n_periods,
+            "no_book_bars": null_flat,
+            # The count's own denominator, so the no-book RATE is computable from one series: `retained_bars`
+            # is `n_periods`, a second source, and the text face prints both for that reason.
+            "total_bars": null_bars,
+            "first_bar": None if null.reference_span is None else null.reference_span[0].isoformat(),
+            "last_bar": None if null.reference_span is None else null.reference_span[1].isoformat(),
+        }
+    # Top level, not inside `provenance`, which a realized series with no scored bars omits while the text
+    # block still prints this line -- and with it the only other realized bar count the payload carries.
+    realized_flat, realized_bars = (None, None) if realized is None else _no_book_bars(realized.weights)
+    payload["realized_no_book_bars"] = realized_flat
+    payload["realized_total_bars"] = realized_bars
 
     payload["self_test"] = (
         None
@@ -1536,13 +1642,13 @@ def soak_report(
     now: datetime | None = None,
 ) -> tuple[str, dict]:
     """Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
-    `L < floor`, degeneracy, and the internals rebuild's own `identity_ok`/`cap_consistent`) against a backtest null
-    rebuilt from the frozen canonical -- absent canonical, no null and a void run -- and render both the text report and
-    its JSON twin. An unavailable internals rebuild DEGRADES governor_engagement/cap_breach to "n/a" (spec 00059 D7); an
-    available one failing either proof VOIDS, since the instrument would be lying about alignment. Never raises on a short,
-    void or absent-canonical run -- those are refusals, not failures -- while everything else propagates, an unreadable
-    record included: the one exception `soak_report` itself catches is the `SoakError` out of `realized_series`.
-    `null_mode`/`path` are validated only when the canonical is present, by whichever callee first rejects them."""
+    `L < floor`, degeneracy, a null too short to discriminate, and the internals rebuild's own `identity_ok`/`cap_consistent`)
+    against a backtest null rebuilt from the frozen canonical and retained over its complete-basket era -- absent canonical or a
+    `build_null` refusal, no null and a void run -- and render both the text report and its JSON twin. An unavailable internals
+    rebuild DEGRADES governor_engagement/cap_breach to "n/a" (spec 00059 D7); an available one failing either proof VOIDS, since
+    the instrument would be lying about alignment. Never raises on a short, void, absent-canonical or null-refused run -- those
+    are refusals, not failures -- while everything else propagates, an unreadable record included. `null_mode`/`path` are
+    validated only when the canonical is present, by whichever callee first rejects them."""
     now = now or datetime.now(UTC)
     # Local import: `cli.engine.command` imports `soak_report` from this module, so a module-level import here
     # would form a cycle.
@@ -1573,38 +1679,56 @@ def soak_report(
         void_reasons.append(f"L={len(realized.net)} < floor={floor}")
 
     if _canonical_present(canonical_dir):
-        null = build_null(canonical_dir, fee=fee, path=path)
-        reader = _snapshot_reader(journal_dir)
+        try:
+            null = build_null(canonical_dir, fee=fee, path=path)
+        except SoakError as exc:
+            # A canonical the null cannot be built over degrades like an absent one: the window block
+            # and the self-tests block above the gate are what a reader needs most on the run that
+            # lost its reference.
+            null = None
+            analysis = None
+            self_test = None
+            internals = None
+            void_reasons.append(f"null unavailable: {exc}")
+        else:
+            reader = _snapshot_reader(journal_dir)
 
-        by_ts = {r.cycle_ts: r for r in records}
-        scored_records = [by_ts[t] for t in realized.cycle_ts]
-        latest_record = max(records, key=lambda r: r.cycle_ts)
-        internals = realized_internals(scored_records, latest_record, reader)
+            by_ts = {r.cycle_ts: r for r in records}
+            scored_records = [by_ts[t] for t in realized.cycle_ts]
+            latest_record = max(records, key=lambda r: r.cycle_ts)
+            internals = realized_internals(scored_records, latest_record, reader)
 
-        self_test = self_tests(
-            records,
-            null,
-            realized=realized,
-            canonical_dir=canonical_dir,
-            registry_path=registry_path,
-            snapshot_reader=reader,
-            path=path,
-        )
-        if self_test.void:
-            if self_test.instrument_ok is False:
-                void_reasons.append("self-test VOID: instrument_ok=False")
-            if self_test.identity_ok is False:
-                void_reasons.append("self-test VOID: identity_ok=False")
-            if self_test.reconcile_ok is False:
-                void_reasons.append("self-test VOID: reconcile_ok=False")
-        void_reasons += plausibility_checks(realized, null)
-        if internals.available and internals.identity_ok is False:
-            void_reasons.append("realized-internals identity mismatch")
-        if internals.available and not internals.cap_consistent:
-            void_reasons.append("cap-breach inconsistent")
-        analysis = analyze_soak(realized, null, band=band, internals=internals, null_mode=null_mode)
-        if analysis.is_degenerate:
-            void_reasons.append("degenerate window")
+            self_test = self_tests(
+                records,
+                null,
+                realized=realized,
+                canonical_dir=canonical_dir,
+                registry_path=registry_path,
+                snapshot_reader=reader,
+                path=path,
+            )
+            if self_test.void:
+                if self_test.instrument_ok is False:
+                    void_reasons.append("self-test VOID: instrument_ok=False")
+                if self_test.identity_ok is False:
+                    void_reasons.append("self-test VOID: identity_ok=False")
+                if self_test.reconcile_ok is False:
+                    void_reasons.append("self-test VOID: reconcile_ok=False")
+            void_reasons += plausibility_checks(realized, null)
+            if internals.available and internals.identity_ok is False:
+                void_reasons.append("realized-internals identity mismatch")
+            if internals.available and not internals.cap_consistent:
+                void_reasons.append("cap-breach inconsistent")
+            analysis = analyze_soak(realized, null, band=band, internals=internals, null_mode=null_mode)
+            if analysis.is_degenerate:
+                void_reasons.append("degenerate window")
+            # `L > 0` keeps this off a realized window the store closed to nothing, where every
+            # `effective_n` is 0.0 for the realized side's reason and the run is already void twice over.
+            if analysis.L > 0 and all(analysis.effective_n[m] < _MIN_EFFECTIVE_N for m in analysis.gating_verdicts):
+                void_reasons.append(
+                    f"null retains {null.n_periods} bars against a realized window of L={analysis.L} -- "
+                    "no gating metric can discriminate"
+                )
     else:
         null = None
         analysis = None
