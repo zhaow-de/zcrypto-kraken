@@ -89,10 +89,10 @@ def _norm(value: Any) -> Any:
 
 
 class FakeClient:
-    """Answers from a script and records every call; `raises` maps a method name to an exception the next call to it raises. Every
-    request method is `async def`; the real client's seven are compiled instead and merely answer with an awaitable --
-    `test_every_client_call_the_red_button_makes_needs_a_running_loop` pins that against the real class, where
-    `inspect.iscoroutinefunction` answers False for all seven."""
+    """Answers from a script and records every call; `raises` maps a method name to an exception the next call
+    to it raises. Every request method is `async def`; the real client's seven are compiled instead --
+    `test_every_client_call_the_red_button_makes_needs_a_running_loop` pins that against the real class,
+    where `inspect.iscoroutinefunction` answers False for all seven."""
 
     api_key_masked = "kr***xy"
     # The secret itself, distinct from its masked form, so a journal test can assert on the VALUE
@@ -308,10 +308,11 @@ def test_an_empty_book_side_aborts_rather_than_guessing_a_price():
 
 
 def test_a_non_positive_book_price_aborts_the_read_rather_than_pricing_a_leg_at_nothing():
-    """Zero or negative fails this function's own `price <= 0.0` check, refused by name before `plan.prices` sees it -- carried
-    through instead, `_tick_floored`'s own `> 0.0` rule disables the notional floor the same way, sizing the leg unpriced and
-    sent rather than dust, so the refusal buys a named, logged reason, not a different outcome. The other side is the true
-    negative: a check refusing every price fails it."""
+    """Zero or negative fails `read_book_price`'s own `price <= 0.0` check, refused by name before
+    `plan.prices` sees it -- carried through instead, `_tick_floored`'s own `> 0.0` rule disables the
+    notional floor the same way, sizing the leg unpriced and sent rather than dust, so the refusal buys a
+    named, logged reason, not a different outcome. The other side is the true negative: a check refusing
+    every price fails it."""
     listing = {"BTC/EUR": _Instrument("BTC/EUR")}
     book = _Book(bid=60000.0, ask=60010.0)
     book._bids = [_Level(0.0)]
@@ -499,10 +500,10 @@ def test_an_unresolvable_code_is_reported_in_the_same_class_never_ignored():
 
 
 def test_a_base_listed_only_against_a_third_quote_is_a_residual_not_a_leg():
-    """The listing knows the base, so `resolve_base` answers -- and `choose_pair` still finds no route, because this command sells
-    into EUR or BTC and nothing else. Read as a leg it would be sized against a pair that does not exist. Even dropped from
-    here, `judge_final` re-derives the same lookup from the final balances and still catches it as a residual -- the run would
-    not read flat."""
+    """The listing knows the base, so `resolve_base` answers -- and `choose_pair` still finds no route, because
+    this command sells into EUR or BTC and nothing else. Read as a leg it would be sized against a pair that
+    does not exist. Even dropped from here, `judge_final` re-derives the same lookup from the final balances
+    and still catches it as a residual -- the run would not read flat."""
     legs, unsellable = flatten.spot_legs([flatten.BalanceRow("ADA", 5.0)], _listing("ADA/USD"))
     assert legs == []
     assert [(u["base"], u["code"], u["free"], u["reason"]) for u in unsellable] == [("ADA", "ADA", 5.0, "no_eur_or_btc_pair")]
@@ -808,9 +809,7 @@ def test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg()
 
 def test_a_book_that_prices_at_zero_leaves_the_leg_unpriced_and_still_sold():
     """The degradation is what makes refusing a zero price safe: the leg is sized on the quantity floor alone and SENT, exactly as
-    one whose book read raised. `_tick_floored`'s own `> 0.0` rule would catch a carried zero the same way -- the sizing outcome
-    does not depend on `read_book_price`'s own refusal; what the refusal buys is a named, logged reason instead of a silent
-    degrade."""
+    one whose book read raised."""
     zero = _Book(0.4, 0.41)
     zero._bids = [_Level(0.0)]
     client = _client_with(balances=[_Balance("ADA", 1200.0)], symbols=("ADA/EUR",), books={"ADA/EUR.KRAKEN": zero})
@@ -1156,7 +1155,7 @@ def _plan_of(client):
 
 
 def test_the_full_sequence_calls_the_venue_in_the_order_the_design_fixes():
-    """The order is the design: no quantity is sized from the pre-confirm snapshot -- only its
+    """The order is the design: no SENT quantity is sized from the pre-confirm snapshot -- only its
     price and constraints are, deliberately, fixed before the confirm -- a fill during the
     human-paced confirm lands in the post-cancel read, and the final snapshot reads orders before
     positions before balances."""
@@ -1287,8 +1286,8 @@ def test_a_rejected_sub_ordermin_closer_is_labelled_from_the_arithmetic_not_from
 
 
 def test_a_failing_cancel_does_not_stop_the_closes():
-    """Its failure is recorded (`cancel_ok=False`, `cancel_error` set) and the sweep runs on
-    regardless."""
+    """The cancel's failure is recorded (`cancel_ok=False`, `cancel_error` set) and the sweep runs
+    on regardless."""
     client = _sweep_client(
         orders=[[]],
         positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
@@ -1641,10 +1640,8 @@ def test_every_refusal_exits_one_with_no_request_and_no_write(tmp_path, setup, r
 
 @pytest.mark.parametrize("execute", [True, False])
 def test_a_venue_that_is_not_online_exits_three_with_nothing_sent(tmp_path, execute):
-    """The dry run takes the venue gate too: `check_venue` runs ahead of the `if execute:` block that gates the kill file, the
-    terminal check and the confirm, so none of those three -- not only the kill file -- apply without `--execute`. The two
-    invocations differ in exactly one way this fixture can see: the dry run leaves no artifact, which is `_dry_exit`'s whole
-    contract and is reachable from no other fixture."""
+    """The two invocations differ in exactly one way this fixture can see: the dry run leaves no artifact, which is
+    `_dry_exit`'s whole contract and is reachable from no other fixture."""
     _armed(tmp_path)
     client = _flat_client()
     assert _run(client, tmp_path, execute=execute, venue=_offline) == 3
@@ -1870,7 +1867,7 @@ def test_a_read_that_fails_after_the_first_write_exits_two_and_never_three(tmp_p
 
 def test_an_instrument_with_no_committed_costmin_is_still_sized_and_sent(tmp_path):
     """min_notional always reads None from this adapter, so a pair outside the committed table has
-    no notional floor at all."""
+    no notional floor at all -- and must still be sold, not skipped."""
     _armed(tmp_path)
     held = [_Balance("WEIRD", 3.0)]
     client = _flat_client(
@@ -1940,10 +1937,11 @@ def test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_s
 
 
 def test_the_journal_payload_is_json_serializable_without_the_dump_s_str_fallback(tmp_path, monkeypatch):
-    """`write_journal` dumps with `default=str`, a net that would quietly stringify a value nobody converted; round-tripping the
-    REAL payload strictly pins the conversions the record depends on -- `_journalled`'s `str()` on `AccountType` and
-    `submit_leg`'s on the instrument id, the order side, the order type and the time in force, each of which a bare `json.dumps`
-    refuses. A margin leg is the fixture because it is the only path carrying both the enum and the `leverage` int."""
+    """`write_journal` dumps with `default=str`, a net that would quietly stringify a value nobody converted;
+    round-tripping the REAL payload strictly pins the conversions the record depends on -- `_journalled`'s
+    `str()` on `AccountType` and `submit_leg`'s on the instrument id, the order side, the order type and the
+    time in force, each of which a bare `json.dumps` refuses. A margin leg is the fixture because it is the
+    only path carrying both the enum and the `leverage` int."""
     _armed(tmp_path)
     row = [_Position("BTC/EUR", "LONG", 0.5)]
     client = _flat_client(positions=[row, row, [], []])
@@ -2272,9 +2270,7 @@ def _real_client():
 
 def _real_calls(client):
     """The seven calls `cli/engine/flatten.py` makes, with the arguments it sends, as zero-arg thunks. Only `_ACCOUNT`,
-    `QUOTE_CURRENCY` and `BOOK_DEPTH` are read from the module's own constants; every other value here -- `open_only`, both
-    `AccountType`s, `use_spot_position_reports`, and the whole `submit_order` list -- is a literal this pin does not hold
-    against a scoping change, and `MARGIN_LEVERAGE` never appears in it at all."""
+    `QUOTE_CURRENCY` and `BOOK_DEPTH` are read from the module's own constants; every other value is a literal."""
     from nautilus_trader.model import AccountType, ClientOrderId, InstrumentId, OrderSide, OrderType, Quantity, TimeInForce
 
     account = flatten._ACCOUNT
