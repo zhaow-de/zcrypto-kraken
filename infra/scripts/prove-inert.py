@@ -12,8 +12,9 @@ exit 4  REFUSED -- a docstring that is program output changed, a path could not 
 may have stopped seeing it, and 4 says the claim cannot be made from here at all. A docstring is often
 program OUTPUT -- a Typer command's is its `--help` body, and scripts hand it to argparse.
 
-An effect carried by a file's raw BYTES is invisible to these arms: `replay_fingerprint` digests whole files,
-so that set is refused, never certified. Run this through `uv run` -- unread, it refuses every file instead."""
+An effect carried by a file's raw BYTES is invisible to these arms: `replay_fingerprint` digests whole files, so
+that set is refused, never certified. Run this through `uv run`: the set needs an importable `cli`, and an older
+interpreter cannot parse this file at all -- exiting 1, which is CODE CHANGED above rather than the crash it is."""
 
 import ast
 import difflib
@@ -194,8 +195,8 @@ def compare(before: str, after: str, *, output_names: frozenset[str] = frozenset
     )
 
 
-def replay_closure() -> tuple[frozenset[pathlib.Path], frozenset[str], pathlib.Path] | str:
-    """The paths whose bytes `replay_fingerprint` digests -- absolute and repo-relative -- and the tree they
+def replay_closure() -> tuple[frozenset[str], pathlib.Path] | str:
+    """The repo-relative paths whose bytes `replay_fingerprint` digests, and the tree they
     describe, or a string saying why they could not be read: only a named cause tells an operator whether to
     fix their invocation or the tree. The tree is the INSTALLED package's, usually but not necessarily the one
     being judged. Every failure is caught, since one escaping here exits 1, this tool's own CODE CHANGED."""
@@ -204,15 +205,13 @@ def replay_closure() -> tuple[frozenset[pathlib.Path], frozenset[str], pathlib.P
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
     try:
-        digested = _replay_code_paths()
-        # BOTH spellings: the absolute paths are the bytes THIS fingerprint reads; the repo-relative ones
-        # cover an installed package that is a different checkout, whose own fingerprint digests the same
-        # relative paths where this one cannot see them.
-        absolute = frozenset(path.resolve() for path in digested)
-        relative = frozenset(str(path.relative_to(_REPO_ROOT)) for path in digested)
+        # Repo-relative, and only that: when the installed package IS the judged tree the two spellings
+        # coincide, and when it is a different checkout the relative one is what still matches, because
+        # that tree digests the same relative paths. An absolute arm beside it was never reached.
+        relative = frozenset(str(path.relative_to(_REPO_ROOT)) for path in _replay_code_paths())
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
-    return absolute, relative, _REPO_ROOT
+    return relative, _REPO_ROOT
 
 
 def _repo_root() -> pathlib.Path:
@@ -266,14 +265,13 @@ def main(argv: list[str]) -> int:
     if unscanned:
         print(f"WARNING: {unscanned} file(s) could not be scanned for docstring readers")
     closure = replay_closure()
-    absolute: frozenset[pathlib.Path] = frozenset()
     relative: frozenset[str] = frozenset()
     unreadable: str | None = None
     if isinstance(closure, str):
-        unreadable = f"the replay closure could not be read ({closure}); run this through `uv run`"
+        unreadable = f"the replay closure could not be read ({closure}); it needs an importable `cli` -- try `uv run`"
     else:
-        absolute, relative, closure_root = closure
-        print(f"replay closure describes: {closure_root}")
+        relative, closure_root = closure
+        print(f"replay closure describes: {closure_root} ({len(relative)} files)")
     worst = EXIT_INERT
     for path in paths:
         # Ahead of the arms, because a clean shape is exactly what makes such a file's edit look free.
@@ -281,7 +279,7 @@ def main(argv: list[str]) -> int:
             print(f"{path}: REFUSED -- {unreadable}")
             worst = worse(worst, EXIT_REFUSED)
             continue
-        if (root / path).resolve() in absolute or str(pathlib.PurePosixPath(path)) in relative:
+        if str(pathlib.PurePosixPath(path)) in relative:
             # Membership, never a diagnosis: the arms never ran, so nothing here knows what changed.
             print(f"{path}: REFUSED -- `replay_fingerprint` digests this file, so any byte of it rebuilds the gate cache")
             worst = worse(worst, EXIT_REFUSED)

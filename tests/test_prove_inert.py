@@ -394,13 +394,13 @@ def test_a_replay_closure_member_is_refused_rather_than_certified() -> None:
     assert "digests this file" in done.stdout, done.stdout
 
 
-def test_the_closure_is_read_in_both_spellings_against_the_tree_it_describes() -> None:
-    """Absolute answers what THIS fingerprint reads; repo-relative answers it for a checkout that is not this one."""
+def test_the_closure_is_read_repo_relative_against_the_tree_it_describes() -> None:
+    """Repo-relative, so it still matches when the installed package is a different checkout of the same tree."""
     closure = pi.replay_closure()
     assert not isinstance(closure, str), closure
-    absolute, relative, closure_root = closure
+    relative, closure_root = closure
     assert {"cli/engine/flatten.py", "cli/engine/executor.py"} <= relative
-    assert closure_root / "cli" / "engine" / "flatten.py" in absolute
+    assert (closure_root / "cli" / "engine" / "flatten.py").is_file()
     assert not [path for path in relative if path.startswith("/")]
     assert "tests/test_prove_inert.py" not in relative
 
@@ -425,5 +425,5 @@ def test_a_member_of_another_checkouts_closure_is_refused_by_its_relative_spelli
     (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')
     monkeypatch.chdir(repo)
     elsewhere = pathlib.Path("/somewhere/else")
-    monkeypatch.setattr(pi, "replay_closure", lambda: (frozenset({elsewhere / "m.py"}), frozenset({"m.py"}), elsewhere))
+    monkeypatch.setattr(pi, "replay_closure", lambda: (frozenset({"m.py"}), elsewhere))
     assert pi.main(["prove-inert.py", "HEAD", "m.py"]) == pi.EXIT_REFUSED
