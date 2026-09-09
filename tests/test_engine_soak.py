@@ -950,6 +950,19 @@ def test_analyze_soak_context_rates_over_an_empty_null_report_no_rate():
     assert a.null_gov_rate is None
 
 
+def test_analyze_soak_d4_bias_over_an_empty_null_is_unmeasured():
+    """`any(...)` over no multiplier is False, and False renders INACTIVE -- the reassuring reading,
+    over a backtest that produced no bar. The measured INACTIVE arm is asserted beside it, since
+    nothing else pins it; `test_analyze_soak_context_and_d4` pins the ACTIVE one."""
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+
+    assert analyze_soak(realized, _mk_null([], []), band=0.90).d4_active is None
+    # Every multiplier 1.0: the governor was observed and never engaged, which is what INACTIVE now
+    # means on its own.
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 100
+    assert analyze_soak(realized, _mk_null(nw, [0.001] * 100), band=0.90).d4_active is False
+
+
 def _mk_internals(cycle_ts, mult_by_cycle=None, breach_by_cycle=None):
     return RealizedInternals(
         available=True,
@@ -1467,6 +1480,21 @@ def test_render_report_calls_an_unmeasured_chain_skipped_and_leaves_the_other_tw
     assert rendered[True] == "  chain_ok       : True"
     assert rendered[False] == "  chain_ok       : False"
     assert rendered[None] == "  chain_ok       : skipped"
+
+
+def test_render_report_calls_an_unobserved_governor_bias_unmeasured_and_leaves_the_other_two_alone():
+    """An empty null rendered `bias INACTIVE`, byte for byte what a null whose governor never engaged
+    renders; `unmeasured` is the third reading, and the other two are unchanged."""
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis = analyze_soak(realized, null, band=0.90)
+    rendered = {}
+    for flag in (True, False, None):
+        text = render_report(replace(analysis, d4_active=flag), realized, null, None, void_reasons=[], band=0.90)
+        rendered[flag] = next(line for line in text.splitlines() if "d4_gap_bps" in line)
+    assert rendered[True] == "  d4_gap_bps: 0.0000 bps/cycle (bias ACTIVE)"
+    assert rendered[False] == "  d4_gap_bps: 0.0000 bps/cycle (bias INACTIVE)"
+    assert rendered[None] == "  d4_gap_bps: 0.0000 bps/cycle (bias unmeasured)"
 
 
 def test_render_report_store_bound_warning_precedes_the_verdict_table():

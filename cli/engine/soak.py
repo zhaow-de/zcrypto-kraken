@@ -619,7 +619,7 @@ class SelfTestReport:
 
     instrument_ok: bool | None  # None = canonical absent (skipped, NOT a fail)
     identity_ok: bool | None  # None = no cycle could be replayed (e.g. snapshots absent)
-    reconcile_ok: bool | None  # None = the realized half compared no consecutive pair
+    reconcile_ok: bool | None  # None = the realized half compared no pair; the null half cannot answer None (T0183)
     messages: tuple[str, ...]
 
     @property
@@ -884,6 +884,7 @@ def self_tests(
 
     reconcile_ok = null.reconcile_ok and realized.chain_ok
     if reconcile_ok is None:
+        # Named for the realized half alone: the null half cannot answer None (`_net_live_from_result`, T0183).
         messages.append("reconcile: skipped, no consecutive scored pair was compared")
     else:
         messages.append(f"reconcile: {'ok' if reconcile_ok else 'FAILED'}")
@@ -915,7 +916,7 @@ class SoakAnalysis:
     null_gov_rate: float | None  # backtest CONTEXT: fraction of null days governor-engaged; None over no null days
     null_cap_rate: float | None  # backtest CONTEXT: cap_breach_bars / n_periods; None over no null periods
     d4_gap_bps: float  # mean(governed_net - net_live) over frozen history, in bps (x1e4)
-    d4_active: bool  # governor engaged anywhere in the null (any mult < 1)
+    d4_active: bool | None  # governor engaged anywhere in the null (any mult < 1); None over no null periods
     pnl_mean: float  # realized interior mean net/cycle
     pnl_cum: float  # realized compounded cumulative net over ALL bars: prod(1+net)-1
     pnl_verdict: MetricVerdict  # NON-GATING: realized interior mean net vs null net_live windows
@@ -1148,7 +1149,9 @@ def analyze_soak(
     null_cap_rate = null.cap_breach_bars / null.n_periods if null.n_periods > 0 else None
 
     d4_gap_bps = _mean([g - n for g, n in zip(null.governed_net, null.net_live)]) * 1e4
-    d4_active = any(m < 1.0 for m in null.multipliers)
+    # `any(...)` over no multiplier is False, and False renders INACTIVE -- byte-identical to a null whose
+    # governor genuinely never engaged. The gap beside it is a signed mean and cannot mark the difference.
+    d4_active = any(m < 1.0 for m in null.multipliers) if null.multipliers else None
 
     null_pnl = null.net_live[1:]
     pnl_window = L - 1
@@ -1365,7 +1368,7 @@ def render_report(
 
     # "Governor-bias gap" is D4 in the spec vocabulary; the token stays off the report surface.
     lines.append("GOVERNOR-BIAS GAP (governed vs live-cost null)")
-    bias = "bias ACTIVE" if analysis.d4_active else "bias INACTIVE"
+    bias = "bias unmeasured" if analysis.d4_active is None else "bias ACTIVE" if analysis.d4_active else "bias INACTIVE"
     lines.append(f"  d4_gap_bps: {analysis.d4_gap_bps:.4f} bps/cycle ({bias})")
     lines.append("  the null P&L uses the live cost convention, so the governor bias cancels by construction")
     lines.append("")
