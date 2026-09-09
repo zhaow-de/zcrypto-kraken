@@ -10,6 +10,7 @@
 - **A number only where the reader needs a VALUE to act**, with the command that produced it and an it-drifts note — the latest value, never superseded ones stacked beside it; a property ("costs per inode") is stated and its measurement named, never quantified.
 - **Every citation resolves from the repo alone** — a symbol, a test name, `T<NNNN>`, `spec NNNNN`, a path; a plan-task number carries its serial on the same line or the one it wraps from (`tests/test_code_prose_citations.py`); a hash is copied from git output, only for a commit that will not be rewritten — before push, cite by subject. **A closed citation re-tenses its sentence to the outcome — never a status annotation on the id (`(T0039, resolved)` is noise: a reader looks the topic up), never deleted where a reader would look the history up.**
 - **Never describe live host state** — config prose says what a setting does, not what a host currently is.
+- **Never call a diff prose-only without `infra/scripts/prove-inert.py` returning 0 for every file in it** — the claim that makes a review cheap is the one never made by reading.
 
 ## Code (`cli/`, `tests/`, `infra/`)
 
