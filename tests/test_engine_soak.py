@@ -361,6 +361,18 @@ def test_net_live_reconcile_false_on_inconsistent_result():
     assert ok is False
 
 
+def test_net_live_reconcile_false_on_a_cap_breach_count_disagreement():
+    # The reconstruction and the builder's own count compute ONE quantity, so a disagreement is broken
+    # code, not a data state -- it lands in reconcile_ok, which voids the run at exit 1.
+    n = 4
+    B = A1 = A2 = [0.30, 0.10, -0.50, 0.05, 0.0]
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
+    assert r.cap_breach_bars == 2  # the fixture really clips, so the tamper moves a number the code recomputes
+    r.cap_breach_bars += 1
+    _net_live, ok, _cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is False
+
+
 def test_net_live_reconciles_when_a_whole_book_limit_binds():
     """The live-cost reconstruction must rerun the builder's WHOLE shaping chain: ten assets at the
     20% long cap give gross 2.0 (past the 1.5x soft cap) and net 1.5 (past the +1.0 band), so
@@ -474,6 +486,116 @@ def test_basket_complete_index_is_zero_when_all_present_from_the_start():
     assert _basket_complete_index(prices, ("BTC", "ETH")) == 0
 
 
+def _canonical_panels(n_h4: int, *, late: str | None = None, late_from: int = 0, n_daily: int = 4):
+    """The four values a stubbed `_load_canonical` returns, keyed like `select_model_inputs`' output. The
+    daily panel is complete from index 0 on every leg, so only the h4 grid moves the cut; `late` carries no
+    h4 price before `late_from`, which is where `build_null`'s cut then lands."""
+    assets = CrossfreqSystemConfig().assets
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    h4_ts = [base + timedelta(hours=4 * i) for i in range(n_h4)]
+    daily_ts = [base + timedelta(days=i) for i in range(n_daily)]
+    h4 = {a: [100.0 + i for i in range(n_h4)] for a in assets}
+    if late is not None:
+        h4[late] = [None] * late_from + h4[late][late_from:]
+    daily = {a: [100.0 + i for i in range(n_daily)] for a in assets}
+    return daily, daily_ts, h4, h4_ts
+
+
+def _stub_late_basket(monkeypatch, *, n: int, cut: int, sleeve: list[float] | None = None):
+    """`build_null`'s two inputs stubbed: a single-asset result over `n` completed bars, and a canonical whose
+    'XRP' leg is unpriced on the h4 grid before `cut`. The sleeve values are distinct per bar, so an assertion
+    on a retained bar's weight cannot pass by every bar carrying the same number."""
+    sleeve = sleeve if sleeve is not None else [0.01 * (k + 1) for k in range(n + 1)]
+    fake = _fake_result(
+        n_periods=n,
+        sleeve_B=sleeve,
+        sleeve_A1=sleeve,
+        sleeve_A2=sleeve,
+        multipliers=[1.0] * (n + 1),
+        governed_net=[0.001 * k for k in range(n)],
+    )
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _canonical_panels(n + 1, late="XRP", late_from=cut))
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+    return fake
+
+
+def test_build_null_drops_bars_before_the_basket_completes(monkeypatch):
+    n, cut = 8, 3
+    fake = _stub_late_basket(monkeypatch, n=n, cut=cut)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.n_periods == n - cut
+    assert ns.weights[0]["BTC/EUR"] == fake.final_targets["BTC"][cut]
+
+
+def test_build_null_cuts_every_parallel_series_to_the_same_length(monkeypatch):
+    """The desynchronisation guard: every per-bar list is cut with the SAME index. Slicing some and not
+    others misattributes a governor day or a clipped bar to a neighbour and nothing downstream can see it."""
+    n, cut = 8, 3
+    _stub_late_basket(monkeypatch, n=n, cut=cut)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.n_periods == n - cut  # the fixture really cut, so equal lengths are not the uncut length
+    assert {
+        len(ns.weights),
+        len(ns.net_live),
+        len(ns.multipliers),
+        len(ns.day_index),
+        len(ns.governed_net),
+        len(ns.cap_breach),
+    } == {ns.n_periods}
+
+
+def test_build_null_recomputes_cap_breach_bars_over_retained_bars(monkeypatch):
+    n, cut = 6, 3
+    sleeve = [0.30, 0.05, 0.05, 0.05, 0.30, 0.05, 0.0]  # past the +0.20 cap on bar 0 and on bar 4
+    fake = _stub_late_basket(monkeypatch, n=n, cut=cut, sleeve=sleeve)
+    assert fake.cap_breach_bars == 2  # the builder's own count, over every bar it built
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.cap_breach == [0.0, 1.0, 0.0]
+    assert ns.cap_breach_bars == 1
+
+
+def test_build_null_refuses_a_canonical_that_retains_no_bars(monkeypatch):
+    # The late leg's first price is the last h4 bar: an empty null whose reference span would name the
+    # whole canonical, printed above the void gate where nothing downstream catches it.
+    n = 5
+    _stub_late_basket(monkeypatch, n=n, cut=n)
+
+    with pytest.raises(SoakError, match=f"index {n}"):
+        soak.build_null(Path("unused-canonical"))
+
+
+def test_build_null_keeps_everything_when_the_basket_is_complete_from_bar_zero(monkeypatch):
+    n = 8
+    fake = _stub_late_basket(monkeypatch, n=n, cut=0)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.n_periods == n
+    assert ns.weights[0]["BTC/EUR"] == fake.final_targets["BTC"][0]
+    assert len(ns.net_live) == n and len(ns.cap_breach) == n
+    assert ns.cap_breach_bars == fake.cap_breach_bars
+
+
+def test_build_null_carries_a_cap_breach_disagreement_into_reconcile_ok(monkeypatch):
+    n = 4
+    B = A1 = A2 = [0.30, 0.10, -0.50, 0.05, 0.0]
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
+    fake.cap_breach_bars += 1
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _canonical_panels(n + 1))
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.reconcile_ok is False  # refused through the self-test, so build_null still returns
+    assert ns.n_periods == n
+
+
 @pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
 def test_build_null_on_real_canonical():
     from cli.engine.soak import build_null
@@ -485,7 +607,15 @@ def test_build_null_on_real_canonical():
     assert len(ns.governed_net) == ns.n_periods
     assert ns.cap_breach_bars >= 0
     assert len(ns.cap_breach) == ns.n_periods
-    assert sum(ns.cap_breach) == ns.cap_breach_bars
+
+    # The cut over a real panel, read back off the loader rather than written as an index or a date, which
+    # the basket's next change falsifies: every leg is priced at the first retained bar, one is not before it.
+    _daily_prices, _daily_ts, h4_prices, h4_ts = soak._load_canonical(Path("data/ohlc-full"))
+    k = len(h4_ts) - 1 - ns.n_periods  # the builder's n_periods is len(h4_ts) - 1, so this is the cut
+    assert k > 0
+    assets = CrossfreqSystemConfig().assets
+    assert all(h4_prices[a][k] is not None and math.isfinite(h4_prices[a][k]) for a in assets)
+    assert any(h4_prices[a][k - 1] is None or not math.isfinite(h4_prices[a][k - 1]) for a in assets)
 
 
 def test_build_null_path_selects_builder(monkeypatch, tmp_path):
@@ -493,18 +623,20 @@ def test_build_null_path_selects_builder(monkeypatch, tmp_path):
     # and both builders, and prove 'fast' calls build_crossfreq_system_fast, 'verified' calls
     # build_crossfreq_system, and an unknown path raises rather than silently defaulting.
     calls = []
-    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: ({}, [], {}, []))
+    # A cut-0 panel, so the basket refusal above the `path` branch cannot preempt the bogus-path refusal
+    # this test names; and n_periods >= 1, so the cut retains a bar and `build_null` reaches the assertion.
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _canonical_panels(2))
 
     def _stub_result():
         return types.SimpleNamespace(
-            final_targets={"BTC": [1.0]},
-            governed_net=[],
-            multipliers=[1.0],
-            sleeve_positions={"B": {"BTC": [0.0]}, "A1": {"BTC": [0.0]}, "A2": {"BTC": [0.0]}},
+            final_targets={"BTC": [1.0, 1.0]},
+            governed_net=[0.0],
+            multipliers=[1.0, 1.0],
+            sleeve_positions={"B": {"BTC": [0.0, 0.0]}, "A1": {"BTC": [0.0, 0.0]}, "A2": {"BTC": [0.0, 0.0]}},
             cap_breach_bars=0,
             governor_engaged_bars=0,
-            day_index=[0],
-            n_periods=0,
+            day_index=[0, 0],
+            n_periods=1,
         )
 
     def _mk_fake(tag):
@@ -2545,7 +2677,7 @@ def test_build_null_casts_its_book_onto_the_live_symbol_space(monkeypatch):
     n = 3
     B = A1 = A2 = [0.09, 0.12, 0.06, 0.0]
     fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
-    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: ({}, [], {}, []))
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _canonical_panels(n + 1))  # cut 0: nothing moves
     monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
 
     ns = soak.build_null(Path("unused-canonical"))
