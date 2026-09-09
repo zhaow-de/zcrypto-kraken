@@ -106,9 +106,6 @@ def test_capture_client_rejects_empty_pairs():
 
 
 class _FakeConnection:
-    """A minimal stand-in for a `websockets` connection: records sent frames, and yields a
-    canned list of messages before optionally raising `ConnectionClosedError`."""
-
     def __init__(self, messages, *, raise_at_end=False):
         self.sent: list[str] = []
         self._messages = messages
@@ -202,7 +199,6 @@ def test_stream_reconnects_with_backoff_after_connection_closed():
 
 
 def _invalid_status_503():
-    """The real exception production saw: `InvalidStatus: server rejected WebSocket connection: HTTP 503`."""
     return InvalidStatus(Response(503, "Service Unavailable", Headers()))
 
 
@@ -367,7 +363,6 @@ class _ClosingConnection(_FakeConnection):
 
 
 def _delays_after_close(close_code, *, messages):
-    """Run `stream()` across one close carrying `close_code`; return the observed backoff delays."""
     conn1 = _ClosingConnection(messages, close_code)
     conn2 = _FakeConnection(messages)
     connect_fn, _ = _connect_fn_returning(conn1, conn2)

@@ -231,8 +231,6 @@ def test_capture_propagates_consumer_crash_even_with_duration_set(tmp_path, monk
 
 
 class _CrashAfterDataFakeClient:
-    """Yields one trade (which lands in a writer's buffer) and then blows up."""
-
     def __init__(self, pairs, depth):
         pass
 
@@ -362,7 +360,8 @@ class _FakeUsage:
 
 
 def _run_healthcheck_once(monkeypatch, *, free_bytes):
-    """Drive _healthcheck_loop for a few iterations and report whether it pinged."""
+    """Drive `_healthcheck_loop` across several ping intervals and return the URLs it pinged -- an
+    empty list is a withheld ping, never an unrun loop."""
     from cli.capture import command as cmd
     from cli.capture.gap_monitor import DiskWatermark, GapMonitor
 

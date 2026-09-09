@@ -18,7 +18,7 @@ DAY = 86400.0
 
 
 def _seg(root: Path, name: str, *, age_days: float) -> Path:
-    """Plant one file in a realistic segment dir and age it."""
+    """Plant one file of the given basename, aged, in the nested date path the sweep must recurse into."""
     path = root / "BTC" / "EUR" / "book" / "2026" / "07" / "01" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"segment")

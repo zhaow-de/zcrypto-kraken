@@ -824,7 +824,6 @@ def test_the_capture_unit_orders_itself_against_no_clock_service():
 
 
 def test_the_unit_parser_refuses_a_line_systemd_would_join(tmp_path):
-    """A backslash-terminated line is half of one directive, so the parser refuses it rather than read the halves as two."""
     unit = tmp_path / "continued.service"
     # systemd joins the pair, then fails to parse the one value it gets and DISCARDS the assignment,
     # leaving the default `Restart=no` — a unit that never restarts, not one that restarts on failure.
@@ -835,7 +834,6 @@ def test_the_unit_parser_refuses_a_line_systemd_would_join(tmp_path):
 
 
 def test_the_unit_parser_reads_a_backslash_terminated_comment_as_a_comment(tmp_path):
-    """A comment ending in a backslash opens no continuation, so the parser drops it and reads the line below as its own directive."""
     unit = tmp_path / "commented.service"
     unit.write_text("# a comment ending in a backslash \\\n[Service]\nRestart=always\n")
 
@@ -2116,7 +2114,7 @@ def test_finalize_completed_hours_reports_an_open_hour_it_could_not_write(tmp_pa
 
 def test_finalize_completed_hours_reports_a_stranded_merging_with_no_final(tmp_path):
     """The hour no sweep re-attempts: its merge completed, its commit did not, and its parts are gone --
-    so the parts walk cannot see it, and only this report keeps the dead-man from going green over it."""
+    so the parts walk cannot see it, and only this report keeps the liquidations poller's dead-man from going green over it."""
     w = _new_writer(tmp_path, flush_rows=1)
     w.append(_hour10_event(0, 0))
     hour_dir = _segment_path(tmp_path, 10).parent
@@ -2136,7 +2134,7 @@ def test_finalize_completed_hours_reports_a_stranded_merging_with_no_final(tmp_p
 
 def test_finalize_completed_hours_is_silent_on_a_merging_beside_its_final(tmp_path):
     """A `.merging` left beside a committed final is not a lost hour: the hour is published, and the
-    leftover is what the next `_recover` clears. Reporting it would withhold the ping over nothing."""
+    leftover is what the next `_recover` clears. Reporting it would withhold that poller's ping over nothing."""
     w = _new_writer(tmp_path, flush_rows=1)
     w.append(_hour10_event(0, 0))
     w.finalize_completed_hours(_ts(11, 0))
@@ -2275,8 +2273,8 @@ def test_rows_quarantined_counts_only_rows_actually_spilled_to_a_held_file(tmp_p
 
 
 def test_rows_quarantined_survives_the_process_that_spilled_them(tmp_path, clock):
-    """T0161: `close()` spills into a process that is exiting, 60 s before the next scrape. The count
-    the next process reports must include it, or the alert's `increase()` never sees the step."""
+    """T0161: `close()` spills into a process that is exiting, so the count the next process reports
+    must include it, or the alert's `increase()` never sees the step."""
     clock.now = _ts(10, 3)
     w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
     for i in range(3):
@@ -2389,7 +2387,7 @@ def test_rows_quarantined_persists_the_cap_site_spill_too(tmp_path, clock):
 )
 def test_an_unreadable_quarantine_count_seeds_zero_and_never_stops_capture(tmp_path, corrupt):
     """This read runs before the daemon connects, so anything escaping it stops capture on EVERY
-    restart -- these shapes seed 0, and the `except` below them is deliberately unbounded."""
+    restart -- these shapes seed 0, and the `except` that catches them is deliberately unbounded."""
     state = tmp_path / "BTC/EUR" / "book" / "rows-quarantined.json"
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_bytes(corrupt)

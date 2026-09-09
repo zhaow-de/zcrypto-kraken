@@ -14,7 +14,6 @@ T0 = datetime(2026, 7, 27, 7, 0, 0, tzinfo=UTC)
 
 
 def test_silence_is_booked_from_when_the_stream_went_quiet_not_from_detection():
-    """The window is stamped at the last message, so the whole outage is booked."""
     m = GapMonitor()
     last_seen = T0
     m.start_silence("BTC/EUR", at=last_seen)  # stamped at last_seen, detected 30 s later
@@ -23,7 +22,7 @@ def test_silence_is_booked_from_when_the_stream_went_quiet_not_from_detection():
 
 
 def test_silence_seconds_reach_the_exported_counter():
-    """The whole point: `gap_seconds_total` must stop reading 0.0 through a total blackout."""
+    """The method, not the export: `gap_seconds` must stop reading 0.0 through a total blackout."""
     m = GapMonitor()
     assert m.gap_seconds("BTC/EUR") == 0.0
     m.start_silence("BTC/EUR", at=T0)
@@ -60,8 +59,8 @@ def test_ending_a_silence_that_never_started_is_a_noop():
 
 
 def test_a_backward_clock_step_cannot_produce_negative_gap():
-    """Mirrors `end_gap`/`end_watermark_gap`: `at` comes from the wall clock, and this runs inside a
-    bare task, so an escaping exception would end silence tracking for the process's life."""
+    """`at` is a wall-clock read and a clock can step backwards; the clamp keeps a negative out of the
+    booked seconds."""
     m = GapMonitor()
     m.start_silence("BTC/EUR", at=T0)
     assert m.end_silence("BTC/EUR", at=T0 - timedelta(seconds=5)) == 0.0
@@ -69,9 +68,8 @@ def test_a_backward_clock_step_cannot_produce_negative_gap():
 
 
 def test_silence_does_not_gate_the_dead_man_in_this_iteration():
-    """A DELIBERATE negative (spec 00073 D3): silence must not gate the healthchecks.io ping, which
-    `is_healthy()` withholds for every pair at once.
-    """
+    """A DELIBERATE negative: `is_healthy()` withholds the ping for every pair at once, so gating it
+    on one pair's silence would withhold it for all."""
     m = GapMonitor()
     m.start_silence("BTC/EUR", at=T0)
     assert m.is_healthy(["BTC/EUR"]) is True, (
@@ -151,8 +149,8 @@ def test_repeated_venue_status_accumulates_per_system_value():
 
 
 def test_a_status_message_without_a_system_field_does_not_crash_the_consumer():
-    """The consumer is the single task the whole daemon runs on; an unexpected payload shape here
-    kills capture for every pair and both kinds."""
+    """`_consume` is the only message-handling task and its exception escapes `_run`, so an unexpected
+    payload shape here kills capture for every pair and both kinds."""
     import asyncio
 
     from cli.capture.command import _consume
@@ -435,9 +433,7 @@ def test_the_close_over_books_by_at_most_one_check_interval_and_never_under():
 
 
 def test_gap_seconds_can_double_count_and_the_ratio_can_exceed_one():
-    """The three window kinds are summed independently, so a pair desynced THROUGH an upstream
-    blackout books those seconds twice and `gap_ratio` exceeds 1.0: an upper bound on lost time,
-    never a fraction of the window."""
+    """`gap_ratio` is an upper bound on lost time, never a fraction of the window."""
     m = GapMonitor()
     m.start_gap("BTC/EUR", "checksum_resync", at=T0)
     m.start_silence("BTC/EUR", at=T0)

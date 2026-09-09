@@ -164,7 +164,7 @@ def test_book_never_exceeds_its_subscribed_depth():
 
 
 def test_a_level_pushed_out_of_the_window_cannot_re_enter_as_a_phantom():
-    """The exact live failure: a stale out-of-window level resurfacing in the top of book."""
+    """The phantom-resurfacing scenario `T0008` records, pinned."""
     book = OrderBook("BTC/USD", depth=2)
     book.ingest_snapshot(
         {
