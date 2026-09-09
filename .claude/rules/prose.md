@@ -1,6 +1,6 @@
 # Prose — comments, docstrings, docs, rules
 
-**A statement gets its place only if a reader would do something differently without it, and if it stays it has to be correct.** Nothing here measures length; a sentence earns its place by what it changes and keeps it by being true.
+**A statement gets its place only if a reader would do something differently without it, and if it stays it has to be correct.**
 
 **A durable file holds STATE and DECISIONS; an EVENT goes to git.** State is what is true now; a decision is what was chosen and its one-clause why; what happened, was measured, read, found or corrected is an event, and its home is the message of the commit that carried it. The one test, at write time and at every review, for every sentence on every surface: *would it be false or pointless after the next change to what it describes?* Then it is an event in the wrong place — the evidence is wanted, the file is the wrong home.
 
