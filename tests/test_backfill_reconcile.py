@@ -40,6 +40,21 @@ def test_reconcile_series_counts_planted_ohlc_diff():
     assert report["ohlc_match_rate"] == pytest.approx(4 / 5)
 
 
+def test_reconcile_series_reports_the_largest_volume_deviation_it_measured():
+    """The populated control beside `test_reconcile_series_disjoint_ts_zero_overlap`: with a measured
+    deviation the field must carry it, so neither an unconditional `None` nor the pre-fix `0.0` passes.
+    The planted row's 0.2 is also the MAX rather than the 0.04 mean over the five rows."""
+    backfill = to_frame(_rows(5))
+    rest_rows = _rows(5)
+    rest_rows[2] = _row(BASE_TS + 2 * HOUR, v="12.5")  # |10.0 - 12.5| / 12.5 = 0.2
+    rest = to_frame(rest_rows)
+
+    report = reconcile_series(backfill, rest)
+
+    assert report["overlap_rows"] == 5
+    assert report["volume_rel_diff_max"] == pytest.approx(0.2)
+
+
 def test_reconcile_series_reports_vwap_diff_without_raising():
     backfill = to_frame(_rows(5, vwap="100.0"))
     rest = to_frame(_rows(5, vwap="105.0"))  # different vwap reconstruction
