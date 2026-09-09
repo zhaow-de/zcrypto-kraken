@@ -397,8 +397,7 @@ cli/trades/backfill.py:89: comment-block 6 > 4	"""True iff `path`'s book final s
 cli/trades/backfill.py:124: comment-block 7 > 4	"""Heal the canonical trade stream to spec 00053's invariant: contiguous AND unique trade_id.
 cli/trades/backfill.py:144: comment-block 7 > 4	# The book sibling of a trades hour: the witness that the stream was CONNECTED while that hour's
 cli/trades/backfill.py:259: comment-block 5 > 4	# No trades final for a settled hour, and a book final that SPANS it: the signature of a
-cli/universe/rules.py:9: comment-block 7 > 4	# effective-spread bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`, so this and the volume floor
-cli/universe/rules.py:55: comment-block 5 > 4	"""Apply the master plan §3 mechanical selection rule to each `cli.snapshot` `PairSnapshot`.
+cli/universe/rules.py:9: comment-block 5 > 4	# effective-spread bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`. Anchored to the fee stack, not fitted to the data: a
 docs/iterations-history-phase6.md:801: changelog-entry 7 > 5	## 2026-09-06 — T0173 resolved: the operator instructions the topology doc was holding, and `fetch_public`'s three refusals
 docs/open-topics/T0018-phase6-build-sequence.md:68: table-row 208 > 200	`00089`
 docs/open-topics/T0018-phase6-build-sequence.md:69: table-row 291 > 200	`00094`
@@ -438,10 +437,10 @@ docs/reference/data-catalog-full.md:133: section 3001 > 2048	### Tape-bars — 1
 docs/reference/data-catalog.md:26: section 6111 > 2048	## Dataset
 docs/reference/docstring-pass-method.md:13: section 2722 > 2048	## What the pass pays on
 docs/reference/docstring-pass-method.md:38: section 2752 > 2048	## What the record does support
-docs/reference/docstring-pass-method.md:52: section 2114 > 2048	## The gate
-docs/reference/docstring-pass-method.md:85: section 3911 > 2048	## Standing procedures
-docs/reference/docstring-pass-method.md:109: section 2795 > 2048	## Failure modes: what the prose claims
-docs/reference/docstring-pass-method.md:125: section 3002 > 2048	## Failure modes: what the instruments report
+docs/reference/docstring-pass-method.md:52: section 2161 > 2048	## The gate
+docs/reference/docstring-pass-method.md:96: section 3911 > 2048	## Standing procedures
+docs/reference/docstring-pass-method.md:120: section 2795 > 2048	## Failure modes: what the prose claims
+docs/reference/docstring-pass-method.md:136: section 3002 > 2048	## Failure modes: what the instruments report
 docs/reference/drill-log.md:9: section 4240 > 2048	## 2026-08-31 — J′ — pass
 docs/reference/drill-log.md:13: section 6747 > 2048	## 2026-08-31 — K — pass
 docs/reference/drill-log.md:17: section 3857 > 2048	## 2026-08-31 — O — pass
@@ -856,10 +855,10 @@ infra/scripts/workspace-transport.sh:260: comment-block 5 > 4	# ~/.claude/ moves
 tests/conftest.py:1: file-prose 29.6 > 20
 tests/test_alpha_a1_directions.py:6: comment-block 6 > 4	# sma_gate(window=2): warm-up k=0 -> 0; k=1: mean([100,110])=105, 110>105 -> 1;
 tests/test_alpha_b1.py:1: file-prose 24.3 > 20
-tests/test_archive_reconcile.py:484: comment-block 5 > 4	# --- T0103: measure the OUTPUT, not the input ----------------------------------------------------
-tests/test_archive_reconcile.py:563: comment-block 6 > 4	# --- the double-count: the same seconds in both a "covered" and a "nobody covered" counter ---------
-tests/test_archive_reconcile.py:655: comment-block 10 > 4	"""The binding rule of the vectorization: `diff_us / 1e6`, never `diff_us * 1e-6`.
-tests/test_archive_reconcile.py:692: comment-block 10 > 4	"""Both wrong units are refused, because with the guard removed they fail in OPPOSITE ways.
+tests/test_archive_reconcile.py:481: comment-block 5 > 4	# --- T0103: measure the OUTPUT, not the input ----------------------------------------------------
+tests/test_archive_reconcile.py:560: comment-block 6 > 4	# --- the double-count: the same seconds in both a "covered" and a "nobody covered" counter ---------
+tests/test_archive_reconcile.py:652: comment-block 10 > 4	"""The binding rule of the vectorization: `diff_us / 1e6`, never `diff_us * 1e-6`.
+tests/test_archive_reconcile.py:689: comment-block 10 > 4	"""Both wrong units are refused, because with the guard removed they fail in OPPOSITE ways.
 tests/test_archive_reconcile_command.py:404: comment-block 6 > 4	"""The end stamp must be a SECOND clock read, taken after the work — not the start value relabelled.
 tests/test_archive_reconcile_command.py:546: comment-block 10 > 4	"""`us_view` guards the fleet-dark timeline, which is built in the per-hour loop with NO
 tests/test_archive_reconcile_command.py:581: comment-block 8 > 4	"""An empty mirror (no finals at all) has +Inf lag, and it MUST be spelled the Prometheus way.
@@ -887,13 +886,13 @@ tests/test_archive_scan_cache.py:169: comment-block 5 > 4	"""Presence must come 
 tests/test_archive_scan_cache.py:290: comment-block 7 > 4	"""`RecursionError` is a `RuntimeError`, which the obvious except tuple misses. The contract is
 tests/test_archive_scan_cache.py:429: comment-block 7 > 4	"""`already_minted` is the one per-hour verdict input outside the mirrors.
 tests/test_archive_scan_cache.py:469: comment-block 5 > 4	"""The overlay term's blind spot, pinned so the backstop is not mistaken for a replacement.
-tests/test_archive_settle.py:1: file-prose 21 > 20
+tests/test_archive_settle.py:1: file-prose 20.9 > 20
 tests/test_archive_settle.py:243: comment-block 6 > 4	# --- total_loss must not fire on a legitimately EMPTY trades hour ---------------------------------
-tests/test_archive_settle.py:289: comment-block 8 > 4	# --- the gap-rate signal must exist in DETECT-ONLY, or its alert is a decoration ------------------
-tests/test_archive_settle.py:377: comment-block 5 > 4	# --- the venue-silence discriminator (spec 00096) -------------------------------------------------
-tests/test_archive_settle.py:546: comment-block 5 > 4	# The survivor of a per-gap dominance rule: 600 s dark, 1,000 s of PERFECTLY HEALTHY traffic on
-tests/test_archive_settle.py:575: comment-block 6 > 4	# --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------
-tests/test_archive_settle.py:663: comment-block 7 > 4	# --- `us_view`: the column-unit guard the hot loop leans on ---------------------------------------
+tests/test_archive_settle.py:288: comment-block 8 > 4	# --- the gap-rate signal must exist in DETECT-ONLY, or its alert is a decoration ------------------
+tests/test_archive_settle.py:376: comment-block 5 > 4	# --- the venue-silence discriminator (spec 00096) -------------------------------------------------
+tests/test_archive_settle.py:545: comment-block 5 > 4	# The survivor of a per-gap dominance rule: 600 s dark, 1,000 s of PERFECTLY HEALTHY traffic on
+tests/test_archive_settle.py:574: comment-block 6 > 4	# --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------
+tests/test_archive_settle.py:662: comment-block 7 > 4	# --- `us_view`: the column-unit guard the hot loop leans on ---------------------------------------
 tests/test_benchmark_dynamic_basket.py:1: file-prose 28.6 > 20
 tests/test_capture_gap_monitor.py:234: comment-block 7 > 4	# --- T0032(c): a probe that CANNOT MEASURE must not read as healthy ------------------------------
 tests/test_capture_prune.py:1: comment-block 5 > 4	"""Segment retention on the capture hosts (spec 00050 D8 — closes T0032's retention half).

@@ -1,7 +1,7 @@
 """The evaluable subjects: committed systems, each named by the registry record it reproduces.
 
 A subject declares the series it needs, so the command can refuse an incomplete dataset before any read; its `build` reads
-every byte through `ObservedReader`, which makes the `datasets` block the run's identity, not a claim beside it (spec 00086 D1)."""
+every byte through `ObservedReader`."""
 
 from __future__ import annotations
 
@@ -28,15 +28,11 @@ class Subject:
 
 
 def required_relpaths(subject: Subject) -> list[str]:
-    """Every series the subject reads, as dataset-relative paths."""
     return [f"{a}/EUR/{i}.parquet" for a in subject.assets for i in subject.intervals]
 
 
 def _capturing_union(reader: ObservedReader, dataset: str, interval: int, window: tuple[str, str] | None):
-    """`load_union` reading through the capturing loader, with the window applied at the read.
-
-    The bare relative root makes the paths `load_union` composes the dataset-relative keys the reader wants, and the
-    window must be forwarded: dropped, the fit runs on full history and the block built from those same reads agrees."""
+    """The bare relative root makes the paths `load_union` composes the dataset-relative keys the reader wants."""
     return load_union(
         interval,
         root=Path(),

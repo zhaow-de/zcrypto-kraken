@@ -58,19 +58,29 @@ A prose-only claim is worth nothing unless it is proved mechanically. Against th
 
 The statement count is not decoration. Without it, `docstring + pass` and `docstring alone` reduce to the same tree, so deleting a `pass` reads inert — and that fired four times in merged work, where deleting an exception class's docstring emptied its body and the class became `class XError(Exception): pass`. **The normalisation that makes two trees comparable modelled the exact transformation it was meant to detect.** Ask of every normalisation: what change does this make invisible, and can the pass produce that change? This one could, in its most routine operation.
 
-The obvious repairs are worse. Dropping the fill, or swapping the docstring for a placeholder, both make *adding* a module docstring read as a statement change — a legitimate prose-only edit. **Six arms, and the last three are the ones a naive fix breaks**: `pass` deleted, return value changed, statement added must all differ; docstring text changed, docstring deleted, module docstring **added** must all compare equal.
+The obvious repairs are worse. Dropping the fill, or swapping the docstring for a placeholder, both make *adding* a module docstring read as a statement change — a legitimate prose-only edit. **Six arms, and the last three are the ones a naive fix breaks**: `pass` deleted, comparison flipped, statement added must all differ; docstring text changed, docstring deleted **from a body it shares with another statement**, module docstring **added** must all compare equal.
 
 **Prove the instruments bite, with every mutant anchor selected by a parser** — the statement arm from an AST node after the docstring `Expr`, the comparison arm from an `ast.Compare` outside every docstring span, the comment arm from a real `COMMENT` token. A regex anchor flips comparisons *inside docstrings*, the dump correctly does not move, and the arm reports a false BLIND.
 
 The two instruments disagree about what a comment is, and both are right: a docstring is not a `#` comment, so adding one leaves the COMMENT stream identical — while a prose tripwire's `comment-block` kind counts docstrings, so it moves once the block crosses its own line bar.
 
-### Running it
+### The per-file prose-only verdict
 
-`infra/scripts/prove-inert.py <base-rev> <path>...` is this gate as runnable code, one verdict per changed file; run with no arguments it prints the exit-code contract, which is where an operator meets it.
+`infra/scripts/prove-inert.py <base-rev> <path>...` answers the neighbouring question: which files of a real change may be called prose-only, and on what grounds. It measures the same shape and the same comment stream, and adds the refusal the arms do not describe — a docstring that is program OUTPUT, a Typer command's `--help` body or a `__doc__` that an argparse script or a test reads. Run with no arguments it prints its exit-code contract, which is where an operator meets it.
 
 **Each verdict costs something different, so read which one fired rather than whether the run was green.** A 1 withdraws the prose-only claim for that file, and with it the licence that made the batch cheap to review. A 3 says a comment's position moved, which costs whichever guard reads that position — `tests/test_config_selectors_are_parsed.py` exempts a check by a `# config-selector-ok:` marker, and `test_the_exemption_window_is_the_comparisons_own` pins where one has to sit. The arm to fear is the silent one: a marker leaving a check it was exempting reddens that check, while a marker arriving above another exempts it with no signal at all. A 4 is not a failed run: it says the claim cannot be made from here, because a docstring that is program output changed, or a path could not be read at the base revision.
 
-**Arm 1 and a docstring that is a scope's whole body cannot both be satisfied.** Deleting such a docstring forces a `pass` in its place, and that `pass` is the one arm 1 must catch appearing rather than disappearing, so the tool reports the change instead of certifying it — the per-package `errors.py` classes are where this is met. A batch that produces one states the change and its consequence; it does not quote a verdict it did not get.
+## What the gate refuses, and what that costs
+
+**The gate is committed, runnable code: `infra/scripts/docstring-gate.py`, which is now its home.** This document says why the arms exist and what the pass may not do because of them; the tool says what they are and drives them. Two people re-derived it from this prose in one week; both lost the same arm.
+
+**A control set is not evidence of coverage.** The two-arm prover this replaced shipped with three controls, all written, run and passing, and none touched the fill: each came from a failure mode already thought of.
+
+**Arm 5's qualifier is a constraint on the pass, not only on the gate.** A docstring that is a body's whole statement cannot be deleted at all — the suite left behind does not parse — and writing `pass` in its place moves the statement count, correctly. So **the pass may not delete a docstring that is a body's only statement and still call the edit prose-only.**
+
+**That refusal is not rare, and a reader hitting it needs to know it is the design.** Over the last 400 non-merge commits on `develop`, every subject beginning `docs(` or `claude(`: 203 commits, of which 69 modified a `.py` at all, giving 202 modified pairs — 171 moved no arm, 18 comments only, **11 the statement count alone**, 2 structure. The eleven are `errors.py` files whose class body IS its docstring. A second census reached 11 and 2 independently; its totals differ because it counted `docs(` alone and did not separate comments-only.
+
+**A mutant anchor is a BYTE offset, never a character one.** `ast` reports `col_offset` in UTF-8 bytes: `x = "— — —"; y = 1` gives `y.col_offset == 19` against a character index of 13. Prose here is em-dash dense, so a character splice over-consumes and builds a mutant that is not the one intended: measured, it either fails to parse or comes back identical, and the arm is lost rather than wrong.
 
 ## Review
 

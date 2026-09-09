@@ -4,13 +4,11 @@ from dataclasses import dataclass
 
 DEFAULT_MIN_LEVERAGE = 2
 # EUR/day; the floor at which a max-size position (`SPREAD_REFERENCE_NOTIONAL_EUR`) is ≈1% of a
-# name's median daily EUR volume — our microstructure-impact bar. Tunable.
+# name's median daily EUR volume — our microstructure-impact bar.
 DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 150_000.0
-# effective-spread bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`, so this and the volume floor
-# both answer "can we trade this at our size?". Anchored to the fee stack, not fitted to the data: a
+# effective-spread bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`. Anchored to the fee stack, not fitted to the data: a
 # round trip crossing twice at the cap costs a quarter of the tier-1 maker round trip (2 x 0.40%,
-# `docs/reference/kraken-fee-schedule.md`) -- a chosen convention, not a derivation: the point where
-# spread stops being a rounding error on the fee stack. Absolute, never re-derived from the live
+# `docs/reference/kraken-fee-schedule.md`) -- a chosen convention, not a derivation. Absolute, never re-derived from the live
 # tier: maker -> 0% at the top tiers would cap at zero and reject everything. T0014 (spec 00066)
 # holds the calibration, T0024 (spec 00067) the cap's convention.
 DEFAULT_MAX_SPREAD_BPS = 10.0
@@ -55,8 +53,7 @@ def finalize_universe(
     """Apply the master plan §3 mechanical selection rule to each `cli.snapshot` `PairSnapshot`.
     A symbol absent from the opt-in `spreads` map (effective-spread bps per side at
     `SPREAD_REFERENCE_NOTIONAL_EUR`) is recorded `spread_bps: None`, never rejected: absence of
-    evidence is not evidence of a wide spread, and the null keeps an unscreened symbol visible in
-    the artifact (spec 00067)."""
+    evidence is not evidence of a wide spread (spec 00067)."""
     entries = []
     for pair in pairs:
         max_leverage = max(pair.leverage_buy) if pair.leverage_buy else 0

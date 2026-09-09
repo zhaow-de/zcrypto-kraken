@@ -37,7 +37,7 @@ def _coherent_messages() -> list[dict]:
 
 
 def _explode(pair: str, hour: datetime, messages: list[dict]) -> pl.DataFrame:
-    """Fan each WS-shaped message out into one row per price level, exactly as the capture writer does."""
+    """Fan a WS-shaped message out into one row per price level exactly as the capture writer's `_handle_book_message` does."""
     rows = []
     for msg in messages:
         ts = hour + timedelta(seconds=msg["offset"])
@@ -608,8 +608,8 @@ def test_audit_compares_every_cached_raw_fact() -> None:
 
 
 def test_audit_k_larger_than_cache_degrades_to_all(tmp_path: Path) -> None:
-    """`min(audit_k, len(reused))`: a small archive (or a big drain night) must audit everything it
-    has, not raise `ValueError: Sample larger than population`."""
+    """A small archive, or a big drain night, must audit everything it has rather than raise
+    `ValueError: Sample larger than population`."""
     tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)
     state = tmp_path / "state"
     verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)

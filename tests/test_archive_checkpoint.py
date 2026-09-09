@@ -71,10 +71,9 @@ def test_save_is_atomic_no_tmp_left_behind(tmp_path):
 
 
 def test_failed_write_never_corrupts_the_final_or_leaves_a_tmp_file(tmp_path, monkeypatch):
-    """The published checkpoint survives a failed write untouched, with no `.tmp` left behind. The
-    failure is injected AFTER real bytes land because `test_save_is_atomic_no_tmp_left_behind`'s
-    clean path leaves no `.tmp` litter
-    against a direct write to `checkpoint.parquet` either -- only a torn write tells the two apart."""
+    """The published checkpoint survives a failed write untouched, with no `.tmp` behind. The failure is injected
+    AFTER real bytes land because a clean write leaves no `.tmp` either, and neither would a direct write to
+    `checkpoint.parquet` -- only a torn one tells an atomic implementation from a direct one."""
     good = _row()
     save_checkpoint(tmp_path, [good])
 
@@ -118,9 +117,8 @@ def test_error_string_past_the_default_schema_inference_window_round_trips(tmp_p
 
 
 def test_mkdir_failure_raises_checkpoint_write_error_not_the_raw_oserror(tmp_path):
-    """`mkdir` itself fails -- the parent is chmod 000, the ":rw mount present but inaccessible"
-    shape -- and that must still surface as `CheckpointWriteError`, never as a `PermissionError`
-    escaping the cleanup path's own `tmp.unlink()`."""
+    """The ":rw mount present but inaccessible" shape, where `mkdir` itself fails: it must still surface as
+    `CheckpointWriteError`, never as a `PermissionError` escaping the cleanup path's own `tmp.unlink()`."""
     parent = tmp_path / "locked"
     parent.mkdir()
     parent.chmod(0o000)

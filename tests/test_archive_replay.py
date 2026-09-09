@@ -27,9 +27,9 @@ H = datetime(2026, 7, 14, 2, 0, tzinfo=UTC)
 
 
 def _explode(pair: str, hour: datetime, messages: list[dict]) -> pl.DataFrame:
-    """Fan each WS-shaped message out into one row per price level, exactly as the capture writer
-    does (cli/capture/command.py:146-158): bids first, then asks, all rows sharing the message's
-    `(ts, type, checksum)`."""
+    """Fan a WS-shaped message out into one row per price level exactly as the capture writer's
+    `_handle_book_message` does: a fixture that diverges from it proves nothing about the replay
+    driver."""
     rows = []
     for msg in messages:
         ts = hour + timedelta(seconds=msg["offset"])
@@ -572,7 +572,7 @@ def test_currently_failing_cached_hour_is_still_printed(tmp_path: Path) -> None:
 
 
 def test_without_state_dir_output_is_unchanged(tmp_path: Path) -> None:
-    """The no-`--state-dir` path is the ad-hoc operator tool and is byte-identical to today."""
+    """The no-`--state-dir` path is the ad-hoc operator tool, so incremental mode may not change what it prints."""
     primary = tmp_path / "primary"
     _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
 
