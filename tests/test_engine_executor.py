@@ -4784,6 +4784,7 @@ def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_pa
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
     refused = [r.getMessage() for r in records if "is not scored" in r.getMessage()]
+    assert refused, "the scorer refused nothing -- the week was scored, or its refusal wording moved"
     assert f"at or after {_TRACK_MONDAY:%G-W%V} began" in refused[-1], refused
 
 
