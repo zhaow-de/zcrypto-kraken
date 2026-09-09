@@ -90,8 +90,17 @@ def test_identical_sources_are_inert_on_both_arms() -> None:
 
 def test_the_entry_point_refuses_with_no_arguments() -> None:
     done = subprocess.run([sys.executable, str(_SCRIPT)], capture_output=True, text=True, cwd=_ROOT)
-    assert done.returncode == 2
+    assert done.returncode == pi.EXIT_USAGE
     assert "usage" in done.stderr.lower()
+
+
+def test_the_usage_text_names_every_code_the_tool_can_return() -> None:
+    """The contract is read at the moment of use, so a code the constants carry is named there."""
+    done = subprocess.run([sys.executable, str(_SCRIPT)], capture_output=True, text=True, cwd=_ROOT)
+    codes = (pi.EXIT_INERT, pi.EXIT_CODE_CHANGED, pi.EXIT_USAGE, pi.EXIT_COMMENTS_CHANGED, pi.EXIT_REFUSED)
+    assert len(set(codes)) == 5
+    for code in codes:
+        assert f"exit {code}" in done.stderr, f"exit {code} is not named: {done.stderr}"
 
 
 COMMAND = '''"""Module docstring, ordinary prose."""

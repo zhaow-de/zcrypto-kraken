@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""Prove a change is prose-only: same code shape, with the comment stream reported separately.
+"""Prove a change is prose-only: the same code shape, with the comment stream reported separately.
 
-A docstring here is often program OUTPUT -- a Typer command's is its `--help` body, and three scripts
-hand it to argparse -- so a change to one is REFUSED rather than certified."""
+exit 0  INERT -- the only verdict that licenses the words *prose-only*
+exit 1  CODE CHANGED -- the stripped shape or a scope's statement count moved
+exit 2  a usage error, which is this text
+exit 3  COMMENTS CHANGED -- a comment's text, column, the line it sits above, or its distance moved
+exit 4  REFUSED -- a docstring that is program output changed, or a path could not be read
+
+3 and 4 are verdicts to act on, never a run to retry: 3 says a guard that reads a comment's position
+may have stopped seeing it, and 4 says the claim cannot be made from here at all. A docstring is often
+program OUTPUT -- a Typer command's is its `--help` body, and three scripts hand it to argparse."""
 
 import ast
 import difflib
@@ -218,7 +225,10 @@ def output_names_in(root: pathlib.Path) -> tuple[frozenset[str], int]:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 3:
-        print(f"usage: {argv[0] if argv else 'prove-inert.py'} <base-rev> <path>...", file=sys.stderr)
+        print(f"usage: {argv[0] if argv else 'prove-inert.py'} <base-rev> <path>...\n", file=sys.stderr)
+        # The contract is met here, at the moment of use; printing it also makes this docstring
+        # program output, so the tool's own refusal covers an edit to it.
+        print(__doc__, file=sys.stderr)
         return EXIT_USAGE
     base, paths = argv[1], argv[2:]
     root = _repo_root()
