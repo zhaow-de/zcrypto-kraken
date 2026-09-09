@@ -113,7 +113,7 @@ def test_a1_kill_bar_cost_stress_can_fail_alone():
         book,
         benchmark,
         n_trials=16,
-        var_trials=1.0,
+        var_trials=VAR_TRIALS_PER_PERIOD,
         mean_block=5,
         seed=7,
         cost_stressed_returns=stressed,
@@ -121,8 +121,9 @@ def test_a1_kill_bar_cost_stress_can_fail_alone():
         benchmark_slices=_NOISE_BENCHMARK_SLICES,
     )
     assert result["cost_stress_pass"] is False
-    # var_trials=1.0 (not the fixture's usual 1e-3) also fails the dsr leg here, so this pins only
-    # cost_stress_pass and the all-must-hold verdict.
+    assert result["dsr_pass"] is True
+    assert result["spa_pass"] is True
+    assert result["worst_slice_pass"] is True
     assert result["passes"] is False
 
 
@@ -136,7 +137,7 @@ def test_a1_kill_bar_worst_slice_can_fail_alone():
         book,
         benchmark,
         n_trials=16,
-        var_trials=1.0,
+        var_trials=VAR_TRIALS_PER_PERIOD,
         mean_block=5,
         seed=7,
         cost_stressed_returns=book,
@@ -146,6 +147,9 @@ def test_a1_kill_bar_worst_slice_can_fail_alone():
     assert result["worst_slice_name"] == "bad_regime"
     assert result["worst_slice_pass"] is False
     assert result["worst_slice_relative"]["beats_benchmark_worst"] is False
+    assert result["dsr_pass"] is True
+    assert result["spa_pass"] is True
+    assert result["cost_stress_pass"] is True
     assert result["passes"] is False
 
 

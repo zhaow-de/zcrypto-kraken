@@ -25,7 +25,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0195 — `--write-baseline` truncates the whole baseline to whatever paths are scanned](T0195-write-baseline-truncates-to-the-scanned-subset.md) — scoped to fewer paths than the committed baseline covers, it silently discards every other file's recorded keeps rather than merging; reproducible against any offender-free file, which writes a 0-line baseline. The safe alternative is a hand-edit proved with `--check-baseline`. Ripe now — it is a design decision about a tool in the tree.
 
-- [T0196 — two `..._can_fail_alone` test names claim isolation their shared fixture value does not pin](T0196-cost-stress-alone-test-name-does-not-isolate.md) — `test_a1_kill_bar_cost_stress_can_fail_alone` and `test_a1_kill_bar_worst_slice_can_fail_alone` both build at `var_trials=1.0`, and both compound with the dsr leg failing alongside the named one, driven and measured; neither assertion pins `dsr_pass`. Ripe now — a rename or a rebuilt fixture is a behavior-shaped test change.
 
 ### Partially done<a name="partially-done"></a>
 
@@ -107,6 +106,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0180 — the prose ratchet's verdict is a tree property no gate sees](archive/T0180-ratchet-verdict-is-a-tree-property-no-gate-sees-it.md) — **resolved 2026-09-08** by three mechanisms with their limits stated: a `pre-push` stage, installed and proven to refuse a red tree, a `coverage.yml` step that blocks a red merge tree at PR time and is the only preventive one, and a `push`-triggered job that re-measures `develop` after each merge because `strict: false` lets the base advance between run and merge. Residual: a red `develop` can go undetected for about a minute — it persists until a corrective commit lands, and what the third mechanism bounds is the time before anyone knows.
 
+- [T0196 — two `..._can_fail_alone` test names claim isolation their shared fixture value does not pin](archive/T0196-cost-stress-alone-test-name-does-not-isolate.md) — **resolved 2026-09-09**: both fixtures rebuilt at `VAR_TRIALS_PER_PERIOD` (`1e-3`) instead of `1.0`, each now driven to show its other three legs passing while only its named leg fails, proved by a mutation back to `1.0` failing the new assertions; the SPA-alone test was also driven and already isolated genuinely, no change needed.
 - [T0197 — the OI level-column null-density guard is unscoped against a forward refresh](archive/T0197-oi-null-density-guard-is-unscoped-against-forward-refresh.md) — **resolved 2026-09-09 as a measured non-issue, no code change**: `_parse_float` never maps an absent value to null for the OI level columns (only for the four ratio columns, per its own docstring), so a null there would be a broken venue guarantee, not an artifact of the window — unlike the sibling zero-population guard, whose count is genuinely window-dependent. The test's docstring now records why it is deliberately unwindowed.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
