@@ -104,7 +104,7 @@ class RealizedSeries:
     net: list[float]
     dropped_tail: int
     assets: tuple[str, ...]
-    chain_ok: bool
+    chain_ok: bool | None  # None = no consecutive scored pair was compared, so the identity went unmeasured
     implausible: bool
     window_bound: str
     store_last_ts: datetime | None
@@ -147,9 +147,11 @@ def _snapshot_240(record: CycleRecord) -> SnapshotEntry:
     raise SoakError(f"cycle {record.cycle_ts!r} has no grid=='240' snapshot")
 
 
-def _chain_consistent(scored_ts: list[datetime], closes_by_asset: dict[str, dict[datetime, float]]) -> bool:
-    """True iff consecutive SCORED cycles chain -- vacuous while the scored sequence is 4h-contiguous, so what
-    it actually detects is a gap in it."""
+def _chain_consistent(scored_ts: list[datetime], closes_by_asset: dict[str, dict[datetime, float]]) -> bool | None:
+    """True iff consecutive SCORED cycles chain, `None` when no consecutive pair was compared -- vacuous while
+    the scored sequence is 4h-contiguous, so what it actually detects is a gap in it."""
+    if len(scored_ts) < 2 or not closes_by_asset:
+        return None
     for i in range(len(scored_ts) - 1):
         t_i = scored_ts[i]
         start_of_next = scored_ts[i + 1] - timedelta(hours=4)
@@ -681,7 +683,7 @@ class SelfTestReport:
 
     instrument_ok: bool | None  # None = canonical absent (skipped, NOT a fail)
     identity_ok: bool | None  # None = no cycle could be replayed (e.g. snapshots absent)
-    reconcile_ok: bool
+    reconcile_ok: bool | None  # None = the realized half compared no pair; the null half cannot answer None (T0183)
     messages: tuple[str, ...]
 
     @property
@@ -758,7 +760,7 @@ class RealizedInternals:
     reason: str  # why unavailable ("" when available)
     mult_by_cycle: dict[datetime, float]
     breach_by_cycle: dict[datetime, bool]
-    identity_ok: bool
+    identity_ok: bool | None  # None = no journaled target was compared, so the identity went unmeasured
     identity_detail: str
     cap_consistent: bool
     cap_detail: str
@@ -848,7 +850,8 @@ def realized_internals(
 
     mult_by_cycle: dict[datetime, float] = {}
     breach_by_cycle: dict[datetime, bool] = {}
-    identity_ok = True
+    identity_ok: bool | None = True
+    compared = 0
     worst_diff = 0.0
     worst_detail = "n/a"
     for rec in scored_records:
@@ -867,6 +870,7 @@ def realized_internals(
         for a, value in rec.final_targets.items():
             if a not in row:
                 raise SoakError(f"cycle {t!r}: asset {a!r} not in the rebuilt universe {sorted(row)}")
+            compared += 1
             diff = abs(row[a] - value)
             if diff >= worst_diff:
                 worst_diff = diff
@@ -874,6 +878,9 @@ def realized_internals(
             if diff > tol:
                 identity_ok = False
 
+    # Nothing compared: `True` here would report agreement never measured.
+    if not compared:
+        identity_ok = None
     identity_detail = f"worst |diff|={worst_diff!r} at {worst_detail}"
 
     completed_breaches = sum(1 for b in breach[: result.n_periods] if b)
@@ -900,7 +907,7 @@ def plausibility_checks(realized, null) -> list[str]:
         messages.append("realized: implausible forward return |r_fwd| > 0.5 in the scored segment")
     messages.extend(f"realized: gross {g!r} outside plausibility bound [-2, 2]" for g in realized.gross if not (-2.0 <= g <= 2.0))
     messages.extend(f"null: net_live value {v!r} is not finite" for v in null.net_live if not math.isfinite(v))
-    if not realized.chain_ok:
+    if realized.chain_ok is False:
         messages.append("realized: chain_ok is False (forward join integrity broken)")
     if not null.reconcile_ok:
         messages.append("null: reconcile_ok is False (live-cost reconstruction or cap-breach count diverged)")
@@ -940,7 +947,11 @@ def self_tests(
             messages.append(f"identity: skipped, replay failed: {exc}")
 
     reconcile_ok = null.reconcile_ok and realized.chain_ok
-    messages.append(f"reconcile: {'ok' if reconcile_ok else 'FAILED'}")
+    if reconcile_ok is None:
+        # Named for the realized half alone: the null half cannot answer None (`_net_live_from_result`, T0183).
+        messages.append("reconcile: skipped, no consecutive scored pair was compared")
+    else:
+        messages.append(f"reconcile: {'ok' if reconcile_ok else 'FAILED'}")
 
     messages.extend(plausibility_checks(realized, null))
 
@@ -966,10 +977,10 @@ class SoakAnalysis:
     L: int  # scored realized bars
     gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi, governor_engagement, cap_breach
     panel: PanelSummary  # summarize_panel over the discriminating (non-"n/a") gating verdicts
-    null_gov_rate: float  # backtest CONTEXT: fraction of null days governor-engaged
-    null_cap_rate: float  # backtest CONTEXT: cap_breach_bars / n_periods
+    null_gov_rate: float | None  # backtest CONTEXT: fraction of null days governor-engaged; None over no null days
+    null_cap_rate: float | None  # backtest CONTEXT: cap_breach_bars / n_periods; None over no null periods
     d4_gap_bps: float  # mean(governed_net - net_live) over the null's complete-basket era, in bps (x1e4)
-    d4_active: bool  # governor engaged anywhere in the null (any mult < 1)
+    d4_active: bool | None  # governor engaged anywhere in the null (any mult < 1); None over no null periods
     pnl_mean: float  # realized interior mean net/cycle
     pnl_cum: float  # realized compounded cumulative net over ALL bars: prod(1+net)-1
     pnl_verdict: MetricVerdict  # NON-GATING: realized interior mean net vs null net_live windows
@@ -1194,11 +1205,17 @@ def analyze_soak(
 
     panel = summarize_panel(gating_verdicts, band=band, dual_verdicts=dual_verdicts)
 
-    null_gov_rate = _mean(governor_engaged_daily(null.multipliers, null.day_index))
-    null_cap_rate = null.cap_breach_bars / null.n_periods if null.n_periods > 0 else 0.0
+    # None, not 0.0, for BOTH: each divides by the null's own extent, and 0.0 reports a backtest that
+    # never breached a cap and never engaged the governor. `_mean` has no polarity of its own, so its
+    # empty case is guarded here rather than in the helper, where four other call sites need the float.
+    gov_daily = governor_engaged_daily(null.multipliers, null.day_index)
+    null_gov_rate = _mean(gov_daily) if gov_daily else None
+    null_cap_rate = null.cap_breach_bars / null.n_periods if null.n_periods > 0 else None
 
     d4_gap_bps = _mean([g - n for g, n in zip(null.governed_net, null.net_live)]) * 1e4
-    d4_active = any(m < 1.0 for m in null.multipliers)
+    # `any(...)` over no multiplier is False, and False renders INACTIVE -- byte-identical to a null whose
+    # governor genuinely never engaged. The gap beside it is a signed mean and cannot mark the difference.
+    d4_active = any(m < 1.0 for m in null.multipliers) if null.multipliers else None
 
     null_pnl = null.net_live[1:]
     pnl_window = L - 1
@@ -1331,7 +1348,7 @@ def render_report(
         lines.append(f"  L (scored bars): {len(realized.net)}")
         lines.append(f"  span           : {span_days:.2f} days")
         lines.append(f"  dropped_tail   : {realized.dropped_tail}")
-        lines.append(f"  chain_ok       : {realized.chain_ok}")
+        lines.append(f"  chain_ok       : {'skipped' if realized.chain_ok is None else realized.chain_ok}")
     else:
         lines.append("  no realized series available")
     # Rendered whenever a series exists at all, the zero-scored-bars case included: a window the store closed
@@ -1437,7 +1454,7 @@ def render_report(
 
     # "Governor-bias gap" is D4 in the spec vocabulary; the token stays off the report surface.
     lines.append("GOVERNOR-BIAS GAP (governed vs live-cost null)")
-    bias = "bias ACTIVE" if analysis.d4_active else "bias INACTIVE"
+    bias = "bias unmeasured" if analysis.d4_active is None else "bias ACTIVE" if analysis.d4_active else "bias INACTIVE"
     lines.append(f"  d4_gap_bps: {analysis.d4_gap_bps:.4f} bps/cycle ({bias})")
     lines.append("  the null P&L uses the live cost convention, so the governor bias cancels by construction")
     lines.append("")
@@ -1698,7 +1715,7 @@ def soak_report(
                 if self_test.reconcile_ok is False:
                     void_reasons.append("self-test VOID: reconcile_ok=False")
             void_reasons += plausibility_checks(realized, null)
-            if internals.available and not internals.identity_ok:
+            if internals.available and internals.identity_ok is False:
                 void_reasons.append("realized-internals identity mismatch")
             if internals.available and not internals.cap_consistent:
                 void_reasons.append("cap-breach inconsistent")

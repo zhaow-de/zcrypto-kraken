@@ -380,9 +380,10 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
 
 
 def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
-    """An unmatched venue trade FAILS the comparison; an unknown row type is only counted."""
+    """An unmatched venue trade FAILS the comparison; an export with no trade row decides nothing; unknown types are only counted."""
     journaled = {f.trade_id for f in fills}
     matched = 0
+    trade_rows = 0
     unmatched: list[str] = []
     ignored: dict[str, int] = {}
     rollover_fees_eur = 0.0
@@ -393,6 +394,7 @@ def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
             if row.asset in EUR_CODES:
                 rollover_fees_eur += row.fee
         elif row.type == "trade":
+            trade_rows += 1
             if row.refid in journaled:
                 # ROWS, not fills: one venue trade writes one ledger row per asset leg.
                 matched += 1
@@ -403,8 +405,9 @@ def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
         elif row.type not in _NO_FILL_LEDGER_TYPES:
             ignored[row.type] = ignored.get(row.type, 0) + 1
     return {
-        "status": "FAILED" if unmatched else "ok",
-        # Every row read: without it, an empty export and one with no trades read as one clean bill.
+        # A third value, never "ok": with no trade row compared, "every venue trade matched" claims nothing.
+        "status": "FAILED" if unmatched else "ok" if trade_rows else "insufficient-data",
+        # Every row read: what separates an empty export from one carrying no trade rows.
         "n_rows": len(rows),
         "matched": matched,
         "rollover_fees_eur": rollover_fees_eur,

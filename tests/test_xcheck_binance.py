@@ -159,9 +159,22 @@ def test_crosscheck_series_disjoint_ts_yields_zero_overlap_and_nulls():
         "overlap_rows": 0,
         "close_corr": None,
         "return_corr": None,
-        "max_abs_rel_diff": 0.0,
+        "max_abs_rel_diff": None,
         "max_rel_diff_ts": None,
     }
+
+
+def test_crosscheck_series_single_overlapping_row_reports_no_deviation():
+    """The `< 2` arm the zero-overlap test does not reach: one shared day is too few for a
+    correlation, and the same branch must not hand the dataset maximum a 0.0 that reads as the two
+    venues agreeing exactly."""
+    kraken = _kraken_frame(3)
+    binance = _binance_frame(1, close_fn=lambda i: 90.0)  # a real 10% deviation on the shared day
+
+    result = crosscheck_series(kraken, binance)
+
+    assert result["overlap_rows"] == 1
+    assert result["max_abs_rel_diff"] is None
 
 
 def test_crosscheck_series_return_corr_on_monotone_series():
@@ -231,6 +244,80 @@ def test_crosscheck_dataset_skips_a_symbol_whose_parquet_is_absent(tmp_path):
 
 
 # --- render_markdown ---
+
+
+def test_summary_over_no_series_reports_no_deviation_and_renders_it(tmp_path):
+    """A maximum over no series has no value; 0.0 would say every series matched exactly. The
+    renderer must show that the way it already shows an absent correlation."""
+    report = crosscheck_dataset(tmp_path / "empty", [], fetch_fn=lambda pair, *, limit=1000: [])
+
+    assert report["summary"]["max_abs_rel_diff_overall"] is None
+    assert "Max abs rel diff overall: n/a" in render_markdown(report)
+
+
+def test_summary_over_a_symbol_with_no_overlap_reports_no_deviation(tmp_path):
+    """The failure that happens in production, unlike the no-series case above: the symbol IS
+    crosschecked, Binance answers, and the two windows simply do not meet. Its per-series maximum is
+    the only one the dataset maximum sees."""
+    root = tmp_path / "ohlc-full"
+    write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / "BTC" / "EUR" / "1440.parquet")
+
+    def fetch_fn(pair, *, limit=1000):
+        ts_ms = [(BASE_TS + (1000 + i) * DAY) * 1000 for i in range(3)]
+        return [_kline(ts, 100.0) for ts in ts_ms]
+
+    report = crosscheck_dataset(root, ["BTC/EUR"], fetch_fn=fetch_fn)
+
+    assert report["series"]["BTC/EUR"]["overlap_rows"] == 0
+    assert report["summary"]["max_abs_rel_diff_overall"] is None
+    md = render_markdown(report)
+    assert "Max abs rel diff overall: n/a" in md
+    assert "| n/a |" in md  # the per-series cell, which formatted the same value
+
+
+def test_summary_over_a_mixed_universe_ignores_the_symbol_that_measured_nothing(tmp_path):
+    """The branch's headline scenario, which neither the all-populated nor the no-series test builds:
+    some symbols reach and some do not. The `is not None` filter in `crosscheck_dataset` is what makes
+    it work, and without a fixture that mixes, deleting that filter passes the suite."""
+    root = tmp_path / "ohlc-full"
+    for base, quote in [("BTC", "EUR"), ("ETH", "EUR"), ("SOL", "BTC")]:
+        write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / base / quote / "1440.parquet")
+
+    def fetch_fn(pair, *, limit=1000):
+        if pair == "SOLBTC":  # listed, answered, and its window does not reach Kraken's
+            ts_ms = [(BASE_TS + (1000 + i) * DAY) * 1000 for i in range(3)]
+            return [_kline(ts, 100.0) for ts in ts_ms]
+        ts_ms = [(BASE_TS + i * DAY) * 1000 for i in range(3)]
+        close = 80.0 if pair == "BTCEUR" else 125.0  # 20/80 = 0.25 against 25/125 = 0.20
+        return [_kline(ts, 100.0 if i != 1 else close) for i, ts in enumerate(ts_ms)]
+
+    report = crosscheck_dataset(root, ["BTC/EUR", "ETH/EUR", "SOL/BTC"], fetch_fn=fetch_fn)
+
+    assert report["series"]["SOL/BTC"]["max_abs_rel_diff"] is None
+    assert report["series"]["ETH/EUR"]["max_abs_rel_diff"] == pytest.approx(0.20)
+    # 0.25, not 0.20: the aggregate is the WORST deviation across the universe, and the unmeasured
+    # symbol contributes nothing to it rather than a zero.
+    assert report["summary"]["max_abs_rel_diff_overall"] == pytest.approx(0.25)
+
+
+def test_summary_and_render_carry_the_deviation_a_populated_run_measures(tmp_path):
+    """The control beside the two None cases: with a real overlap and a planted diff, both the
+    summary and the rendered line must carry the measured number, so a guard that answered None or
+    "n/a" unconditionally cannot pass."""
+    root = tmp_path / "ohlc-full"
+    write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / "BTC" / "EUR" / "1440.parquet")
+
+    def fetch_fn(pair, *, limit=1000):
+        ts_ms = [(BASE_TS + i * DAY) * 1000 for i in range(3)]
+        closes = [100.0, 80.0, 100.0]  # 25% on the middle day, against Binance's close
+        return [_kline(ts, close) for ts, close in zip(ts_ms, closes, strict=True)]
+
+    report = crosscheck_dataset(root, ["BTC/EUR"], fetch_fn=fetch_fn)
+
+    md = render_markdown(report)
+    assert report["summary"]["max_abs_rel_diff_overall"] == pytest.approx(0.25)
+    assert "Max abs rel diff overall: 0.250000" in md
+    assert "| 0.250000 |" in md  # the per-series cell, whose guard is separate from the summary's
 
 
 def test_render_markdown_contains_series_row_and_summary(tmp_path):

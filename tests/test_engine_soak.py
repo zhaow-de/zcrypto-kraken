@@ -291,6 +291,19 @@ def test_chain_consistent_detects_gap():
     assert _chain_consistent(scored_ts, closes_by_asset) is False
 
 
+def test_chain_consistent_reports_nothing_compared_rather_than_a_held_chain():
+    """A window that compares no consecutive pair leaves the chain identity UNMEASURED rather than
+    held -- `True` there reports forward-join integrity nobody checked. The measured controls are
+    `test_chain_consistent_detects_gap` and, for the True path,
+    `test_realized_series_forward_join_and_chain_ok`."""
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes_by_asset = {"BTC": {d: 100.0, d + timedelta(hours=4): 105.0}}
+    assert _chain_consistent([d], closes_by_asset) is None
+    assert _chain_consistent([], closes_by_asset) is None
+    # No asset either: the pair exists but there is no series to compare it across.
+    assert _chain_consistent([d, d + timedelta(hours=4)], {}) is None
+
+
 def _fake_result(*, n_periods, sleeve_B, sleeve_A1, sleeve_A2, multipliers, governed_net):
     """All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
     final_targets/cap_breach_bars mirror the real builder's chain -- capped = apply_position_caps(
@@ -877,6 +890,16 @@ def test_plausibility_flags_gross_out_of_bounds():
     assert any("gross" in m.lower() and "bound" in m.lower() for m in msgs)
 
 
+def test_plausibility_names_a_broken_chain_but_not_an_unmeasured_one():
+    """The message asserts a break was FOUND, so it fires on False and must stay silent on None,
+    where no consecutive pair was compared at all."""
+    null = types.SimpleNamespace(net_live=[0.01, -0.02], reconcile_ok=True)
+    broken = types.SimpleNamespace(implausible=False, gross=[0.1, 0.2], chain_ok=False)
+    assert any("chain_ok is False" in m for m in plausibility_checks(broken, null))
+    unmeasured = types.SimpleNamespace(implausible=False, gross=[0.1, 0.2], chain_ok=None)
+    assert plausibility_checks(unmeasured, null) == []
+
+
 def test_plausibility_flags_non_finite_net_live():
     realized = types.SimpleNamespace(implausible=False, gross=[0.1, 0.2], chain_ok=True)
     null = types.SimpleNamespace(net_live=[0.01, float("inf")], reconcile_ok=True)
@@ -937,6 +960,30 @@ def test_self_tests_wires_checks_and_computes_void(monkeypatch):
     assert report.reconcile_ok is True  # null.reconcile_ok and realized.chain_ok both True
     assert report.void is True  # identity_ok False alone VOIDs the run
     assert any("identity mismatch" in m for m in report.messages)
+
+
+def test_self_tests_reports_reconcile_skipped_when_no_pair_was_chained(monkeypatch):
+    """An unmeasured chain is not a failed one: `reconcile_ok` is None, the run does not VOID, and the
+    message says skipped rather than FAILED. `test_self_tests_wires_checks_and_computes_void` is the
+    measured control, where `chain_ok=True` gives `reconcile_ok is True`."""
+    monkeypatch.setattr(soak, "instrument_self_check", lambda canonical_dir, registry_path, config=None: (True, "instrument ok"))
+    monkeypatch.setattr(soak, "identity_self_check", lambda record, snapshot_reader, tol=1e-6, path="fast": (True, "identity ok"))
+    rec = types.SimpleNamespace(cycle_ts=datetime(2026, 7, 16, 0, 0, tzinfo=UTC))
+    realized = types.SimpleNamespace(implausible=False, gross=[0.1], chain_ok=None)
+    null = types.SimpleNamespace(net_live=[0.01], reconcile_ok=True)
+
+    report = self_tests(
+        [rec],
+        null,
+        realized=realized,
+        canonical_dir=Path("data/ohlc-full"),
+        registry_path=Path("docs/reference/trial-registry.jsonl"),
+        snapshot_reader=None,
+    )
+    assert report.reconcile_ok is None
+    assert report.void is False
+    assert any(m.startswith("reconcile: skipped") for m in report.messages)
+    assert not any("FAILED" in m for m in report.messages)
 
 
 def test_self_tests_threads_path_to_identity_self_check(monkeypatch):
@@ -1072,6 +1119,31 @@ def test_analyze_soak_context_and_d4():
     assert math.isclose(a.null_cap_rate, 10 / 100)
     assert a.d4_active is True  # mult drops to 0.5
     assert a.pnl_verdict.verdict in ("consistent", "weakly-consistent", "inconsistent", "n/a")
+
+
+def test_analyze_soak_context_rates_over_an_empty_null_report_no_rate():
+    """Both context rates divide by the null's own extent. With no null periods, `0.0` says the null
+    never breached a cap and never engaged the governor -- a measurement, reported for a backtest that
+    produced none, into the payload a go-live decision reads."""
+    null = _mk_null([], [])
+
+    a = analyze_soak(_mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6), null, band=0.90)
+
+    assert a.null_cap_rate is None
+    assert a.null_gov_rate is None
+
+
+def test_analyze_soak_d4_bias_over_an_empty_null_is_unmeasured():
+    """`any(...)` over no multiplier is False, and False renders INACTIVE -- the reassuring reading,
+    over a backtest that produced no bar. The measured INACTIVE arm is asserted beside it, since
+    nothing else pins it; `test_analyze_soak_context_and_d4` pins the ACTIVE one."""
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+
+    assert analyze_soak(realized, _mk_null([], []), band=0.90).d4_active is None
+    # Every multiplier 1.0: the governor was observed and never engaged, which is what INACTIVE now
+    # means on its own.
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 100
+    assert analyze_soak(realized, _mk_null(nw, [0.001] * 100), band=0.90).d4_active is False
 
 
 def _mk_internals(cycle_ts, mult_by_cycle=None, breach_by_cycle=None):
@@ -1670,6 +1742,34 @@ def test_render_report_store_bound_window_warns_naming_both_bounds(tmp_path):
     low = text.lower()
     for w in FORBIDDEN:
         assert w not in low
+
+
+def test_render_report_calls_an_unmeasured_chain_skipped_and_leaves_the_other_two_alone():
+    """`None` renders as `skipped`, the word the SELF-TESTS block below already uses for it, while
+    `True` and `False` stay byte-identical -- a bare `None` reads as "no breaks found"."""
+    rs = _mk_realized([{"BTC": 0.1}, {"BTC": 0.1}], [0.01, 0.01])
+    rendered = {}
+    for flag in (True, False, None):
+        text = render_report(None, replace(rs, chain_ok=flag), None, None, void_reasons=["short window"], band=0.90)
+        rendered[flag] = next(line for line in text.splitlines() if "chain_ok" in line)
+    assert rendered[True] == "  chain_ok       : True"
+    assert rendered[False] == "  chain_ok       : False"
+    assert rendered[None] == "  chain_ok       : skipped"
+
+
+def test_render_report_calls_an_unobserved_governor_bias_unmeasured_and_leaves_the_other_two_alone():
+    """An empty null rendered `bias INACTIVE`, byte for byte what a null whose governor never engaged
+    renders; `unmeasured` is the third reading, and the other two are unchanged."""
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis = analyze_soak(realized, null, band=0.90)
+    rendered = {}
+    for flag in (True, False, None):
+        text = render_report(replace(analysis, d4_active=flag), realized, null, None, void_reasons=[], band=0.90)
+        rendered[flag] = next(line for line in text.splitlines() if "d4_gap_bps" in line)
+    assert rendered[True] == "  d4_gap_bps: 0.0000 bps/cycle (bias ACTIVE)"
+    assert rendered[False] == "  d4_gap_bps: 0.0000 bps/cycle (bias INACTIVE)"
+    assert rendered[None] == "  d4_gap_bps: 0.0000 bps/cycle (bias unmeasured)"
 
 
 def test_render_report_store_bound_warning_precedes_the_verdict_table():
@@ -2544,6 +2644,33 @@ def test_realized_internals_identity_holds(monkeypatch):
     assert ri.mult_by_cycle[scored[0].cycle_ts] == mult[1]
     assert ri.mult_by_cycle[scored[1].cycle_ts] == mult[3]
     assert set(ri.breach_by_cycle) == {scored[0].cycle_ts, scored[1].cycle_ts}
+
+
+def test_realized_internals_identity_is_unmeasured_with_no_scored_record(monkeypatch):
+    """The rebuild is AVAILABLE and no journaled target was compared against it, so `identity_ok` is
+    None: `True` would report spec 00059 D2's window-wide identity holding over zero comparisons, and
+    a caller cannot tell that from the measured pass `test_realized_internals_identity_holds` pins.
+    `cap_consistent` is unaffected -- it compares the rebuild against itself, scored records or not."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 4
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0 + k for k in range(n + 1)]
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.03, 0.0]
+    mult = [1.0] * (n + 1)
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    ri = realized_internals([], latest, reader)
+    assert ri.available is True and ri.reason == ""
+    assert ri.identity_ok is None
+    assert ri.cap_consistent is True, ri.cap_detail
+
+    # A scored record carrying no target at all compares nothing either, and reaches the same answer
+    # through the inner loop rather than the outer one.
+    ri_empty_targets = realized_internals([_mk_scored_record(h4_ts[1] + timedelta(hours=4), {})], latest, reader)
+    assert ri_empty_targets.identity_ok is None
 
 
 def test_realized_internals_shift_breaks_identity(monkeypatch):

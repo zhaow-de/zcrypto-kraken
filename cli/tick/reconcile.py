@@ -28,18 +28,20 @@ def _rel_diff(col: str) -> pl.Expr:
     return (pl.col(col) - pl.col(f"{col}_ohlcvt")).abs() / pl.col(f"{col}_ohlcvt").abs().clip(lower_bound=1e-12)
 
 
-def _match_stats(joined: pl.DataFrame, tol: float) -> tuple[int, float]:
+def _match_stats(joined: pl.DataFrame, tol: float) -> tuple[int, float | None]:
     match = joined.select(pl.all_horizontal([_rel_diff(c) <= tol for c in _OHLC_COLUMNS]).alias("match"))
     n_matched = int(match["match"].sum())
     n = joined.height
-    return n_matched, (100.0 * n_matched / n if n else 100.0)
+    # None, not 100.0: with nothing joined there is no ratio, and the success value would report
+    # that every interval agreed.
+    return n_matched, (100.0 * n_matched / n if n else None)
 
 
 def reconcile(tick_bars: pl.DataFrame, ohlcvt_bars: pl.DataFrame, *, tol: float = 1e-6) -> dict:
     """Compare tick-derived bars against canonical OHLCVT bars (`cli.ohlc.dataset.read_parquet`) over their `ts` overlap: an
     interval matches when every OHLC field's relative difference is within `tol`, near-exact by default since both series derive
-    from the same trades, and again at the looser `_LOOSE_TOL`. Zero overlap reports `pct_within_tol(_loose)` 100.0 vacuously,
-    mirroring `cli.backfill.reconcile.reconcile_series`."""
+    from the same trades, and again at the looser `_LOOSE_TOL`. Zero overlap reports `pct_within_tol(_loose)` as None: there is no
+    ratio over an empty join, and a percentage would say the two series agreed."""
     joined = tick_bars.join(ohlcvt_bars, on="ts", how="inner", suffix="_ohlcvt")
     n_intervals = joined.height
 
@@ -48,10 +50,10 @@ def reconcile(tick_bars: pl.DataFrame, ohlcvt_bars: pl.DataFrame, *, tol: float 
             "n_intervals": 0,
             "tol": tol,
             "n_matched": 0,
-            "pct_within_tol": 100.0,
+            "pct_within_tol": None,
             "loose_tol": _LOOSE_TOL,
             "n_matched_loose": 0,
-            "pct_within_tol_loose": 100.0,
+            "pct_within_tol_loose": None,
             "worst_mismatches": [],
         }
 

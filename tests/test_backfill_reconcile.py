@@ -40,6 +40,21 @@ def test_reconcile_series_counts_planted_ohlc_diff():
     assert report["ohlc_match_rate"] == pytest.approx(4 / 5)
 
 
+def test_reconcile_series_reports_the_largest_volume_deviation_it_measured():
+    """The populated control beside `test_reconcile_series_disjoint_ts_zero_overlap`: with a measured
+    deviation the field must carry it, so neither an unconditional `None` nor the pre-fix `0.0` passes.
+    The planted row's 0.2 is also the MAX rather than the 0.04 mean over the five rows."""
+    backfill = to_frame(_rows(5))
+    rest_rows = _rows(5)
+    rest_rows[2] = _row(BASE_TS + 2 * HOUR, v="12.5")  # |10.0 - 12.5| / 12.5 = 0.2
+    rest = to_frame(rest_rows)
+
+    report = reconcile_series(backfill, rest)
+
+    assert report["overlap_rows"] == 5
+    assert report["volume_rel_diff_max"] == pytest.approx(0.2)
+
+
 def test_reconcile_series_reports_vwap_diff_without_raising():
     backfill = to_frame(_rows(5, vwap="100.0"))
     rest = to_frame(_rows(5, vwap="105.0"))  # different vwap reconstruction
@@ -57,20 +72,32 @@ def test_reconcile_series_disjoint_ts_zero_overlap():
     report = reconcile_series(backfill, rest)
 
     assert report["overlap_rows"] == 0
+    # The three fields are not one decision: a rate whose success value is 1.0, and two deviation
+    # measures whose success value is 0.0. All three report agreement that was never measured.
+    assert report["ohlc_match_rate"] is None
+    assert report["volume_rel_diff_max"] is None
+    assert report["vwap_mean_abs_rel_diff"] is None
 
 
 def test_reconcile_dataset_discovers_symbols_and_aggregates_summary(tmp_path):
     frame = to_frame(_rows(5))
+    degraded_rows = _rows(5)
+    degraded_rows[2] = _row(BASE_TS + 2 * HOUR, h="999.0")  # planted diff, so the minimum is not 1.0
     backfill_root = tmp_path / "backfill"
     rest_root = tmp_path / "rest"
     write_parquet(frame, backfill_root / "BTC" / "EUR" / "60.parquet")
     write_parquet(frame, rest_root / "BTC" / "EUR" / "60.parquet")
+    write_parquet(frame, backfill_root / "ETH" / "EUR" / "60.parquet")
+    write_parquet(to_frame(degraded_rows), rest_root / "ETH" / "EUR" / "60.parquet")
 
     report = reconcile_dataset(backfill_root, rest_root, {"60": HOUR})
 
-    assert set(report["series"]) == {"BTC/EUR/60"}
+    assert set(report["series"]) == {"BTC/EUR/60", "ETH/EUR/60"}
     assert report["series"]["BTC/EUR/60"]["ohlc_match_rate"] == 1.0
-    assert report["summary"]["series_count"] == 1
+    assert report["summary"]["series_count"] == 2
+    # The populated control for the empty-dataset case: a measured minimum, and one the aggregate had
+    # to pick out of two series rather than hand back from a fallback.
+    assert report["summary"]["min_ohlc_match_rate"] == pytest.approx(4 / 5)
 
 
 def test_reconcile_dataset_skips_series_absent_from_rest_root(tmp_path):
@@ -83,6 +110,72 @@ def test_reconcile_dataset_skips_series_absent_from_rest_root(tmp_path):
 
     assert report["series"] == {}
     assert report["summary"]["series_count"] == 0
+    assert report["summary"]["min_ohlc_match_rate"] is None  # a minimum over no series, not a perfect one
+
+
+def test_dataset_minimum_over_a_mixed_dataset_ignores_the_series_that_measured_nothing(tmp_path):
+    """Some series overlap and some do not, which neither the all-populated nor the no-series test
+    builds. The `is not None` filter before the `min()` is what makes it work, and without a fixture
+    that mixes, deleting that filter passes the suite."""
+    degraded_rows = _rows(5)
+    degraded_rows[2] = _row(BASE_TS + 2 * HOUR, h="999.0")
+    backfill_root = tmp_path / "backfill"
+    rest_root = tmp_path / "rest"
+    write_parquet(to_frame(_rows(5)), backfill_root / "BTC" / "EUR" / "60.parquet")
+    write_parquet(to_frame(degraded_rows), rest_root / "BTC" / "EUR" / "60.parquet")
+    write_parquet(to_frame(_rows(5)), backfill_root / "ETH" / "EUR" / "60.parquet")
+    disjoint = [_row(BASE_TS + (100 + i) * HOUR) for i in range(5)]
+    write_parquet(to_frame(disjoint), rest_root / "ETH" / "EUR" / "60.parquet")
+
+    report = reconcile_dataset(backfill_root, rest_root, {"60": HOUR})
+
+    assert report["series"]["ETH/EUR/60"]["ohlc_match_rate"] is None
+    assert report["summary"]["min_ohlc_match_rate"] == pytest.approx(4 / 5)
+    assert "| ETH/EUR/60 | 0 | n/a | 0 | n/a | n/a |" in render_markdown(report)
+
+
+def test_render_markdown_shows_an_unmeasured_series_as_not_available():
+    """A series with no overlap carries `None` in all three measures; the renderer must show that
+    rather than raise on the format spec or print a zero that reads as exact agreement."""
+    report = {
+        "series": {
+            "BTC/EUR/60": {
+                "overlap_rows": 0,
+                "ohlc_exact_match_rows": 0,
+                "ohlc_match_rate": None,
+                "volume_rel_diff_max": None,
+                "vwap_mean_abs_rel_diff": None,
+            }
+        },
+        "summary": {"series_count": 1, "total_overlap_rows": 0, "min_ohlc_match_rate": None},
+    }
+
+    md = render_markdown(report)
+
+    assert "| BTC/EUR/60 | 0 | n/a | 0 | n/a | n/a |" in md
+    assert "Min OHLC match rate: n/a" in md
+
+
+def test_render_markdown_carries_the_numbers_a_populated_run_measures():
+    """The control beside the None case: with real measurements every cell must show the value, so a
+    renderer that answered `n/a` unconditionally could not pass."""
+    report = {
+        "series": {
+            "BTC/EUR/60": {
+                "overlap_rows": 5,
+                "ohlc_exact_match_rows": 4,
+                "ohlc_match_rate": 0.8,
+                "volume_rel_diff_max": 0.125,
+                "vwap_mean_abs_rel_diff": 0.0625,
+            }
+        },
+        "summary": {"series_count": 1, "total_overlap_rows": 5, "min_ohlc_match_rate": 0.8},
+    }
+
+    md = render_markdown(report)
+
+    assert "| BTC/EUR/60 | 5 | 0.8000 | 4 | 0.125000 | 0.062500 |" in md
+    assert "Min OHLC match rate: 0.8000" in md
 
 
 def test_render_markdown_contains_series_table():
