@@ -430,6 +430,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     offenders = scan(paths)
     if args.write_baseline:
+        # The mode below is `w`, so a path this scan did not cover is not preserved -- it is dropped.
+        # A first write to a path that holds no baseline yet discards nothing and is left alone.
+        if args.paths and os.path.isfile(args.write_baseline):
+            dropped = sorted({key[0] for key in read_baseline(args.write_baseline)} - set(paths))
+            if dropped:
+                print(
+                    f"{args.write_baseline} records {len(dropped)} path(s) this scan does not cover, and a scoped "
+                    f"write would discard their keeps -- {dropped[0]} first. Re-run with no path list.",
+                    file=sys.stderr,
+                )
+                return 2
         with open(args.write_baseline, "w", encoding="utf-8") as fh:
             fh.write(baseline_text(offenders))
         return 0
