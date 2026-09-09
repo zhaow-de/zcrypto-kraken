@@ -62,7 +62,8 @@ def test_realized_internals_refuses_an_identity_it_could_not_measure(monkeypatch
     assert ri.identity_ok is False, ri.identity_detail
     assert ri.identity_unmeasurable == 1
     assert "unmeasurable" in ri.identity_detail and "BTC" in ri.identity_detail
-    assert "journaled=nan" in ri.identity_detail  # both operands, since the arm never says which went non-finite
+    # Both operands, since the arm never says which one went non-finite (spec 00113 D5).
+    assert "journaled=nan" in ri.identity_detail and "rebuilt=" in ri.identity_detail
 
     # `compared == 0` holds above too, so that window alone cannot tell the arm from the narrower
     # `if unmeasurable and not compared:`. Here one comparison IS made and agrees, and the refusal
@@ -80,6 +81,9 @@ def test_realized_internals_refuses_an_identity_it_could_not_measure(monkeypatch
     infinite = realized_internals([inf_rec], latest, reader)
     assert infinite.identity_unmeasurable == 1
     assert infinite.identity_ok is False, infinite.identity_detail
+    # The `continue` kept an unmeasurable pair out of `worst_diff`: the docstring's "never compared".
+    # Without it this window's detail reads `worst |diff|=inf`, a magnitude nothing measured.
+    assert infinite.identity_detail.startswith("worst |diff|=0.0 at n/a")
 ```
 
 - [ ] **Step 2: Run it and read WHICH failure fired**
@@ -150,6 +154,8 @@ Note the `compared += 1` moved BELOW the `diff` computation; it was above it bef
 
 - [ ] **Step 5: Order the two arms, and extend the detail**
 
+Replace `cli/engine/soak.py:881-884` — the `# Nothing compared:` comment, the `if not compared:` arm under it, and the `identity_detail = …` assignment that sits BELOW that arm today — with the block here. The assignment moves ABOVE both arms because the unmeasurable arm appends to it: inserted above the existing four lines instead of over them, the leftover `if not compared: identity_ok = None` runs after the new arm and the leftover assignment overwrites the extended detail, which puts the all-NaN window back on `identity_ok=None` with no void reason — the silent pass this pair exists to close.
+
 ```python
     identity_detail = f"worst |diff|={worst_diff!r} at {worst_detail}"
     # Order is load-bearing (spec 00113 D4): an all-NaN window has `compared == 0` as well, and
@@ -167,6 +173,8 @@ One `if unmeasurable:` decides the verdict (D3) and the detail (D5) together, so
 Pass `identity_unmeasurable=unmeasurable` in the successful return.
 
 And extend `realized_internals`' own contract sentence at `:820-821` — "`identity_ok` is spec 00059 D2's window-wide check that the rebuilt row equals the journaled `final_targets` to `tol`" — with ", and refuses when a `diff` was not finite (spec 00113 D2)". Three sentences in this file state `identity_ok`'s contract and the family is exactly those three: this one; the field comment Step 3 rewrites (`:763`); and the dataclass docstring at `:757` ("spec 00059 D2's window-wide proof that each resolved row is that cycle's own"), which states the field's PURPOSE rather than its arms and is left alone. Outside the family: `soak_report`'s gate list at `:1645` names `identity_ok` without saying what `False` means, and `SelfTestReport.identity_ok` (`:685`) belongs to a different class.
+
+That extension costs a line the prose ratchet is watching. The docstring spans `:815-822` — 8 lines — and `infra/scripts/prose-tripwire-baseline.txt` records it at exactly that size (`grep "soak.py:815" infra/scripts/prose-tripwire-baseline.txt` → `comment-block 8 > 4`); re-wrapping its closing paragraph with the added clause returns four lines where three stand, both at the width the docstring's own longest line implies and at `ruff.toml`'s 132 (`uv run python -c` over `textwrap.wrap`). Nine against a recorded 8 is `grown`, which fails the hook at `pre-commit` and again at `pre-push`. So either condense the docstring's existing tail by a line in the same edit, or keep the ninth consciously and re-record with `uv run python infra/scripts/prose-tripwire.py --write-baseline infra/scripts/prose-tripwire-baseline.txt`, staged in Step 7's commit — the script's header requires reading `--check-baseline`'s classification first, because the re-record absorbs everything else the tree has grown along with this line.
 
 - [ ] **Step 6: Run both files and confirm the true positive is still green**
 
@@ -195,7 +203,7 @@ uv run pytest --collect-only -q tests/test_engine_soak.py -k realized_internals
 
 It must select every `test_realized_internals_*` test and deselect none of them — 10 on this branch's base, 11 with the new one. Do not narrow the filter to make a number match: the wider set is what carries the probe's true positives, including the schema-2 and real-journal tests that walk the same loop.
 
-Two mutations, one probe run each, same control. Both must report KILLED, and the control must FAIL in both, which is how the probe proves it is measuring — it widens `tol` so `test_realized_internals_shift_breaks_identity`'s mismatch stops being detected. Read which assertion fired, not the exit code.
+Three mutations, one probe run each, same control. All three must report KILLED, and the control must FAIL in each, which is how the probe proves it is measuring — it widens `tol` so `test_realized_internals_shift_breaks_identity`'s mismatch stops being detected. Read which assertion fired, not the exit code.
 
 ```bash
 infra/scripts/mutate-probe.sh \
@@ -217,6 +225,16 @@ infra/scripts/mutate-probe.sh \
 
 Narrows the arm to the reading Step 5's own comment invites. The all-NaN window still passes under it; only Step 1's mixed window kills it, on `assert mixed.identity_ok is False`. If this one reports SURVIVED, the mixed window is not discriminating and the fixture is the thing to fix.
 
+```bash
+infra/scripts/mutate-probe.sh \
+  --file cli/engine/soak.py \
+  --control 's/if diff > tol:/if diff > tol * 1e12:/' \
+  --mutation 's/if not math.isfinite(diff):/if math.isnan(diff):/' \
+  -- uv run pytest tests/test_engine_soak.py -k realized_internals -q
+```
+
+Narrows D2's keying from finiteness to a NaN test, which is the claim the spec calls load-bearing and the reason Step 1 carries a third window at all. The fragment matches once after Step 4 (`grep -c "if not math.isfinite(diff):" cli/engine/soak.py` is `0` on this branch's base and `1` once Step 4 lands). Only the infinite window kills it, on `assert infinite.identity_unmeasurable == 1`: under `math.isnan` an infinite journaled target counts as compared again and reports a magnitude mismatch, which is the reclassification spec `00113` D2 rejects. Without this run the third window is asserted and never shown to bite, and the commit body would claim proof for the ordering arm alone.
+
 ---
 
 ### Task 2: The void reason names which of the two happened
@@ -234,7 +252,7 @@ Narrows the arm to the reading Step 5's own comment invites. The all-NaN window 
 
 `_patch_canonical_pipeline` stubs `realized_internals`, the PRODUCER of the count; `soak_report` still computes `void_reasons` itself, so the branch under test is the live one. Task 1's `test_realized_internals_refuses_an_identity_it_could_not_measure` is what pins that a NaN journaled target produces the count; this arm pins which string the branch picks given it.
 
-Place the arm after the `identity_ok=False` one and before the `identity_ok=None` one, and extend the test's docstring to state the claim the new assertions make:
+Place the arm after the `identity_ok=False` one and before the `identity_ok=None` one, and extend the test's docstring to state the claim the new assertions make — in four lines, because that docstring (`tests/test_engine_soak_command.py:271-274`) already sits exactly at the tripwire's `COMMENT_BLOCK_LINES` and `grep "test_engine_soak_command.py:2" infra/scripts/prose-tripwire-baseline.txt` returns nothing, so a fifth line is a NEW offender and Step 5's commit is refused. Condense a clause to make room, or re-record the baseline the way Task 1 Step 5 sets out.
 
 ```python
     # A journaled value that is not a number and a rebuild that disagrees by magnitude are different
@@ -301,6 +319,8 @@ git commit
 
 Load `.claude/skills/topic-ops/SKILL.md` and follow it: `status: resolved`, a `## Resolution` naming the commits and what each decision landed as, `git mv` into `docs/open-topics/archive/`, and the index bullet moved to the same category's `### Resolved` with its link repointed at `archive/`. Its `## Suggested next steps` bullets are answered, in their own order, by spec `00113` D1 (where the refusal belongs), D7 (the guard's fixture and its degeneracy) and D2/D3/D5 (what a partly-NaN window answers, and what the detail then carries), with D6 as the consequence for the void reason — say which, so the archived file records the answers rather than the questions.
 
+In the same edit that moves the index bullet, rewrite its TEXT as the outcome — what the arm now answers and which void reason it emits — and drop its closing "Ripe now.". `docs/open-topics/README.md:124` states the defect in the present tense today, and every bullet already under a `### Resolved` heading reads as its outcome instead; `topic-ops` prescribes the move and the repointed link, not the wording, so the plan is the only place this can land.
+
 - [ ] **Step 2: Re-tense the three topics this change falsifies**
 
 None is `T0188`, and none is archived here — the edits are prose corrections in files that stay open. The family is `grep -rn "T0188" docs/` less the `00113` spec/plan pair: five live-file hits — `T0183:53`, `T0193:25` and `T0194:17`, one bullet each below; `README.md:124`, which Step 1's archive move already carries; and `docs/iterations-history-phase6.md:889`, a point-in-time changelog entry that correctly keeps its wording. The `T0183:93` bullet carries no `T0188` token — it is the same `identity_ok` contract sentence Task 1 Step 3 rewrites at its source:
@@ -308,6 +328,7 @@ None is `T0188`, and none is archived here — the edits are prose corrections i
 - `docs/open-topics/T0183-reconciliation-reports-perfect-on-an-empty-set.md:53` reads "A non-finite `diff` renders the same string with comparisons counted, which is `T0188` — a different defect … and not this topic's to fix". After this branch the string is no longer the same and the comparisons are no longer counted: re-tense it to the outcome, keeping the bare `T0188` citation — `grep -rn "T0188-soak-identity" docs/` returns `README.md:124` as the only markdown link to the topic file, so no bullet here repoints one.
 - The same file's table row at `:93` states `identity_ok`'s range as "`bool | None` — `None` when no `(record, asset)` pair was compared". Correct it to name the new arm as well: `False` when any pair was unmeasurable.
 - `docs/open-topics/T0193-nonfinite-snapshot-close-escapes-the-soak-report.md:25` reads "`T0188` is a silent pass over an unmeasurable comparison, this is a loud escape past a contract that promised degradation" — present tense about a defect this branch closes, in a topic that stays open and whose own fork is the one spec `00113` parks. Re-tense it to the outcome, keeping the citation (`prose.md`); the sentence's point — that the two arrive at `realized_internals` from opposite sides — survives the re-tensing.
+- The same file's `:23` reads "the verified builder raises `AlphaError` on the same input" — the claim spec `00113`'s measured basis corrects: `AlphaError` at the three 4h placements, `BenchmarkError` at the three daily ones. Correct it here too, or the disproof lives only in a spec a `T0193` reader has no reason to open. This member carries no `T0188` token and the grep above cannot see it; it is found by reading the file the `:25` edit already opens.
 - `docs/open-topics/T0194-journal-readers-that-never-validate-the-record.md:17` already reads "That is closed at the comparison by spec `00113`" while nothing had landed — a completed-work sentence ahead of the step that makes it true (`prose.md`). Re-tense it to name what closed it.
 
 - [ ] **Step 3: The changelog entry**
@@ -316,7 +337,7 @@ The soak report's void reasons and its `--json` internals block are surfaces an 
 
 - [ ] **Step 4: Verify the reach, once, on the final tip**
 
-`git grep -l "soak" -- tests/` names the reachable files; run `tests/test_engine_soak.py` and `tests/test_engine_soak_command.py` at minimum, plus `tests/test_internal_terms_not_operator_visible.py` (the new void-reason string is runtime output from `cli/`, which that test's `SCANNED_PACKAGES` covers) and `tests/test_code_prose_citations.py` — which resolves no serial and no `T<NNNN>`, only that a `task <N>` token carries a 5-digit serial nearby, so it is the guard that catches such a token if a fix-up introduces one into the new comments. Then `uv run pre-commit run -a`.
+`git grep -l "soak" -- tests/` names the reachable files; run `tests/test_engine_soak.py` and `tests/test_engine_soak_command.py` at minimum, plus `tests/test_internal_terms_not_operator_visible.py` (the new void-reason string is runtime output from `cli/`, which that test's `SCANNED_PACKAGES` covers) and `tests/test_code_prose_citations.py` — which resolves no serial and no `T<NNNN>`, only that a `task <N>` token carries a 5-digit serial nearby, so it is the guard that catches such a token if a fix-up introduces one into the new comments. Add `tests/test_open_topics_frontmatter.py` too: it is the only mechanical check over Step 1's own operation — `test_frontmatter_parses_as_yaml_with_a_valid_status` on the `status` flip, `test_an_archived_topic_carries_no_ripe_when` on the archive move, `test_every_topic_link_in_the_index_resolves` on the repointed index bullet — and no grep for `soak` can select it (`grep -c "soak" tests/test_open_topics_frontmatter.py` → `0`). Then `uv run pre-commit run -a`, which runs no pytest.
 
 - [ ] **Step 5: Commit**
 
