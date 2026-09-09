@@ -134,8 +134,8 @@ def test_a_below_minimum_result_passes_through_unchanged():
 
 
 def test_a_below_costmin_result_names_the_floor():
-    """The fail-open direction: a matched EUR pair that clears ordermin but falls
-    under the EUR costmin floor. A costmin drop (e.g. costmin=0.0) must not survive this test."""
+    """The fail-open direction: a matched EUR pair that clears ordermin but falls under the EUR
+    costmin floor. A costmin drop (e.g. costmin=0.0) must not survive this test."""
     result = size_probe_order(0.001, 100.0, _constraints())
     assert isinstance(result, BelowMinimum)
     assert "costmin" in result.reason
@@ -445,8 +445,8 @@ def _gate(tmp_path: Path, level: str = GateLevel.FULL) -> ExecutionGate:
 
 
 class CountingGate:
-    """Counts evaluations. The idle-tick claim ("an idle tick does only the os.lstat") is only
-    checkable against something that records being asked."""
+    """Counts evaluations. The idle-tick claim -- that no gate is read with no plan on disk -- is
+    only checkable against something that records being asked."""
 
     def __init__(self, level=GateLevel.FULL):
         self.calls = 0
@@ -544,7 +544,7 @@ def _venue_record(tmp_path: Path, *, balances, positions=None, when: datetime = 
 def _open_order(client_order_id, *, is_reduce_only=False, filled_qty=0.0):
     """A resting order as reconciliation adopts it. `is_reduce_only` is here because the real adopted
     report carries it and the startup pass must be seen NOT to consult it; `filled_qty` and `status`
-    are what it reads instead (`cli/engine/executor.py:912`, `:933`)."""
+    are what `_reconcile_adopted_row` reads instead."""
     return SimpleNamespace(
         client_order_id=client_order_id,
         is_reduce_only=is_reduce_only,
@@ -2214,8 +2214,8 @@ def test_a_rest_hold_order_is_priced_the_declared_percent_passive_of_the_touch(t
 
 
 def test_the_kill_file_revokes_a_resting_rest_hold_order_within_one_tick(tmp_path):
-    """Drill E's subject, and the only bound that acts on a resting order while it rests. The path
-    is exercised today only against `execute`."""
+    """Drill E's subject: the LEVEL bound in `_poll`, which is the arm a kill file reaches while an
+    order rests. Its two siblings there, quote silence and the box, have their own tests."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
     ex.on_order_event(_accepted(client.last_order_id))
     resting_order = client.submitted[0][0]
@@ -4054,8 +4054,8 @@ def _idle_executor(tmp_path):
 
 def test_an_external_fill_with_no_strategy_claim_does_not_trip(tmp_path):
     """The settle's healthy path, proven quiet: the Cache position moves and nothing reaches
-    `on_order_event`; a live settle arrives on the OTHER stream, where the unmatched early-return
-    keeps it from the trip (`cli/engine/executor.py:1890`). No intent active, and no kill file."""
+    `on_order_event`; a live settle arrives on the OTHER stream, where `_on_external_event`'s
+    unmatched early return keeps it from the trip. No intent active, and no kill file."""
     ex, client, state_dir = _idle_executor(tmp_path)
     client.cache.set_external_position("BTC/EUR", 0.0004)  # the settle landed as a holding, attributed to EXTERNAL
     _advance_ticks(ex, minutes=2)
@@ -4635,8 +4635,8 @@ def test_the_week_containing_the_first_fill_is_not_scored(tmp_path):
 def test_a_fill_at_the_journals_oldest_boundary_is_refused(tmp_path):
     """The truncated journal: the same HEALTHY week with everything before the build-out pruned
     away, so the opening slice is gone and `held` is short. Nothing on disk distinguishes that from
-    a real breach, so it is refused by the birth-record arm (`cli/engine/executor.py:1709`) --
-    which REPLACED asking whether the oldest surviving boundary carries a fill."""
+    a real breach, so it is refused by `_score_closed_week`'s birth-record arm -- which REPLACED
+    asking whether the oldest surviving boundary carries a fill."""
     journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
     for boundary in (_TRACK_LEAD, _OPENING, _TRACK_LEAD + timedelta(hours=8), _TRACK_LEAD + timedelta(hours=12)):
         (journal / f"{boundary:%Y-%m-%d}" / f"cycle-{boundary:%H}.json").unlink()
@@ -4714,8 +4714,8 @@ def test_the_trip_keeps_the_first_reason_across_a_restart(tmp_path, kill_trip_ex
 
 def test_the_idle_tick_never_evaluates_tracking(tmp_path):
     """`on_timer` is not a call site for this. A week-wide read on a 5-second tick would be 17280
-    journal scans a day, and the tick's whole cheap-idle contract is that it does an os.lstat and
-    stops."""
+    journal scans a day, and `_pickup`'s idle path is contracted to read no gate and no venue at
+    all."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
     gate = CountingGate()
     executor = _tracking_executor(tmp_path)
@@ -4740,8 +4740,8 @@ _BOUNDARY_RAMP_FILLS = {
 def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path):
     """The retention prune turns the true positive into a latched false kill, and this is that
     construction: the HEALTHY fixture -- the week that must pass -- with the two oldest boundaries
-    deleted. The opening slice goes with them,
-    `held` is short by it, and the same journal reads a breach.
+    deleted. The opening slice goes with them, `held` is short by it, and the journal reads a
+    breach.
 
     Nothing on disk distinguishes that from a real breach, and asking whether the oldest surviving
     boundary carries a fill passes whenever the prune cuts at a quiet one. The birth record answers
@@ -4771,9 +4771,8 @@ def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path)
 
 def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_path):
     """A first fill exactly ON Monday 00:00 -- what arming at a week boundary produces -- is still
-    the week the series started in, and must go unscored. What refuses it is the birth-record arm
-    (`cli/engine/executor.py:1709`): the clock sits a week past the fill, so `_BIRTH_MINT_WINDOW`
-    refuses to mint. The `>=` this shape protects is at `:1724`, behind that arm."""
+    the week the series started in, so its ramp would be in the mean. `_score_closed_week` must
+    refuse it, and the assertions pin that outcome -- no trip, `_TRACKING_UNSCORED` published."""
     _journal_week(tmp_path, fills=_BOUNDARY_RAMP_FILLS, lead=6)
 
     tripped, states = _tracking_states(tmp_path)
@@ -5052,8 +5051,8 @@ def test_the_limit_call_the_executor_makes_binds_against_the_real_order_factory(
 def test_a_real_money_answers_both_accessors_the_fill_row_reads():
     """The two accessors the fill path takes off a commission -- `float(...)` for the amount and
     `.currency.code` for its denomination -- pinned by VALUE rather than by a name-existence walk.
-    Only `_fee_eur`'s currency read is `getattr`-wrapped (`cli/engine/executor.py:255`); the other
-    three are bare (`:259`, `:2419`, `:2420`), so a dropped accessor raises rather than defaults.
+    Only `_fee_eur`'s currency read is `getattr`-wrapped; its amount read and both of
+    `_fill_payload`'s are bare, so a dropped accessor raises rather than quietly defaulting.
 
     The second half is the quantization every fee number in this file rests on: a `Money` quantizes
     to its currency's precision, so a `EUR` fee written to two decimals survives it and a finer one
