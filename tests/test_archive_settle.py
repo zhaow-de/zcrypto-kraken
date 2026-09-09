@@ -279,7 +279,7 @@ def test_absent_trades_hour_IS_a_loss_when_the_book_hour_is_also_gone() -> None:
 
 
 def test_book_stream_keeps_the_old_behaviour_when_it_has_no_witness() -> None:
-    """The book IS the witness, so it is judged on bracketing alone -- unchanged."""
+    """The book IS the witness, so it is judged on bracketing alone."""
     available = {H - timedelta(hours=1), H + timedelta(hours=1)}
 
     assert is_total_loss(H, available=available, span=(min(available), max(available)), alive_witness=None) is True

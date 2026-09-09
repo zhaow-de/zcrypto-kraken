@@ -71,8 +71,9 @@ def test_save_is_atomic_no_tmp_left_behind(tmp_path):
 
 
 def test_failed_write_never_corrupts_the_final_or_leaves_a_tmp_file(tmp_path, monkeypatch):
-    """The failure is injected AFTER real bytes land: a clean write leaves no `.tmp` behind and neither would a
-    direct write to `checkpoint.parquet`, so only a torn one tells an atomic implementation from a direct one."""
+    """The published checkpoint survives a failed write untouched, with no `.tmp` behind. The failure is injected
+    AFTER real bytes land because a clean write leaves no `.tmp` either, and neither would a direct write to
+    `checkpoint.parquet` -- only a torn one tells an atomic implementation from a direct one."""
     good = _row()
     save_checkpoint(tmp_path, [good])
 

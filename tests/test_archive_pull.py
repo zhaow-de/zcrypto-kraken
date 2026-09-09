@@ -174,8 +174,9 @@ def _part(root: Path, pair: str, kind: str, hour: str, idx: int) -> Path:
 
 
 def test_verify_tree_reports_which_finals_verified() -> None:
-    """A final that failed its hash must not reach `verified`: `prune_stale_parts` deletes the parts of
-    everything listed there, and those parts are the only intact copy of a final that did not verify."""
+    """`verified` carries the finals that hashed OK and excludes the ones that did not: `prune_stale_parts`
+    deletes the parts of everything listed there, and for a final that did not verify those parts are the only
+    intact copy."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:

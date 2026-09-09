@@ -84,7 +84,7 @@ def _roots(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def _healthy(pri: Path, sec: Path, hour: datetime, *, pairs: tuple[str, ...] = PAIRS) -> None:
-    """Both hosts recording both pairs, no gaps anywhere."""
+    """Both hosts recording every pair given, no gaps anywhere."""
     for pair in pairs:
         _write(pri, pair, "book", hour, _book(pair, hour, _dense()))
         _write(sec, pair, "book", hour, _book(pair, hour, _dense(range(3, 3600, 10))))
