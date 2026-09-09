@@ -66,15 +66,15 @@ The two instruments disagree about what a comment is, and both are right: a docs
 
 ## What the gate refuses, and what that costs
 
-**The gate is committed, runnable code — `infra/scripts/docstring-gate.py` — and that is now its home.** This document says why the arms exist and what the pass may not do because of them; the tool says what they are and drives them. Two people re-derived it from this prose in one week and both lost the same arm.
+**The gate is committed, runnable code: `infra/scripts/docstring-gate.py`, which is now its home.** This document says why the arms exist and what the pass may not do because of them; the tool says what they are and drives them. Two people re-derived it from this prose in one week; both lost the same arm.
 
-**A control set is not evidence of coverage.** The two-arm prover this replaced shipped with three controls, written and run and all passing, and none of them touched the fill — each was built from a failure mode already thought of.
+**A control set is not evidence of coverage.** The two-arm prover this replaced shipped with three controls, all written, run and passing, and none touched the fill: each came from a failure mode already thought of.
 
 **Arm 5 carries a qualifier the list above does not: the docstring deleted must SHARE its body with another statement.** One that is a body's whole statement cannot be deleted at all — the suite left behind does not parse — and writing `pass` in its place moves the statement count, correctly. So **the pass may not delete a docstring that is a body's only statement and still call the edit prose-only.**
 
-**That refusal is not rare, and a reader hitting it needs to know it is the design.** Over the last 400 non-merge commits on `develop`, every subject beginning `docs(` or `claude(` and every `.py` file they MODIFIED: 203 commits, 202 pairs — 171 moved no arm, 18 moved comments only, **11 moved the statement count alone**, 2 moved structure. The eleven are `errors.py` files whose class body IS its docstring. A second census reached 11 and 2 independently; its totals differ because it counted `docs(` alone and did not separate the comments-only category.
+**That refusal is not rare, and a reader hitting it needs to know it is the design.** Over the last 400 non-merge commits on `develop`, every subject beginning `docs(` or `claude(`: 203 commits, of which 69 modified a `.py` at all, giving 202 modified pairs — 171 moved no arm, 18 comments only, **11 the statement count alone**, 2 structure. The eleven are `errors.py` files whose class body IS its docstring. A second census reached 11 and 2 independently; its totals differ because it counted `docs(` alone and did not separate comments-only.
 
-**A mutant anchor is a BYTE offset, never a character one.** `ast` reports `col_offset` in UTF-8 bytes: `x = "— — —"; y = 1` gives `y.col_offset == 19` against a character index of 13. Prose here is em-dash dense, so a character splice over-consumes and builds a mutant that is not the one intended — and one that still parses makes an arm report a result nobody can tell from a real one.
+**A mutant anchor is a BYTE offset, never a character one.** `ast` reports `col_offset` in UTF-8 bytes: `x = "— — —"; y = 1` gives `y.col_offset == 19` against a character index of 13. Prose here is em-dash dense, so a character splice over-consumes and builds a mutant that is not the one intended: measured, it either fails to parse or comes back identical, and the arm is lost rather than wrong. A silently valid-but-different mutant was sought across 900 constructed shapes and not found.
 
 ## Review
 

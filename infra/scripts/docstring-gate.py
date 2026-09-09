@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove a docstring-only edit changed no code: `compare` measures files against a base revision on three arms -- structure, per-scope statement counts and comments -- and `arms` drives the six mutations that show those measurements bite.
 
-Why each arm is needed, and what the pass may not do because of them, is `docs/reference/docstring-pass-method.md`. This file states what the arms ARE; that one states why.
+Why the arms exist, and what the pass may not do because of them, is `docs/reference/docstring-pass-method.md`. Here you will find only what a line's own shape needs to survive the next edit.
 """
 
 from __future__ import annotations
@@ -26,14 +26,14 @@ _EPILOG = """the three arms `compare` reports:
 
 the six arms `arms` drives, three of which must differ and three of which must not:
   differ  pass deleted, comparison flipped, statement added
-  equal   docstring text changed, docstring deleted, module docstring added
+  equal   docstring text changed, docstring deleted from a body it shares, module docstring added
 
 an arm that cannot be built on a file is reported with its reason and counted, never omitted.
 
 when `compare` moves `stmt` alone, a scope's statement count changed while its structure did not.
 one prose edit does that by design: a docstring that is a body's whole statement cannot be removed
 without writing `pass` in its place, and that `pass` is a statement. an `errors.py` whose class body
-IS its docstring reports CHANGED for that reason, and the verdict is the gate working, not failing."""
+IS its docstring reports CHANGED for that reason: the statement count really did move."""
 
 
 class Refused(Exception):
@@ -94,8 +94,14 @@ def _scopes(tree: ast.Module) -> list[tuple[str, ast.AST]]:
 def ast_arm(src: str, where: str = "<source>") -> str:
     tree = _parse(src, where)
     for node in ast.walk(tree):
-        if isinstance(node, _SCOPE) and _docstring(node) is not None:
-            node.body = node.body[1:] or [ast.Pass()]
+        if not isinstance(node, _SCOPE):
+            continue
+        if _docstring(node) is not None:
+            node.body = node.body[1:]
+        # Fill ANY empty body, not only one a docstring emptied: an empty module never held a
+        # docstring, so filling only the stripped ones makes ADDING one to `cli/__init__.py` read as
+        # a structure change -- the arm the fill exists to keep.
+        node.body = node.body or [ast.Pass()]
     return _sha(ast.dump(ast.fix_missing_locations(tree), include_attributes=False))
 
 
@@ -208,9 +214,8 @@ def arm_docstring_text_changed(src: str, tree: ast.Module):
 
 
 def arm_docstring_deleted(src: str, tree: ast.Module):
-    """A docstring sharing a body with other statements. A docstring that is a body's ONLY statement
-    cannot be deleted at all -- the suite left behind does not parse, and writing `pass` in its place
-    moves STMT -- so the pass may not delete one and call the edit prose-only."""
+    """A docstring sharing a body with other statements: a sole-statement one cannot be deleted at
+    all, so there is no such mutant to build."""
     for node in ast.walk(tree):
         if isinstance(node, _SCOPE) and _docstring(node) is not None and len(node.body) > 1:
             return _cut_lines(

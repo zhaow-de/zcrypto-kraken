@@ -65,6 +65,30 @@ def test_adding_a_module_docstring_leaves_the_comment_arm_alone():
     assert gate.cmt_arm("# c\nx = 1\n") == gate.cmt_arm('"""m."""\n\n# c\nx = 1\n')
 
 
+def test_a_module_docstring_added_to_an_EMPTY_module_moves_no_arm():
+    """The fill runs for any emptied body, not only one a docstring emptied. An empty module never
+    held a docstring, so filling only the stripped ones makes `Module()` differ from
+    `Module(body=[Pass()])` and falsifies arm 6 on the pass's most routine edit -- five tracked
+    `__init__.py` files are live instances."""
+    assert _moved("", '"""m."""\n') == set()
+    assert _moved("# c\n", '"""m."""\n\n# c\n') == set()
+
+
+def test_the_fill_does_not_blind_an_empty_module_to_a_real_statement():
+    """The control beside it: a blanket fill that swallowed any difference would pass the test above
+    for the wrong reason."""
+    assert _moved("", "x = 1\n") == {"ast", "stmt"}
+
+
+def test_arms_on_an_empty_module_passes_arm_six_and_names_the_five_it_cannot_build(tmp_path, capsys):
+    target = tmp_path / "__init__.py"
+    target.write_text("", encoding="utf-8")
+    assert gate.run_arms([str(target)]) == 0
+    out = capsys.readouterr().out
+    assert "[PASS] module docstring added" in out
+    assert "arms: 1 passed, 0 failed, 5 not constructible, of 6" in out
+
+
 # --- the three that must DIFFER -------------------------------------------------------------------
 
 
