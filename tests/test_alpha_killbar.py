@@ -122,7 +122,7 @@ def test_a1_kill_bar_cost_stress_can_fail_alone():
     )
     assert result["cost_stress_pass"] is False
     # var_trials=1.0 (not the fixture's usual 1e-3) also fails the dsr leg here, so this pins only
-    # cost_stress_pass and the all-must-hold verdict, not isolation from the other three legs.
+    # cost_stress_pass and the all-must-hold verdict.
     assert result["passes"] is False
 
 

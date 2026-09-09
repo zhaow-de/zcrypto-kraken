@@ -443,9 +443,7 @@ def _substrate_root(name: str) -> Path:
 _OI_ROOT = _substrate_root("derivatives-oi")
 
 # A closed past window. A forward refresh extends the substrate beyond it and cannot move a count
-# taken over it; the zero-population counts below are scoped to it. The null-count assertion is
-# NOT scoped here -- it reads the whole panel, so a forward refresh landing a null anywhere would
-# move it.
+# taken over it; the zero-population counts below are scoped to it.
 _CLOSED_WINDOW_END = datetime(2026, 1, 1, tzinfo=UTC)
 
 
