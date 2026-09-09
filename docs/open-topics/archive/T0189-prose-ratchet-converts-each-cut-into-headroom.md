@@ -33,7 +33,7 @@ The ratchet exists to make prose decrease monotonically. Each cutting batch drop
 
 ## Resolution
 
-**Dropped, not fixed.** The apparatus this topic describes — `infra/scripts/prose-tripwire.py`, its generated baseline, the pre-commit hook and the CI job that measured the merge tree — was deleted on `chore/retire-prose-size-machinery`. Both remainders describe behaviour that no longer exists: there is no `rewritten` arm left to close, and no line budget or marker scheme left to decide. Nothing here was repaired and nothing was measured away.
+**Dropped, not fixed.** The apparatus this topic describes — `infra/scripts/prose-tripwire.py`, its generated baseline, the pre-commit hook and the CI job that measured the merge tree — was deleted in PR #483. Both remainders describe behaviour that no longer exists: there is no `rewritten` arm left to close, and no line budget or marker scheme left to decide. Nothing here was repaired and nothing was measured away.
 
 What stands in its place is one rule in `.claude/rules/prose.md`: a statement gets its place only if a reader would do something differently without it, and if it stays it has to be correct. The size bars went with the tool that enforced them.
 
