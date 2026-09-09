@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: no commit in the last 50 on develop has touched the ratchet baseline -- `git log -50 --oneline develop -- infra/scripts/prose-tripwire-baseline.txt` is empty
+ripe_when: slack is standing unbanked on develop -- `prose-tripwire.py --check-baseline infra/scripts/prose-tripwire-baseline.txt` reports a non-zero `shrunk:` count while `git log -20 --oneline develop -- infra/scripts/prose-tripwire-baseline.txt` is empty
 ---
 
 # The prose ratchet converts every cut into silent headroom
@@ -28,8 +28,10 @@ Measured on a fixture before the fix: a shrink keeping its first line printed no
 
 **The cheap form this topic proposed — `--check-baseline` rewriting a recorded entry down to the observed size — is not available, and that is a fact about the gate rather than a preference between two designs.** `--check-baseline` is the pre-commit hook's own command (`pass_filenames: false`, `always_run: true`, both stages). A hook that writes a tracked file leaves it modified and unstaged, and pre-commit then fails the commit. Auto-lowering would therefore break the gate on every prose-cutting commit. Every write stays with `--write-baseline`.
 
-Measured on the committed baseline at the time of the fix: 1229 rows, 1215 sitting exactly at their observed size, 10 above it carrying 6.6 units of slack, and 2 retired. **That number is small because the passes running that day kept re-recording the baseline, not because the defect is rare** — a later reader taking 6.6 as evidence that this barely happens would be reading recent discipline as a property of the tool.
+Measured on the committed baseline at the time of the fix: 1229 rows, 1215 sitting exactly at their observed size, 10 above it, and 2 retired. The ten are not summable into one figure: six are `file-prose` percentages and four are `comment-block` line counts, so the slack is 5 lines across four blocks and 1.6 percentage points across six files. **That number is small because the passes running that day kept re-recording the baseline, not because the defect is rare** — a later reader taking 6.6 as evidence that this barely happens would be reading recent discipline as a property of the tool.
 
 ## Suggested next steps
 
 - **Decide whether an unbanked shrink should FAIL rather than only report.** Reporting names the loss; it does not lower the ceiling, so a shrink nobody banks still licenses regrowth to the old size. Failing is the same code path plus an exit code, and it is the option that makes the ratchet monotonic. It was not taken now for sequencing rather than merit: a gate that fails every unbanked shrink breaks the commits of whatever pass is cutting prose at the time, and one was running. It becomes worth taking when prose-cutting stops being routine — which is precisely when the slack starts accumulating again, and is what the trigger above measures.
+
+  Its guard is specified here rather than left to be re-derived, because the reporting change discharged neither: a fixture where a recorded offender SHRINKS and is then REGROWN to its recorded size, asserting the regrowth **fails** — no test in `tests/test_prose_tripwire.py` constructs that today — with a true-positive control where a legitimately-recorded offender at its recorded size still passes. The degeneracy is a fixture whose before and after sizes are equal: it passes under the defect and proves nothing.
