@@ -4735,6 +4735,9 @@ _BOUNDARY_RAMP_FILLS = {
     _TRACK_MONDAY: [("BTC/EUR", "buy", 0.00042)],
     _IN_WEEK: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
 }
+# NOT the shared `_MINT_AT`, which predates this ramp's own first fill: with no birth record the
+# birth arm refuses the week, and the week-start arm this fixture exists for is never reached.
+_RAMP_MINT_AT = _TRACK_MONDAY + timedelta(hours=4)
 
 
 def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path):
@@ -4771,14 +4774,18 @@ def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path)
 
 def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_path):
     """A first fill exactly ON Monday 00:00 -- what arming at a week boundary produces -- is still
-    the week the series started in, so its ramp would be in the mean. `_score_closed_week` must
-    refuse it, and the assertions pin that outcome -- no trip, `_TRACKING_UNSCORED` published."""
+    the week the series started in. The WEEK-START arm refuses it; the birth record asserted below
+    is what says the earlier arm let it through, so `>` for `>=` here latches the kill file."""
     _journal_week(tmp_path, fills=_BOUNDARY_RAMP_FILLS, lead=6)
 
-    tripped, states = _tracking_states(tmp_path)
+    tripped, states = _tracking_states(tmp_path, mint_at=_RAMP_MINT_AT)
 
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
+    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
+    assert birth.is_file() and birth.read_text().strip() == _TRACK_MONDAY.isoformat(), (
+        "no birth record, so the birth arm refused this week and the week-start arm never ran"
+    )
 
 
 def test_a_malformed_fill_event_does_not_raise_onto_the_trade_path(tmp_path):
