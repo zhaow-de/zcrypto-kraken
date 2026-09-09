@@ -194,7 +194,7 @@ def test_a_command_registered_by_call_is_found_in_the_real_entry_module() -> Non
 def test_a_call_registered_command_docstring_is_refused() -> None:
     before = 'def capture(pair: str) -> None:\n    """Stream the book."""\n    run(pair)\n'
     after = before.replace("Stream the book.", "Stream the book (Phase 3).")
-    assert pi.compare(before, after, registered=frozenset({"capture"})).output_docstring_changed
+    assert pi.compare(before, after, output_names=frozenset({"capture"})).output_docstring_changed
     # Without the registration the same function is an ordinary helper and stays certifiable.
     assert not pi.compare(before, after).output_docstring_changed
 
@@ -222,3 +222,61 @@ def test_a_group_callback_docstring_is_program_output() -> None:
     assert not pi.compare(before, after).output_docstring_changed
     decorated = "@app.callback()\n" + before
     assert pi.compare(decorated, "@app.callback()\n" + after).output_docstring_changed
+
+
+def test_the_entry_point_exits_four_on_a_changed_command_docstring(tmp_path: pathlib.Path) -> None:
+    # The refusal existed but nothing drove it through `main`, so downgrading it to INERT passed.
+    repo = _repo(tmp_path, '@app.command()\ndef go() -> None:\n    """Old help."""\n    pass\n')
+    (repo / "m.py").write_text('@app.command()\ndef go() -> None:\n    """New help."""\n    pass\n')
+    done = _cli(repo, "HEAD", "m.py")
+    assert done.returncode == 4, done.stdout
+    assert "REFUSED" in done.stdout
+
+
+def test_the_entry_point_reads_the_entry_module_for_call_registered_commands(tmp_path: pathlib.Path) -> None:
+    # `capture` carries no decorator; only `cli/__main__.py` says its docstring is a `--help` body.
+    repo = _repo(tmp_path, 'def capture(pair: str) -> None:\n    """Old help."""\n    run(pair)\n')
+    entry = repo / "cli" / "__main__.py"
+    entry.parent.mkdir(parents=True)
+    entry.write_text('from m import capture\n\napp.command(name="capture")(capture)\n')
+    subprocess.run(["git", "-C", str(repo), "add", "cli/__main__.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "entry"], check=True)
+    (repo / "m.py").write_text('def capture(pair: str) -> None:\n    """New help."""\n    run(pair)\n')
+    done = _cli(repo, "HEAD", "m.py")
+    assert done.returncode == 4, done.stdout
+
+
+def test_a_docstring_read_through_an_attribute_is_output() -> None:
+    reader = "assert clause in mod.run_flatten.__doc__\n"
+    assert pi.docstring_reader_names(reader) == frozenset({"run_flatten"})
+    before = 'def run_flatten():\n    """Old."""\n    return 1\n'
+    after = before.replace("Old.", "New.")
+    assert pi.compare(before, after, output_names=frozenset({"run_flatten"})).output_docstring_changed
+    # Without a reader the same function is ordinary prose and stays certifiable.
+    assert not pi.compare(before, after).output_docstring_changed
+
+
+def test_the_real_tree_reads_run_flattens_docstring() -> None:
+    # `tests/test_engine_flatten.py` asserts on `flatten.run_flatten.__doc__`; `run_flatten` carries
+    # no decorator, so nothing else in this tool can see that its docstring is pinned.
+    names = pi.docstring_reader_names((_ROOT / "tests" / "test_engine_flatten.py").read_text())
+    assert "run_flatten" in names
+
+
+def test_a_relocated_comment_is_not_the_same_comment_stream() -> None:
+    # Same text, same order: only its position relative to the statement it annotates moved, which is
+    # what `tests/test_config_selectors_are_parsed.py` reads when it looks two lines above a node.
+    before = "x = 1\n# marker\nassert x\ny = 2\n"
+    after = "x = 1\nassert x\n# marker\ny = 2\n"
+    result = pi.compare(before, after)
+    assert result.ast_inert
+    assert not result.comments_same
+
+
+def test_a_docstring_cut_leaves_the_comment_stream_alone() -> None:
+    # The true positive beside it: the commonest prose-only edit must not read as a comment change.
+    before = 'def f():\n    """Doc."""\n    # marker\n    return 1\n'
+    after = "def f():\n    # marker\n    return 1\n"
+    result = pi.compare(before, after)
+    assert result.ast_inert
+    assert result.comments_same

@@ -42,6 +42,23 @@ def registered_command_names(main_src: str) -> frozenset[str]:
     return frozenset(names)
 
 
+def docstring_reader_names(src: str) -> frozenset[str]:
+    """Names whose `__doc__` this source READS -- `flatten.run_flatten.__doc__` yields `run_flatten`.
+
+    A test asserting on a docstring pins it as surely as `--help` does, and the file defining it
+    carries no sign of that."""
+    names = set()
+    for node in ast.walk(ast.parse(src, optimize=0)):
+        if not (isinstance(node, ast.Attribute) and node.attr == "__doc__"):
+            continue
+        owner = node.value
+        if isinstance(owner, ast.Attribute):
+            names.add(owner.attr)
+        elif isinstance(owner, ast.Name):
+            names.add(owner.id)
+    return frozenset(names)
+
+
 def _names_a_typer_hook(dec: ast.AST) -> bool:
     """`.command` or `.callback` on the decorator itself -- a group callback's docstring is its help.
 
@@ -51,12 +68,11 @@ def _names_a_typer_hook(dec: ast.AST) -> bool:
     return isinstance(node, ast.Attribute) and node.attr in ("command", "callback")
 
 
-def _is_command(node: ast.AST, registered: frozenset[str]) -> bool:
-    # `@app.command()`, `@app.command(name=...)`, `@app.command` all render `command` in the dump.
+def _docstring_is_output(node: ast.AST, output_names: frozenset[str]) -> bool:
     if any(_names_a_typer_hook(dec) for dec in getattr(node, "decorator_list", [])):
         return True
     # A name collision over-refuses, which is the safe direction for a tool that certifies.
-    return getattr(node, "name", None) in registered
+    return getattr(node, "name", None) in output_names
 
 
 def _docstring_index(node: ast.AST) -> bool:
@@ -69,11 +85,11 @@ def _docstring_index(node: ast.AST) -> bool:
     )
 
 
-def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output: bool, registered: frozenset[str]) -> ast.AST:
+def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output: bool, output_names: frozenset[str]) -> ast.AST:
     for node in ast.walk(tree):
         if not isinstance(node, _HOLDS_DOCSTRING) or not _docstring_index(node):
             continue
-        is_output = _is_command(node, registered) or (isinstance(node, ast.Module) and module_doc_is_output)
+        is_output = _docstring_is_output(node, output_names) or (isinstance(node, ast.Module) and module_doc_is_output)
         if keep_output and is_output:
             continue
         # `or [Pass()]`: a body that was ONLY a docstring becomes empty, and an empty body is a
@@ -82,19 +98,33 @@ def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output:
     return tree
 
 
-def _shape(src: str, *, keep_output: bool, registered: frozenset[str]) -> str:
+def _shape(src: str, *, keep_output: bool, output_names: frozenset[str]) -> str:
     # optimize=0 explicitly: under `-OO` the interpreter discards docstrings before this sees them.
     tree = ast.parse(src, optimize=0)
     module_doc_is_output = any(isinstance(n, ast.Name) and n.id == "__doc__" for n in ast.walk(tree))
     return ast.dump(
-        _strip_docstrings(tree, module_doc_is_output=module_doc_is_output, keep_output=keep_output, registered=registered),
+        _strip_docstrings(tree, module_doc_is_output=module_doc_is_output, keep_output=keep_output, output_names=output_names),
         include_attributes=False,
         indent=1,
     )
 
 
-def comment_stream(src: str) -> list[str]:
-    return [tok.string for tok in tokenize.generate_tokens(io.StringIO(src).readline) if tok.type == tokenize.COMMENT]
+_NOT_A_NEIGHBOUR = frozenset(
+    {tokenize.NEWLINE, tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT, tokenize.ENDMARKER}
+)
+
+
+def comment_stream(src: str) -> list[tuple[int, str, str]]:
+    """Each comment with its column and the token that FOLLOWS it, since a guard can read POSITION.
+
+    The successor and not the predecessor: deleting a docstring above a comment must stay inert, which
+    is the commonest edit this tool certifies."""
+    toks = list(tokenize.generate_tokens(io.StringIO(src).readline))
+    return [
+        (tok.start[1], tok.string, next((t.string for t in toks[i + 1 :] if t.type not in _NOT_A_NEIGHBOUR), ""))
+        for i, tok in enumerate(toks)
+        if tok.type == tokenize.COMMENT
+    ]
 
 
 @dataclass(frozen=True)
@@ -105,12 +135,15 @@ class Result:
     detail: str
 
 
-def compare(before: str, after: str, *, registered: frozenset[str] = frozenset()) -> Result:
+def compare(before: str, after: str, *, output_names: frozenset[str] = frozenset()) -> Result:
     bare_b, bare_a = (
-        _shape(before, keep_output=False, registered=registered),
-        _shape(after, keep_output=False, registered=registered),
+        _shape(before, keep_output=False, output_names=output_names),
+        _shape(after, keep_output=False, output_names=output_names),
     )
-    kept_b, kept_a = _shape(before, keep_output=True, registered=registered), _shape(after, keep_output=True, registered=registered)
+    kept_b, kept_a = (
+        _shape(before, keep_output=True, output_names=output_names),
+        _shape(after, keep_output=True, output_names=output_names),
+    )
     detail = ""
     if bare_b != bare_a:
         # The differing nodes, not a bare verdict: a reader has to see WHICH construct moved.
@@ -139,19 +172,39 @@ def _at_revision(rev: str, path: str) -> str:
     return done.stdout
 
 
+def output_names_in(root: pathlib.Path) -> tuple[frozenset[str], int]:
+    """Names the tree pins the docstring of, and the count of files that could not be scanned.
+
+    Both facts are cross-file: a call-registered command carries no decorator, and a docstring read as
+    `mod.fn.__doc__` leaves no mark where it is defined. An unscannable file is counted, not skipped."""
+    names: set[str] = set()
+    unscanned = 0
+    entry = root / "cli" / "__main__.py"
+    if entry.is_file():
+        names |= registered_command_names(entry.read_text())
+    listed = subprocess.run(["git", "-C", str(root), "ls-files", "*.py"], capture_output=True, text=True)
+    for rel in listed.stdout.split():
+        try:
+            names |= docstring_reader_names((root / rel).read_text())
+        except OSError, SyntaxError, ValueError:
+            unscanned += 1
+    return frozenset(names), unscanned
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 3:
         print(f"usage: {argv[0] if argv else 'prove-inert.py'} <base-rev> <path>...", file=sys.stderr)
         return EXIT_USAGE
     base, paths = argv[1], argv[2:]
     root = _repo_root()
-    entry = root / "cli" / "__main__.py"
-    registered = registered_command_names(entry.read_text()) if entry.is_file() else frozenset()
+    output_names, unscanned = output_names_in(root)
     print(f"after-side tree: {root}")
+    if unscanned:
+        print(f"WARNING: {unscanned} file(s) could not be scanned for docstring readers")
     worst = EXIT_INERT
     for path in paths:
         try:
-            result = compare(_at_revision(base, path), (root / path).read_text(), registered=registered)
+            result = compare(_at_revision(base, path), (root / path).read_text(), output_names=output_names)
         except (ValueError, OSError, SyntaxError) as exc:
             # One unreadable path must not abort the rest, or a run prints partial results and no summary.
             print(f"{path}: REFUSED -- {exc}")
