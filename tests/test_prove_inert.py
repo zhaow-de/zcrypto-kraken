@@ -394,6 +394,26 @@ def test_a_replay_closure_member_is_refused_rather_than_certified() -> None:
     assert "digests this file" in done.stdout, done.stdout
 
 
+def test_an_absolute_spelling_of_a_closure_member_is_never_certified(tmp_path: pathlib.Path) -> None:
+    """The membership arm is repo-relative, so an absolute spelling of a member misses it and `_at_revision`
+    refuses the path instead -- the property that makes one arm enough, asserted here rather than assumed.
+    The prose-only pair below is the true positive: this harness can still return 0, so the refusal above is
+    that path's and not a blanket one."""
+    relative, _ = pi.replay_closure()
+    absolute = str(_ROOT / "cli/engine/flatten.py")
+    assert "cli/engine/flatten.py" in relative, "the member must be in the closure, or this proves nothing"
+    assert absolute not in relative, "the arm would catch it, and `_at_revision` would never be reached"
+
+    done = _cli(_ROOT, "HEAD", absolute)
+    assert done.returncode == pi.EXIT_REFUSED, done.stdout + done.stderr
+    assert "cannot read" in done.stdout, done.stdout
+
+    repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
+    (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')
+    clean = _cli(repo, "HEAD", "m.py")
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+
+
 def test_the_closure_is_read_repo_relative_against_the_tree_it_describes() -> None:
     """Repo-relative, so it still matches when the installed package is a different checkout of the same tree."""
     closure = pi.replay_closure()

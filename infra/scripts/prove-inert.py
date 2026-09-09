@@ -5,8 +5,8 @@ exit 0  INERT -- the only verdict that licenses the words *prose-only*
 exit 1  CODE CHANGED -- the stripped shape or a scope's statement count moved
 exit 2  a usage error, which is this text
 exit 3  COMMENTS CHANGED -- a comment's text, column, the line it sits above, or its distance moved
-exit 4  REFUSED -- a docstring that is program output changed, a path could not be read, or the file is one
-        whose raw bytes `replay_fingerprint` digests, where these arms cannot prove no observable effect
+exit 4  REFUSED -- a docstring that is program output changed, a path or the replay closure itself could not
+        be read, or the file is one whose raw bytes `replay_fingerprint` digests: no arm proves no effect
 
 3 and 4 are verdicts to act on, never a run to retry: 3 says a guard that reads a comment's position
 may have stopped seeing it, and 4 says the claim cannot be made from here at all. A docstring is often
@@ -205,9 +205,9 @@ def replay_closure() -> tuple[frozenset[str], pathlib.Path] | str:
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
     try:
-        # Repo-relative, and only that: when the installed package IS the judged tree the two spellings
-        # coincide, and when it is a different checkout the relative one is what still matches, because
-        # that tree digests the same relative paths. An absolute arm beside it was never reached.
+        # Repo-relative, and only that: another checkout of the same tree digests the same relative paths.
+        # A member spelled otherwise -- absolute or `..`-bearing -- misses this set, and `_at_revision`
+        # refuses it (`git show` exits 128): the refusal `tests/test_prove_inert.py` asserts is what makes one arm enough.
         relative = frozenset(str(path.relative_to(_REPO_ROOT)) for path in _replay_code_paths())
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
