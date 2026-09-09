@@ -288,7 +288,7 @@ def test_trailing_gap_beyond_the_lag_tolerance_is_fatal(tmp_path):
 
     files = {_day_url("BTCUSDT", "2026-06-30"): _zip_of(_metrics_csv("2026-06-30", "BTCUSDT"), "a.csv")}
     opener = _Opener(files)
-    far = 2 + _MAX_TRAILING_LAG_DAYS  # e.g. 6 days of trailing 404
+    far = 2 + _MAX_TRAILING_LAG_DAYS  # comfortably past the tolerance, not merely at its edge
     with pytest.raises(DerivativesError, match="exceeds the .* publication-lag tolerance"):
         backfill_oi(
             "BTCUSDT",
@@ -443,7 +443,7 @@ def _substrate_root(name: str) -> Path:
 _OI_ROOT = _substrate_root("derivatives-oi")
 
 # A closed past window. A forward refresh extends the substrate beyond it and cannot move a count
-# taken over it; every population pinned below sits entirely inside it.
+# taken over it; the zero-population counts below are scoped to it.
 _CLOSED_WINDOW_END = datetime(2026, 1, 1, tzinfo=UTC)
 
 

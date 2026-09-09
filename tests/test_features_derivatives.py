@@ -36,7 +36,7 @@ def test_align_asof_is_none_before_the_first_source_row():
 
 
 def test_a_null_source_row_erases_the_carry_rather_than_being_skipped():
-    """Pins spec D5's null semantics: a null source value REPLACES the carry, it is not skipped.
+    """Pins spec 00110 D5's null semantics: a null source value REPLACES the carry, it is not skipped.
     The competing reading (forward-fill the last observed value, skipping nulls) is equally
     plausible and silently different -- the OI and ratio features feed nulls through this exact path
     (`oi_levels_from_raw`'s zero-to-None map, and the ratio columns' own nulls), so a later "fix" to
@@ -63,13 +63,12 @@ def test_align_asof_refuses_a_length_mismatch_and_either_unsorted_input_but_perm
 
 
 def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
-    """The look-ahead guard (spec D2/D10), in the form that actually bites.
+    """The look-ahead guard (spec 00110 D2/D10), in the form that actually bites.
 
     Appending FUTURE source rows beyond the grid's last stamp proves nothing: rows past the grid's
     end cannot move any value under a backward-fill defect (`if t >= g: return x`, which reads the
     NEXT source row) either. This form truncates instead: recompute over `grid[:k]` using only
-    source rows stamped at or before `grid[k-1]`, and demand the prefix match the full run's. The
-    defect first mismatches at k=2 (`[1.0, None]` vs `[1.0, 2.0]`)."""
+    source rows stamped at or before `grid[k-1]`, and demand the prefix match the full run's."""
     src_ts, src_v = [_t(0), _t(8)], [1.0, 2.0]
     grid = [_t(0), _t(4), _t(8)]
     full = align_asof(src_ts, src_v, grid)
@@ -81,7 +80,7 @@ def test_a_truncated_prefix_reproduces_the_full_run_bit_for_bit():
 
 
 def test_funding_zscore_recovers_a_planted_value():
-    """Planted signal (spec D10) under D7's pinned window: inclusive trailing window ending at k,
+    """Planted signal (spec 00110 D10) under D7's pinned window: inclusive trailing window ending at k,
     sample stdev. The score is asserted as a computed value, never as a threshold: `> 3.0` pins no
     window at all, since population stdev gives exactly 3.0 and the exclusive window is undefined.
 
@@ -101,7 +100,7 @@ def test_funding_zscore_propagates_null():
 
 
 def test_sign_persistence_counts_consecutive_same_sign_prints():
-    """A zero print is its own sign (spec D7), and a null breaks the run without joining one."""
+    """A zero print is its own sign (spec 00110 D7), and a null breaks the run without joining one."""
     assert funding_sign_persistence([0.1, 0.2, 0.0, -0.1, -0.2]) == [1, 2, 1, 1, 2]
     assert funding_sign_persistence([0.1, 0.2, None, -0.1, -0.2]) == [1, 2, None, 1, 2]
 
@@ -126,8 +125,10 @@ def test_every_windowed_funding_feature_rejects_a_short_window():
     The rates below are healthy, so only the window can be what fires. `window=0` is the dangerous
     one -- the warm-up branch never runs and the trailing slice is empty, so an unguarded
     `funding_accrued_carry` returns `sum([]) == 0.0` at every index: a fabricated flat carry, which
-    is exactly the reading spec D7 says a de-risking trigger acts on as safe. `window=1` is the
-    loud one -- unguarded it raises `statistics.StatisticsError`, which is not `FeatureError`."""
+    is exactly the reading spec 00110 D7 says a de-risking trigger acts on as safe. `window=1` is
+    loud for `funding_zscore` -- a one-element window has no stdev and unguarded raises
+    `statistics.StatisticsError`, not `FeatureError` -- but silent for `funding_accrued_carry`,
+    which sums the one element and returns cleanly."""
     for f in (funding_zscore, funding_accrued_carry):
         for bad in (0, 1, 2.0, True):
             with pytest.raises(FeatureError):
@@ -135,7 +136,7 @@ def test_every_windowed_funding_feature_rejects_a_short_window():
 
 
 def test_every_funding_feature_reproduces_itself_on_a_truncated_prefix():
-    """The causality guard for the three funding features (spec D2/D10), in the only form that bites.
+    """The causality guard for the three funding features (spec 00110 D2/D10), in the only form that bites.
 
     Every assertion above is a fixed-input equality, and a window that reads one bar into the
     future agrees with the causal form at the last index -- so recompute over each prefix and
@@ -217,7 +218,7 @@ def test_every_windowed_oi_feature_rejects_a_short_window():
 
 
 def test_every_oi_feature_reproduces_itself_on_a_truncated_prefix():
-    """The causality guard for the three OI features (spec D2/D10). See
+    """The causality guard for the three OI features (spec 00110 D2/D10). See
     `test_every_funding_feature_reproduces_itself_on_a_truncated_prefix` for why `[-1]` cannot carry
     it. The fixture rises and falls so no two candidate window offsets coincide."""
     levels = [100.0, 104.0, 99.0, 130.0, 128.0, 90.0, 155.0, 151.0]

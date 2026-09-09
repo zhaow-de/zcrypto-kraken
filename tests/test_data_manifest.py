@@ -289,8 +289,9 @@ def test_one_span_bound_null_and_the_other_set_is_refused():
 
 # --- every writer, one contract --------------------------------------------------------------------
 #
-# One driver per module of `cli/` that names `build_manifest`. Each reaches its remote through an
-# injected seam, so every producer runs offline against a tmp tree.
+# One driver per module of `cli/` that names `build_manifest`. Four reach a remote through an
+# injected seam; the OHLCVT and legacy-conversion drivers read only local files. Every producer
+# runs offline against a tmp tree either way.
 
 
 class _Resp(io.BytesIO):
@@ -328,7 +329,7 @@ def _binance_opener(zips: dict[str, bytes]):
 
 
 def _drive_backfill(tmp_path):
-    """The OHLCVT dump reader: previously nested symbol -> interval, two levels deep."""
+    """The OHLCVT dump reader."""
     from cli.backfill.backfill import backfill_basket
 
     src = tmp_path / "src"
@@ -342,7 +343,7 @@ def _drive_backfill(tmp_path):
 
 
 def _drive_ingest(tmp_path):
-    """v0 ingest: previously a LIST of rows, hashing under the key `dataset_hash`."""
+    """v0 ingest."""
     from cli.ohlc.ingest import ingest_basket
 
     out = tmp_path / "v0"
@@ -357,10 +358,9 @@ def _drive_ingest(tmp_path):
 
 
 def _drive_reach(tmp_path):
-    """The REST reach round: the one producer whose identity is a declared subset, not the set digest.
-
-    The REST rows overlap the canonical tail by ten stamps, so the leg lands continuous and this is the
-    one driver whose manifest carries `identity == "subset:continuous"` rather than the set digest."""
+    """The REST reach round: the REST rows overlap the canonical tail by ten stamps, so the leg lands
+    continuous and this is the one driver whose manifest carries `identity == "subset:continuous"`
+    rather than the set digest."""
     from cli.ohlc.dataset import write_parquet
     from cli.ohlc.reach import reach_round
 

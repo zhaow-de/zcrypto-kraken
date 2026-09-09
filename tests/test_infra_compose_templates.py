@@ -111,7 +111,7 @@ def test_ops_metrics_port_and_publish_land_on_the_liquidations_service():
 
 
 def test_engine_logship_guard_moves_environment_and_entrypoint_together():
-    # The riskiest edit in the branch (cold-review I5): `environment:` un-nested out of the
+    # The riskiest edit this test guards: `environment:` un-nested out of the
     # logship guard on the TRADE-KEY host. ZCRYPTO_METRICS_PORT (spec 00069 D6, unguarded) must
     # stay present either way; --ship-logs/ZCRYPTO_LOG_HOST must appear only with the token.
     without_token = _render(ENGINE_TEMPLATE, ENGINE_CONTEXT)["services"]["engine"]
@@ -126,8 +126,8 @@ def test_engine_logship_guard_moves_environment_and_entrypoint_together():
     assert with_token["entrypoint"] == ["zcrypto", "--ship-logs", "engine", "run"]
 
 
-# The NAS compose is Container-Manager-managed rather than Ansible-rendered, and included anyway: it
-# shares the single-file bind-mount pattern the assertion below refuses.
+# infra/nas/compose.yaml is not Ansible-rendered, but shares the single-file bind-mount pattern the
+# assertion below refuses, so it is included anyway.
 ALLOY_COMPOSE_FILES = (
     REPO / "infra/ansible/roles/capture/templates/alloy-compose.yaml.j2",
     REPO / "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2",

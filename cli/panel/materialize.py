@@ -92,9 +92,8 @@ def materialize_hour(
     snapshot lands" (spec 00052 D3/Risks) with no special-casing: before the snapshot is ingested
     both sides are empty, so every pre-snapshot boundary is already skipped by the general rule.
 
-    The grid is [hour+0s, hour+3599s]: the hour's final fractional second (messages after
-    :59:59.0) has no boundary in this file and is deliberately unsampled -- the next hour
-    re-anchors on its own snapshot or the carried state (which includes this hour's final fractional-second messages via the trailing drain), so nothing is lost.
+    The grid is [hour+0s, hour+3599s] -- the trailing drain below folds the final fractional
+    second's messages into the returned book state instead, for the caller to carry forward.
     """
     frame = pl.read_parquet(path)
     messages = regroup_messages(frame)
@@ -217,8 +216,7 @@ def load_state(panel_root: Path, pair: str, hour: datetime, *, depth: int = 100)
 def panel_watermark(panel_root: Path, pair: str) -> datetime | None:
     """The newest hour with an existing panel final for `pair`, or None if it holds none yet.
 
-    Globs `*.parquet` and strictly matches `FINAL_NAME` -- the `<HH>.state.json` sidecar never
-    matches either, so it cannot confuse the watermark.
+    Globs `*.parquet` and strictly matches `FINAL_NAME`.
     """
     hours = []
     for p in _pair_dir(panel_root, pair).glob("*/*/*/*.parquet"):

@@ -149,7 +149,7 @@ def test_eta_over_deadline_refuses_and_restarts_timer(tmp_path):
     assert r.returncode == 3
     # WHICH refusal fired, not just that one did: setsid also denies /dev/tty, and that gate's
     # refusal is rc 3 with the same [stop, start] call log and the same intact tree. Without this
-    # the deadline comparison can be deleted outright and the test still passes (measured).
+    # the deadline comparison can be deleted outright and the test still passes.
     assert "02:25 UTC auto-reboot" in r.stderr
     assert panel.exists()  # nothing deleted
     assert calls(log) == [*STEP1, TIMER_RESTART]
@@ -158,7 +158,7 @@ def test_eta_over_deadline_refuses_and_restarts_timer(tmp_path):
 @pytest.mark.parametrize("boolish", ["true", "TRUE", "false", "1", "yes"])
 def test_boolean_override_refused(boolish, tmp_path):
     # Parametrized because a single value pins only its own arm: dropping the false/1/yes clauses
-    # left the suite green (measured), so each refusal carries its own case.
+    # left the suite green, so each refusal carries its own case.
     script, env, panel, log = render(tmp_path, STUB_DU_HUGE)
     r = subprocess.run(
         ["setsid", str(script), "--override", boolish], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL
@@ -174,8 +174,9 @@ def test_boolean_override_refused(boolish, tmp_path):
     [("12345678", 2), ("123456789", 3)],  # 8 chars refused; 9 accepted, so the run reaches the tty gate
 )
 def test_override_length_boundary_is_behavioural(reason, expect_rc, tmp_path):
-    # The 8/9 boundary was pinned only by a literal string match on the guard line, so an offset
-    # typo (:1, :9, :20) failed nothing but that assert. This runs the rendered script instead.
+    # A literal string match on the guard line would pass even with an offset typo (:1, :9, :20)
+    # that broke the real boundary; this runs the rendered script instead, so the assertion is
+    # behavioral, not textual.
     script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
     r = subprocess.run(
         ["setsid", str(script), "--override", reason], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL
@@ -193,7 +194,7 @@ def test_a_failing_du_refuses_at_the_sizing_step(failing, tmp_path):
     # It must refuse AT the sizing step rather than wander on to the next gate. Combined into one
     # arithmetic expansion the CANONICAL-side failure is swallowed -- the assignment takes the last
     # substitution's status and the empty operand parses as unary plus -- so the ETA is computed
-    # from the overlay alone and the run continues past its own central refusal (measured), exactly
+    # from the overlay alone and the run continues past its own central refusal, exactly
     # when the NAS mount is the thing that is broken.
     assert "no controlling terminal" not in r.stderr
     # Timer deliberately left stopped: the hourly materialize must not resume against an input tree
@@ -377,8 +378,6 @@ def test_every_ansible_template_is_parseable_jinja():
     """Repo-wide: a template that cannot parse never installs, whatever its tests say."""
     jinja2 = pytest.importorskip("jinja2")
     # For PARSING these settings are inert: trim_blocks changes rendered whitespace, not what parses.
-    # This sweep therefore catches the comment-tag class only — the weld class needs a render, which
-    # tests/test_infra_shell_templates_render.py provides.
     env = jinja2.Environment(trim_blocks=True, lstrip_blocks=False)
     root = TEMPLATE.resolve().parent.parent.parent.parent  # infra/ansible
     templates = sorted(root.rglob("*.j2"))
