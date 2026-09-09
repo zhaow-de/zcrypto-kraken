@@ -7,7 +7,7 @@ from cli.validation import ValidationError, annualized_return, max_drawdown, sha
 
 
 def run_backtest(asset_returns: list[float], positions: list[float], *, fee_rate: float = 0.0, periods_per_year: int) -> dict:
-    """Net returns and metrics from target positions, less fee_rate per unit of turnover from a flat start (spec 00016).
+    """Net returns and metrics from target positions (spec 00016).
 
     positions[t] is held during period t and must be set from pre-t information; a degenerate or blown-up run raises, never NaN.
     """

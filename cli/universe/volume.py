@@ -6,7 +6,7 @@ from cli.universe.errors import UniverseError
 
 
 def median_quote_volume(daily: pl.DataFrame, *, window: int = 30) -> float:
-    """Median daily quote volume (`volume * vwap`) over the last `window` rows of a `ts`-ascending `cli.ohlc.to_frame` frame."""
+    """Median daily quote volume over the last `window` rows of a `ts`-ascending `cli.ohlc.to_frame` frame."""
     if daily.height < window:
         raise UniverseError(f"need at least {window} daily rows for a median quote volume, got {daily.height}")
     tail = daily.tail(window)
