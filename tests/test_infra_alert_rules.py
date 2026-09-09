@@ -1513,7 +1513,9 @@ def test_the_dark_with_exposure_range_declares_the_window_its_expression_reads()
     )
 
 
-def _replay_dark_with_exposure(published, up_at, *, lookback, hold_for, span, a_form="lookbacked", b_form="value"):
+def _replay_dark_with_exposure(
+    published, up_at, *, lookback, hold_for, span, a_form="lookbacked", b_form="value", unobserved_reads=0.0
+):
     """Evaluation timestamps at which the rule is FIRING, over one `(position, scrape)` history.
 
     `published` is the position gauge's samples as `(t, value)`; `up_at(t)` returns 1, 0, or `None`
@@ -1525,7 +1527,7 @@ def _replay_dark_with_exposure(published, up_at, *, lookback, hold_for, span, a_
     def a(t: int) -> float:
         window = lookback if a_form == "lookbacked" else _STALENESS
         inside = [v for at, v in published if t - window < at <= t]
-        return abs(inside[-1]) if inside else 0.0
+        return abs(inside[-1]) if inside else unobserved_reads  # the default is node A's own `or on() vector(0)`
 
     def b(t: int) -> float:
         u = up_at(t)
@@ -1630,6 +1632,70 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     assert presence_on_alloy_route, (
         "the presence form stays quiet even when the series is ABSENT, so this replay is not modelling the "
         "`or on() vector(0)` fallback and control 2 proves nothing"
+    )
+
+
+def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot_tell_them_apart():
+    """A CHARACTERISATION of the blindness `T0187` records, not an approval of it: with no
+    `zcrypto_exec_position` sample in the window, node A's `or on() vector(0)` supplies the same 0 a
+    flat book publishes, so both histories get the same quiet verdict. It is meant to go RED the day
+    that gap closes -- green here is not the rule being sound."""
+    rule = _rule(_DARK_WITH_EXPOSURE)
+    lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
+
+    dark_at = 3600
+    flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
+    # An engine restarted while a position was open: `zcrypto_exec_position` is a labelled Gauge whose
+    # only setter is the executor's fill hook, so until the next fill the child does not exist and the
+    # series carries nothing -- not a 0, an absence.
+    never_observed = []
+    # Stopped at the flat history's own horizon: past it that history is unobserved too, and the two
+    # stop being different things to compare.
+    span = max(at for at, _ in flat_then_dark) + lookback
+
+    def goes_dark(t):
+        return 1 if t < dark_at else 0
+
+    quiet_flat = _replay_dark_with_exposure(flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    assert not quiet_flat, (
+        f"a flat book the engine DID report pages inside its own horizon, so the comparison below is between two "
+        f"firing histories and pins nothing: {sorted(quiet_flat)[:3]}"
+    )
+
+    unobserved = _replay_dark_with_exposure(never_observed, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    assert unobserved == quiet_flat, (
+        f"the rule now tells an unmade observation apart from a measured flat book -- if that is `T0187` closing, "
+        f"this assertion is what the fix changes: {sorted(unobserved ^ quiet_flat)[:3]}"
+    )
+
+
+def test_the_replay_can_separate_an_unobserved_window_from_a_published_zero():
+    """About the replay, not the rule: told to read an empty window as something other than 0, the
+    same harness gives the two histories different verdicts and still leaves the flat one quiet. It
+    is the seam `T0187`'s fix turns on, exercised so that a change of expectation there is a changed
+    assertion rather than a rewritten harness."""
+    rule = _rule(_DARK_WITH_EXPOSURE)
+    lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
+
+    dark_at = 3600
+    flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
+    span = max(at for at, _ in flat_then_dark) + lookback
+
+    def goes_dark(t):
+        return 1 if t < dark_at else 0
+
+    never_observed = []
+    unobserved = _replay_dark_with_exposure(
+        never_observed, goes_dark, lookback=lookback, hold_for=hold_for, span=span, unobserved_reads=1.0
+    )
+    assert unobserved, "the replay cannot express an unobserved window as anything but a flat book, so no fix can be replayed"
+
+    still_quiet_flat = _replay_dark_with_exposure(
+        flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span, unobserved_reads=1.0
+    )
+    assert not still_quiet_flat, (
+        f"reading an unobserved window as exposure also pages on a book the engine reported flat -- that trades the "
+        f"blindness for a false page, which is worse: {sorted(still_quiet_flat)[:3]}"
     )
 
 
