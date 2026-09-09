@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # The OI level-column null-density guard is unscoped, unlike its sibling zero-population guard
@@ -37,13 +37,15 @@ data-drift the closed-window sibling was built to prevent for the zero-populatio
   enumerated blind spot, banned by `prose.md`'s no-coverage-claims rule) surfaced this as a
   question worth tracking rather than stating in-line.
 
-## Suggested next steps
+## Resolution
 
-- **Decide whether the density claim is meant to hold for all time or only as measured.** If a
-  venue-emitted null is expected to never occur going forward (an instrument-defect-if-violated
-  invariant), the current unscoped assertion is correct by design and this topic closes as a
-  non-issue. If it is only a measured historical fact like the zero-population counts, window the
-  assertion to `_CLOSED_WINDOW_END` the same way, and re-verify the file's own docstring/spec
-  citation still supports an unwindowed reading for whichever choice is made.
-  Either way, this is a behavior-shaped test change -- its own branch and review, not a fold-in to
-  a docs-kind batch.
+Measured non-issue -- no code change. `cli/derivatives/oi.py`'s `_parse_float` maps every column in
+`_FLOAT_COLUMNS` (both OI level columns and all four ratio columns) through the same
+absent-value-to-null rule, and its own docstring documents that Early Vision metrics leave the
+ratio columns -- never the OI columns -- absent. A null in either OI level column would therefore
+mean that venue guarantee broke, not that the panel grew past a measured window: unlike the sibling
+zero-population guard, whose `4_426_251` figure is genuinely a property of `_CLOSED_WINDOW_END`
+(the full panel is 5,010,882 rows), the null-density guard's zero does not depend on where the
+window ends. `test_both_oi_level_columns_carry_no_nulls` (re-driven,
+`uv run pytest tests/test_derivatives_oi.py -k "null or zero_pop"`, 4 passed) is correctly
+unwindowed by design; its docstring now records why, so the same question does not get re-filed.
