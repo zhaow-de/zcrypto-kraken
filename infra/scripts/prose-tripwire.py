@@ -399,7 +399,7 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
     # What each offender COULD have come from is read from the retired rows as they stood before any of
     # them was matched: consuming left to right would otherwise leave the last offender naming one row
     # as a fact when every permutation is an equally valid assignment.
-    retired = {key: list(pool) for key, pool in known.items()}
+    before_match = {key: list(pool) for key, pool in known.items()}
     rewritten, still_new = [], []
     for o in new:
         candidates = _absorbable(known, o)
@@ -408,7 +408,7 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
             known[key].remove(was)
             # Every candidate could be this block's own row: the anchor that identified it is exactly what
             # the rewrite changed. Name one size only when one size could have been the source.
-            rewritten.append((o, sorted({m for m, _ in _absorbable(retired, o)})))
+            rewritten.append((o, sorted({m for m, _ in _absorbable(before_match, o)})))
         else:
             still_new.append(o)
     # A row no offender claimed: its block no longer trips, so it can never fail again and is named
@@ -426,7 +426,15 @@ def render(offenders: list[Offender]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     thresholds = " ".join(f"{name}={globals()[name]}" for name in THRESHOLDS)
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].replace("\n", " "), epilog=f"thresholds: {thresholds}")
+    # The epilog rather than the module docstring: that block sits at its own recorded ceiling, and
+    # this pass may not grow one. `--help` is the gate's own surface either way.
+    epilog = (
+        f"thresholds: {thresholds}\n"
+        "--check-baseline marks every line: `fail` blocks the commit, `note` does not. "
+        "A `note shrunk` is a keep that got smaller while its recorded size stayed put, so the row "
+        "licenses the way back -- bank it with --write-baseline or the ceiling stands."
+    )
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].replace("\n", " "), epilog=epilog)
     parser.add_argument("paths", nargs="*", help="files or directories to scan; default: the repo's live prose")
     parser.add_argument("--since", metavar="REV", help="report only offenders absent at REV")
     parser.add_argument("--write-baseline", metavar="PATH", help="write today's offenders to PATH as the ratchet's baseline")
@@ -464,22 +472,31 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{args.check_baseline}: no such baseline -- write one with --write-baseline", file=sys.stderr)
             return 2
         new, grown, rewritten, shrunk, retired = against_baseline(offenders, read_baseline(args.check_baseline))
+        # `fail` marks what blocks the commit and nothing else does, so a line WRAPPED onto a second
+        # row carries no marker and cannot be read as a failure. Column cannot say that: a
+        # continuation renders flush left however the first row was indented.
         for o in new:
-            print(_line(o))
+            print(f"fail new: {_line(o)}")
         for o, was in grown:
-            print(f"grown: {_line(o)} recorded {was:.10g}")
+            print(f"fail grown: {_line(o)} recorded {was:.10g}")
         for o, sizes in rewritten:
             recorded = f"{sizes[0]:.10g}" if len(sizes) == 1 else "one of " + ", ".join(f"{m:.10g}" for m in sizes)
-            print(f"  rewritten: {_line(o)} recorded {recorded}")
+            print(f"note rewritten: {_line(o)} recorded {recorded}")
         for o, was in shrunk:
-            print(f"  shrunk: {_line(o)} recorded {was:.10g}")
+            print(f"note shrunk: {_line(o)} recorded {was:.10g}")
+        # An anchor is a whole first line, so an untruncated one wraps at any ordinary width, and a
+        # continuation carries no marker. Not a bar: `--help` advertises every uppercase int global.
+        budget = 60
         for path, kind, was, anchor in retired:
-            print(f"  retired: {path}: {kind} {was:.10g} recorded" + (f" -- {anchor}" if anchor else ""))
-        # Indented lines are reports; only the flush-left ones fail, so a reader scans one column.
+            short = anchor[:budget].rstrip() + ("..." if len(anchor) > budget else "")
+            print(f"note retired: {path}: {kind} {was:.10g} recorded" + (f" -- {short}" if anchor else ""))
         print(f"new: {len(new)} grown: {len(grown)} rewritten: {len(rewritten)} shrunk: {len(shrunk)} retired: {len(retired)}")
         if new or grown:
+            # Flushed first: pre-commit merges the two streams into one pipe, where stdout is block
+            # buffered and stderr is not, so an unflushed note arrives before the lines it names.
+            sys.stdout.flush()
             print(
-                f"cut the flush-left lines above, or record them as keeps with --write-baseline {args.check_baseline}",
+                f"cut the lines marked `fail`, or record them as keeps with --write-baseline {args.check_baseline}",
                 file=sys.stderr,
             )
             return 1
@@ -488,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
         if subprocess.run(["git", "rev-parse", "--verify", "--quiet", args.since], capture_output=True).returncode != 0:
             print(f"{args.since}: not a revision this repository knows", file=sys.stderr)
             return 2
-        offenders = new_since(offenders, baseline(args.since, paths))[0]
+        offenders, _shrunk_against_rev = new_since(offenders, baseline(args.since, paths))
     offenders.sort()
     print(render(offenders))
     return 1 if offenders else 0
