@@ -80,7 +80,7 @@ def test_the_token_is_delivered_on_stdin_and_never_in_argv(tmp_path):
 
 
 def test_a_curl_that_ends_its_write_out_with_a_newline_is_read_the_same(tmp_path):
-    """A write-out ending in a newline is read the same as one that does not -- real curl ends it."""
+    """Real curl ends its write-out with a newline."""
     metrics = _run(tmp_path, '#!/bin/sh\nprintf "200 0.412\\n"\n')
 
     assert metrics["zcrypto_grafana_keepalive_status"] == "200"
@@ -88,7 +88,7 @@ def test_a_curl_that_ends_its_write_out_with_a_newline_is_read_the_same(tmp_path
 
 
 def test_a_503_is_recorded_rather_than_swallowed(tmp_path):
-    """A 503 is recorded rather than swallowed. `curl -f` would have made it an error exit and no data."""
+    """`curl -f` would have made a 503 an error exit with no data instead."""
     metrics = _run(tmp_path, '#!/bin/sh\nprintf "503 12.8"\n')
 
     assert metrics["zcrypto_grafana_keepalive_status"] == "503"

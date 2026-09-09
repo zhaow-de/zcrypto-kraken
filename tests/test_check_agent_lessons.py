@@ -94,7 +94,7 @@ def test_an_unreadable_path_outranks_a_bad_record(tmp_path: pathlib.Path) -> Non
 
 
 def test_a_bad_record_before_an_unreadable_path_still_exits_2(tmp_path: pathlib.Path) -> None:
-    # The other order: `max()` over the per-path codes must return the same verdict regardless of check order.
+    # The other order: the verdict must not depend on which check runs first.
     bad = tmp_path / "bad.jsonl"
     bad.write_text(json.dumps({**OK, "kind": "bogus"}) + "\n")
     done = _run(str(bad), str(tmp_path / "gone.jsonl"))
