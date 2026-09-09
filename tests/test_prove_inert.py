@@ -362,10 +362,35 @@ def test_a_docstring_read_through_a_bare_name_is_output() -> None:
     assert pi.docstring_reader_names("assert flatten.run_flatten.__doc__\n") == frozenset({"run_flatten"})
 
 
-def test_a_tree_it_cannot_list_is_refused(tmp_path: pathlib.Path) -> None:
-    """A listing that fails under-collects the names every refusal is driven by, so it refuses."""
-    with pytest.raises(SystemExit, match="cannot list the tree"):
+def test_a_tree_it_cannot_list_is_refused(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A listing that fails under-collects the names every refusal is driven by, so it refuses -- and the
+    CODE is the claim: REFUSED, never the 1 that would tell a caller the diff was read and moved."""
+    with pytest.raises(SystemExit) as raised:
         pi.output_names_in(tmp_path)
+    assert raised.value.code == pi.EXIT_REFUSED
+    assert "cannot list the tree" in capsys.readouterr().err
+
+
+def test_a_cwd_outside_any_repo_is_a_usage_error_not_a_code_change(tmp_path: pathlib.Path) -> None:
+    """The shape this setup produces routinely: a scratch worktree is removed while a shell still sits in
+    it. The operator fixes that by moving, so it is EXIT_USAGE with the contract printed -- and never 1,
+    which an agent reading WHICH code fired would record as CODE CHANGED for a file never compared."""
+    done = _cli(tmp_path, "HEAD", "cli/engine/flatten.py")
+    assert done.returncode == pi.EXIT_USAGE, done.stdout + done.stderr
+    assert "not inside a git worktree" in done.stderr, done.stderr
+    assert "exit 0  INERT" in done.stderr, "the contract is what EXIT_USAGE prints"
+
+
+def test_a_closure_read_from_another_checkout_is_refused_rather_than_judged(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The third resolution base. `replay_closure` reads the INSTALLED package's root; if that is a second
+    clone whose closure has grown, a member of the judged tree sits outside `relative` and can reach INERT.
+    Refused instead, so the guard covers all three bases rather than two."""
+    monkeypatch.setattr(pi, "replay_closure", lambda: (frozenset({"cli/engine/flatten.py"}), pathlib.Path("/nonexistent-checkout")))
+    monkeypatch.chdir(_ROOT)
+    assert pi.main(["prove-inert.py", "HEAD", "cli/engine/flatten.py"]) == pi.EXIT_USAGE
+    assert "not the tree being judged" in capsys.readouterr().err
 
 
 def test_a_file_it_cannot_parse_is_counted_not_skipped(tmp_path: pathlib.Path) -> None:
@@ -385,3 +410,80 @@ def test_a_docstring_cut_leaves_the_comment_stream_alone() -> None:
     result = pi.compare(before, after)
     assert result.ast_inert
     assert result.comments_same
+
+
+def test_a_replay_closure_member_is_refused_rather_than_certified() -> None:
+    """A prose-only edit to a file `replay_fingerprint` digests is not inert: it changes the gate's cache key."""
+    done = _cli(_ROOT, "HEAD", "cli/engine/flatten.py")
+    assert done.returncode == pi.EXIT_REFUSED, done.stdout + done.stderr
+    assert "digests this file" in done.stdout, done.stdout
+
+
+def test_each_spelling_of_a_closure_member_is_refused_never_certified(tmp_path: pathlib.Path) -> None:
+    """The list with the arm each row must refuse THROUGH, so a refusal for the wrong reason is not green.
+    Membership folds `./`, `//` and an interior `..`; the two it does not fold reach `_at_revision`, which
+    holds at the toplevel only -- `git show` resolves `../` against cwd -- so `main` refuses any other cwd,
+    asserted below. `./a/../b` certified INERT before the normalisation; the pair below is the true positive."""
+    closure = pi.replay_closure()
+    assert not isinstance(closure, str), closure
+    relative, _ = closure
+    assert "cli/engine/flatten.py" in relative, "the member must be in the closure, or this proves nothing"
+
+    spellings = [
+        ("cli/engine/flatten.py", "digests this file"),
+        ("./cli/engine/flatten.py", "digests this file"),
+        ("cli//engine/flatten.py", "digests this file"),
+        ("cli/engine/../engine/flatten.py", "digests this file"),
+        ("./cli/engine/../engine/flatten.py", "digests this file"),
+        (str(_ROOT / "cli/engine/flatten.py"), "cannot read"),
+        (f"../{_ROOT.name}/cli/engine/flatten.py", "cannot read"),
+    ]
+    for spelling, arm in spellings:
+        done = _cli(_ROOT, "HEAD", spelling)
+        assert done.returncode == pi.EXIT_REFUSED, f"{spelling}: {done.stdout}{done.stderr}"
+        assert "INERT" not in done.stdout, f"{spelling} certified a closure member: {done.stdout}"
+        assert arm in done.stdout, f"{spelling} refused through the wrong arm: {done.stdout}"
+
+    off_root = _cli(_ROOT / "cli", "HEAD", "engine/flatten.py")
+    assert off_root.returncode == pi.EXIT_USAGE, off_root.stdout + off_root.stderr
+    assert "run from the repo root" in off_root.stderr, off_root.stderr
+
+    repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
+    (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')
+    clean = _cli(repo, "HEAD", "m.py")
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+
+
+def test_the_closure_is_read_repo_relative_against_the_tree_it_describes() -> None:
+    """Repo-relative, so it still matches when the installed package is a different checkout of the same tree."""
+    closure = pi.replay_closure()
+    assert not isinstance(closure, str), closure
+    relative, closure_root = closure
+    assert {"cli/engine/flatten.py", "cli/engine/executor.py"} <= relative
+    assert (closure_root / "cli" / "engine" / "flatten.py").is_file()
+    assert not [path for path in relative if path.startswith("/")]
+    assert "tests/test_prove_inert.py" not in relative
+
+
+def test_nothing_is_certified_when_the_closure_cannot_be_read(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unknown membership refuses, and NAMES its cause: nobody can fix an invocation the refusal never described."""
+    repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
+    (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(pi, "replay_closure", lambda: "ModuleNotFoundError: no module named 'cli'")
+    assert pi.main(["prove-inert.py", "HEAD", "m.py"]) == pi.EXIT_REFUSED
+    assert "ModuleNotFoundError" in capsys.readouterr().out
+
+
+def test_a_member_of_another_checkouts_closure_is_refused_by_its_relative_spelling(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The installed package can be a DIFFERENT checkout; that tree digests the same relative paths, unseen here."""
+    repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
+    (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')
+    monkeypatch.chdir(repo)
+    elsewhere = pathlib.Path("/somewhere/else")
+    monkeypatch.setattr(pi, "replay_closure", lambda: (frozenset({"m.py"}), elsewhere))
+    assert pi.main(["prove-inert.py", "HEAD", "m.py"]) == pi.EXIT_REFUSED

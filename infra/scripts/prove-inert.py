@@ -5,15 +5,21 @@ exit 0  INERT -- the only verdict that licenses the words *prose-only*
 exit 1  CODE CHANGED -- the stripped shape or a scope's statement count moved
 exit 2  a usage error, which is this text
 exit 3  COMMENTS CHANGED -- a comment's text, column, the line it sits above, or its distance moved
-exit 4  REFUSED -- a docstring that is program output changed, or a path could not be read
+exit 4  REFUSED -- a docstring that is program output changed, a path or the replay closure itself could not
+        be read, or the file is one whose raw bytes `replay_fingerprint` digests: no arm proves no effect
 
 3 and 4 are verdicts to act on, never a run to retry: 3 says a guard that reads a comment's position
 may have stopped seeing it, and 4 says the claim cannot be made from here at all. A docstring is often
-program OUTPUT -- a Typer command's is its `--help` body, and scripts hand it to argparse."""
+program OUTPUT -- a Typer command's is its `--help` body, and scripts hand it to argparse.
+
+An effect carried by a file's raw BYTES is invisible to these arms: `replay_fingerprint` digests whole files, so
+that set is refused, never certified. Run this through `uv run`: the set needs an importable `cli`, and an older
+interpreter cannot parse this file at all -- exiting 1, which is CODE CHANGED above rather than the crash it is."""
 
 import ast
 import difflib
 import io
+import os
 import pathlib
 import subprocess
 import sys
@@ -190,10 +196,31 @@ def compare(before: str, after: str, *, output_names: frozenset[str] = frozenset
     )
 
 
+def replay_closure() -> tuple[frozenset[str], pathlib.Path] | str:
+    """The repo-relative paths whose bytes `replay_fingerprint` digests, and the tree they
+    describe, or a string saying why they could not be read: only a named cause tells an operator whether to
+    fix their invocation or the tree. The tree is the INSTALLED package's, usually but not necessarily the one
+    being judged. Every failure is caught, since one escaping here exits 1, this tool's own CODE CHANGED."""
+    try:
+        from cli.engine.gate_cache import _REPO_ROOT, _replay_code_paths
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    try:
+        # Repo-relative and normalised (`./`, `//`, interior `..`) -- STRICTER membership, the opposite
+        # direction from a forgiving `_at_revision`. Absolute and leading-`../` it does not fold; both exit
+        # 128 in `_at_revision`, but only at the toplevel, which is why `main` refuses any other cwd.
+        relative = frozenset(str(path.relative_to(_REPO_ROOT)) for path in _replay_code_paths())
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return relative, _REPO_ROOT
+
+
 def _repo_root() -> pathlib.Path:
     done = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if done.returncode != 0:
-        raise SystemExit("prove-inert: not inside a git worktree")
+        print("prove-inert: not inside a git worktree\n", file=sys.stderr)
+        print(__doc__, file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
     return pathlib.Path(done.stdout.strip())
 
 
@@ -218,7 +245,8 @@ def output_names_in(root: pathlib.Path) -> tuple[frozenset[str], int]:
     listed = subprocess.run(["git", "-C", str(root), "ls-files", "*.py"], capture_output=True, text=True)
     if listed.returncode != 0:
         # A short listing silently under-refuses, which is the one direction a certifier must not fail in.
-        raise SystemExit(f"prove-inert: cannot list the tree: {listed.stderr.strip()}")
+        print(f"prove-inert: cannot list the tree: {listed.stderr.strip()}", file=sys.stderr)
+        raise SystemExit(EXIT_REFUSED)
     for rel in listed.stdout.split():
         try:
             names |= docstring_reader_names((root / rel).read_text())
@@ -236,12 +264,40 @@ def main(argv: list[str]) -> int:
         return EXIT_USAGE
     base, paths = argv[1], argv[2:]
     root = _repo_root()
+    # Lexical membership, `git show`'s cwd and the after side agree only here, and exit 0 is a licence.
+    if pathlib.Path.cwd() != root:
+        print(f"prove-inert: run from the repo root ({root}), not {pathlib.Path.cwd()}\n", file=sys.stderr)
+        print(__doc__, file=sys.stderr)
+        return EXIT_USAGE
     output_names, unscanned = output_names_in(root)
     print(f"after-side tree: {root}")
     if unscanned:
         print(f"WARNING: {unscanned} file(s) could not be scanned for docstring readers")
+    closure = replay_closure()
+    relative: frozenset[str] = frozenset()
+    unreadable: str | None = None
+    if isinstance(closure, str):
+        unreadable = f"the replay closure could not be read ({closure}); it needs an importable `cli` -- try `uv run`"
+    else:
+        relative, closure_root = closure
+        # The third base: a second checkout's closure may have grown past the imported one.
+        if closure_root != root and (root / "cli" / "engine" / "gate_cache.py").is_file():
+            print(f"prove-inert: `cli` imports from {closure_root}, not the tree being judged ({root})\n", file=sys.stderr)
+            print(__doc__, file=sys.stderr)
+            return EXIT_USAGE
+        print(f"replay closure describes: {closure_root} ({len(relative)} files)")
     worst = EXIT_INERT
     for path in paths:
+        # Ahead of the arms, because a clean shape is exactly what makes such a file's edit look free.
+        if unreadable is not None:
+            print(f"{path}: REFUSED -- {unreadable}")
+            worst = worse(worst, EXIT_REFUSED)
+            continue
+        if os.path.normpath(path) in relative:
+            # Membership, never a diagnosis: the arms never ran, so nothing here knows what changed.
+            print(f"{path}: REFUSED -- `replay_fingerprint` digests this file, so any byte of it rebuilds the gate cache")
+            worst = worse(worst, EXIT_REFUSED)
+            continue
         try:
             result = compare(_at_revision(base, path), (root / path).read_text(), output_names=output_names)
         except (ValueError, OSError, SyntaxError) as exc:

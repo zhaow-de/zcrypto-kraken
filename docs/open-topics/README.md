@@ -33,6 +33,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0189 — the prose ratchet converts every cut into silent headroom](T0189-prose-ratchet-converts-each-cut-into-headroom.md) — partial: a recorded size is a ceiling rather than a fact about the tree, so a shrink leaves headroom the next regrowth spends silently. A shrink under an unchanged first line now FAILS until its row comes down, and the ten standing ceilings were banked; a shrink that also rewords the block's first line re-keys it, is absorbed at exit 0, and still licenses regrowth — that arm stays open, alongside whether the report's line budget or its marker scheme should change.
 
+- [T0190 — three flags gate the live-venue tests and `CLAUDE.md` documents one](T0190-live-venue-opt-in-flags-disagree.md) — `CLAUDE.md` documents `ZCRYPTO_LIVE_VENUE_TESTS`, but `test_engine_flatten.py` gates on `ZCRYPTO_VENUE_CONTRACT` and `test_e1b_order_visibility_probe.py` on `ZCRYPTO_E1B_LIVE`, so an agent following the rule silently skips both. **Partial: the owner ruled one flag covers the class**, so the remainder is the two renames. The topic's original second half — that only the documented flag fails on an unreachable venue — was measured FALSE and is refuted in the file; every one of them fails when its flag is set.
+
 ### Resolved<a name="resolved"></a>
 
 - [T0002 — universe liquidity-floor calibration & quote-currency volume](archive/T0002-universe-liquidity-floor-calibration.md) — resolved in iter-007: EUR floor lowered €1M→€150k (footprint-based) + `quote_volume_in_eur` FX-normalizes the BTC-quoted legs → the full 12-name basket, `escalate=False`; findings recorded in master-plan §3.

@@ -437,9 +437,9 @@ docs/reference/data-catalog.md:26: section 6111 > 2048	## Dataset
 docs/reference/docstring-pass-method.md:13: section 2722 > 2048	## What the pass pays on
 docs/reference/docstring-pass-method.md:38: section 2752 > 2048	## What the record does support
 docs/reference/docstring-pass-method.md:52: section 2161 > 2048	## The gate
-docs/reference/docstring-pass-method.md:95: section 3911 > 2048	## Standing procedures
-docs/reference/docstring-pass-method.md:119: section 2795 > 2048	## Failure modes: what the prose claims
-docs/reference/docstring-pass-method.md:135: section 3002 > 2048	## Failure modes: what the instruments report
+docs/reference/docstring-pass-method.md:97: section 3911 > 2048	## Standing procedures
+docs/reference/docstring-pass-method.md:121: section 2795 > 2048	## Failure modes: what the prose claims
+docs/reference/docstring-pass-method.md:137: section 3002 > 2048	## Failure modes: what the instruments report
 docs/reference/drill-log.md:9: section 4240 > 2048	## 2026-08-31 — J′ — pass
 docs/reference/drill-log.md:13: section 6747 > 2048	## 2026-08-31 — K — pass
 docs/reference/drill-log.md:17: section 3857 > 2048	## 2026-08-31 — O — pass
@@ -843,7 +843,8 @@ infra/scripts/ops_daily.py:1407: comment-block 6 > 4	"""Peel what changes WHO ru
 infra/scripts/ops_daily.py:1441: comment-block 8 > 4	"""Which tier a runbook step falls in. Default-deny: unrecognised is PREPARED, always.
 infra/scripts/probe-with-vaulted-key.sh:2: comment-block 12 > 4	# Runs the order-semantics probe harness with the vaulted Kraken trade credential in its environment
 infra/scripts/prose-tripwire.py:2: comment-block 17 > 4	"""Flag prose over the repo's bars: comment blocks, prose-heavy files, long table rows, long
-infra/scripts/prove-inert.py:2: comment-block 11 > 4	"""Prove a change is prose-only: the same code shape, with the comment stream reported separately.
+infra/scripts/prove-inert.py:1: file-prose 20.6 > 20
+infra/scripts/prove-inert.py:2: comment-block 16 > 4	"""Prove a change is prose-only: the same code shape, with the comment stream reported separately.
 infra/scripts/prune-host-images.py:1: comment-block 17 > 4	"""Remove the Docker images a fleet host no longer needs, keeping every digest the pins file records.
 infra/scripts/prune-host-images.py:55: comment-block 5 > 4	"""The pins file cannot serve as the authority -- refuse rather than compute a keep-set.
 infra/scripts/prune-host-images.py:145: comment-block 6 > 4	"""The `## Current pins` table of the pins file, as rows.
