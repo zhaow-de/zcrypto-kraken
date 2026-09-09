@@ -31,7 +31,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0183 — a reconciliation reports a perfect score when it compared nothing](T0183-reconciliation-reports-perfect-on-an-empty-set.md) — partial: the data-QA and soak sites listed in the file now answer `None` (or `insufficient-data`) instead of the value that also means success, each with a test whose empty case fails against the pre-fix literal and a populated control beside it, so arm (b) holds. Arm (a) — every site fixed or Excluded with its reason — no longer waits on the capture-path member, which `T0185`'s refusal made unreachable, and holds no earlier than `T0187` lands, the one member excluded by *transfer* rather than by a reason. The HHI aggregation is not a member and is `T0184`.
 
-
 - [T0190 — three flags gate the live-venue tests and `CLAUDE.md` documents one](T0190-live-venue-opt-in-flags-disagree.md) — `CLAUDE.md` documents `ZCRYPTO_LIVE_VENUE_TESTS`, but `test_engine_flatten.py` gates on `ZCRYPTO_VENUE_CONTRACT` and `test_e1b_order_visibility_probe.py` on `ZCRYPTO_E1B_LIVE`, so an agent following the rule silently skips both. **Partial: the owner ruled one flag covers the class**, so the remainder is the two renames. The topic's original second half — that only the documented flag fails on an unreachable venue — was measured FALSE and is refuted in the file; every one of them fails when its flag is set.
 
 ### Resolved<a name="resolved"></a>
