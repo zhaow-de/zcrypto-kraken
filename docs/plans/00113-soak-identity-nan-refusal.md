@@ -215,12 +215,13 @@ Five mutations, one probe run each, same control. All five must report KILLED, a
 
 `mutate-probe.sh` discards the probe command's output in all three of its phases (`:99`, `:106`, `:111`) and prints its verdict alone, so KILLED plus the proven control is all it observes. The assertion text `commit-messages.md` wants in the body therefore comes from the probe command's OWN redirect, which the script's `>/dev/null 2>&1` cannot reach: every probe below is wrapped as `sh -c '… > "<log>" 2>&1'`, and `sh -c` exits with the wrapped command's status, so the verdict is unchanged. A scratch worktree is deliberately NOT the mechanism — a second checkout puts the mutation and the measurement in different trees with nothing in the body saying which one the assertion came from, and every command aiming it is a `git checkout --` steered by a cwd that resets between calls (`agent-ops.md`).
 
-Each log holds its own probe's LAST phase, which is the mutation's: the phases run baseline (`:99`), control (`:106`), mutation (`:111`), each overwriting, and `restore` runs no probe. So the control's failure text is not kept — `mutate-probe.sh`'s own verdict line is what attests it. The wrapper belongs on every mutate-probe invocation in this plan, each with its own log name: the five probes below and Task 3 Step 6's.
+Each log holds the last phase that RAN — baseline (`:99`), control (`:106`), mutation (`:111`), each overwriting, and `restore` runs no probe — which is the mutation's only when the script printed KILLED or SURVIVED. Four exits stop earlier: rc 3 (dirty tree, `:61`) before any phase runs, rc 7 (baseline failed, `:99`), rc 5 (control did not fail, `:106`), and rc 6 (a no-op sed, `:87-91`), which on the MUTATION sed aborts with the control phase's output already in the log. Nothing in the log names its run or its phase, so read `mutate-probe.sh`'s verdict line first and the log only under a KILLED — and never the control's failure text, which no phase keeps; the verdict line is what attests that. The wrapper belongs on every mutate-probe invocation in this plan, each with its own log name — the five probes below and Task 3 Step 6's — and each fence clears the logs it is about to write, so an earlier attempt's cannot be read as this run's.
 
-Create the log directory once first. `.tmp/` is gitignored, so the logs leave the tree clean for the next probe's own dirty-tree refusal:
+Create the log directory once first and clear the five logs this step writes. `.tmp/` is gitignored, so the logs leave the tree clean for the next probe's own dirty-tree refusal:
 
 ```bash
 mkdir -p "$(git rev-parse --show-toplevel)/.tmp"
+find "$(git rev-parse --show-toplevel)/.tmp" -maxdepth 1 -name '00113-*.log' -delete
 ```
 
 ```bash
@@ -413,6 +414,7 @@ The probe runs after the commit, for Task 1 Step 8's reason — `mutate-probe.sh
 
 ```bash
 mkdir -p "$(git rev-parse --show-toplevel)/.tmp"
+rm -f "$(git rev-parse --show-toplevel)/.tmp/00113-selfcheck.log"
 infra/scripts/mutate-probe.sh \
   --file cli/engine/soak.py \
   --control 's/abs(replayed\[asset\] - value) > tol/abs(replayed[asset] - value) > tol * 1e12/' \
@@ -433,7 +435,7 @@ Deletes the arm under proof; the new test's `assert ok is False` fires. The cont
 
 - [ ] **Step 1: Resolve T0188 through the `topic-ops` skill**
 
-Load `.claude/skills/topic-ops/SKILL.md` and follow it: `status: resolved`, a `## Resolution` naming the commits and what each decision landed as, `git mv` into `docs/open-topics/archive/`, and the index bullet moved to the same category's `### Resolved` with its link repointed at `archive/`. Its `## Suggested next steps` bullets are answered, in their own order, by spec `00113` D1 (where the refusal belongs), D7 (the guard's fixture and its degeneracy) and D2/D3/D5 (what a partly-NaN window answers, and what the detail then carries), with D6 as the consequence for the void reason — say which, so the archived file records the answers rather than the questions. Its `## Findings so far` clears `cap_consistent` alone; D8 is what swept the rest of the file, so the `## Resolution` names `identity_self_check` as the second instance this branch closed and D8's non-members — the two `!=` comparisons and `reconcile_ok`'s `<=` bar — as the rest of the sweep.
+Load `.claude/skills/topic-ops/SKILL.md` and follow it: `status: resolved`, a `## Resolution` naming the commits and what each decision landed as, `git mv` into `docs/open-topics/archive/`, and the index bullet moved to the same category's `### Resolved` with its link repointed at `archive/`. Its `## Suggested next steps` bullets are answered, in their own order, by spec `00113` D1 (where the refusal belongs), D7 (the guard's fixture and its degeneracy) and D2/D3/D5 (what a partly-NaN window answers, and what the detail then carries), with D6 as the consequence for the void reason — say which, so the archived file records the answers rather than the questions. Its `## Findings so far` clears `cap_consistent` alone; D8 is what swept the rest of the file, so the `## Resolution` names `identity_self_check` as the second instance this branch closed, the `breach` bar's OTHER site — the one `reconcile_ok` counts (`:317`), the one shape-carrying member left where it is, on the same finiteness argument the topic already accepts for `cap_consistent`'s — and D8's non-members — the two `!=` comparisons and `reconcile_ok`'s `<=` bar — as the rest of the sweep.
 
 In the same edit that moves the index bullet, rewrite its TEXT as the outcome — what the arm now answers and which void reason it emits — and drop its closing "Ripe now.". `docs/open-topics/README.md:124` states the defect in the present tense today, and every bullet already under a `### Resolved` heading reads as its outcome instead; `topic-ops` prescribes the move and the repointed link, not the wording, so the plan is the only place this can land.
 
