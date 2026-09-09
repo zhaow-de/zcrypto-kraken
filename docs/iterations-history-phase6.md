@@ -898,3 +898,9 @@ ______________________________________________________________________
 - `--json` carries `identity_unmeasurable` beside `identity_ok`, so a machine consumer tells an unmeasurable window from a disagreeing one without parsing the detail string.
 - The report's identity self-test answers `False` on a replay difference that is not finite and names both operands in its message, so the newest cycle's identity is no longer certified over a comparison the check could not make.
 - `T0183`'s census row for `identity_ok`, and `T0193`'s and `T0194`'s cross-references, now read against the code that landed, so a session picking any of those three up is not told that the silent pass is still open.
+## 2026-09-09 — the prose ratchet stops converting a cut into headroom
+
+- A commit that shrinks a recorded block now FAILS the gate until the baseline is re-recorded, so a cutting pass banks its own cut in the same commit — the remedy `prose.md` already prescribed for a conscious keep, now required for a cut as well. Before this a shrink passed silently and the row kept licensing regrowth to the old size.
+- `infra/scripts/prose-tripwire.py --check-baseline` marks every line it prints — `fail` for what blocks the commit, `note` for what does not — and clamps each to a single row, so an operator reads one marker instead of judging by indentation that a wrapped line destroys.
+- A retired row is named rather than counted, so a recorded keep whose block no longer trips can be found and removed instead of sitting in the baseline licensing a future regrowth.
+- The committed baseline was re-recorded, lowering the ten ceilings that stood above their blocks' current size; an agent reading the ratchet's verdict is now reading the tree rather than the high-water mark of passes since.
