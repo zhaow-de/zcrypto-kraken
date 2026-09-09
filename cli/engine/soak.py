@@ -1547,6 +1547,7 @@ def _json_payload(
             "available": internals.available,
             "reason": internals.reason,
             "identity_ok": internals.identity_ok,
+            "identity_unmeasurable": internals.identity_unmeasurable,
             "identity_detail": internals.identity_detail,
             "cap_consistent": internals.cap_consistent,
             "cap_detail": internals.cap_detail,
@@ -1736,7 +1737,15 @@ def soak_report(
                     void_reasons.append("self-test VOID: reconcile_ok=False")
             void_reasons += plausibility_checks(realized, null)
             if internals.available and internals.identity_ok is False:
-                void_reasons.append("realized-internals identity mismatch")
+                # Both can hold at once; the unmeasurable case is the weaker claim and names the reason, which
+                # then carries `identity_detail` -- `render_report` renders these reasons and never that field,
+                # so the displaced mismatch would otherwise reach the JSON reader alone (spec 00113 D6).
+                # Parenthesised because that renderer joins reasons with `; ` and the detail carries one.
+                void_reasons.append(
+                    f"realized-internals identity unmeasurable ({internals.identity_detail})"
+                    if internals.identity_unmeasurable
+                    else "realized-internals identity mismatch"
+                )
             if internals.available and not internals.cap_consistent:
                 void_reasons.append("cap-breach inconsistent")
             analysis = analyze_soak(realized, null, band=band, internals=internals, null_mode=null_mode)
