@@ -100,7 +100,7 @@ def test_a_year_directory_that_is_not_a_date_is_skipped_beside_a_real_hour(tmp_p
 
 
 def test_two_quote_dirs_under_one_base_stay_independent_streams(tmp_path):
-    """`ETH/EUR` and `ETH/BTC` resolve as two separate pairs, never merged by base (T0092)."""
+    """The universe carries BTC-quoted legs beside the EUR ones (T0092), so one base can hold two quote directories."""
     primary = tmp_path / "primary"
     _final(primary, "ETH/EUR", "book", H)
     _final(primary, "ETH/BTC", "book", H)
