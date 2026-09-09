@@ -359,9 +359,9 @@ async def read_book_price(client: Any, rec: Recorder, constraints: PairConstrain
     if price <= 0.0:
         # `_required` rejects only `None` and `_as_float` only a non-number or a non-finite one, so a
         # finite zero arrives here unrefused -- and never reaches a notional: `_tick_floored` maps it to
-        # None one step on, which DISABLES the costmin floor, so a leg listed `dust_below_venue_minimum`
-        # at a real price is sized on the quantity floor alone and SENT. Refusing changes no send; it
-        # buys the operator a named, logged unreachable in place of a silently unpriced leg.
+        # None one step on, which DISABLES the costmin floor. A leg the NOTIONAL floor listed
+        # `dust_below_venue_minimum` is then sized on `ordermin` alone and SENT; one under `ordermin`
+        # stays dust either way. Refusing changes no send: it buys a named, logged unreachable instead.
         raise FlattenUnreachable(f"{what}: the top of the {'bid' if side == 'SELL' else 'ask'} side is {price!r}, not a price")
     return price
 
