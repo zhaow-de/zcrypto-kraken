@@ -71,7 +71,7 @@ def _write(root: Path, pair: str, kind: str, hour: datetime) -> Path:
 
 
 def _scans(pri: Path, sec: Path) -> dict:
-    """The cycle's availability picture, built exactly as `command.py` builds it."""
+    """The cycle's availability picture, built exactly as `cli/archive/command.py`'s `reconcile` builds it."""
     return {
         "primary": {kind: scan_hours(pri, kind) for kind in ("book", "trades")},
         "secondary": {kind: scan_hours(sec, kind) for kind in ("book", "trades")},
