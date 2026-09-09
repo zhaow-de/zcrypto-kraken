@@ -164,6 +164,7 @@ def _patch_canonical_pipeline(
     available: bool = True,
     reason: str = "",
     identity_ok: bool | None = True,
+    identity_unmeasurable: int = 0,
     cap_consistent: bool = True,
     null_bars: int = 40,
     reconcile_ok: bool = True,
@@ -194,6 +195,7 @@ def _patch_canonical_pipeline(
             mult_by_cycle=dict.fromkeys(cycle_ts, 1.0),
             breach_by_cycle=dict.fromkeys(cycle_ts, False),
             identity_ok=identity_ok,
+            identity_unmeasurable=identity_unmeasurable,
             identity_detail="worst |diff|=0.0",
             cap_consistent=cap_consistent,
             cap_detail="completed-bar breach count=0",
@@ -253,6 +255,7 @@ def test_soak_check_json_includes_internals_and_disclosures(tmp_path, monkeypatc
         "available": True,
         "reason": "",
         "identity_ok": True,
+        "identity_unmeasurable": 0,
         "identity_detail": "worst |diff|=0.0",
         "cap_consistent": True,
         "cap_detail": "completed-bar breach count=0",
@@ -268,10 +271,10 @@ def test_soak_check_json_includes_internals_and_disclosures(tmp_path, monkeypatc
 
 
 def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
-    """The D2/D3-vs-D7 void distinction, wired at the `soak_report` level: `available=True` with
-    `identity_ok=False` or `cap_consistent=False` VOIDS the run (the instrument is lying about
-    alignment); `identity_ok=None` (the identity unmeasured) does not, and `available=False`
-    DEGRADES (governor_engagement/cap_breach read "n/a") but never voids on its own."""
+    """The D2/D3-vs-D7 void distinction, wired at `soak_report`: `available=True` with
+    `identity_ok=False` or `cap_consistent=False` VOIDS (the instrument is lying about alignment);
+    `identity_ok=None` (unmeasured) does not, `available=False` DEGRADES but never voids alone --
+    and `identity_unmeasurable` picks which void-reason string names the failure (spec 00113 D6)."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {
@@ -302,6 +305,22 @@ def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     payload = json.loads(identity_out.read_text())
     assert any("identity mismatch" in r for r in payload["void_reasons"])
+
+    # A journaled value that is not a number and a rebuild that disagrees by magnitude are different
+    # operator actions, so they take different reasons. The branch sees only the count, which is how
+    # it names the unmeasurable case when both hold (spec 00113 D6).
+    _patch_canonical_pipeline(monkeypatch, identity_ok=False, identity_unmeasurable=1)
+    unmeasurable_out = tmp_path / "identity-unmeasurable.json"
+    result = runner.invoke(app, [*common_args, "--json", str(unmeasurable_out)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(unmeasurable_out.read_text())
+    assert any("identity unmeasurable" in r for r in payload["void_reasons"])
+    assert not any("identity mismatch" in r for r in payload["void_reasons"])
+    assert payload["internals"]["identity_unmeasurable"] == 1
+    # The text report renders `void_reasons` and never `identity_detail`, so the reason it picks
+    # carries the detail (spec 00113 D6) -- read off the payload, and non-empty, or `in` is vacuous.
+    detail = payload["internals"]["identity_detail"]
+    assert detail and any(detail in r for r in payload["void_reasons"])
 
     # `identity_ok=None` is the identity UNMEASURED -- no journaled target was compared against the
     # rebuild. Only a ran-and-failed proof voids, so this one must not, while `cap_consistent=False`
