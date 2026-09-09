@@ -24,9 +24,9 @@ def _py(prose_lines: list[str], code_lines: int) -> str:
     return "\n".join(prose_lines + [f"x{i} = {i}" for i in range(code_lines)]) + "\n"
 
 
-def _summary(new: int = 0, grown: int = 0, rewritten: int = 0, retired: int = 0) -> str:
+def _summary(new: int = 0, grown: int = 0, rewritten: int = 0, shrunk: int = 0, retired: int = 0) -> str:
     """The check's last line, built rather than transcribed, so a new counter is one edit here."""
-    return f"new: {new} grown: {grown} rewritten: {rewritten} retired: {retired}"
+    return f"new: {new} grown: {grown} rewritten: {rewritten} shrunk: {shrunk} retired: {retired}"
 
 
 def _kinds(offenders) -> list[str]:
@@ -503,7 +503,7 @@ class TestTheIndexIsTheDefaultScope:
         assert capsys.readouterr().out.splitlines() == [_summary()]
         subprocess.run([*_GIT, "add", "-f", "cli/fresh.py"], check=True)
         assert tw.main(["--check-baseline", "base.txt"]) == 1
-        assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
+        assert capsys.readouterr().out.splitlines()[0] == f"fail new: cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
 
     def test_a_tracked_file_deleted_from_disk_is_reported_not_opened(self, repo: Path, capsys) -> None:
         """The bytes come from the worktree, so a deletion the index still lists is a keep retired, never a read."""
@@ -514,14 +514,16 @@ class TestTheIndexIsTheDefaultScope:
         assert (repo / "base.txt").read_text().startswith("cli/gone.py:1: comment-block")
         (repo / "cli" / "gone.py").unlink()
         assert tw.main(["--check-baseline", "base.txt"]) == 0
-        assert capsys.readouterr().out.splitlines() == [_summary(retired=1)]
+        out = capsys.readouterr().out.splitlines()
+        assert out == [out[0], _summary(retired=1)]  # exactly one line, and it is the retired row
+        assert out[0].startswith("note retired: cli/gone.py: comment-block")
 
     def test_a_named_path_is_scanned_tracked_or_not(self, repo: Path, capsys) -> None:
         """An explicit argument is the caller's word, not the index's."""
         n = tw.COMMENT_BLOCK_LINES + 1
         (repo / "cli" / "fresh.py").write_text(_py(["# fresh"] * n, 6 * n))
         assert tw.main(["--check-baseline", "base.txt", "cli/fresh.py"]) == 1
-        assert capsys.readouterr().out.splitlines()[0] == f"cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
+        assert capsys.readouterr().out.splitlines()[0] == f"fail new: cli/fresh.py:1: comment-block {n} > {tw.COMMENT_BLOCK_LINES}"
 
 
 class TestADefaultScopeThatCannotBeRead:
@@ -555,7 +557,7 @@ class TestADefaultScopeThatCannotBeRead:
 
     def test_from_the_root_the_staged_offender_is_named(self, repo: Path, capsys) -> None:
         assert tw.main(["--check-baseline", str(repo / "base.txt")]) == 1
-        assert capsys.readouterr().out.splitlines()[0].startswith("cli/a.py:1: comment-block")
+        assert capsys.readouterr().out.splitlines()[0].startswith("fail new: cli/a.py:1: comment-block")
 
     def test_from_a_subdirectory_it_refuses_rather_than_calling_that_tree_clean(self, repo: Path, monkeypatch, capsys) -> None:
         """`git ls-files` prints paths relative to cwd, so the roots below the root match nothing."""
@@ -613,7 +615,7 @@ class TestTheCommandLine:
         with pytest.raises(SystemExit) as exc:
             tw.main(["--help"])
         assert exc.value.code == 0
-        text = "".join(capsys.readouterr().out.split())  # argparse wraps the epilog and breaks long words
+        text = "".join(capsys.readouterr().out.split())  # whitespace-insensitive: a formatter change is M-1's test, not this one
         for name in tw.THRESHOLDS:
             assert f"{name}={getattr(tw, name)}" in text
         # THRESHOLDS derives itself, so iterating it cannot notice an omission: pin the set instead.
@@ -623,8 +625,22 @@ class TestTheCommandLine:
         """One assertion per test: a regression here and in the thresholds must redden separately."""
         with pytest.raises(SystemExit):
             tw.main(["--help"])
-        text = " ".join(capsys.readouterr().out.split())  # argparse re-wraps the description to $COLUMNS
+        text = " ".join(capsys.readouterr().out.split())  # whitespace-insensitive, as above
         assert "long changelog entries." in text
+
+    def test_the_description_wraps_to_the_terminal(self, capsys, monkeypatch) -> None:
+        """`_RawEpilogFormatter`'s wrapping half: a fully raw formatter runs it past the terminal."""
+        monkeypatch.setenv("COLUMNS", "60")
+        with pytest.raises(SystemExit):
+            tw.main(["--help"])
+        opening = next(line for line in capsys.readouterr().out.splitlines() if "Flag prose over" in line)
+        assert len(opening) <= 60, opening
+
+    def test_the_epilog_keeps_the_break_before_the_shrink_contract(self, capsys) -> None:
+        """`_RawEpilogFormatter`'s raw half: reflowing runs the thresholds into the marker contract."""
+        with pytest.raises(SystemExit):
+            tw.main(["--help"])
+        assert "\nA `fail shrunk` is a keep" in capsys.readouterr().out
 
 
 def _commit(*paths: str) -> None:
@@ -744,7 +760,7 @@ class TestTheBaselineRatchet:
         (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * (self.N - 1), 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         out = capsys.readouterr().out.splitlines()
-        assert out[0] == f"rewritten: kept.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES} recorded {self.N}"
+        assert out[0] == f"note rewritten: kept.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES} recorded {self.N}"
         assert out[-1] == _summary(rewritten=1)
 
     def test_a_re_anchored_block_is_covered_by_a_larger_retired_sibling(self, tree: Path, capsys) -> None:
@@ -764,7 +780,7 @@ class TestTheBaselineRatchet:
         (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * 5, 40 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         out = capsys.readouterr().out.splitlines()
-        assert out[0] == f"rewritten: kept.py:1: comment-block 6 > {tw.COMMENT_BLOCK_LINES} recorded one of 6, 22"
+        assert out[0] == f"note rewritten: kept.py:1: comment-block 6 > {tw.COMMENT_BLOCK_LINES} recorded one of 6, 22"
         assert out[-1] == _summary(rewritten=1, retired=1)
 
     def test_one_possible_source_is_named_exactly(self, tree: Path, capsys) -> None:
@@ -773,7 +789,7 @@ class TestTheBaselineRatchet:
         (tree / "kept.py").write_text(_py(["# rewritten"] + ["# kept"] * 5, 40 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         out = capsys.readouterr().out.splitlines()
-        assert out[0] == f"rewritten: kept.py:1: comment-block 6 > {tw.COMMENT_BLOCK_LINES} recorded 22"
+        assert out[0] == f"note rewritten: kept.py:1: comment-block 6 > {tw.COMMENT_BLOCK_LINES} recorded 22"
         assert out[-1] == _summary(rewritten=1)
 
     def test_the_smallest_candidate_is_still_the_one_consumed(self, tree: Path, capsys) -> None:
@@ -846,28 +862,34 @@ class TestTheBaselineRatchet:
         (tree / "kept.py").write_text(_py(["# kept"] * (self.N + 1), 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         out = capsys.readouterr().out.splitlines()
-        assert out[0] == f"grown: kept.py:1: comment-block {self.N + 1} > {tw.COMMENT_BLOCK_LINES} recorded {self.N}"
+        assert out[0] == f"fail grown: kept.py:1: comment-block {self.N + 1} > {tw.COMMENT_BLOCK_LINES} recorded {self.N}"
         assert out[-1] == _summary(grown=1)
 
     def test_the_recorded_block_unchanged_passes(self, tree: Path, capsys) -> None:
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
         assert capsys.readouterr().out.splitlines() == [_summary()]
 
-    def test_a_block_that_shrank_but_is_still_over_the_bar_passes(self, tree: Path, capsys) -> None:
-        """The arm is directional: a keep getting shorter is the improvement the ratchet exists to allow."""
+    def test_a_block_that_shrank_but_is_still_over_the_bar_fails_until_it_is_banked(self, tree: Path, capsys) -> None:
+        """A cut is the improvement the ratchet exists to allow, and it FAILS until the row comes down
+        with it: while the row keeps the old size it licenses the way back, silently."""
         big = tw.COMMENT_BLOCK_LINES + 3
         (tree / "kept.py").write_text(_py(["# kept"] * big, 6 * big))
         assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
         (tree / "kept.py").write_text(_py(["# kept"] * (big - 1), 6 * big))
-        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
-        assert capsys.readouterr().out.splitlines() == [_summary()]
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        assert capsys.readouterr().out.splitlines() == [
+            f"fail shrunk: kept.py:1: comment-block {big - 1} > {tw.COMMENT_BLOCK_LINES} recorded {big}",
+            _summary(shrunk=1),
+        ]
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0  # banked: the ceiling came down
 
     def test_a_second_offender_in_a_recorded_file_fails_and_names_it(self, tree: Path, capsys) -> None:
         block = _py(["# kept"] * self.N, 6 * self.N)
         (tree / "kept.py").write_text(block + _py(["# other"] * self.N, 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         out = capsys.readouterr().out.splitlines()
-        assert out[0] == f"kept.py:{7 * self.N + 1}: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[0] == f"fail new: kept.py:{7 * self.N + 1}: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
         assert out[-1] == _summary(new=1)
 
     def test_a_duplicate_of_the_recorded_offender_is_new_and_not_the_keep_grown(self, tree: Path, capsys) -> None:
@@ -876,20 +898,23 @@ class TestTheBaselineRatchet:
         (tree / "kept.py").write_text(block + block)
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
         out = capsys.readouterr().out.splitlines()
-        assert out[0] == f"kept.py:{7 * self.N + 1}: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[0] == f"fail new: kept.py:{7 * self.N + 1}: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
         assert out[-1] == _summary(new=1)
 
     def test_an_offender_in_an_unrecorded_file_fails_and_is_printed(self, tree: Path, capsys) -> None:
         (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
         assert tw.main(["--check-baseline", "base.txt", "kept.py", "fresh.py"]) == 1
         out = capsys.readouterr().out.splitlines()
-        assert out[0] == f"fresh.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
+        assert out[0] == f"fail new: fresh.py:1: comment-block {self.N} > {tw.COMMENT_BLOCK_LINES}"
         assert out[-1] == _summary(new=1)
 
     def test_a_cleaned_offender_passes_and_is_reported_retired(self, tree: Path, capsys) -> None:
         (tree / "kept.py").write_text("y = 0\n")
         assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
-        assert capsys.readouterr().out.splitlines() == [_summary(retired=1)]
+        assert capsys.readouterr().out.splitlines() == [
+            f"note retired: kept.py: comment-block {self.N} recorded -- # kept",
+            _summary(retired=1),
+        ]
 
     def test_a_failing_check_names_the_remedy_on_stderr(self, tree: Path, capsys) -> None:
         (tree / "fresh.py").write_text(_py(["# fresh"] * self.N, 6 * self.N))
@@ -914,6 +939,15 @@ def test_the_pre_commit_hook_runs_the_check_against_the_committed_baseline() -> 
     assert _BASELINE in hook["entry"]
     assert hook["always_run"] is True and hook["pass_filenames"] is False
     assert (_REPO / _BASELINE).is_file(), "the hook names a baseline that is not committed"
+
+
+def test_the_pre_commit_hook_name_is_pinned_because_nothing_else_checks_it() -> None:
+    """The headline pre-commit prints. Two wrong ones shipped on this branch before anything read it,
+    and no test can check that a sentence is true -- so pin the bytes and make a change a decision."""
+    config = yaml.safe_load((_REPO / ".pre-commit-config.yaml").read_text())
+    hooks = [h for repo in config["repos"] if repo["repo"] == "local" for h in repo["hooks"]]
+    hook = next(h for h in hooks if h["id"] == "prose-tripwire")
+    assert hook["name"] == "prose measured against the sizes the baseline records"
 
 
 class TestAScopedWriteBaselineWillNotTruncateTheRest:
@@ -978,3 +1012,145 @@ class TestAScopedWriteBaselineWillNotTruncateTheRest:
 
         assert (repo / "cli" / "one.py").read_text() == before
         assert "not a baseline" in capsys.readouterr().err
+
+
+class TestAShrinkSpendsItsCeilingInTheOpen:
+    """A recorded size is a ceiling, not a fact about the tree, so a shrink leaves headroom behind it.
+    The check reports every shape of that rather than writing: the write is `--write-baseline`'s."""
+
+    RECORDED = 7
+    SHRUNK = 5
+
+    @pytest.fixture
+    def tree(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.chdir(tmp_path)
+        assert self.SHRUNK != self.RECORDED, "equal sizes pass under the defect and prove nothing"
+        assert self.SHRUNK > tw.COMMENT_BLOCK_LINES, "the shrunk block must still trip, or this is the retired case"
+        (tmp_path / "kept.py").write_text(_py(["# kept"] * self.RECORDED, 6 * self.RECORDED))
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        return tmp_path
+
+    def _shrink(self, tree: Path) -> None:
+        (tree / "kept.py").write_text(_py(["# kept"] * self.SHRUNK, 6 * self.RECORDED))
+
+    def test_a_shrink_that_still_trips_fails_rather_than_being_swallowed(self, tree: Path, capsys) -> None:
+        self._shrink(tree)
+
+        failed = tw.main(["--check-baseline", "base.txt", "kept.py"])
+
+        out = capsys.readouterr().out.splitlines()
+        assert failed == 1
+        assert out[0] == (
+            f"fail shrunk: kept.py:1: comment-block {self.SHRUNK} > {tw.COMMENT_BLOCK_LINES} recorded {self.RECORDED}"
+        )
+        assert out[-1] == _summary(shrunk=1)
+
+    def test_a_regrowth_to_the_recorded_size_fails_once_the_shrink_was_banked(self, tree: Path, capsys) -> None:
+        """The ceiling actually comes down: banked at the shrunk size, growing back to what the
+        baseline once recorded is a `grown` failure -- which under the old ratchet passed silently."""
+        self._shrink(tree)
+        assert tw.main(["--write-baseline", "base.txt", "kept.py"]) == 0
+        capsys.readouterr()
+
+        (tree / "kept.py").write_text(_py(["# kept"] * self.RECORDED, 6 * self.RECORDED))
+
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 1
+        assert capsys.readouterr().out.splitlines()[0] == (
+            f"fail grown: kept.py:1: comment-block {self.RECORDED} > {tw.COMMENT_BLOCK_LINES} recorded {self.SHRUNK}"
+        )
+
+    def test_a_keep_at_the_size_the_baseline_records_still_passes(self, tree: Path, capsys) -> None:
+        """The true-positive control for the arm above: enforcement refusing an unchanged keep would
+        refuse every commit in the repo."""
+        assert tw.main(["--check-baseline", "base.txt", "kept.py"]) == 0
+        assert capsys.readouterr().out.splitlines() == [_summary()]
+
+    def test_a_retired_row_is_named_and_not_only_counted(self, tree: Path, capsys) -> None:
+        """A row whose block no longer trips can never fail again, so a reader has to be able to find it."""
+        (tree / "kept.py").write_text(_py(["# kept"] * tw.COMMENT_BLOCK_LINES, 6 * self.RECORDED))
+
+        tw.main(["--check-baseline", "base.txt", "kept.py"])
+
+        out = capsys.readouterr().out.splitlines()
+        assert out[0] == f"note retired: kept.py: comment-block {self.RECORDED} recorded -- # kept"
+        assert out[-1] == _summary(retired=1)
+
+    def test_only_the_lines_that_fail_the_gate_carry_the_marker(self, tree: Path, capsys) -> None:
+        """A wrapped line's continuation renders flush left whatever its first row did, so the column
+        cannot carry this and the marker does. Absence of `fail` is what says a line is not one."""
+        self._shrink(tree)
+        (tree / "grown.py").write_text(_py(["# grown"] * (self.RECORDED + 1), 6 * self.RECORDED))
+        assert tw.main(["--write-baseline", "grown-base.txt", "grown.py"]) == 0
+        (tree / "grown.py").write_text(_py(["# grown"] * (self.RECORDED + 2), 6 * self.RECORDED))
+
+        failed = tw.main(["--check-baseline", "base.txt", "kept.py", "grown.py"])
+
+        out = capsys.readouterr().out.splitlines()
+        assert failed == 1
+        assert sorted(line for line in out if line.startswith("fail ")) == [
+            f"fail new: grown.py:1: comment-block {self.RECORDED + 2} > {tw.COMMENT_BLOCK_LINES}",
+            f"fail shrunk: kept.py:1: comment-block {self.SHRUNK} > {tw.COMMENT_BLOCK_LINES} recorded {self.RECORDED}",
+        ]
+        assert [line for line in out if line.startswith("note ")] == []
+        assert out[-1] == _summary(new=1, shrunk=1)  # and the summary carries neither marker
+
+    def test_a_retired_anchor_is_budgeted_so_the_line_does_not_wrap(self, tree: Path, capsys) -> None:
+        """An anchor is a whole first line, so an unbudgeted one wraps and its continuation is a row
+        the marker cannot reach -- the one place a reader could still misread a report as a failure."""
+        long_first = "# " + "z" * 200
+        (tree / "wide.py").write_text(_py([long_first] + ["# kept"] * self.RECORDED, 6 * self.RECORDED))
+        assert tw.main(["--write-baseline", "wide-base.txt", "wide.py"]) == 0
+        (tree / "wide.py").write_text("y = 0\n")
+
+        tw.main(["--check-baseline", "wide-base.txt", "wide.py"])
+
+        retired = [line for line in capsys.readouterr().out.splitlines() if line.startswith("note retired: ")]
+        assert len(retired) == 1, retired
+        assert retired[0].endswith("...") and len(retired[0]) < len(long_first)
+
+
+class TestARetiredRowIsClampedToTheBudget:
+    """Both assertions drive `_retired_line`, so what they pin is `_clamped`'s truncation over the
+    committed corpus -- not a row on any given terminal. Below the budget a row still wraps, and that
+    half is T0189's open design question rather than a property pinned here."""
+
+    def test_no_row_in_the_committed_baseline_renders_past_the_budget(self) -> None:
+        rows = tw.read_baseline(str(_REPO / _BASELINE))
+        total = sum(len(pool) for pool in rows.values())
+        assert total > 1000, f"the committed baseline, not a sample: {total} rows"
+        over = [
+            line
+            for (path, kind, anchor), pool in rows.items()
+            for measured in pool
+            if len(line := tw._retired_line(path, kind, measured, anchor)) > tw._report_width
+        ]
+        assert over == [], f"{len(over)} of {total} rows render past the budget"
+
+    def test_a_long_anchor_and_a_long_path_are_both_clamped(self) -> None:
+        """Both halves, because budgeting the anchor alone left a 164-character line the path made."""
+        line = tw._retired_line("infra/" + "d/" * 40 + "x.py", "comment-block", 7, "# " + "z" * 300)
+        assert len(line) == tw._report_width and line.endswith("...")
+
+
+class TestTheFailureNoteArrivesAfterTheLinesItNames:
+    """pre-commit merges both streams into one pipe, where stdout is block buffered and stderr is not,
+    so an unflushed note is delivered before the lines it tells the reader to cut."""
+
+    def test_the_note_follows_the_lines_when_both_streams_share_a_pipe(self, tmp_path: Path) -> None:
+        (tmp_path / "kept.py").write_text(_py(["# kept"] * 5, 30))
+        script = _REPO / "infra" / "scripts" / "prose-tripwire.py"
+        subprocess.run([sys.executable, str(script), "--write-baseline", "base.txt", "kept.py"], cwd=tmp_path, check=True)
+        (tmp_path / "fresh.py").write_text(_py(["# fresh"] * 9, 30))
+
+        merged = subprocess.run(
+            [sys.executable, str(script), "--check-baseline", "base.txt", "kept.py", "fresh.py"],
+            cwd=tmp_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        ).stdout.splitlines()
+
+        assert any(line.startswith("fail new: fresh.py") for line in merged), merged
+        note = next(i for i, line in enumerate(merged) if line.startswith("cut the block"))
+        first_fail = next(i for i, line in enumerate(merged) if line.startswith("fail "))
+        assert note > first_fail, f"the note arrived at {note}, before the lines at {first_fail}: {merged}"
