@@ -1645,9 +1645,9 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
 
     dark_at = 3600
     flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
-    # An engine restarted while a position was open: `zcrypto_exec_position` is a labelled Gauge whose
-    # only setter is the executor's fill hook, so until the next fill the child does not exist and the
-    # series carries nothing -- not a 0, an absence.
+    # No child on the gauge, so no series at all: `run()`'s startup seed publishes no symbol when the
+    # journal holds no readable ok schema-2 venue record (and its `except Exception` swallows a raise),
+    # and no fill has set one since. Not a published 0 -- an absence.
     never_observed = []
     # Stopped at the flat history's own horizon: past it that history is unobserved too, and the two
     # stop being different things to compare.
@@ -1670,10 +1670,10 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
 
 
 def test_the_replay_can_separate_an_unobserved_window_from_a_published_zero():
-    """About the replay, not the rule: told to read an empty window as something other than 0, the
-    same harness gives the two histories different verdicts and still leaves the flat one quiet. It
-    is the seam `T0187`'s fix turns on, exercised so that a change of expectation there is a changed
-    assertion rather than a rewritten harness."""
+    """About the replay, not the rule: told to read an empty window as something other than 0, the same
+    harness gives the two histories different verdicts and still leaves the flat one quiet inside its
+    own horizon. It is a seam a fix could turn on -- which one is undecided -- exercised so that a
+    change of expectation there is a changed assertion rather than a rewritten harness."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
