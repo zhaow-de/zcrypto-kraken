@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ---
 
 # Three flags gate the live-venue tests, `CLAUDE.md` documents one, and only one fails on an outage
@@ -28,9 +28,11 @@ Measured with `git grep -hoE 'ZCRYPTO_[A-Z0-9_]+' -- cli/ tests/ infra/ | sort -
 - The fix cannot ride a docstring-pass branch: renaming a constant moves the AST, and those branches carry proven inertness as their whole value.
 - `ZCRYPTO_E1B_LIVE`'s probe is an attended live-order path, so its opt-in is doing more work than a read-only contract check — whether one flag should cover both is part of the decision, not settled here.
 
-## Suggested next steps
+## Done so far
 
-- **Decide whether one flag covers the class, or whether an order-placing probe earns its own.** A single `ZCRYPTO_LIVE_VENUE_TESTS` is what `CLAUDE.md` documents and the simplest thing a reader can follow; a second flag for anything that places an order is defensible on blast radius. Decide before renaming, because the rename is cheap and the wrong shape is not.
+- **Decided by the owner, 2026-09-09: one flag covers the class.** `ZCRYPTO_LIVE_VENUE_TESTS` is the opt-in for every venue-reaching test, including the order-placing probe — no second flag on blast-radius grounds, because the granularity buys nothing a reader can act on. So `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` are renames, not a design question, and `CLAUDE.md`'s sentence already names the surviving flag and needs no change.
+
+## Suggested next steps
 - **Give every flag in the class the failing arm**, so that with the flag set an unreachable venue fails rather than skips. That is the half `CLAUDE.md` already requires and two of three readers omit.
 - **The guard, and its degeneracy.** A test asserting that every `skipif`/`skip` gate in `tests/` keyed on a venue opt-in also carries a fail-when-set arm — constructed so that removing the arm from any one of them turns it red, with a gate that legitimately has no venue dependency passing beside it. A guard that only enumerates today's three flag names goes stale the moment a fourth is added; key it on the shape, not the list.
 - **Then reconcile `CLAUDE.md`'s sentence with whatever lands**, in the same change — the rule names one flag today and would name the wrong set the moment a second is sanctioned.
