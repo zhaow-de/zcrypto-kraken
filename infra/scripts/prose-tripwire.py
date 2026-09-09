@@ -417,6 +417,23 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
     return still_new, grown, rewritten, shrunk, retired
 
 
+# Lowercase: an uppercase int global is advertised by `--help` as a bar and pinned by a test.
+_report_width = 120
+
+
+def _retired_line(path: str, kind: str, measured: float, anchor: str) -> str:
+    """A retired row as the check prints it. Here rather than inline so the guard over the committed
+    baseline drives the same rendering the tool does, instead of a copy that can drift from it."""
+    short = anchor[:60].rstrip() + ("..." if len(anchor) > 60 else "")
+    return _clamped(f"note retired: {path}: {kind} {measured:.10g} recorded" + (f" -- {short}" if anchor else ""))
+
+
+def _clamped(text: str) -> str:
+    """One row per line, so no continuation can wear a marker or lack one -- the anchor is arbitrary
+    repo prose and the path is not sanitisable, so neither can be trusted to keep a line short."""
+    return text if len(text) <= _report_width else text[: _report_width - 3].rstrip() + "..."
+
+
 def render(offenders: list[Offender]) -> str:
     lines = [_line(o) for o in offenders]
     counts = " ".join(f"{kind}={sum(1 for o in offenders if o.kind == kind)}" for kind in KINDS)
@@ -430,7 +447,8 @@ def main(argv: list[str] | None = None) -> int:
     # this pass may not grow one. `--help` is the gate's own surface either way.
     epilog = (
         f"thresholds: {thresholds}\n"
-        "--check-baseline marks every line: `fail` blocks the commit, `note` does not. "
+        "--check-baseline marks every line: `fail` blocks the commit, `note` does not; with no mode "
+        "flag every line printed is an offender and the exit is 1, so nothing is marked there. "
         "A `note shrunk` is a keep that got smaller while its recorded size stayed put, so the row "
         "licenses the way back -- bank it with --write-baseline or the ceiling stands."
     )
@@ -472,26 +490,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{args.check_baseline}: no such baseline -- write one with --write-baseline", file=sys.stderr)
             return 2
         new, grown, rewritten, shrunk, retired = against_baseline(offenders, read_baseline(args.check_baseline))
-        # `fail` marks what blocks the commit and nothing else does, so a line WRAPPED onto a second
-        # row carries no marker and cannot be read as a failure. Column cannot say that: a
-        # continuation renders flush left however the first row was indented.
+        # `fail` marks what blocks the commit and nothing else does, and `_clamped` keeps every line
+        # to one row, so a continuation can neither wear the marker nor be mistaken for lacking it.
         for o in new:
-            print(f"fail new: {_line(o)}")
+            print(_clamped(f"fail new: {_line(o)}"))
         for o, was in grown:
-            print(f"fail grown: {_line(o)} recorded {was:.10g}")
+            print(_clamped(f"fail grown: {_line(o)} recorded {was:.10g}"))
+        # A shrink FAILS: the row keeps the old size, so reporting alone leaves the way back open.
+        # The remedy is the re-record `prose.md` already prescribes for a conscious keep.
+        for o, was in shrunk:
+            print(_clamped(f"fail shrunk: {_line(o)} recorded {was:.10g}"))
         for o, sizes in rewritten:
             recorded = f"{sizes[0]:.10g}" if len(sizes) == 1 else "one of " + ", ".join(f"{m:.10g}" for m in sizes)
-            print(f"note rewritten: {_line(o)} recorded {recorded}")
-        for o, was in shrunk:
-            print(f"note shrunk: {_line(o)} recorded {was:.10g}")
-        # An anchor is a whole first line, so an untruncated one wraps at any ordinary width, and a
-        # continuation carries no marker. Not a bar: `--help` advertises every uppercase int global.
-        budget = 60
+            print(_clamped(f"note rewritten: {_line(o)} recorded {recorded}"))
         for path, kind, was, anchor in retired:
-            short = anchor[:budget].rstrip() + ("..." if len(anchor) > budget else "")
-            print(f"note retired: {path}: {kind} {was:.10g} recorded" + (f" -- {short}" if anchor else ""))
+            print(_retired_line(path, kind, was, anchor))
         print(f"new: {len(new)} grown: {len(grown)} rewritten: {len(rewritten)} shrunk: {len(shrunk)} retired: {len(retired)}")
-        if new or grown:
+        if new or grown or shrunk:
             # Flushed first: pre-commit merges the two streams into one pipe, where stdout is block
             # buffered and stderr is not, so an unflushed note arrives before the lines it names.
             sys.stdout.flush()
