@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove a docstring-only edit changed no code: `compare` measures files against a base revision on three arms -- structure, per-scope statement counts and comments -- and `arms` drives the six mutations that show those measurements bite.
 
-Why the arms exist, and what the pass may not do because of them, is `docs/reference/docstring-pass-method.md`. Here you will find only what a line's own shape needs to survive the next edit.
+Why the arms exist, and what the pass may not do because of them, is `docs/reference/docstring-pass-method.md`.
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def ast_arm(src: str, where: str = "<source>") -> str:
         if _docstring(node) is not None:
             node.body = node.body[1:]
         # Fill ANY empty body, not only one a docstring emptied: an empty module never held a
-        # docstring, so filling only the stripped ones makes ADDING one to `cli/__init__.py` read as
+        # docstring, so filling only the stripped ones makes ADDING one to an empty `__init__.py` read as
         # a structure change -- the arm the fill exists to keep.
         node.body = node.body or [ast.Pass()]
     return _sha(ast.dump(ast.fix_missing_locations(tree), include_attributes=False))

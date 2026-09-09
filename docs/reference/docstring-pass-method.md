@@ -58,7 +58,7 @@ A prose-only claim is worth nothing unless it is proved mechanically. Against th
 
 The statement count is not decoration. Without it, `docstring + pass` and `docstring alone` reduce to the same tree, so deleting a `pass` reads inert — and that fired four times in merged work, where deleting an exception class's docstring emptied its body and the class became `class XError(Exception): pass`. **The normalisation that makes two trees comparable modelled the exact transformation it was meant to detect.** Ask of every normalisation: what change does this make invisible, and can the pass produce that change? This one could, in its most routine operation.
 
-The obvious repairs are worse. Dropping the fill, or swapping the docstring for a placeholder, both make *adding* a module docstring read as a statement change — a legitimate prose-only edit. **Six arms, and the last three are the ones a naive fix breaks**: `pass` deleted, return value changed, statement added must all differ; docstring text changed, docstring deleted **from a body it shares with another statement**, module docstring **added** must all compare equal.
+The obvious repairs are worse. Dropping the fill, or swapping the docstring for a placeholder, both make *adding* a module docstring read as a statement change — a legitimate prose-only edit. **Six arms, and the last three are the ones a naive fix breaks**: `pass` deleted, comparison flipped, statement added must all differ; docstring text changed, docstring deleted **from a body it shares with another statement**, module docstring **added** must all compare equal.
 
 **Prove the instruments bite, with every mutant anchor selected by a parser** — the statement arm from an AST node after the docstring `Expr`, the comparison arm from an `ast.Compare` outside every docstring span, the comment arm from a real `COMMENT` token. A regex anchor flips comparisons *inside docstrings*, the dump correctly does not move, and the arm reports a false BLIND.
 
@@ -70,11 +70,11 @@ The two instruments disagree about what a comment is, and both are right: a docs
 
 **A control set is not evidence of coverage.** The two-arm prover this replaced shipped with three controls, all written, run and passing, and none touched the fill: each came from a failure mode already thought of.
 
-**Arm 5 carries a qualifier the list above does not: the docstring deleted must SHARE its body with another statement.** One that is a body's whole statement cannot be deleted at all — the suite left behind does not parse — and writing `pass` in its place moves the statement count, correctly. So **the pass may not delete a docstring that is a body's only statement and still call the edit prose-only.**
+**Arm 5's qualifier is a constraint on the pass, not only on the gate.** A docstring that is a body's whole statement cannot be deleted at all — the suite left behind does not parse — and writing `pass` in its place moves the statement count, correctly. So **the pass may not delete a docstring that is a body's only statement and still call the edit prose-only.**
 
 **That refusal is not rare, and a reader hitting it needs to know it is the design.** Over the last 400 non-merge commits on `develop`, every subject beginning `docs(` or `claude(`: 203 commits, of which 69 modified a `.py` at all, giving 202 modified pairs — 171 moved no arm, 18 comments only, **11 the statement count alone**, 2 structure. The eleven are `errors.py` files whose class body IS its docstring. A second census reached 11 and 2 independently; its totals differ because it counted `docs(` alone and did not separate comments-only.
 
-**A mutant anchor is a BYTE offset, never a character one.** `ast` reports `col_offset` in UTF-8 bytes: `x = "— — —"; y = 1` gives `y.col_offset == 19` against a character index of 13. Prose here is em-dash dense, so a character splice over-consumes and builds a mutant that is not the one intended: measured, it either fails to parse or comes back identical, and the arm is lost rather than wrong. A silently valid-but-different mutant was sought across 900 constructed shapes and not found.
+**A mutant anchor is a BYTE offset, never a character one.** `ast` reports `col_offset` in UTF-8 bytes: `x = "— — —"; y = 1` gives `y.col_offset == 19` against a character index of 13. Prose here is em-dash dense, so a character splice over-consumes and builds a mutant that is not the one intended: measured, it either fails to parse or comes back identical, and the arm is lost rather than wrong.
 
 ## Review
 

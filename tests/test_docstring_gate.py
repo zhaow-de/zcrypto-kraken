@@ -68,8 +68,7 @@ def test_adding_a_module_docstring_leaves_the_comment_arm_alone():
 def test_a_module_docstring_added_to_an_EMPTY_module_moves_no_arm():
     """The fill runs for any emptied body, not only one a docstring emptied. An empty module never
     held a docstring, so filling only the stripped ones makes `Module()` differ from
-    `Module(body=[Pass()])` and falsifies arm 6 on the pass's most routine edit -- five tracked
-    `__init__.py` files are live instances."""
+    `Module(body=[Pass()])` and falsifies arm 6 on the pass's most routine edit."""
     assert _moved("", '"""m."""\n') == set()
     assert _moved("# c\n", '"""m."""\n\n# c\n') == set()
 
@@ -87,6 +86,10 @@ def test_arms_on_an_empty_module_passes_arm_six_and_names_the_five_it_cannot_bui
     out = capsys.readouterr().out
     assert "[PASS] module docstring added" in out
     assert "arms: 1 passed, 0 failed, 5 not constructible, of 6" in out
+    # the name promises the five are NAMED, so the rows are read rather than only counted
+    assert out.count("NOT CONSTRUCTIBLE") == 5
+    assert "NOT CONSTRUCTIBLE -- no docstring" in out
+    assert "NOT CONSTRUCTIBLE -- no function carrying a docstring" in out
 
 
 # --- the three that must DIFFER -------------------------------------------------------------------
