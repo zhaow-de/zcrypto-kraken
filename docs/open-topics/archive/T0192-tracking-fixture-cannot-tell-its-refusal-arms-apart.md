@@ -14,13 +14,13 @@ The week-start arm is what stops the week containing the first fill being scored
 
 ## Findings so far
 
-Driven both ways on `docs/docstrings-tests-engine-executor-rerun` at `e1f52258`, reading the refusal off the executor's own logger rather than inferring it:
+Driven both ways on `docs/docstrings-tests-engine-executor-rerun`, at its commit `docs(tests): the line-number citations go, and three claims the bodies refute`, reading the refusal off the executor's own logger rather than inferring it:
 
 - As written, the clock sits `_BIRTH_MINT_WINDOW` (seven days) plus two minutes past the fill: the mint refuses, no `FIRST_FILL_FILE` is written, and the birth-record arm refuses the week.
 - Four minutes earlier, the mint succeeds, the birth file appears, and the week-start arm refuses it instead.
 - Both readings give `tripped=False` and `states=[_TRACKING_UNSCORED]`, so every assertion in the test passes on either arm.
 
-At `e1f52258` the docstring claimed only the outcome its assertions pinned, so what was open here was a test that could pin more, never a false claim left standing.
+At that commit the docstring claimed only the outcome its assertions pinned, so what was open here was a test that could pin more, never a false claim left standing.
 
 ## Resolution
 
