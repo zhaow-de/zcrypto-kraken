@@ -37,8 +37,13 @@ def registered_command_names(main_src: str) -> frozenset[str]:
     their docstring is a `--help` body."""
     names = set()
     for node in ast.walk(ast.parse(main_src, optimize=0)):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Call) and "command" in ast.dump(node.func.func):
-            names.update(arg.id for arg in node.args if isinstance(arg, ast.Name))
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Call) and _names_a_typer_hook(node.func)):
+            continue
+        for target in (*node.args, *(kw.value for kw in node.keywords)):
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+            elif isinstance(target, ast.Attribute):
+                names.add(target.attr)
     return frozenset(names)
 
 
@@ -60,7 +65,7 @@ def docstring_reader_names(src: str) -> frozenset[str]:
 
 
 def _names_a_typer_hook(dec: ast.AST) -> bool:
-    """`.command` or `.callback` on the decorator itself -- a group callback's docstring is its help.
+    """A group callback's docstring is its `--help` body, so `.callback` counts as much as `.command`.
 
     Matched on the attribute, not on the dump: a bare `@app.callback()` names neither in its keywords,
     and `invoke_without_command=True` merely happens to contain the substring."""
@@ -75,7 +80,7 @@ def _docstring_is_output(node: ast.AST, output_names: frozenset[str]) -> bool:
     return getattr(node, "name", None) in output_names
 
 
-def _docstring_index(node: ast.AST) -> bool:
+def _has_docstring(node: ast.AST) -> bool:
     body = getattr(node, "body", None)
     return (
         bool(body)
@@ -87,26 +92,36 @@ def _docstring_index(node: ast.AST) -> bool:
 
 def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output: bool, output_names: frozenset[str]) -> ast.AST:
     for node in ast.walk(tree):
-        if not isinstance(node, _HOLDS_DOCSTRING) or not _docstring_index(node):
+        if not isinstance(node, _HOLDS_DOCSTRING) or not _has_docstring(node):
             continue
         is_output = _docstring_is_output(node, output_names) or (isinstance(node, ast.Module) and module_doc_is_output)
         if keep_output and is_output:
             continue
-        # `or [Pass()]`: a body that was ONLY a docstring becomes empty, and an empty body is a
-        # statement-count change to any comparison -- how a deleted `errors.py` docstring reads as code.
+        # `or [Pass()]` is the method's prescribed normalisation; what keeps an emptied body from
+        # reading as a real `pass` is the per-scope count, which no dump of the tree can carry.
         node.body = node.body[1:] or [ast.Pass()]
     return tree
+
+
+def _scope_statement_counts(tree: ast.AST) -> list[int]:
+    """How many statements besides its docstring each scope holds, read BEFORE the fill above runs.
+
+    The fill equates an emptied body with a real `pass`, so without this a deleted `pass` reads inert;
+    the count is mode-independent, which is why the kept-output shape cannot differ by it alone."""
+    return [len(node.body) - (1 if _has_docstring(node) else 0) for node in ast.walk(tree) if isinstance(node, _HOLDS_DOCSTRING)]
 
 
 def _shape(src: str, *, keep_output: bool, output_names: frozenset[str]) -> str:
     # optimize=0 explicitly: under `-OO` the interpreter discards docstrings before this sees them.
     tree = ast.parse(src, optimize=0)
     module_doc_is_output = any(isinstance(n, ast.Name) and n.id == "__doc__" for n in ast.walk(tree))
-    return ast.dump(
+    counts = _scope_statement_counts(tree)
+    dump = ast.dump(
         _strip_docstrings(tree, module_doc_is_output=module_doc_is_output, keep_output=keep_output, output_names=output_names),
         include_attributes=False,
         indent=1,
     )
+    return f"{dump}\nnon-docstring statements per scope: {counts}"
 
 
 _NOT_A_NEIGHBOUR = frozenset(
@@ -114,17 +129,24 @@ _NOT_A_NEIGHBOUR = frozenset(
 )
 
 
-def comment_stream(src: str) -> list[tuple[int, str, str]]:
-    """Each comment with its column and the token that FOLLOWS it, since a guard can read POSITION.
+def comment_stream(src: str) -> list[tuple[int, str, str, int]]:
+    """A guard can read a comment's POSITION, so identity alone is not the comment.
 
-    The successor and not the predecessor: deleting a docstring above a comment must stay inert, which
-    is the commonest edit this tool certifies."""
+    The line BELOW and not the one above: deleting a docstring above a comment must stay inert, which
+    is the commonest edit this tool certifies, and it moves neither that line nor the distance to it."""
+    lines = src.splitlines()
     toks = list(tokenize.generate_tokens(io.StringIO(src).readline))
-    return [
-        (tok.start[1], tok.string, next((t.string for t in toks[i + 1 :] if t.type not in _NOT_A_NEIGHBOUR), ""))
-        for i, tok in enumerate(toks)
-        if tok.type == tokenize.COMMENT
-    ]
+    out = []
+    for i, tok in enumerate(toks):
+        if tok.type != tokenize.COMMENT:
+            continue
+        after = next((t for t in toks[i + 1 :] if t.type not in _NOT_A_NEIGHBOUR), None)
+        # The whole line and the distance, because `assert` is what these markers name by design: a
+        # marker sliding onto the next one keeps its column, its own text and its successor's token.
+        named = lines[after.start[0] - 1].strip() if after else ""
+        gap = after.start[0] - tok.start[0] if after else 0
+        out.append((tok.start[1], tok.string, named, gap))
+    return out
 
 
 @dataclass(frozen=True)
@@ -183,6 +205,9 @@ def output_names_in(root: pathlib.Path) -> tuple[frozenset[str], int]:
     if entry.is_file():
         names |= registered_command_names(entry.read_text())
     listed = subprocess.run(["git", "-C", str(root), "ls-files", "*.py"], capture_output=True, text=True)
+    if listed.returncode != 0:
+        # A short listing silently under-refuses, which is the one direction a certifier must not fail in.
+        raise SystemExit(f"prove-inert: cannot list the tree: {listed.stderr.strip()}")
     for rel in listed.stdout.split():
         try:
             names |= docstring_reader_names((root / rel).read_text())

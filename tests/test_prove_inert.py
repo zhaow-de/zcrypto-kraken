@@ -50,13 +50,30 @@ def test_a_planted_behavioural_change_is_reported_with_what_changed() -> None:
     assert "GtE()" in result.detail and "Gt()" in result.detail  # `Gt()` is not a substring of `GtE()`
 
 
-def test_a_body_that_is_only_a_docstring_does_not_false_trip() -> None:
-    # The case that defeated the ad-hoc strippers: stripping empties the body, and a naive
-    # comparison reports the statement-count change as a code change.
+def test_a_docstring_that_was_the_whole_body_is_not_certified() -> None:
+    # `pass` deleted must differ and a docstring deleted must not, so the scope where the docstring IS
+    # the body cannot satisfy both -- and a tool that certifies takes the refusing side of that.
     before = 'class E(Exception):\n    """Raised on a bad thing."""\n'
     after = "class E(Exception):\n    pass\n"
     result = pi.compare(before, after)
-    assert result.ast_inert, result.detail
+    assert not result.ast_inert
+    assert "non-docstring statements per scope: [1, 0]" in result.detail
+
+
+def test_a_deleted_pass_is_not_an_emptied_body() -> None:
+    """The count, not the fill, tells the two apart -- the fill renders them as the same tree."""
+    body = 'def f() -> None:\n    """Do nothing."""\n'
+    result = pi.compare(body + "    pass\n", body)
+    assert not result.ast_inert
+    assert "non-docstring statements per scope: [1, 1]" in result.detail
+    assert "non-docstring statements per scope: [1, 0]" in result.detail
+
+
+def test_a_docstring_deleted_beside_other_statements_stays_inert() -> None:
+    """The true positive beside the arm above: the count moves only when a statement does."""
+    before = 'def f(x: int) -> int:\n    """Return it."""\n    return x\n'
+    after = "def f(x: int) -> int:\n    return x\n"
+    assert pi.compare(before, after).ast_inert
 
 
 def test_a_comment_only_change_separates_the_two_arms() -> None:
@@ -164,7 +181,7 @@ def test_the_entry_point_exits_nonzero_on_a_code_change(tmp_path: pathlib.Path) 
 def test_the_entry_point_refuses_a_revision_it_cannot_read(tmp_path: pathlib.Path) -> None:
     repo = _repo(tmp_path, "X = 1\n")
     done = _cli(repo, "no-such-rev", "m.py")
-    assert done.returncode != 0, done.stdout
+    assert done.returncode == pi.EXIT_REFUSED, done.stdout
     assert "cannot read" in done.stdout
 
 
@@ -233,6 +250,18 @@ def test_the_entry_point_exits_four_on_a_changed_command_docstring(tmp_path: pat
     assert "REFUSED" in done.stdout
 
 
+def test_every_call_registered_form_names_its_function() -> None:
+    """A registration is selected by parsing the hook, so neither the argument's form nor the hook's."""
+    main = (
+        "app.command(name='capture')(capture)\n"
+        "app.command(name='poll')(fn=poll)\n"
+        "app.command(name='flat')(mod.flat)\n"
+        "app.callback()(root)\n"
+        "app.add_typer(other, name='commandeer')\n"
+    )
+    assert pi.registered_command_names(main) == frozenset({"capture", "poll", "flat", "root"})
+
+
 def test_the_entry_point_reads_the_entry_module_for_call_registered_commands(tmp_path: pathlib.Path) -> None:
     # `capture` carries no decorator; only `cli/__main__.py` says its docstring is a `--help` body.
     repo = _repo(tmp_path, 'def capture(pair: str) -> None:\n    """Old help."""\n    run(pair)\n')
@@ -268,6 +297,18 @@ def test_a_relocated_comment_is_not_the_same_comment_stream() -> None:
     # what `tests/test_config_selectors_are_parsed.py` reads when it looks two lines above a node.
     before = "x = 1\n# marker\nassert x\ny = 2\n"
     after = "x = 1\nassert x\n# marker\ny = 2\n"
+    result = pi.compare(before, after)
+    assert result.ast_inert
+    assert not result.comments_same
+
+
+def test_a_comment_that_keeps_its_successors_token_still_moved() -> None:
+    # The defect neither identity nor distance can see: the marker slides onto the NEXT `assert`, so
+    # its column, its own text, its successor's token and the distance to it are all unchanged.
+    before = "# marker\nassert a\nb = 1\nassert c\n"
+    after = "assert a\nb = 1\n# marker\nassert c\n"
+    assert pi.comment_stream(before) == [(0, "# marker", "assert a", 1)]
+    assert pi.comment_stream(after) == [(0, "# marker", "assert c", 1)]
     result = pi.compare(before, after)
     assert result.ast_inert
     assert not result.comments_same
