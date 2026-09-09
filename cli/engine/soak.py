@@ -1358,7 +1358,7 @@ def render_report(
         lines.append("  no-book bar    : held nothing at all -- its hhi reads 0, a sentinel not a measurement")
         lines.append(f"  retained bars  : {null.n_periods}")
         lines.append(f"  no-book bars   : {null_flat} of {null_bars}")
-        # A null built anywhere but `build_null` carries no stamps; the three lines above read none of them.
+        # A null built anywhere but `build_null` carries no stamps; the lines above read none of them.
         if null.reference_span is not None:
             lines.append(f"  first bar      : {null.reference_span[0].isoformat()}")
             lines.append(f"  last  bar      : {null.reference_span[1].isoformat()}")
