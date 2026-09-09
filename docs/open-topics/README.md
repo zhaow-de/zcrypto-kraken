@@ -130,6 +130,9 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0188 — the soak report's identity check counts a NaN comparison as made and passed](T0188-soak-identity-check-counts-a-nan-comparison-as-passed.md) — a NaN `diff` is False against both `worst_diff` and `tol`, so `realized_internals` increments `compared` and still reports spec `00059` D2's window-wide identity as held; the finiteness refusal lives in `validate_record`, which this path runs on the rebuild's own record and never on the scored records it compares, so only the writer's discipline stands between. Disjoint from the `compared == 0` arm that answers `None`, and distinct from `T0183`'s family — an unmeasurable comparison counted as measured, not an empty branch returning the success value. Ripe now.
 
 - [T0191 — the zero-price refusal's comment inverts its own consequence](T0191-flatten-zero-price-comment-inverts-its-own-consequence.md) — the red button's comment says a carried zero silently sends nothing; measured, it sends more.
+- [T0193 — a non-finite snapshot close escapes the soak report as a traceback](T0193-nonfinite-snapshot-close-escapes-the-soak-report.md) — `realized_internals` promises `available=False` on a failing build, but a NaN close makes the fast builder raise `ValueError`, which neither it nor `soak_report` nor the soak command catches; the repair is not obvious, because `available=False` would make the failure quieter than a traceback.
+
+- [T0194 — several journal readers never validate the record they read](T0194-journal-readers-that-never-validate-the-record.md) — `from_json` leaves schema to the caller and `journal.py` twice records that several callers skip `validate_record`; the readers have never been enumerated, so the guarantee is each call site's discipline rather than a property of the read.
 
 ### Partially done<a name="partially-done-1"></a>
 
