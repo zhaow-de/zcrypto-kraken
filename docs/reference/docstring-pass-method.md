@@ -64,6 +64,14 @@ The obvious repairs are worse. Dropping the fill, or swapping the docstring for 
 
 The two instruments disagree about what a comment is, and both are right: a docstring is not a `#` comment, so adding one leaves the COMMENT stream identical — while a prose tripwire's `comment-block` kind counts docstrings, so it moves once the block crosses its own line bar.
 
+### Running it
+
+`infra/scripts/prove-inert.py <base-rev> <path>...` is this gate as runnable code, one verdict per changed file; run with no arguments it prints the exit-code contract, which is where an operator meets it.
+
+**Each verdict costs something different, so read which one fired rather than whether the run was green.** A 1 withdraws the prose-only claim for that file, and with it the licence that made the batch cheap to review. A 3 says a comment's position moved, which costs whichever guard reads that position — `tests/test_config_selectors_are_parsed.py` reads `# config-selector-ok:` markers in the two lines above the node they exempt, so a marker that slides onto the next statement silently stops exempting anything. A 4 is not a failed run: it says the claim cannot be made from here, because a docstring that is program output changed, or a path could not be read at the base revision.
+
+**Arm 1 and a docstring that is a scope's whole body cannot both be satisfied.** Deleting such a docstring forces a `pass` in its place, and that `pass` is the one arm 1 must catch appearing rather than disappearing, so the tool reports the change instead of certifying it — the per-package `errors.py` classes are where this is met. A batch that produces one states the change and its consequence; it does not quote a verdict it did not get.
+
 ## Review
 
 **Prose-only is what makes review cheap, so it must be true before it is claimed.** Reviewers told a diff cannot change behaviour spend their whole budget on whether each sentence is true; a false premise spends it on the wrong thing.
