@@ -1,7 +1,7 @@
-"""The red button's fake-client suite (spec 00106 D8): every read is parsed by named fields it
-requires, and a field the venue stopped sending aborts rather than being guessed through. The fake
-records every call in order, so the assertions here are about what reached the venue, never only
-about a return value."""
+"""The red button's fake-client suite (spec 00106 D8): a read that needs a field is parsed by
+named fields, and one the venue stopped sending aborts rather than being guessed through --
+`read_open_orders` and `read_listing` need none, by design. The fake records every call in order,
+so the assertions here are about what reached the venue, never only about a return value."""
 
 from __future__ import annotations
 
@@ -89,11 +89,10 @@ def _norm(value: Any) -> Any:
 
 
 class FakeClient:
-    """Answers from a script and records every call; `raises` maps a method name to an exception the
-    next call to it raises. Every request method is `async def`, as all seven of the real client's
-    are -- `test_every_client_call_the_red_button_makes_needs_a_running_loop` pins that against the
-    real class, where `inspect.iscoroutinefunction` answers False for all seven.
-    """
+    """Answers from a script and records every call; `raises` maps a method name to an exception the next call
+    to it raises. Every request method is `async def`; the real client's seven are compiled instead --
+    `test_every_client_call_the_red_button_makes_needs_a_running_loop` pins that against the real class,
+    where `inspect.iscoroutinefunction` answers False for all seven."""
 
     api_key_masked = "kr***xy"
     # The secret itself, distinct from its masked form, so a journal test can assert on the VALUE
@@ -213,9 +212,10 @@ def test_the_listing_is_keyed_by_symbol_and_a_missing_constraint_aborts_the_pair
 
 @pytest.mark.parametrize("field", ["size_increment", "price_increment"])
 def test_a_zero_quantization_step_aborts_rather_than_dividing_by_it(field):
-    """A step of zero passes an is-it-absent check and then divides. `_floor_to_step` raises a bare
-    ValueError on it, which nothing between here and the operator catches -- so the exit-code
-    contract would arrive as a traceback with no journal."""
+    """A step of zero would reach `_floor_to_step` and raise a bare ValueError nothing here catches --
+    a traceback where the exit-code contract promises a named unreachable. `_as_step` refuses it
+    first: `constraints_for` raises `FlattenUnreachable` naming "not a positive step" before any
+    division is attempted."""
     rows = [_Instrument("BTC/EUR")]
     setattr(rows[0], field, 0.0)
     client = FakeClient(instruments=rows)
@@ -308,10 +308,11 @@ def test_an_empty_book_side_aborts_rather_than_guessing_a_price():
 
 
 def test_a_non_positive_book_price_aborts_the_read_rather_than_pricing_a_leg_at_nothing():
-    """Zero passes every is-it-absent check and then makes every notional read as nothing: below
-    every `costmin`, so each basket leg would be listed as dust and not sent, and the one predicate
-    judging the final snapshot would agree the account is flat with the whole spot book still held.
-    The other side of the same book is the true negative -- a check refusing every price fails it."""
+    """Zero or negative fails `read_book_price`'s own `price <= 0.0` check, refused by name before
+    `plan.prices` sees it -- carried through instead, `_tick_floored`'s own `> 0.0` rule disables the
+    notional floor the same way, sizing the leg unpriced and sent rather than dust, so the refusal buys a
+    named, logged reason, not a different outcome. The other side is the true negative: a check refusing
+    every price fails it."""
     listing = {"BTC/EUR": _Instrument("BTC/EUR")}
     book = _Book(bid=60000.0, ask=60010.0)
     book._bids = [_Level(0.0)]
@@ -460,7 +461,8 @@ def test_a_zero_or_negative_balance_is_not_a_leg():
 
 def test_a_classic_asset_code_resolves_through_the_listing_not_through_string_surgery():
     """`XXBT` is the venue's classic spelling of BTC; a sweep that failed to resolve it would leave
-    a real BTC balance unsold and call the account flat."""
+    a real BTC balance unsold -- caught only by `judge_final`'s own re-derivation as a residual,
+    never read as flat."""
     legs, unsellable = flatten.spot_legs([flatten.BalanceRow("XXBT", 0.5)], _listing("BTC/EUR"))
     assert unsellable == []
     assert [(leg.base, leg.symbol, leg.side) for leg in legs] == [("BTC", "BTC/EUR", "SELL")]
@@ -498,10 +500,10 @@ def test_an_unresolvable_code_is_reported_in_the_same_class_never_ignored():
 
 
 def test_a_base_listed_only_against_a_third_quote_is_a_residual_not_a_leg():
-    """The listing knows the base, so `resolve_base` answers -- and `choose_pair` still finds no
-    route, because this command sells into EUR or BTC and nothing else. Read as a leg it would be
-    sized against a pair that does not exist; dropped silently it would leave the operator holding
-    it with the run reporting flat."""
+    """The listing knows the base, so `resolve_base` answers -- and `choose_pair` still finds no route, because
+    this command sells into EUR or BTC and nothing else. Read as a leg it would be sized against a pair that
+    does not exist. Even dropped from here, `judge_final` re-derives the same lookup from the final balances
+    and still catches it as a residual -- the run would not read flat."""
     legs, unsellable = flatten.spot_legs([flatten.BalanceRow("ADA", 5.0)], _listing("ADA/USD"))
     assert legs == []
     assert [(u["base"], u["code"], u["free"], u["reason"]) for u in unsellable] == [("ADA", "ADA", 5.0, "no_eur_or_btc_pair")]
@@ -680,7 +682,7 @@ def test_the_estimate_is_the_floored_quantity_s_notional_never_the_balance_s():
     """The other axis of the same contradiction: an estimate multiplied out of the raw balance sits
     beside a verdict computed from the floored one -- 1.9 floors to 1.0, so the refusal names 0.40
     EUR where the raw 1.9 would read 0.76, over the 0.45 costmin it refuses the leg for. The coarse
-    lot step is deliberate: at 1e-8 the two products differ by less than `pytest.approx`'s tolerance.
+    lot step is deliberate: at 1e-8 the floor changes nothing, so the two products are identical.
     """
     coarse = flatten.PairConstraints("ADA/EUR", "ADA/EUR.KRAKEN", ordermin=1.0, lot_step=1.0, tick_size=0.01)
     spot = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1.9, "CASH", "account_state.free")
@@ -806,10 +808,8 @@ def test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg()
 
 
 def test_a_book_that_prices_at_zero_leaves_the_leg_unpriced_and_still_sold():
-    """The degradation is what makes refusing a zero price safe: the leg is sized on the quantity
-    floor alone and SENT, exactly as one whose book read raised. Carried instead, the zero would
-    make it dust -- not sent, not a residual, and the run would report flat while still holding
-    it."""
+    """The degradation is what makes refusing a zero price safe: the leg is sized on the quantity floor alone and SENT, exactly as
+    one whose book read raised."""
     zero = _Book(0.4, 0.41)
     zero._bids = [_Level(0.0)]
     client = _client_with(balances=[_Balance("ADA", 1200.0)], symbols=("ADA/EUR",), books={"ADA/EUR.KRAKEN": zero})
@@ -1155,7 +1155,8 @@ def _plan_of(client):
 
 
 def test_the_full_sequence_calls_the_venue_in_the_order_the_design_fixes():
-    """The order is the design: nothing is sized from the pre-confirm snapshot, a fill during the
+    """The order is the design: no SENT quantity is sized from the pre-confirm snapshot -- only its
+    price and constraints are, deliberately, fixed before the confirm -- a fill during the
     human-paced confirm lands in the post-cancel read, and the final snapshot reads orders before
     positions before balances."""
     client = _sweep_client(
@@ -1206,7 +1207,7 @@ def test_a_margin_closer_carries_reduce_only_market_ioc_leverage_and_the_margin_
 
 
 def test_a_spot_sell_carries_no_reduce_only_and_no_leverage():
-    """Kraken's reduce_only is a margin concept a spot order cannot carry."""
+    """Kraken's reduce_only is a margin concept; a spot order carries it as False, never True."""
     client = _sweep_client(
         orders=[[]],
         positions=[[]],
@@ -1285,7 +1286,6 @@ def test_a_rejected_sub_ordermin_closer_is_labelled_from_the_arithmetic_not_from
 
 
 def test_a_failing_cancel_does_not_stop_the_closes():
-    """The closes do not depend on the cancel, so its failure is recorded and the sweep runs on."""
     client = _sweep_client(
         orders=[[]],
         positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
@@ -1323,7 +1323,7 @@ def test_a_broken_shape_on_the_post_cancel_re_read_stops_before_any_order():
 
 
 def test_the_second_spot_pass_sells_the_btc_the_first_pass_produced():
-    """Pass one sells a BTC-quoted leg; pass two sells the BTC that produced, priced from the
+    """Pass one sells a BTC-quoted leg; pass two sells the BTC it produced, priced from the
     BTC/EUR book taken at the snapshot."""
     client = _sweep_client(
         orders=[[]],
@@ -1343,10 +1343,10 @@ def test_the_second_spot_pass_sells_the_btc_the_first_pass_produced():
 
 
 def test_a_leg_below_the_venue_minimum_is_recorded_and_never_reaches_the_venue():
-    """A leg below the venue minimum is recorded and never sent: the DOT balance is dust -- 0.001 at
-    4.00 EUR against the 0.45 EUR costmin -- so no order is constructed and no client order id is
-    minted for one an operator would then hunt at the venue. The ADA leg beside it has no reference
-    price and is sent anyway, so a `_send` that refused everything would fail here."""
+    """The DOT balance is dust -- 0.001 at 4.00 EUR against the 0.45 EUR costmin -- so no order is
+    constructed and no client order id is minted for one an operator would then hunt at the venue.
+    The ADA leg beside it has no reference price and is sent anyway, so a `_send` that refused
+    everything would fail here."""
     client = _sweep_client(
         orders=[[]],
         positions=[[]],
@@ -1624,8 +1624,8 @@ def test_every_refusal_exits_one_with_no_request_and_no_write(tmp_path, setup, r
     assert "submit_order" not in names(client)
     if setup == "kill-absent":
         assert client.calls == []  # refused before a single request
-    # Every exit-1 refusal `run_flatten` itself makes leaves the record: the refusal and its reason
-    # are what the artifact exists for, and an unrecorded refusal is one nobody can reconstruct.
+    # Every execute-mode exit-1 refusal leaves the record (a dry run leaves none, by `_dry_exit`'s
+    # own contract): the refusal and its reason are what the artifact exists for here.
     assert len(list(_exec_dir(tmp_path).glob("flatten-*.json"))) == 1
     # And it records the confirm truthfully. Every journal on disk is an execute-mode one, where
     # the word is always required, so the two gates that refuse BEFORE the prompt must say the
@@ -1638,9 +1638,8 @@ def test_every_refusal_exits_one_with_no_request_and_no_write(tmp_path, setup, r
 
 @pytest.mark.parametrize("execute", [True, False])
 def test_a_venue_that_is_not_online_exits_three_with_nothing_sent(tmp_path, execute):
-    """The dry run takes the venue gate too -- only the kill-file gate is skipped without
-    `--execute`. The two invocations differ in exactly one way: the dry run leaves no artifact,
-    which is `_dry_exit`'s whole contract and is reachable from no other fixture."""
+    """The two invocations differ in exactly one way this fixture can see: the dry run leaves no artifact, which is
+    `_dry_exit`'s whole contract."""
     _armed(tmp_path)
     client = _flat_client()
     assert _run(client, tmp_path, execute=execute, venue=_offline) == 3
@@ -1919,10 +1918,9 @@ def test_the_journal_records_the_snapshots_the_requests_the_confirm_and_the_exit
 
 
 def test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_sweep_one(tmp_path):
-    """Residuals are judged against the final snapshot: read off the pre-sweep one they would name
-    positions the sweep has since closed while missing an order that outlived the cancel. The two
-    snapshots disagree in BOTH directions here and the code is 2 either way, so the residual KINDS
-    are what discriminate."""
+    """Read off the pre-sweep snapshot instead, residuals would name positions the sweep has since
+    closed while missing an order that outlived the cancel. The two snapshots disagree in BOTH
+    directions here and the code is 2 either way, so the residual KINDS are what discriminate."""
     _armed(tmp_path)
     row = [_Position("BTC/EUR", "LONG", 0.5)]
     client = _flat_client(orders=[[], [], [object()]], positions=[row, row, [], []])
@@ -1937,11 +1935,11 @@ def test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_s
 
 
 def test_the_journal_payload_is_json_serializable_without_the_dump_s_str_fallback(tmp_path, monkeypatch):
-    """`write_journal` dumps with `default=str`, a net that would quietly stringify a value nobody
-    converted; round-tripping the REAL payload strictly pins the conversions the record depends on
-    -- `_journalled`'s `str()` on `AccountType` and `submit_leg`'s on the order side, the order
-    type, the time in force and the quantity, each of which a bare `json.dumps` refuses. A margin
-    leg is the fixture because it is the only path carrying both the enum and the `leverage` int."""
+    """`write_journal` dumps with `default=str`, a net that would quietly stringify a value nobody converted;
+    round-tripping the REAL payload strictly pins the conversions the record depends on -- `_journalled`'s
+    `str()` on `AccountType` and `submit_leg`'s on the order side, the order type, the time in force and the
+    quantity, each of which a bare `json.dumps` refuses. A margin leg is the fixture because it is the
+    only path carrying both the enum and the `leverage` int."""
     _armed(tmp_path)
     row = [_Position("BTC/EUR", "LONG", 0.5)]
     client = _flat_client(positions=[row, row, [], []])
@@ -1963,7 +1961,7 @@ def test_the_recorded_instrument_id_is_converted_where_the_fake_cannot_show_it()
     """The one journalled conversion no sweep-level fixture can reach. `constraints_for` reads the
     id straight off the listing row, and this file's row carries a `str` -- so a dropped
     `str(constraints.instrument_id)` is invisible from every fake-driven run. Built here with the
-    production type, which a bare `json.dumps` refuses, so the fourth conversion is pinned too."""
+    production type, which a bare `json.dumps` refuses, so this conversion is pinned too."""
     from nautilus_trader.model import InstrumentId
 
     constraints = flatten.PairConstraints(
@@ -2074,10 +2072,9 @@ def test_the_journal_s_own_fallback_survives_the_stdout_that_broke_the_file_writ
 
 
 def test_a_terminal_that_dies_between_the_check_and_the_prompt_refuses_and_journals(tmp_path):
-    """A terminal that dies between the check and the prompt refuses and journals: without the
-    handler the raise leaves a traceback and Python's own exit 1, which reads identically to a
-    refusal and leaves nothing behind, where the journal's recorded `unreadable` tells the two
-    apart."""
+    """Without the handler the raise leaves a traceback and Python's own exit 1, which reads
+    identically to a refusal and leaves nothing behind, where the journal's recorded `unreadable`
+    tells the two apart."""
     _armed(tmp_path)
     client = _flat_client()
 
@@ -2203,10 +2200,9 @@ def _stub_the_button(monkeypatch, seen, *, code: int) -> None:
 
 @pytest.mark.parametrize("code", [0, 1, 2, 3])
 def test_the_code_run_flatten_returns_is_the_code_the_process_exits_with(monkeypatch, tmp_path, code):
-    """The code `run_flatten` returns is the code the process exits with -- 0 flat, 1 refused, 2
-    something is still open, 3 the venue could not be read -- since a Typer body that `return`s the
-    number instead of raising `typer.Exit` exits 0 whatever it returned. Parametrized over all four:
-    a command hardcoding `Exit(2)` would pass a single-code test on 2."""
+    """0 flat, 1 refused, 2 something is still open, 3 the venue could not be read -- a Typer body
+    that `return`s the number instead of raising `typer.Exit` exits 0 whatever it returned.
+    Parametrized over all four: a command hardcoding `Exit(2)` would pass a single-code test on 2."""
     seen: dict[str, Any] = {}
     _stub_the_button(monkeypatch, seen, code=code)
     result = _runner.invoke(app, ["engine", "flatten", "--state-dir", str(tmp_path)])
@@ -2271,9 +2267,8 @@ def _real_client():
 
 
 def _real_calls(client):
-    """The seven calls `cli/engine/flatten.py` makes, with the arguments it sends, as zero-arg
-    thunks. Built from the module's own constants so a changed scoping value cannot leave this pin
-    testing a call the button no longer makes."""
+    """The seven calls `cli/engine/flatten.py` makes, with the arguments it sends, as zero-arg thunks. Only `_ACCOUNT`,
+    `QUOTE_CURRENCY` and `BOOK_DEPTH` are read from the module's own constants; every other value is a literal."""
     from nautilus_trader.model import AccountType, ClientOrderId, InstrumentId, OrderSide, OrderType, Quantity, TimeInForce
 
     account = flatten._ACCOUNT
