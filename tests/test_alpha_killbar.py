@@ -121,7 +121,9 @@ def test_a1_kill_bar_cost_stress_can_fail_alone():
         benchmark_slices=_NOISE_BENCHMARK_SLICES,
     )
     assert result["cost_stress_pass"] is False
-    assert result["passes"] is False  # cost stress alone fails the all-must-hold bar
+    # var_trials=1.0 (not the fixture's usual 1e-3) also fails the dsr leg here, so this pins only
+    # cost_stress_pass and the all-must-hold verdict, not isolation from the other three legs.
+    assert result["passes"] is False
 
 
 def test_a1_kill_bar_worst_slice_can_fail_alone():
@@ -217,9 +219,9 @@ def test_a1_kill_bar_all_slices_degenerate():
 
 
 def test_a1_kill_bar_dsr_fails_between_old_and_new_bar():
-    # A marginal edge (beta=0.4) with var_trials=0.01 lands dsr ~= 0.925 -- strictly between the
-    # pre-ratification 0.5 bar and the T0009-ratified 0.95 bar (2026-07-09). It would have passed the old
-    # kill bar; it fails the new one, alone (the other three legs still pass).
+    # A marginal edge (beta=0.4) with var_trials=0.01 lands strictly between the pre-ratification
+    # 0.5 bar and the T0009-ratified 0.95 bar: it would have passed the old kill bar and fails the
+    # new one, alone (the other three legs still pass).
     x, r = linear_signal(N, beta=0.4, noise_sd=1.0, seed=1)
     book = sign_strategy_returns(x, r)
     benchmark = [0.0] * N
