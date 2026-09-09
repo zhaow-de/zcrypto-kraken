@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """How long does the reconcile ledger take to scan, at sizes the live one has not reached?
 `_load_ledger` reads the whole append-only JSONL and `_totals` sums it on EVERY cycle, so both are
-O(ledger). T0044 registered that against a record-count trigger nobody could check; this measures
-the curve instead, so the question is answered by running a command rather than re-deriving an
-estimate under time pressure.
+O(ledger); this measures the curve directly, so the question is answered by running a command
+rather than by re-deriving an estimate under time pressure.
 MEMORY binds first. The returned list costs several times the file's size on disk, and a cycle the
 OOM reaper kills publishes nothing at all -- so it fails abruptly and the cycle-duration alert
 goes STALE rather than high, unable to warn about it. Peak resident against the ops host's
 MemAvailable (`node_memory_MemAvailable_bytes{host="ops"}`), never MemFree, is the cliff. Time is
-far behind it: the cycle is half-hourly, so a scan approaching 1800 s collides with the next one,
-which on the measured fit needs an order of magnitude more records than memory does; the backstops
-`zcrypto-reconcile-exporter-stale` and `zcrypto-reconcile-source-lag` page at 3 h.
+the second constraint: the cycle is half-hourly, so a scan approaching 1800 s collides with the
+next one; the backstops `zcrypto-reconcile-exporter-stale` and `zcrypto-reconcile-source-lag` page
+at 3 h.
 The KEY SPACE is the part of the synthetic data that has to be right: the writer emits each (pair,
 kind, hour) at most once, so a real ledger's `measured` dedup set grows with the file and is the
 one structure here that is not O(1) per record. Cycling pair and hour off `n % k` would saturate
@@ -117,11 +116,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="1000,10000,50000,100000,250000,500000,1000000")
     ap.add_argument("--repeats", type=int, default=3, help="best-of, to shed scheduler noise")
-    # A committed operator tool the runbook tells you to run under alert pressure: 0 repeats would
-    # crash in the child on an unbound name rather than say what was wrong.
     ap.add_argument("--child", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
+    # A committed operator tool the runbook tells you to run under alert pressure: 0 repeats would
+    # crash in the child on an unbound name rather than say what was wrong.
     if args.repeats < 1:
         ap.error("--repeats must be >= 1")
 

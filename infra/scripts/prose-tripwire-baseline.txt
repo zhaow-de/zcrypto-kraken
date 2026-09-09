@@ -924,6 +924,7 @@ tests/test_dashboards_cover_metrics.py:212: comment-block 7 > 4	# --- What this 
 tests/test_dashboards_cover_metrics.py:518: comment-block 7 > 4	# A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
 tests/test_dashboards_cover_metrics.py:543: comment-block 8 > 4	# `merge` and `joinByField` combine one frame per series, and Grafana suffixes the value column
 tests/test_dashboards_cover_metrics.py:680: comment-block 6 > 4	"""Where a panel draws per-series thresholds, the charted series' bar must equal its rule's.
+tests/test_data_manifest.py:290: comment-block 5 > 4	# --- every writer, one contract --------------------------------------------------------------------
 tests/test_data_rebuild.py:245: comment-block 6 > 4	"""A missing `manifest.json` must fail closed, never emit `ohlc_dataset_hash: ""` (T0094).
 tests/test_data_rebuild.py:275: comment-block 6 > 4	"""A manifest that EXISTS but cannot be read is the same defect as an absent one (T0094).
 tests/test_data_rebuild.py:332: comment-block 5 > 4	"""T0093: the volume floor is a TRAILING 30-day median, so it is only meaningful if the dataset
@@ -1103,12 +1104,12 @@ tests/test_engine_tracking.py:942: comment-block 5 > 4	# And the realized half m
 tests/test_engine_tracking.py:1163: comment-block 7 > 4	"""`drift_bps` -- the operand the kill switch trips on -- must come from the journaled NAV.
 tests/test_engine_venuestate.py:42: comment-block 8 > 4	"""A REAL `CurrencyPair` at one leg's precisions -- what `Cache.instrument()` hands back.
 tests/test_error_paths_are_logged.py:117: comment-block 7 > 4	"""The widened catch must not swallow either: click renders usage errors and `typer.Exit` as
-tests/test_features_derivatives.py:1: file-prose 28.5 > 20
+tests/test_features_derivatives.py:1: file-prose 28.7 > 20
 tests/test_features_derivatives.py:39: comment-block 5 > 4	"""Pins spec D5's null semantics: a null source value REPLACES the carry, it is not skipped.
 tests/test_features_derivatives.py:51: comment-block 5 > 4	"""The three preconditions the as-of walk rests on, and the one it deliberately does not
 tests/test_features_derivatives.py:66: comment-block 7 > 4	"""The look-ahead guard (spec D2/D10), in the form that actually bites.
 tests/test_features_derivatives.py:84: comment-block 7 > 4	"""Planted signal (spec D10) under D7's pinned window: inclusive trailing window ending at k,
-tests/test_features_derivatives.py:125: comment-block 6 > 4	"""The window half of the same guard: `_validate_window` must be CALLED, by both windowed forms.
+tests/test_features_derivatives.py:124: comment-block 8 > 4	"""The window half of the same guard: `_validate_window` must be CALLED, by both windowed forms.
 tests/test_features_derivatives.py:138: comment-block 6 > 4	"""The causality guard for the three funding features (spec D2/D10), in the only form that bites.
 tests/test_features_derivatives.py:197: comment-block 6 > 4	"""`oi_levels_from_raw` is a step a caller has to remember, and these three assertions are what
 tests/test_features_derivatives.py:249: comment-block 14 > 4	"""Spec 00110 D5: no imputation. A null in, a null out -- never 0.0, never a trailing mean.

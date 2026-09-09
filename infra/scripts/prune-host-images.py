@@ -8,8 +8,8 @@ the new row is written, or the run takes the digest that row is about.
 Usage:  uv run python infra/scripts/prune-host-images.py <host> [--apply] [--keep D] [--pins PATH]
 Dry-run by default. `--apply` removes one explicit `repo@sha256:<digest>` at a time, never `docker
 image prune -a`, which would take the recorded rollback operands. The second authority is the host
-itself: a resident container's digest is kept whatever the file says, and a STOPPED container counts
--- it holds its image against removal just as a running one does.
+itself: a resident container's digest is kept whatever the file says, and a STOPPED one counts too
+(`ContainerImage`'s docstring says why).
 Neither authority sees a PRE-STAGED digest: an image pulled for a converge that has not happened
 is resident, unrecorded and attached to no container, so it is indistinguishable from a stale one.
 Prune only the host that just converged, and pass `--keep <digest12>` for anything staged for a
@@ -172,7 +172,6 @@ def parse_pins_table(text: str) -> list[PinRow]:
     # indented row, or a second image table -- would vanish from the keep-set, taking that row's
     # ROLLBACK OPERAND with it. That is precisely the deletion this script exists to prevent, and
     # the container union cannot mask it: an operand is by definition not attached to a container.
-    # The live file has no such token outside the block, so this refuses only on the defect.
     stray = [ln for ln in tail if ln.startswith("|") and ANY_DIGEST12.search(ln)]
     if stray:
         raise PinsError(
@@ -339,8 +338,7 @@ class Docker:
         return self._ssh((*self.access.docker, *argv), check=check)
 
     def containers(self) -> list[ContainerImage]:
-        # -a: a STOPPED container still holds its image against removal, so omitting it turns a
-        # correct docker refusal into a spurious FAILED line and a non-zero exit.
+        # -a: a stopped container's image still counts (ContainerImage's docstring says why).
         names = [n for n in self._docker("ps", "-a", "--format", "{{.Names}}")[1].split() if n]
         if not names:
             return []
