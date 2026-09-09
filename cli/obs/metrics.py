@@ -31,7 +31,7 @@ def find_ship_handler() -> LokiShipHandler | None:
 def build_registry() -> CollectorRegistry:
     """A fresh registry carrying the `ProcessCollector` families plus a `LogshipCollector` bound to this process's live
     `--ship-logs` handler -- never `prometheus_client`'s global default, whose `python_gc_*`/`python_info` collectors are
-    unpublished noise here (spec 00069 D2). Every daemon builds its registry here, so the tap is live wherever logs ship."""
+    unpublished noise here (spec 00069 D2)."""
     registry = CollectorRegistry()
     ProcessCollector(registry=registry)
     registry.register(LogshipCollector(find_ship_handler()))
@@ -65,8 +65,8 @@ def start_metrics_server(port: int, registry: CollectorRegistry) -> bool:
 
 
 class LogshipCollector:
-    """with no handler (`--ship-logs` off) `collect()`
-    yields NOTHING -- an absent family is honest, a published zero would falsely claim log shipping runs (spec 00069 D5)."""
+    """With no handler (`--ship-logs` off) `collect()` yields NOTHING -- an absent family is honest, a
+    published zero would falsely claim log shipping runs (spec 00069 D5)."""
 
     def __init__(self, handler: LokiShipHandler | None) -> None:
         self._handler = handler
@@ -85,12 +85,13 @@ class LogshipCollector:
             "zcrypto_logship_dropped_lines_total", "Log lines dropped by the Loki ship handler.", value=dropped
         )
         yield CounterMetricFamily("zcrypto_logship_shipped_lines_total", "Log lines successfully shipped to Loki.", value=shipped)
-        # Liveness only, published from startup: last_success is stale whenever logging is quiet -- "is anything reaching Loki?" is dropped_lines_total's question, not this one.
         yield GaugeMetricFamily(
             "zcrypto_logship_last_cycle_timestamp_seconds",
             "Unix timestamp of the last log-shipping cycle the worker completed -- idle, shipped, or batch discarded.",
             value=last_cycle,
         )
+        # Liveness only: last_success is stale whenever logging is quiet; dropped_lines_total answers
+        # whether anything is reaching Loki.
         if last_success is not None:
             yield GaugeMetricFamily(
                 "zcrypto_logship_last_success_timestamp_seconds",
