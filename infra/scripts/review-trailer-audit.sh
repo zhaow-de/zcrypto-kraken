@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Compute review-before-push compliance for <base>..HEAD (default develop) against
-# .claude/rules/commit-messages.md: exit 0 iff HEAD carries a `Reviewed-by:` trailer, 1 if it does
-# not, 2 on a refusal. An empty range passes -- a branch with nothing on it has nothing to review.
+# .claude/rules/commit-messages.md: exit 0 if the record commit carries a `Reviewed-by:` trailer or
+# the range is empty, 1 otherwise, 2 on a refusal. The record commit is HEAD, or HEAD's first
+# parent when HEAD is a merge -- a merge carries no trailers by convention (`merge-pr`), and
+# `amend-reviewed-by.sh` refuses to rewrite one, so a reviewed branch that merged its base back in
+# would otherwise fail with no route out.
 #
 # HEAD specifically, not anywhere in the range: a trailer on an early commit with unreviewed work
 # after it would otherwise pass, and the tip is what gets pushed. When a fix-up lands after the read,
@@ -30,7 +33,6 @@ git rev-parse --verify --quiet "${base}^{commit}" >/dev/null \
 range="${base}..HEAD"
 
 records=()
-bare=()
 total=0
 
 # One record per commit, field-separated by 0x1f and record-separated by 0x1e, so a subject
@@ -43,18 +45,21 @@ while IFS=$'\x1f' read -r -d $'\x1e' hash subject reviewers; do
   total=$((total + 1))
   entry="$(git log -1 --format='%h' "$hash")  ${subject}"
 
-  if [ -z "$reviewers" ]; then
-    bare+=("$entry")
-    continue
-  fi
+  [ -n "$reviewers" ] || continue
 
   records+=("$entry")
 done < <(git log --no-merges --format="%H%x1f%s%x1f%(trailers:key=Reviewed-by,valueonly,separator=%x2C)%x1e" "$range")
 
 merges="$(git rev-list --count --merges "$range")"
 
-head_trailer="$(git log -1 --format='%(trailers:key=Reviewed-by,valueonly,separator=%x2C)' HEAD)"
-head_line="$(git log -1 --format='%h  %s' HEAD)"
+# A merge tip carries no trailers by convention, so the record sits on its first parent.
+if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -gt 2 ]; then
+  record_at="HEAD^"; record_note=" (HEAD is a merge; read from its first parent)"
+else
+  record_at="HEAD"; record_note=""
+fi
+head_trailer="$(git log -1 --format='%(trailers:key=Reviewed-by,valueonly,separator=%x2C)' "$record_at")"
+head_line="$(git log -1 --format='%h  %s' "$record_at")"
 
 echo "review-trailer audit — ${range}"
 echo "  ${total} non-merge commits, ${#records[@]} carrying a trailer, ${merges} merge commits excluded"
@@ -77,16 +82,16 @@ if [ "$total" -eq 0 ]; then
 fi
 
 if [ -n "$head_trailer" ]; then
-  echo "PASS — HEAD carries the branch's review record."
+  echo "PASS — the branch's review record is present${record_note}."
   echo "  ${head_line}"
   echo "  ${head_trailer}"
   exit 0
 fi
 
-echo "FAIL — HEAD carries no Reviewed-by trailer, so ${range} has no review record."
+echo "FAIL — no Reviewed-by trailer on the record commit${record_note}, so ${range} has no review record."
 echo "  ${head_line}"
 [ "${#records[@]}" -eq 0 ] \
   || echo "       Earlier commits carry one, but work has landed since: the record belongs on the tip."
 echo "       Review the branch with an agent that is not its author, then"
-echo "       infra/scripts/amend-reviewed-by.sh HEAD \"<reviewer model>\""
+echo "       infra/scripts/amend-reviewed-by.sh ${record_at} \"<reviewer model>\""
 exit 1
