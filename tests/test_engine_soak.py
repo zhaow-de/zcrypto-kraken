@@ -19,6 +19,7 @@ from cli.engine.soak import (
     RealizedSeries,
     SelfTestReport,
     SoakError,
+    _basket_complete_index,
     _chain_consistent,
     _instrument_expectations,
     _net_live_from_result,
@@ -435,6 +436,42 @@ def test_block_bootstrap_deterministic_and_centered():
     b = block_bootstrap_null(s, 6, n=500, mean_block=3, seed=0)
     assert a == b and len(a) == 500  # deterministic given seed
     assert abs(sum(a) / len(a) - sum(s) / len(s)) < 0.01  # bootstrap mean ≈ series mean
+
+
+def test_basket_complete_index_is_the_first_all_present_bar():
+    # SOL's pre-entry bars spell absence both ways: a check testing only `is not None` reads bar 0's NaN as a price.
+    prices = {
+        "BTC": [10.0, 11.0, 12.0, 13.0],
+        "ETH": [20.0, 21.0, 22.0, 23.0],
+        "SOL": [float("nan"), None, 32.0, 33.0],
+    }
+    assert _basket_complete_index(prices, ("BTC", "ETH", "SOL")) == 2
+
+
+def test_basket_complete_index_ignores_a_later_hole():
+    prices = {
+        "BTC": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+        "ETH": [None, None, 22.0, 23.0, 24.0, 25.0],
+        "SOL": [30.0, 31.0, 32.0, 33.0, None, 35.0],
+    }
+    assert _basket_complete_index(prices, ("BTC", "ETH", "SOL")) == 2
+
+
+def test_basket_complete_index_refuses_a_basket_never_complete():
+    prices = {"BTC": [10.0, 11.0], "ETH": [20.0, 21.0], "SOL": [None, None]}
+    with pytest.raises(SoakError, match="SOL"):
+        _basket_complete_index(prices, ("BTC", "ETH", "SOL"))
+
+
+def test_basket_complete_index_refuses_an_asset_missing_from_prices():
+    prices = {"BTC": [10.0, 11.0], "ETH": [20.0, 21.0]}
+    with pytest.raises(SoakError, match="SOL"):
+        _basket_complete_index(prices, ("BTC", "ETH", "SOL"))
+
+
+def test_basket_complete_index_is_zero_when_all_present_from_the_start():
+    prices = {"BTC": [10.0, 11.0], "ETH": [20.0, 21.0]}
+    assert _basket_complete_index(prices, ("BTC", "ETH")) == 0
 
 
 @pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")

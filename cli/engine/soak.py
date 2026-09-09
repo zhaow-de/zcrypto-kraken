@@ -344,6 +344,20 @@ def _load_canonical(
     return daily_prices, daily_ts, h4_prices, h4_ts
 
 
+def _basket_complete_index(prices: dict[str, list[float | None]], assets: tuple[str, ...]) -> int:
+    """The first index at which every basket asset carries a finite price, derived per call because the basket
+    changes and a constant would not (spec 00112 D3)."""
+    # `.get`, not `[]`: an asset with no key is absent at every index, so a missing one reaches the
+    # refusal below instead of raising KeyError out of a helper nobody catches.
+    series = {a: prices.get(a, []) for a in assets}
+    for k in range(min((len(s) for s in series.values()), default=0)):
+        if all(s[k] is not None and math.isfinite(s[k]) for s in series.values()):
+            return k
+    absent = sorted(a for a, s in series.items() if not any(v is not None and math.isfinite(v) for v in s))
+    # Empty `absent` is the disjoint case -- each asset priced somewhere, never all at one index -- so name the basket.
+    raise SoakError(f"basket never complete: no index prices all of {absent or sorted(assets)}")
+
+
 def build_null(
     canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, fee: float = 0.006, path: str = "fast"
 ) -> NullSystem:
