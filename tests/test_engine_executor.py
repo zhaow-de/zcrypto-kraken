@@ -112,8 +112,8 @@ def _constraints(**overrides):
 
 
 def test_the_mismatched_denomination_raises_and_names_the_defect():
-    """T0138's constructed defect: a BTC floor (2e-05) against a EUR notional. Assert WHICH failure
-    fired -- the denomination guard, not a BelowMinimum or an unrelated raise."""
+    """T0138's constructed defect: a BTC floor against a EUR notional. Assert WHICH failure fired --
+    the denomination guard, not a BelowMinimum or an unrelated raise."""
     c = _constraints(symbol="ETH/BTC", instrument_id="ETH/BTC.KRAKEN", costmin=2e-05, costmin_quote="BTC")
     with pytest.raises(EngineError, match="cross-denomination"):
         size_probe_order(0.01, 0.05, c)
