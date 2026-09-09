@@ -5,6 +5,8 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
+
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / "infra" / "scripts" / "prove-inert.py"
 
@@ -19,7 +21,7 @@ def _load():
 
 pi = _load()
 
-# Production-shaped rather than a toy: a module docstring, a class, a method, a comment, a guard.
+# Production-shaped rather than a toy.
 BEFORE = '''"""Read a series and refuse a stamp outside the plausible range."""
 
 MIN_TS = 1_000_000_000
@@ -276,6 +278,24 @@ def test_every_call_registered_form_names_its_function() -> None:
     assert pi.registered_command_names(main) == frozenset({"capture", "poll", "flat", "root"})
 
 
+def test_the_entry_point_refuses_a_docstring_another_file_pins_through_doc(tmp_path: pathlib.Path) -> None:
+    # `pinned` carries no decorator and no registration, so only the cross-file `__doc__` scan can see
+    # it -- and `loose`, edited identically in the same run, is what says the scan did the deciding.
+    base = 'def pinned() -> None:\n    """Old contract."""\n    run()\n\n\ndef loose() -> None:\n    """Old note."""\n    run()\n'
+    repo = _repo(tmp_path, base)
+    (repo / "reads.py").write_text("import m\n\nassert m.pinned.__doc__\n")
+    subprocess.run(["git", "-C", str(repo), "add", "reads.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "reader"], check=True)
+
+    (repo / "m.py").write_text(base.replace('"""Old note."""', '"""New note."""'))
+    loose = _cli(repo, "HEAD", "m.py")
+    assert loose.returncode == pi.EXIT_INERT, loose.stdout
+
+    (repo / "m.py").write_text(base.replace('"""Old contract."""', '"""New contract."""'))
+    done = _cli(repo, "HEAD", "m.py")
+    assert done.returncode == pi.EXIT_REFUSED, done.stdout
+
+
 def test_the_entry_point_reads_the_entry_module_for_call_registered_commands(tmp_path: pathlib.Path) -> None:
     # `capture` carries no decorator; only `cli/__main__.py` says its docstring is a `--help` body.
     repo = _repo(tmp_path, 'def capture(pair: str) -> None:\n    """Old help."""\n    run(pair)\n')
@@ -326,6 +346,37 @@ def test_a_comment_that_keeps_its_successors_token_still_moved() -> None:
     result = pi.compare(before, after)
     assert result.ast_inert
     assert not result.comments_same
+
+
+def test_a_reindented_comment_is_not_the_same_comment_stream() -> None:
+    """The column is part of the fingerprint, which the tool's own exit-3 contract names."""
+    before = "if x:\n    # marker\n    pass\n"
+    after = "if x:\n  # marker\n    pass\n"
+    result = pi.compare(before, after)
+    assert result.ast_inert
+    assert not result.comments_same
+
+
+def test_a_docstring_read_through_a_bare_name_is_output() -> None:
+    """The bare-`Name` owner, beside the `mod.fn.__doc__` form the tree happens to use."""
+    assert pi.docstring_reader_names("assert run_flatten.__doc__\n") == frozenset({"run_flatten"})
+    assert pi.docstring_reader_names("assert flatten.run_flatten.__doc__\n") == frozenset({"run_flatten"})
+
+
+def test_a_tree_it_cannot_list_is_refused(tmp_path: pathlib.Path) -> None:
+    """A listing that fails under-collects the names every refusal is driven by, so it refuses."""
+    with pytest.raises(SystemExit, match="cannot list the tree"):
+        pi.output_names_in(tmp_path)
+
+
+def test_a_file_it_cannot_parse_is_counted_not_skipped(tmp_path: pathlib.Path) -> None:
+    """An unscannable file is counted, so the run can say the scan was incomplete."""
+    repo = _repo(tmp_path, "X = 1\n")
+    (repo / "broken.py").write_text("def (:\n")
+    subprocess.run(["git", "-C", str(repo), "add", "broken.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "broken"], check=True)
+    names, unscanned = pi.output_names_in(repo)
+    assert unscanned == 1, names
 
 
 def test_a_docstring_cut_leaves_the_comment_stream_alone() -> None:

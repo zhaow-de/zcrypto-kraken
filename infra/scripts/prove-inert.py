@@ -9,7 +9,7 @@ exit 4  REFUSED -- a docstring that is program output changed, or a path could n
 
 3 and 4 are verdicts to act on, never a run to retry: 3 says a guard that reads a comment's position
 may have stopped seeing it, and 4 says the claim cannot be made from here at all. A docstring is often
-program OUTPUT -- a Typer command's is its `--help` body, and three scripts hand it to argparse."""
+program OUTPUT -- a Typer command's is its `--help` body, and scripts hand it to argparse."""
 
 import ast
 import difflib
@@ -143,8 +143,8 @@ _NOT_A_NEIGHBOUR = frozenset(
 def comment_stream(src: str) -> list[tuple[int, str, str, int]]:
     """A guard can read a comment's POSITION, so identity alone is not the comment.
 
-    The line BELOW and not the one above: deleting a docstring above a comment must stay inert, which
-    is the commonest edit this tool certifies, and it moves neither that line nor the distance to it."""
+    The line BELOW and not the one above: deleting a docstring above a comment must stay inert, and
+    it moves neither that line nor the distance to it."""
     lines = src.splitlines()
     toks = list(tokenize.generate_tokens(io.StringIO(src).readline))
     out = []
