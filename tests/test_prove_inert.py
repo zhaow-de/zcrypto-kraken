@@ -69,6 +69,11 @@ def test_a_deleted_pass_is_not_an_emptied_body() -> None:
     assert "non-docstring statements per scope: [1, 0]" in result.detail
 
 
+def test_a_docstring_added_to_an_empty_module_stays_inert() -> None:
+    """An empty `__init__.py` is a real before-side, so the fill must not be the statement it adds."""
+    assert pi.compare("", '"""The package."""\n').ast_inert
+
+
 def test_a_docstring_deleted_beside_other_statements_stays_inert() -> None:
     """The true positive beside the arm above: the count moves only when a statement does."""
     before = 'def f(x: int) -> int:\n    """Return it."""\n    return x\n'

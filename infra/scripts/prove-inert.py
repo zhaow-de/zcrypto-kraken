@@ -99,7 +99,12 @@ def _has_docstring(node: ast.AST) -> bool:
 
 def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output: bool, output_names: frozenset[str]) -> ast.AST:
     for node in ast.walk(tree):
-        if not isinstance(node, _HOLDS_DOCSTRING) or not _has_docstring(node):
+        if not isinstance(node, _HOLDS_DOCSTRING):
+            continue
+        if not _has_docstring(node):
+            # A module is the one body that can already be empty, so it takes the same fill: without
+            # it, a docstring added to an empty `__init__.py` reads as the `pass` put in its place.
+            node.body = node.body or [ast.Pass()]
             continue
         is_output = _docstring_is_output(node, output_names) or (isinstance(node, ast.Module) and module_doc_is_output)
         if keep_output and is_output:
@@ -111,10 +116,9 @@ def _strip_docstrings(tree: ast.AST, *, module_doc_is_output: bool, keep_output:
 
 
 def _scope_statement_counts(tree: ast.AST) -> list[int]:
-    """How many statements besides its docstring each scope holds, read BEFORE the fill above runs.
+    """Read BEFORE the fill runs, because the fill equates an emptied body with a real `pass`.
 
-    The fill equates an emptied body with a real `pass`, so without this a deleted `pass` reads inert;
-    the count is mode-independent, which is why the kept-output shape cannot differ by it alone."""
+    Mode-independent, so the kept-output shape can never differ by this alone."""
     return [len(node.body) - (1 if _has_docstring(node) else 0) for node in ast.walk(tree) if isinstance(node, _HOLDS_DOCSTRING)]
 
 
