@@ -152,7 +152,7 @@ An instrument reports independently of the thing it describes, and every one of 
 
 ## Tooling
 
-Two of the pass's tools are committed, and each is named by its filename here and everywhere — "the prover" now resolves to either. `infra/scripts/docstring-gate.py` compares a file against the batch base on the three arms and drives the mutations that show they bite. `infra/scripts/prove-inert.py` returns the per-file prose-only verdict and the exit code that carries it.
+Two of the pass's tools are committed, and this document names each by its filename — with `prove-inert.py` in the tree, "the prover" resolves to either. `infra/scripts/docstring-gate.py` compares a file against the batch base on the three arms and drives the mutations that show they bite. `infra/scripts/prove-inert.py` returns the per-file prose-only verdict and the exit code that carries it.
 
 The rest stay disposable, kept beside the pass rather than committed as machinery:
 
