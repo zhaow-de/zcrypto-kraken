@@ -1,5 +1,6 @@
 ---
-status: open
+status: partial
+ripe_when: no commit in the last 50 on develop has touched the ratchet baseline -- `git log -50 --oneline develop -- infra/scripts/prose-tripwire-baseline.txt` is empty
 ---
 
 # The prose ratchet converts every cut into silent headroom
@@ -19,8 +20,16 @@ The ratchet exists to make prose decrease monotonically. Each cutting batch drop
 - `prose.md` offers two dispositions when the hook names a block — cut it, or keep it consciously and re-record the baseline with `--write-baseline` in the same commit. Neither disposition covers this case, because here the hook does not name anything: the tree got better and the baseline silently got looser.
 - [[T0195]] shared this topic's baseline-integrity surface and is resolved: `--write-baseline` refuses a path list that would drop another file's recorded keeps. It was fixed by refusing and NOT by the merge remedy it proposed, for this topic's own reason — scan-and-preserve-untouched would have carried forward exactly the stale, oversized rows this topic exists to stop licensing. So nothing here waits on it, and nothing there relieves it: what this topic names is `_absorbable()`'s path+kind-only matching, which never checks a size's own headroom before consuming it as a match, and that is untouched. (T0195's own defect was the truncating `open(..., "w")`, never `_absorbable()`.)
 
+## Done so far
+
+The check now reports every shape of a shrink instead of swallowing one of them, and names the rows it used to only count. Landed on `fix/t0189-a-shrink-lowers-the-ceiling`, in `fix(prose_tripwire): a shrink is named where it used to be swallowed`.
+
+Measured on a fixture before the fix: a shrink keeping its first line printed nothing at all; one whose first line changed came back as `rewritten:`; one falling below the bar was a bare integer in `retired:`. All three now print an indented line naming both sizes, and only the flush-left lines fail the gate, so an informational line cannot be mistaken for a failing one.
+
+**The cheap form this topic proposed — `--check-baseline` rewriting a recorded entry down to the observed size — is not available, and that is a fact about the gate rather than a preference between two designs.** `--check-baseline` is the pre-commit hook's own command (`pass_filenames: false`, `always_run: true`, both stages). A hook that writes a tracked file leaves it modified and unstaged, and pre-commit then fails the commit. Auto-lowering would therefore break the gate on every prose-cutting commit. Every write stays with `--write-baseline`.
+
+Measured on the committed baseline at the time of the fix: 1229 rows, 1215 sitting exactly at their observed size, 10 above it carrying 6.6 units of slack, and 2 retired. **That number is small because the passes running that day kept re-recording the baseline, not because the defect is rare** — a later reader taking 6.6 as evidence that this barely happens would be reading recent discipline as a property of the tool.
+
 ## Suggested next steps
 
-- **Decide whether a shrink should lower the ceiling automatically.** The cheap form is for `--check-baseline` to rewrite a recorded entry down to the observed size whenever the observed size is smaller, so the baseline tracks the tree's best-ever state. Weigh it against the churn that puts in every cutting commit's diff, and against whether a ratchet that tightens itself can be re-widened deliberately when a block legitimately grows.
-- **Decide what `retired:` should do.** An entry whose block no longer trips is dead weight that will never fail again; leaving it recorded means a future regrowth to the old size passes silently.
-- **The guard, and its degeneracy.** Whatever is decided, it is a change to a tool that judges the tree, so it takes the construction proof: a fixture where a recorded offender shrinks and is then regrown to its old recorded size, asserting the regrowth FAILS, with a true-positive control where a legitimately-recorded offender at its recorded size still passes. A fixture whose before and after sizes are equal passes under the defect and proves nothing.
+- **Decide whether an unbanked shrink should FAIL rather than only report.** Reporting names the loss; it does not lower the ceiling, so a shrink nobody banks still licenses regrowth to the old size. Failing is the same code path plus an exit code, and it is the option that makes the ratchet monotonic. It was not taken now for sequencing rather than merit: a gate that fails every unbanked shrink breaks the commits of whatever pass is cutting prose at the time, and one was running. It becomes worth taking when prose-cutting stops being routine — which is precisely when the slack starts accumulating again, and is what the trigger above measures.
