@@ -328,9 +328,13 @@ def baseline(rev: str, paths: list[str]) -> dict[tuple[str, str, str], list[floa
     return known
 
 
-def new_since(offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]) -> list[Offender]:
-    """Each offender consumes one baseline entry -- its exact size first, else the smallest at least as large."""
-    fresh, pending = [], []
+def new_since(
+    offenders: list[Offender], known: dict[tuple[str, str, str], list[float]]
+) -> tuple[list[Offender], list[tuple[Offender, float]]]:
+    """Each offender consumes one baseline entry -- its exact size first, else the smallest at least as
+    large. That second case is a shrink spending a bigger ceiling, so it is returned rather than
+    swallowed: the row keeps the old size and licenses regrowth back to it until someone re-records."""
+    fresh, pending, shrunk = [], [], []
     for o in sorted(offenders):
         pool = known.get(o.key, [])
         if o.measured in pool:
@@ -344,7 +348,8 @@ def new_since(offenders: list[Offender], known: dict[tuple[str, str, str], list[
             fresh.append(o)
         else:
             pool.remove(match)
-    return fresh
+            shrunk.append((o, match))
+    return fresh, shrunk
 
 
 def _line(o: Offender) -> str:
@@ -382,7 +387,8 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
     """A keep may shrink but never grow, and a rewrite re-keys itself because the anchor is the block's
     first line -- which is why a retired row of the same path and kind can still claim it."""
     new, grown = [], []
-    for o in new_since(offenders, known):
+    fresh, shrunk = new_since(offenders, known)
+    for o in fresh:
         pool = known.get(o.key, [])
         smaller = [m for m in pool if m < o.measured]
         if smaller:
@@ -405,7 +411,10 @@ def against_baseline(offenders: list[Offender], known: dict[tuple[str, str, str]
             rewritten.append((o, sorted({m for m, _ in _absorbable(retired, o)})))
         else:
             still_new.append(o)
-    return still_new, grown, rewritten, sum(len(pool) for pool in known.values())
+    # A row no offender claimed: its block no longer trips, so it can never fail again and is named
+    # rather than counted -- a reader cannot retire what the report will not identify.
+    retired = sorted((key[0], key[1], m, key[2]) for key, pool in known.items() for m in pool)
+    return still_new, grown, rewritten, shrunk, retired
 
 
 def render(offenders: list[Offender]) -> str:
@@ -454,24 +463,32 @@ def main(argv: list[str] | None = None) -> int:
         if not os.path.isfile(args.check_baseline):
             print(f"{args.check_baseline}: no such baseline -- write one with --write-baseline", file=sys.stderr)
             return 2
-        new, grown, rewritten, retired = against_baseline(offenders, read_baseline(args.check_baseline))
+        new, grown, rewritten, shrunk, retired = against_baseline(offenders, read_baseline(args.check_baseline))
         for o in new:
             print(_line(o))
         for o, was in grown:
             print(f"grown: {_line(o)} recorded {was:.10g}")
         for o, sizes in rewritten:
             recorded = f"{sizes[0]:.10g}" if len(sizes) == 1 else "one of " + ", ".join(f"{m:.10g}" for m in sizes)
-            print(f"rewritten: {_line(o)} recorded {recorded}")
-        print(f"new: {len(new)} grown: {len(grown)} rewritten: {len(rewritten)} retired: {retired}")
+            print(f"  rewritten: {_line(o)} recorded {recorded}")
+        for o, was in shrunk:
+            print(f"  shrunk: {_line(o)} recorded {was:.10g}")
+        for path, kind, was, anchor in retired:
+            print(f"  retired: {path}: {kind} {was:.10g} recorded" + (f" -- {anchor}" if anchor else ""))
+        # Indented lines are reports; only the flush-left ones fail, so a reader scans one column.
+        print(f"new: {len(new)} grown: {len(grown)} rewritten: {len(rewritten)} shrunk: {len(shrunk)} retired: {len(retired)}")
         if new or grown:
-            print(f"cut what is listed above, or record it as a keep with --write-baseline {args.check_baseline}", file=sys.stderr)
+            print(
+                f"cut the flush-left lines above, or record them as keeps with --write-baseline {args.check_baseline}",
+                file=sys.stderr,
+            )
             return 1
         return 0
     if args.since:
         if subprocess.run(["git", "rev-parse", "--verify", "--quiet", args.since], capture_output=True).returncode != 0:
             print(f"{args.since}: not a revision this repository knows", file=sys.stderr)
             return 2
-        offenders = new_since(offenders, baseline(args.since, paths))
+        offenders = new_since(offenders, baseline(args.since, paths))[0]
     offenders.sort()
     print(render(offenders))
     return 1 if offenders else 0
