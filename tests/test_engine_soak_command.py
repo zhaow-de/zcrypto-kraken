@@ -13,9 +13,12 @@ import cli.engine.command as command
 import cli.engine.soak as soak
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
+from cli.engine.cycle import _MODEL_SYMBOLS
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json
 from cli.engine.soak import NullSystem, RealizedInternals, SelfTestReport
+from cli.engine.store import GRID_INTERVALS
 from cli.ohlc.dataset import to_frame, write_parquet
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 runner = CliRunner()
 
@@ -81,6 +84,14 @@ def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict) -> tuple[Path, 
     return journal_dir, store_dir
 
 
+def _report_field(out: str, label: str) -> str:
+    """The value the rendered report prints against `label`, asserting the label appears exactly once --
+    a payload compared against a line that vanished would otherwise fail as a generator's StopIteration."""
+    matched = [line for line in out.splitlines() if line.strip().startswith(label)]
+    assert len(matched) == 1, f"{label!r} matched {len(matched)} lines in:\n{out}"
+    return matched[0].split(":", 1)[1].strip()
+
+
 def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatch):
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
@@ -126,16 +137,20 @@ def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatc
     # present in the payload shape but carry no analysis, symmetric with the other analysis fields.
     assert "internals" in payload and payload["internals"] is None
     assert "disclosures" in payload and payload["disclosures"] is None
+    assert payload["null_reference"] is None  # canonical absent -> no null, so neither null count is writable
+    # The realized count sits at the payload's top level rather than inside `provenance`, which a window
+    # the store closed to nothing would omit while the text block still printed the line.
+    assert _report_field(out, "realized no-book bars") == f"{payload['realized_no_book_bars']} of {payload['provenance']['L']}"
 
 
-def _mk_fake_null(n: int = 40) -> NullSystem:
+def _mk_fake_null(n: int = 40, *, reconcile_ok: bool = True) -> NullSystem:
     return NullSystem(
         weights=[{"BTC": 1.0}] * n,
         net_live=[0.001] * n,
         multipliers=[1.0] * n,
         day_index=list(range(n)),
         assets=("BTC",),
-        reconcile_ok=True,
+        reconcile_ok=reconcile_ok,
         n_periods=n,
         governed_net=[0.001] * n,
         cap_breach=[0.0] * n,
@@ -144,19 +159,32 @@ def _mk_fake_null(n: int = 40) -> NullSystem:
 
 
 def _patch_canonical_pipeline(
-    monkeypatch, *, available: bool = True, reason: str = "", identity_ok: bool = True, cap_consistent: bool = True
+    monkeypatch,
+    *,
+    available: bool = True,
+    reason: str = "",
+    identity_ok: bool = True,
+    cap_consistent: bool = True,
+    null_bars: int = 40,
+    reconcile_ok: bool = True,
+    stub_self_tests: bool = True,
 ) -> None:
-    """Stub the canonical-present branch of `soak_report` so a command test needs no real frozen
-    canonical dataset or trial registry: `_canonical_present` always True, `build_null`/`self_tests`
-    canned non-void results, and `realized_internals` a `RealizedInternals` over the actual scored
-    records it is given, with the caller-controlled `available`/`identity_ok`/`cap_consistent`."""
+    """Stub the canonical-present branch of `soak_report` so a command test needs no real frozen canonical
+    dataset or trial registry: `_canonical_present` always True, `build_null`/`self_tests` canned non-void
+    results, `realized_internals` one over the actual scored records. `stub_self_tests=False` runs the REAL
+    `self_tests` -- the only way to reach the `reconcile_ok` wiring the stub swallows -- the instrument canned."""
     monkeypatch.setattr(soak, "_canonical_present", lambda canonical_dir: True)
-    monkeypatch.setattr(soak, "build_null", lambda canonical_dir, fee=0.006, path="fast": _mk_fake_null())
     monkeypatch.setattr(
-        soak,
-        "self_tests",
-        lambda *a, **kw: SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=()),
+        soak, "build_null", lambda canonical_dir, fee=0.006, path="fast": _mk_fake_null(null_bars, reconcile_ok=reconcile_ok)
     )
+    if stub_self_tests:
+        monkeypatch.setattr(
+            soak,
+            "self_tests",
+            lambda *a, **kw: SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=()),
+        )
+    else:
+        monkeypatch.setattr(soak, "instrument_self_check", lambda *a, **kw: (True, "stubbed instrument check"))
 
     def _fake_realized_internals(scored_records, latest_record, reader):
         cycle_ts = [r.cycle_ts for r in scored_records]
@@ -231,6 +259,12 @@ def test_soak_check_json_includes_internals_and_disclosures(tmp_path, monkeypatc
         "n_scored_cycles": payload["provenance"]["L"],
     }
     assert isinstance(payload["disclosures"], list) and payload["disclosures"]  # day-granularity note at least
+    # Both faces read the same two numbers off one helper, so equality here is by construction, not by
+    # two computations happening to agree. `_mk_fake_null` builds no span, which is the stamps-absent arm.
+    null_reference = payload["null_reference"]
+    assert null_reference["first_bar"] is None and null_reference["last_bar"] is None
+    assert _report_field(out, "retained bars") == str(null_reference["retained_bars"]) == "40"
+    assert _report_field(out, "no-book bars") == f"{null_reference['no_book_bars']} of 40"
 
 
 def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
@@ -293,6 +327,177 @@ def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
         assert payload["gating_verdicts"]["governor_engagement"][field] is None
         assert payload["gating_verdicts"]["cap_breach"][field] is None
     assert payload["gating_verdicts"]["gross"]["live"] is not None
+
+
+def _soak_args(journal_dir, store_dir, canonical_dir, json_out) -> list[str]:
+    return [
+        "engine",
+        "soak-check",
+        "--journal-dir",
+        str(journal_dir),
+        "--store-dir",
+        str(store_dir),
+        "--canonical-dir",
+        str(canonical_dir),
+        "--registry",
+        str(canonical_dir.parent / "fake-registry.jsonl"),
+        "--floor",
+        "1",
+        "--json",
+        str(json_out),
+    ]
+
+
+_CLOSES = {
+    datetime(2026, 7, 15, 20, 0, tzinfo=UTC): 100.0,
+    datetime(2026, 7, 16, 0, 0, tzinfo=UTC): 110.0,
+    datetime(2026, 7, 16, 4, 0, tzinfo=UTC): 121.0,
+    datetime(2026, 7, 16, 8, 0, tzinfo=UTC): 133.1,
+}
+
+
+def test_soak_check_exits_non_zero_when_the_null_reconciliation_fails(tmp_path, monkeypatch):
+    """A `reconcile_ok=False` null is a BROKEN CODE CONTRACT, not a data finding: the run prints its
+    window, its self-tests and its record-47 comparison, then exits 1. No other test takes that branch."""
+    _patch_config(monkeypatch, tmp_path)
+    _patch_canonical_pipeline(monkeypatch, reconcile_ok=False, stub_self_tests=False)
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(app, _soak_args(journal_dir, store_dir, tmp_path / "fake-canonical", json_out))
+
+    out = result.output
+    assert result.exit_code == 1, out
+    assert "REALIZED-SERIES WINDOW" in out
+    assert "self-tests VOID" in out
+    reasons = json.loads(json_out.read_text())["void_reasons"]
+    assert any("reconcile_ok=False" in r for r in reasons), reasons
+    # The one string that DESCRIBES the flag names both identities it now ANDs; naming the live-cost
+    # reconstruction alone would send a reader debugging the wrong one of the two.
+    assert any("cap-breach count" in r and "live-cost reconstruction" in r for r in reasons), reasons
+
+
+def test_soak_check_voids_when_the_null_cannot_discriminate(tmp_path, monkeypatch):
+    """A null too short to discriminate is a void reason, not a full page of "n/a" over an empty
+    `void_reasons`. At this fixture's L=2 over one realized day every gating arm is under the cutoff
+    at 2 retained bars -- the governor arm is the binding one, its numerator the null's distinct-day count."""
+    _patch_config(monkeypatch, tmp_path)
+    _patch_canonical_pipeline(monkeypatch, null_bars=2)
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(app, _soak_args(journal_dir, store_dir, tmp_path / "fake-canonical", json_out))
+
+    out = result.output
+    assert result.exit_code == 0, out  # a reference too short to judge against is a data state
+    assert "NO VERDICT" in out
+    payload = json.loads(json_out.read_text())
+    assert any("null retains 2 bars" in r and "L=2" in r for r in payload["void_reasons"]), payload["void_reasons"]
+
+
+def test_soak_check_short_null_reason_does_not_fire_on_an_empty_realized_window(tmp_path, monkeypatch):
+    """The `L > 0` arm, on a store that closed the realized window to nothing: every `effective_n` is 0.0
+    there for the REALIZED side's reason, so without the arm a healthy 40-bar null is blamed for it."""
+    _patch_config(monkeypatch, tmp_path)
+    _patch_canonical_pipeline(monkeypatch)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, {d - timedelta(hours=8): 100.0, d - timedelta(hours=4): 105.0})
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(app, _soak_args(journal_dir, store_dir, tmp_path / "fake-canonical", json_out))
+
+    assert result.exit_code == 0, result.output
+    reasons = json.loads(json_out.read_text())["void_reasons"]
+    assert any("L=0 < floor" in r for r in reasons), reasons  # the fixture really did close the window
+    assert not any("null retains" in r for r in reasons), reasons
+
+
+def test_soak_report_degrades_when_the_canonical_is_missing_a_leg(tmp_path, monkeypatch):
+    """State (a): a canonical carrying only the leg `_canonical_present` probes. Nothing is stubbed, so
+    the real `_load_canonical` probe runs -- without it the run dies on a `FileNotFoundError` out of
+    `read_store_series`, which is neither a SoakError nor an EngineError and reaches no handler at all."""
+    _patch_config(monkeypatch, tmp_path)
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
+    canonical = tmp_path / "canonical"
+    (canonical / "BTC" / "EUR").mkdir(parents=True)
+    (canonical / "BTC" / "EUR" / "240.parquet").touch()
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(app, _soak_args(journal_dir, store_dir, canonical, json_out))
+
+    out = result.output
+    assert result.exit_code == 0, out
+    assert "REALIZED-SERIES WINDOW" in out
+    reasons = json.loads(json_out.read_text())["void_reasons"]
+    # The missing legs by NAME -- the absent-canonical reason names none, which is what tells the two
+    # states apart -- and by COORDINATE, the whole product minus the file present: naming one entry
+    # leaves either loop narrowed to a single element green, and a probe blind to `.exists()` names
+    # the present file too.
+    reason = next(r for r in reasons if r.startswith("null unavailable: "))
+    expected = {
+        f"{symbol}@{interval}" for symbol in _MODEL_SYMBOLS for interval in GRID_INTERVALS if (symbol, interval) != ("BTC/EUR", 240)
+    }
+    assert all(leg in reason for leg in expected), sorted(leg for leg in expected if leg not in reason)
+    assert "BTC/EUR@240" not in reason, reason
+
+
+def test_soak_report_degrades_when_the_null_refuses(tmp_path, monkeypatch):
+    """The wiring, against a stub: whatever `build_null` refuses on, the run keeps its window block and
+    its self-tests block and exits 0 -- the degrade path leaves `self_test` None, so exit 1 never fires."""
+    _patch_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(soak, "_canonical_present", lambda canonical_dir: True)
+
+    def _refuse(canonical_dir, fee=0.006, path="fast"):
+        raise soak.SoakError("basket never complete: no index prices all of ['XRP']")
+
+    monkeypatch.setattr(soak, "build_null", _refuse)
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(app, _soak_args(journal_dir, store_dir, tmp_path / "fake-canonical", json_out))
+
+    out = result.output
+    assert result.exit_code == 0, out
+    assert "REALIZED-SERIES WINDOW" in out and "SELF-TESTS" in out
+    reasons = json.loads(json_out.read_text())["void_reasons"]
+    assert any(r.startswith("null unavailable: ") for r in reasons), reasons
+
+
+def _daily_dead_leg_panels(dead: str = "XRP", *, n_daily: int = 60, n_h4: int = 360):
+    """What a leg loads as when the forming-bar drop takes its only daily row: unpriced on the DAILY
+    grid alone, finite from index 0 on h4 like every other leg. A panel dead on BOTH grids would refuse
+    through the h4 call whether the daily one ran or not, so only this shape proves the daily call."""
+    assets = CrossfreqSystemConfig().assets
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    daily_ts = [base + timedelta(days=i) for i in range(n_daily)]
+    h4_ts = [base + timedelta(hours=4 * i) for i in range(n_h4)]
+    daily = {a: [100.0 + i for i in range(n_daily)] for a in assets}
+    daily[dead] = [None] * n_daily
+    h4 = {a: [100.0 + i for i in range(n_h4)] for a in assets}
+    return daily, daily_ts, h4, h4_ts
+
+
+def test_soak_report_degrades_when_a_leg_carries_no_price(tmp_path, monkeypatch):
+    """State (b) end to end, on the daily-only shape. Neither builder is stubbed: the daily refusal runs
+    BEFORE them, and ordered after -- or with the daily call gone -- the real builder is entered on an
+    all-None column and raises a bare `ValueError` that escapes the CLI's `except EngineError` entirely."""
+    _patch_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: _daily_dead_leg_panels())
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
+    canonical = tmp_path / "canonical"
+    (canonical / "BTC" / "EUR").mkdir(parents=True)
+    (canonical / "BTC" / "EUR" / "240.parquet").touch()
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(app, _soak_args(journal_dir, store_dir, canonical, json_out))
+
+    out = result.output
+    assert result.exit_code == 0, out
+    assert "REALIZED-SERIES WINDOW" in out
+    reasons = json.loads(json_out.read_text())["void_reasons"]
+    # The refusal NARROWS to the legs absent at every index. Naming the whole basket would contain
+    # 'XRP' too, so the priced leg's absence from the text is what tells the two apart.
+    assert any("null unavailable" in r and "'XRP'" in r and "'BTC'" not in r for r in reasons), reasons
 
 
 def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, monkeypatch):

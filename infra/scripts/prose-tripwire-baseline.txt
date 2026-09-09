@@ -1,13 +1,13 @@
 README.md:48: table-row 233 > 200	`--ship-logs`
-README.md:67: table-row 260 > 200	`--pairs <PAIR>`
-README.md:104: section 17221 > 2048	### `zcrypto engine`<a name="zcrypto-engine"></a>
+README.md:67: table-row 234 > 200	`--pairs <PAIR>`
+README.md:104: section 17731 > 2048	### `zcrypto engine`<a name="zcrypto-engine"></a>
 README.md:114: table-row 227 > 200	`seed`
 README.md:115: table-row 576 > 200	`run`
 README.md:116: table-row 338 > 200	`cycle [--at ISO_TS] [--replace]`
 README.md:117: table-row 417 > 200	`replay [--date YYYY-MM-DD] [--path fast\
 README.md:118: table-row 319 > 200	`report [--journal-dir <PATH>]`
 README.md:119: table-row 2106 > 200	`gate-export --textfile <PATH> [--journal-dir <PATH>] [--healthcheck-url <URL>] [--lag-fail-seconds <SECS>] [--cache <PATH>]`
-README.md:120: table-row 2915 > 200	`soak-check [--journal-dir <PATH>] [--store-dir <PATH>] [--canonical-dir <PATH>] [--registry <PATH>] [--fee-per-side <RATE>] [--band <FLOAT>] [--floor <N>] [--null windows\
+README.md:120: table-row 3425 > 200	`soak-check [--journal-dir <PATH>] [--store-dir <PATH>] [--canonical-dir <PATH>] [--registry <PATH>] [--fee-per-side <RATE>] [--band <FLOAT>] [--floor <N>] [--null windows\
 README.md:121: table-row 1152 > 200	`decompose [--journal-dir <PATH>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]`
 README.md:122: table-row 1387 > 200	`accum-replay [--journal-dir <PATH>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--minimums <PATH>] [--nav <EUR>]… [--json]`
 README.md:123: table-row 3636 > 200	`tracking-report [--journal-dir <PATH>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--nav <EUR>] [--gate-from YYYY-Www] [--minimums <PATH>] [--simulated-fills] [--ledger-export <PATH>] [--json]`
@@ -166,7 +166,7 @@ cli/data/sync.py:127: comment-block 7 > 4	"""What attests `set_name`: (every vou
 cli/data/sync.py:154: comment-block 6 > 4	"""Why `rel`'s content is unattested, or None when it is attested. Shared by both directions.
 cli/data/sync.py:170: comment-block 6 > 4	"""Re-hash what a push is about to transmit, and refuse content nothing attests.
 cli/data/sync.py:181: comment-block 5 > 4	# Fail closed, and MORE readily than the fetch side: this is the permanent direction. A
-cli/engine/command.py:1735: comment-mass 855 > 528	"""Close every open position and sell every non-EUR balance at market, account-wide.
+cli/engine/command.py:1738: comment-mass 855 > 528	"""Close every open position and sell every non-EUR balance at market, account-wide.
 cli/engine/cycle.py:1: comment-block 6 > 4	"""The shadow cycle core (spec 00041 SS the cycle core). Aware-UTC everywhere: naive datetimes are rejected at
 cli/engine/cycle.py:1: file-prose 32.9 > 20
 cli/engine/cycle.py:68: comment-block 9 > 4	# The engine's per-cycle hook (spec 00069 D5/T4): `run()` installs this UNCONDITIONALLY -- it no
@@ -315,15 +315,15 @@ cli/engine/node.py:410: comment-block 17 > 4	"""Every knob explicit (all five ar
 cli/engine/node.py:437: comment-block 15 > 4	"""The Kraken data client. The adapter loads the venue's instrument universe itself on connect;
 cli/engine/node.py:460: comment-block 5 > 4	"""The trade key and secret read from the environment, or None when either is absent or empty.
 cli/engine/node.py:486: comment-block 25 > 4	# Matched literally against the loaded instrument's `quote_currency.code`, which for
-cli/engine/soak.py:279: comment-block 7 > 4	"""Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
-cli/engine/soak.py:528: comment-block 7 > 4	"""Roll per-metric verdicts into a multiplicity-aware summary: judging N discriminating metrics at `band`
-cli/engine/soak.py:577: comment-block 6 > 4	"""Reconcile two per-metric null verdicts (spec 00061 D1) -- pure: two labels in, a `DualVerdict` out. An
-cli/engine/soak.py:749: comment-block 8 > 4	"""Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
-cli/engine/soak.py:944: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
-cli/engine/soak.py:973: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
-cli/engine/soak.py:1249: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
-cli/engine/soak.py:1379: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
-cli/engine/soak.py:1521: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
+cli/engine/soak.py:289: comment-block 7 > 4	"""Recompute a result's net P&L under the LIVE cost convention -- cost on `final_targets = mult x limited`
+cli/engine/soak.py:592: comment-block 7 > 4	"""Roll per-metric verdicts into a multiplicity-aware summary: judging N discriminating metrics at `band`
+cli/engine/soak.py:641: comment-block 6 > 4	"""Reconcile two per-metric null verdicts (spec 00061 D1) -- pure: two labels in, a `DualVerdict` out. An
+cli/engine/soak.py:813: comment-block 8 > 4	"""Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
+cli/engine/soak.py:1008: comment-block 5 > 4	"""Judge `live` against `null_series` under `null_mode` (spec 00061 D4), one call per gating call site in
+cli/engine/soak.py:1037: comment-block 9 > 4	"""Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`. Gates on the
+cli/engine/soak.py:1313: comment-block 9 > 4	"""Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
+cli/engine/soak.py:1465: comment-block 6 > 4	"""`asdict(verdict)`, except: a governor_engagement/cap_breach verdict whose "n/a" comes from an internals
+cli/engine/soak.py:1627: comment-block 8 > 4	"""Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
 cli/engine/venuestate.py:1: comment-block 26 > 4	"""The frozen venue-truth snapshot and its Cache reader (spec 00089 D3): the ONE module in this spec that
 cli/engine/venuestate.py:1: file-prose 33.3 > 20
 cli/engine/venuestate.py:44: comment-block 5 > 4	"""One symbol's venue-quoted order constraints, evidence -- not live-precision, hence float.
@@ -347,16 +347,15 @@ cli/liquidations/coinalyze.py:248: comment-block 5 > 4	# A malformed bucket (nul
 cli/liquidations/coinalyze.py:297: comment-block 5 > 4	# Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
 cli/liquidations/coinalyze.py:309: comment-block 7 > 4	# SIGTERM is pointed at the same handler Python installs for SIGINT by default
 cli/ohlc/reach.py:1: comment-block 7 > 4	"""REST reach-round: carry the canonical OHLC basket forward from Kraken's public OHLC endpoint.
-cli/panel/materialize.py:1: comment-block 17 > 4	"""Hour materializer + watermarked sweep for the 1s L2 panel (spec 00052 D3/D4/D5/D6).
-cli/panel/materialize.py:1: file-prose 36.3 > 20
-cli/panel/materialize.py:45: comment-block 7 > 4	# T0066 / spec 00052 D6 correction: an hour being "settled" (its canonical final is committed +
-cli/panel/materialize.py:58: comment-block 6 > 4	# 2 (T0104): `stale_seconds` joined PANEL_SCHEMA. A column addition is a GENERATION change under
-cli/panel/materialize.py:81: comment-block 28 > 4	"""Replay one canonical hour into the 1s-grid wide primitive panel, threading `OrderBook` state
-cli/panel/materialize.py:153: comment-block 9 > 4	"""Publish `frame` as `pair`'s hour, atomically, with a `.sha256` sidecar.
-cli/panel/materialize.py:187: comment-block 5 > 4	"""Persist `book`'s end-of-hour state as `<HH>.state.json`, next to the hour's parquet, for O(1)
-cli/panel/materialize.py:231: comment-block 5 > 4	"""The newest hour with an existing panel final for `pair`, or None if it holds none yet.
-cli/panel/materialize.py:262: comment-block 5 > 4	#: distinct pairs present in the archive whose quote has no entry in `NOTIONALS_BY_QUOTE`
-cli/panel/materialize.py:281: comment-block 21 > 4	"""Sweep canonical book hours (reconciled-first, spec 00052 D3) into the panel, per-pair
+cli/panel/materialize.py:1: comment-block 11 > 4	"""Hour materializer + watermarked sweep for the 1s L2 panel (spec 00052 D3/D4/D5/D6).
+cli/panel/materialize.py:1: file-prose 32.9 > 20
+cli/panel/materialize.py:39: comment-block 7 > 4	# T0066 / spec 00052 D6 correction: an hour being "settled" (its canonical final is committed +
+cli/panel/materialize.py:73: comment-block 26 > 4	"""Replay one canonical hour into the 1s-grid wide primitive panel, threading `OrderBook` state
+cli/panel/materialize.py:142: comment-block 9 > 4	"""Publish `frame` as `pair`'s hour, atomically, with a `.sha256` sidecar.
+cli/panel/materialize.py:176: comment-block 5 > 4	"""Persist `book`'s end-of-hour state as `<HH>.state.json`, next to the hour's parquet, for O(1)
+cli/panel/materialize.py:218: comment-block 5 > 4	"""The newest hour with an existing panel final for `pair`, or None if it holds none yet.
+cli/panel/materialize.py:246: comment-block 5 > 4	#: distinct pairs present in the archive whose quote has no entry in `NOTIONALS_BY_QUOTE`
+cli/panel/materialize.py:265: comment-block 19 > 4	"""Sweep canonical book hours (reconciled-first, spec 00052 D3) into the panel, per-pair
 cli/portfolio/crossfreq.py:1: comment-block 11 > 4	"""Cross-frequency combination primitives — 00038 §Construction items 1 and 4.
 cli/portfolio/crossfreq.py:1: file-prose 30.4 > 20
 cli/portfolio/crossfreq.py:22: comment-block 16 > 4	"""Hold each daily position across the intraday bars inside its (daily_ts[k], daily_ts[k+1]] interval.
@@ -391,13 +390,13 @@ cli/snapshot/register.py:15: comment-block 5 > 4	"""Deterministic given a fixed 
 cli/snapshot/register.py:31: comment-block 8 > 4	# The three ways a selected pair changes identity underneath us -- T0025's trigger, as a check the
 cli/snapshot/register.py:43: comment-block 7 > 4	"""Reasons this snapshot must stop a reference-data sweep, one string each; empty means clean.
 cli/snapshot/register.py:104: comment-block 5 > 4	# The ⏱ cost facts. Rendered as base tier + ladder depth rather than the full ladders: the
-cli/trades/backfill.py:1: comment-block 14 > 4	"""Orchestration for spec 00053 Task 4: heal the canonical trade stream.
-cli/trades/backfill.py:1: file-prose 24.3 > 20
-cli/trades/backfill.py:81: comment-block 5 > 4	# A book final's mere EXISTENCE proves only that at least one book event landed somewhere in the
-cli/trades/backfill.py:90: comment-block 6 > 4	"""True iff `path`'s book final spans `hour` end to end (see `_BOOK_WITNESS_SLACK`).
-cli/trades/backfill.py:125: comment-block 7 > 4	"""Heal the canonical trade stream to spec 00053's invariant: contiguous AND unique trade_id.
-cli/trades/backfill.py:145: comment-block 10 > 4	# The book sibling of a trades hour: the witness that the stream was CONNECTED while that hour's
-cli/trades/backfill.py:267: comment-block 5 > 4	# No trades final for a settled hour, and a book final that SPANS it: the signature of a
+cli/trades/backfill.py:1: comment-block 13 > 4	"""Orchestration for spec 00053 Task 4: heal the canonical trade stream.
+cli/trades/backfill.py:1: file-prose 21.2 > 20
+cli/trades/backfill.py:80: comment-block 5 > 4	# A book final's mere EXISTENCE proves only that at least one book event landed somewhere in the
+cli/trades/backfill.py:89: comment-block 6 > 4	"""True iff `path`'s book final spans `hour` end to end (see `_BOOK_WITNESS_SLACK`).
+cli/trades/backfill.py:124: comment-block 7 > 4	"""Heal the canonical trade stream to spec 00053's invariant: contiguous AND unique trade_id.
+cli/trades/backfill.py:144: comment-block 7 > 4	# The book sibling of a trades hour: the witness that the stream was CONNECTED while that hour's
+cli/trades/backfill.py:259: comment-block 5 > 4	# No trades final for a settled hour, and a book final that SPANS it: the signature of a
 cli/universe/rules.py:9: comment-block 7 > 4	# effective-spread bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`, so this and the volume floor
 cli/universe/rules.py:55: comment-block 5 > 4	"""Apply the master plan §3 mechanical selection rule to each `cli.snapshot` `PairSnapshot`.
 docs/iterations-history-phase6.md:801: changelog-entry 7 > 5	## 2026-09-06 — T0173 resolved: the operator instructions the topology doc was holding, and `fetch_public`'s three refusals
@@ -430,12 +429,12 @@ docs/reference/capture-era-data-hygiene-map.md:34: table-row 3170 > 200	**2026-0
 docs/reference/captured-spread-calibration.md:28: section 3080 > 2048	## Provenance
 docs/reference/captured-spread-calibration.md:37: section 2757 > 2048	## Two things to know before you quote a spread number
 docs/reference/captured-spread-calibration.md:53: section 2339 > 2048	## Caveats
-docs/reference/data-catalog-full.md:9: section 3301 > 2048	### `ohlc-full`
-docs/reference/data-catalog-full.md:66: section 3871 > 2048	### `ohlc-reach`
-docs/reference/data-catalog-full.md:83: section 4143 > 2048	### `derivatives-oi`
-docs/reference/data-catalog-full.md:115: section 2201 > 2048	### Canonical trades — healed (`capture-reconciled/…/trades/`, since 2026-07-08; daily)
-docs/reference/data-catalog-full.md:123: section 3095 > 2048	### L2 primitive panel (`l2-panel/`, since 2026-07-08 capture start; accruing hourly)
-docs/reference/data-catalog-full.md:131: section 3001 > 2048	### Tape-bars — 15m OHLCV from the captured trade tape (`tape-bars/`, since 2026-07-08; daily finals)
+docs/reference/data-catalog-full.md:9: section 3550 > 2048	### `ohlc-full`
+docs/reference/data-catalog-full.md:68: section 3871 > 2048	### `ohlc-reach`
+docs/reference/data-catalog-full.md:85: section 4143 > 2048	### `derivatives-oi`
+docs/reference/data-catalog-full.md:117: section 2201 > 2048	### Canonical trades — healed (`capture-reconciled/…/trades/`, since 2026-07-08; daily)
+docs/reference/data-catalog-full.md:125: section 3095 > 2048	### L2 primitive panel (`l2-panel/`, since 2026-07-08 capture start; accruing hourly)
+docs/reference/data-catalog-full.md:133: section 3001 > 2048	### Tape-bars — 15m OHLCV from the captured trade tape (`tape-bars/`, since 2026-07-08; daily finals)
 docs/reference/data-catalog.md:26: section 6111 > 2048	## Dataset
 docs/reference/docstring-pass-method.md:13: section 2722 > 2048	## What the pass pays on
 docs/reference/docstring-pass-method.md:38: section 2752 > 2048	## What the record does support
@@ -494,15 +493,15 @@ infra/ansible/roles/access_ops/tasks/main.yml:103: comment-block 10 > 4	# Render
 infra/ansible/roles/base/tasks/main.yml:1: comment-block 8 > 4	# Fleet policy, pinned in config (spec 00050, spec 00051, .claude/rules/fleet-deploys.md): no two
 infra/ansible/roles/capture/files/zcrypto-clock-offset.sh:2: comment-block 7 > 4	# Installed by the `capture` role at /usr/local/sbin/zcrypto-clock-offset, so a hand-edit there is
 infra/ansible/roles/capture/tasks/main.yml:2: comment-block 5 > 4	# Deploys the capture daemon: renders the compose file and the systemd unit, and lets the unit's own
-infra/ansible/roles/capture/tasks/main.yml:199: comment-block 8 > 4	# The CLI's own Loki push credentials for the CAPTURE container (spec 00068 D5), distinct from the
-infra/ansible/roles/capture/tasks/main.yml:251: comment-block 5 > 4	# The absolute path to rrsync keeps the forced command independent of the login shell's PATH.
-infra/ansible/roles/capture/tasks/main.yml:263: comment-block 9 > 4	# Segment retention (spec 00050 D8, T0032): a daily timer bounds the host's local spool. The NAS
-infra/ansible/roles/capture/tasks/main.yml:342: comment-block 5 > 4	# The three tasks above CREATE this unit and write nothing under --check, so systemd cannot find
-infra/ansible/roles/capture/tasks/main.yml:387: comment-block 5 > 4	# The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
-infra/ansible/roles/capture/tasks/main.yml:397: comment-block 6 > 4	# T0110: the gate above skips the config copy on any converge that omits the digest -- by design,
-infra/ansible/roles/capture/tasks/main.yml:445: comment-block 6 > 4	# Alloy mounts the host root read-only for free-disk metrics, so a key-owning user's ~/.ssh
-infra/ansible/roles/capture/tasks/main.yml:469: comment-block 5 > 4	# The host's persistent journal files are group-readable only, and Alloy reads them through its
-infra/ansible/roles/capture/tasks/main.yml:507: comment-block 6 > 4	# Plain `copy`, not `template`: this file is entirely static, and its own header says why
+infra/ansible/roles/capture/tasks/main.yml:208: comment-block 8 > 4	# The CLI's own Loki push credentials for the CAPTURE container (spec 00068 D5), distinct from the
+infra/ansible/roles/capture/tasks/main.yml:260: comment-block 5 > 4	# The absolute path to rrsync keeps the forced command independent of the login shell's PATH.
+infra/ansible/roles/capture/tasks/main.yml:272: comment-block 9 > 4	# Segment retention (spec 00050 D8, T0032): a daily timer bounds the host's local spool. The NAS
+infra/ansible/roles/capture/tasks/main.yml:351: comment-block 5 > 4	# The three tasks above CREATE this unit and write nothing under --check, so systemd cannot find
+infra/ansible/roles/capture/tasks/main.yml:396: comment-block 5 > 4	# The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
+infra/ansible/roles/capture/tasks/main.yml:406: comment-block 6 > 4	# T0110: the gate above skips the config copy on any converge that omits the digest -- by design,
+infra/ansible/roles/capture/tasks/main.yml:454: comment-block 6 > 4	# Alloy mounts the host root read-only for free-disk metrics, so a key-owning user's ~/.ssh
+infra/ansible/roles/capture/tasks/main.yml:478: comment-block 5 > 4	# The host's persistent journal files are group-readable only, and Alloy reads them through its
+infra/ansible/roles/capture/tasks/main.yml:516: comment-block 6 > 4	# Plain `copy`, not `template`: this file is entirely static, and its own header says why
 infra/ansible/roles/engine/tasks/main.yml:6: comment-block 8 > 4	# The §8-hardening gate asserts before anything else: the probes are read-only and run with
 infra/ansible/roles/engine/tasks/main.yml:22: comment-block 7 > 4	# No pipe, deliberately. As `nft list ruleset | grep -q .` the rc was GREP's alone, so an `nft`
 infra/ansible/roles/engine/tasks/main.yml:98: comment-block 6 > 4	# `prohibit-password` is accepted alongside `no`: the gate's substance is that no password-
@@ -1082,13 +1081,13 @@ tests/test_engine_node.py:804: comment-block 5 > 4	"""No file under cli/ carries
 tests/test_engine_node.py:822: comment-block 8 > 4	"""The observer's OWN id is the tagless string the library reserves: `StrategyId` requires
 tests/test_engine_node.py:1378: comment-block 5 > 4	# Nothing in the node configuration selects instruments: the Kraken data client loads the venue's
 tests/test_engine_node.py:1662: comment-block 6 > 4	# A native abort prints a stack only while faulthandler is armed, and nothing sets
-tests/test_engine_soak.py:294: comment-block 5 > 4	"""All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
-tests/test_engine_soak.py:2174: comment-block 5 > 4	"""A CycleRecord whose 240 SnapshotEntry hash-verifies against (h4_ts, closes) -- the data
-tests/test_engine_soak.py:2410: comment-block 5 > 4	"""A clean segment whose records flip from schema 1 (base-keyed "BTC") to schema 2 (symbol-keyed
-tests/test_engine_soak.py:2503: comment-block 5 > 4	"""The null and the realized series are judged metric against metric and `structural_metrics`
-tests/test_engine_soak_command.py:40: comment-block 5 > 4	"""3 contiguous cycles at 00:00, 04:00, 08:00 on 2026-07-16 (single asset BTC, final_targets
-tests/test_engine_soak_command.py:536: comment-block 5 > 4	"""5 contiguous cycles from 2026-07-16 00:00 whose journaled records flip from schema 1
-tests/test_engine_soak_command.py:588: comment-block 6 > 4	"""A soak report over a window that straddles the deploy runs to a rendered report instead of
+tests/test_engine_soak.py:295: comment-block 5 > 4	"""All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
+tests/test_engine_soak.py:2465: comment-block 5 > 4	"""A CycleRecord whose 240 SnapshotEntry hash-verifies against (h4_ts, closes) -- the data
+tests/test_engine_soak.py:2701: comment-block 5 > 4	"""A clean segment whose records flip from schema 1 (base-keyed "BTC") to schema 2 (symbol-keyed
+tests/test_engine_soak.py:2794: comment-block 5 > 4	"""The null and the realized series are judged metric against metric and `structural_metrics`
+tests/test_engine_soak_command.py:43: comment-block 5 > 4	"""3 contiguous cycles at 00:00, 04:00, 08:00 on 2026-07-16 (single asset BTC, final_targets
+tests/test_engine_soak_command.py:741: comment-block 5 > 4	"""5 contiguous cycles from 2026-07-16 00:00 whose journaled records flip from schema 1
+tests/test_engine_soak_command.py:793: comment-block 6 > 4	"""A soak report over a window that straddles the deploy runs to a rendered report instead of
 tests/test_engine_stub_fidelity.py:1: comment-block 40 > 4	"""Every test double in the engine suite, classified: what it stands in for, and how the standing-in
 tests/test_engine_stub_fidelity.py:1: file-prose 30.5 > 20
 tests/test_engine_stub_fidelity.py:50: comment-block 8 > 4	# What the walk must still find per module, so a walker that stops seeing a whole SHAPE of double

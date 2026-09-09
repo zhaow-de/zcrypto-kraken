@@ -1036,7 +1036,10 @@ def soak_check(
     canonical_dir: Path = typer.Option(
         CANONICAL_DIR,
         "--canonical-dir",
-        help="Frozen canonical dataset root used to rebuild the backtest null; absent skips the null and any verdict.",
+        help=(
+            "Frozen canonical dataset root used to rebuild the backtest null, which is then judged over that dataset's "
+            "complete-basket era only; absent skips the null and any verdict."
+        ),
     ),
     registry: Path = typer.Option(
         Path("docs/reference/trial-registry.jsonl"),
