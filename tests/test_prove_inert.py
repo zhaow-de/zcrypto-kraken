@@ -395,28 +395,33 @@ def test_a_replay_closure_member_is_refused_rather_than_certified() -> None:
 
 
 def test_each_spelling_of_a_closure_member_is_refused_never_certified(tmp_path: pathlib.Path) -> None:
-    """The list, not a universal: membership folds `./`, `//` and an interior `..`; the two forms it does
-    not fold -- absolute, and a leading `../` -- `git show` refuses at the revision. The `./a/../b` row is
-    the one that certified INERT before the normalisation, git resolving that pathspec against cwd where
-    `PurePosixPath` left the `..` standing. The pair below is the true positive: the tool can still say 0."""
+    """The list with the arm each row must refuse THROUGH, so a refusal for the wrong reason is not green.
+    Membership folds `./`, `//` and an interior `..`; the two it does not fold reach `_at_revision`, which
+    holds at the toplevel only -- `git show` resolves `../` against cwd -- so `main` refuses any other cwd,
+    asserted below. `./a/../b` certified INERT before the normalisation; the pair below is the true positive."""
     closure = pi.replay_closure()
     assert not isinstance(closure, str), closure
     relative, _ = closure
     assert "cli/engine/flatten.py" in relative, "the member must be in the closure, or this proves nothing"
 
     spellings = [
-        "cli/engine/flatten.py",
-        "./cli/engine/flatten.py",
-        "cli//engine/flatten.py",
-        "cli/engine/../engine/flatten.py",
-        "./cli/engine/../engine/flatten.py",
-        str(_ROOT / "cli/engine/flatten.py"),
-        f"../{_ROOT.name}/cli/engine/flatten.py",
+        ("cli/engine/flatten.py", "digests this file"),
+        ("./cli/engine/flatten.py", "digests this file"),
+        ("cli//engine/flatten.py", "digests this file"),
+        ("cli/engine/../engine/flatten.py", "digests this file"),
+        ("./cli/engine/../engine/flatten.py", "digests this file"),
+        (str(_ROOT / "cli/engine/flatten.py"), "cannot read"),
+        (f"../{_ROOT.name}/cli/engine/flatten.py", "cannot read"),
     ]
-    for spelling in spellings:
+    for spelling, arm in spellings:
         done = _cli(_ROOT, "HEAD", spelling)
         assert done.returncode == pi.EXIT_REFUSED, f"{spelling}: {done.stdout}{done.stderr}"
         assert "INERT" not in done.stdout, f"{spelling} certified a closure member: {done.stdout}"
+        assert arm in done.stdout, f"{spelling} refused through the wrong arm: {done.stdout}"
+
+    off_root = _cli(_ROOT / "cli", "HEAD", "engine/flatten.py")
+    assert off_root.returncode == pi.EXIT_USAGE, off_root.stdout + off_root.stderr
+    assert "run from the repo root" in off_root.stderr, off_root.stderr
 
     repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
     (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')

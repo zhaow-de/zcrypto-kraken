@@ -206,9 +206,9 @@ def replay_closure() -> tuple[frozenset[str], pathlib.Path] | str:
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
     try:
-        # Repo-relative, so another checkout of the same tree matches, and normalised (`./`, `//`, interior
-        # `..`) -- STRICTER membership, the opposite direction from a forgiving `_at_revision`. Absolute and
-        # leading-`../` it does not fold; `_at_revision` refuses those, `git show` exiting 128 on each.
+        # Repo-relative and normalised (`./`, `//`, interior `..`) -- STRICTER membership, the opposite
+        # direction from a forgiving `_at_revision`. Absolute and leading-`../` it does not fold; both exit
+        # 128 in `_at_revision`, but only at the toplevel, which is why `main` refuses any other cwd.
         relative = frozenset(str(path.relative_to(_REPO_ROOT)) for path in _replay_code_paths())
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
@@ -261,6 +261,11 @@ def main(argv: list[str]) -> int:
         return EXIT_USAGE
     base, paths = argv[1], argv[2:]
     root = _repo_root()
+    # Lexical membership, `git show`'s cwd and `root / path` agree only here, and exit 0 is a licence.
+    if pathlib.Path.cwd() != root:
+        print(f"prove-inert: run from the repo root ({root}), not {pathlib.Path.cwd()}\n", file=sys.stderr)
+        print(__doc__, file=sys.stderr)
+        return EXIT_USAGE
     output_names, unscanned = output_names_in(root)
     print(f"after-side tree: {root}")
     if unscanned:
