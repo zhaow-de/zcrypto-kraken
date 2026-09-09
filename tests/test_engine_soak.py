@@ -1153,6 +1153,7 @@ def _mk_internals(cycle_ts, mult_by_cycle=None, breach_by_cycle=None):
         mult_by_cycle=mult_by_cycle if mult_by_cycle is not None else dict.fromkeys(cycle_ts, 1.0),
         breach_by_cycle=breach_by_cycle if breach_by_cycle is not None else dict.fromkeys(cycle_ts, False),
         identity_ok=True,
+        identity_unmeasurable=0,
         identity_detail="",
         cap_consistent=True,
         cap_detail="",
@@ -1499,6 +1500,7 @@ def test_analyze_soak_guards_against_missing_internals_key():
         mult_by_cycle=partial_mult,
         breach_by_cycle=partial_breach,
         identity_ok=True,
+        identity_unmeasurable=0,
         identity_detail="",
         cap_consistent=True,
         cap_detail="",
@@ -1865,6 +1867,7 @@ def test_render_report_vocabulary_lock_and_banner_hold():
         mult_by_cycle=dict.fromkeys(realized.cycle_ts, 1.0),
         breach_by_cycle=dict.fromkeys(realized.cycle_ts, False),
         identity_ok=True,
+        identity_unmeasurable=0,
         identity_detail="identity check passed at cycle=2026-07-16T00:00:00+00:00",
         cap_consistent=True,
         cap_detail="cap check passed: completed-bar breach count matches",
@@ -1938,6 +1941,7 @@ def test_render_report_scrubs_internals_reason_json_stays_raw():
         mult_by_cycle={},
         breach_by_cycle={},
         identity_ok=False,
+        identity_unmeasurable=0,
         identity_detail="",
         cap_consistent=False,
         cap_detail="",
@@ -2694,6 +2698,57 @@ def test_realized_internals_shift_breaks_identity(monkeypatch):
     ri = realized_internals([shifted], latest, reader)
     assert ri.identity_ok is False
     assert ri.identity_detail  # non-empty, names the worst diff
+
+
+def test_realized_internals_refuses_an_identity_it_could_not_measure(monkeypatch):
+    """One journaled target is not a number and nothing else disagrees: the pair is counted
+    unmeasurable, never compared, and the identity refuses rather than holding -- over a window where
+    that is the only pair, over one where a measured comparison stands beside it, and over an
+    infinite target, which is unmeasurable for the same reason a NaN one is."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 4
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0 + k for k in range(n + 1)]
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.03, 0.0]
+    mult = [1.0] * (n + 1)
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+    nan_rec = _mk_scored_record(h4_ts[1] + timedelta(hours=4), {"BTC": float("nan")})
+
+    ri = realized_internals([nan_rec], latest, reader)
+    assert ri.available is True and ri.reason == ""
+    assert ri.identity_ok is False, ri.identity_detail
+    assert ri.identity_unmeasurable == 1
+    assert "unmeasurable" in ri.identity_detail and "BTC" in ri.identity_detail
+    # Both operands, since the arm never says which one went non-finite (spec 00113 D5).
+    assert "journaled=nan" in ri.identity_detail and "rebuilt=" in ri.identity_detail
+
+    # `compared == 0` holds above too, so that window alone cannot tell the arm from the narrower
+    # `if unmeasurable and not compared:`. Here one comparison IS made and agrees, and the refusal
+    # is spec 00113 D3's "any" rather than "nothing was measured". Two unmeasurable pairs, because a
+    # count every window puts at 1 is satisfied by an assignment, and "at/after" by an overwrite.
+    agreeing = _mk_scored_record(h4_ts[3] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][3]})
+    later_nan = _mk_scored_record(h4_ts[2] + timedelta(hours=4), {"BTC": float("nan")})
+    mixed = realized_internals([nan_rec, agreeing, later_nan], latest, reader)
+    assert mixed.identity_ok is False, mixed.identity_detail
+    assert mixed.identity_unmeasurable == 2
+    assert "at n/a" not in mixed.identity_detail  # the measured pair moved `worst_detail` (spec D5)
+    # "at/after" is the FIRST pair the loop could not compare, so the second one's stamp is absent.
+    assert f"cycle={nan_rec.cycle_ts!r} asset='BTC'" in mixed.identity_detail
+    assert f"cycle={later_nan.cycle_ts!r}" not in mixed.identity_detail
+
+    # Keyed on the diff's finiteness, never on NaN (spec 00113 D2): an infinite journaled target
+    # against a finite rebuilt row is unmeasurable, where `math.isnan(diff)` would count it compared
+    # and report a mismatch. `identity_ok` is False under the defect too, so it cannot carry this.
+    inf_rec = _mk_scored_record(h4_ts[1] + timedelta(hours=4), {"BTC": float("inf")})
+    infinite = realized_internals([inf_rec], latest, reader)
+    assert infinite.identity_unmeasurable == 1
+    assert infinite.identity_ok is False, infinite.identity_detail
+    # The `continue` kept an unmeasurable pair out of `worst_diff`: the docstring's "never compared".
+    # Without it this window's detail reads `worst |diff|=inf`, a magnitude nothing measured.
+    assert infinite.identity_detail.startswith("worst |diff|=0.0 at n/a")
 
 
 def test_realized_internals_missing_stamp_raises(monkeypatch):

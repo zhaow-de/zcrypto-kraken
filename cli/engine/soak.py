@@ -760,7 +760,8 @@ class RealizedInternals:
     reason: str  # why unavailable ("" when available)
     mult_by_cycle: dict[datetime, float]
     breach_by_cycle: dict[datetime, bool]
-    identity_ok: bool | None  # None = no journaled target was compared, so the identity went unmeasured
+    identity_ok: bool | None  # None = nothing compared and none unmeasurable; any unmeasurable pair answers False (spec 00113 D4)
+    identity_unmeasurable: int  # pairs whose |diff| was not finite: counted, never compared (spec 00113 D2)
     identity_detail: str
     cap_consistent: bool
     cap_detail: str
@@ -817,9 +818,9 @@ def realized_internals(
     h4_ts[k] == T - 4h, from a `{ts: index}` dict and NEVER by offset arithmetic; a missing stamp or an asset
     outside the rebuilt universe raises `SoakError` as a genuine inconsistency, while a validate/assemble/build
     failing on `EngineError`/`PortfolioError` returns `available=False` and leaves the void decision to the caller.
-    `identity_ok` is spec 00059 D2's window-wide check that the rebuilt row equals the journaled `final_targets` to
-    `tol`. Breach is read from the pre-cap sleeves -- `final_targets = mult * limited` is in-cap by construction
-    and could never show one -- and stops at the per-asset caps, mirroring the builder's own `cap_breach_bars`."""
+    `identity_ok` is spec 00059 D2's window-wide check that the rebuilt row equals the journaled `final_targets` to `tol`, and
+    refuses on a non-finite `diff` (spec 00113 D2). Breach is read from the pre-cap sleeves -- `final_targets = mult * limited` is
+    in-cap by construction and never shows one -- and stops at the per-asset caps, mirroring the builder's own `cap_breach_bars`."""
     try:
         validate_record(latest_record)
         daily_ts, daily_prices, h4_ts, h4_prices = _assemble_latest_grids(latest_record, snapshot_reader)
@@ -831,6 +832,7 @@ def realized_internals(
             mult_by_cycle={},
             breach_by_cycle={},
             identity_ok=False,
+            identity_unmeasurable=0,
             identity_detail="",
             cap_consistent=False,
             cap_detail="",
@@ -852,6 +854,8 @@ def realized_internals(
     breach_by_cycle: dict[datetime, bool] = {}
     identity_ok: bool | None = True
     compared = 0
+    unmeasurable = 0
+    unmeasurable_detail = ""
     worst_diff = 0.0
     worst_detail = "n/a"
     for rec in scored_records:
@@ -870,18 +874,33 @@ def realized_internals(
         for a, value in rec.final_targets.items():
             if a not in row:
                 raise SoakError(f"cycle {t!r}: asset {a!r} not in the rebuilt universe {sorted(row)}")
-            compared += 1
             diff = abs(row[a] - value)
+            # Keyed on the diff's finiteness, never on which operand produced it (spec 00113 D2):
+            # `nan` and two MATCHING infinities are both False against the bars below, so counting
+            # either as compared reports the identity holding over a comparison nobody could make.
+            if not math.isfinite(diff):
+                unmeasurable += 1
+                if not unmeasurable_detail:
+                    # Both operands, because this arm never decides which one went non-finite and the
+                    # rebuilt side is not provably finite either (spec 00113 D1, D5).
+                    unmeasurable_detail = f"cycle={t!r} asset={a!r} journaled={value!r} rebuilt={row[a]!r}"
+                continue
+            compared += 1
             if diff >= worst_diff:
                 worst_diff = diff
                 worst_detail = f"cycle={t!r} asset={a!r}"
             if diff > tol:
                 identity_ok = False
 
-    # Nothing compared: `True` here would report agreement never measured.
-    if not compared:
-        identity_ok = None
     identity_detail = f"worst |diff|={worst_diff!r} at {worst_detail}"
+    # Order is load-bearing (spec 00113 D4): an all-NaN window has `compared == 0` as well, and
+    # reaching the `None` arm first would report it unmeasured -- which appends no void reason.
+    if unmeasurable:
+        identity_ok = False
+        identity_detail += f"; {unmeasurable} unmeasurable at/after {unmeasurable_detail}"
+    elif not compared:
+        # Nothing compared: `True` here would report agreement never measured.
+        identity_ok = None
 
     completed_breaches = sum(1 for b in breach[: result.n_periods] if b)
     cap_consistent = completed_breaches == result.cap_breach_bars
@@ -893,6 +912,7 @@ def realized_internals(
         mult_by_cycle=mult_by_cycle,
         breach_by_cycle=breach_by_cycle,
         identity_ok=identity_ok,
+        identity_unmeasurable=unmeasurable,
         identity_detail=identity_detail,
         cap_consistent=cap_consistent,
         cap_detail=cap_detail,
