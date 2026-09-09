@@ -213,9 +213,10 @@ def test_the_listing_is_keyed_by_symbol_and_a_missing_constraint_aborts_the_pair
 
 @pytest.mark.parametrize("field", ["size_increment", "price_increment"])
 def test_a_zero_quantization_step_aborts_rather_than_dividing_by_it(field):
-    """A step of zero passes an is-it-absent check and then divides. `_floor_to_step` raises a bare
-    ValueError on it, which nothing between here and the operator catches -- so the exit-code
-    contract would arrive as a traceback with no journal."""
+    """A step of zero would reach `_floor_to_step` and raise a bare ValueError nothing here catches --
+    a traceback where the exit-code contract promises a named unreachable. `_as_step` refuses it
+    first: `constraints_for` raises `FlattenUnreachable` naming "not a positive step" before any
+    division is attempted."""
     rows = [_Instrument("BTC/EUR")]
     setattr(rows[0], field, 0.0)
     client = FakeClient(instruments=rows)
