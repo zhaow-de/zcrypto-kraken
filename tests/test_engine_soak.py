@@ -290,10 +290,10 @@ def test_chain_consistent_detects_gap():
     assert _chain_consistent(scored_ts, closes_by_asset) is False
 
 
-def test_chain_consistent_reports_nothing_compared_without_a_consecutive_pair():
-    """A window of one scored cycle, or of none, forms no consecutive pair, so the chain identity is
-    UNMEASURED rather than held -- `True` there reports forward-join integrity nobody checked. The
-    measured controls are `test_chain_consistent_detects_gap` and, for the True path,
+def test_chain_consistent_reports_nothing_compared_rather_than_a_held_chain():
+    """A window that compares no consecutive pair leaves the chain identity UNMEASURED rather than
+    held -- `True` there reports forward-join integrity nobody checked. The measured controls are
+    `test_chain_consistent_detects_gap` and, for the True path,
     `test_realized_series_forward_join_and_chain_ok`."""
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes_by_asset = {"BTC": {d: 100.0, d + timedelta(hours=4): 105.0}}
@@ -1454,6 +1454,19 @@ def test_render_report_store_bound_window_warns_naming_both_bounds(tmp_path):
     low = text.lower()
     for w in FORBIDDEN:
         assert w not in low
+
+
+def test_render_report_calls_an_unmeasured_chain_skipped_and_leaves_the_other_two_alone():
+    """`None` renders as `skipped`, the word the SELF-TESTS block below already uses for it, while
+    `True` and `False` stay byte-identical -- a bare `None` reads as "no breaks found"."""
+    rs = _mk_realized([{"BTC": 0.1}, {"BTC": 0.1}], [0.01, 0.01])
+    rendered = {}
+    for flag in (True, False, None):
+        text = render_report(None, replace(rs, chain_ok=flag), None, None, void_reasons=["short window"], band=0.90)
+        rendered[flag] = next(line for line in text.splitlines() if "chain_ok" in line)
+    assert rendered[True] == "  chain_ok       : True"
+    assert rendered[False] == "  chain_ok       : False"
+    assert rendered[None] == "  chain_ok       : skipped"
 
 
 def test_render_report_store_bound_warning_precedes_the_verdict_table():

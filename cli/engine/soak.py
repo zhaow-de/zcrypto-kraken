@@ -96,7 +96,7 @@ class RealizedSeries:
     net: list[float]
     dropped_tail: int
     assets: tuple[str, ...]
-    chain_ok: bool | None  # None = no consecutive scored pair to chain, so the identity went unmeasured
+    chain_ok: bool | None  # None = no consecutive scored pair was compared, so the identity went unmeasured
     implausible: bool
     window_bound: str
     store_last_ts: datetime | None
@@ -619,7 +619,7 @@ class SelfTestReport:
 
     instrument_ok: bool | None  # None = canonical absent (skipped, NOT a fail)
     identity_ok: bool | None  # None = no cycle could be replayed (e.g. snapshots absent)
-    reconcile_ok: bool | None  # None = the realized half had no consecutive pair to chain
+    reconcile_ok: bool | None  # None = the realized half compared no consecutive pair
     messages: tuple[str, ...]
 
     @property
@@ -884,7 +884,7 @@ def self_tests(
 
     reconcile_ok = null.reconcile_ok and realized.chain_ok
     if reconcile_ok is None:
-        messages.append("reconcile: skipped, no consecutive scored cycle pair to chain")
+        messages.append("reconcile: skipped, no consecutive scored pair was compared")
     else:
         messages.append(f"reconcile: {'ok' if reconcile_ok else 'FAILED'}")
 
@@ -1281,7 +1281,7 @@ def render_report(
         lines.append(f"  L (scored bars): {len(realized.net)}")
         lines.append(f"  span           : {span_days:.2f} days")
         lines.append(f"  dropped_tail   : {realized.dropped_tail}")
-        lines.append(f"  chain_ok       : {realized.chain_ok}")
+        lines.append(f"  chain_ok       : {'skipped' if realized.chain_ok is None else realized.chain_ok}")
     else:
         lines.append("  no realized series available")
     # Rendered whenever a series exists at all, the zero-scored-bars case included: a window the store closed
