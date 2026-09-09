@@ -48,7 +48,7 @@ def _blocks() -> list[Block]:
 
 
 def _trade_block(ids: list[int] | None = None) -> Block:
-    """A trades-kind block, mirroring `_block` above but for a non-reconciler (backfill) caller."""
+    """Mirrors `_block` for a caller that is not the reconciler: backfill, which mints trades."""
     ids = ids if ids is not None else [1]
     n = len(ids)
     frame = pl.DataFrame(
