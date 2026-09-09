@@ -1,7 +1,7 @@
 """The red button's fake-client suite (spec 00106 D8): a read that needs a field is parsed by
 named fields, and one the venue stopped sending aborts rather than being guessed through --
-`read_open_orders` needs none, by design. The fake records every call in order, so the assertions
-here are about what reached the venue, never only about a return value."""
+`read_open_orders` and `read_listing` need none, by design. The fake records every call in order,
+so the assertions here are about what reached the venue, never only about a return value."""
 
 from __future__ import annotations
 
@@ -1286,8 +1286,6 @@ def test_a_rejected_sub_ordermin_closer_is_labelled_from_the_arithmetic_not_from
 
 
 def test_a_failing_cancel_does_not_stop_the_closes():
-    """The cancel's failure is recorded (`cancel_ok=False`, `cancel_error` set) and the sweep runs
-    on regardless."""
     client = _sweep_client(
         orders=[[]],
         positions=[[_Position("BTC/EUR", "LONG", 0.5)], [_Position("BTC/EUR", "LONG", 0.5)], [], []],
@@ -1641,7 +1639,7 @@ def test_every_refusal_exits_one_with_no_request_and_no_write(tmp_path, setup, r
 @pytest.mark.parametrize("execute", [True, False])
 def test_a_venue_that_is_not_online_exits_three_with_nothing_sent(tmp_path, execute):
     """The two invocations differ in exactly one way this fixture can see: the dry run leaves no artifact, which is
-    `_dry_exit`'s whole contract and is reachable from no other fixture."""
+    `_dry_exit`'s whole contract."""
     _armed(tmp_path)
     client = _flat_client()
     assert _run(client, tmp_path, execute=execute, venue=_offline) == 3
@@ -1939,8 +1937,8 @@ def test_the_residuals_are_judged_against_the_final_snapshot_and_never_the_pre_s
 def test_the_journal_payload_is_json_serializable_without_the_dump_s_str_fallback(tmp_path, monkeypatch):
     """`write_journal` dumps with `default=str`, a net that would quietly stringify a value nobody converted;
     round-tripping the REAL payload strictly pins the conversions the record depends on -- `_journalled`'s
-    `str()` on `AccountType` and `submit_leg`'s on the instrument id, the order side, the order type and the
-    time in force, each of which a bare `json.dumps` refuses. A margin leg is the fixture because it is the
+    `str()` on `AccountType` and `submit_leg`'s on the order side, the order type, the time in force and the
+    quantity, each of which a bare `json.dumps` refuses. A margin leg is the fixture because it is the
     only path carrying both the enum and the `leverage` int."""
     _armed(tmp_path)
     row = [_Position("BTC/EUR", "LONG", 0.5)]
