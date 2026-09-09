@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # The zero-price refusal's comment inverts the consequence it exists to justify
@@ -22,8 +22,14 @@ The tree also contradicts itself as of the `test_engine_flatten.py` docstring pa
 - Two independent readers reached it from different directions — the scoped read of the fix commit, which drove the carried-zero case, and the whole-branch read, which found the comment only because it was holding the implementation while reading the corrected test docstring.
 - **Not folded into the branch that found it.** `cli/engine/flatten.py` is inside `replay_fingerprint`'s import closure, and that branch is a test-docstring pass whose whole property is that it changes no file the fingerprint reads; `branch-workflow.md` also puts one component in one PR. This is ordinary queued work needing only its own branch, not a deferral on a precondition — `gate_cache.load_cache` rejects the cache once on a `replay_fp` mismatch and re-caches, so the cost is a single cold replay on the next gate run however many closure files changed, and it is shared with any other `cli/` change landing in the same window.
 
-## Suggested next steps
+## Resolution
 
-- **Rewrite the comment to the measured consequence** — a carried zero sends legs the sizing would have skipped — keeping the refusal itself untouched. It is prose, not behaviour: the `raise` is correct and stays.
-- **Check the sibling prose in the same function while it is open**: `_required` and `_as_float`'s refusal reasons are cited in the same sentence, and only the zero-price consequence is known wrong. Read them against the bodies rather than assuming the error is confined.
-- **Do not add a test for the comment.** What is wrong is a sentence; the behaviour it describes is already covered where the carried-zero case was driven. A guard here would pin prose, not code.
+**Resolved by PR #478** (`docs/t0191-flatten-zero-price-comment`, two commits), which rewrote the comment and left the code alone.
+
+- **The comment states what a carried zero does.** `_tick_floored` maps `0.0` to `None` before any notional exists, so `_size` passes `costmin=0.0` and the notional floor is DISABLED rather than tripped. A leg the notional floor listed `dust_below_venue_minimum` at a real price is then sized on `ordermin` alone and SENT; a balance under `ordermin` is dust at a real price and dust unpriced, so the send does not flip for it. Both arms are pinned already: `tests/test_engine_flatten.py:544` and `:562-563`.
+- **The refusal's real justification replaced the phantom one.** Refusing changes no send — the caller catches `FlattenUnreachable`, logs at ERROR and sizes the leg on the quantity floor alone, which is byte-identical to the carried-zero path. What it buys is a named, logged unreachable in place of a silently unpriced leg. That is what a reader weighing whether the refusal can be relaxed now weighs.
+- **The sibling prose was read against the bodies, and one was also wrong.** `_as_float` was described as rejecting "only the non-finite"; it rejects a non-number first, since `float(value)` raises before the finiteness test. Corrected in the same sentence. `_required`'s "rejects only `None`" is accurate as written and was left.
+- **`_tick_floored`'s docstring is NOT swept, and that is a decision rather than an omission.** It makes the same notional-cascade claim, but about its OWN counterfactual return — "left at 0.0 every notional reads as nothing" — an antecedent it controls, so the claim holds: `size_order(0.001, 0.0, ordermin=0.0001, costmin=0.45, ...)` is `BelowMinimum('notional 0.0 ... is below costmin 0.45')`. `read_book_price` had inherited the sentence into a place where the antecedent is false. The sentence was true where it was written and false where it was copied. The Fable read adds the bound worth keeping: that docstring's "the balance is judged dust" holds for `COSTMIN` pairs only — measured dust on DOT/EUR and ETH/BTC, sent on a pair carrying no committed costmin, where `classify_balance` judges on `ordermin` alone (`tests/test_engine_flatten.py:557`).
+- **No test was added**, as this topic directed: what was wrong was a sentence, and the behaviour is covered at `tests/test_engine_flatten.py:810`. The `raise` is untouched.
+
+The killed sentence survives in two places, both deliberately: `infra/scripts/prose-tripwire-baseline.txt`, where it is a row's identity key rather than prose, and `docs/plans/00106-engine-flatten.md`, a point-in-time record.
