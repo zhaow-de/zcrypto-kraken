@@ -200,7 +200,7 @@ def test_the_entry_point_refuses_a_revision_it_cannot_read(tmp_path: pathlib.Pat
 
 
 def test_the_entry_point_does_not_certify_a_comment_only_change(tmp_path: pathlib.Path) -> None:
-    # `# noqa` is a comment the gate reads, so a changed comment stream is not certifiable prose.
+    # A suppression directive is a comment a tool READS, so a changed comment stream is not prose.
     repo = _repo(tmp_path, "X = 1  # noqa: E501\n")
     (repo / "m.py").write_text("X = 1\n")
     done = _cli(repo, "HEAD", "m.py")
