@@ -394,19 +394,29 @@ def test_a_replay_closure_member_is_refused_rather_than_certified() -> None:
     assert "digests this file" in done.stdout, done.stdout
 
 
-def test_an_absolute_spelling_of_a_closure_member_is_never_certified(tmp_path: pathlib.Path) -> None:
-    """The membership arm is repo-relative, so an absolute spelling of a member misses it and `_at_revision`
-    refuses the path instead -- the property that makes one arm enough, asserted here rather than assumed.
-    The prose-only pair below is the true positive: this harness can still return 0, so the refusal above is
-    that path's and not a blanket one."""
-    relative, _ = pi.replay_closure()
-    absolute = str(_ROOT / "cli/engine/flatten.py")
+def test_each_spelling_of_a_closure_member_is_refused_never_certified(tmp_path: pathlib.Path) -> None:
+    """The list, not a universal: membership folds `./`, `//` and an interior `..`; the two forms it does
+    not fold -- absolute, and a leading `../` -- `git show` refuses at the revision. The `./a/../b` row is
+    the one that certified INERT before the normalisation, git resolving that pathspec against cwd where
+    `PurePosixPath` left the `..` standing. The pair below is the true positive: the tool can still say 0."""
+    closure = pi.replay_closure()
+    assert not isinstance(closure, str), closure
+    relative, _ = closure
     assert "cli/engine/flatten.py" in relative, "the member must be in the closure, or this proves nothing"
-    assert absolute not in relative, "the arm would catch it, and `_at_revision` would never be reached"
 
-    done = _cli(_ROOT, "HEAD", absolute)
-    assert done.returncode == pi.EXIT_REFUSED, done.stdout + done.stderr
-    assert "cannot read" in done.stdout, done.stdout
+    spellings = [
+        "cli/engine/flatten.py",
+        "./cli/engine/flatten.py",
+        "cli//engine/flatten.py",
+        "cli/engine/../engine/flatten.py",
+        "./cli/engine/../engine/flatten.py",
+        str(_ROOT / "cli/engine/flatten.py"),
+        f"../{_ROOT.name}/cli/engine/flatten.py",
+    ]
+    for spelling in spellings:
+        done = _cli(_ROOT, "HEAD", spelling)
+        assert done.returncode == pi.EXIT_REFUSED, f"{spelling}: {done.stdout}{done.stderr}"
+        assert "INERT" not in done.stdout, f"{spelling} certified a closure member: {done.stdout}"
 
     repo = _repo(tmp_path, 'def f():\n    """One."""\n    return 1\n')
     (repo / "m.py").write_text('def f():\n    """Two."""\n    return 1\n')

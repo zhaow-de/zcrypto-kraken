@@ -19,6 +19,7 @@ interpreter cannot parse this file at all -- exiting 1, which is CODE CHANGED ab
 import ast
 import difflib
 import io
+import os
 import pathlib
 import subprocess
 import sys
@@ -205,9 +206,9 @@ def replay_closure() -> tuple[frozenset[str], pathlib.Path] | str:
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
     try:
-        # Repo-relative, and only that: another checkout of the same tree digests the same relative paths.
-        # A member spelled otherwise -- absolute or `..`-bearing -- misses this set, and `_at_revision`
-        # refuses it (`git show` exits 128): the refusal `tests/test_prove_inert.py` asserts is what makes one arm enough.
+        # Repo-relative, so another checkout of the same tree matches, and normalised (`./`, `//`, interior
+        # `..`) -- STRICTER membership, the opposite direction from a forgiving `_at_revision`. Absolute and
+        # leading-`../` it does not fold; `_at_revision` refuses those, `git show` exiting 128 on each.
         relative = frozenset(str(path.relative_to(_REPO_ROOT)) for path in _replay_code_paths())
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
@@ -279,7 +280,7 @@ def main(argv: list[str]) -> int:
             print(f"{path}: REFUSED -- {unreadable}")
             worst = worse(worst, EXIT_REFUSED)
             continue
-        if str(pathlib.PurePosixPath(path)) in relative:
+        if os.path.normpath(path) in relative:
             # Membership, never a diagnosis: the arms never ran, so nothing here knows what changed.
             print(f"{path}: REFUSED -- `replay_fingerprint` digests this file, so any byte of it rebuilds the gate cache")
             worst = worse(worst, EXIT_REFUSED)
