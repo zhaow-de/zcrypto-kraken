@@ -23,7 +23,9 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0189 — the prose ratchet converts every cut into silent headroom](T0189-prose-ratchet-converts-each-cut-into-headroom.md) — `--check-baseline` fails only on an offender the baseline does not record at that size or larger, so a cut that shrinks a recorded block leaves the old, larger size on record as a ceiling and licenses regrowth back to it without failing; measured twice on the same entries, after PR #459 and again on `chore/prose-batch-c`. Ripe now — it is a design decision about a tool in the tree.
 
-- [T0195 — `--write-baseline` truncates the whole baseline to whatever paths are scanned](T0195-write-baseline-truncates-to-the-scanned-subset.md) — scoped to fewer paths than the committed baseline covers, it silently discards every other file's recorded keeps rather than merging; measured, 1228 lines to 0 against a single offender-free file. The safe alternative is a hand-edit proved with `--check-baseline`. Ripe now — it is a design decision about a tool in the tree.
+- [T0195 — `--write-baseline` truncates the whole baseline to whatever paths are scanned](T0195-write-baseline-truncates-to-the-scanned-subset.md) — scoped to fewer paths than the committed baseline covers, it silently discards every other file's recorded keeps rather than merging; reproducible against any offender-free file, which writes a 0-line baseline. The safe alternative is a hand-edit proved with `--check-baseline`. Ripe now — it is a design decision about a tool in the tree.
+
+- [T0196 — two `..._can_fail_alone` test names claim isolation their shared fixture value does not pin](T0196-cost-stress-alone-test-name-does-not-isolate.md) — `test_a1_kill_bar_cost_stress_can_fail_alone` and `test_a1_kill_bar_worst_slice_can_fail_alone` both build at `var_trials=1.0`, and both compound with the dsr leg failing alongside the named one, driven and measured; neither assertion pins `dsr_pass`. Ripe now — a rename or a rebuilt fixture is a behavior-shaped test change.
 
 ### Partially done<a name="partially-done"></a>
 
