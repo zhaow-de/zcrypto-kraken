@@ -27,7 +27,7 @@ HOUR_END = H + timedelta(hours=1)
 
 
 def _book(rows: list[tuple[float, str]]) -> pl.DataFrame:
-    """rows = [(offset_seconds, type)]; one wire message per row."""
+    """`rows` is [(offset_seconds, type)]; rows sharing an offset are the levels of one wire message."""
     return pl.DataFrame(
         {
             "ts": [H + timedelta(seconds=o) for o, _ in rows],
@@ -258,10 +258,7 @@ def test_an_absent_primary_hour_with_bounds_yields_every_secondary_row():
 
 
 def _row_conservation_holds(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap], blocks: list) -> bool:
-    """sum(block heights) == (primary rows outside every gap) + (secondary rows inside any gap).
-
-    Generic pin for `splice_book`: however many blocks it emits, no row may be dropped OR duplicated.
-    """
+    """Generic pin for `splice_book`: however many blocks it emits, no row may be dropped OR duplicated."""
     if not gaps:
         return sum(b.frame.height for b in blocks) == primary.height
     inside_any = pl.any_horizontal([_inside(g) for g in gaps])
