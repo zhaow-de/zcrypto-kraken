@@ -920,7 +920,7 @@ tests/test_dashboards_cover_metrics.py:37: comment-block 6 > 4	# `host` LABEL VA
 tests/test_dashboards_cover_metrics.py:51: comment-block 6 > 4	# Where a producer LIVES -> the hosts that run it, so an unscoped rule over an app family can still
 tests/test_dashboards_cover_metrics.py:72: comment-block 7 > 4	# --- Deliberate exclusions ----------------------------------------------------------------------
 tests/test_dashboards_cover_metrics.py:142: comment-block 6 > 4	"""The `host` label values `family`'s selectors name in `expr`, or None when any occurrence of
-tests/test_dashboards_cover_metrics.py:212: comment-block 7 > 4	# --- What this repo publishes ---------------------------------------------------------------------
+tests/test_dashboards_cover_metrics.py:209: comment-block 8 > 4	# --- What this repo publishes ---------------------------------------------------------------------
 tests/test_dashboards_cover_metrics.py:518: comment-block 7 > 4	# A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
 tests/test_dashboards_cover_metrics.py:543: comment-block 8 > 4	# `merge` and `joinByField` combine one frame per series, and Grafana suffixes the value column
 tests/test_dashboards_cover_metrics.py:680: comment-block 6 > 4	"""Where a panel draws per-series thresholds, the charted series' bar must equal its rule's.

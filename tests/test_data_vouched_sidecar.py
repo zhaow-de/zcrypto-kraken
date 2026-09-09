@@ -251,7 +251,7 @@ def test_push_still_carries_an_attested_set(tmp_path, monkeypatch):
     assert (dest / "frozen-set" / "BTC/EUR/1440.parquet").is_file()
 
 
-# --- the waiting consumer T0133 parked: manifest-attested sets become path-bound -------------------
+# --- manifest-attested sets are path-bound too, discharging T0133's parked consumer ----------------
 
 
 def _conformant_set(tmp_path, name="ohlc-thing"):
@@ -272,7 +272,7 @@ def _conformant_set(tmp_path, name="ohlc-thing"):
 
 def test_a_swap_inside_a_manifest_attested_set_is_refused_at_read(tmp_path, monkeypatch):
     """A conformant manifest's series key IS the path, so it binds paths exactly as the sidecar does
-    -- the residual T0133 parked."""
+    -- T0133's parked consumer, discharged here."""
     _point_sidecar_at(tmp_path, monkeypatch, [])  # no sidecar: the manifest is the only attestor
     root, a, b = _conformant_set(tmp_path)
     ObservedReader(root).read_series("ohlc-thing", "A/EUR/1440.parquet")  # healthy

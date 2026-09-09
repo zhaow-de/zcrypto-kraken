@@ -34,7 +34,8 @@ def test_a_selected_asset_named_in_a_delisting_is_a_hit():
 
 
 def test_a_selected_asset_in_the_components_is_a_hit_too():
-    """The 2026-09-25 Rain entry carries its asset only in `components`, not in the name."""
+    """`components` alone can carry the asset -- this entry's name has no ticker at all, so a scan
+    that only checked `name` would miss it."""
     hits = scan_delistings(_feed(_entry("Asset Delisting", components=("Ethereum (ETH) - Mainnet",))), SELECTED)
     assert len(hits) == 1 and hits[0]["asset"] == "ETH"
 
@@ -62,8 +63,8 @@ def _entry_with_body(name, body, when="2026-12-01T00:00:00.000Z"):
 
 
 def test_an_asset_named_only_in_the_announcement_body_is_a_hit():
-    """The live feed's "Delisting assets for UAE clients" (2026-09-25) names its assets only in
-    `incident_updates[].body` -- no ticker in the title, no components."""
+    """A live delisting entry can name its assets ONLY in `incident_updates[].body` -- no ticker in
+    the title, no components."""
     feed = _feed(
         _entry_with_body(
             "Delisting assets for UAE clients", "…delisting cycle for the following assets…: XMR, ZEC, DASH, ETH, and USDE."

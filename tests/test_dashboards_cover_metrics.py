@@ -1,12 +1,11 @@
 """Guard: when an alert fires, the operator must be able to open a picture of what moved -- and the
 alert must say which picture.
 
-Family extraction from PromQL: no parser exists in the locked dependency set (`prometheus-client`
-is an exposition library and ships none), and adding one for a guard test is not licensed here.
-What replaces it is not a denylist of function names -- that rots the moment PromQL grows one --
-but STRUCTURAL removal: delete the regions of an expression that cannot contain a metric name
-(string literals, `$vars`, `{label matchers}`, `[ranges]`, `by (...)`/`on (...)` label lists), then
-keep every remaining identifier that is NOT immediately applied to an argument list. `rate`,
+Family extraction from PromQL: no parser exists in the locked dependency set, so this uses
+STRUCTURAL removal instead of a denylist of function names (which rots the moment PromQL grows
+one) -- delete the regions of an expression that cannot contain a metric name (string literals,
+`$vars`, `{label matchers}`, `[ranges]`, `by (...)`/`on (...)` label lists), then keep every
+remaining identifier that is NOT immediately applied to an argument list. `rate`,
 `histogram_quantile` and whatever ships next are dropped because they are CALLED, not because they
 are listed.
 """
@@ -73,9 +72,7 @@ PUBLISHER_HOSTS = (
 # Families deliberately drawn by no panel. Each entry is a REVIEWED decision and the reason IS the
 # entry: a bare name here is drift wearing a test's clothes. The bar: charting the family would
 # actively mislead, or it is a duplicate view of one already charted -- "we ran out of room" is not
-# a reason, densify the layout instead. A filesystem entry takes `node_filesystem_avail_bytes`, never
-# `_free_bytes`: `free` counts the root-reserved blocks `avail` excludes, so a `free` series plotted
-# beside the avail-based lines the three filesystem rules page on disagrees with them by the reserve.
+# a reason, densify the layout instead.
 NOT_CHARTED: dict[str, str] = {}
 
 
@@ -210,8 +207,9 @@ def panel_families() -> dict[str, frozenset[str]]:
 
 
 # --- What this repo publishes ---------------------------------------------------------------------
-# Three publication mechanisms, three patterns, one canary each in
-# `test_the_publisher_scan_still_finds_each_source_kind`.
+# Four publication mechanisms (patterns): the three numbered below plus _RECONCILE_EMIT. Eight
+# canaries in `test_the_publisher_scan_still_finds_each_source_kind` -- one per discovery path,
+# not one per mechanism (see that test's own comment).
 #
 # Scope is the three namespaces this repo's own producers publish into. `node_*`, `process_*` and
 # `hc_*` come from node-exporter, prometheus_client and healthchecks.io -- not ours to chart
@@ -230,9 +228,9 @@ _CONSTRUCTOR = re.compile(
     rf'HistogramMetricFamily|SummaryMetricFamily|InfoMetricFamily|StateSetMetricFamily)\(\s*"({_APP})"'
 )
 _COUNTER_CONSTRUCTORS = frozenset({"Counter", "CounterMetricFamily"})
-# `cli/archive/command.py` assembles every reconcile series as `f"zcrypto_reconcile_{name}"`, so no
-# name-shaped scan can see one -- only the `_emit(<suffix>, ...)` call sites can. Derived rather than
-# hand-listed so a new reconcile series joins the candidate set on the commit that adds it.
+# (4) `cli/archive/command.py` assembles every reconcile series as `f"zcrypto_reconcile_{name}"`, so
+# no name-shaped scan can see one -- only the `_emit(<suffix>, ...)` call sites can. Derived rather
+# than hand-listed so a new reconcile series joins the candidate set on the commit that adds it.
 _RECONCILE_EMIT = re.compile(r'_emit\(\s*"([a-z0-9_]+)"')
 _RECONCILE_PREFIX = "zcrypto_reconcile_"
 
