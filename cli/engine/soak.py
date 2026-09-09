@@ -477,8 +477,8 @@ class MetricVerdict:
     width: float  # hi - lo
 
 
-# Null observations per window below which a band cannot discriminate. Shared by every site that reads
-# `effective_n`, so a verdict, the disclosure explaining it and `soak_report`'s short-null void cannot disagree.
+# Null observations per window below which a band cannot discriminate. Shared by every site that tests
+# `effective_n` against it, so a verdict, the disclosure explaining it and the short-null void cannot disagree.
 _MIN_EFFECTIVE_N = 3
 
 
@@ -1611,9 +1611,9 @@ def soak_report(
         try:
             null = build_null(canonical_dir, fee=fee, path=path)
         except SoakError as exc:
-            # A canonical the null cannot be built over degrades like an absent one: the window block,
-            # the self-tests block and the record-47 comparison above the gate are what a reader needs
-            # most on the run that lost its reference.
+            # A canonical the null cannot be built over degrades like an absent one: the window block
+            # and the self-tests block above the gate are what a reader needs most on the run that
+            # lost its reference.
             null = None
             analysis = None
             self_test = None

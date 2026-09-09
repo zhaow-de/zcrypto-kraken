@@ -13,8 +13,10 @@ import cli.engine.command as command
 import cli.engine.soak as soak
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
+from cli.engine.cycle import _MODEL_SYMBOLS
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json
 from cli.engine.soak import NullSystem, RealizedInternals, SelfTestReport
+from cli.engine.store import GRID_INTERVALS
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
@@ -409,9 +411,16 @@ def test_soak_report_degrades_when_the_canonical_is_missing_a_leg(tmp_path, monk
     assert result.exit_code == 0, out
     assert "REALIZED-SERIES WINDOW" in out
     reasons = json.loads(json_out.read_text())["void_reasons"]
-    # A missing leg by NAME: "canonical absent -- null unavailable" names none, and that is the only
-    # thing telling this state apart from the absent-canonical branch.
-    assert any("ADA/EUR@1440" in r for r in reasons), reasons
+    # The missing legs by NAME -- the absent-canonical reason names none, which is what tells the two
+    # states apart -- and by COORDINATE, the whole product minus the file present: naming one entry
+    # leaves either loop narrowed to a single element green, and a probe blind to `.exists()` names
+    # the present file too.
+    reason = next(r for r in reasons if r.startswith("null unavailable: "))
+    expected = {
+        f"{symbol}@{interval}" for symbol in _MODEL_SYMBOLS for interval in GRID_INTERVALS if (symbol, interval) != ("BTC/EUR", 240)
+    }
+    assert all(leg in reason for leg in expected), sorted(leg for leg in expected if leg not in reason)
+    assert "BTC/EUR@240" not in reason, reason
 
 
 def test_soak_report_degrades_when_the_null_refuses(tmp_path, monkeypatch):
