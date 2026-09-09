@@ -470,7 +470,8 @@ def test_the_balanced_oi_panel_starts_2021_12_01(oi_panel):
 def test_both_oi_level_columns_carry_no_nulls(oi_panel):
     """Spec 00110 D5's density claim is about BOTH level columns. A single-column guard would let a
     re-fetch put holes in the other one silently — the same reason the zero counts below assert
-    both."""
+    both. Deliberately unwindowed: only the ratio columns are ever left absent by the venue
+    (`_parse_float`'s docstring), so a null here means a broken venue guarantee, not a stale window."""
     nulls = {
         column: sum(frame[column].null_count() for frame in oi_panel.values())
         for column in ("sum_open_interest", "sum_open_interest_value")
