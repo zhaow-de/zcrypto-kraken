@@ -968,7 +968,7 @@ class SoakAnalysis:
     panel: PanelSummary  # summarize_panel over the discriminating (non-"n/a") gating verdicts
     null_gov_rate: float  # backtest CONTEXT: fraction of null days governor-engaged
     null_cap_rate: float  # backtest CONTEXT: cap_breach_bars / n_periods
-    d4_gap_bps: float  # mean(governed_net - net_live) over frozen history, in bps (x1e4)
+    d4_gap_bps: float  # mean(governed_net - net_live) over the null's complete-basket era, in bps (x1e4)
     d4_active: bool  # governor engaged anywhere in the null (any mult < 1)
     pnl_mean: float  # realized interior mean net/cycle
     pnl_cum: float  # realized compounded cumulative net over ALL bars: prod(1+net)-1
@@ -1354,7 +1354,10 @@ def render_report(
     lines.append("NULL REFERENCE SPAN")
     if null is not None:
         null_flat, null_bars = _no_book_bars(null.weights)
-        lines.append("  reference      : the canonical's complete-basket era, not its whole extent")
+        lines.append(
+            "  reference      : the canonical's complete-basket era, not its whole extent"
+            "; a no-book bar held nothing, and its hhi reads 0"
+        )
         lines.append(f"  retained bars  : {null.n_periods}")
         lines.append(f"  no-book bars   : {null_flat} of {null_bars}")
         # A null built anywhere but `build_null` carries no stamps; the three lines above read none of them.
@@ -1492,8 +1495,8 @@ def _json_payload(
 ) -> dict:
     """Every number the report renders, as a `json.dumps`-able dict -- the machine-readable twin of
     `render_report`'s text, plus the raw `RealizedInternals` diagnostics the vocabulary-locked text cannot
-    carry. `null` contributes the reference span and its no-book count, which exist nowhere else; every other
-    null-derived number lives in `analysis`. `internals` is `None` exactly when `analysis` is."""
+    carry. `null` contributes the reference span, its retained bars and its no-book count, which exist nowhere
+    else; every other null-derived number lives in `analysis`. `internals` is `None` exactly when `analysis` is."""
     payload: dict = {
         "generated_at": now.isoformat(),
         "band": band,
@@ -1541,16 +1544,21 @@ def _json_payload(
     if null is None:
         payload["null_reference"] = None
     else:
-        null_flat, _ = _no_book_bars(null.weights)
+        null_flat, null_bars = _no_book_bars(null.weights)
         payload["null_reference"] = {
             "retained_bars": null.n_periods,
             "no_book_bars": null_flat,
+            # The count's own denominator, so the no-book RATE is computable from one series: `retained_bars`
+            # is `n_periods`, a second source, and the text face prints both for that reason.
+            "total_bars": null_bars,
             "first_bar": None if null.reference_span is None else null.reference_span[0].isoformat(),
             "last_bar": None if null.reference_span is None else null.reference_span[1].isoformat(),
         }
     # Top level, not inside `provenance`, which a realized series with no scored bars omits while the text
-    # block still prints this line.
-    payload["realized_no_book_bars"] = None if realized is None else _no_book_bars(realized.weights)[0]
+    # block still prints this line -- and with it the only other realized bar count the payload carries.
+    realized_flat, realized_bars = (None, None) if realized is None else _no_book_bars(realized.weights)
+    payload["realized_no_book_bars"] = realized_flat
+    payload["realized_total_bars"] = realized_bars
 
     payload["self_test"] = (
         None
@@ -1620,12 +1628,12 @@ def soak_report(
 ) -> tuple[str, dict]:
     """Orchestrate the full soak-check: load the journal, build the realized series, gate it (self-tests, plausibility,
     `L < floor`, degeneracy, a null too short to discriminate, and the internals rebuild's own `identity_ok`/`cap_consistent`)
-    against a backtest null rebuilt from the frozen canonical -- absent canonical or a `build_null` refusal, no null and a
-    void run -- and render both the text report and its JSON twin. An unavailable internals rebuild DEGRADES
-    governor_engagement/cap_breach to "n/a" (spec 00059 D7); an available one failing either proof VOIDS, since the instrument
-    would be lying about alignment. Never raises on a short, void, absent-canonical or null-refused run -- those are refusals,
-    not failures -- while everything else propagates, an unreadable record included. `null_mode`/`path` are validated only
-    when the canonical is present, by whichever callee first rejects them."""
+    against a backtest null rebuilt from the frozen canonical and retained over its complete-basket era -- absent canonical or a
+    `build_null` refusal, no null and a void run -- and render both the text report and its JSON twin. An unavailable internals
+    rebuild DEGRADES governor_engagement/cap_breach to "n/a" (spec 00059 D7); an available one failing either proof VOIDS, since
+    the instrument would be lying about alignment. Never raises on a short, void, absent-canonical or null-refused run -- those
+    are refusals, not failures -- while everything else propagates, an unreadable record included. `null_mode`/`path` are
+    validated only when the canonical is present, by whichever callee first rejects them."""
     now = now or datetime.now(UTC)
     # Local import: `cli.engine.command` imports `soak_report` from this module, so a module-level import here
     # would form a cycle.

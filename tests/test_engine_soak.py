@@ -1630,7 +1630,25 @@ def test_report_counts_no_book_bars_in_both_series():
     assert "realized no-book bars : 1 of 6" in text
     assert payload["null_reference"]["no_book_bars"] == 2
     assert payload["null_reference"]["retained_bars"] == 5
+    assert payload["null_reference"]["total_bars"] == 5
     assert payload["realized_no_book_bars"] == 1
+    assert payload["realized_total_bars"] == 6
+
+
+def test_payload_totals_are_read_off_the_series_their_counts_were_counted_over():
+    """A count without its own denominator is not a rate, and `n_periods` is a second source for the null's:
+    the payload's total is the length `_no_book_bars` counted over, so a total taken from `n_periods` instead
+    reports a span the count was never measured against."""
+    nw = [{"BTC": 0.0, "ETH": 0.0}] * 2 + [{"BTC": 0.15, "ETH": 0.15}] * 3
+    null = replace(_mk_null(nw, [0.001] * 5), n_periods=4)
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+
+    payload = soak._json_payload(
+        None, realized, null, None, void_reasons=["L=6 < floor=30"], band=0.90, now=datetime(2026, 7, 20, tzinfo=UTC)
+    )
+
+    assert payload["null_reference"]["total_bars"] == 5
+    assert payload["null_reference"]["retained_bars"] == 4
 
 
 def test_render_report_store_bound_window_warns_naming_both_bounds(tmp_path):
