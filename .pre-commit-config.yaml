@@ -6,9 +6,8 @@
 # rewrites it (measured 2026-07-24). tests/test_vendored_rrsync_integrity.py is the tripwire.
 exclude: '^infra/nas/rrsync$'
 
-# Every hook is a commit-time hook unless it says otherwise. Removing this line puts 13 of the 18
-# into the push stage — the five below pin themselves out of it — and the ratchet is the only one
-# worth paying for twice.
+# Every hook is a commit-time hook unless it says otherwise. Removing this line puts most of them
+# into the push stage as well, and nothing here is worth paying for twice.
 # The push stage needs `pre-commit install --hook-type pre-push`, which is per-clone: a fresh clone
 # has none until it is re-run, and these declarations are the tracked half of that arrangement.
 # The generated hook execs the MAIN CHECKOUT's `.venv/bin/python` by absolute path, shared by every
@@ -23,9 +22,8 @@ default_stages: [pre-commit]
 repos:
   # Five hooks below pin `stages: [pre-commit]`. Their upstream manifest declares
   # `[pre-commit, pre-push, manual]`, which outranks `default_stages`, and two of the five REWRITE
-  # files — at push they would edit the working tree mid-push. Counterfactual, measured through
-  # pre-commit's own API: the push stage resolves to 1 hook with the pins, 6 without, 18 without
-  # these and `default_stages` both. `tests/test_pre_push_stage.py` holds it at 1.
+  # files — at push they would edit the working tree mid-push. The push stage is empty by design and
+  # `tests/test_pre_push_stage.py` holds it there, so a hook arriving in it is a red, not a choice.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
