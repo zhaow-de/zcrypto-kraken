@@ -24,15 +24,10 @@ The docstring is truthful as it stands: `e1f52258` rewrote it to claim only the 
 
 ## Resolution
 
-Both steps landed on `test/t0192-pin-the-week-boundary-refusal-arm`, in `test(engine): the week-boundary fixture reaches the arm it is named for`.
+Both steps landed on `test/t0192-pin-the-week-boundary-refusal-arm`.
 
-The cause was the fixture, not the assertions: `_BOUNDARY_RAMP_FILLS`' first fill is `_TRACK_MONDAY` while the shared `_MINT_AT` is twelve hours before it, so the mint ran against a journal holding no fill, no birth record was written, and the birth arm refused the week before the week-start arm could be reached. `_RAMP_MINT_AT` -- the first boundary after this ramp's own first fill, which is what `_mint_birth` documents the mint to mean -- lets the birth arm pass, and the week-start arm is what refuses.
+The cause was the fixture, not the assertions: `_BOUNDARY_RAMP_FILLS`' first fill is `_TRACK_MONDAY` while the shared `_MINT_AT` is twelve hours before it, so the mint ran against a journal holding no fill, no birth record was written, and the birth arm refused the week before the week-start arm could be reached. `_RAMP_MINT_AT` — the first boundary after this ramp's own first fill, which is what `_mint_birth` documents the mint to mean — lets the birth arm pass, and the week-start arm is what refuses.
 
-One assertion pins it, reading the birth record's content rather than its existence. `mutate-probe.sh` narrowing `>=` to `>` in `_score_closed_week` is now KILLED, the kill-trip guard firing on `2026-W37 tracked 2118.2 bps of NAV ... outside the 120.0 bps band`; the same mutation left this test green before. The docstring names the arm again.
+The pin reads that arm's own refusal message, because every arm publishes `_TRACKING_UNSCORED` and the state alone cannot tell them apart. Two mutations of `_score_closed_week` are killed that were invisible before: narrowing `>=` to `>`, and widening the boundary-count arm so it refuses first. They are killed by different things, which is worth stating because an earlier draft of this section credited the wrong one — the first dies on the fixture change plus the pre-existing `assert not tripped`, before the added assertion is reached at all; the second dies on the added assertion, which is also what stops the docstring naming an arm nothing reads.
 
-## Suggested next steps
-
-_(none — resolved.)_ The original steps, both done:
-
-- Add one assertion naming the arm — on the mint-refusal warning, or on `(exec_dir(tmp_path) / FIRST_FILL_FILE).exists()`, which is the shape the sibling `test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held` already uses. It cannot ride a docstring pass: it moves the AST, which falsifies that branch's prose-only proof, so it takes its own branch and its own review.
-- With the arm pinned, the docstring may name it again.
+The docstring names the arm again.

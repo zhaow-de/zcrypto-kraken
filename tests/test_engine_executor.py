@@ -4778,14 +4778,13 @@ def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_pa
     is what says the earlier arm let it through, so `>` for `>=` here latches the kill file."""
     _journal_week(tmp_path, fills=_BOUNDARY_RAMP_FILLS, lead=6)
 
-    tripped, states = _tracking_states(tmp_path, mint_at=_RAMP_MINT_AT)
+    with _executor_errors(logging.WARNING) as records:
+        tripped, states = _tracking_states(tmp_path, mint_at=_RAMP_MINT_AT)
 
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
-    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
-    assert birth.is_file() and birth.read_text().strip() == _TRACK_MONDAY.isoformat(), (
-        "no birth record, so the birth arm refused this week and the week-start arm never ran"
-    )
+    refused = [r.getMessage() for r in records if "is not scored" in r.getMessage()]
+    assert f"at or after {_TRACK_MONDAY:%G-W%V} began" in refused[-1], refused
 
 
 def test_a_malformed_fill_event_does_not_raise_onto_the_trade_path(tmp_path):
