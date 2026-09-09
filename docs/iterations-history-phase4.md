@@ -139,3 +139,6 @@ ______________________________________________________________________
 - **A `0.0` is a venue hole in the OI levels and a real observation in the taker ratio** — levels map to `None` before validation, the ratio family validates finite-or-null, and the holes' provenance is stated as unestablished.
 - **Every feature frame ships a per-year coverage summary** — the ratio columns' nulls concentrate in one bear year at rates an order of magnitude apart, so no single headline null rate describes the substrate.
 - **A data-gated test gates on the configured canonical root, never `Path("data/…")`** — the per-checkout path is empty in a worktree and the skip would have been read as coverage; T0023 stays `partial` and carries the substrate→feature emission and the liquidations leg.
+## 2026-09-09 — T0196 resolved: three kill-bar "can fail alone" tests now prove it, not just claim it
+
+- `test_a1_kill_bar_cost_stress_can_fail_alone`, `test_a1_kill_bar_worst_slice_can_fail_alone` and `test_a1_kill_bar_spa_decisive_window_diverges_from_full` now assert every other leg passes alongside the one each names, so a future change compounding a second leg's failure into the fixture fails loudly rather than passing under a name that no longer means what it says.

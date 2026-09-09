@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # Two `..._can_fail_alone` test names claim isolation their shared fixture value does not pin
@@ -46,13 +46,24 @@ first.
 - Registered from the branch that found and corrected the cost-stress comment; corrected sentence
   cannot fix a test's name, since renaming moves the AST and cannot ride a prose-only batch.
 
-## Suggested next steps
+## Resolution
 
-- **Rename both tests** to what they actually prove (a compound failure at `var_trials=1.0`), or
-  **rebuild both fixtures** at the file's usual `var_trials=1e-3` (where `dsr_pass` was `True` for
-  the cost-stress book) so each name becomes true of its isolated leg, adding an assertion that
-  pins `dsr_pass is True` in each so a future change to either leg is caught. Either is a
-  behavior-shaped change to a test file -- takes its own branch and its own review under the
-  normal cadence, not a fold-in to a docs-kind batch.
-- **Drive `test_a1_kill_bar_spa_decisive_window_diverges_from_full`** the same way before closing
-  this, to confirm the SPA-alone test isn't a third instance of the same class.
+Fixed by rebuilding both fixtures at `VAR_TRIALS_PER_PERIOD` (`1e-3`, the file's usual value)
+instead of `1.0`, on `fix/t0196-kill-bar-isolation-fixtures`:
+
+- `test_a1_kill_bar_cost_stress_can_fail_alone`: driven at `1e-3` on the same book --
+  `dsr_pass=True, spa_pass=True, worst_slice_pass=True` alongside `cost_stress_pass=False`, a
+  genuine single-leg isolation. Assertions added pinning all three; the now-obsolete comment
+  explaining why `dsr_pass` also failed at `var_trials=1.0` was deleted, since it no longer does.
+- `test_a1_kill_bar_worst_slice_can_fail_alone`: driven the same way -- `dsr_pass=True,
+  spa_pass=True, cost_stress_pass=True` alongside `worst_slice_pass=False`. Assertions added
+  pinning all three.
+- Both proved by construction: reverting `var_trials` back to `1.0` fails the new `dsr_pass is
+  True` assertion in each test (a heavy flat cost drag or a very negative regime slice both also
+  fail the DSR leg at that scale, per the deleted comment's own claim), so the added assertions
+  discriminate the defect they were written to catch, not merely restate the fixture.
+- `test_a1_kill_bar_spa_decisive_window_diverges_from_full` was driven as `## Findings so far`
+  asked: `dsr_pass=True, cost_stress_pass=True, worst_slice_pass=True` alongside `spa_pass=False` --
+  it already isolated genuinely (it already used `VAR_TRIALS_PER_PERIOD`, not `1.0`), but carried
+  the same unpinned-legs gap as the other two, caught in review; the same three assertions were
+  added there too.
