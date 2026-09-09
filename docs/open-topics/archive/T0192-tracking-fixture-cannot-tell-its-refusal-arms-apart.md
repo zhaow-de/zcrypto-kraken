@@ -20,7 +20,7 @@ Driven both ways on `docs/docstrings-tests-engine-executor-rerun` at `e1f52258`,
 - Four minutes earlier, the mint succeeds, the birth file appears, and the week-start arm refuses it instead.
 - Both readings give `tripped=False` and `states=[_TRACKING_UNSCORED]`, so every assertion in the test passes on either arm.
 
-The docstring is truthful as it stands: `e1f52258` rewrote it to claim only the outcome its assertions pin. This is a test that could pin more, not a false claim left standing.
+At `e1f52258` the docstring claimed only the outcome its assertions pinned, so what was open here was a test that could pin more, never a false claim left standing.
 
 ## Resolution
 
@@ -28,6 +28,6 @@ Both steps landed on `test/t0192-pin-the-week-boundary-refusal-arm`.
 
 The cause was the fixture, not the assertions: `_BOUNDARY_RAMP_FILLS`' first fill is `_TRACK_MONDAY` while the shared `_MINT_AT` is twelve hours before it, so the mint ran against a journal holding no fill, no birth record was written, and the birth arm refused the week before the week-start arm could be reached. `_RAMP_MINT_AT` — the first boundary after this ramp's own first fill, which is what `_mint_birth` documents the mint to mean — lets the birth arm pass, and the week-start arm is what refuses.
 
-The pin reads that arm's own refusal message, because every arm publishes `_TRACKING_UNSCORED` and the state alone cannot tell them apart. Two mutations of `_score_closed_week` are killed that were invisible before: narrowing `>=` to `>`, and widening the boundary-count arm so it refuses first. They are killed by different things, which is worth stating because an earlier draft of this section credited the wrong one — the first dies on the fixture change plus the pre-existing `assert not tripped`, before the added assertion is reached at all; the second dies on the added assertion, which is also what stops the docstring naming an arm nothing reads.
+The pin reads that arm's own refusal message, because every arm publishes `_TRACKING_UNSCORED` and the state alone cannot tell them apart. Two mutations of `_score_closed_week` are killed that were invisible before: narrowing `>=` to `>`, and widening the boundary-count arm so it refuses first. They are killed by different things: the first dies on the fixture change plus the pre-existing `assert not tripped`, before the added assertion is reached at all; the second dies on the added assertion, which is also what stops the docstring naming an arm nothing reads.
 
 The docstring names the arm again.

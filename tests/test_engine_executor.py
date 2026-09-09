@@ -4774,8 +4774,8 @@ def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path)
 
 def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_path):
     """A first fill exactly ON Monday 00:00 -- what arming at a week boundary produces -- is still
-    the week the series started in. The WEEK-START arm refuses it; the birth record asserted below
-    is what says the earlier arm let it through, so `>` for `>=` here latches the kill file."""
+    the week the series started in. The WEEK-START arm refuses it, read off that arm's own message
+    since every arm publishes `_TRACKING_UNSCORED`, and `>` for `>=` there latches the kill file."""
     _journal_week(tmp_path, fills=_BOUNDARY_RAMP_FILLS, lead=6)
 
     with _executor_errors(logging.WARNING) as records:
@@ -4783,8 +4783,9 @@ def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_pa
 
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
-    refused = [r.getMessage() for r in records if "is not scored" in r.getMessage()]
+    refused = [m for m in (r.getMessage() for r in records) if "is not scored" in m]
     assert refused, "the scorer refused nothing -- the week was scored, or its refusal wording moved"
+    # `[-1]`: `_tracking_states` mints inside this block, and that boundary refuses the week before.
     assert f"at or after {_TRACK_MONDAY:%G-W%V} began" in refused[-1], refused
 
 
