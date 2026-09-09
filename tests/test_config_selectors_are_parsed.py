@@ -18,8 +18,8 @@ TESTS = Path(__file__).resolve().parent
 # A hand-edited artifact we do not control the shape of. Fixtures a test writes itself are fair game
 # for a substring check -- it knows exactly what it wrote.
 _HAZARD = "infra"
-# Declare an exception on the line above the check, or anywhere inside a multi-line one:
-# `# config-selector-ok: <why>`.
+# Declare an exception on the line above the comparison or within the comparison's own lines:
+# `# config-selector-ok: <why>`. `test_the_exemption_window_is_the_comparisons_own` pins it.
 _MARKER = "config-selector-ok:"
 
 
@@ -282,6 +282,32 @@ def t():
     assert name in s
 """
     assert not _violations(src)
+
+
+_WINDOW_HEAD = '\ndef t():\n    s = (REPO / "infra/m.yml").read_text()\n'
+
+
+@pytest.mark.parametrize(
+    ("position", "body", "exempted"),
+    [
+        ("no marker", "    assert name in s\n", False),
+        ("above the comparison", "    # config-selector-ok: why\n    assert name in s\n", True),
+        ("two lines above", "    # config-selector-ok: why\n\n    assert name in s\n", False),
+        ("trailing on the comparison", "    assert name in s  # config-selector-ok: why\n", True),
+        ("above a wrapped assert", "    # config-selector-ok: why\n    assert (\n        name\n        in s\n    )\n", False),
+        ("on the wrapped assert's line", "    assert (  # config-selector-ok: why\n        name\n        in s\n    )\n", True),
+        ("between the operands", "    assert (\n        name\n        # config-selector-ok: why\n        in s\n    )\n", True),
+        (
+            "on its own line below the comparison",
+            "    assert (\n        name\n        in s\n        # config-selector-ok: why\n    )\n",
+            False,
+        ),
+        ("trailing on the closing paren", "    assert (\n        name\n        in s\n    )  # config-selector-ok: why\n", False),
+    ],
+)
+def test_the_exemption_window_is_the_comparisons_own(position: str, body: str, exempted: bool) -> None:
+    """The window is the line above the comparison plus the comparison's own lines."""
+    assert bool(_violations(_WINDOW_HEAD + body)) is not exempted, position
 
 
 @pytest.mark.parametrize("path", sorted(TESTS.glob("test_*.py")), ids=lambda p: p.name)

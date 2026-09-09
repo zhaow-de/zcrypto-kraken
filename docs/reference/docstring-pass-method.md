@@ -64,6 +64,12 @@ The obvious repairs are worse. Dropping the fill, or swapping the docstring for 
 
 The two instruments disagree about what a comment is, and both are right: a docstring is not a `#` comment, so adding one leaves the COMMENT stream identical — while a prose tripwire's `comment-block` kind counts docstrings, so it moves once the block crosses its own line bar.
 
+### The per-file prose-only verdict
+
+`infra/scripts/prove-inert.py <base-rev> <path>...` answers the neighbouring question: which files of a real change may be called prose-only, and on what grounds. It measures the same shape and the same comment stream, and adds the refusal the arms do not describe — a docstring that is program OUTPUT, a Typer command's `--help` body or a `__doc__` that an argparse script or a test reads. Run with no arguments it prints its exit-code contract, which is where an operator meets it.
+
+**Each verdict costs something different, so read which one fired rather than whether the run was green.** A 1 withdraws the prose-only claim for that file, and with it the licence that made the batch cheap to review. A 3 says a comment's position moved, which costs whichever guard reads that position — `tests/test_config_selectors_are_parsed.py` exempts a check by a `# config-selector-ok:` marker, and `test_the_exemption_window_is_the_comparisons_own` pins where one has to sit. The arm to fear is the silent one: a marker leaving a check it was exempting reddens that check, while a marker arriving above another exempts it with no signal at all. A 4 is not a failed run: it says the claim cannot be made from here, because a docstring that is program output changed, or a path could not be read at the base revision.
+
 ## What the gate refuses, and what that costs
 
 **The gate is committed, runnable code: `infra/scripts/docstring-gate.py`, which is now its home.** This document says why the arms exist and what the pass may not do because of them; the tool says what they are and drives them. Two people re-derived it from this prose in one week; both lost the same arm.
@@ -146,10 +152,10 @@ An instrument reports independently of the thing it describes, and every one of 
 
 ## Tooling
 
-Small, disposable scripts, kept beside the pass rather than committed as machinery:
+Two of the pass's tools are committed, and this document names each by its filename — with `prove-inert.py` in the tree, "the prover" resolves to either. `infra/scripts/docstring-gate.py` compares a file against the batch base on the three arms and drives the mutations that show they bite. `infra/scripts/prove-inert.py` returns the per-file prose-only verdict and the exit code that carries it.
 
-- the two-instrument comparison against the batch base — stripped-AST dump plus per-scope non-docstring statement counts, and the COMMENT stream;
-- the instrument prover, which mutates each parser-selected anchor and requires every arm to bite;
+The rest stay disposable, kept beside the pass rather than committed as machinery:
+
 - the batch self-check: docstring mass before/after with its unit named, and tripwire rows before/after, emitted from one invocation at one revision;
 - a repetition detector, useful for *finding* a fold to make and useless for predicting whether a package will yield.
 
