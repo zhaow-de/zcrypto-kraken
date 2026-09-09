@@ -84,6 +84,14 @@ def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict) -> tuple[Path, 
     return journal_dir, store_dir
 
 
+def _report_field(out: str, label: str) -> str:
+    """The value the rendered report prints against `label`, asserting the label appears exactly once --
+    a payload compared against a line that vanished would otherwise fail as a generator's StopIteration."""
+    matched = [line for line in out.splitlines() if line.strip().startswith(label)]
+    assert len(matched) == 1, f"{label!r} matched {len(matched)} lines in:\n{out}"
+    return matched[0].split(":", 1)[1].strip()
+
+
 def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatch):
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
@@ -129,6 +137,10 @@ def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatc
     # present in the payload shape but carry no analysis, symmetric with the other analysis fields.
     assert "internals" in payload and payload["internals"] is None
     assert "disclosures" in payload and payload["disclosures"] is None
+    assert payload["null_reference"] is None  # canonical absent -> no null, so neither null count is writable
+    # The realized count sits at the payload's top level rather than inside `provenance`, which a window
+    # the store closed to nothing would omit while the text block still printed the line.
+    assert _report_field(out, "realized no-book bars") == f"{payload['realized_no_book_bars']} of {payload['provenance']['L']}"
 
 
 def _mk_fake_null(n: int = 40, *, reconcile_ok: bool = True) -> NullSystem:
@@ -247,6 +259,12 @@ def test_soak_check_json_includes_internals_and_disclosures(tmp_path, monkeypatc
         "n_scored_cycles": payload["provenance"]["L"],
     }
     assert isinstance(payload["disclosures"], list) and payload["disclosures"]  # day-granularity note at least
+    # Both faces read the same two numbers off one helper, so equality here is by construction, not by
+    # two computations happening to agree. `_mk_fake_null` builds no span, which is the stamps-absent arm.
+    null_reference = payload["null_reference"]
+    assert null_reference["first_bar"] is None and null_reference["last_bar"] is None
+    assert _report_field(out, "retained bars") == str(null_reference["retained_bars"]) == "40"
+    assert _report_field(out, "no-book bars") == f"{null_reference['no_book_bars']} of 40"
 
 
 def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):

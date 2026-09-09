@@ -582,6 +582,20 @@ def test_build_null_keeps_everything_when_the_basket_is_complete_from_bar_zero(m
     assert ns.cap_breach_bars == fake.cap_breach_bars
 
 
+def test_build_null_reference_span_ends_at_the_last_scored_bar(monkeypatch):
+    """The h4 grid carries one bar more than the builder scores, so a span closed on its last entry would
+    postdate every verdict the null produced."""
+    n, cut = 8, 3
+    _stub_late_basket(monkeypatch, n=n, cut=cut)
+    _, _, _, h4_ts = soak._load_canonical(Path("unused-canonical"))
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert ns.reference_span == (h4_ts[cut], h4_ts[n - 1])
+    assert ns.reference_span[1] != h4_ts[-1]  # never the forming bar the null never scored
+    assert ns.reference_span[1] != h4_ts[ns.n_periods - 1]  # never the retained COUNT read as an index
+
+
 def test_build_null_carries_a_cap_breach_disagreement_into_reconcile_ok(monkeypatch):
     n = 4
     B = A1 = A2 = [0.30, 0.10, -0.50, 0.05, 0.0]
@@ -1545,6 +1559,80 @@ def test_render_report_banner_and_vocabulary_lock():
         assert m in text  # the 5 gating rows
 
 
+def test_report_states_the_null_reference_span():
+    """Two runs judged against different references are told apart only by what the page itself says the
+    reference was, so the span renders on a run that reaches a verdict."""
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    first, last = datetime(2021, 12, 21, tzinfo=UTC), datetime(2026, 3, 31, 16, tzinfo=UTC)
+    null = replace(_mk_null(nw, [0.001] * 200), reference_span=(first, last))
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert "NULL REFERENCE SPAN" in text
+    assert "complete-basket era" in text  # the span is a cut, not the canonical's whole extent
+    assert "retained bars  : 200" in text
+    assert f"first bar      : {first.isoformat()}" in text
+    assert f"last  bar      : {last.isoformat()}" in text
+    assert text.index("NULL REFERENCE SPAN") < text.index("STRUCTURAL FINGERPRINT")
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+
+
+def test_report_names_the_absent_null_reference():
+    """A void run still says which reference it would have judged against -- here, none."""
+    rs = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+
+    text = render_report(None, rs, None, None, void_reasons=["canonical absent — null unavailable"], band=0.90)
+
+    assert "NULL REFERENCE SPAN" in text
+    assert "no null reference available" in text
+
+
+def test_report_renders_a_null_whose_reference_span_is_absent():
+    """A `NullSystem` built outside `build_null` carries no stamps: the counts above them still print and
+    the render does not raise on `None[0]`."""
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 200, [0.001] * 200)
+    assert null.reference_span is None
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert "retained bars  : 200" in text
+    assert "no-book bars   : 0 of 200" in text
+    assert "realized no-book bars : 0 of 6" in text
+    assert "no null reference stamps available" in text
+    assert "first bar" not in text and "last  bar" not in text
+
+
+def test_report_counts_no_book_bars_in_both_series():
+    """The two counts are read off two different series: a block computing both from one of them prints a
+    count and a total that belong to the other. Both faces are asserted on the one fixture whose counts
+    differ from each other and from zero, which is what pins them as values rather than as placeholders."""
+    nw = [{"BTC": 0.0, "ETH": 0.0}] * 2 + [{"BTC": 0.15, "ETH": 0.15}] * 3
+    rw = [{"BTC": 0.0, "ETH": 0.0}] + [{"BTC": 0.15, "ETH": 0.15}] * 5
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 5)
+    void_reasons = ["L=6 < floor=30"]
+
+    text = render_report(None, realized, null, None, void_reasons=void_reasons, band=0.90)
+    payload = soak._json_payload(
+        None, realized, null, None, void_reasons=void_reasons, band=0.90, now=datetime(2026, 7, 20, tzinfo=UTC)
+    )
+
+    assert "no-book bars   : 2 of 5" in text
+    assert "realized no-book bars : 1 of 6" in text
+    assert payload["null_reference"]["no_book_bars"] == 2
+    assert payload["null_reference"]["retained_bars"] == 5
+    assert payload["realized_no_book_bars"] == 1
+
+
 def test_render_report_store_bound_window_warns_naming_both_bounds(tmp_path):
     """End-to-end on a real truncated store: the warning must fire, name the store's last usable
     bar AND the journal's last cycle, and say how many cycles the gap cost."""
@@ -2295,6 +2383,22 @@ def test_json_payload_dual_none_in_windows_only_mode():
     assert payload["null_mode"] == "windows"
     assert all(v["dual"] is None for v in payload["gating_verdicts"].values())
     assert payload["pnl"]["pnl_verdict"]["dual"] is None
+
+
+def test_json_payload_survives_an_absent_realized_series():
+    """The empty-journal path renders and then builds a payload with every input `None`; an unguarded read
+    of `realized.weights` there raises past `cli.engine.command`, which catches `EngineError` alone."""
+    void_reasons = ["no journaled cycles found"]
+
+    text = render_report(None, None, None, None, void_reasons=void_reasons, band=0.90)
+    payload = soak._json_payload(
+        None, None, None, None, void_reasons=void_reasons, band=0.90, now=datetime(2026, 7, 20, tzinfo=UTC)
+    )
+
+    assert payload["null_reference"] is None
+    assert payload["realized_no_book_bars"] is None
+    assert "no null reference available" in text
+    assert "realized no-book bars" not in text
 
 
 # --- _verdict_payload: degraded verdict JSON, zero vs null ---------------------------------------------

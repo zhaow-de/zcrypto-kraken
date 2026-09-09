@@ -67,6 +67,14 @@ def structural_metrics(
     }
 
 
+def _no_book_bars(weights_by_bar: list[dict[str, float]]) -> tuple[int, int]:
+    """Bars holding no book at all, and the total they are out of -- read off `structural_metrics`' own
+    hhi sentinel rather than a second spelling of its gross test, and shared by the text report and the
+    JSON payload, so neither count can disagree with the branch it reports or with the other face."""
+    hhi = structural_metrics(weights_by_bar)["hhi"]
+    return sum(1 for h in hhi if h == 0.0), len(hhi)
+
+
 def governor_engaged_daily(mult: list[float], day_index: list[int]) -> list[float]:
     """One flag per distinct `day_index` day, kept in first-appearance order: the nulls built from it slice
     contiguous windows and blocks."""
@@ -330,6 +338,7 @@ class NullSystem:
     governed_net: list[float]  # n_periods
     cap_breach: list[float]  # n_periods; 1.0 on a bar where the pre-cap book was clipped
     cap_breach_bars: int
+    reference_span: tuple[datetime, datetime] | None = None  # first and last RETAINED bar; None outside `build_null`
 
 
 def _canonical_present(canonical_dir: Path) -> bool:
@@ -418,6 +427,9 @@ def build_null(
         governed_net=list(result.governed_net[cut:n]),
         cap_breach=cap_breach,
         cap_breach_bars=int(sum(cap_breach)),
+        # `h4_ts[n - 1]`, never `h4_ts[-1]`: the grid carries one bar more than the builder scores, so its
+        # last entry is the forming bar, and a span closed on it would postdate every verdict below.
+        reference_span=(h4_ts[cut], h4_ts[n - 1]),
     )
 
 
@@ -1300,7 +1312,7 @@ def render_report(
 ) -> str:
     """Render a soak-check analysis to a text report. `analysis`/`null`/`self_test` are `None` when the canonical
     is absent, `realized` too when the journal is empty or `realized_series` raised `SoakError`; the report then
-    stops at the NO VERDICT line, with the window block and self-tests still rendered above it, and
+    stops at the NO VERDICT line, with the window block, the null-reference block and self-tests above it, and
     `null_mode`/`path` (spec 00061 D4/D5) are stated up front even so, since a void run still reflects a choice a
     re-run would want to reproduce. A non-empty `void_reasons` suppresses every section below the gate, so an
     untrustworthy run never prints a per-metric conclusion, while the STORE-BOUND WINDOW warning sits ABOVE that
@@ -1337,6 +1349,27 @@ def render_report(
             lines.append("     Everything below is a read on a STALE window, not on the journal's current")
             lines.append("     extent. Re-run against a store that covers the journal before reading it as")
             lines.append("     the present state of the evidence.")
+    lines.append("")
+
+    lines.append("NULL REFERENCE SPAN")
+    if null is not None:
+        null_flat, null_bars = _no_book_bars(null.weights)
+        lines.append("  reference      : the canonical's complete-basket era, not its whole extent")
+        lines.append(f"  retained bars  : {null.n_periods}")
+        lines.append(f"  no-book bars   : {null_flat} of {null_bars}")
+        # A null built anywhere but `build_null` carries no stamps; the three lines above read none of them.
+        if null.reference_span is not None:
+            lines.append(f"  first bar      : {null.reference_span[0].isoformat()}")
+            lines.append(f"  last  bar      : {null.reference_span[1].isoformat()}")
+        else:
+            lines.append("  no null reference stamps available")
+    else:
+        lines.append("  no null reference available")
+    # Under `realized` alone, not its cycle_ts: a no-book bar in the LIVE window biases the reading itself
+    # rather than only the reference, so the count survives a window the store closed to nothing.
+    if realized is not None:
+        realized_flat, realized_bars = _no_book_bars(realized.weights)
+        lines.append(f"  realized no-book bars : {realized_flat} of {realized_bars}")
     lines.append("")
 
     lines.append("SELF-TESTS")
@@ -1459,9 +1492,8 @@ def _json_payload(
 ) -> dict:
     """Every number the report renders, as a `json.dumps`-able dict -- the machine-readable twin of
     `render_report`'s text, plus the raw `RealizedInternals` diagnostics the vocabulary-locked text cannot
-    carry. `null` is accepted to mirror `render_report`'s signature but contributes nothing; every
-    null-derived number already lives in `analysis`. `internals` is `None` exactly when `analysis` is."""
-    del null
+    carry. `null` contributes the reference span and its no-book count, which exist nowhere else; every other
+    null-derived number lives in `analysis`. `internals` is `None` exactly when `analysis` is."""
     payload: dict = {
         "generated_at": now.isoformat(),
         "band": band,
@@ -1503,6 +1535,22 @@ def _json_payload(
         }
     else:
         payload["provenance"] = None
+
+    # Two payloads archived across a change of reference otherwise carry identical `provenance` blocks and
+    # different bands, with nothing saying the null moved.
+    if null is None:
+        payload["null_reference"] = None
+    else:
+        null_flat, _ = _no_book_bars(null.weights)
+        payload["null_reference"] = {
+            "retained_bars": null.n_periods,
+            "no_book_bars": null_flat,
+            "first_bar": None if null.reference_span is None else null.reference_span[0].isoformat(),
+            "last_bar": None if null.reference_span is None else null.reference_span[1].isoformat(),
+        }
+    # Top level, not inside `provenance`, which a realized series with no scored bars omits while the text
+    # block still prints this line.
+    payload["realized_no_book_bars"] = None if realized is None else _no_book_bars(realized.weights)[0]
 
     payload["self_test"] = (
         None
