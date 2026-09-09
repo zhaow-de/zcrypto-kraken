@@ -62,7 +62,8 @@ instead of `1.0`, on `fix/t0196-kill-bar-isolation-fixtures`:
   True` assertion in each test (a heavy flat cost drag or a very negative regime slice both also
   fail the DSR leg at that scale, per the deleted comment's own claim), so the added assertions
   discriminate the defect they were written to catch, not merely restate the fixture.
-- `test_a1_kill_bar_spa_decisive_window_diverges_from_full` was driven per the suggestion below:
-  `dsr_pass=True, cost_stress_pass=True, worst_slice_pass=True` alongside `spa_pass=False` -- this
-  one already isolates genuinely (it already used `VAR_TRIALS_PER_PERIOD`, not `1.0`) and needed no
-  change.
+- `test_a1_kill_bar_spa_decisive_window_diverges_from_full` was driven as `## Findings so far`
+  asked: `dsr_pass=True, cost_stress_pass=True, worst_slice_pass=True` alongside `spa_pass=False` --
+  it already isolated genuinely (it already used `VAR_TRIALS_PER_PERIOD`, not `1.0`), but carried
+  the same unpinned-legs gap as the other two, caught in review; the same three assertions were
+  added there too.
