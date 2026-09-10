@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The instrument that replaced the refine-rules staleness sweep: one line per count command the corpus names, and a universal with no command beside it is the finding.
-# Two entries the corpus does not name close the list: topic-only merges, and the claude-kind commits since the last refine round closed.
+# Three entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, and the processes with a cwd inside a worktree.
 set -uo pipefail
 
 errors=()
@@ -112,6 +112,10 @@ c_claude_commits_since_the_round_closed() {
   git log "${base}..develop" --no-merges --format=%s | grep -c '^claude('
 }
 
+# The third count the corpus does not carry: processes with a cwd inside a worktree, the read that
+# catches a stale worktree whatever its branch's merge state (the protocol's worktree line).
+c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | grep -c /tmp/claude-1000/; }
+
 main() {
   cd "$(git rev-parse --show-toplevel)" || exit 2
   # Five counts read the integration branch by name. A checkout without that ref answers 0 from
@@ -140,6 +144,7 @@ main() {
   emit "converge-sh-wrapped-in-timeout" c_converge_sh_wrapped_in_timeout
   emit "topic-only-merges" c_micro_prs
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed
+  emit "worktrees" c_worktree_processes
 
   if [ "${#errors[@]}" -gt 0 ]; then
     printf 'count-list: %s command(s) errored: %s\n' "${#errors[@]}" "${errors[*]}" >&2

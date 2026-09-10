@@ -1,4 +1,4 @@
-"""count-list.sh: one line per count command the corpus names plus the two it does not, and a topic-only-merge arm that counts a merge only when every file it brought in is a topic file."""
+"""count-list.sh: one line per count command the corpus names plus the three it does not, and a topic-only-merge arm that counts a merge only when every file it brought in is a topic file."""
 
 from __future__ import annotations
 
@@ -27,12 +27,12 @@ def _develop_resolves() -> bool:
     return done.returncode == 0
 
 
-def test_one_entry_per_corpus_count_command_plus_the_two_the_corpus_does_not_name():
+def test_one_entry_per_corpus_count_command_plus_the_three_the_corpus_does_not_name():
     """The corpus's own count commands are the entry list -- a universal whose command is not run here is the finding."""
     names = _ENTRY.findall(SCRIPT.read_text())
     assert len(names) == len(set(names)), f"two entries answer to one name: {sorted(names)}"
-    assert len(names) == _corpus_count_commands() + 2, (
-        f"{len(names)} entries against {_corpus_count_commands()} count commands + 2: {names}"
+    assert len(names) == _corpus_count_commands() + 3, (
+        f"{len(names)} entries against {_corpus_count_commands()} count commands + 3: {names}"
     )
 
 
@@ -49,7 +49,7 @@ def test_the_script_prints_one_shaped_line_per_entry():
     )
     assert done.returncode == 0, done.stdout + done.stderr
     lines = done.stdout.splitlines()
-    assert len(lines) == _corpus_count_commands() + 2, done.stdout
+    assert len(lines) == _corpus_count_commands() + 3, done.stdout
     for line in lines:
         name, tab, value = line.partition("\t")
         assert tab == "\t" and name, f"no name and tab: {line!r}"
