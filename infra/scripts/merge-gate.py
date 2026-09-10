@@ -11,6 +11,15 @@ REPO = "zhaow-de/zcrypto-kraken"
 INDEX = "docs/reference/change-index.md"
 FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid"
 READ_LINE = re.compile(r"^Read before push by: *(.+?) +at +([0-9a-f]{7,40}) *$", re.M)
+FLOOR = re.compile(r"Claude (Opus|Fable)\b", re.I)
+FABLE_PATHS = (
+    "CLAUDE.md",
+    ".claude/",
+    "cli/engine/",
+    "cli/capture/",
+    "infra/ansible/roles/capture/",
+    "infra/ansible/roles/engine/",
+)
 _DONE = ("SUCCESS", "NEUTRAL", "SKIPPED")
 _BAD = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE")
 
@@ -19,8 +28,12 @@ def _state(check: dict) -> str:
     return (check.get("conclusion") or check.get("state") or "").upper()
 
 
-def read_line_fails(pr: dict, head_commit: dict | None) -> list[str]:
-    """The read must name the head, or the head is the one change-index row commit past the tip it names."""
+def _fable_paths_touched(files: list[str]) -> list[str]:
+    return sorted(p for p in files if any(p == g or (g.endswith("/") and p.startswith(g)) for g in FABLE_PATHS))
+
+
+def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None) -> list[str]:
+    """The read is at the floor and names the head, or the head is the one change-index row commit past the tip it names."""
     if pr.get("headRefName") == "ops-journal":
         return []  # the month PR is exempt from the pre-push read (docs/reference/ops-journal/README.md)
     body = pr.get("body") or ""
@@ -28,7 +41,21 @@ def read_line_fails(pr: dict, head_commit: dict | None) -> list[str]:
     m = READ_LINE.search(body)
     if not m or m.group(1).strip().startswith("<"):
         return ["no 'Read before push by: <model> at <sha>' line in the body: the whole-branch read is unrecorded"]
-    sha = m.group(2)
+    model, sha = m.group(1).strip(), m.group(2)
+    family = FLOOR.match(model)
+    if not family:
+        return [
+            f"the read named in the body was by {model!r}; the floor is Claude Opus, and Claude Fable where the PR touches {', '.join(FABLE_PATHS)}"
+        ]
+    if family.group(1).lower() == "opus":
+        if files is None:
+            return ["the PR's file list was not fetched, so the paths that need a Fable read cannot be checked"]
+        touched = _fable_paths_touched(files)
+        if touched:
+            more = f" and {len(touched) - 1} more" if len(touched) > 1 else ""
+            return [
+                f"the read named in the body was by {model!r}, and the PR touches {touched[0]}{more}: the floor there is Claude Fable"
+            ]
     if head.startswith(sha):
         return []
     if head_commit is not None:
@@ -41,7 +68,7 @@ def read_line_fails(pr: dict, head_commit: dict | None) -> list[str]:
     ]
 
 
-def evaluate(pr: dict, head_commit: dict | None = None) -> list[str]:
+def evaluate(pr: dict, head_commit: dict | None = None, files: list[str] | None = None) -> list[str]:
     fails: list[str] = []
     base = pr.get("baseRefName")
     state = pr.get("state")
@@ -72,24 +99,25 @@ def evaluate(pr: dict, head_commit: dict | None = None) -> list[str]:
         fails.append("no CI checks reported yet — wait for coverage.yml to register")
     if "- [ ]" in body:
         fails.append("PR description has unchecked checklist item(s) (- [ ])")
-    fails.extend(read_line_fails(pr, head_commit))
+    fails.extend(read_line_fails(pr, head_commit, files))
     return fails
 
 
-def _gh(*args: str) -> dict:
-    done = subprocess.run(["gh", *args], check=True, capture_output=True, text=True, timeout=60)
-    return json.loads(done.stdout)
+def _gh(*args: str) -> str:
+    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, timeout=60).stdout
 
 
 def main(argv: list[str]) -> int:
     number = argv[1:2]
-    pr = _gh("pr", "view", *number, "--json", FIELDS)
-    head_commit = None
+    pr = json.loads(_gh("pr", "view", *number, "--json", FIELDS))
+    head_commit = files = None
     m = READ_LINE.search(pr.get("body") or "")
     head = pr.get("headRefOid") or ""
+    if m:
+        files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
     if m and head and not head.startswith(m.group(2)):
-        head_commit = _gh("api", f"repos/{REPO}/commits/{head}")
-    fails = evaluate(pr, head_commit)
+        head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
+    fails = evaluate(pr, head_commit, files)
     if fails:
         print("GATE FAILED:")
         for fail in fails:

@@ -1,10 +1,12 @@
-"""merge-gate.py: the read line must name the head, with exactly two exceptions -- the one change-index row commit past the tip it names, and the ops-journal month PR."""
+"""merge-gate.py: the read line must be at the floor and name the head, with exactly two exceptions -- the one change-index row commit past the tip it names, and the ops-journal month PR."""
 
 from __future__ import annotations
 
 import importlib.util
 import pathlib
 import sys
+
+import pytest
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / "infra" / "scripts" / "merge-gate.py"
@@ -90,6 +92,52 @@ def test_a_missing_or_placeholder_line_fails():
     assert gate.evaluate(_pr(body="## Summary\n\n- [x] done\n")) == [unrecorded]
     assert gate.evaluate(_pr(body=f"Read before push by: <model> at {TIP}\n")) == [unrecorded]
     assert gate.evaluate(_pr(body="Read before push by: Claude Fable 5.1\n")) == [unrecorded]
+
+
+def _read_by(model: str) -> str:
+    return f"## Summary\n\nRead before push by: {model} at {TIP}\n\n- [x] done\n"
+
+
+def test_a_read_below_the_floor_fails():
+    fails = gate.evaluate(_pr(body=_read_by("Claude Haiku 4.5")), files=[])
+    assert len(fails) == 1 and "the floor is Claude Opus" in fails[0]
+    assert len(gate.evaluate(_pr(body=_read_by("Claude Sonnet 4.6")), files=[])) == 1
+
+
+def test_an_opus_read_passes_off_the_guarded_paths():
+    pr = _pr(body=_read_by("Claude Opus 4.8"))
+    assert (
+        gate.evaluate(pr, files=["cli/costs/schedule.py", "docs/reference/fleet.md", "infra/ansible/roles/ops/tasks/main.yml"])
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "CLAUDE.md",
+        ".claude/skills/open-pr/SKILL.md",
+        "cli/engine/executor.py",
+        "cli/capture/daemon.py",
+        "infra/ansible/roles/capture/tasks/main.yml",
+        "infra/ansible/roles/engine/tasks/main.yml",
+    ],
+)
+def test_an_opus_read_on_a_guarded_path_fails(path):
+    fails = gate.evaluate(_pr(body=_read_by("Claude Opus 4.8")), files=["cli/costs/schedule.py", path])
+    assert len(fails) == 1 and path in fails[0] and fails[0].endswith("the floor there is Claude Fable")
+
+
+def test_a_look_alike_path_is_not_guarded():
+    pr = _pr(body=_read_by("Claude Opus 4.8"))
+    assert (
+        gate.evaluate(pr, files=["cli/engine_tools/x.py", "docs/CLAUDE.md", "infra/ansible/roles/capture-mirror/tasks/main.yml"])
+        == []
+    )
+
+
+def test_an_opus_read_with_no_file_list_fails():
+    assert len(gate.evaluate(_pr(body=_read_by("Claude Opus 4.8")))) == 1
 
 
 def test_every_other_arm_still_fires():
