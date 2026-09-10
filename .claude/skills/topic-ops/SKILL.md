@@ -1,6 +1,6 @@
 ---
 name: topic-ops
-description: Use for EVERY T<NNNN> open-topic file operation — creating a topic, flipping status to partial or resolved, archiving, or editing docs/open-topics/README.md — load BEFORE writing the file or touching the index.
+description: Use when creating a T<NNNN> topic, flipping its status to partial or resolved, archiving it, or editing docs/open-topics/README.md — the serials, the file shape, the index sync and the archive move.
 disable-model-invocation: false
 ---
 
