@@ -18,6 +18,9 @@ exclude: '^infra/nas/rrsync$'
 # every commit is already reachable from a remote-tracking ref of that remote — and the hooks measure
 # the tree you are STANDING in, not the ref you are pushing.
 default_stages: [pre-commit]
+# `pre-commit install` then installs every hook type a hook here declares -- pre-push for the tracked
+# declarations above, commit-msg for guidance-guard -- instead of one `--hook-type` per clone.
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
 
 repos:
   # Five hooks below pin `stages: [pre-commit]`. Their upstream manifest declares
@@ -101,6 +104,15 @@ repos:
         entry: bash infra/scripts/staged-kind-check.sh
         language: system
         pass_filenames: false
+        always_run: true
+      # The always-loaded guidance -- CLAUDE.md, .claude/rules/*.md, every skill's name and description
+      # lines -- grows only with a stated reason in the message, and a corpus bullet with a universal
+      # names its count entry. Runs at commit-msg, the one stage that can read the message.
+      - id: guidance-guard
+        name: guidance growth is stated, universals are counted
+        entry: uv run python infra/scripts/guidance-guard.py
+        language: system
+        stages: [commit-msg]
         always_run: true
 
   - repo: https://github.com/hukkin/mdformat
