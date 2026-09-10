@@ -12,19 +12,46 @@ SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
-META_FIELD = re.compile(r"(?:^|[{,])\s*(name|description|whenToUse):\s*(['\"`])((?:(?!\2)[^\\]|\\.)*)\2", re.M | re.S)
+META_LITERAL = re.compile(
+    r"\Aexport const meta = \{\n(.*?)\n\}", re.S
+)  # the authoring reference's own shape, and the only one read
+META_KEY = re.compile(r"^  (name|description|whenToUse):", re.M)
+META_FIELD = re.compile(r"^  (name|description|whenToUse): '((?:[^'\\\n]|\\.)*)',?$", re.M)
 JS_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", re.S)
 _SIMPLE = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
 
 
+class Unreadable(ValueError):
+    """A file the guard will not measure: refused with the shape it reads, never guessed at."""
+
+
 def _unescape(value: str) -> str:
-    """A JavaScript string literal's escapes resolved to the characters the harness lists."""
+    """A single-quoted JavaScript string's escapes resolved to the characters the harness lists."""
+    if "\\u{" in value:
+        raise Unreadable("a `\\u{...}` escape in a listed string: write the character itself")
     return JS_ESCAPE.sub(
         lambda m: (
             chr(int(m.group(1)[1:], 16)) if m.group(1)[0] in "ux" and len(m.group(1)) > 1 else _SIMPLE.get(m.group(1), m.group(1))
         ),
         value,
     )
+
+
+def workflow_listed(text: str) -> list[str]:
+    """The strings the harness lists for a saved workflow, read from the one meta shape the guard accepts."""
+    m = META_LITERAL.match(text)
+    if not m:
+        raise Unreadable(
+            "the meta literal is not `export const meta = {` on the first line, then one field per line, then `}` alone on its own line"
+        )
+    block = m.group(1)
+    fields = {key: _unescape(value) for key, value in META_FIELD.findall(block)}
+    if len(META_KEY.findall(block)) != len(fields):
+        raise Unreadable("a name, description or whenToUse line that is not one single-quoted string on its own line")
+    for key in ("name", "description"):
+        if key not in fields:
+            raise Unreadable(f"no `{key}:` line in the meta literal, which the authoring reference requires")
+    return list(fields.values())
 
 
 GROWTH_LINE = re.compile(r"^Ambient grows by (\d+) bytes: \S", re.M)
@@ -62,10 +89,9 @@ def ambient_bytes(path: str, text: str) -> int:
                 total += len(line.encode()) + 1
         return total
     if WORKFLOW_FILE.match(path):
-        head, _, _ = text.partition("\n}")  # the meta literal is the file's first object; a pure literal by the authoring reference
         return sum(
-            len(_unescape(value).encode()) + 1 for _, _, value in META_FIELD.findall(head)
-        )  # the listed text, escapes resolved
+            len(value.encode()) + 1 for value in workflow_listed(text)
+        )  # the listed text, escapes resolved; an unreadable meta raises
     return 0
 
 
@@ -104,7 +130,12 @@ def uncounted_universals(path: str, text: str) -> list[tuple[int, str]]:
 def evaluate(before: dict[str, str], after: dict[str, str], message: str, against: str = "") -> list[str]:
     """before/after map each ambient path the commit changes to its text at the basis and in the commit; a missing key is an absent file; `against` names a basis other than HEAD in a refusal."""
     fails: list[str] = []
-    growth = sum(ambient_bytes(p, after.get(p, "")) - ambient_bytes(p, before.get(p, "")) for p in set(before) | set(after))
+    growth = 0
+    for p in sorted(set(before) | set(after)):
+        try:
+            growth += ambient_bytes(p, after.get(p, "")) - (ambient_bytes(p, before[p]) if p in before else 0)
+        except Unreadable as exc:
+            fails.append(f"{p}: {exc} — {SKILL}")
     lines = GROWTH_LINE.findall(message)
     if len(lines) > 1:
         fails.append(f"two `Ambient grows by` lines in the message; one, with the whole commit's growth — {SKILL}")
@@ -199,7 +230,11 @@ def main(argv: list[str]) -> int:
         return 2
     root = pathlib.Path(top.stdout.strip())
     if argv[1:] == ["--ambient-bytes"]:
-        print(tree_ambient_bytes(root))
+        try:
+            print(tree_ambient_bytes(root))
+        except Unreadable as exc:
+            print(f"guidance-guard: a workflow the guard cannot measure -- {exc}", file=sys.stderr)
+            return 2
         return 0
     if argv[1:2] == ["--range"] and len(argv) == 3 and ".." in argv[2] and "..." not in argv[2]:
         base, head = argv[2].split("..", 1)
