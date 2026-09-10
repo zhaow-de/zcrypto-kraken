@@ -134,7 +134,7 @@ An instrument reports independently of the thing it describes, and every one of 
 
 **Serials, versions and short numeric ids collide with data, so a hit count is not a reference count.** A five-digit spec serial grepped across a repo full of floats returned three confident hits that were a quantity, a drawdown and a timestamp; taking the counts would have inverted the ruling.
 
-**A review is a producer, not an authority over a measurement** (`agent-ops.md` owns the two-producers rule). When a dispatched review's figure contradicts a measured one, report both and name which is yours: deferring once would have shipped a fix that closed three symptoms and left the real defect untouched.
+**A review is a producer, not an authority over a measurement** — two producers measuring the same thing independently are the check on each other, and their disagreement is the finding. When a dispatched review's figure contradicts a measured one, report both and name which is yours: deferring once would have shipped a fix that closed three symptoms and left the real defect untouched.
 
 **Split CALL from ACCESS in any probe of what a function raises.** A probe touching a lazily-evaluated or converted value inside the same `try` as the call attributes the consumer's exception to the callee. Two phases, and report which raised.
 

@@ -1,63 +1,32 @@
 # Multi-agent protocol
 
-Four named Claude Code sessions on this repo, one owner. The owner keeps all four running; sessions talk only through `SendMessage`, addressed by name.
+Sessions talk through `SendMessage`, addressed by name. Session identity is not in git (`git log -200 --format=%an | sort -u` prints one author): the lines below are assignments the sessions honour, not refusals a tool enforces.
 
-## Roles
+## Roles and authorities
 
-- **`zcrypto-marco` — the coordinator.** Runs no payload work: no SDD loop, no plan-review loop, no drill, no daily-ops pass, no investigation. It grooms the backlog, assigns work, holds the authorities below, and runs the hourly tick. Git ownership is coordination: main opens and merges PRs. Its own hands-on work is the coordination corpus itself — grooming, refine-rules rounds, this protocol. It runs on Fable; when the weekly Fable quota is exhausted it falls back to Opus and says so in the coordination table. Payload drafting runs on the tier the owner names per assignment; reviewers by blast radius (`commit-messages.md`).
-- **`zcrypto-alex`, `zcrypto-bravo` — payload sessions.** Idle until main assigns; execute one assignment at a time in their own worktree; report by message.
-- **`zcrypto-zebra` — the owner's own session.** Never in the assignment pool. Main assigns it nothing unless the owner names it.
-- **Subagents** belong to the session that dispatched them and are not handed `.local/memo.md` or `.local/coordination.md` — a dispatch inlines the task's own context and never pastes the memo (`.claude/skills/zcrypto-grooming/references/memo-protocol.md`).
-
-## Authorities held only by main
-
-- **PRs.** A payload session never opens or merges a PR. It sends main the component name (`branch-workflow.md`'s gate, step 1) and its branch state; main answers open, hold, or a reason — it holds the owner's PR word by delegation (`.claude/rules/branch-workflow.md` names it) — and main opens it. The one carve-out: the owner's direct word to a payload session, which then opens the PR itself and names that word in the body.
-- **T-topics.** A payload session never registers a topic. A finding it cannot resolve in-branch goes to main as the topic's `Context` + `Why this matters`; main registers, folds, or drops — **with the word recorded in the PR that carried the finding**: register → the new topic file, fold → the target topic's file, drop → the PR body's `## Out of scope` as an explicit drop — never only in a reply or the coordination table; a *later batch* answer is a registration into the umbrella topic now. The request is the queue. With no coordinator reachable, the session registers it and names it in its hand-back for confirm-or-kill (`open-topics.md`).
-- **Memory.** Only main writes `~/.claude/projects/…/memory/`. A session's lessons go to its own inbox per `agent-ops.md`'s inbox rule; a record's `session` names the origin and its `branch` where the WORK happened, `(branchless: <what>)` when there was none; the refine-rules round harvests every inbox, and main files in memory what the harvest shows belongs there.
-- **The memo.** Main's alone — the section below. `.local/coordination.md` is main's alone too.
-
-## The memo
-
-`.local/memo.md` has one writer, main (`agent-ops.md`'s no-undo rule applies). A payload session sends main the exact text and where it goes; main writes it under the memo-protocol's read-guard (`.claude/skills/zcrypto-grooming/references/memo-protocol.md`) and records the chain — `sha256 · lines · bytes` — in the coordination table after every write.
+- `zcrypto-marco` — the coordinator: assigns work, keeps `.local/coordination.md`, and holds the PR word, topic registration and the memo.
+- `zcrypto-alex`, `zcrypto-bravo` — payload sessions: one assignment at a time, in the worktree the brief names; they report by message.
+- `zcrypto-zebra` — the owner's own session; marco assigns it a subject when the owner names it in (set: the zebra row of the table; count: `awk -F'|' '/^\| *zcrypto-zebra/ {gsub(/ /,"",$5); print $5!="—"}' .local/coordination.md`).
+- Subagents belong to the dispatching session; a brief inlines the task's context and pastes neither memo nor table (set: the briefs in `.local/dispatch/`; count: `grep -rl --no-ignore-files 'Memo chain carried by main' .local/dispatch/ | wc -l`).
+- **The PR word is marco's, by the owner's delegation**: a payload session sends the component name — a spec, memo item, topic, or the defect a fix kills — with branch and commit hash; marco answers open, hold or a reason, and opens the PR. The owner's direct word to a payload session lets it open the PR itself, naming the word in the body.
+- **Topic registration is marco's**: a finding left unresolved in-branch goes to marco as the topic's `Context` + `Why this matters`; marco registers, folds or drops it, and the PR that carried the finding records the answer — a topic file, or an explicit drop under `## Out of scope` (set: the topic keys in `docs/reference/change-index.md`; count: `for t in $(grep -oE '\bT[0-9]{4}\b' docs/reference/change-index.md | sort -u); do find docs/open-topics -name "$t-*.md" | grep -q . || echo "$t"; done | wc -l` — keys with no file).
+- **The memo `.local/memo.md` is marco's** — one writer, `.claude/hooks/memo-guard.sh` refusing a write without a fresh read: a payload session sends the text and where it goes; marco writes it per `.claude/skills/zcrypto-grooming/references/memo-protocol.md` and records the chain in the table (set: the live memo against the table's chain line; count: `grep -c "$(sha256sum .local/memo.md | cut -c1-64).* · $(wc -l < .local/memo.md) · $(wc -c < .local/memo.md)" .local/coordination.md` — 1 when they match).
+- **A lesson goes to the session's own inbox, not to its harness memory** — `~/.claude/projects/<cwd>/memory/` is one directory per checkout, loaded by that checkout's session and not harvested — through `infra/scripts/append-lesson.py`; the refine round harvests the inboxes (set: `.local/agent-lessons/*.jsonl`; count: `uv run python infra/scripts/check-agent-lessons.py .local/agent-lessons/*.jsonl | wc -l` — malformed records).
 
 ## Assignment
 
-- **Availability and affinity.** Main keeps the coordination table: session → status (idle / busy) → branch → topic or spec → warm-context tags → last report. A subject goes to the idle session that already holds its context; else the idle one; never zebra.
-- **One assignment per payload session at a time**, and every payload status message names its branch and latest commit hash.
-- **A dispatch on a fresh owner instruction that REORDERS a sequenced package waits one turn for the owner's next message, or its brief says HELD at its head.**
-- **An addition to a closing fold-in that adds a MECHANISM is new work — a topic or its own branch — never appended**; a fix rides.
-- **A table row is the session's CURRENT state, one line per cell** — status, branch, topic or spec, and what the branch has GROWN: a new guard, file or claimed property named in a payload report goes into the topic column, and the tick compares the columns pairwise for a property pinned on two branches. A block below the table exists only while its assignment is in flight and is deleted when it lands.
-- **A dispatched assignment whose pre-push loop reaches its third round carrying a Critical or Important gets a transcript retro by main before that session's next assignment** — rounds, findings by class, minutes per round, what the author's own tier could have caught; the output is registry records and a proposed rule or skill change, never a verbal note.
+- **One subject per payload session — the owner's ruling.** A session whose branch is finished but gated on an external event stays idle; marco offers it no second subject and treats no idle session as spare capacity (set: the payload rows of the table; count: `awk -F'|' '/^\| *zcrypto-(alex|bravo|zebra)/ && split($5,a,/[;,+]/)>1' .local/coordination.md | wc -l` — rows holding two or more subjects).
+- A subject goes to the idle session holding its context, else the idle one. A row is the session's current state; a guard, file or property a report names goes into the topic cell, compared pairwise before assigning (count: `awk -F'|' '/^\| *zcrypto-(alex|bravo|zebra)/ {gsub(/ /,"",$5); if ($5!="—") print $5}' .local/coordination.md | sort | uniq -d | wc -l` — a subject on two rows). A block below the table lives while its assignment is in flight (count: `grep -c '^## ' .local/coordination.md` against the rows holding a subject).
+- A brief names the component, the worktree, the boundary list (paths and actions it stays off), where output lands, whom to message, the concurrency bound, and who decides a gap (set: the briefs; count: `grep -rL --no-ignore-files -E 'worktree|wt-' .local/dispatch/*.md | wc -l` — briefs naming no worktree).
+- An assignment whose pre-push loop reaches a third round carrying a Critical or Important gets a transcript retro by marco before that session's next assignment, written to a dated directory under `.local/retro/` with a proposed rule or skill change.
 
-## The brief
+## Mechanics
 
-An assignment message carries:
-
-- the component name and the worktree to use;
-- the boundary list — paths it must not write, actions it must not take (venue, credentials, converges, PRs, topics) — and where output lands;
-- who to message about what, and the concurrency bound — a fan-out wider than it asks first;
-- an arm for a gap surfaced by implementation: it goes to whoever decides items in that assignment;
-- when the owner is present in the payload session, what the owner decides, with questions batched per topic.
-
-Its scope: a scope line that licenses an artefact licenses the artefact's mandatory consequences — an alert rule carries its runbook section, panel and README row; a brief that DEFINES a check states the census it was run against; under a hard clock the first wave is the set that can COMPLETE inside the window, never the head of the global order. And an assignment governed by rules that exist only on an unmerged branch waits for the merge, or the brief names the branch and quotes every clause relied on. A brief names a constructed defect it has constructed, or labels it a hypothesis; a briefed failure mode is derived from the tree by the assignee, never transcribed into a commit body.
-
-## The hourly tick
-
-**The coordinator is unpoked.** The tick resumes a stalled payload turn; nothing resumes main's, so `agent-ops.md`'s announcing rule is main's own check at the top of every turn.
-
-Main runs it from an in-session `CronCreate` job — session-only, fires only while main is idle, **expires after seven days**: reinstall it at every restart and every week. Its cron field, like every one-shot read's, is in the process's zone — UTC — never a conversion to the owner's. **The runnable prompt is `.claude/skills/zcrypto-main-session-init/SKILL.md`'s, verbatim** — this section is its outline, never a second copy:
-
-1. Prove each `interactive` row alive from its own tmux target, every step from the row and the host; a step failing is DEAD, never idle, and a second consecutive miss is flagged.
-2. **Poke first.** A payload session that is idle with an open assignment gets a one-line message: what it last declared and a request to continue. This is the whole enforcement mechanism for announced-but-not-started work — a stalled turn resumes on any message.
-3. Read git state and the memo's work-package markers, and compare the table's topic columns pairwise; a collision is FLAGGED in the report and routed to one owner after the tick, never assigned inside it.
-4. Post one report to the owner: per session, what it is on and whether the branch moved; the backlog's next three items; anything flagged.
-
-## Restart and rename
-
-- A session cannot be renamed by the session; the owner runs `/rename` from its console, at a quiet moment, and tells main.
-- After a `claude` binary update the owner exits and resumes each session with no running tasks; names persist, connections re-establish.
-- After a workstation restart, `infra/scripts/zcrypto-tmux.zsh` rebuilds the cockpit — one tmux session `zcrypto-main` with the three payload-and-coordinator panes resuming their Claude sessions by ID — and the owner's `zcrypto-zebra` shell; idempotent per TMUX session, so re-running it rebuilds a missing cockpit or zebra and leaves a live one alone — a Claude pane that died inside a live cockpit is NOT rebuilt: kill that tmux session and re-run. Main reinstalls its tick on resume and re-reads the coordination table before assigning anything.
+- The hourly tick is installed on the owner's word, not by default — `zcrypto-main-session-init` holds its install step and prompt — and the table's `tick installed:` line records whether it is installed (`grep '^tick installed' .local/coordination.md`).
+- A worktree is removed when its branch merges; the count that catches a stale one is processes with a cwd inside it (`for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | grep -c /tmp/claude-1000/`) beside worktrees whose branch is merged (`git worktree list --porcelain` against `git branch --merged develop`).
+- `CLAUDE.md` and `.claude/` are edited through a `claude(…)` commit and no other kind — the `staged-kind` hook refuses the mix (set: `develop`'s commits touching those paths; count: `git log develop --format='%h %s' -- CLAUDE.md .claude | grep -vc ' claude('`); a PR lists its `claude(…)` commits under `## Guidance changes` (`open-pr`), where the owner reviews them.
+- The owner renames a session with `/rename` from its console and tells marco; after a workstation restart `infra/scripts/zcrypto-tmux.zsh` rebuilds the cockpit, and marco re-reads the table before assigning.
 
 ## The payload contract
 
-A payload session, on receiving an assignment: works only in the worktree named; never writes outside the boundary list; never opens a PR, registers a topic, or writes memory — it asks main, except as `## Authorities held only by main` carves out; reports at start, at each commit, when blocked, and at completion, each report carrying branch and commit hash; ends a turn only with its state reported, never with work announced and not begun; reports only what it can see — *I have heard nothing*, never *the owner has not spoken*, which only the coordinator can tell apart; appends its lessons per `agent-ops.md`'s inbox rule as they happen — a review or a read included.
+A payload session works in the worktree named, inside the boundary list; reports at start, at each commit, when blocked and at completion, naming branch and commit hash; ends a turn with its state reported, not with work announced and unbegun; says what it saw — *I have heard nothing*, not *the owner has not spoken*, which the coordinator alone can tell apart; appends its lessons as they happen.

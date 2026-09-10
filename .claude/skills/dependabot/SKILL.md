@@ -17,7 +17,7 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 
 ## Repo specifics
 
-- **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main` (which is release-only per `.claude/rules/branch-workflow.md`). If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
+- **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main`, which is release-only (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`). If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
 - The Python application lives at the **repo root** (flat layout). Tests, lint, and the lockfile (`uv.lock`) all live at the root; run `uv` commands from the repo root.
 - Pre-commit hooks (`.pre-commit-config.yaml` at repo root) auto-format on every `git commit` (ruff-format, trailing whitespace, etc.). A push after a hook-driven amend may need re-staging — the loop handles it.
 - Configured ecosystems: `uv` (updates `pyproject.toml` + `uv.lock`), `github-actions` (updates `.github/workflows/*`), and `pre-commit` (updates `.pre-commit-config.yaml`). This skill processes any `dependabot/` PR regardless of ecosystem.
@@ -80,10 +80,10 @@ uv run pytest -q
 
 After the cap: **stop and ask** the user. Don't silently keep retrying.
 
-Commit any fixes with our project's commit convention (per `.claude/rules/commit-messages.md`):
+Commit any fixes with our project's commit convention — Conventional Commits, one commit-type's file kind per commit:
 
 ```bash
-# Stage by EXPLICIT PATH — never -A/-u (commit-messages.md): name exactly the files 2c edited.
+# Stage by EXPLICIT PATH — never -A/-u: name exactly the files 2c edited.
 git add <paths the auto-fix touched>
 git commit -m "$(cat <<'EOF'
 fix(config): resolve <symptom> after <package> upgrade
@@ -95,7 +95,7 @@ EOF
 
 If pre-commit reformats during the commit, re-stage and re-commit (NEVER `--no-verify`).
 
-Before pushing, dispatch a review subagent on the fix commit and land the branch's review record on HEAD with its `Reviewed-by:` trailer — mandatory for every Claude-authored branch, no trivial-fix exception (`.claude/rules/commit-messages.md`).
+Before pushing, dispatch a review subagent on the fix commit — mandatory for every Claude-authored branch, no trivial-fix exception; the reader is a different agent from the author (`CLAUDE.md`).
 
 #### 2d. Push + wait for CI + merge
 
@@ -121,7 +121,7 @@ PR_NUMBER=<the number for this PR>
 # have not registered yet; `coverage.yml` triggers on `pull_request` into develop/main and branch
 # protection requires the `Full test suite` context, so "this repo runs no checks" is not a state
 # this loop can be in. Requiring that run BY NAME is what makes the empty window pending.
-# Run this as its OWN command and re-read it every ~45 s (agent-ops.md: no long foreground loop),
+# Run this as its OWN command and re-read it every ~45 s — never one long foreground loop —
 # then merge in a SEPARATE command only after reading `success` — a fresh shell per call means
 # `$state` does not survive to the `if` below, which fails closed but merges nothing.
 SHA=$(git rev-parse HEAD)
@@ -199,6 +199,6 @@ gh api "repos/zhaow-de/zcrypto-kraken/commits/<sha>/check-runs" \
 
 ## Notes
 
-- **`main` is PR-only** (branch protection enforces); it advances only via `/release`. Dependabot PRs target `develop`.
+- **`main` is PR-only** (branch protection enforces); it advances only via `/release` (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`). Dependabot PRs target `develop`.
 - Use `fix(config): …` for auto-fix commits — cross-cutting tooling fixes, not component-specific.
 - Prefer separate `uv …` / `git …` lines over composite `(cd X && Y) && Z` commands.

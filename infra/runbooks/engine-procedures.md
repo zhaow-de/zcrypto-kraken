@@ -318,7 +318,7 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
 **Step 7 — re-sync the tax depot and record the verdict.** After all three terminal acts — the close, the settle, the disposal — re-sync the Kraken depot in Blockpit and record pass/fail in `docs/research/14.phase6-decisions.md` with the evidence: bucket assignment (derivatives PnL vs spot disposal), rollover fees attached as costs, FIFO lots intact, no phantom balances, and the disposal's gain/loss computed off the basis the settle carried.
 
-**On a FAIL, registering the fallback build item is a step of THIS checklist, executed in the same session as the verdict — never a remembered promise.** Open a topic file under `docs/open-topics/` (convention: `.claude/rules/open-topics.md`; file mechanics: the `topic-ops` skill) for the deterministic pre-transform that maps Kraken's ledger and trades exports into Blockpit's manual-import CSV with explicit margin-PnL rows, and queue it in the memo in the same pass — a topic registered but not queued is invisible when work is picked up.
+**On a FAIL, registering the fallback build item is a step of THIS checklist, executed in the same session as the verdict — never a remembered promise.** Open a topic file under `docs/open-topics/` (file mechanics: the `topic-ops` skill) for the deterministic pre-transform that maps Kraken's ledger and trades exports into Blockpit's manual-import CSV with explicit margin-PnL rows, and queue it in the memo in the same pass — a topic registered but not queued is invisible when work is picked up.
 
 #### 5. Disarm — both keys down, the second one the same day
 

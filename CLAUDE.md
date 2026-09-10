@@ -1,61 +1,39 @@
 # CLAUDE.md
 
-## Project
+## Orientation
 
-`zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script. Vocabulary: "observability" means the Grafana Cloud telemetry stack, never the healthchecks.io dead-man switches — those are a separate, independent failure domain.
+`zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin); the phased master plan is `docs/research/00.master-plan.md`; the `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script.
 
-**Sessions.** Four named Claude Code sessions share this repo (`docs/reference/multi-agent-protocol.md`): `zcrypto-marco` coordinates and holds the PR, topic, memory and memo-token authorities; `zcrypto-alex` and `zcrypto-bravo` are payload sessions bound by that doc's payload contract; `zcrypto-zebra` is the owner's own and is never assigned. `ListAgents` prints which one you are.
-
-## Repository layout
-
-Standard single-package uv project: `pyproject.toml`, `uv.lock`, `.python-version`, and `ruff.toml` all live at the **repo root**, and every `uv` command runs from the root.
-
-- `cli/` — the application package; run via `uv run python -m cli`.
-- `.claude/rules/`, `.claude/skills/` — repo-specific Claude Code rules and skills.
-- **CLI subcommands**: each is a sibling package `cli/<name>/` with a `command.py` (library packages like `cli/portfolio` carry no command). Single-command ones register in `cli/__main__.py` via `app.command(name=...)(...)`; multi-command groups expose a Typer sub-app registered via `app.add_typer(...)`. Loggers are named `get_logger("<package>.<module>")`.
-- `zcrypto.toml` — the app's config, loaded by `cli/config.py`.
-- `docs/` — the knowledge tree, organized into subdirectories: `research/` (master plan + phase reports + phase decisions logs, serial-prefixed and grouped by phase), `reference/` (living cross-phase artifacts that belong to no single phase — fee schedule, data catalogs, the fleet topology + pins maps, the corporate-action ledger, and the append-only `trial-registry.jsonl`), `universe/` (the point-in-time universe's living doc), `open-topics/` (parked follow-ups + index), `specs/` + `plans/` (per `spec-plan-locations.md`). The only Markdown files that live **directly** under `docs/` are the per-phase changelogs `iterations-history-phase<N>.md` (+ the `iterations-history.md` index). **Do not create new documents directly under `docs/`** — every new doc belongs in a subdirectory (`research/` for phase-specific reports, `reference/` for living reference, `specs/`/`plans/`/`open-topics/` for their kinds).
-- `data/` — the gitignored data root (its own `.gitignore` ignores everything inside): the compiled/canonical datasets plus the engine's transactional dirs (`data/engine-store`, `data/engine-journal`) — config defaults, present only where an engine actually runs; the live pair is on the engine host.
-- `.local/` — gitignored and KEPT, unlike the disposable `.tmp/`: the memo (`memo.md`), the coordination table, the per-session lesson inboxes (`agent-lessons/<session>.jsonl`), retro artefacts.
-
-## Secrets
-
-*Protected — every edit takes the owner's per-edit sign-off (`zcrypto-refine-rules`).*
-
-**Never print a container's environment on the engine host `zcrypto`** — `docker inspect … {{json .Config.Env}}` / `{{json .Config}}`, `docker exec … env`, `docker compose config`: `zcrypto-engine` carries the live Kraken trade key and the Loki push password as env vars. Scope every inspect to the field you need — `.Mounts`, `.State`, `.Config.Image`, `.Config.Entrypoint`, `.RestartCount` — and **name those fields in a subagent's dispatch prompt**, since an unscoped "gather `docker inspect` evidence" invites the whole-object form. Vault- and deploy-specific hazards (`ansible-inventory --host`/`--list`) are in `fleet-deploys.md`.
+- Package manager: **uv** (`pyproject.toml` + `uv.lock`); run all Python through uv — `uv sync`, `uv run zcrypto [args]`, `uv run pytest [path::test]`, `uv run pre-commit run -a`, `uv add [--dev] <pkg>`. Tests live in `tests/`.
+- Layout: `cli/<name>/command.py` per subcommand; `zcrypto.toml` is the app config; `docs/` = `research/`, `reference/`, `universe/`, `open-topics/`, `specs/`, `plans/` — no Markdown file directly under `docs/` (set: the tracked Markdown files `docs/` itself holds; count: `infra/scripts/count-list.sh markdown-directly-under-docs`); `data/` is the gitignored data root; `.local/` is gitignored and KEPT (the memo, the coordination table, the lesson inboxes), `.tmp/` is disposable; fleet hosts, pins and access: `docs/reference/fleet.md`, `docs/reference/fleet-pins.md`.
+- Every branch is cut from `develop` and merges by PR into `develop`; `main` is release-only; GitHub refuses direct pushes to both (`.github/settings.yml`) (set: `develop`'s first-parent merges; count: `infra/scripts/count-list.sh non-pr-merges-on-develop`). Commits follow Conventional Commits, type `claude` for `CLAUDE.md`/`.claude/` changes (`.cz.toml`); the `staged-kind` hook refuses mixing those with other files.
+- Unversioned data — `data/` or another gitignored path — is copied aside before a tool rewrites it, and the copy is deleted after the last verification that could read it: there is no undo. A scratch worktree that symlinks a canonical dataset unlinks it before `git worktree remove`, and the main checkout's `data/` listing is read afterwards (no count command: nothing in the tree records a copy-aside).
+- Four named sessions share this repo (`docs/reference/multi-agent-protocol.md`); `ListAgents` prints which one you are.
 
 ## Tooling
 
-- Package/dependency manager: **uv** (`pyproject.toml` + `uv.lock`). Do not edit `uv.lock` by hand.
-- Python is pinned to **3.14**. PEP 758 applies: `except ValueError, IndexError:` — unparenthesized multiple exception types (only without `as`) — is **valid syntax**; do not flag it as an error or "fix" it in review.
-- Run all Python through uv so the locked environment is used.
+- Python is pinned to 3.14 (`.python-version`); PEP 758 makes `except ValueError, IndexError:` valid syntax — do not flag it or "fix" it in review.
+- The commit gate is `uv run pre-commit run -a`; a run that rewrites files reports Failed and leaves the rewrites unstaged — re-run until clean, then stage what it rewrote.
 
-## Commands
+## Secrets
 
-```bash
-uv sync                          # install/refresh the locked environment (incl. dev group)
-uv run zcrypto [args]            # run the CLI via the installed console script
+- Never print a container's environment on the engine host `zcrypto` — `docker inspect … {{json .Config.Env}}` / `{{json .Config}}`, `docker exec … env`, `docker compose config`: `zcrypto-engine` carries the live Kraken trade key and the Loki push password as env vars; scope every inspect to the field you need (`.Mounts`, `.State`, `.Config.Image`, `.Config.Entrypoint`, `.RestartCount`) and name those fields in a subagent's dispatch prompt (set: the non-comment lines of the non-Markdown files under `infra/`, `.claude/`, `cli/` — the roles, templates, units, hooks and scripts a command runs from — with the counter itself excluded; the Markdown runbooks and skills, where the form appears as the prohibition's own text, are outside it; count: `infra/scripts/count-list.sh engine-env-forms-invoked`).
+- Never run `ansible-inventory --host`, `--list`, or `--graph --vars` — all three print every vault secret in cleartext; `infra/ansible/scripts/vault-pass.sh` refuses those ancestries; use `--graph` / `--list-tags`, or a key-names-only filter (set: the same non-comment lines, with `infra/ansible/scripts/vault-pass.sh` — whose text is the refusal — excluded beside the counter; count: `infra/scripts/count-list.sh ansible-inventory-secret-forms-invoked`; `tests/test_vault_pass_guard.py` proves the refusal).
+- `kraken-cli` is workstation-only — never install or invoke it on a remote host (engine node, capture pair, ops, NAS, bridgehead) (set: the non-Markdown files under `infra/` and `cli/` — roles, compose templates, units, scripts, and the Python that runs on the engine host — with the counter itself excluded; count: `infra/scripts/count-list.sh kraken-cli-on-infra-surfaces`).
 
-uv run pytest                    # run tests
-uv run pytest path/to/test.py::test_name   # run a single test
+## Guards and proofs
 
-uv run pre-commit run -a         # full commit gate
-uv add <pkg>            # add new deps
-uv add --dev <pkg>      # add new dev deps
-```
+- A commit that adds or changes a guard (test, assertion, hook, alert rule, checker) proves it with `infra/scripts/mutate-probe.sh` — never a hand-rolled mutate-and-restore loop; its header states its refusals (set: commits on `develop` since the script landed whose message says "mutation"; count: `infra/scripts/count-list.sh mutation-commits-without-a-probe`).
+- A diff is called prose-only only when `uv run python infra/scripts/prove-inert.py <base-rev> <path>...` exits 0 for every file in it (set: commits on `develop` since the script landed whose message says "prose-only"; count: `infra/scripts/count-list.sh prose-only-commits-without-the-prover`).
+- A comment or docstring gets its place only if a reader would do something differently without it, and if it stays it has to be correct (set: every comment and docstring under `cli/`, `tests/`, `infra/`; count: `infra/scripts/count-list.sh prose-chars` — their mass in characters, a number to watch, not a gate).
+- A spec whose sha256 is stored as a registry record's `spec_hash` is immutable — a change is a new spec and a new record, never a rewritten hash (set: every record in `docs/reference/trial-registry.jsonl`; count: `infra/scripts/count-list.sh spec-hash-provenance`).
+- `tests/test_internal_terms_not_operator_visible.py` keeps `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>` and `WP<N>` off the operator-read surfaces it walks, and `WP<N>` out of every tracked file: move the token to the adjacent comment; never widen that test's allowlist (set: the surfaces the test parametrises and its `_WP_CARRIERS`; count: `infra/scripts/count-list.sh operator-term-surfaces`).
+- A lesson — *it was mine*, *I mistakenly*, *the third time*, *a miscount* — goes through `infra/scripts/append-lesson.py` into `.local/agent-lessons/<session>.jsonl` the moment it happens; the retro loop reads the inboxes.
 
-Tests live in `tests/` (pytest + Typer's `CliRunner`).
+## Ledger, topics, specs, PRs
 
-**The pre-PR full-suite run is CI's — do not duplicate it locally.** `.github/workflows/coverage.yml` runs the whole suite on every PR into `develop` and a failing suite fails that check. Locally run the tests the diff can reach, targeting one with `uv run pytest path::test` while iterating. The full run takes ~19 minutes with both local data sources present.
-
-**Except what CI cannot run.** Tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage — a full-suite run from a scratch worktree skips them silently, since the datasets under `data/` live only in the main checkout: a local full-suite claim names which of them were present, and a worktree run symlinks them in first and unlinks them before removal (`agent-ops.md`'s snapshot bullet): `tests/test_costmin_drift.py` is COSTMIN's only guard against venue-side drift, sits on the live trade path, and skips in CI.
-
-**A network-gated test is not data-gated** — one that reaches a live venue endpoint runs in CI, where it is a flake source, and skips silently if the venue ever blocks the runner. Gate such a test on the explicit opt-in `ZCRYPTO_LIVE_VENUE_TESTS=1` rather than on reachability, so a skip is a decision and never an outage read as coverage; with the flag set, every venue answer short of the expected one fails.
-
-**A change to `uv.lock`, `pyproject.toml` or a `conftest.py` reaches everything** — run the suite in full for those.
-
-## Conventions
-
-- **The commit gate is `uv run pre-commit run -a`** — run the full suite before committing, not individual hooks; it runs ruff (lint + format), yamllint, ansible-lint, mdformat, and standard hygiene hooks. A run that rewrites files reports **Failed** and leaves the rewrites **unstaged**: re-run until clean, then **stage everything the hooks rewrote** (re-stage even if you'd staged before) and commit. Semantics: `-a` checks all tracked files, bare `pre-commit run` only the staged set, and a brand-new file is invisible to both until `git add`ed. If the commit-time hook still rewrites something, re-stage and re-commit — never `--no-verify`.
-- **Versioning** is commitizen-managed (`.cz.toml`). `cz bump` (run by the `/release` skill) is the source of truth for the version and updates both `pyproject.toml` and the README `Version` badge — don't hand-edit either or they'll drift.
-- **Workflow conventions** live in `.claude/rules/`: branch model (`branch-workflow.md`), PR title/body + co-author trailer (`pull-requests.md`), commit messages (`commit-messages.md`), README Usage (`readme-usage.md`), when/where to write specs & plans (`spec-plan-locations.md`), the general working discipline — think before coding, simplicity, surgical changes, done by outcome — in `general.md`, the open-topics convention for parking follow-up items (`open-topics.md`), and the decisions-log convention for recording subject-matter research decisions in the per-phase `docs/research/<serial>.phase<N>-decisions.md` logs (`decisions-log.md`). Fleet deploy discipline — the canary rule, converge windows for every tier, the alert-rule lifecycle — lives in `fleet-deploys.md`; host access (ssh aliases, the passwordless-sudo deploy user) and the attended-reboot discipline are `docs/reference/fleet.md`; shell/subagent operating lessons in `agent-ops.md`; every sentence of comment, docstring, doc and rule — the one principle and the changelog entry every plan ends with — in `prose.md`; keeping internal traceability vocabulary off operator-visible surfaces in `operator-facing-text.md`. Consult them before branching, opening a PR, or releasing.
+- `.local/memo.md` is the work ledger and queue — `zcrypto-marco`'s alone; its protocol is `.claude/skills/zcrypto-grooming/references/memo-protocol.md`, and `.claude/hooks/memo-guard.sh` enforces fresh-read-before-write.
+- A follow-up parked for later is a topic, `docs/open-topics/T<NNNN>-<slug>.md`, indexed in `docs/open-topics/README.md`; its `ripe_when:` is one of six shapes — a date, another topic's resolution, an alert, an evaluation statement, a milestone, an activity — and `zcrypto-daily-ops` evaluates them; file mechanics are the `topic-ops` skill (set: every live topic; count: `infra/scripts/count-list.sh live-topics-without-a-trigger`). A topic is `resolved` in the PR that delivers its solution; a converge that solution still needs is the fleet's concern (`.claude/rules/fleet-deploys.md`), not the topic's.
+- A change whose design choices are still open takes a committed spec `docs/specs/<serial>-<topic>-design.md` and plan `docs/plans/<serial>-<feature>.md` (5-digit serial, the next above the highest in `docs/specs/`), reviewed by `zcrypto-plan-review` before Task 1; a design settled by a ruling or topic that predates the branch is implemented directly.
+- `docs/reference/change-index.md` maps each keyed PR to its `iter-NNN`, spec and topic — one row per PR, written by `open-pr` at create time from the branch name, the PR title and the body's `## Spec / Plan` section; no cell carries a path (`tests/test_change_index.py::test_no_cell_carries_a_path_shaped_token`). An iteration's serial is the index's highest plus one, minted when the branch is cut; `open-pr`'s Step 2 prints that highest beside the serial in the branch or title and refuses to create the PR on a mismatch.
+- PRs target `develop`: open the PR before closeout, so its number exists; a different agent from the author reads the whole branch before push and the PR body names who read it and the tip they read — Opus at least, Fable where the PR touches `CLAUDE.md`, `.claude/`, the engine or capture package or role; `merge-pr`'s gate refuses a lower read and a head the line does not cover, with the two exceptions its own arms hold; create or edit through the `open-pr` skill, merge through `merge-pr` (set: PRs merged into `develop` in the last 30 days; count: `infra/scripts/count-list.sh merged-prs-without-a-floor-read-30d`).

@@ -22,7 +22,7 @@ The primary windowed null's overlapping windows share observations, so it unders
 
 ## Done so far
 
-Landed in **iter-111** (spec `00061`, PR into `develop`; see `docs/iterations-history-phase6.md`):
+Landed in **iter-111** (spec `00061`, PR #159):
 
 - `block_bootstrap_null` is wired into `analyze_soak`. Every metric is judged under **both** nulls and reconciled by the explicit D1 severity rule (identical / adjacent-takes-the-milder / opposite-extremes-`indeterminate (instrument-fragile)` / exactly-one-`n/a`), with each disagreement disclosed verbatim.
 - `--null [windows|block-bootstrap|both]` (default `both`) and `--path [fast|verified]` landed and are threaded through `soak_report`. `--null windows` reproduces the pre-change verdicts, numerics, panel line and disclosures exactly — verified side-by-side against `develop` on the real journal — so the second construction is strictly additive.

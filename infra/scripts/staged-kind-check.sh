@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # claude-kind files (.claude/, CLAUDE.md) never share a commit with another kind
-# (commit-messages.md: stage by explicit path, one kind per commit).
+# Stage by explicit path, one kind per commit.
 # Deliberate exception: SKIP=staged-kind git commit ...
 set -euo pipefail
 staged=$(git diff --cached --name-only)

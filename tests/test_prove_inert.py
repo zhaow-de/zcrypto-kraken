@@ -126,7 +126,7 @@ def helper(x: int) -> int:
 
 
 def test_a_command_docstring_is_program_output_and_is_refused() -> None:
-    # A Typer command's docstring IS its `--help` body, which `operator-facing-text.md` puts in scope.
+    # A Typer command's docstring IS its `--help` body, an operator-read surface.
     after = COMMAND.replace('"""Stream the venue\'s book for PAIR."""', '"""Stream the venue\'s book for PAIR (Phase 3)."""')
     result = pi.compare(COMMAND, after)
     assert result.ast_inert  # the code really is unchanged

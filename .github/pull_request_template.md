@@ -7,18 +7,18 @@
 - Spec: `docs/specs/<serial_no>-<topic>-design.md`
 - Plan: `docs/plans/<serial_no>-<feature>.md`
 
+Read before push by: <model> at <sha>
+
 <!--
 Add sections below as the change warrants — scale to complexity, mirror the spec.
 Common ones: ## Changes · ## Test plan · ## Migration / compatibility · ## Risks ·
-## Screenshots · ## Follow-ups. A trivial fix may need only Summary + Spec/Plan;
+## Screenshots · ## Follow-ups; ## Guidance changes lists the branch's claude-typed
+commits when it has any. A trivial fix may need only Summary + Spec/Plan;
 a large feature warrants several. This is a menu, not a checklist — pick what fits.
 -->
 
 ## Checklist
 
-- [ ] Updated the relevant `docs/iterations-history-phase<N>.md` (see `.claude/rules/prose.md`)
-- [ ] README `## Usage` updated if CLI options changed (see `.claude/rules/readme-usage.md`)
+- [ ] This PR's row is in `docs/reference/change-index.md` (the `open-pr` skill writes it at PR-open)
+- [ ] README `## Usage` updated if CLI options changed
 - [ ] Tests pass (`uv run pytest`)
-
----
-Co-Authored-By: <Claude models — deduped, e.g. Claude Opus 4.8; Claude Sonnet 4.6>

@@ -1,6 +1,6 @@
 # Open topics
 
-Topics worth follow-up are parked here, one file per topic. See `.claude/rules/open-topics.md` for the convention.
+Topics worth follow-up are parked here, one file per topic; the file mechanics are the `topic-ops` skill.
 
 <!-- mdformat-toc start --slug=github --maxlevel=3 --minlevel=2 -->
 

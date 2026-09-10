@@ -11,19 +11,19 @@ allowed-tools: Bash(git status:*), Bash(git checkout:*), Bash(git pull:*), Bash(
 
 Merging a PR is a shared, hard-to-reverse action. **Gate it on verification first, then clean up local state safely.** Never merge past a failed gate; never touch a dirty worktree. If a gate fails, report exactly what's wrong and ask the user to resolve it manually — do not work around it, do not proceed.
 
-PRs handled by this skill **always merge with a merge commit** (`--merge`) — never squash, never rebase. (The one deliberate exception in this repo is Dependabot PRs, which the `dependabot` skill squash-merges so each bump lands as a single commit — they are not handled here.) The merge commit itself is produced by `gh`, not by Claude, so it carries no `Co-Authored-By:` or `Reviewed-by:` trailer (see `.claude/rules/commit-messages.md`).
+PRs handled by this skill **always merge with a merge commit** (`--merge`) — never squash, never rebase. (The one deliberate exception in this repo is Dependabot PRs, which the `dependabot` skill squash-merges so each bump lands as a single commit — they are not handled here.)
 
 ## When to use
 
 - The user confirms a PR is reviewed/ready and asks to merge it and/or clean up local branches.
 - Finishing a Claude-authored PR after the user's review.
 
-**Not for:** opening/creating PRs; deciding *how* to finish a branch (see superpowers:finishing-a-development-branch); merging into `main` (release-only — use the `/release` skill).
+**Not for:** opening/creating PRs; deciding *how* to finish a branch (see superpowers:finishing-a-development-branch); merging into `main` (release-only — use the `/release` skill) (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`).
 
 ## Step 1 — Identify the PR
 
 ```bash
-gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body
+gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid
 ```
 
 (Omit `<number>` to use the current branch's PR.) Record `number`, `headRefName`, `baseRefName`, and the gate fields below.
@@ -32,53 +32,10 @@ Base correctness (`develop`, never `main`) is the Step-2 gate's first check.
 
 ## Step 2 — The merge gate (STOP if ANY fails)
 
-GitHub has no single ready-to-merge field; readiness is spread across several fields. Pipe the Step 1 JSON through this evaluator — it prints `GATE PASSED` or lists every failing gate:
+GitHub has no single ready-to-merge field; readiness is spread across several fields. Run the evaluator — it fetches the Step 1 fields itself, reads the head commit from the REST API only when the read line and the head differ, and prints `GATE PASSED` or lists every failing gate (`tests/test_merge_gate.py` drives every arm):
 
 ```bash
-gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body \
-  | python3 -c '
-import sys, json
-d = json.load(sys.stdin)
-fails = []
-base = d.get("baseRefName")
-state = d.get("state")
-m = d.get("mergeable")
-rollup = d.get("statusCheckRollup") or []
-body = d.get("body") or ""
-if base != "develop":
-    fails.append("base branch is " + repr(base) + ", not develop (feature PRs never merge to main)")
-if state != "OPEN":
-    fails.append("state is " + repr(state) + ", expected OPEN")
-if d.get("isDraft"):
-    fails.append("PR is a draft")
-if m == "CONFLICTING":
-    fails.append("mergeable=CONFLICTING (conflicts) — update the branch and resolve first")
-elif m != "MERGEABLE":
-    fails.append("mergeable=" + repr(m) + " — GitHub is still computing; re-run in a moment, never merge on UNKNOWN")
-if d.get("mergeStateStatus") == "BLOCKED":
-    fails.append("mergeStateStatus=BLOCKED (branch protection: a required review or required check is unsatisfied)")
-if d.get("reviewDecision") == "CHANGES_REQUESTED":
-    fails.append("reviewDecision=CHANGES_REQUESTED (a reviewer requested changes)")
-_DONE = ("SUCCESS","NEUTRAL","SKIPPED")
-_BAD = ("FAILURE","ERROR","CANCELLED","TIMED_OUT","STARTUP_FAILURE")
-_state = lambda c: (c.get("conclusion") or c.get("state") or "").upper()
-bad = [c for c in rollup if _state(c) in _BAD]
-if bad:
-    fails.append(str(len(bad)) + " CI check(s) failing")
-pending = [c for c in rollup if _state(c) not in _DONE + _BAD]
-if pending:
-    fails.append(str(len(pending)) + " CI check(s) still running — wait; nothing else blocks a merge on pending")
-if not rollup:
-    fails.append("no CI checks reported yet — wait for coverage.yml to register")
-if "- [ ]" in body:
-    fails.append("PR description has unchecked checklist item(s) (- [ ])")
-if fails:
-    print("GATE FAILED:")
-    for f in fails:
-        print("  - " + f)
-    sys.exit(1)
-print("GATE PASSED — ready to merge")
-'
+uv run python infra/scripts/merge-gate.py <number>
 ```
 
 What each gate covers:
@@ -87,8 +44,10 @@ What each gate covers:
 2. **`mergeable == "MERGEABLE"`** — GitHub computed a clean (conflict-free) merge. `CONFLICTING` is a hard stop; `UNKNOWN` means GitHub is still computing — wait a few seconds and re-run (the gate refuses it).
 3. **`mergeStateStatus != "BLOCKED"`** — `BLOCKED` means branch protection is unsatisfied (required review missing or a required check failing). `CLEAN`, `UNSTABLE`, `BEHIND`, and `HAS_HOOKS` are all fine for a merge commit (being behind `develop` is reconciled by the merge; non-required checks don't block).
 4. **`reviewDecision != "CHANGES_REQUESTED"`** — if reviews aren't required by the repo, `reviewDecision` comes back empty and the user's go-ahead (why this skill was invoked) is the approval. If reviews ARE required, gate 3 (`BLOCKED`) enforces them.
-5. **No failing and no still-running CI** — the gate blocks both: `develop` requires the **`Full test suite`** check (`.github/settings.yml`), so GitHub now refuses a red or unfinished run by itself — this evaluator is defense in depth, not the only gate, and it still catches what GitHub does not: an unchecked checklist, a wrong base, a draft. Do not relax it on the strength of the branch rule; the rule lives in a file one PR can change. `coverage.yml` runs the suite on **`pull_request` into `develop`/`main`** (only — no `push` trigger, so no redundant post-merge run), and a failing suite fails that check; an empty rollup means it has not registered yet, which is also a wait. CI is the only place the whole suite runs (`CLAUDE.md`).
+5. **No failing and no still-running CI** — the gate blocks both: `develop` requires the **`Full test suite`** check (`.github/settings.yml`), so GitHub now refuses a red or unfinished run by itself — this evaluator is defense in depth, not the only gate, and it still catches what GitHub does not: an unchecked checklist, a wrong base, a draft. Do not relax it on the strength of the branch rule; the rule lives in a file one PR can change. `coverage.yml` runs the suite on **`pull_request` into `develop`/`main`** (only — no `push` trigger, so no redundant post-merge run), and a failing suite fails that check; an empty rollup means it has not registered yet, which is also a wait. CI is the only place the whole suite runs (`.github/workflows/coverage.yml`; the `Full test suite` context in `.github/settings.yml`).
 6. **Checklist complete** — the PR description has no unchecked `- [ ]` task-list items (GitHub does not enforce these, so the gate parses the body).
+7. **The whole-branch read covers the head** — the body's `Read before push by: <model> at <sha>` line names a model and a sha that is the PR head; a line missing, still carrying the `<model>` placeholder, or naming an earlier tip fails. A commit pushed after the read moves the head off the line, so the delta is read (or the branch re-read) and the line updated before merge. The one commit admitted past the named tip is `open-pr`'s change-index row commit — a single non-merge commit whose only file is `docs/reference/change-index.md`, checked on the REST commit object. The floor is mechanical too: the line's model must be Claude Opus or Claude Fable, and Fable when any file of the PR is `CLAUDE.md` or under `.claude/`, `cli/engine/`, `cli/capture/`, `infra/ansible/roles/capture/` or `infra/ansible/roles/engine/` — the file list is the paginated REST `pulls/<n>/files` endpoint, so no file is unseen.
+8. **The `ops-journal` month PR is exempt from gate 7** — its README declares the month PR outside the pre-push read; a head branch named `ops-journal` whose every file is under `docs/reference/ops-journal/` skips the read-line arm; one carrying any other file takes every arm, floor included.
 
 **If any gate fails:** report which one and why, ask the user to resolve it manually (update the branch, fix CI, get the review, check the boxes), then **STOP**. Do not merge.
 

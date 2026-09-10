@@ -365,11 +365,12 @@ RUNBOOKS = REPO_ROOT / "infra/runbooks"
 # a group so a finding can quote it verbatim; `_RUNBOOK_LINK`'s own file and anchor groups sit one
 # number further along, and it is composed rather than respelled so the two cannot drift apart.
 _RUNBOOK_CITED = re.compile(r"(?i:Runbook:)\s*(" + _RUNBOOK_LINK.pattern + ")")
-# The vocabulary `.claude/rules/operator-facing-text.md` bans from any surface read without the repo
-# open, spelled wider than that rule spells it wherever hand-written prose varies: either separator
-# after the phase word, an optional backtick around a serial. The bare decision number the rule also
-# bans is deliberately absent: this check detects and cannot repair, so a two-character token would
-# mint a finding line in every daily report until a human edits a description that was never wrong.
+# The internal vocabulary kept off a surface read without the repo open, spelled wider than
+# `tests/test_internal_terms_not_operator_visible.py` spells it wherever hand-written prose varies:
+# either separator after the phase word, an optional backtick around a serial. The bare decision
+# number that test also bans is deliberately absent: this check detects and cannot repair, so a
+# two-character token would mint a finding line in every daily report until a human edits a
+# description that was never wrong.
 _INTERNAL_TOKEN = re.compile(r"\bPhase[ -]\d|\bT\d{4}\b|\biter-\d+|\bspec\s+`?\d{5}|\bWP\d")
 
 

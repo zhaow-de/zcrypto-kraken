@@ -14,7 +14,7 @@ No dates, derivations, or narration. The one-clause why survives on rules that w
 
 ## P4 — Load cost drives placement
 
-Ambient iff needed before knowing the task (safety invariants, routing). Operation-scoped content lives in the operation's skill — the WHEN/HOW split (`open-topics.md` / `topic-ops` is the pattern). A skill's description is ambient; only its body is deferred.
+Ambient iff needed before knowing the task (safety invariants, routing). Operation-scoped content lives in the operation's skill — the WHEN/HOW split (CLAUDE.md's topics line / `topic-ops` is the pattern). A skill's description is ambient; only its body is deferred.
 
 ## P5 — References are operands
 

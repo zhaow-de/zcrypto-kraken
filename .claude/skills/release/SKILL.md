@@ -119,7 +119,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
     git checkout develop
     ```
 
-14. **Auto-merge the release PR** with a merge commit (preserving the tagged bump commit on `main`). Releases run end-to-end without pausing to ask. Stop only if something is genuinely worth attention: the PR has conflicts, or it was closed without merging. Otherwise read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s (`agent-ops.md`: never one long foreground loop), and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
+14. **Auto-merge the release PR** with a merge commit (preserving the tagged bump commit on `main`). Releases run end-to-end without pausing to ask. Stop only if something is genuinely worth attention: the PR has conflicts, or it was closed without merging. Otherwise read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s (never one long foreground loop), and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
     ```bash
     PR_NUMBER=<the PR number from step 12>
 
@@ -163,7 +163,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
     git push -u origin "$BACKMERGE_BRANCH"
     BACKMERGE_URL=$(gh pr create --base develop --head "$BACKMERGE_BRANCH" \
         --title "chore(config): back-merge v<VERSION> into develop" \
-        --body "Back-merge of the \`v<VERSION>\` release commit from \`main\` into \`develop\` so the two branches stay in lock-step per \`.claude/rules/branch-workflow.md\`. Auto-opened by the \`/release\` skill.")
+        --body "Back-merge of the \`v<VERSION>\` release commit from \`main\` into \`develop\` so the two branches stay in lock-step. Auto-opened by the \`/release\` skill.")
     BACKMERGE_NUMBER=$(echo "$BACKMERGE_URL" | sed -E 's|.*/pull/([0-9]+)|\1|')
 
     pr_state=$(timeout 30 gh pr view "$BACKMERGE_NUMBER" --json state -q .state)

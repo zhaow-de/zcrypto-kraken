@@ -91,7 +91,7 @@ repos:
         files: '^(infra/|\.ansible-lint$)'
         pass_filenames: false
 
-  # Enforcement for commit-messages.md's one-kind-per-commit rule (violated five times while
+  # Enforcement for the one-kind-per-commit rule (violated five times while
   # written down — the P6 trigger). Only separates claude-kind from everything else; feat/fix
   # commits legitimately mix cli/ + tests/ + docs. Deliberate exception: SKIP=staged-kind.
   - repo: local
@@ -115,8 +115,8 @@ repos:
       # file under infra/runbooks/ + EVERY report under docs/research/, matched by glob so a new
       # subsystem runbook or research paper is covered automatically (no per-file edit here).
       # Excluded by the negative lookahead: the verbatim per-phase decision logs *-decisions.md,
-      # whose option lists + "(Decision: N)" markers mdformat would restructure (see
-      # .claude/rules/decisions-log.md). Nothing else under docs/ is covered (reference/, specs/,
+      # whose option lists + "(Decision: N)" markers mdformat would restructure (the
+      # iteration-closeout skill owns their shape). Nothing else under docs/ is covered (reference/, specs/,
       # plans/, open-topics topic files format by hand).
       files: |
         (?x)^(

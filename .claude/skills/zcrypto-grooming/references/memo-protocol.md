@@ -44,7 +44,7 @@ The single source of truth for the memo's data model, tooling discipline, and me
 |---|---|
 | `T0028` | `docs/open-topics/T0028-*.md` — or `docs/open-topics/archive/T0028-*.md` once resolved; the `docs/open-topics/README.md` index links whichever is current |
 | `spec 00060` / bare `00060` | `docs/specs/00060-*-design.md` (its plan: `docs/plans/00060-*.md`) |
-| `iter-082` | the `## <date> — iter-082: <title>` section of `docs/iterations-history-phase<N>.md` — **N is the iteration's subject-matter phase, not the milestone's**: an item worked for the Phase-6a milestone may be logged in `iterations-history-phase1.md` (entries route by subject per the `iteration-closeout` skill), so locate with `grep -l "iter-082" docs/iterations-history-phase*.md`, never by assuming the milestone's phase |
+| `iter-082` | the row whose `iter` cell carries `iter-082` in `docs/reference/change-index.md`; its `PR` cell names the pull request that delivered the iteration, and `gh pr view <N>` prints that PR's description |
 | `PR #143` | `gh pr view 143` |
 
 ## Ad-hoc procedures — mechanical, single-item, nothing else
@@ -54,7 +54,7 @@ Appliable by whoever follows this protocol: the joint grooming conversation, or 
 - **done** (`T9999 is done`) → find the `WORK-ITEMS QUEUE` item(s) referencing that topic; mark done citing the evidence (iter-N / T-topic / commits / PRs — whichever apply) with a timestamp; **move** the whole item to `DONE ITEMS`.
 - **partially done** (`T9999 is partially done`) → append one short cited, timestamped note in place; when the partial resolution changed the item's *shape* — scope shrank, effort resized, prerequisites moved — also update its **subject**, **Size**, and **DependsOn** to describe only the remainder, then **re-order the milestone list** so it stays a dependency-true suggested sequence.
 - **insert** (`T9999 registered — insert into queue`) → for a newly registered topic: add a queue item in the standard shape at its **dependency- and priority-correct position** in the milestone list.
-- **work-shaped argument** (`iter-290 (PR #1332) has been merged`) → resolve the delivered work to its topic(s) first — the iteration's `docs/iterations-history-phase<N>.md` entry and/or the PR — then apply *done* / *partially done* to each matching item, citing the iter/PR as evidence. Ambiguous resolution (several topics, different completion states) → ask, never guess.
+- **work-shaped argument** (`iter-290 (PR #1332) has been merged`) → resolve the delivered work to its topic(s) first — the iteration's row in `docs/reference/change-index.md` and the pull request that row names — then apply *done* / *partially done* to each matching item, citing the iter/PR as evidence. Ambiguous resolution (several topics, different completion states) → ask, never guess.
 
 **All forms**: touch nothing else — no discovery, no purge, no `NEW IDEAS`, no frontmatter timestamp. No matching item → say so and stop.
 

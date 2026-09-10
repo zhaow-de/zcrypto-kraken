@@ -1,16 +1,14 @@
 ---
 name: open-pr
-description: Use when creating a GitHub pull request, editing a PR title or body, or regenerating a PR's trailer aggregation after new commits land — load BEFORE running gh pr create or any PR-body edit.
+description: Use when creating a GitHub pull request or editing a PR title or body — load BEFORE running gh pr create or any PR-body edit.
 disable-model-invocation: false
 ---
 
 # open-pr
 
-## Step 0 — the gate (defense in depth; `branch-workflow.md` is the authority)
+## Step 0 — the gate
 
 A PR delivers **one completed, nameable component**. Before anything below: (1) name the component from durable state — branch name, spec serial, memo queue item, `T<NNNN>` topic; cannot name it → stop, report the branch ready-or-not instead. (2) Confirm the component is complete — topic `resolved`, or `partial` with the remainder registered. (3) The word — `zcrypto-marco`'s by delegation in the multi-session setup, the user's explicit say-so for a single attended session; a `/zcrypto-auto-exec` run opens at item completion. A green commit is not a reason; a different component is not a reason to reuse this PR.
-
-(4) **Run `infra/scripts/review-trailer-audit.sh <base>` and read its output** — never infer review compliance from memory, which is routinely wrong by an order of magnitude. A non-zero exit means the branch carries no review record: review it with an agent other than its author and land the record on the commit the script names, before push.
 
 ## Title (iteration PRs)
 
@@ -33,49 +31,46 @@ Open PRs using the template at `.github/pull_request_template.md`. Because `gh p
 
 1. `## Summary` — one or two sentences mirroring the spec's goal.
 2. `## Spec / Plan` — links to the `docs/specs/…` and `docs/plans/…` that produced the PR (`N/A — <reason>` if there was none).
-3. the flexible middle (below),
-4. `## Checklist`,
-5. the aggregated `Co-Authored-By:` trailer — plus a `Reviewed-by:` line if any commits carry reviewer trailers (see below).
+3. `Read before push by: <model> at <sha>` — one line naming the agent that read the whole branch before push, a different agent from the author, and the tip it read; `merge-pr`'s gate refuses a body whose sha is not the PR head, so a commit pushed after the read takes a read of the delta and an updated line — except Step 4's change-index row commit, the one commit the gate admits past the named tip.
+4. `## Guidance changes` — when `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` prints a line, that output verbatim under this heading, one commit per line; omitted when it prints nothing.
+5. the flexible middle (below),
+6. `## Checklist`.
 
-**Flexible middle:** between Spec/Plan and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home (see `open-topics.md`).
-
-### Co-author trailer (PR description)
-
-End the PR body with a single trailer aggregating the **distinct** Claude models that co-authored the PR's commits — deduplicated, **names only** (drop the `<email>`), joined with `; `:
-
-```
-Co-Authored-By: Claude Opus 4.8; Claude Sonnet 4.6
-```
-
-Derive it from the PR's commits (preserving first-seen order), where `<base>` is the PR's base branch (usually `develop`):
-
-```bash
-git log <base>..HEAD --pretty='%(trailers:key=Co-authored-by,valueonly)' \
-  | sed '/^$/d' | sed 's/ <[^>]*>//' | awk '!seen[$0]++' | paste -sd , - | sed 's/,/; /g'
-```
-
-(`paste -sd ','` joins with a single delimiter, then `sed` expands each into `; ` — a multi-char `paste -sd '; '` would alternate the two characters and drop the space.)
-
-Regenerate the trailer whenever the PR description changes. This aggregated form is for the PR **description only** — per-commit `Co-Authored-By:` trailers stay as-is (one per commit, full `Name <noreply@anthropic.com>` form) per `commit-messages.md`.
-
-### Reviewer trailer (PR description)
-
-If any of the PR's commits carry `Reviewed-by:` trailers (see `commit-messages.md`), add a `Reviewed-by:` line directly below the co-author one, aggregated the **same way** — distinct models, **names only** (drop the `<email>`), `; `-joined — but from the `Reviewed-by` key and emitted as `Reviewed-by:`, so reviewers are never folded into authorship:
-
-```
-Reviewed-by: Claude Opus 4.7
-```
-
-```bash
-git log <base>..HEAD --pretty='%(trailers:key=Reviewed-by,valueonly)' \
-  | sed '/^$/d' | sed 's/ <[^>]*>//' | awk '!seen[$0]++' | paste -sd , - | sed 's/,/; /g'
-```
-
-Omit the line entirely when there are no reviewer trailers. The PR body is free text, so this line is plain text (not parsed by git's trailer engine) — it just mirrors the co-author aggregation.
+**Flexible middle:** between the lines above and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home.
 
 ## The deferral sweep — before every create or body edit
 
 Sweep the draft body for deferral language — *follow-up, later, once/when X, deferred, out of scope, known imprecision, registered* — and resolve **every hit in the same edit**: an existing `T<NNNN>` reference, a new topic via `topic-ops`, or an explicit drop. Writing the caveat is not registering it; a claim that something "is registered" is checked by grep, not trusted.
+
+## Creating the PR — four steps, in order
+
+Steps 1 and 2 refuse before anything reaches GitHub; steps 3 and 4 are one operation and neither is finished without the other. **This skill runs BEFORE `iteration-closeout`**, so the PR number an entry cites already exists when closeout writes it.
+
+**Step 1 — the title check.** A title longer than 72 characters is refused: `docs/reference/change-index.md`'s title cell IS the title, capped at 72 by `tests/test_change_index.py`, so a longer one either loses its tail or fails the guard. Measure it, never eyeball it. A title carrying a path-shaped token — a repo root `cli/`, `tests/`, `infra/`, `docs/`, `.claude/`, or `word/word.ext` — writes its `/` as `-` (`tests/test_change_index.py::test_no_cell_carries_a_path_shaped_token` is the grammar); a bare `long/flat` is not a path and keeps its slash:
+
+```bash
+TITLE='feat(<scope>): iter-<N> — <short description>'
+printf '%s' "$TITLE" | wc -m      # > 72 → rewrite the title shorter, do not create
+```
+
+**Step 2 — the serial refusal.** If the branch name or the title carries `iter-<N>`, that number must be the change index's highest `iter` **plus one**, or the index must already hold this PR's own row (a body edit on a PR that has one). Anything else means the serial was improvised rather than minted:
+
+```bash
+HIGHEST=$(awk -F'|' '/^\| #/ {print $5}' docs/reference/change-index.md | grep -oE 'iter-[0-9]{3}' | sort -u | tail -1)
+grep -n "^| #<PR number> " docs/reference/change-index.md   # on a body edit: the row this PR already has
+```
+
+On a mismatch, **refuse to create the PR** and print both numbers — the one in the branch or title, and the index's highest — so the mint can be corrected before the PR exists. A serial is minted when the branch is cut, from this same command; nothing else mints one.
+
+**Step 3 — `gh pr create`.** The PR number comes back in the URL it prints; keep it.
+
+**Step 4 — the change-index row.** Parse the keys — iterations `\biter-(\d{1,3})\b` from the branch name and the PR title only, since a `## Spec / Plan` sentence naming an earlier iteration as its precedent is a cross-reference, not a delivery; spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`, from the branch name, the title and the body's `## Spec / Plan` section. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
+
+```
+| #<PR number> | <today, UTC> | <title, at most 72 chars> | <iters> | <specs> | <topics> |
+```
+
+Iterations are zero-padded to three digits (`iter-007`), several keys of one kind are comma-separated, and a kind with no key is an em dash `—`. Rows stay sorted by PR number ascending, and **no cell may hold a file path** — a spec is its bare serial `00034`, never `docs/specs/00034-…`. No key of any kind ⇒ no row. Then re-read the file and confirm the row is there before reporting the PR open. The row commit is the one commit `merge-pr`'s gate admits past the tip the read line names — a single commit touching the index alone — so it takes no delta read and the line stays as written.
 
 ## Editing a PR body
 
@@ -90,4 +85,4 @@ A stale body matters: the `/merge-pr` gate parses it for unchecked `- [ ]` items
 
 ## Target branch
 
-Feature and iteration PRs target **`develop`** (see `branch-workflow.md`). Release PRs are opened by the `/release` skill from a `release/<timestamp>` branch **into `main`**, titled `Release v<major>.<minor>.<patch>` — you don't write those by hand.
+Feature and iteration PRs target **`develop`**. Release PRs are opened by the `/release` skill from a `release/<timestamp>` branch **into `main`**, titled `Release v<major>.<minor>.<patch>` — you don't write those by hand.

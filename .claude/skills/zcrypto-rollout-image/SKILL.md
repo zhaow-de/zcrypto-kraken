@@ -11,7 +11,7 @@ The executable form of the app-image canary rollout: the one image serves captur
 ## Ground rules
 
 - **Every host-touching command runs in the main loop as a plain command — never inside a dispatched subagent or background workflow.** The permission gate blocks ssh-sudo there and the step dies where nobody sees the prompt; the user grants access live, at the command.
-- **Every irreversible action** — converge, re-pin, restart — takes the user's explicit word at that step, with the blocker sweep (open-topics index + memo) presented alongside (`agent-ops.md`).
+- **Every irreversible action** — converge, re-pin, restart — takes the user's explicit word at that step, with the blocker sweep (open-topics index + memo) presented alongside.
 - Rollout order: **secondary first, primary last.**
 - Digest identity is always `{{.Config.Image}}` — `{{.Image}}` is host-dependent and lies under classic storage.
 - Converges via `infra/ansible/scripts/converge.sh` — it requires `--limit`, shows the `--check --diff` preview, and takes a typed confirm before the real pass (preview-only: pass `--check`); never wrap it in `timeout` (attended by design; the orphaned child would converge unsupervised); never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `fleet-deploys.md` and CLAUDE.md `## Secrets`.

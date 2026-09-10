@@ -1,12 +1,12 @@
 ---
 name: topic-ops
-description: Use for EVERY T<NNNN> open-topic file operation — creating a topic, flipping status to partial or resolved, archiving, or editing docs/open-topics/README.md — load BEFORE writing the file or touching the index.
+description: Use when creating a T<NNNN> topic, flipping its status to partial or resolved, archiving it, or editing docs/open-topics/README.md — the serials, the file shape, the index sync and the archive move.
 disable-model-invocation: false
 ---
 
 # topic-ops
 
-The file mechanics for `docs/open-topics/` — when-and-whether rules live ambiently in `.claude/rules/open-topics.md`; this skill is the HOW, loaded at the moment of the operation.
+The file mechanics for `docs/open-topics/` — the HOW, loaded at the moment of the operation. Whether a follow-up becomes a topic at all, and the six shapes its `ripe_when:` may take, are CLAUDE.md's topics line. A topic that is created here but not inserted into `.local/memo.md`'s queue is invisible at pick time — registration and queue insertion travel together.
 
 ## File path & naming
 

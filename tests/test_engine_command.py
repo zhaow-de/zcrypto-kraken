@@ -609,7 +609,7 @@ def _readme_engine_subcommands() -> set[str]:
 
 
 def test_the_engine_subcommand_set_is_the_same_in_the_code_the_help_and_the_readme():
-    """`readme-usage.md` is a human remembering; this is the check. Every registered subcommand must
+    """Updating the README by hand is a human remembering; this is the check. Every registered subcommand must
     reach `--help` and README's table, and neither may name one the sub-app does not register."""
     registered = set(typer.main.get_command(command.engine_app).commands)
     assert registered, "no subcommands registered -- the introspection, not the sub-app, is broken"

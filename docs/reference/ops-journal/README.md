@@ -22,7 +22,7 @@ The verdict is one of `all-clear`, `attention`, `incident`. `tests/test_ops_jour
 
 ## The branch
 
-A standing branch, `ops-journal`, cut from `develop`. The pass commits to it after every run; at a month change it opens the finished month's PR, merges it on CI green, and re-cuts the branch from `develop`. That is a standing exception to the attended PR-open gate, registered in `.claude/rules/branch-workflow.md`.
+A standing branch, `ops-journal`, cut from `develop`. The pass commits to it after every run; at a month change it opens the finished month's PR, merges it on CI green, and re-cuts the branch from `develop`. That is a standing exception to `open-pr`'s Step 0 word and to the pre-push read, holding only while every file of the PR is under this directory — `merge-pr`'s gate scopes it so: a month of all-clear entries has nothing for a reviewer to read (`.claude/skills/zcrypto-daily-ops/SKILL.md` carries the month-change step).
 
 ## What this is not
 

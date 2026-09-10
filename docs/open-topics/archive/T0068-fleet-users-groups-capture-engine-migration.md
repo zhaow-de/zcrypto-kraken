@@ -24,7 +24,7 @@ Provisioning `zcrypto-alloy` on `zcrypto` means Alloy lands on the engine host u
 
 ## Resolution
 
-The capture/engine migration landed in full at iter-105 (see `docs/iterations-history-phase1.md`): the `kraken-capture → zcrypto-data` and `kraken-engine → zcrypto-engine` renames, the pull-export key move with Ansible provisioning, `deploy → zcrypto-deploy`, and the first `zcrypto-alloy` deployment to both capture hosts — sequenced per `fleet-deploys.md`'s canary discipline, with no capture gap.
+The capture/engine migration landed in full at iter-105 (see PR #148): the `kraken-capture → zcrypto-data` and `kraken-engine → zcrypto-engine` renames, the pull-export key move with Ansible provisioning, `deploy → zcrypto-deploy`, and the first `zcrypto-alloy` deployment to both capture hosts — sequenced per `fleet-deploys.md`'s canary discipline, with no capture gap.
 
 In the tree: `infra/ansible/roles/base/tasks/main.yml:81` creates the `zcrypto-data` system user (rrsync-only shell, home = its state dir), with the capture-hosts-only guard at `:91-95` documenting the name collision the rename introduced (the ops node owns its own `zcrypto-data` via the `ops` role). Spec `00057` D1 is the ratifying decision.
 

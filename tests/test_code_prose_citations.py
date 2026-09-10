@@ -1,4 +1,4 @@
-"""Guard for `.claude/rules/prose.md`'s resolvable-citation rule.
+"""Guard for the resolvable-citation rule: a citation in code prose resolves from the repo alone.
 
 A plan-local task number outlives the point-in-time plan it indexes, so it means nothing to a cold
 reader. `docs/` is out of scope on purpose — there a bare task number names the document's own

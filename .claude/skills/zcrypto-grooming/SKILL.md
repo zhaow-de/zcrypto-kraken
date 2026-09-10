@@ -39,7 +39,7 @@ Parse the points and present your understanding of each; ask where unclear. Then
 | Agreed outcome | Action |
 |---|---|
 | Not pursuing | **Rewrite** into `ABANDONED ITEMS` — a summary reflecting the discussion (never a cut-and-paste), the subject, the decision date, and the drop date |
-| Enhances / changes / invalidates an existing T\<NNNN\> | Remove the point from the memo; revise the topic file **interactively** so it stays internally consistent; index sync through the `topic-ops` skill, which `.claude/rules/open-topics.md` reserves every topic-file operation for |
+| Enhances / changes / invalidates an existing T\<NNNN\> | Remove the point from the memo; revise the topic file **interactively** so it stays internally consistent; index sync through the `topic-ops` skill |
 | New, deserves its own topic | Remove the point from the memo; create the T\<NNNN\> through the `topic-ops` skill (its serial check spans `archive/` **and** unmerged branches) |
 | Undecided — any reason (no time, needs thought, no consensus yet) | Stays in `NEW IDEAS`, untouched — **the default**: a point leaves the inbox only through one of the other four outcomes |
 | Already addressed (memory gap or changed context) | Cite the evidence — iter-N, T-topic, or PR — and drop **only after the user confirms the citation** |
@@ -51,7 +51,7 @@ A drop the user gives without a reason is recorded as decision + dates only — 
 ### Step 2 — pre-cleanup: reconcile the queue against reality
 
 1. Read `last-grooming-section-at` from the memo frontmatter. Absent **or not a parseable timestamp** (a placeholder counts as absent) → agree a baseline with the user and set the key.
-2. Queue empty → skip this and the matching step (nothing can match; say so). Otherwise collect what landed since then: merged PRs (`gh pr list --state merged --search "merged:>TS"`), commits (`git log --since=TS --oneline develop`), new iterations-history entries, and open-topics moves (`docs/open-topics/README.md`'s Resolved / Partially-done deltas, plus `archive/` — note `--diff-filter=A` there counts relocations as adds, so the index deltas and PR list are the reliable signal).
+2. Queue empty → skip this and the matching step (nothing can match; say so). Otherwise collect what landed since then: merged PRs (`gh pr list --state merged --search "merged:>TS"`), commits (`git log --since=TS --oneline develop`), and open-topics moves (`docs/open-topics/README.md`'s Resolved / Partially-done deltas, plus `archive/` — note `--diff-filter=A` there counts relocations as adds, so the index deltas and PR list are the reliable signal).
 3. If the queue holds narrative status prose rather than discrete items, the same rule applies at block level: a block describing only finished work moves into `DONE ITEMS` **entire, never summarized-with-the-original-left-behind** — the purge gate disposes of it on confirmation; a mixed block keeps only its open remainder in the queue. **After grooming, the milestone contains only open work.** Then match against every `WORK-ITEMS QUEUE` item:
    - **fully resolved** → mark done with citations + timestamp, **move** the whole item to `DONE ITEMS`;
    - **partially resolved** → append one very short cited, timestamped note in place;
@@ -80,5 +80,5 @@ Set `last-grooming-section-at:` to now (UTC, ISO-8601) — full runs only; seman
 | Ad-hoc argument, but NEW IDEAS looks messy | Out of scope. Mention it; the user can invoke the full flow. |
 | Purging DONE ITEMS as items arrive there | Purge happens once — after the numbered display and the batch confirmation. |
 | Copying a memo paragraph into a T-topic | Paraphrase. The memo is private; topics are git-tracked. |
-| Changing a T-topic's *status* without moving its `docs/open-topics/README.md` bullet | `open-topics.md` violation — the bullet moves on status transitions; a content-only edit may merely refresh its description. |
+| Changing a T-topic's *status* without moving its `docs/open-topics/README.md` bullet | The bullet moves on every status transition — `topic-ops`'s index sync; a content-only edit may merely refresh its description. |
 | Moving a *summary* to DONE ITEMS while the item's text stays in the queue | Move the WHOLE item — a groomed milestone carries no done work. |
