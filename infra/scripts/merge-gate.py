@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import re
 import subprocess
 import sys
 
 REPO = "zhaow-de/zcrypto-kraken"
+GUARD = pathlib.Path(__file__).with_name("guidance-guard.py")
 INDEX = "docs/reference/change-index.md"
 JOURNAL = "docs/reference/ops-journal/"
 FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid"
@@ -72,7 +74,10 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
     ]
 
 
-def evaluate(pr: dict, head_commit: dict | None = None, files: list[str] | None = None) -> list[str]:
+def evaluate(
+    pr: dict, head_commit: dict | None = None, files: list[str] | None = None, branch_growth: list[str] | None = None
+) -> list[str]:
+    """branch_growth is guidance-guard.py --range's refusals over the branch, [] when it refused nothing; None means it was not run."""
     fails: list[str] = []
     base = pr.get("baseRefName")
     state = pr.get("state")
@@ -104,11 +109,31 @@ def evaluate(pr: dict, head_commit: dict | None = None, files: list[str] | None 
     if "- [ ]" in body:
         fails.append("PR description has unchecked checklist item(s) (- [ ])")
     fails.extend(read_line_fails(pr, head_commit, files))
+    if branch_growth is None:
+        fails.append(
+            "the branch's ambient growth was not checked commit by commit: `guidance-guard.py --range <base>..<head>` did not run"
+        )
+    for growth in branch_growth or []:
+        fails.append(f"a commit grows the always-loaded guidance without stating it, or states it wrongly — {growth}")
     return fails
 
 
 def _gh(*args: str) -> str:
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, timeout=60).stdout
+
+
+def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
+    """Fetch both branches, then judge every commit past the merge base against its parent through the guard's range mode."""
+    subprocess.run(["git", "fetch", "-q", "origin", base_ref, head_ref], check=True, timeout=120)
+    merge_base = subprocess.run(
+        ["git", "merge-base", f"origin/{base_ref}", head], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    done = subprocess.run(
+        [sys.executable, str(GUARD), "--range", f"{merge_base}..{head}"], capture_output=True, text=True, timeout=300
+    )
+    if done.returncode == 0:
+        return []
+    return [line[4:] for line in done.stdout.splitlines() if line.startswith("  - ")] or [(done.stdout + done.stderr).strip()]
 
 
 def main(argv: list[str]) -> int:
@@ -121,7 +146,7 @@ def main(argv: list[str]) -> int:
         files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
-    fails = evaluate(pr, head_commit, files)
+    fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head))
     if fails:
         print("GATE FAILED:")
         for fail in fails:
