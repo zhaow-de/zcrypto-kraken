@@ -85,4 +85,4 @@ A stale body matters: the `/merge-pr` gate parses it for unchecked `- [ ]` items
 
 ## Target branch
 
-Feature and iteration PRs target **`develop`**. Nothing opened here targets `main`.
+Feature and iteration PRs target **`develop`**. Release PRs are opened by the `/release` skill from a `release/<timestamp>` branch **into `main`**, titled `Release v<major>.<minor>.<patch>` — you don't write those by hand.

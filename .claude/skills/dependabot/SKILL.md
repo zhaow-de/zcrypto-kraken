@@ -17,7 +17,7 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 
 ## Repo specifics
 
-- **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main`. If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
+- **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main`, which is release-only (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`). If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
 - The Python application lives at the **repo root** (flat layout). Tests, lint, and the lockfile (`uv.lock`) all live at the root; run `uv` commands from the repo root.
 - Pre-commit hooks (`.pre-commit-config.yaml` at repo root) auto-format on every `git commit` (ruff-format, trailing whitespace, etc.). A push after a hook-driven amend may need re-staging — the loop handles it.
 - Configured ecosystems: `uv` (updates `pyproject.toml` + `uv.lock`), `github-actions` (updates `.github/workflows/*`), and `pre-commit` (updates `.pre-commit-config.yaml`). This skill processes any `dependabot/` PR regardless of ecosystem.
@@ -199,6 +199,6 @@ gh api "repos/zhaow-de/zcrypto-kraken/commits/<sha>/check-runs" \
 
 ## Notes
 
-- **`main` is PR-only** (branch protection enforces) and nothing here advances it. Dependabot PRs target `develop`.
+- **`main` is PR-only** (branch protection enforces); it advances only via `/release` (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`). Dependabot PRs target `develop`.
 - Use `fix(config): …` for auto-fix commits — cross-cutting tooling fixes, not component-specific.
 - Prefer separate `uv …` / `git …` lines over composite `(cd X && Y) && Z` commands.

@@ -18,7 +18,7 @@ PRs handled by this skill **always merge with a merge commit** (`--merge`) — n
 - The user confirms a PR is reviewed/ready and asks to merge it and/or clean up local branches.
 - Finishing a Claude-authored PR after the user's review.
 
-**Not for:** opening/creating PRs; deciding *how* to finish a branch (see superpowers:finishing-a-development-branch); merging into `main`, which nothing merges into.
+**Not for:** opening/creating PRs; deciding *how* to finish a branch (see superpowers:finishing-a-development-branch); merging into `main` (release-only — use the `/release` skill) (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`).
 
 ## Step 1 — Identify the PR
 
