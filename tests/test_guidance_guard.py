@@ -128,6 +128,9 @@ def test_a_workflow_s_listed_text_is_ambient_and_its_body_is_not():
     grown_body = _workflow("Review a range.", body="\nphase('Read')\nconst x = 1\nreturn x\n")
     assert guard.evaluate({WORKFLOW: short}, {WORKFLOW: grown_body}, "claude(workflows): a longer body\n") == []
     assert guard.ambient_bytes(WORKFLOW, short) == sum(len(v.encode()) + 1 for v in ("review", "Review a range.", "Before a push."))
+    quoted = 'export const meta = {\n  name: "review",\n  description: \'the caller\\\'s model\',\n  whenToUse: "a \\"quoted\\" range",\n}\nreturn 1\n'
+    listed = ("review", "the caller's model", 'a "quoted" range')
+    assert guard.ambient_bytes(WORKFLOW, quoted) == sum(len(v.encode()) + 1 for v in listed)
 
 
 def test_a_new_corpus_file_counts_whole_and_a_deleted_one_counts_as_a_shrink():

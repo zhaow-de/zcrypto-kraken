@@ -12,7 +12,7 @@ SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
-META_FIELD = re.compile(r"^\s*(name|description|whenToUse):\s*'((?:[^'\\]|\\.)*)'", re.M)
+META_FIELD = re.compile(r"^\s*(name|description|whenToUse):\s*(['\"])((?:(?!\2)[^\\]|\\.)*)\2", re.M)
 GROWTH_LINE = re.compile(r"^Ambient grows by (\d+) bytes: \S", re.M)
 UNIVERSAL = re.compile(r"\b(every|never|always|only|any|cannot)\b", re.I)
 CODE_SPAN = re.compile(r"`[^`]*`")
@@ -49,7 +49,9 @@ def ambient_bytes(path: str, text: str) -> int:
         return total
     if WORKFLOW_FILE.match(path):
         head, _, _ = text.partition("\n}")  # the meta literal is the file's first object; a pure literal by the authoring reference
-        return sum(len(value.encode()) + 1 for _, value in META_FIELD.findall(head))
+        return sum(
+            len(re.sub(r"\\(.)", r"\1", value).encode()) + 1 for _, _, value in META_FIELD.findall(head)
+        )  # the listed text, escapes resolved
     return 0
 
 
