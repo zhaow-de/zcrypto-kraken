@@ -86,6 +86,8 @@ const known = new Set(prior.map((p) => p.id))
 const unknown = report.prior.filter((p) => !known.has(p.id)).map((p) => p.id)
 if (unknown.length) log(`the reader's table names ids the caller never passed, ignored: ${unknown.join(', ')}`)
 const seen = new Set()
+const doubled = report.prior.filter((p) => known.has(p.id)).map((p) => p.id).filter((id, i, ids) => ids.indexOf(id) !== i)
+if (doubled.length) log(`the reader's table lists a prior twice, the first row kept: ${[...new Set(doubled)].join(', ')}`)
 report.prior = report.prior.filter((p) => known.has(p.id) && !seen.has(p.id) && seen.add(p.id))  // one row per prior id, the first wins
 const accounted = new Set(report.prior.map((p) => p.id))
 const unaccounted = prior.map((p) => p.id).filter((id) => !accounted.has(id))
