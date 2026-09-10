@@ -1,4 +1,4 @@
-"""count-list.sh: one line per count command the corpus names plus the three it does not, and a topic-only-merge arm that counts a merge only when every file it brought in is a topic file."""
+"""count-list.sh: one entry per count the corpus names by entry name plus the three it does not, a name filter, and a topic-only-merge arm that counts a merge only when every file it brought in is a topic file."""
 
 from __future__ import annotations
 
@@ -15,11 +15,13 @@ FEED = REPO / "tests" / "fixtures" / "kraken_scheduled_maintenances.json"
 CORPUS = (REPO / "CLAUDE.md", REPO / ".claude" / "rules" / "fleet-deploys.md")
 
 _ENTRY = re.compile(r'^\s*emit "([^"]+)"', re.MULTILINE)
+_CORPUS_ENTRY = re.compile(r"count: `infra/scripts/count-list\.sh ([a-z0-9-]+)`")
+NOT_NAMED = {"topic-only-merges", "claude-commits-since-the-round-closed", "worktrees"}
 _VALUE = re.compile(r"\d+(?: passed)?")
 
 
-def _corpus_count_commands() -> int:
-    return sum(path.read_text().count("count:") for path in CORPUS)
+def _corpus_entries() -> set[str]:
+    return {name for path in CORPUS for name in _CORPUS_ENTRY.findall(path.read_text())}
 
 
 def _develop_resolves() -> bool:
@@ -27,13 +29,25 @@ def _develop_resolves() -> bool:
     return done.returncode == 0
 
 
-def test_one_entry_per_corpus_count_command_plus_the_three_the_corpus_does_not_name():
-    """The corpus's own count commands are the entry list -- a universal whose command is not run here is the finding."""
+def test_the_corpus_names_every_entry_but_the_three_the_script_carries_on_its_own():
+    """A corpus count names an entry that exists, and an entry the corpus does not name is one of the three -- a universal whose count is not run here is the finding."""
     names = _ENTRY.findall(SCRIPT.read_text())
     assert len(names) == len(set(names)), f"two entries answer to one name: {sorted(names)}"
-    assert len(names) == _corpus_count_commands() + 3, (
-        f"{len(names)} entries against {_corpus_count_commands()} count commands + 3: {names}"
+    corpus = _corpus_entries()
+    assert corpus <= set(names), f"the corpus names entries the script lacks: {sorted(corpus - set(names))}"
+    assert set(names) - corpus == NOT_NAMED, f"entries the corpus does not name: {sorted(set(names) - corpus)}"
+
+
+@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_named_entry_runs_alone_and_an_unknown_name_is_refused():
+    one = subprocess.run(
+        ["bash", str(SCRIPT), "markdown-directly-under-docs"], cwd=REPO, capture_output=True, text=True, timeout=120
     )
+    assert one.returncode == 0 and one.stdout.splitlines() == [
+        f"markdown-directly-under-docs\t{one.stdout.split(chr(9))[1].strip()}"
+    ], one.stdout + one.stderr
+    none = subprocess.run(["bash", str(SCRIPT), "no-such-entry"], cwd=REPO, capture_output=True, text=True, timeout=120)
+    assert none.returncode == 2 and "no entry named no-such-entry" in none.stderr, none.stdout + none.stderr
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="five counts read the develop ref by name, and this checkout has none")
@@ -49,7 +63,7 @@ def test_the_script_prints_one_shaped_line_per_entry():
     )
     assert done.returncode == 0, done.stdout + done.stderr
     lines = done.stdout.splitlines()
-    assert len(lines) == _corpus_count_commands() + 3, done.stdout
+    assert len(lines) == len(_ENTRY.findall(SCRIPT.read_text())), done.stdout
     for line in lines:
         name, tab, value = line.partition("\t")
         assert tab == "\t" and name, f"no name and tab: {line!r}"

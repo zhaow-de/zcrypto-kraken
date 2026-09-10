@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # The instrument that replaced the refine-rules staleness sweep: one line per count command the corpus names, and a universal with no command beside it is the finding.
 # Three entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, and the processes with a cwd inside a worktree.
+# Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 set -uo pipefail
 
 errors=()
+wanted=()
+seen=()
 
 # The count a command printed: pytest's own summary line, else the last line it wrote.
 value_of() {
@@ -22,6 +25,12 @@ value_of() {
 emit() {
   local name="$1"
   shift
+  if [ "${#wanted[@]}" -gt 0 ]; then
+    local w hit=0
+    for w in "${wanted[@]}"; do [ "$w" = "$name" ] && hit=1; done
+    [ "$hit" = 1 ] || return 0
+  fi
+  seen+=("$name")
   local fn raw status value joined=""
   for fn in "$@"; do
     raw="$("$fn")"
@@ -67,7 +76,9 @@ c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|l
 
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
-c_merged_prs_without_a_read() { timeout 60 gh pr list --state merged --base develop --limit 200 --json body,mergedAt | jq '[.[] | select(.mergedAt >= (now - 2592000 | todate)) | select((.body // "") | test("^Read before push by: .+ at [0-9a-f]{7,}"; "m") | not)] | length'; }
+# The journal month PR is exempt from the read (docs/reference/ops-journal/README.md) and is left out; a
+# line naming a model below the floor counts as no read, the same as the gate reads it.
+c_merged_prs_without_a_floor_read() { timeout 60 gh pr list --state merged --base develop --limit 200 --json body,mergedAt,headRefName | jq '[.[] | select(.mergedAt >= (now - 2592000 | todate)) | select(.headRefName != "ops-journal") | select((.body // "") | test("^Read before push by: Claude (Opus|Fable)\\b.* at [0-9a-f]{7,}"; "m") | not)] | length'; }
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
@@ -121,6 +132,7 @@ c_claude_commits_since_the_round_closed() {
 c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | grep -c /tmp/claude-1000/; }
 
 main() {
+  wanted=("$@")
   cd "$(git rev-parse --show-toplevel)" || exit 2
   # Five counts read the integration branch by name. A checkout without that ref answers 0 from
   # inside a process substitution, where the failure never reaches the pipeline's status.
@@ -150,7 +162,12 @@ main() {
   emit "topic-only-merges" c_micro_prs
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed
   emit "worktrees" c_worktree_processes
-  emit "merged-prs-without-a-read-line-30d" c_merged_prs_without_a_read
+  emit "merged-prs-without-a-floor-read-30d" c_merged_prs_without_a_floor_read
+
+  local w
+  for w in "${wanted[@]}"; do
+    case " ${seen[*]} " in *" $w "*) ;; *) echo "count-list: no entry named $w" >&2; exit 2 ;; esac
+  done
 
   if [ "${#errors[@]}" -gt 0 ]; then
     printf 'count-list: %s command(s) errored: %s\n' "${#errors[@]}" "${errors[*]}" >&2
