@@ -13,10 +13,12 @@ CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
 META_LITERAL = re.compile(
-    r"\Aexport const meta = \{\n(.*?)\n\}", re.S
+    r"\Aexport const meta = \{\n(.*?)\n\}[ \t]*(?:\n|\Z)", re.S
 )  # the authoring reference's own shape, and the only one read
 META_KEY = re.compile(r"^  (name|description|whenToUse):", re.M)
-META_FIELD = re.compile(r"^  (name|description|whenToUse): '((?:[^'\\\n]|\\.)*)',?$", re.M)
+META_FIELD = re.compile(
+    r"^  (name|description|whenToUse): '((?:[^'\\\n]|\\.)*)',?[ \t]*(?://.*)?$", re.M
+)  # a trailing comment is the reference's own example
 JS_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", re.S)
 _SIMPLE = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
 
@@ -27,7 +29,9 @@ class Unreadable(ValueError):
 
 def _unescape(value: str) -> str:
     """A single-quoted JavaScript string's escapes resolved to the characters the harness lists."""
-    if "\\u{" in value:
+    if re.search(
+        r"(?<!\\)(?:\\\\)*\\u\{", value
+    ):  # an odd run of backslashes before u{ is the escape; an even one is a literal backslash
         raise Unreadable("a `\\u{...}` escape in a listed string: write the character itself")
     return JS_ESCAPE.sub(
         lambda m: (
@@ -133,9 +137,15 @@ def evaluate(before: dict[str, str], after: dict[str, str], message: str, agains
     growth = 0
     for p in sorted(set(before) | set(after)):
         try:
-            growth += ambient_bytes(p, after.get(p, "")) - (ambient_bytes(p, before[p]) if p in before else 0)
+            now = ambient_bytes(p, after[p]) if p in after else 0  # a deletion is a shrink, never a read of nothing
         except Unreadable as exc:
             fails.append(f"{p}: {exc} — {SKILL}")
+            continue
+        try:
+            was = ambient_bytes(p, before[p]) if p in before else 0
+        except Unreadable:
+            was = 0  # a basis the guard cannot read counts as nothing, so the commit that reshapes it states the whole listed text
+        growth += now - was
     lines = GROWTH_LINE.findall(message)
     if len(lines) > 1:
         fails.append(f"two `Ambient grows by` lines in the message; one, with the whole commit's growth — {SKILL}")
@@ -220,7 +230,15 @@ def tree_ambient_bytes(root: pathlib.Path) -> int:
         *sorted((root / ".claude" / "skills").glob("*/SKILL.md")),
         *sorted((root / ".claude" / "workflows").glob("*.js")),
     ]
-    return sum(ambient_bytes(str(p.relative_to(root)), p.read_text()) for p in paths if p.is_file())
+    total = 0
+    for p in paths:
+        if not p.is_file():
+            continue
+        try:
+            total += ambient_bytes(str(p.relative_to(root)), p.read_text())
+        except Unreadable as exc:
+            raise Unreadable(f"{p.relative_to(root)}: {exc}") from None
+    return total
 
 
 def main(argv: list[str]) -> int:

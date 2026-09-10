@@ -147,6 +147,35 @@ def test_a_meta_the_guard_cannot_read_is_refused_not_guessed_at():
         assert len(fails) == 1 and fails[0].startswith(WORKFLOW + ": ") and fails[0].endswith(guard.SKILL), (shape, fails)
 
 
+def test_deleting_or_reshaping_a_workflow_is_a_change_the_guard_measures_not_refuses():
+    """The fourth re-review's Critical: the deletion side read as an empty file and was refused; a basis in another shape counts as nothing."""
+    canonical = _workflow("Review a range.")
+    assert guard.evaluate({WORKFLOW: canonical}, {}, "claude(workflows): drop it\n") == []
+    old_shape = "export const meta = { name: 'review', description: 'Review a range.', whenToUse: 'Before a push.' }\nreturn 1\n"
+    assert guard.evaluate({WORKFLOW: old_shape}, {}, "claude(workflows): drop the odd one\n") == []
+    n = guard.ambient_bytes(WORKFLOW, canonical)
+    assert (
+        guard.evaluate(
+            {WORKFLOW: old_shape},
+            {WORKFLOW: canonical},
+            f"claude(workflows): reshape\n\nAmbient grows by {n} bytes: the whole listed text, the basis unreadable\n",
+        )
+        == []
+    )
+
+
+def test_the_brace_must_be_alone_and_a_trailing_comment_is_allowed_on_a_field():
+    commented = (
+        "export const meta = {\n  name: 'x',\n  description: 'd',   // one-line, shown in the permission dialog\n}\nreturn 1\n"
+    )
+    assert guard.ambient_bytes(WORKFLOW, commented) == len("x".encode()) + 1 + len("d".encode()) + 1
+    trailing = "export const meta = {\n  name: 'x',\n  description: 'd',\n} // not alone\nreturn 1\n"
+    fails = guard.evaluate({}, {WORKFLOW: trailing}, "claude(workflows): x\n")
+    assert len(fails) == 1 and "the meta literal is not" in fails[0], fails
+    literal_backslash = "export const meta = {\n  name: 'x',\n  description: 'a \\\\u{b',\n}\nreturn 1\n"
+    assert guard.ambient_bytes(WORKFLOW, literal_backslash) == len("x".encode()) + 1 + len("a \\u{b".encode()) + 1
+
+
 def test_a_description_below_the_meta_literal_is_not_counted():
     """The third re-review's finding: a schema's description after the literal must not be charged as ambient."""
     text = "export const meta = {\n  name: 'x',\n  description: 'd',\n}\nconst FINDING = {\n  type: 'object',\n  description: 'the finding in one sentence',\n}\nreturn 1\n"
@@ -401,7 +430,7 @@ def test_the_ambient_bytes_subcommand_refuses_a_tree_with_an_unreadable_workflow
     (repo / ".claude" / "workflows").mkdir()
     (repo / ".claude" / "workflows" / "odd.js").write_text("export const meta = { name: 'x', description: 'd' }\nreturn 1\n")
     done = _run(repo, "", "--ambient-bytes")
-    assert done.returncode == 2 and "cannot measure" in done.stderr, done.stdout + done.stderr
+    assert done.returncode == 2 and "cannot measure" in done.stderr and "odd.js" in done.stderr, done.stdout + done.stderr
 
 
 def test_the_ambient_bytes_subcommand_is_the_function_over_the_tree(tmp_path):
