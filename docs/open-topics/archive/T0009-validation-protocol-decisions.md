@@ -20,7 +20,7 @@ Reports `docs/research/07` (cost-asymmetry gap, A1-long/flat tradeoff), `09` (wo
 
 ## Consequence tables (iter-066 — decision-support; adjudication stays yours)
 
-Each candidate worst-slice redesign applied to the contested books (calendar years, end-of-move stamping; A1-lf weekly = the offset-mean series, QA'd to the recorded 1.380 at vol=0.12; full table in the iter-066 history entry):
+Each candidate worst-slice redesign applied to the contested books (calendar years, end-of-move stamping; A1-lf weekly = the offset-mean series, QA'd to the recorded 1.380 at vol=0.12; full table in PR #85's description):
 
 - **(a) absolute (current leg): FAILS every real book — including the adopted bar itself** (B3+vt-dynamic: 2018/2022/2023/2025) **and the adopted combined system**. The leg cannot pass anything that trades.
 - **(c) absolute excluding 2013/2026 stubs: barely moves** — it clears only A2's 2026 rows; every book still fails on full-year slices. The stub question is secondary to exposure-blindness.

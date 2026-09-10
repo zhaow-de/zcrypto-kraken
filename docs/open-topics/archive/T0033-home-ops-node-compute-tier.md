@@ -79,7 +79,7 @@ Still open under this topic: **OPS-6** (the workstation's `data/`, its two lefto
 
 ## Done so far — OPS-6 Loop (spec `00056`, iter-103, 2026-07-18) — RESOLVES this topic
 
-OPS-6, the final increment, landed the hot-cluster dataset exchange and proved research runnable on ops (full detail in `docs/iterations-history-phase1.md` iter-103):
+OPS-6, the final increment, landed the hot-cluster dataset exchange and proved research runnable on ops (full detail in PR #147's description, iter-103):
 
 - **Topology + tool (D1/D2/D3/D8):** the custody / hot / private cluster split; the `zcrypto data` fetch/push/rebuild group over a NAS `hot/` hub keyed on one `[zcrypto].nfs_mount_dir`; the catalog rewritten by the taxonomy (`docs/reference/data-catalog-full.md`).
 - **The channel:** the write-capable push into `hot/` jailed by a vendored `rrsync` (four containment layers, append-only enforced server-side; validated live on the NAS's rsync 3.1.2), and a new dedicated `sync_hot -ro` ops→NAS pull.
