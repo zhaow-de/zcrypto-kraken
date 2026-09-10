@@ -7,7 +7,7 @@
 - Spec: `docs/specs/<serial_no>-<topic>-design.md`
 - Plan: `docs/plans/<serial_no>-<feature>.md`
 
-Read before push by: <a different agent than the author>
+Read before push by: <model> at <sha>
 
 <!--
 Add sections below as the change warrants — scale to complexity, mirror the spec.
