@@ -1,31 +1,12 @@
 # Fleet deploys
 
-*Protected — every edit takes the owner's per-edit sign-off (`zcrypto-refine-rules`).*
+L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-red` (secondary) is permanent data loss. Converges, re-pins, restarts and image prunes follow `.claude/skills/zcrypto-rollout-image/SKILL.md` (app-image digests) or `.claude/skills/zcrypto-bump-alloy/SKILL.md` (Alloy digests).
 
-L2 capture is unbackfillable — a mistake on `zcrypto` (primary) or `zcrypto-red` (secondary) is permanent data loss. **Before any converge, re-pin, restart, image prune or panel regeneration, read the owning skill** — `.claude/skills/zcrypto-rollout-image/SKILL.md` for app-image digests and every tier's converge mechanics, `.claude/skills/zcrypto-bump-alloy/SKILL.md` for Alloy digests; both carry the shared converge mechanics and are readable even where skill invocation is blocked. Below is only what must hold before either file is open.
-
-## Invariants
-
-- **Never re-pin the primary or the engine to a capture-image digest whose secondary bake gate has not passed** — the roles refuse it mechanically (`-e canary_override="<reason>"` is the emergency bypass). Skipping or degrading the gate takes the user's explicit approval, never silently.
-- **Never converge or reboot inside a published Kraken maintenance window** — `https://status.kraken.com/api/v2/scheduled-maintenances.json`, the entries carrying `WebSocket` or `REST` in `components` **or in the entry's `name` (an API, not a ticker)** — an empty `components` array is not an absent impact. They have appeared as little as 41 h (1.7 days) ahead — measured, not promised — so an empty feed is never evidence the window is clear: check at planning time and again immediately before.
-- **Inducing a fault on live capture happens only inside an attended window** — a drill that breaks a production path is deliberate and supervised, never a step inside another task. The primary's capture daemon and its Alloy are never the subject; the secondary and ops are, and only with the window's own word.
-- **`-e converge_primary=true` restarts live capture and/or the engine — mean it.** Never run `site.yml` un-tagged on the primary: a bare run pulls in the engine play and can restart the LIVE trade engine.
-- **The engine converges or restarts only inside the 4-hourly inter-cycle gap** (boundaries 00/04/08/12/16/20 UTC) — `site.yml` re-asserts the window (`-e engine_window_override="<reason>"` bypasses); a failed boundary is never retried.
-- **Adding a capture pair: PRIMARY first, secondary second** — the role refuses secondary-first. A pair-list change is config, not a re-pin.
-- **A schema-widening deploy converges every READER of the record format before the WRITER.**
-- **The NAS runs only `-compat` builds** — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by running polars in the pulled image, never by reading a label.
-- **Panel regeneration is the point of no return** — no old tree survives and rollback is another full rebuild; only through `zcrypto-panel-regenerate`, on the user's word.
-- **One PR per rollout, merged before any other branch touches the pins, deploy-log or fleet files — same day is the default, not a gate; never branch other work from it.**
-- **`kraken-cli` is workstation-only — never install or invoke it on a REMOTE host**: not the engine node, not the capture pair, not ops, not the NAS, not the bridgehead. No role, compose file, image or unit installs it. Its account reads run from the workstation against the API, which needs no host presence.
-
-## Alert-rule lifecycle
-
-- **`grafana-push.sh` runs from merged `develop`, never from a branch** — its header states the bar; pushing ahead of the merge takes the owner's word, named in the PR body.
-- **Deleting a rule from `infra/grafana/alerts.yaml` does not retire it** — the push upserts and never deletes; retiring is `GRAFANA_PRUNE=1` with the orphan report naming exactly the uid.
-- **Never prune the superseded rule before its replacement's first sample is verified by VALUE** — `delta()`/`increase()` are blind to a condition already present in a series' first sample. Order: converge → push → verify the value → prune → confirm the old uid 404s.
-- A rule pushed before its metric's first record pages a spurious no-data alert — push after the first record, or knowingly accept one self-healing page; journal-seed an eagerly-registered gauge instead of publishing `0.0`.
-
-## Ansible secrets
-
-- **Never run `ansible-inventory --host`, `--list`, or `--graph --vars`.** `infra/ansible/ansible.cfg` sets `vault_password_file`, so all three silently decrypt the vault and print every secret (incl. the live Kraken trade key) in cleartext — and `vault-pass.sh` itself refuses those ancestries. Use `--graph` / `--list-tags`, or pipe through a key-names-only filter.
-- **Never wrap `converge.sh` in `timeout`** — it is attended by design (the confirm reads `/dev/tty`); `timeout` kills the wrapper while its `ansible-playbook` child keeps converging a production host with nothing supervising it. Let it run, or background the whole invocation.
+- Never re-pin the primary or the engine to a capture-image digest whose secondary bake gate has not passed — the capture role refuses it; `-e canary_override="<reason>"` is the bypass and takes the user's explicit approval, never silently (set: `docs/reference/deploy-log.jsonl` rows with `limit == "zcrypto"`; count: `jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l`).
+- Never converge or reboot a fleet host inside a published Kraken maintenance window — `https://status.kraken.com/api/v2/scheduled-maintenances.json`, the entries carrying `WebSocket` or `REST` in `components` or in the entry's `name`; an empty feed is never evidence the window is clear: check at planning time and again immediately before (set: every deploy-log row against the windows the feed still carries; count: `uv run python infra/scripts/deploy-log-audit.py maintenance`).
+- A fault is induced on live capture only inside an attended window, on the secondary or ops — the primary's capture daemon and its Alloy are never the subject (set: `docs/reference/drill-log.md` entries; count: `grep -cE '^\*host\* `zcrypto`' docs/reference/drill-log.md`).
+- `-e converge_primary=true` restarts live capture and/or the engine — mean it; never run `site.yml` un-tagged on the primary (set: deploy-log rows with `limit == "zcrypto"`; count: `jq -c 'select(.limit=="zcrypto" and .tags=="")' docs/reference/deploy-log.jsonl | wc -l`).
+- The engine converges or restarts only inside the 4-hourly inter-cycle gap (boundaries 00/04/08/12/16/20 UTC) — `site.yml` refuses outside it (`-e engine_window_override="<reason>"` bypasses); a failed boundary is never retried (set: deploy-log rows whose `tags` include `engine`; count: `uv run python infra/scripts/deploy-log-audit.py engine-window`).
+- A schema-widening deploy converges the readers of the record format before the writer.
+- The NAS runs `-compat` builds — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by running polars in the pulled image, never by reading a label (set: the NAS rows of `docs/reference/fleet-pins.md`; count: `grep -iE '^\| *nas' docs/reference/fleet-pins.md | grep -vc compat`).
+- Never wrap `infra/ansible/scripts/converge.sh` in `timeout` — its confirm reads `/dev/tty`, and `timeout` kills the wrapper while `ansible-playbook` keeps converging a production host unsupervised; let it run, or background the whole invocation (set: tracked non-Markdown invocations; count: `git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l`).
