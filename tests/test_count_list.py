@@ -14,7 +14,13 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "infra" / "scripts" / "count-list.sh"
 FEED = REPO / "tests" / "fixtures" / "kraken_scheduled_maintenances.json"
-CORPUS = (REPO / "CLAUDE.md", REPO / ".claude" / "rules" / "fleet-deploys.md")
+CORPUS = (
+    REPO / "CLAUDE.md",
+    REPO / ".claude" / "rules" / "fleet-deploys.md",
+    REPO / "docs" / "reference" / "fleet.md",
+    REPO / "docs" / "reference" / "fleet-pins.md",
+    REPO / ".claude" / "skills" / "zcrypto-grooming" / "references" / "memo-protocol.md",
+)  # the always-loaded guidance, and the three contracts the guard reads for universals
 
 _ENTRY = re.compile(r'^\s*emit "([^"]+)"', re.MULTILINE)
 _CORPUS_ENTRY = re.compile(r"count: `infra/scripts/count-list\.sh ([a-z0-9-]+)`")
