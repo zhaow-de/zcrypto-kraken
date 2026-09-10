@@ -84,12 +84,12 @@ const report = await agent(readerPrompt, { ...opts('re-read', 'Re-read'), schema
 if (!report) throw new Error('the reader returned nothing')
 const accounted = new Set(report.prior.map((p) => p.id))
 const unaccounted = prior.map((p) => p.id).filter((id) => !accounted.has(id))
-if (unaccounted.length) log(`prior findings the reader did not account for: ${unaccounted.join(', ')}`)
-const open = report.prior.filter((p) => p.status === 'open').map((p) => p.id)
+if (unaccounted.length) log(`prior findings the reader did not account for: ${unaccounted.join(', ')} -- carried forward as open`)
+const open = [...report.prior.filter((p) => p.status === 'open').map((p) => p.id), ...unaccounted]
 const RANK = { Critical: 3, Important: 2, Minor: 1 }
 const byId = new Map(prior.map((p) => [p.id, p]))
-const reopened = open.filter((id) => byId.has(id)).map((id) => ({ ...byId.get(id), evidence: report.prior.find((p) => p.id === id).by, consequence: 'the prior finding stands', priorId: id }))
-const findings = [...report.findings, ...reopened].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((f, i) => ({ id: i + 1, ...f }))
+const reopened = open.filter((id) => byId.has(id)).map((id) => ({ ...byId.get(id), evidence: (report.prior.find((p) => p.id === id) || { by: 'the reader did not account for it' }).by, consequence: 'the prior finding stands', priorId: id }))
+const findings = [...report.findings, ...reopened].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((f, i) => ({ ...f, id: i + 1 }))
 const count = (sev, list) => list.filter((f) => f.severity === sev).length
 log(`prior: ${report.prior.filter((p) => p.status === 'closed').length} closed, ${report.prior.filter((p) => p.status === 'left').length} left, ${open.length} open; new: ${count('Critical', findings)} Critical / ${count('Important', findings)} Important / ${count('Minor', findings)} Minor`)
 

@@ -16,6 +16,7 @@ if (!repo || !range || !tip || !Array.isArray(lenses) || lenses.length === 0 || 
 for (const l of lenses) {
   if (!l.name || !l.brief || !/^[a-z0-9-]+$/.test(l.name)) throw new Error(`lens needs a slug name and a brief: ${JSON.stringify(l)}`)
 }
+if (new Set(lenses.map((l) => l.name)).size !== lenses.length) throw new Error(`lens names must be distinct: ${lenses.map((l) => l.name).join(', ')}`)
 
 // --- schemas -----------------------------------------------------------------------------------
 const FINDING = {
@@ -91,7 +92,7 @@ for (const r of live) {
     }
   }
 }
-const findings = [...union.values()].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((f, i) => ({ id: i + 1, ...f }))
+const findings = [...union.values()].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((f, i) => ({ ...f, id: i + 1 }))
 const count = (sev, list) => list.filter((f) => f.severity === sev).length
 log(`union over ${live.length} lenses: ${count('Critical', findings)} Critical / ${count('Important', findings)} Important / ${count('Minor', findings)} Minor`)
 
