@@ -20,14 +20,16 @@ COLUMNS = ("PR", "date", "title", "iter", "spec", "topic")
 TITLE_MAX = 72
 
 # The key grammar the index is written from — the same three expressions `open-pr` reads a branch
-# name and title with. A PR number is three digits, so it cannot collide with a 5-digit serial.
+# name, a title and a `## Spec / Plan` section with. A PR number is three digits, so it cannot
+# collide with a 5-digit serial. A topic key is matched case-insensitively — a branch spells it
+# `t0189` — and written with an upper-case T.
 _ITER = re.compile(r"\biter-(\d{1,3})\b")
 _SPEC = re.compile(r"\b(\d{5})\b")
-_TOPIC = re.compile(r"\bT(\d{4})\b")
+_TOPIC = re.compile(r"\bT(\d{4})\b", re.IGNORECASE)
 
-# Any two path segments joined by a slash. Deliberately wider than a real repo path: the claim the
-# index makes is that NO cell can be matched by a path sweep, not that no cell names a file today.
-_PATH_LIKE = re.compile(r"[\w.-]+/[\w.-]+")
+# A repo root followed by a slash, or two segments joined by a slash where the second carries a file
+# extension — what a rename sweep greps for; a bare `long/flat` inside a title is not a path.
+_PATH_LIKE = re.compile(r"(?:cli|tests|infra|docs|\.claude)/|[\w-]+/[\w-]+\.[a-z]+")
 
 _MERGE_SUBJECT = re.compile(r"^Merge pull request #(\d+) from [^/]+/(.+)$")
 
@@ -72,7 +74,7 @@ def test_every_title_cell_fits_the_column() -> None:
 
 
 def test_no_cell_carries_a_path_shaped_token() -> None:
-    """No cell in any row matches a two-segment slash path."""
+    """No cell in a row matches a repo-root path or a slashed filename."""
     offenders = []
     for line, cells in _rows():
         for column, cell in zip(COLUMNS, cells):
@@ -80,8 +82,8 @@ def test_no_cell_carries_a_path_shaped_token() -> None:
             if match:
                 offenders.append((line, column, match.group(0)))
     assert not offenders, (
-        "a path-shaped token in a cell — a rename sweep would have to edit this file; write a "
-        "title's slash as a hyphen:\n  "
+        "a path-shaped token in a cell — a rename sweep would have to edit this file; write the "
+        "token's slash as a hyphen:\n  "
         + "\n  ".join(f"change-index.md:{line}: {column} cell carries {tok!r}" for line, column, tok in offenders)
     )
 

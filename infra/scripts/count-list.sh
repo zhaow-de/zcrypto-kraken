@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # The instrument that replaced the refine-rules staleness sweep: one line per count command the corpus names, and a universal with no command beside it is the finding.
+# Two entries the corpus does not name close the list: topic-only merges, and the claude-kind commits since the last refine round closed.
 set -uo pipefail
 
 errors=()
@@ -56,13 +57,15 @@ count_micro_prs() {
   printf '%s\n' "$micro"
 }
 
+c_docs_markdown_at_the_root() { git ls-files ':(glob)docs/*.md' | wc -l; }
+
 c_non_pr_merges() { git log --first-parent --merges develop --format=%s | grep -vc '^Merge pull request'; }
 
-c_engine_env_forms() { git grep -nE '\{\{ ?json \.Config(\.Env)? ?\}\}|docker exec [^|;]* env( |$)|docker compose config' -- infra .claude cli | grep -viE 'never|do not|refus|forbid|prints|scoped' | wc -l; }
+c_engine_env_forms() { git grep -nE '\{\{ ?json \.Config(\.Env)? ?\}\}|docker exec [^|;]* env( |$)|docker compose config' -- infra .claude cli ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
 
-c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|list|vars)' -- infra .claude cli | grep -viE 'never|refus|forbid|not ' | wc -l; }
+c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|list|vars)' -- infra .claude cli ':!*.md' ':!infra/ansible/scripts/vault-pass.sh' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
 
-c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra ':!*.md' | wc -l; }
+c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
 c_mutation_commits_without_a_probe() { comm -23 <(git log develop --since=2026-08-03 -i --grep=mutation --format=%h | sort) <(git log develop --since=2026-08-03 -i --grep=mutate-probe --format=%h | sort) | wc -l; }
 
@@ -94,11 +97,20 @@ c_un_tagged_primary_runs() { jq -c 'select(.limit=="zcrypto" and .tags=="")' doc
 
 c_engine_rows_outside_the_gap() { uv run python infra/scripts/deploy-log-audit.py engine-window | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'; }
 
-c_nas_rows_without_compat() { grep -iE '^\| *nas' docs/reference/fleet-pins.md | grep -vc compat; }
+c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }
 
 c_micro_prs() { count_micro_prs develop; }
+
+# The other count the corpus does not carry: claude-kind commits since the last refine round
+# closed. A missing closing commit is an error, never a count over the whole history.
+c_claude_commits_since_the_round_closed() {
+  local base
+  base="$(git log -1 --grep='^Refine-Round-Closed:' --format=%h)"
+  if [ -z "$base" ]; then return 2; fi
+  git log "${base}..develop" --no-merges --format=%s | grep -c '^claude('
+}
 
 main() {
   cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -109,6 +121,7 @@ main() {
     exit 2
   fi
 
+  emit "markdown-directly-under-docs" c_docs_markdown_at_the_root
   emit "non-pr-merges-on-develop" c_non_pr_merges
   emit "engine-env-forms-invoked" c_engine_env_forms
   emit "ansible-inventory-secret-forms-invoked" c_ansible_inventory_forms
@@ -126,6 +139,7 @@ main() {
   emit "nas-rows-without-compat" c_nas_rows_without_compat
   emit "converge-sh-wrapped-in-timeout" c_converge_sh_wrapped_in_timeout
   emit "topic-only-merges" c_micro_prs
+  emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed
 
   if [ "${#errors[@]}" -gt 0 ]; then
     printf 'count-list: %s command(s) errored: %s\n' "${#errors[@]}" "${errors[*]}" >&2

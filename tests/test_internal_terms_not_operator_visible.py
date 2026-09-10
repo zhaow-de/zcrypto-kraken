@@ -1,15 +1,15 @@
 """Internal development vocabulary must not reach a surface an operator sees at runtime (T0096).
 
-The surface list lives in `.claude/rules/operator-facing-text.md` and is not restated here: a
+The surface list is this file's own parametrisations and walkers, restated nowhere else: a
 second copy drifts. `WP<N>` is different -- memo-private, banned from every git-tracked file
 outright, enforced by the last test in this file.
 
 Every non-docstring string literal in the scanned packages is checked, not just the ones lexically
 inside a `raise`/`echo`: a message built into a variable and echoed later
 (`text = render_report(...); typer.echo(text)`) is invisible to any call-site walk, and chasing it
-statically is dataflow analysis. That makes this scan STRICTER than
-`.claude/rules/operator-facing-text.md`'s log-line carve-out, `logger.*` literals included, and it
-stays so: narrowing it to spare a log line reopens the loophole the carve-out would otherwise be.
+statically is dataflow analysis. That makes this scan STRICTER than a log-line carve-out would
+be, `logger.*` literals included, and it stays so: narrowing it to spare a log line reopens the
+loophole such a carve-out would otherwise be.
 """
 
 from __future__ import annotations
@@ -390,7 +390,7 @@ def test_rendered_cli_help_carries_no_internal_vocabulary():
 
 
 # ---------------------------------------------------------------------------------------------
-# The WP ban is repo-wide, not an operator-surface rule (operator-facing-text.md): WP labels are
+# The WP ban is repo-wide, not an operator-surface rule: WP labels are
 # memo-private structure.
 
 _WP = re.compile(r"\bWP\d")

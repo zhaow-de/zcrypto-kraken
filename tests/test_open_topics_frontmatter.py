@@ -1,5 +1,5 @@
-"""The open-topics frontmatter invariants `.claude/rules/open-topics.md` and
-`.claude/skills/topic-ops/SKILL.md` state, checked mechanically."""
+"""The open-topics frontmatter invariants `.claude/skills/topic-ops/SKILL.md` states, checked
+mechanically."""
 
 import re
 from pathlib import Path

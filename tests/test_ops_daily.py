@@ -1733,9 +1733,9 @@ _CLEAN_DESC = f"Pings on a clean overlay-writer cycle. Runbook: {_GOOD_LINK}"
 
 
 def test_a_description_carrying_an_internal_token_is_a_finding_named_per_check():
-    """`operator-facing-text.md` governs these descriptions, read from a phone with nothing open and
-    hand-written in a SaaS: every banned token in one description is its own finding, named per
-    check, and a clean description yields none."""
+    """These descriptions are read from a phone with nothing open and hand-written in a SaaS, so
+    internal vocabulary stays out of them: every banned token in one description is its own
+    finding, named per check, and a clean description yields none."""
     checks = [
         {
             "name": "zcrypto-engine-shadow",

@@ -5,7 +5,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 ## Scope — what belongs here, and what does not
 
 - **Procedures** for a signal that fires at an operator, and **accepted limitations** an operator may run into while debugging. Nothing else.
-- **This is not a backlog.** If acting on a section produces work, put it where work lives: something needing a *decision* opens a `T<NNNN>` per `.claude/rules/open-topics.md`; something needing *doing* goes in the memo queue. Deferrals must not accumulate here — a runbook nobody can finish reading is a runbook nobody reads.
+- **This is not a backlog.** If acting on a section produces work, put it where work lives: something needing a *decision* opens a `T<NNNN>` under `docs/open-topics/` through the `topic-ops` skill; something needing *doing* goes in the memo queue. Deferrals must not accumulate here — a runbook nobody can finish reading is a runbook nobody reads.
 - **Four parts, in this order**: *What you are seeing* · *What it means* · *What to do* · *Retire when* — for ALERT, KNOWN LIMITATION and SCHEDULED REMINDER sections. A PROCEDURE carries those four or, for a drill, the seven spec `00105` names. Same order every time, so a cold reader can skim.
 - **Four kinds, marked in the heading**: `— ALERT` (something fires), `— KNOWN LIMITATION` (something an operator meets while debugging, where the right action may be "nothing"), `— PROCEDURE` (nothing fires it; you open it deliberately), `— SCHEDULED REMINDER` (a reminder came due; nothing is wrong).
 - **A step names the sanctioned program that executes it.** A step with no such program is a credential-handling improvisation waiting for an operator — write the program's invocation, or do not write the step.
