@@ -11,6 +11,59 @@ import sys
 SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
+WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
+META_OPEN = "export const meta = {"  # the authoring reference's own shape, and the only one read
+META_KEY = re.compile(r"^  (name|description|whenToUse):", re.M)
+META_FIELD = re.compile(
+    r"^  (name|description|whenToUse): '((?:[^'\\\n]|\\.)*)',?[ \t]*(?://.*)?$", re.M
+)  # a trailing comment is the reference's own example
+JS_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", re.S)
+_SIMPLE = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
+
+
+class Unreadable(ValueError):
+    """A file the guard will not measure: refused with the shape it reads, never guessed at."""
+
+
+def _unescape(value: str) -> str:
+    """A single-quoted JavaScript string's escapes resolved to the characters the harness lists."""
+    if re.search(
+        r"(?<!\\)(?:\\\\)*\\u\{", value
+    ):  # an odd run of backslashes before u{ is the escape; an even one is a literal backslash
+        raise Unreadable("a `\\u{...}` escape in a listed string: write the character itself")
+    return JS_ESCAPE.sub(
+        lambda m: (
+            chr(int(m.group(1)[1:], 16)) if m.group(1)[0] in "ux" and len(m.group(1)) > 1 else _SIMPLE.get(m.group(1), m.group(1))
+        ),
+        value,
+    )
+
+
+def _meta_block(text: str) -> str:
+    """The lines between `export const meta = {` on the file's first line and the first line that starts with `}`, which must be `}` alone; anything else is refused."""
+    lines = text.split("\n")
+    if not lines or lines[0] != META_OPEN:
+        raise Unreadable("the meta literal is not `export const meta = {` on the file's first line")
+    for i, line in enumerate(lines[1:], 1):
+        if line.startswith("}"):
+            if line.rstrip() != "}":
+                raise Unreadable("the meta literal's closing `}` is not alone on its own line")
+            return "\n".join(lines[1:i])
+    raise Unreadable("the meta literal has no closing `}` alone on its own line")
+
+
+def workflow_listed(text: str) -> list[str]:
+    """The strings the harness lists for a saved workflow, read from the one meta shape the guard accepts."""
+    block = _meta_block(text)
+    fields = {key: _unescape(value) for key, value in META_FIELD.findall(block)}
+    if len(META_KEY.findall(block)) != len(fields):
+        raise Unreadable("a name, description or whenToUse line that is not one single-quoted string on its own line")
+    for key in ("name", "description"):
+        if key not in fields:
+            raise Unreadable(f"no `{key}:` line in the meta literal, which the authoring reference requires")
+    return list(fields.values())
+
+
 GROWTH_LINE = re.compile(r"^Ambient grows by (\d+) bytes: \S", re.M)
 UNIVERSAL = re.compile(r"\b(every|never|always|only|any|cannot)\b", re.I)
 CODE_SPAN = re.compile(r"`[^`]*`")
@@ -32,7 +85,7 @@ def frontmatter_lines(text: str) -> list[str]:
 
 
 def ambient_bytes(path: str, text: str) -> int:
-    """What a session pays for the file on every turn: a corpus file whole; a skill's name and description values, block scalars included."""
+    """What a session pays for the file on every turn: a corpus file whole; a skill's name and description values, block scalars included; a workflow's listed text -- the name, description and whenToUse strings of its meta literal."""
     if CORPUS.match(path):
         return len(text.encode())
     if SKILL_FILE.match(path):
@@ -45,6 +98,10 @@ def ambient_bytes(path: str, text: str) -> int:
             if inside:
                 total += len(line.encode()) + 1
         return total
+    if WORKFLOW_FILE.match(path):
+        return sum(
+            len(value.encode()) + 1 for value in workflow_listed(text)
+        )  # the listed text, escapes resolved; an unreadable meta raises
     return 0
 
 
@@ -83,7 +140,18 @@ def uncounted_universals(path: str, text: str) -> list[tuple[int, str]]:
 def evaluate(before: dict[str, str], after: dict[str, str], message: str, against: str = "") -> list[str]:
     """before/after map each ambient path the commit changes to its text at the basis and in the commit; a missing key is an absent file; `against` names a basis other than HEAD in a refusal."""
     fails: list[str] = []
-    growth = sum(ambient_bytes(p, after.get(p, "")) - ambient_bytes(p, before.get(p, "")) for p in set(before) | set(after))
+    growth = 0
+    for p in sorted(set(before) | set(after)):
+        try:
+            now = ambient_bytes(p, after[p]) if p in after else 0  # a deletion is a shrink, never a read of nothing
+        except Unreadable as exc:
+            fails.append(f"{p}: {exc} — {SKILL}")
+            continue
+        try:
+            was = ambient_bytes(p, before[p]) if p in before else 0
+        except Unreadable:
+            was = 0  # a basis the guard cannot read counts as nothing, so the commit that reshapes it states the whole listed text
+        growth += now - was
     lines = GROWTH_LINE.findall(message)
     if len(lines) > 1:
         fails.append(f"two `Ambient grows by` lines in the message; one, with the whole commit's growth — {SKILL}")
@@ -139,7 +207,7 @@ def _message(path: str) -> tuple[str, str]:
 
 
 def _ambient(paths: list[str]) -> list[str]:
-    return [p for p in paths if CORPUS.match(p) or SKILL_FILE.match(p)]
+    return [p for p in paths if CORPUS.match(p) or SKILL_FILE.match(p) or WORKFLOW_FILE.match(p)]
 
 
 def range_fails(base: str, head: str) -> list[str]:
@@ -166,8 +234,17 @@ def tree_ambient_bytes(root: pathlib.Path) -> int:
         root / "CLAUDE.md",
         *sorted((root / ".claude" / "rules").glob("*.md")),
         *sorted((root / ".claude" / "skills").glob("*/SKILL.md")),
+        *sorted((root / ".claude" / "workflows").glob("*.js")),
     ]
-    return sum(ambient_bytes(str(p.relative_to(root)), p.read_text()) for p in paths if p.is_file())
+    total = 0
+    for p in paths:
+        if not p.is_file():
+            continue
+        try:
+            total += ambient_bytes(str(p.relative_to(root)), p.read_text())
+        except Unreadable as exc:
+            raise Unreadable(f"{p.relative_to(root)}: {exc}") from None
+    return total
 
 
 def main(argv: list[str]) -> int:
@@ -177,7 +254,11 @@ def main(argv: list[str]) -> int:
         return 2
     root = pathlib.Path(top.stdout.strip())
     if argv[1:] == ["--ambient-bytes"]:
-        print(tree_ambient_bytes(root))
+        try:
+            print(tree_ambient_bytes(root))
+        except Unreadable as exc:
+            print(f"guidance-guard: a workflow the guard cannot measure -- {exc}", file=sys.stderr)
+            return 2
         return 0
     if argv[1:2] == ["--range"] and len(argv) == 3 and ".." in argv[2] and "..." not in argv[2]:
         base, head = argv[2].split("..", 1)

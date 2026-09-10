@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 import sys
 
 import pytest
@@ -174,6 +175,13 @@ def test_every_other_arm_still_fires():
         "1",
         "PR",
     ]
+
+
+def test_the_fable_paths_subcommand_prints_the_gate_s_own_list():
+    """CLAUDE.md names this command instead of repeating the list, so what it prints is what the gate enforces."""
+    done = subprocess.run([sys.executable, str(_SCRIPT), "--fable-paths"], capture_output=True, text=True)
+    assert done.returncode == 0 and done.stdout.split("\n")[:-1] == list(gate.FABLE_PATHS)
+    assert "cli/engine/" in gate.FABLE_PATHS and ".claude/" in gate.FABLE_PATHS
 
 
 def test_a_commit_growing_the_guidance_unstated_fails_the_gate():

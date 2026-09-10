@@ -8,7 +8,7 @@ model: fable
 
 ## Before you write guidance
 
-The always-loaded set — `CLAUDE.md`, `.claude/rules/*.md`, and every skill's `name:` and `description:` lines — is paid by every session on every turn; a skill's body is paid only when the skill loads. Measure it, never recall it: `infra/scripts/count-list.sh ambient-bytes`.
+The always-loaded set — `CLAUDE.md`, `.claude/rules/*.md`, every skill's `name:` and `description:` lines, and every saved workflow's `name`, `description` and `whenToUse` strings — is paid by every session on every turn; a skill's body, and a workflow's, is paid only when it loads. Measure it, never recall it: `infra/scripts/count-list.sh ambient-bytes`.
 
 A line lands on one of four grounds, or it does not land:
 
