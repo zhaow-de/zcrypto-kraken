@@ -65,6 +65,8 @@ c_engine_env_forms() { git grep -nE '\{\{ ?json \.Config(\.Env)? ?\}\}|docker ex
 
 c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|list|vars)' -- infra .claude cli ':!*.md' ':!infra/ansible/scripts/vault-pass.sh' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
 
+c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
+
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
 c_mutation_commits_without_a_probe() { comm -23 <(git log develop --since=2026-08-03 -i --grep=mutation --format=%h | sort) <(git log develop --since=2026-08-03 -i --grep=mutate-probe --format=%h | sort) | wc -l; }
@@ -130,6 +132,7 @@ main() {
   emit "engine-env-forms-invoked" c_engine_env_forms
   emit "ansible-inventory-secret-forms-invoked" c_ansible_inventory_forms
   emit "kraken-cli-on-infra-surfaces" c_kraken_cli_on_infra
+  emit "prose-chars" c_prose_chars
   emit "mutation-commits-without-a-probe" c_mutation_commits_without_a_probe
   emit "prose-only-commits-without-the-prover" c_prose_only_commits_without_the_prover
   emit "spec-hash-provenance" c_spec_hash_provenance
