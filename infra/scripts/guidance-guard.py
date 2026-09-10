@@ -12,9 +12,7 @@ SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
-META_LITERAL = re.compile(
-    r"\Aexport const meta = \{\n(.*?)\n\}[ \t]*(?:\n|\Z)", re.S
-)  # the authoring reference's own shape, and the only one read
+META_OPEN = "export const meta = {"  # the authoring reference's own shape, and the only one read
 META_KEY = re.compile(r"^  (name|description|whenToUse):", re.M)
 META_FIELD = re.compile(
     r"^  (name|description|whenToUse): '((?:[^'\\\n]|\\.)*)',?[ \t]*(?://.*)?$", re.M
@@ -41,14 +39,22 @@ def _unescape(value: str) -> str:
     )
 
 
+def _meta_block(text: str) -> str:
+    """The lines between `export const meta = {` on the file's first line and the first line that starts with `}`, which must be `}` alone; anything else is refused."""
+    lines = text.split("\n")
+    if not lines or lines[0] != META_OPEN:
+        raise Unreadable("the meta literal is not `export const meta = {` on the file's first line")
+    for i, line in enumerate(lines[1:], 1):
+        if line.startswith("}"):
+            if line.rstrip() != "}":
+                raise Unreadable("the meta literal's closing `}` is not alone on its own line")
+            return "\n".join(lines[1:i])
+    raise Unreadable("the meta literal has no closing `}` alone on its own line")
+
+
 def workflow_listed(text: str) -> list[str]:
     """The strings the harness lists for a saved workflow, read from the one meta shape the guard accepts."""
-    m = META_LITERAL.match(text)
-    if not m:
-        raise Unreadable(
-            "the meta literal is not `export const meta = {` on the first line, then one field per line, then `}` alone on its own line"
-        )
-    block = m.group(1)
+    block = _meta_block(text)
     fields = {key: _unescape(value) for key, value in META_FIELD.findall(block)}
     if len(META_KEY.findall(block)) != len(fields):
         raise Unreadable("a name, description or whenToUse line that is not one single-quoted string on its own line")

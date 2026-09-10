@@ -171,7 +171,10 @@ def test_the_brace_must_be_alone_and_a_trailing_comment_is_allowed_on_a_field():
     assert guard.ambient_bytes(WORKFLOW, commented) == len("x".encode()) + 1 + len("d".encode()) + 1
     trailing = "export const meta = {\n  name: 'x',\n  description: 'd',\n} // not alone\nreturn 1\n"
     fails = guard.evaluate({}, {WORKFLOW: trailing}, "claude(workflows): x\n")
-    assert len(fails) == 1 and "the meta literal is not" in fails[0], fails
+    assert len(fails) == 1 and "not alone on its own line" in fails[0], fails
+    deeper = "export const meta = {\n  name: 'x',\n  description: 'd',\n} // not alone\nconst OPTS = {\n  whenToUse: 'from the body',\n}\nreturn 1\n"
+    fails = guard.evaluate({}, {WORKFLOW: deeper}, "claude(workflows): x\n")
+    assert len(fails) == 1 and "not alone on its own line" in fails[0], fails
     literal_backslash = "export const meta = {\n  name: 'x',\n  description: 'a \\\\u{b',\n}\nreturn 1\n"
     assert guard.ambient_bytes(WORKFLOW, literal_backslash) == len("x".encode()) + 1 + len("a \\u{b".encode()) + 1
 
