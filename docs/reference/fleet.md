@@ -1,6 +1,6 @@
 # Fleet topology
 
-What runs where: hosts, services, data paths, mounts, replication, telemetry labels. Read it before running a command on a fleet host or naming a path there; a change to what-runs-where updates this file in the same change. Running digests are [fleet-pins.md](fleet-pins.md); dataset schemas are the data catalogs'. This file holds state, not history — a measurement, an incident or a drill goes to git, a runbook or the drill log — and `tests/test_fleet_contracts.py` refuses a date, a table cell or a paragraph past its cap, a heading outside the six sections and anything nested below them.
+What runs where: hosts, services, data paths, mounts, replication, telemetry labels. Read it before running a command on a fleet host or naming a path there; a change to what-runs-where updates this file in the same change. Running digests are [fleet-pins.md](fleet-pins.md); dataset schemas are the data catalogs'. This file holds state, not history — a measurement, an incident or a drill goes to git, a runbook or the drill log — and `tests/test_fleet_contracts.py` refuses a date, a table cell, a bullet or a paragraph past its cap, a heading outside the six sections and anything nested below them.
 
 ## Hosts
 

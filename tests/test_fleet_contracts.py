@@ -57,7 +57,7 @@ def _tables(path: Path) -> list[tuple[list[str], list[tuple[int, list[str]]]]]:
 
 
 def _blocks(path: Path) -> list[tuple[int, str]]:
-    """Each bullet (its indented continuation lines joined, the guidance guard's reading) and each paragraph (consecutive prose lines joined); tables, headings and fenced blocks are not blocks."""
+    """Each bullet (its continuation lines joined, indented or lazy, as Markdown renders them) and each paragraph (consecutive prose lines joined); tables, headings and fenced blocks are not blocks."""
     out: list[tuple[int, str]] = []
     kind = None  # "bullet", "paragraph" or None while the previous line closed a block
     fenced = False
@@ -70,9 +70,7 @@ def _blocks(path: Path) -> list[tuple[int, str]]:
         elif BULLET.match(line):
             out.append((i, line))
             kind = "bullet"
-        elif kind == "bullet" and line[:1].isspace():
-            out[-1] = (out[-1][0], out[-1][1] + " " + line.strip())
-        elif kind == "paragraph":
+        elif kind in ("bullet", "paragraph"):
             out[-1] = (out[-1][0], out[-1][1] + " " + line.strip())
         else:
             out.append((i, line))

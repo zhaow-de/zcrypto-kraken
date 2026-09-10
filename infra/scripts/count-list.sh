@@ -126,8 +126,9 @@ c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|r
 c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?(json )?\.Image ?\}\}' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
 
 # A capture host counts unless the setting it reads first -- its host_vars, else the group -- is one of
-# the six false spellings Ansible reads (0, f, false, n, no, off); a host with the key in neither file
-# counts too, since the base role's default is not read here.
+# six false spellings (0, f, false, n, no, off): the template renders the value raw into apt's config,
+# whose reader accepts these and more, so the count never under-reports. A host with the key in neither
+# file counts too, since the base role's default is not read here.
 c_capture_hosts_with_automatic_reboot() {
   local h f n=0
   for h in zcrypto zcrypto-red; do
