@@ -14,7 +14,7 @@ SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 GROWTH_LINE = re.compile(r"^Ambient grows by (\d+) bytes: \S", re.M)
 UNIVERSAL = re.compile(r"\b(every|never|always|only|any|cannot)\b", re.I)
 CODE_SPAN = re.compile(r"`[^`]*`")
-BULLET = re.compile(r"^\s*(?:[-*+]|\d+\.) ")
+BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)]) ")
 COUNTED = ("count: `infra/scripts/count-list.sh ", "(no count command:")
 SCISSORS = "# ------------------------ >8 ------------------------"
 
@@ -53,7 +53,7 @@ def bullets(text: str) -> list[tuple[int, str]]:
     out: list[tuple[int, str]] = []
     open_bullet = fenced = False
     for i, line in enumerate(text.split("\n"), 1):
-        if line.lstrip().startswith("```"):
+        if line.lstrip().startswith(("```", "~~~")):
             fenced = not fenced
             open_bullet = False
         elif fenced:
@@ -80,15 +80,14 @@ def uncounted_universals(path: str, text: str) -> list[tuple[int, str]]:
     return hits
 
 
-def evaluate(before: dict[str, str], after: dict[str, str], message: str, basis: str = "HEAD") -> list[str]:
-    """before/after map each staged ambient path to its text at the basis commit and in the index; a missing key is an absent file."""
+def evaluate(before: dict[str, str], after: dict[str, str], message: str, against: str = "") -> list[str]:
+    """before/after map each ambient path the commit changes to its text at the basis and in the commit; a missing key is an absent file; `against` names a basis other than HEAD in a refusal."""
     fails: list[str] = []
     growth = sum(ambient_bytes(p, after.get(p, "")) - ambient_bytes(p, before.get(p, "")) for p in set(before) | set(after))
     lines = GROWTH_LINE.findall(message)
     if len(lines) > 1:
         fails.append(f"two `Ambient grows by` lines in the message; one, with the whole commit's growth — {SKILL}")
     n = int(lines[0]) if lines else None
-    against = "" if basis == "HEAD" else f" against {basis}, the amended commit's parent, since the subject is unchanged"
     if growth > 0 and n is None:
         fails.append(
             f"the always-loaded guidance grows by {growth} bytes{against} and the message does not say so: add one line "
@@ -135,6 +134,30 @@ def _message(path: str) -> tuple[str, str]:
     return text, " ".join(first)
 
 
+def _ambient(paths: list[str]) -> list[str]:
+    return [p for p in paths if CORPUS.match(p) or SKILL_FILE.match(p)]
+
+
+def range_fails(base: str, head: str) -> list[str]:
+    """Every non-merge commit of base..head judged against its first parent -- the record a rewrite may have lost or doubled, which no commit-msg hook sees."""
+    listed = _git("rev-list", "--reverse", "--no-merges", f"{base}..{head}")
+    if listed.returncode != 0:
+        return [f"cannot list {base}..{head}: {listed.stderr.strip()}"]
+    out: list[str] = []
+    for commit in listed.stdout.split():
+        changed = _git("diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", "--root", commit).stdout.split("\n")
+        paths = _ambient(changed)
+        if not paths:
+            continue
+        before = {p: t for p in paths if (t := _show(f"{commit}^:{p}")) is not None}
+        after = {p: t for p in paths if (t := _show(f"{commit}:{p}")) is not None}
+        message = _git("log", "-1", "--format=%B", commit).stdout
+        subject = message.split("\n", 1)[0]
+        for fail in evaluate(before, after, message, f" against its parent"):
+            out.append(f"{commit[:8]} {subject}: {fail}")
+    return out
+
+
 def tree_ambient_bytes(root: pathlib.Path) -> int:
     paths = [
         root / "CLAUDE.md",
@@ -153,32 +176,43 @@ def main(argv: list[str]) -> int:
     if argv[1:] == ["--ambient-bytes"]:
         print(tree_ambient_bytes(root))
         return 0
+    if argv[1:2] == ["--range"] and len(argv) == 3 and ".." in argv[2]:
+        base, head = argv[2].split("..", 1)
+        fails = range_fails(base, head)
+        if fails:
+            print(f"guidance-guard: refused over {argv[2]}")
+            for fail in fails:
+                print("  - " + fail)
+            return 1
+        print(f"guidance-guard: every commit of {argv[2]} states its ambient growth")
+        return 0
     if len(argv) != 2:
-        print("usage: guidance-guard.py <commit-message-file> | --ambient-bytes", file=sys.stderr)
+        print("usage: guidance-guard.py <commit-message-file> | --ambient-bytes | --range <base>..<head>", file=sys.stderr)
         return 2
     merge_head = _git("rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
     if merge_head and os.path.exists(merge_head):
         return 0  # a merge commit carries the other branch's growth, which was judged at its own commits
     message, subject = _message(argv[1])
-    basis = "HEAD"
-    if (
+    basis, against = "HEAD", ""
+    if _git("rev-parse", "--verify", "-q", "HEAD").returncode != 0:
+        basis = None  # a repository's first commit: the index against the empty tree
+    elif (
         subject
         and subject == _git("log", "-1", "--format=%s").stdout.strip()
         and _git("rev-parse", "--verify", "-q", "HEAD~1").returncode == 0
     ):
         basis = "HEAD~1"  # an amend keeps its subject; the resulting commit's growth is against its parent
-    staged = _git(
-        "diff", "--cached", "--name-only", "--no-renames", basis
-    )  # the index against the basis, so an amend sees every file the whole commit changes
+        against = " against HEAD~1, the amended commit's parent, since the subject is unchanged"
+    staged = _git("diff", "--cached", "--name-only", "--no-renames", *([basis] if basis else []))  # the index against the basis
     if staged.returncode != 0:
         print(staged.stderr, file=sys.stderr)
         return 2
-    paths = [p for p in staged.stdout.split("\n") if CORPUS.match(p) or SKILL_FILE.match(p)]
+    paths = _ambient(staged.stdout.split("\n"))
     if not paths:
         return 0
-    before = {p: t for p in paths if (t := _show(f"{basis}:{p}")) is not None}
+    before = {p: t for p in paths if basis and (t := _show(f"{basis}:{p}")) is not None}
     after = {p: t for p in paths if (t := _show(f":{p}")) is not None}
-    fails = evaluate(before, after, message, basis)
+    fails = evaluate(before, after, message, against)
     if fails:
         print("guidance-guard: refused")
         for fail in fails:

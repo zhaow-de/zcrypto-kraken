@@ -69,7 +69,9 @@ def test_two_growth_lines_are_refused():
 
 
 def test_an_amend_basis_is_named_in_the_refusal():
-    fails = guard.evaluate({RULE: COUNTED}, {RULE: COUNTED + DECLARED}, "x\n", basis="HEAD~1")
+    fails = guard.evaluate(
+        {RULE: COUNTED}, {RULE: COUNTED + DECLARED}, "x\n", against=" against HEAD~1, the amended commit's parent"
+    )
     assert len(fails) == 1 and "against HEAD~1, the amended commit's parent" in fails[0]
 
 
@@ -135,8 +137,12 @@ def test_a_nested_bullet_is_read_and_a_wrapped_bullet_is_one_block():
 
 
 def test_plus_and_numbered_items_are_read_and_a_fenced_block_is_not():
-    assert [w for _, w in guard.uncounted_universals(RULE, "+ never a plus.\n1. always a number.\n")] == ["never", "always"]
-    fenced = "- A counted item (no count command: none).\n\n```bash\n- uv sync --only-group dev\nnever\n```\n"
+    assert [w for _, w in guard.uncounted_universals(RULE, "+ never a plus.\n1. always a number.\n2) only a paren.\n")] == [
+        "never",
+        "always",
+        "only",
+    ]
+    fenced = "- A counted item (no count command: none).\n\n```bash\n- uv sync --only-group dev\nnever\n```\n\n~~~\n- never in a tilde fence\n~~~\n"
     assert guard.uncounted_universals(RULE, fenced) == []
 
 
@@ -273,7 +279,7 @@ def test_a_wrapped_subject_is_read_the_way_git_renders_it(tmp_path):
     repo = _repo(tmp_path)
     n1 = _grow_claude_md(repo)
     message = f"claude(rules): grow a line that\nwraps onto a second\n\nAmbient grows by {n1} bytes: first\n"
-    _git(repo, "commit", "-q", "-F", "-", input=message) if False else (repo / "M").write_text(message)
+    (repo / "M").write_text(message)
     _git(repo, "commit", "-q", "-F", str(repo / "M"))
     n2 = _grow_claude_md(repo, DECLARED)
     refused = _run(repo, message)
@@ -293,6 +299,51 @@ def test_the_script_judges_only_a_commit_that_stages_an_ambient_file(tmp_path):
     (repo / "README.md").write_text("# readme, longer\n")
     _git(repo, "add", "README.md")
     assert _run(repo, "docs: readme\n\nAmbient grows by 99 bytes: a line the guard never reads\n").returncode == 0
+
+
+def test_a_repository_s_first_commit_is_judged_against_the_empty_tree(tmp_path):
+    repo = tmp_path / "fresh"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "develop")
+    (repo / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + DECLARED)
+    _git(repo, "add", "CLAUDE.md")
+    n = len(("# CLAUDE.md\n\n" + DECLARED).encode())
+    refused = _run(repo, "claude(rules): the first\n")
+    assert refused.returncode == 1 and f"grows by {n} bytes" in refused.stdout, refused.stdout + refused.stderr
+    assert _run(repo, f"claude(rules): the first\n\nAmbient grows by {n} bytes: born\n").returncode == 0
+
+
+def test_the_range_mode_judges_every_commit_against_its_parent_and_skips_merges(tmp_path):
+    """A rewrite that lost a line lands unrefused by the hook; the range mode is where it is caught."""
+    repo = _repo(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    n1 = _grow_claude_md(repo)
+    _git(repo, "commit", "-q", "-m", f"claude(rules): first\n\nAmbient grows by {n1} bytes: stated\n")
+    rule = repo / ".claude" / "rules" / "fleet-deploys.md"
+    rule.write_text(rule.read_text() + DECLARED)
+    _git(repo, "add", str(rule))
+    _git(repo, "commit", "-q", "-m", "claude(rules): second, its line lost in a rebase\n")
+    lost = _git(repo, "rev-parse", "--short=8", "HEAD").stdout.strip()
+    refused = _run(repo, "", "--range", f"{base}..HEAD")
+    assert refused.returncode == 1 and refused.stdout.count("\n  - ") == 1 and f"{lost} claude(rules): second" in refused.stdout, (
+        refused.stdout + refused.stderr
+    )
+    _git(
+        repo,
+        "commit",
+        "-q",
+        "--amend",
+        "-m",
+        f"claude(rules): second, its line restored\n\nAmbient grows by {len(DECLARED.encode())} bytes: restored\n",
+    )
+    passed = _run(repo, "", "--range", f"{base}..HEAD")
+    assert passed.returncode == 0 and "every commit" in passed.stdout, passed.stdout + passed.stderr
+    _git(repo, "checkout", "-q", "-b", "side", base)
+    (repo / "README.md").write_text("# readme, on side\n")
+    _git(repo, "commit", "-q", "-am", "docs: side")
+    _git(repo, "checkout", "-q", "develop")
+    _git(repo, "merge", "-q", "--no-ff", "--no-edit", "side")
+    assert _run(repo, "", "--range", f"{base}..HEAD").returncode == 0
 
 
 def test_the_ambient_bytes_subcommand_is_the_function_over_the_tree(tmp_path):
