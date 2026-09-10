@@ -1,0 +1,52 @@
+{
+  "page": {
+    "id": "lfz25gyhcpjf",
+    "name": "Kraken"
+  },
+  "scheduled_maintenances": [
+    {
+      "id": "chn484898m32",
+      "name": "Beeks Maintenance",
+      "status": "completed",
+      "impact": "maintenance",
+      "components": [
+        {
+          "id": "pwc5xxqb9057",
+          "name": "FIX",
+          "status": "operational"
+        },
+        {
+          "id": "vz83fx0396f0",
+          "name": "WebSocket",
+          "status": "operational"
+        }
+      ],
+      "scheduled_for": "2026-08-28T23:00:00.000Z",
+      "scheduled_until": "2026-08-29T02:00:00.000Z"
+    },
+    {
+      "id": "pk1r7q0mz3wd",
+      "name": "REST API rate-limit change",
+      "status": "completed",
+      "impact": "maintenance",
+      "components": [],
+      "scheduled_for": "2026-09-01T00:00:00.000Z",
+      "scheduled_until": "2026-09-01T01:00:00.000Z"
+    },
+    {
+      "id": "j8x2vv4t0hbn",
+      "name": "Website styling refresh",
+      "status": "completed",
+      "impact": "none",
+      "components": [
+        {
+          "id": "q0wm5s7ll2xk",
+          "name": "Website",
+          "status": "operational"
+        }
+      ],
+      "scheduled_for": "2026-08-20T00:00:00.000Z",
+      "scheduled_until": "2026-08-20T02:00:00.000Z"
+    }
+  ]
+}
