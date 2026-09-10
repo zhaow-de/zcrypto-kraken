@@ -19,6 +19,3 @@ a large feature warrants several. This is a menu, not a checklist — pick what 
 - [ ] Updated the relevant `docs/iterations-history-phase<N>.md` (see `.claude/rules/prose.md`)
 - [ ] README `## Usage` updated if CLI options changed (see `.claude/rules/readme-usage.md`)
 - [ ] Tests pass (`uv run pytest`)
-
----
-Co-Authored-By: <Claude models — deduped, e.g. Claude Opus 4.8; Claude Sonnet 4.6>
