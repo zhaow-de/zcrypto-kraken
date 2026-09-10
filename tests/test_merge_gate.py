@@ -82,9 +82,23 @@ def test_a_stale_read_with_no_head_commit_to_inspect_fails():
     assert len(gate.evaluate(_pr(body=_stale_body()))) == 1
 
 
+JOURNAL_PR = {"headRefName": "ops-journal", "body": "## 2026-09\n\n- [x] CI green\n"}
+
+
 def test_the_ops_journal_month_pr_needs_no_read_line():
-    pr = _pr(headRefName="ops-journal", body="## 2026-09\n\n- [x] CI green\n")
-    assert gate.evaluate(pr) == []
+    assert gate.evaluate(_pr(**JOURNAL_PR), files=["docs/reference/ops-journal/2026-09.md"]) == []
+
+
+def test_a_journal_pr_carrying_a_foreign_file_takes_every_arm():
+    files = ["docs/reference/ops-journal/2026-09.md", "cli/engine/executor.py"]
+    fails = gate.evaluate(_pr(**JOURNAL_PR), files=files)
+    assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
+    haiku = _pr(headRefName="ops-journal", body=f"Read before push by: Claude Haiku 4.5 at {TIP}\n\n- [x] done\n")
+    assert len(gate.evaluate(haiku, files=files)) == 1 and "the floor is Claude Opus" in gate.evaluate(haiku, files=files)[0]
+
+
+def test_a_journal_pr_with_no_file_list_fails():
+    assert len(gate.evaluate(_pr(**JOURNAL_PR))) == 1
 
 
 def test_a_missing_or_placeholder_line_fails():

@@ -9,6 +9,7 @@ import sys
 
 REPO = "zhaow-de/zcrypto-kraken"
 INDEX = "docs/reference/change-index.md"
+JOURNAL = "docs/reference/ops-journal/"
 FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid"
 READ_LINE = re.compile(r"^Read before push by: *(.+?) +at +([0-9a-f]{7,40}) *$", re.M)
 FLOOR = re.compile(r"Claude (Opus|Fable)\b", re.I)
@@ -35,7 +36,10 @@ def _fable_paths_touched(files: list[str]) -> list[str]:
 def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None) -> list[str]:
     """The read is at the floor and names the head, or the head is the one change-index row commit past the tip it names."""
     if pr.get("headRefName") == "ops-journal":
-        return []  # the month PR is exempt from the pre-push read (docs/reference/ops-journal/README.md)
+        if files is None:
+            return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]
+        if all(f.startswith(JOURNAL) for f in files):
+            return []  # a month of journal entries has nothing for a reviewer to read (docs/reference/ops-journal/README.md)
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
     m = READ_LINE.search(body)
@@ -113,7 +117,7 @@ def main(argv: list[str]) -> int:
     head_commit = files = None
     m = READ_LINE.search(pr.get("body") or "")
     head = pr.get("headRefOid") or ""
-    if m:
+    if m or pr.get("headRefName") == "ops-journal":
         files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
