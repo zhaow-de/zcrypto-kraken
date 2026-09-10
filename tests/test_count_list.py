@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+import json
 import os
 import pathlib
 import re
@@ -34,8 +36,34 @@ def test_the_corpus_names_every_entry_but_the_three_the_script_carries_on_its_ow
     names = _ENTRY.findall(SCRIPT.read_text())
     assert len(names) == len(set(names)), f"two entries answer to one name: {sorted(names)}"
     corpus = _corpus_entries()
+    inline = sum(p.read_text().count("count: ") for p in CORPUS) - sum(len(_CORPUS_ENTRY.findall(p.read_text())) for p in CORPUS)
+    assert inline == 0, f"{inline} corpus count(s) carry a command inline instead of naming an entry"
     assert corpus <= set(names), f"the corpus names entries the script lacks: {sorted(corpus - set(names))}"
     assert set(names) - corpus == NOT_NAMED, f"entries the corpus does not name: {sorted(set(names) - corpus)}"
+
+
+@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floor(tmp_path):
+    """A Fable line on the body's third line is a read; a Haiku line at the top is not; the journal PR is left out; no line counts."""
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    line = "Read before push by: Claude Fable 5.1 at 22ac48df"
+    prs = [
+        {"headRefName": "feat/a", "mergedAt": stamp, "body": f"## Summary\n\n{line}\n\n- [x] done"},
+        {"headRefName": "feat/b", "mergedAt": stamp, "body": "Read before push by: Claude Haiku 4.5 at 22ac48df\n"},
+        {"headRefName": "ops-journal", "mergedAt": stamp, "body": "## 2026-09\n"},
+        {"headRefName": "feat/c", "mergedAt": stamp, "body": "## Summary\n"},
+    ]
+    snapshot = tmp_path / "prs.json"
+    snapshot.write_text(json.dumps(prs))
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "COUNT_LIST_PRS_SNAPSHOT": str(snapshot)},
+        timeout=120,
+    )
+    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t2\n", done.stdout + done.stderr
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")

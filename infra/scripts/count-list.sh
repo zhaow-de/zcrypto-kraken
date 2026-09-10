@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The instrument that replaced the refine-rules staleness sweep: one line per count command the corpus names, and a universal with no command beside it is the finding.
+# The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus names by entry, and a universal with no entry beside it is the finding.
 # Three entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, and the processes with a cwd inside a worktree.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 set -uo pipefail
@@ -77,8 +77,15 @@ c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|l
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
 # The journal month PR is exempt from the read (docs/reference/ops-journal/README.md) and is left out; a
-# line naming a model below the floor counts as no read, the same as the gate reads it.
-c_merged_prs_without_a_floor_read() { timeout 60 gh pr list --state merged --base develop --limit 200 --json body,mergedAt,headRefName | jq '[.[] | select(.mergedAt >= (now - 2592000 | todate)) | select(.headRefName != "ops-journal") | select((.body // "") | test("^Read before push by: Claude (Opus|Fable)\\b.* at [0-9a-f]{7,}"; "m") | not)] | length'; }
+# line naming a model below the floor counts as no read, the same as the gate reads it. The line may sit
+# anywhere in the body: jq's "m" flag is dot-all, not line anchoring, so the anchor is a literal newline.
+# COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test.
+c_merged_prs_without_a_floor_read() {
+  local prs
+  if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
+  else prs="$(timeout 60 gh pr list --state merged --base develop --limit 200 --json body,mergedAt,headRefName)" || return 2; fi
+  printf '%s' "$prs" | jq '[.[] | select(.mergedAt >= (now - 2592000 | todate)) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: Claude (Opus|Fable)\\b.* at [0-9a-f]{7,}") | not)] | length'
+}
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
