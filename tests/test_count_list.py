@@ -1,4 +1,4 @@
-"""count-list.sh: one entry per count the corpus names by entry name plus the three it does not, a name filter, and a topic-only-merge arm that counts a merge only when every file it brought in is a topic file."""
+"""count-list.sh: one entry per count the corpus names by entry name plus the four it does not, a name filter, and a topic-only-merge arm that counts a merge only when every file it brought in is a topic file."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ CORPUS = (REPO / "CLAUDE.md", REPO / ".claude" / "rules" / "fleet-deploys.md")
 
 _ENTRY = re.compile(r'^\s*emit "([^"]+)"', re.MULTILINE)
 _CORPUS_ENTRY = re.compile(r"count: `infra/scripts/count-list\.sh ([a-z0-9-]+)`")
-NOT_NAMED = {"topic-only-merges", "claude-commits-since-the-round-closed", "worktrees"}
+NOT_NAMED = {"topic-only-merges", "claude-commits-since-the-round-closed", "worktrees", "ambient-bytes"}
 _VALUE = re.compile(r"\d+(?: passed)?")
 
 
@@ -31,8 +31,8 @@ def _develop_resolves() -> bool:
     return done.returncode == 0
 
 
-def test_the_corpus_names_every_entry_but_the_three_the_script_carries_on_its_own():
-    """A corpus count names an entry that exists, and an entry the corpus does not name is one of the three -- a universal whose count is not run here is the finding."""
+def test_the_corpus_names_every_entry_but_the_four_the_script_carries_on_its_own():
+    """A corpus count names an entry that exists, and an entry the corpus does not name is one of the four -- a universal whose count is not run here is the finding."""
     names = _ENTRY.findall(SCRIPT.read_text())
     assert len(names) == len(set(names)), f"two entries answer to one name: {sorted(names)}"
     corpus = _corpus_entries()

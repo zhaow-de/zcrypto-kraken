@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus names by entry, and a universal with no entry beside it is the finding.
-# Three entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, and the processes with a cwd inside a worktree.
+# Four entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, the processes with a cwd inside a worktree, and the ambient bytes every session pays on every turn.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 set -uo pipefail
 
@@ -138,6 +138,11 @@ c_claude_commits_since_the_round_closed() {
 # catches a stale worktree whatever its branch's merge state (the protocol's worktree line).
 c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | grep -c /tmp/claude-1000/; }
 
+# The fourth: the always-loaded bytes -- the corpus whole, plus every skill's name and description values,
+# which load with it -- measured by the guard's own parser, so this entry and what the guard refuses to
+# grow without a stated reason cannot disagree.
+c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-bytes; }
+
 main() {
   wanted=("$@")
   cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -169,6 +174,7 @@ main() {
   emit "topic-only-merges" c_micro_prs
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed
   emit "worktrees" c_worktree_processes
+  emit "ambient-bytes" c_ambient_bytes
   emit "merged-prs-without-a-floor-read-30d" c_merged_prs_without_a_floor_read
 
   local w
