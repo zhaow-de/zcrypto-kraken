@@ -4,14 +4,14 @@ Sessions talk through `SendMessage`, addressed by name. Session identity is not 
 
 ## Roles and authorities
 
-- `zcrypto-marco` — the coordinator: assigns work, keeps `.local/coordination.md`, and holds the PR word, topic registration, the memo and memory.
+- `zcrypto-marco` — the coordinator: assigns work, keeps `.local/coordination.md`, and holds the PR word, topic registration and the memo.
 - `zcrypto-alex`, `zcrypto-bravo` — payload sessions: one assignment at a time, in the worktree the brief names; they report by message.
 - `zcrypto-zebra` — the owner's own session; marco assigns it a subject when the owner names it in (set: the zebra row of the table; count: `awk -F'|' '/^\| *zcrypto-zebra/ {gsub(/ /,"",$5); print $5!="—"}' .local/coordination.md`).
 - Subagents belong to the dispatching session; a brief inlines the task's context and pastes neither memo nor table (set: the briefs in `.local/dispatch/`; count: `grep -rl --no-ignore-files 'Memo chain carried by main' .local/dispatch/ | wc -l`).
 - **The PR word is marco's, by the owner's delegation**: a payload session sends the component name — a spec, memo item, topic, or the defect a fix kills — with branch and commit hash; marco answers open, hold or a reason, and opens the PR. The owner's direct word to a payload session lets it open the PR itself, naming the word in the body.
 - **Topic registration is marco's**: a finding left unresolved in-branch goes to marco as the topic's `Context` + `Why this matters`; marco registers, folds or drops it, and the PR that carried the finding records the answer — a topic file, or an explicit drop under `## Out of scope` (set: the topic keys in `docs/reference/change-index.md`; count: `for t in $(grep -oE '\bT[0-9]{4}\b' docs/reference/change-index.md | sort -u); do find docs/open-topics -name "$t-*.md" | grep -q . || echo "$t"; done | wc -l` — keys with no file).
 - **The memo `.local/memo.md` is marco's** — one writer, `.claude/hooks/memo-guard.sh` refusing a write without a fresh read: a payload session sends the text and where it goes; marco writes it per `.claude/skills/zcrypto-grooming/references/memo-protocol.md` and records the chain in the table (set: the live memo against the table's chain line; count: `grep -c "$(sha256sum .local/memo.md | cut -c1-64).* · $(wc -l < .local/memo.md) · $(wc -c < .local/memo.md)" .local/coordination.md` — 1 when they match).
-- **Memory (`~/.claude/projects/…/memory/`) is marco's**: a lesson goes to the session's own inbox through `infra/scripts/append-lesson.py`, and the refine round harvests the inboxes (set: `.local/agent-lessons/*.jsonl`; count: `uv run python infra/scripts/check-agent-lessons.py .local/agent-lessons/*.jsonl | wc -l` — malformed records).
+- **A lesson goes to the session's own inbox, not to its harness memory** — `~/.claude/projects/<cwd>/memory/` is one directory per checkout, loaded by that checkout's session and not harvested — through `infra/scripts/append-lesson.py`; the refine round harvests the inboxes (set: `.local/agent-lessons/*.jsonl`; count: `uv run python infra/scripts/check-agent-lessons.py .local/agent-lessons/*.jsonl | wc -l` — malformed records).
 
 ## Assignment
 
