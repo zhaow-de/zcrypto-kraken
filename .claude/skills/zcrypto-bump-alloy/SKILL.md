@@ -155,6 +155,6 @@ Re-pin the previous digest (Step 0's baseline record) and repeat the same conver
 
 ## Closeout
 
-- `docs/reference/fleet-pins.md`: the new digest, version, publish date, deploy date, per host.
+- `docs/reference/fleet-pins.md`: the alloy row's digest and version, its `since` from the deploy-log line, and the operand — re-trued, not re-typed.
 - Prune each bumped host once its row is written — `uv run python infra/scripts/prune-host-images.py <host>`, then `--apply`. All four hosts run Alloy, so this is owed four times, each after that host's row lands.
 - Commit + PR per the repo conventions (branch off `develop`, review before push). Note the run in the iterations history only if the bump rode a larger iteration.

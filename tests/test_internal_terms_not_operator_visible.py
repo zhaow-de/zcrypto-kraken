@@ -395,10 +395,9 @@ def test_rendered_cli_help_carries_no_internal_vocabulary():
 
 _WP = re.compile(r"\bWP\d")
 _WP_CARRIERS = {
-    # the one historical exception: this spec's title carries the token (work package seven)
+    # the one historical exception: this spec's title carries the token (work package seven); the
+    # memo protocol defines the work-package format as `WP<N>`, which carries no digit
     "docs/specs/00058-soak-check-oos-report-design.md",
-    # the file that RECORDS the ban and the exception, and defines the memo's work-package format
-    ".claude/skills/zcrypto-grooming/references/memo-protocol.md",
 }
 
 
