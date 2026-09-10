@@ -67,6 +67,8 @@ c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|l
 
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
+c_merged_prs_without_a_read() { timeout 60 gh pr list --state merged --base develop --limit 200 --json body,mergedAt | jq '[.[] | select(.mergedAt >= (now - 2592000 | todate)) | select((.body // "") | test("^Read before push by: .+ at [0-9a-f]{7,}"; "m") | not)] | length'; }
+
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
 c_mutation_commits_without_a_probe() { comm -23 <(git log develop --since=2026-08-03 -i --grep=mutation --format=%h | sort) <(git log develop --since=2026-08-03 -i --grep=mutate-probe --format=%h | sort) | wc -l; }
@@ -148,6 +150,7 @@ main() {
   emit "topic-only-merges" c_micro_prs
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed
   emit "worktrees" c_worktree_processes
+  emit "merged-prs-without-a-read-line-30d" c_merged_prs_without_a_read
 
   if [ "${#errors[@]}" -gt 0 ]; then
     printf 'count-list: %s command(s) errored: %s\n' "${#errors[@]}" "${errors[*]}" >&2
