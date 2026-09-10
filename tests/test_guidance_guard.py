@@ -344,6 +344,13 @@ def test_the_range_mode_judges_every_commit_against_its_parent_and_skips_merges(
     _git(repo, "checkout", "-q", "develop")
     _git(repo, "merge", "-q", "--no-ff", "--no-edit", "side")
     assert _run(repo, "", "--range", f"{base}..HEAD").returncode == 0
+    verbatim = f"claude(rules): stored verbatim\n\n{guard.SCISSORS}\nAmbient grows by 5 bytes: below the scissors, stored\n"
+    (repo / "M").write_text(verbatim)
+    (repo / "CLAUDE.md").write_text((repo / "CLAUDE.md").read_text() + "- five\n")
+    _git(repo, "add", "CLAUDE.md")
+    _git(repo, "commit", "-q", "--cleanup=verbatim", "-F", str(repo / "M"))
+    stored = _run(repo, "", "--range", f"{base}..HEAD")
+    assert stored.returncode == 1 and "does not say so" in stored.stdout, stored.stdout + stored.stderr
     three_dot = _run(repo, "", "--range", f"{base}...HEAD")
     assert three_dot.returncode == 2 and "usage" in three_dot.stderr, three_dot.stdout + three_dot.stderr
 
