@@ -202,20 +202,43 @@ def test_the_range_mode_s_refusals_are_prefixed_with_the_commit_and_a_run_failur
     ]
 
 
-def test_a_timeout_and_an_empty_merge_base_are_refusals_too(monkeypatch):
-    def timing_out(args, **kwargs):
-        raise gate.subprocess.TimeoutExpired(args, 120)
+def test_a_timeout_anywhere_and_a_silent_merge_base_failure_are_refusals_too(monkeypatch):
+    calls = []
 
-    monkeypatch.setattr(gate.subprocess, "run", timing_out)
-    assert gate.branch_growth("develop", "feat/x", "b" * 40)[0].startswith("the branch could not be checked commit by commit: ")
+    def guard_times_out(args, **kwargs):
+        calls.append(args[:2])
+        if args[:2] == ["git", "fetch"]:
+            return gate.subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["git", "merge-base"]:
+            return gate.subprocess.CompletedProcess(args, 0, "a" * 40 + "\n", "")
+        raise gate.subprocess.TimeoutExpired(args, 300)
 
-    def no_base(args, **kwargs):
-        return gate.subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(gate.subprocess, "run", guard_times_out)
+    fails = gate.branch_growth("develop", "feat/x", "b" * 40)
+    assert len(calls) == 3 and len(fails) == 1 and fails[0].startswith("the branch could not be checked commit by commit: ")
 
-    monkeypatch.setattr(gate.subprocess, "run", no_base)
+    def orphan(args, **kwargs):
+        if args[:2] == ["git", "fetch"]:
+            return gate.subprocess.CompletedProcess(args, 0, "", "")
+        raise gate.subprocess.CalledProcessError(1, args, output="", stderr="")  # merge-base: no output, exit 1
+
+    monkeypatch.setattr(gate.subprocess, "run", orphan)
     assert gate.branch_growth("develop", "feat/x", "b" * 40) == [
         "the branch could not be checked commit by commit: no merge base between origin/develop and bbbbbbbb"
     ]
+
+    def gone(args, **kwargs):
+        raise gate.subprocess.CalledProcessError(128, args, output="", stderr="fatal: couldn't find remote ref gone/branch\n")
+
+    monkeypatch.setattr(gate.subprocess, "run", gone)
+    assert gate.branch_growth("develop", "gone/branch", "b" * 40) == [
+        "the branch could not be checked commit by commit: fatal: couldn't find remote ref gone/branch"
+    ]
+
+
+def test_an_unchecked_branch_growth_fails_the_gate():
+    fails = gate.evaluate(_pr(), None, None, None)
+    assert len(fails) == 1 and "was not checked commit by commit" in fails[0]
 
 
 def test_a_branch_that_cannot_be_fetched_is_one_refusal_not_a_crash(monkeypatch):
@@ -225,8 +248,3 @@ def test_a_branch_that_cannot_be_fetched_is_one_refusal_not_a_crash(monkeypatch)
     monkeypatch.setattr(gate.subprocess, "run", raise_fetch)
     fails = gate.branch_growth("develop", "gone/branch", "0" * 40)
     assert fails == ["the branch could not be checked commit by commit: fatal: couldn't find remote ref gone/branch"]
-
-
-def test_an_unchecked_branch_growth_fails_the_gate():
-    fails = gate.evaluate(_pr(), None, None, None)
-    assert len(fails) == 1 and "was not checked commit by commit" in fails[0]

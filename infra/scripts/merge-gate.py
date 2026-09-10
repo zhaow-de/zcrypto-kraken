@@ -122,7 +122,7 @@ def _gh(*args: str) -> str:
 
 
 def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
-    """Fetch both branches, then judge every commit past the merge base against its parent through the guard's range mode; each of its refusals names the commit, and a branch that cannot be fetched or based is one refusal, never a crash."""
+    """Fetch both branches, then judge every commit past the merge base against its parent through the guard's range mode; each refusal of a commit names it, and a branch that cannot be fetched, based or judged is one refusal, never a crash."""
     try:
         subprocess.run(
             ["git", "fetch", "-q", "origin", base_ref, head_ref], check=True, capture_output=True, text=True, timeout=120
@@ -130,14 +130,14 @@ def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
         merge_base = subprocess.run(
             ["git", "merge-base", f"origin/{base_ref}", head], check=True, capture_output=True, text=True
         ).stdout.strip()
+        done = subprocess.run(
+            [sys.executable, str(GUARD), "--range", f"{merge_base}..{head}"], capture_output=True, text=True, timeout=300
+        )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        detail = ((getattr(exc, "stderr", None) or getattr(exc, "stdout", None) or "") or str(exc)).strip()
-        return [f"the branch could not be checked commit by commit: {detail}"]
-    if not merge_base:
-        return [f"the branch could not be checked commit by commit: no merge base between origin/{base_ref} and {head[:8]}"]
-    done = subprocess.run(
-        [sys.executable, str(GUARD), "--range", f"{merge_base}..{head}"], capture_output=True, text=True, timeout=300
-    )
+        detail = ((getattr(exc, "stderr", None) or getattr(exc, "stdout", None) or "") or "").strip()
+        if not detail and list(exc.cmd[:2]) == ["git", "merge-base"]:
+            detail = f"no merge base between origin/{base_ref} and {head[:8]}"  # git says nothing and exits 1
+        return [f"the branch could not be checked commit by commit: {detail or str(exc)}"]
     if done.returncode == 0:
         return []
     refusals = [line[4:] for line in done.stdout.splitlines() if line.startswith("  - ")]
