@@ -5,7 +5,7 @@ description: The review-and-fix loop for a committed spec+plan pair, run after `
 
 # zcrypto-plan-review
 
-The gate between a committed plan and its execution. Every step below exists because its absence was measured to ship a defect — `docs/research/90.spec-plan-review-protocol.md` is the evidence; this file is only the procedure. The three facts that shape it: the loop's own reports are not a stopping signal, a second independent reader finds more than a second round, and no reader can falsify a wrong premise from the text.
+The gate between a committed plan and its execution. Every step below exists because its absence was measured to ship a defect — `docs/research/90.spec-plan-review-protocol.md` is the evidence; this file is only the procedure. The three facts that shape it: the loop's own reports are not a stopping signal, a second independent reader finds more than a second round, and no reader can falsify a wrong premise from the text. The branch-read variant — independent lenses in parallel and the union at maximum severity as here, plus two skeptics per Critical and Important and a scoped re-read with a prior-findings table, which this loop does not have — is the `review` and `re-review` workflow pair under `.claude/workflows/`; this skill keeps what a spec and plan pair needs beyond it: the contract pin, the fixer, the Minor sweep, the executability pass, the blind gate.
 
 **Every dispatch prompt is rendered from `references/` and written to the report dir before dispatch** — never composed ad hoc, never patched mid-loop with the loop's own lessons. Re-read the rendered prompt once before sending it: a template is not portable and every new pair has broken one at render time.
 
