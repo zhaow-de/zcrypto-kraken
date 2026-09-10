@@ -6,7 +6,7 @@ disable-model-invocation: false
 
 # topic-ops
 
-The file mechanics for `docs/open-topics/` — when-and-whether rules live ambiently in `.claude/rules/open-topics.md`; this skill is the HOW, loaded at the moment of the operation.
+The file mechanics for `docs/open-topics/` — the HOW, loaded at the moment of the operation. Whether a follow-up becomes a topic at all, and the six shapes its `ripe_when:` may take, are CLAUDE.md's topics line. A topic that is created here but not inserted into `.local/memo.md`'s queue is invisible at pick time — registration and queue insertion travel together.
 
 ## File path & naming
 

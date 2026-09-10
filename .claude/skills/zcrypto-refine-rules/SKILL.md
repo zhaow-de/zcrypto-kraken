@@ -1,6 +1,6 @@
 ---
 name: zcrypto-refine-rules
-description: Joint refinement round for CLAUDE.md, rules, skills, and the local memory — harvest lessons, graduate them, sweep staleness, condense, verify losslessly. User-invoked only.
+description: Joint refinement round for CLAUDE.md, rules, skills, and the local memory — harvest lessons, graduate them, count the universals, condense, verify losslessly. User-invoked only.
 disable-model-invocation: true
 model: claude-fable-5
 ---
@@ -15,7 +15,6 @@ A joint session that keeps the guidance corpus truthful, minimal, and placed whe
 
 - **Joint dispositions close items; undecided is the default.** Nothing is decided unilaterally, exactly as in grooming.
 - **One open decision set at a time.** Fact-collection may run ahead in the background, but the next step's findings are HELD until the previous step's dispositions close — later steps depend on earlier outcomes, and presenting two open sets collides them mid-review.
-- **Protected set** — CLAUDE.md's `## Secrets`, `fleet-deploys.md`, `commit-messages.md`'s different-agent-reviewer rule, `open-topics.md`'s registration rule: every edit to these needs the user's **explicit per-edit sign-off** during the round; Step 5 classification alone is not sufficient. The round must not be able to quietly weaken the rules that police it.
 - **Any "later" outcome registers a topic in the same step** — a deferred hook, a parked finding, a postponed graduation: `T<NNNN>` via `topic-ops`, never only the round's report.
 - **Net always-loaded growth needs the user's explicit OK** — graduation adds weight, condensing removes it; report the measured delta, never assume the sign.
 - **Hooks are proposed case-by-case, each shown to the user before it lands.**
@@ -34,8 +33,8 @@ Walk every memory item — candidates and standing ones alike. Per item, exactly
 
 | Disposition | Action |
 |---|---|
-| → CLAUDE.md | The shortest imperative form lands there; note the net-growth invariant |
-| → a rule | Lands in the owning `.claude/rules/` file, per `prose.md` |
+| → CLAUDE.md | The shortest imperative form lands there, and **only in the same commit as a deletion of equal or larger byte size from the always-loaded corpus — a trade, never an addition** |
+| → a rule | Lands in the owning `.claude/rules/` file, and **only in the same commit as a deletion of equal or larger byte size from the always-loaded corpus — a trade, never an addition** |
 | → an existing skill | Lands at the step where it applies (P4) |
 | → a new skill | Only with the description-is-ambient cost acknowledged |
 | → a hook proposal | Shown to the user; on approval, lands with the settings change |
@@ -44,19 +43,20 @@ Walk every memory item — candidates and standing ones alike. Per item, exactly
 
 A graduated item's file is **staged** — moved to `graduated/<round-date>/` under the memory dir — **never deleted here**. Memory is unversioned; an unverified landing must not be the only copy's obituary. Record every graduation in a table: *item → disposition → landing path*. Deletion is Step 5's last action.
 
-## Step 3 — Staleness sweep
+## Step 3 — Count list
 
-Mechanical and read-only — may fan out (one checker per artifact; writes stay in the main loop):
+Run `infra/scripts/count-list.sh`. It prints one line per surviving universal in `CLAUDE.md` and `.claude/rules/` — the set that universal quantifies, the command that counts the set, and today's value.
 
-- **Operand check**: every path, command, flag, config key, and skill name cited by CLAUDE.md, each rule, and each skill exists in the tree and means what the citation implies.
-- **Practice check**: rules contradicted by how recent iterations actually worked are flagged — a contradiction is a finding to resolve jointly, in either direction.
-- **Reference check** (P5): every `references/` file is named at a loading step; unpointed ones are flagged.
+- **A non-zero count is a finding.** Resolve it in the round: fix the practice, narrow the rule, or delete the rule.
+- **A universal that appears with no command beside it is the finding.** It is given a set and a command in this round, or it goes — an uncountable universal cannot be reported on.
 
-Output is a findings table, resolved jointly. A finding that cannot be resolved in the round registers a topic (see Invariants).
+Read the corpus and you can find a stale path, two texts that disagree, and a name that has gone stale; you structurally cannot find a rule whose text is entirely correct, whose citations all resolve, and which is simply not obeyed by the population it governs, because nothing in a read counts that population — which is why this step counts instead of reading.
+
+Output is a findings table, resolved jointly. A finding that cannot be resolved in the round registers a topic (see Invariants). **The values live in that table, never in the corpus lines**, which carry set and command only — a count written into a rule is stale the next day.
 
 ## Step 4 — Condense
 
-**Load `references/principles.md` now** — the principles there govern every edit in this step. Work the biggest always-loaded offenders first (`wc -c CLAUDE.md .claude/rules/*.md | sort -n`). The protected set's per-edit sign-off applies throughout. A prose-cleanup worklist over the whole tree excludes `.claude/*` and `docs/specs/*` + `docs/plans/*`; `docs/open-topics/*` keeps `topic-ops`'s shape.
+**Load `references/principles.md` now** — the principles there govern every edit in this step. Work the biggest always-loaded offenders first (`wc -c CLAUDE.md .claude/rules/*.md | sort -n`). A prose-cleanup worklist over the whole tree excludes `.claude/*` and `docs/specs/*` + `docs/plans/*`; `docs/open-topics/*` keeps `topic-ops`'s shape.
 
 ## Step 5 — Verify
 
