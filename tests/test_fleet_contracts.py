@@ -1,6 +1,6 @@
-"""The two fleet contracts are state files, held to shape: no date outside a `since` column, no table cell or bullet past its cap, no heading below the fixed section set, a digest glossary that mirrors the pins table with no digest elsewhere, and NAS rows that agree with the committed pins.
+"""The two fleet contracts are state files, held to shape: no date outside a `since` column, no table cell, bullet or paragraph past its cap, no heading below the fixed section set, a digest glossary that mirrors the pins table with no digest outside the digest cells and the glossary, and NAS rows that agree with the committed pins.
 
-Twice the two files grew a change history inside their state -- dated readings, incident narratives, cells three kilobytes long -- and each time a cleanup commit removed it by hand. A refusal in CI, and at the next `uv run pytest`, ends the class; an undated narrative that fits inside a bullet's cap is what the caps leave to the reader.
+Twice the two files grew a change history inside their state -- dated readings, incident narratives, cells three kilobytes long -- and each time a cleanup commit removed it by hand. A refusal in CI, and at the next `uv run pytest`, ends the class; an undated narrative that fits inside a block's cap is what the caps leave to the reader.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ PINS = REPO / "docs" / "reference" / "fleet-pins.md"
 NAS_VARS = REPO / "infra" / "ansible" / "host_vars" / "nas" / "vars.yml"
 
 CELL_MAX = 200  # an identifier and one clause; the cells that carried a saga ran past three thousand
-BULLET_MAX = 700  # one fact and its pointers; the storage listing is the longest legitimate bullet
+BLOCK_MAX = 700  # a bullet or a paragraph holds one fact and its pointers
 DATE = re.compile(
     r"\b\d{4}[-/.]\d{2}[-/.]\d{2}\b"  # 2026-09-10, 2026/09/10
     r"|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b"  # 10.09.2026, 9/10/2026
@@ -56,23 +56,27 @@ def _tables(path: Path) -> list[tuple[list[str], list[tuple[int, list[str]]]]]:
     return tables
 
 
-def _bullets(path: Path) -> list[tuple[int, str]]:
-    """Each list item with its indented continuation lines joined, fenced blocks skipped -- the guidance guard's reading."""
+def _blocks(path: Path) -> list[tuple[int, str]]:
+    """Each bullet (its indented continuation lines joined, the guidance guard's reading) and each paragraph (consecutive prose lines joined); tables, headings and fenced blocks are not blocks."""
     out: list[tuple[int, str]] = []
-    open_bullet = fenced = False
+    kind = None  # "bullet", "paragraph" or None while the previous line closed a block
+    fenced = False
     for i, line in _lines(path):
         if line.lstrip().startswith(("```", "~~~")):
             fenced = not fenced
-            open_bullet = False
-        elif fenced:
-            continue
+            kind = None
+        elif fenced or not line.strip() or line.startswith(("|", "#")):
+            kind = None
         elif BULLET.match(line):
             out.append((i, line))
-            open_bullet = True
-        elif open_bullet and line.strip() and line[:1].isspace():
+            kind = "bullet"
+        elif kind == "bullet" and line[:1].isspace():
+            out[-1] = (out[-1][0], out[-1][1] + " " + line.strip())
+        elif kind == "paragraph":
             out[-1] = (out[-1][0], out[-1][1] + " " + line.strip())
         else:
-            open_bullet = False
+            out.append((i, line))
+            kind = "paragraph"
     return out
 
 
@@ -129,9 +133,9 @@ def test_no_table_cell_exceeds_the_cap(path: Path):
 
 
 @pytest.mark.parametrize("path", [FLEET, PINS], ids=["fleet", "pins"])
-def test_no_bullet_exceeds_the_cap(path: Path):
-    long = [(n, len(text)) for n, text in _bullets(path) if len(text) > BULLET_MAX]
-    assert long == [], f"{path.name}: a bullet past {BULLET_MAX} characters is a narrative, not a fact and its pointers: {long}"
+def test_no_bullet_or_paragraph_exceeds_the_cap(path: Path):
+    long = [(n, len(text)) for n, text in _blocks(path) if len(text) > BLOCK_MAX]
+    assert long == [], f"{path.name}: a block past {BLOCK_MAX} characters is a narrative, not a fact and its pointers: {long}"
 
 
 @pytest.mark.parametrize(("path", "expected"), [(FLEET, FLEET_SECTIONS), (PINS, PINS_SECTIONS)], ids=["fleet", "pins"])
@@ -163,7 +167,12 @@ def test_the_glossary_mirrors_the_pins_table():
         for i, line in _lines(PINS)
         if (FULL.search(line) or HEX12.search(line)) and i not in table_lines and i not in glossary.values()
     ]
-    assert stray == [], f"a digest outside the pins tables and the glossary, at lines {stray}"
+    for k, (header, rows) in enumerate(_tables(PINS)):
+        digest_cells = {i for i, h in enumerate(header) if h.startswith(("digest", "rollback operand"))} if k == 0 else set()
+        stray += [
+            n for n, cells in rows for i, c in enumerate(cells) if i not in digest_cells and (FULL.search(c) or HEX12.search(c))
+        ]
+    assert stray == [], f"a digest outside the pins table's digest cells and the glossary, at lines {sorted(stray)}"
 
 
 def test_the_nas_rows_agree_with_the_committed_pins():

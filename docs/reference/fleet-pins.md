@@ -1,6 +1,8 @@
 # Fleet pins
 
-The current pin and rollback operand of every service — a state file: a row is re-trued in the change that re-pins or converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from the container's `.State.StartedAt`, the restart marker — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle. `tests/test_fleet_contracts.py` holds the file to state: a date sits in a `since` column alone, a cell stays under its cap, the digest glossary mirrors the table, and the NAS rows agree with `infra/ansible/host_vars/nas/vars.yml`. The Alloy pins on the ops and capture hosts are converge-time extra-vars with no repo default, so their row is their only record.
+The current pin and rollback operand of every service — a state file: a row is re-trued in the change that re-pins or converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from the container's `.State.StartedAt`, the restart marker — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle.
+
+`tests/test_fleet_contracts.py` holds the file to state: a date sits in a `since` column alone, a cell and a paragraph stay under their caps, no heading sits below the three sections, a digest appears in the tables' digest cells and the glossary alone, the glossary mirrors the table, and the NAS rows agree with `infra/ansible/host_vars/nas/vars.yml`. The Alloy pins on the ops and capture hosts are converge-time extra-vars with no repo default, so their row is their only record.
 
 Reading rules:
 
