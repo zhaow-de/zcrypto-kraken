@@ -45,7 +45,7 @@ A graduated item's file is **staged** — moved to `graduated/<round-date>/` und
 
 ## Step 3 — Count list
 
-Run `infra/scripts/count-list.sh`. It prints one line per surviving universal in `CLAUDE.md` and `.claude/rules/` — the set that universal quantifies, the command that counts the set, and today's value.
+Run `infra/scripts/count-list.sh`. It prints one line per entry — the entry's name and today's value; a surviving universal in `CLAUDE.md` and `.claude/rules/` names its set in prose and its entry as `count: \`infra/scripts/count-list.sh <entry>\``, and the script's function of that name is the command.
 
 - **A non-zero count is a finding.** Resolve it in the round: fix the practice, narrow the rule, or delete the rule.
 - **A universal that appears with no command beside it is the finding.** It is given a set and a command in this round, or it goes — an uncountable universal cannot be reported on.

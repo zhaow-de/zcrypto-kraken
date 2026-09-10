@@ -73,7 +73,7 @@ The report's `## Dead-men` section prints one `- description:` line per **defect
 
 Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in. Commit.
 
-At a month change: open the finished month's PR, merge it on CI green, delete the branch, and re-cut `ops-journal` from `develop`. No review and no word — a month of all-clear entries has nothing a second reader could check, and a gate there is a place the routine stalls.
+At a month change: open the finished month's PR, merge it on CI green, delete the branch, and re-cut `ops-journal` from `develop`. No review and no word while the PR carries journal files alone — a month of all-clear entries has nothing a second reader could check, and a gate there is a place the routine stalls; `merge-pr`'s gate holds the exemption to exactly that, so a PR that also carries a script or a role fix takes the read like any other.
 
 ## 8. Post the summary
 
