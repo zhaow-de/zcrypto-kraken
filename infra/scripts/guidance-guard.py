@@ -11,6 +11,8 @@ import sys
 SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
+WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
+META_FIELD = re.compile(r"^\s*(name|description|whenToUse):\s*'((?:[^'\\]|\\.)*)'", re.M)
 GROWTH_LINE = re.compile(r"^Ambient grows by (\d+) bytes: \S", re.M)
 UNIVERSAL = re.compile(r"\b(every|never|always|only|any|cannot)\b", re.I)
 CODE_SPAN = re.compile(r"`[^`]*`")
@@ -32,7 +34,7 @@ def frontmatter_lines(text: str) -> list[str]:
 
 
 def ambient_bytes(path: str, text: str) -> int:
-    """What a session pays for the file on every turn: a corpus file whole; a skill's name and description values, block scalars included."""
+    """What a session pays for the file on every turn: a corpus file whole; a skill's name and description values, block scalars included; a workflow's listed text -- the name, description and whenToUse strings of its meta literal."""
     if CORPUS.match(path):
         return len(text.encode())
     if SKILL_FILE.match(path):
@@ -45,6 +47,9 @@ def ambient_bytes(path: str, text: str) -> int:
             if inside:
                 total += len(line.encode()) + 1
         return total
+    if WORKFLOW_FILE.match(path):
+        head, _, _ = text.partition("\n}")  # the meta literal is the file's first object; a pure literal by the authoring reference
+        return sum(len(value.encode()) + 1 for _, value in META_FIELD.findall(head))
     return 0
 
 
@@ -139,7 +144,7 @@ def _message(path: str) -> tuple[str, str]:
 
 
 def _ambient(paths: list[str]) -> list[str]:
-    return [p for p in paths if CORPUS.match(p) or SKILL_FILE.match(p)]
+    return [p for p in paths if CORPUS.match(p) or SKILL_FILE.match(p) or WORKFLOW_FILE.match(p)]
 
 
 def range_fails(base: str, head: str) -> list[str]:
@@ -166,6 +171,7 @@ def tree_ambient_bytes(root: pathlib.Path) -> int:
         root / "CLAUDE.md",
         *sorted((root / ".claude" / "rules").glob("*.md")),
         *sorted((root / ".claude" / "skills").glob("*/SKILL.md")),
+        *sorted((root / ".claude" / "workflows").glob("*.js")),
     ]
     return sum(ambient_bytes(str(p.relative_to(root)), p.read_text()) for p in paths if p.is_file())
 

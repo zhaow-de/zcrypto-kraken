@@ -112,6 +112,24 @@ def test_a_folded_description_is_counted_whole():
     assert len(fails) == 1 and "grows by" in fails[0]
 
 
+WORKFLOW = ".claude/workflows/review.js"
+
+
+def _workflow(description: str, when: str = "Before a push.", body: str = "\nphase('Read')\nreturn 1\n") -> str:
+    return f"export const meta = {{\n  name: 'review',\n  description: '{description}',\n  whenToUse: '{when}',\n  phases: [{{ title: 'Read' }}],\n}}\n{body}"
+
+
+def test_a_workflow_s_listed_text_is_ambient_and_its_body_is_not():
+    """The harness lists a saved workflow by name, description and whenToUse, the way it lists a skill's description."""
+    short, longer = _workflow("Review a range."), _workflow("Review a range with two lenses and two skeptics.")
+    grown = len(longer.encode()) - len(short.encode())
+    fails = guard.evaluate({WORKFLOW: short}, {WORKFLOW: longer}, "claude(workflows): wider\n")
+    assert len(fails) == 1 and f"grows by {grown} bytes" in fails[0]
+    grown_body = _workflow("Review a range.", body="\nphase('Read')\nconst x = 1\nreturn x\n")
+    assert guard.evaluate({WORKFLOW: short}, {WORKFLOW: grown_body}, "claude(workflows): a longer body\n") == []
+    assert guard.ambient_bytes(WORKFLOW, short) == sum(len(v.encode()) + 1 for v in ("review", "Review a range.", "Before a push."))
+
+
 def test_a_new_corpus_file_counts_whole_and_a_deleted_one_counts_as_a_shrink():
     fails = guard.evaluate({}, {".claude/rules/new.md": COUNTED}, "claude(rules): a new file\n")
     assert len(fails) == 1 and f"grows by {len(COUNTED.encode())} bytes" in fails[0]
