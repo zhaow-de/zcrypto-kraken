@@ -344,6 +344,8 @@ def test_the_range_mode_judges_every_commit_against_its_parent_and_skips_merges(
     _git(repo, "checkout", "-q", "develop")
     _git(repo, "merge", "-q", "--no-ff", "--no-edit", "side")
     assert _run(repo, "", "--range", f"{base}..HEAD").returncode == 0
+    three_dot = _run(repo, "", "--range", f"{base}...HEAD")
+    assert three_dot.returncode == 2 and "usage" in three_dot.stderr, three_dot.stdout + three_dot.stderr
 
 
 def test_the_ambient_bytes_subcommand_is_the_function_over_the_tree(tmp_path):

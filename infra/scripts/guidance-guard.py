@@ -114,10 +114,10 @@ def _show(spec: str) -> str | None:
     return done.stdout if done.returncode == 0 else None
 
 
-def _message(path: str) -> tuple[str, str]:
-    """The message as git will record it: nothing below the scissors line, no comment lines; and its subject as `%s` renders it, the first paragraph joined by spaces."""
+def _clean(raw: str) -> tuple[str, str]:
+    """A message as git records it: nothing below the scissors line, no comment lines; and its subject as `%s` renders it, the first paragraph joined by spaces."""
     kept: list[str] = []
-    for line in pathlib.Path(path).read_text().split("\n"):
+    for line in raw.split("\n"):
         if line.startswith(SCISSORS):
             break
         if not line.startswith("#"):
@@ -132,6 +132,10 @@ def _message(path: str) -> tuple[str, str]:
             break
         first.append(line)
     return text, " ".join(first)
+
+
+def _message(path: str) -> tuple[str, str]:
+    return _clean(pathlib.Path(path).read_text())
 
 
 def _ambient(paths: list[str]) -> list[str]:
@@ -151,9 +155,8 @@ def range_fails(base: str, head: str) -> list[str]:
             continue
         before = {p: t for p in paths if (t := _show(f"{commit}^:{p}")) is not None}
         after = {p: t for p in paths if (t := _show(f"{commit}:{p}")) is not None}
-        message = _git("log", "-1", "--format=%B", commit).stdout
-        subject = message.split("\n", 1)[0]
-        for fail in evaluate(before, after, message, f" against its parent"):
+        message, subject = _clean(_git("log", "-1", "--format=%B", commit).stdout)
+        for fail in evaluate(before, after, message, " against its parent"):
             out.append(f"{commit[:8]} {subject}: {fail}")
     return out
 
@@ -176,7 +179,7 @@ def main(argv: list[str]) -> int:
     if argv[1:] == ["--ambient-bytes"]:
         print(tree_ambient_bytes(root))
         return 0
-    if argv[1:2] == ["--range"] and len(argv) == 3 and ".." in argv[2]:
+    if argv[1:2] == ["--range"] and len(argv) == 3 and ".." in argv[2] and "..." not in argv[2]:
         base, head = argv[2].split("..", 1)
         fails = range_fails(base, head)
         if fails:
