@@ -12,7 +12,7 @@ Read `{UNION}` — only its Minor blocks concern you — then {SPEC} (the bindin
 
 {SPEC_PINNED} Under the pinned clause a Minor whose hunk is in {SPEC} goes under `## Left` with the reason `pinned` — this report has no `## Spec-blocked`.
 
-Before committing, `grep` the pair for every value you changed, and re-run every `--collect-only` a touched filter affects. Stage by explicit path; `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`; no `Reviewed-by:`; no `Claude-Session:`; `uv run pre-commit run -a` until clean; never `--no-verify`. Do not push.
+Before committing, `grep` the pair for every value you changed, and re-run every `--collect-only` a touched filter affects. Stage by explicit path; `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`; `uv run pre-commit run -a` until clean; never `--no-verify`. Do not push.
 
 Report `{OUT}`: `## Folded`, `## Left` (key + reason) and `## Spec amendments` (quoted before/after, or `none`) — counts derived by re-reading it. Final message: the commit hash and the two counts. Run everything as plain blocking commands; background nothing; no subagents; do not end your turn before the commit exists.
 

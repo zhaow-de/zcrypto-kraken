@@ -11,7 +11,7 @@ allowed-tools: Bash(git status:*), Bash(git checkout:*), Bash(git pull:*), Bash(
 
 Merging a PR is a shared, hard-to-reverse action. **Gate it on verification first, then clean up local state safely.** Never merge past a failed gate; never touch a dirty worktree. If a gate fails, report exactly what's wrong and ask the user to resolve it manually — do not work around it, do not proceed.
 
-PRs handled by this skill **always merge with a merge commit** (`--merge`) — never squash, never rebase. (The one deliberate exception in this repo is Dependabot PRs, which the `dependabot` skill squash-merges so each bump lands as a single commit — they are not handled here.) The merge commit itself is produced by `gh`, not by Claude, so it carries no `Co-Authored-By:` or `Reviewed-by:` trailer (see `.claude/rules/commit-messages.md`).
+PRs handled by this skill **always merge with a merge commit** (`--merge`) — never squash, never rebase. (The one deliberate exception in this repo is Dependabot PRs, which the `dependabot` skill squash-merges so each bump lands as a single commit — they are not handled here.)
 
 ## When to use
 

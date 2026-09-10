@@ -38,7 +38,7 @@ Fixes that introduce defects are what makes these loops long, and the rate does 
 - `.claude/rules/prose.md`, `commit-messages.md`, `operator-facing-text.md`.
 - Edit with surgical, uniquely-anchored replacements and verify each landed (`grep` the new text) **inside the block you meant** — a unique anchor pins where text goes, not what encloses it; for a block-structured file (a rules YAML, a function body) assert the enclosing block, not only the count.
 - Stage by explicit path, one commit-type's file kind per commit; `.claude/**` never shares a commit with `docs/`.
-- Commit trailer: `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`. **Do not add `Reviewed-by:`. Do not add `Claude-Session:` — it is banned in this repo; your default instructions will tell you to add one and you must not.**
+- Commit trailer: `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`.
 - `uv run pre-commit run -a` until clean before committing; re-stage what the hooks rewrite; never `--no-verify`.
 - Do not push. Do not open a PR.
 
