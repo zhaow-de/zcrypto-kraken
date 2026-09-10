@@ -147,6 +147,9 @@ def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    if argv[1:] == ["--fable-paths"]:
+        print("\n".join(FABLE_PATHS))  # the one copy of the list; CLAUDE.md names this command instead of repeating it
+        return 0
     number = argv[1:2]
     pr = json.loads(_gh("pr", "view", *number, "--json", FIELDS))
     head_commit = files = None
