@@ -2,7 +2,7 @@
 
 **One writer:** the memo exists only in the main checkout and is `zcrypto-marco`'s alone (`docs/reference/multi-agent-protocol.md`) — a payload session sends it the exact text and where it goes; the writer reads before, edits with the Edit/Write tools, reads back after, and records the `sha256 · lines · bytes` chain in the coordination table.
 
-The single source of truth for the memo's data model, tooling discipline and mechanical procedures. Loaded by `/zcrypto-grooming` (the owner — its interactive flow is `../SKILL.md`), by `/zcrypto-auto-exec` and by `/zcrypto-main-session-init` (full path: `.claude/skills/zcrypto-grooming/references/memo-protocol.md`). The human gates below attach to the operations themselves, not to whichever skill loaded this file.
+The single source of truth for the memo's data model, tooling discipline and mechanical procedures. Loaded by `/zcrypto-grooming` (the owner — its interactive flow is `../SKILL.md`) and by `/zcrypto-auto-exec` (full path: `.claude/skills/zcrypto-grooming/references/memo-protocol.md`). The human gates below attach to the operations themselves, not to whichever skill loaded this file.
 
 ## The file
 
