@@ -114,7 +114,7 @@ def evaluate(
             "the branch's ambient growth was not checked commit by commit: `guidance-guard.py --range <base>..<head>` did not run"
         )
     for growth in branch_growth or []:
-        fails.append(f"a commit grows the always-loaded guidance without stating it, or states it wrongly — {growth}")
+        fails.append(f"a commit fails the guidance guard against its parent — {growth}")
     return fails
 
 
@@ -123,11 +123,16 @@ def _gh(*args: str) -> str:
 
 
 def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
-    """Fetch both branches, then judge every commit past the merge base against its parent through the guard's range mode."""
-    subprocess.run(["git", "fetch", "-q", "origin", base_ref, head_ref], check=True, timeout=120)
-    merge_base = subprocess.run(
-        ["git", "merge-base", f"origin/{base_ref}", head], check=True, capture_output=True, text=True
-    ).stdout.strip()
+    """Fetch both branches, then judge every commit past the merge base against its parent through the guard's range mode; a branch that cannot be fetched or based is one refusal, never a crash."""
+    try:
+        subprocess.run(
+            ["git", "fetch", "-q", "origin", base_ref, head_ref], check=True, capture_output=True, text=True, timeout=120
+        )
+        merge_base = subprocess.run(
+            ["git", "merge-base", f"origin/{base_ref}", head], check=True, capture_output=True, text=True
+        ).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        return [f"the branch could not be checked commit by commit: {(exc.stderr or exc.stdout or str(exc)).strip()}"]
     done = subprocess.run(
         [sys.executable, str(GUARD), "--range", f"{merge_base}..{head}"], capture_output=True, text=True, timeout=300
     )

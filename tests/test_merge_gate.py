@@ -181,7 +181,20 @@ def test_a_commit_growing_the_guidance_unstated_fails_the_gate():
         "1a2b3c4d claude(rules): x: the always-loaded guidance grows by 40 bytes against its parent and the message does not say so"
     ]
     fails = _eval(_pr(), branch_growth=growth)
-    assert len(fails) == 1 and fails[0].endswith(growth[0]) and fails[0].startswith("a commit grows the always-loaded guidance")
+    assert (
+        len(fails) == 1
+        and fails[0].endswith(growth[0])
+        and fails[0].startswith("a commit fails the guidance guard against its parent")
+    )
+
+
+def test_a_branch_that_cannot_be_fetched_is_one_refusal_not_a_crash(monkeypatch):
+    def raise_fetch(*args, **kwargs):
+        raise gate.subprocess.CalledProcessError(128, args[0], output="", stderr="fatal: couldn't find remote ref gone/branch\n")
+
+    monkeypatch.setattr(gate.subprocess, "run", raise_fetch)
+    fails = gate.branch_growth("develop", "gone/branch", "0" * 40)
+    assert fails == ["the branch could not be checked commit by commit: fatal: couldn't find remote ref gone/branch"]
 
 
 def test_an_unchecked_branch_growth_fails_the_gate():
