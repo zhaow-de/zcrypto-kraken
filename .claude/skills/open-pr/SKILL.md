@@ -31,10 +31,12 @@ Open PRs using the template at `.github/pull_request_template.md`. Because `gh p
 
 1. `## Summary` — one or two sentences mirroring the spec's goal.
 2. `## Spec / Plan` — links to the `docs/specs/…` and `docs/plans/…` that produced the PR (`N/A — <reason>` if there was none).
-3. the flexible middle (below),
-4. `## Checklist`.
+3. `Read before push by: <model>` — one line naming the agent that read the whole branch before push, a different agent from the author (CLAUDE.md's PR bullet requires the body to name who read it).
+4. `## Guidance changes` — when `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` prints a line, that output verbatim under this heading, one commit per line; omitted when it prints nothing.
+5. the flexible middle (below),
+6. `## Checklist`.
 
-**Flexible middle:** between Spec/Plan and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home.
+**Flexible middle:** between the lines above and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home.
 
 ## The deferral sweep — before every create or body edit
 
@@ -44,7 +46,7 @@ Sweep the draft body for deferral language — *follow-up, later, once/when X, d
 
 Steps 1 and 2 refuse before anything reaches GitHub; steps 3 and 4 are one operation and neither is finished without the other. **This skill runs BEFORE `iteration-closeout`**, so the PR number an entry cites already exists when closeout writes it.
 
-**Step 1 — the title check.** A title longer than 72 characters is refused: `docs/reference/change-index.md`'s title cell IS the title, capped at 72 by `tests/test_change_index.py`, so a longer one either loses its tail or fails the guard. Measure it, never eyeball it — and write any `/` in a title as `-`, because no cell may carry a path-shaped token:
+**Step 1 — the title check.** A title longer than 72 characters is refused: `docs/reference/change-index.md`'s title cell IS the title, capped at 72 by `tests/test_change_index.py`, so a longer one either loses its tail or fails the guard. Measure it, never eyeball it. A title carrying a path-shaped token — a repo root `cli/`, `tests/`, `infra/`, `docs/`, `.claude/`, or `word/word.ext` — writes its `/` as `-` (`tests/test_change_index.py::test_no_cell_carries_a_path_shaped_token` is the grammar); a bare `long/flat` is not a path and keeps its slash:
 
 ```bash
 TITLE='feat(<scope>): iter-<N> — <short description>'
@@ -62,7 +64,7 @@ On a mismatch, **refuse to create the PR** and print both numbers — the one in
 
 **Step 3 — `gh pr create`.** The PR number comes back in the URL it prints; keep it.
 
-**Step 4 — the change-index row.** Parse the three key kinds out of the branch name, the PR title, and the body's `## Spec / Plan` section — iterations `\biter-(\d{1,3})\b`, spec serials `\b\d{5}\b`, topics `\bT\d{4}\b`. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
+**Step 4 — the change-index row.** Parse the three key kinds out of the branch name, the PR title, and the body's `## Spec / Plan` section — iterations `\biter-(\d{1,3})\b`, spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
 
 ```
 | #<PR number> | <today, UTC> | <title, at most 72 chars> | <iters> | <specs> | <topics> |

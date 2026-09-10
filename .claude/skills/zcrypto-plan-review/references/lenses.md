@@ -19,7 +19,7 @@ A second reviewer works the other lens in parallel. Leave its subject to it and 
 - Every test rewrite — what can the new assertion still fail on? A test the templating makes unreachable, or one asserting a tautology, is a defect at the severity of what it was guarding.
 - Every threshold against its metric's structural ceiling and floor; every `noDataState`, `for`, window and label selector against what the series actually carries.
 - Every deletion, overwrite, rename or move against everything else that reads the thing — a unit file, a metric name, a runbook anchor, a config key.
-- Every operator-visible string (`--help`, `Description=`, alert summaries, `fail_msg`, README) against `.claude/rules/operator-facing-text.md`.
+- Every operator-visible string (`--help`, `Description=`, alert summaries, `fail_msg`, README) against `tests/test_internal_terms_not_operator_visible.py` — no `Phase <N>`, `T<NNNN>`, `iter-<N>` or `spec <NNNNN>` on a surface read with nothing checked out.
 - Every new file, dir or unit the plan's code writes into — who creates it, and what happens on the first run where nothing has.
 
 **Ignore** spec→plan coverage, symbol/step/count/cross-reference consistency and deferral registration — the other lens owns them; do not spend a line there.
@@ -32,7 +32,7 @@ A second reviewer works the other lens in parallel. Leave its subject to it and 
 - Every symbol, import, fixture, shell variable, path and config key: defined before its first use, **in task order**, by a task the implementer will have completed.
 - Every `-k` filter and every stated collect count against `pin-facts.md`; every path against the tree.
 - Every count, step number, filter, name or cross-reference that appears twice: the two agree. Every "as in Task N": the referent says what this task assumes.
-- Every sentence in the plan's code or prose asserting a fact about a file other than the one it sits in — `.claude/rules/prose.md`'s one test, test docstrings included.
+- Every sentence in the plan's code or prose asserting a fact about a file other than the one it sits in — it goes false on the next change to that file, test docstrings included.
 - Every deferral names a registered `T<NNNN>` topic or an explicit drop with its reason — "later", "follow-up", "out of scope" and "known" are not registration. Check the topic file exists.
 - Every guard the plan builds has a production caller — never a guard for a door nothing opens.
 - Every `Expected:` line after a `Run:` — is it what that command prints on this tree at that point?
