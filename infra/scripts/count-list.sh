@@ -138,11 +138,10 @@ c_claude_commits_since_the_round_closed() {
 # catches a stale worktree whatever its branch's merge state (the protocol's worktree line).
 c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | grep -c /tmp/claude-1000/; }
 
-# The fourth: the always-loaded bytes -- the corpus whole, plus every skill's name and description lines,
-# which load with it; the same set infra/scripts/guidance-guard.py refuses to grow without a stated reason.
-c_ambient_bytes() {
-  { cat CLAUDE.md .claude/rules/*.md; for f in .claude/skills/*/SKILL.md; do sed -n '/^---$/,/^---$/p' "$f" | grep -E '^(name|description):'; done; } | wc -c
-}
+# The fourth: the always-loaded bytes -- the corpus whole, plus every skill's name and description values,
+# which load with it -- measured by the guard's own parser, so this entry and what the guard refuses to
+# grow without a stated reason cannot disagree.
+c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-bytes; }
 
 main() {
   wanted=("$@")
