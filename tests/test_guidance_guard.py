@@ -90,6 +90,14 @@ def test_a_skill_description_is_ambient_and_its_body_and_other_keys_are_not():
     assert guard.evaluate({SKILL: short}, {SKILL: other_key}, "claude(skills): another frontmatter key\n") == []
 
 
+def test_a_blank_line_inside_a_folded_description_does_not_end_the_count():
+    one = "---\nname: s\ndescription: >\n  First paragraph.\n---\n"
+    two = "---\nname: s\ndescription: >\n  First paragraph.\n\n  Second paragraph, loaded with the first.\n---\n"
+    assert guard.ambient_bytes(SKILL, two) - guard.ambient_bytes(SKILL, one) == len(
+        "\n  Second paragraph, loaded with the first.\n".encode()
+    )
+
+
 def test_a_folded_description_is_counted_whole():
     """A `description: >` block is what the harness loads; the header line alone would register the change as a shrink."""
     flat = _skill("Use when opening a PR, or editing a PR title or body, or aggregating trailers.")
@@ -124,6 +132,12 @@ def test_a_nested_bullet_is_read_and_a_wrapped_bullet_is_one_block():
         "  (set: invocations; count: `infra/scripts/count-list.sh converge-sh-wrapped-in-timeout`).\n"
     )
     assert guard.uncounted_universals(RULE, wrapped) == []
+
+
+def test_plus_and_numbered_items_are_read_and_a_fenced_block_is_not():
+    assert [w for _, w in guard.uncounted_universals(RULE, "+ never a plus.\n1. always a number.\n")] == ["never", "always"]
+    fenced = "- A counted item (no count command: none).\n\n```bash\n- uv sync --only-group dev\nnever\n```\n"
+    assert guard.uncounted_universals(RULE, fenced) == []
 
 
 def test_a_universal_inside_a_code_span_is_not_a_universal():
@@ -228,6 +242,42 @@ def test_the_script_measures_an_amend_against_the_parent(tmp_path):
     assert passed.returncode == 0, passed.stdout + passed.stderr
     renamed = _run(repo, f"claude(rules): a new subject\n\nAmbient grows by {n2} bytes: measured against HEAD\n")
     assert renamed.returncode == 0, renamed.stdout + renamed.stderr
+
+
+def test_an_amend_sees_every_file_the_whole_commit_changes(tmp_path):
+    """The second file was changed by the original commit, not by the amend; against the parent it still counts."""
+    repo = _repo(tmp_path)
+    n1 = _grow_claude_md(repo)
+    message = f"claude(rules): grow\n\nAmbient grows by {n1} bytes: first\n"
+    _git(repo, "commit", "-q", "-m", message)
+    rule = repo / ".claude" / "rules" / "fleet-deploys.md"
+    rule.write_text(rule.read_text() + DECLARED)
+    _git(repo, "add", str(rule))
+    n2 = len(DECLARED.encode())
+    refused = _run(repo, message)
+    assert refused.returncode == 1 and f"grow it by {n1 + n2} against HEAD~1" in refused.stdout, refused.stdout + refused.stderr
+    assert _run(repo, f"claude(rules): grow\n\nAmbient grows by {n1 + n2} bytes: both\n").returncode == 0
+
+
+def test_a_message_only_amend_is_judged_against_the_parent(tmp_path):
+    repo = _repo(tmp_path)
+    n1 = _grow_claude_md(repo)
+    message = f"claude(rules): grow\n\nAmbient grows by {n1} bytes: first\n"
+    _git(repo, "commit", "-q", "-m", message)
+    assert _run(repo, message).returncode == 0
+    dropped = _run(repo, "claude(rules): grow\n\nthe line, dropped in the amend\n")
+    assert dropped.returncode == 1 and "does not say so" in dropped.stdout, dropped.stdout + dropped.stderr
+
+
+def test_a_wrapped_subject_is_read_the_way_git_renders_it(tmp_path):
+    repo = _repo(tmp_path)
+    n1 = _grow_claude_md(repo)
+    message = f"claude(rules): grow a line that\nwraps onto a second\n\nAmbient grows by {n1} bytes: first\n"
+    _git(repo, "commit", "-q", "-F", "-", input=message) if False else (repo / "M").write_text(message)
+    _git(repo, "commit", "-q", "-F", str(repo / "M"))
+    n2 = _grow_claude_md(repo, DECLARED)
+    refused = _run(repo, message)
+    assert refused.returncode == 1 and f"grow it by {n1 + n2} against HEAD~1" in refused.stdout, refused.stdout + refused.stderr
 
 
 def test_the_script_reads_nothing_below_the_scissors_or_in_comments(tmp_path):

@@ -14,7 +14,7 @@ SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 GROWTH_LINE = re.compile(r"^Ambient grows by (\d+) bytes: \S", re.M)
 UNIVERSAL = re.compile(r"\b(every|never|always|only|any|cannot)\b", re.I)
 CODE_SPAN = re.compile(r"`[^`]*`")
-BULLET = re.compile(r"^\s*[-*] ")
+BULLET = re.compile(r"^\s*(?:[-*+]|\d+\.) ")
 COUNTED = ("count: `infra/scripts/count-list.sh ", "(no count command:")
 SCISSORS = "# ------------------------ >8 ------------------------"
 
@@ -40,8 +40,8 @@ def ambient_bytes(path: str, text: str) -> int:
         for line in frontmatter_lines(text):
             if line.startswith(("name:", "description:")):
                 inside = True
-            elif not line[:1].isspace():
-                inside = False  # a new top-level key ends a folded or literal block
+            elif line.strip() and not line[:1].isspace():
+                inside = False  # a new top-level key ends a folded or literal block; a blank line inside one does not
             if inside:
                 total += len(line.encode()) + 1
         return total
@@ -49,11 +49,16 @@ def ambient_bytes(path: str, text: str) -> int:
 
 
 def bullets(text: str) -> list[tuple[int, str]]:
-    """Each bullet, nested ones included, as its first line number and its text with continuation lines joined."""
+    """Each bullet, nested ones included and fenced code blocks skipped, as its first line number and its text with continuation lines joined."""
     out: list[tuple[int, str]] = []
-    open_bullet = False
+    open_bullet = fenced = False
     for i, line in enumerate(text.split("\n"), 1):
-        if BULLET.match(line):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            open_bullet = False
+        elif fenced:
+            continue
+        elif BULLET.match(line):
             out.append((i, line))
             open_bullet = True
         elif open_bullet and line.strip() and line[:1].isspace():
@@ -111,7 +116,7 @@ def _show(spec: str) -> str | None:
 
 
 def _message(path: str) -> tuple[str, str]:
-    """The message as git will record it: nothing below the scissors line, no comment lines; and its subject."""
+    """The message as git will record it: nothing below the scissors line, no comment lines; and its subject as `%s` renders it, the first paragraph joined by spaces."""
     kept: list[str] = []
     for line in pathlib.Path(path).read_text().split("\n"):
         if line.startswith(SCISSORS):
@@ -119,8 +124,15 @@ def _message(path: str) -> tuple[str, str]:
         if not line.startswith("#"):
             kept.append(line)
     text = "\n".join(kept)
-    subject = next((line.strip() for line in kept if line.strip()), "")
-    return text, subject
+    body = [line.strip() for line in kept]
+    while body and not body[0]:
+        body.pop(0)
+    first: list[str] = []
+    for line in body:
+        if not line:
+            break
+        first.append(line)
+    return text, " ".join(first)
 
 
 def tree_ambient_bytes(root: pathlib.Path) -> int:
@@ -147,13 +159,6 @@ def main(argv: list[str]) -> int:
     merge_head = _git("rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
     if merge_head and os.path.exists(merge_head):
         return 0  # a merge commit carries the other branch's growth, which was judged at its own commits
-    staged = _git("diff", "--cached", "--name-only", "--no-renames")
-    if staged.returncode != 0:
-        print(staged.stderr, file=sys.stderr)
-        return 2
-    paths = [p for p in staged.stdout.split("\n") if CORPUS.match(p) or SKILL_FILE.match(p)]
-    if not paths:
-        return 0
     message, subject = _message(argv[1])
     basis = "HEAD"
     if (
@@ -162,6 +167,15 @@ def main(argv: list[str]) -> int:
         and _git("rev-parse", "--verify", "-q", "HEAD~1").returncode == 0
     ):
         basis = "HEAD~1"  # an amend keeps its subject; the resulting commit's growth is against its parent
+    staged = _git(
+        "diff", "--cached", "--name-only", "--no-renames", basis
+    )  # the index against the basis, so an amend sees every file the whole commit changes
+    if staged.returncode != 0:
+        print(staged.stderr, file=sys.stderr)
+        return 2
+    paths = [p for p in staged.stdout.split("\n") if CORPUS.match(p) or SKILL_FILE.match(p)]
+    if not paths:
+        return 0
     before = {p: t for p in paths if (t := _show(f"{basis}:{p}")) is not None}
     after = {p: t for p in paths if (t := _show(f":{p}")) is not None}
     fails = evaluate(before, after, message, basis)
