@@ -235,9 +235,27 @@ def test_a_skill_file_is_not_read_for_universals():
     assert guard.evaluate({SKILL: text}, {SKILL: text}, "x\n") == []
 
 
+def test_a_contract_is_read_for_universals_and_is_not_ambient():
+    """The three contracts the skills load whole take the universal test; their bytes are not paid on every turn, so growth there needs no line."""
+    contract = "docs/reference/fleet-pins.md"
+    fails = guard.evaluate({}, {contract: "- Never re-pin the NAS to an AVX build.\n"}, "x\n")
+    assert len(fails) == 1 and fails[0].startswith(f"{contract}:1 carries a universal ('Never')"), fails
+    assert guard._judged([contract, "docs/reference/fleet.md", "docs/reference/drill-log.md", "cli/x.py"]) == [
+        contract,
+        "docs/reference/fleet.md",
+    ]
+    assert guard.ambient_bytes(contract, "- Never re-pin the NAS to an AVX build.\n") == 0
+
+
 def test_the_corpus_on_disk_carries_no_uncounted_universal():
-    """The universal test as a CI assertion over the real files, not only over what a commit stages."""
-    paths = [_ROOT / "CLAUDE.md", *sorted((_ROOT / ".claude" / "rules").glob("*.md"))]
+    """The universal test as a CI assertion over the real files -- the corpus and the three contracts -- not only over what a commit stages."""
+    paths = [
+        _ROOT / "CLAUDE.md",
+        *sorted((_ROOT / ".claude" / "rules").glob("*.md")),
+        _ROOT / "docs" / "reference" / "fleet.md",
+        _ROOT / "docs" / "reference" / "fleet-pins.md",
+        _ROOT / ".claude" / "skills" / "zcrypto-grooming" / "references" / "memo-protocol.md",
+    ]
     bad = [
         (p.relative_to(_ROOT), i, w) for p in paths for i, w in guard.uncounted_universals(str(p.relative_to(_ROOT)), p.read_text())
     ]
