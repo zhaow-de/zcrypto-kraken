@@ -121,18 +121,19 @@ c_engine_rows_outside_the_gap() { uv run python infra/scripts/deploy-log-audit.p
 
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
-c_image_removals_outside_the_pruner() { git grep -nE 'docker (image prune|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
 
-c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?\.Image ?\}\}' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
+c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?(json )?\.Image ?\}\}' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
 
-# A capture host counts unless the setting it reads first -- its host_vars, else the group -- says "false";
-# a host with the key in neither file counts too, since the base role's default is not read here.
+# A capture host counts unless the setting it reads first -- its host_vars, else the group -- is a false
+# in any spelling Ansible reads; a host with the key in neither file counts too, since the base role's
+# default is not read here.
 c_capture_hosts_with_automatic_reboot() {
   local h f n=0
   for h in zcrypto zcrypto-red; do
     for f in "infra/ansible/host_vars/$h/vars.yml" infra/ansible/group_vars/capture_host/vars.yml; do
       if grep -qE '^base_unattended_upgrades_automatic_reboot:' "$f" 2>/dev/null; then
-        grep -qE '^base_unattended_upgrades_automatic_reboot: *"false"' "$f" || n=$((n + 1))
+        grep -qiE '^base_unattended_upgrades_automatic_reboot: *["'"'"']?(false|no|off)["'"'"']? *$' "$f" || n=$((n + 1))
         continue 2
       fi
     done
@@ -141,9 +142,10 @@ c_capture_hosts_with_automatic_reboot() {
   echo "$n"
 }
 
-# Pairs of successful capture-touching rows -- a capture tag, or an un-tagged site.yml run -- on the two
-# capture hosts within an hour of each other.
-c_capture_hosts_converged_within_an_hour() { jq -s '[.[] | select((.limit == "zcrypto" or .limit == "zcrypto-red") and .rc == 0 and ((.tags | test("capture")) or .tags == ""))] | sort_by(.ts) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].limit != .[$j].limit and ((.[$j].ts | fromdate) - (.[$i].ts | fromdate)) <= 3600)] | length' docs/reference/deploy-log.jsonl; }
+# Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
+# restart event per capture host it limits to (the capture_host group is both), and the count is the
+# pairs of events on different hosts within an hour of each other; a group row pairs with itself.
+c_capture_hosts_converged_within_an_hour() { jq -s '[.[] | select(.rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600)] | length' docs/reference/deploy-log.jsonl; }
 
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }
 

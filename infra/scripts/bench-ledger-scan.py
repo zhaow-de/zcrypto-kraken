@@ -148,7 +148,8 @@ def main() -> None:
             )
     print(
         f"\nMemory binds first: compare peak MiB against the ops host's MemAvailable "
-        f"(docs/reference/fleet.md's ops row), because a cycle killed for memory publishes nothing "
+        f'(node_memory_MemAvailable_bytes{{host="ops"}}, read with infra/scripts/grafana-query.py), '
+        f"because a cycle killed for memory publishes nothing "
         f"and the cycle-duration alert then goes stale rather than high. Time is the second "
         f"constraint -- cycle period {CYCLE_PERIOD_SECONDS:.0f}s -- and exporter-stale/source-lag "
         f"page at {PAGE_THRESHOLD_SECONDS:.0f}s as backstops."
