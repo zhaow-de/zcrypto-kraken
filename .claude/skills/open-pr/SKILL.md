@@ -31,7 +31,7 @@ Open PRs using the template at `.github/pull_request_template.md`. Because `gh p
 
 1. `## Summary` — one or two sentences mirroring the spec's goal.
 2. `## Spec / Plan` — links to the `docs/specs/…` and `docs/plans/…` that produced the PR (`N/A — <reason>` if there was none).
-3. `Read before push by: <model> at <sha>` — one line naming the agent that read the whole branch before push, a different agent from the author, and the tip it read; `merge-pr`'s gate refuses a body whose sha is not the PR head, so a commit pushed after the read takes a read of the delta and an updated line.
+3. `Read before push by: <model> at <sha>` — one line naming the agent that read the whole branch before push, a different agent from the author, and the tip it read; `merge-pr`'s gate refuses a body whose sha is not the PR head, so a commit pushed after the read takes a read of the delta and an updated line — except Step 4's change-index row commit, the one commit the gate admits past the named tip.
 4. `## Guidance changes` — when `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` prints a line, that output verbatim under this heading, one commit per line; omitted when it prints nothing.
 5. the flexible middle (below),
 6. `## Checklist`.
@@ -53,11 +53,11 @@ TITLE='feat(<scope>): iter-<N> — <short description>'
 printf '%s' "$TITLE" | wc -m      # > 72 → rewrite the title shorter, do not create
 ```
 
-**Step 2 — the serial refusal.** If the branch name or the title carries `iter-<N>`, that number must be the change index's highest `iter` **plus one**, or must already appear in the index against this same branch (re-opening a PR for a branch that already has a row). Anything else means the serial was improvised rather than minted:
+**Step 2 — the serial refusal.** If the branch name or the title carries `iter-<N>`, that number must be the change index's highest `iter` **plus one**, or the index must already hold this PR's own row (a body edit on a PR that has one). Anything else means the serial was improvised rather than minted:
 
 ```bash
 HIGHEST=$(awk -F'|' '/^\| #/ {print $5}' docs/reference/change-index.md | grep -oE 'iter-[0-9]{3}' | sort -u | tail -1)
-grep -n "$(git rev-parse --abbrev-ref HEAD)" docs/reference/change-index.md   # a row already ours?
+grep -n "^| #<PR number> " docs/reference/change-index.md   # on a body edit: the row this PR already has
 ```
 
 On a mismatch, **refuse to create the PR** and print both numbers — the one in the branch or title, and the index's highest — so the mint can be corrected before the PR exists. A serial is minted when the branch is cut, from this same command; nothing else mints one.
@@ -70,7 +70,7 @@ On a mismatch, **refuse to create the PR** and print both numbers — the one in
 | #<PR number> | <today, UTC> | <title, at most 72 chars> | <iters> | <specs> | <topics> |
 ```
 
-Iterations are zero-padded to three digits (`iter-007`), several keys of one kind are comma-separated, and a kind with no key is an em dash `—`. Rows stay sorted by PR number ascending, and **no cell may hold a file path** — a spec is its bare serial `00034`, never `docs/specs/00034-…`. No key of any kind ⇒ no row. Then re-read the file and confirm the row is there before reporting the PR open.
+Iterations are zero-padded to three digits (`iter-007`), several keys of one kind are comma-separated, and a kind with no key is an em dash `—`. Rows stay sorted by PR number ascending, and **no cell may hold a file path** — a spec is its bare serial `00034`, never `docs/specs/00034-…`. No key of any kind ⇒ no row. Then re-read the file and confirm the row is there before reporting the PR open. The row commit is the one commit `merge-pr`'s gate admits past the tip the read line names — a single commit touching the index alone — so it takes no delta read and the line stays as written.
 
 ## Editing a PR body
 
