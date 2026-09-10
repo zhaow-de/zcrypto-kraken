@@ -1,6 +1,7 @@
 ---
 name: zcrypto-refine-rules
 description: Use before any edit to CLAUDE.md, a rule under .claude/rules/ or a skill file — the edit contract that infra/scripts/guidance-guard.py enforces at commit — and, invoked as `/zcrypto-refine-rules round`, the periodic harvest → graduate → count → condense → verify round over the guidance and the lesson inboxes.
+model: fable
 ---
 
 # zcrypto-refine-rules
@@ -18,11 +19,11 @@ A line lands on one of four grounds, or it does not land:
 
 Three tests on the line as written, two of them the guard's:
 
-- **The universal test.** A bullet that says *every*, *never*, *always*, *only*, *any* or *cannot* names its set and its count — `(set: …; count: `infra/scripts/count-list.sh <entry>`)` — or declares `(no count command: <why nothing in the tree records it>)`. The guard refuses the bullet otherwise. An entry is a `c_<name>` function in `infra/scripts/count-list.sh` plus its `emit "<entry>"` line; `tests/test_count_list.py` pins that every entry a corpus line names exists.
-- **The trade.** The ambient set grows only for a stated reason: the commit message carries one line, `Ambient grows by N bytes: <reason>`, with N the exact growth the guard measures from the staged files; a deletion of equal size in the same commit needs no line. A growth with no reason worth one line is a line that does not belong.
+- **The universal test.** A bullet that says *every*, *never*, *always*, *only*, *any* or *cannot* names its set and its count — `(set: …; count: `infra/scripts/count-list.sh <entry>`)` — or declares `(no count command: <why nothing in the tree records it>)`. The guard reads every bullet of `CLAUDE.md` and the rules — nested ones included, a wrapped bullet as one block, code spans set aside — and refuses one whose prose carries the word with neither the entry nor the declaration; it does not judge the set, which is the reader's. A paragraph or a heading it does not read. An entry is a `c_<name>` function in `infra/scripts/count-list.sh` plus its `emit "<entry>"` line; `tests/test_count_list.py` pins that every entry a corpus line names exists.
+- **The trade.** The ambient set grows only for a stated reason: the commit message carries one line, `Ambient grows by N bytes: <reason>`, with N the exact growth the guard measures from the staged files; a deletion of equal size in the same commit needs no line, and a line on a commit that does not grow the set is refused. The guard measures the staged files against `HEAD`, or against the amended commit's parent when the subject is unchanged, so an amend states the whole commit's growth; a commit that stages no ambient file is not judged, so a message-only amend keeps its line. A growth with no reason worth one line is a line that does not belong.
 - **Placement.** What every session must do on every turn goes to `CLAUDE.md`; what it must do in one domain goes to that domain's rule; a procedure goes to the skill step where it runs; a claim a check can make goes to the check, and the sentence goes. A skill's description is ambient — write it as the trigger and nothing else.
 
-A lesson goes to the inbox through `infra/scripts/append-lesson.py`, never straight into a rule: the round below is where a lesson becomes guidance, and only with a deletion beside it.
+A lesson goes to the inbox through `infra/scripts/append-lesson.py`, never straight into a rule: the round below is where a lesson becomes guidance, under the trade above.
 
 ## The round — `/zcrypto-refine-rules round`
 
@@ -56,7 +57,7 @@ A graduated item's file is **staged** — moved to `graduated/<round-date>/` und
 Run `infra/scripts/count-list.sh`. It prints one line per entry — the entry's name and today's value; a surviving universal in `CLAUDE.md` and `.claude/rules/` names its set in prose and its entry as `count: `infra/scripts/count-list.sh <entry>``, and the script's `c_` function behind that entry is the command.
 
 - **A non-zero count is a finding.** Resolve it in the round: fix the practice, narrow the rule, or delete the rule.
-- **A universal with no entry beside it is the finding** — the guard refuses one at commit, so a standing one is a line older than the guard. It is given a set and an entry in this round, or it goes.
+- **A universal with no entry beside it is the finding** — the guard refuses one at commit, so a standing one is older than the guard or sits in a paragraph the guard does not read. It is given a set and an entry in this round, or it goes.
 
 Read the corpus and you can find a stale path, two texts that disagree, and a name that has gone stale; you structurally cannot find a rule whose text is entirely correct, whose citations all resolve, and which is simply not obeyed by the population it governs, because nothing in a read counts that population — which is why this step counts instead of reading. Output is a findings table, resolved jointly; the values live in that table, never in the corpus lines.
 
@@ -78,7 +79,7 @@ Then, and only then, delete the staged memory files and update `MEMORY.md`.
 
 ### Closing
 
-The round's closing commit carries the watermark trailer — `Refine-Round-Closed: <ISO-8601 UTC>` — placed below `Co-Authored-By:`, which opens the trailer block. Verify end-to-end before reporting done:
+The round closes with one commit: Step 5 (d)'s delta in its body, the watermark trailer — `Refine-Round-Closed: <ISO-8601 UTC>` — below `Co-Authored-By:`, which opens the trailer block; the PR's `## Guidance changes` carries the round's claude commits. Verify end-to-end before reporting done:
 
 ```bash
 test "$(git log -1 --grep='^Refine-Round-Closed:' --format=%H)" = "$(git rev-parse HEAD)"
