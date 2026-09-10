@@ -1,6 +1,6 @@
 # Change index
 
-One row per merged pull request that carries at least one key. A key is an `iter-NNN` iteration serial, a 5-digit spec serial, or a `T<NNNN>` topic id, read from the pull request's own title, branch name and `## Spec / Plan` section — a topic key case-insensitively, since a branch spells it `t0189`, and written with an upper-case T; a cell with no key of that kind is an em dash. The backfilled rows also drew on two sources a pull request does not hold — the iterations-history entry git keeps for the row's iteration, and the trial registry's `spec_hash` resolved through the digest of the spec file it pins — so a cell can name a spec or topic the title does not spell. No file path appears in this file (`test_change_index` asserts it), so a rename sweep has nothing to edit here — a path-shaped title has its `/` written as `-`, a bare `long/flat` keeps it, and titles are truncated to 72 characters. `date` is the date the pull request was created, UTC — the day the row is written. Rows are sorted by pull-request number ascending. The row is written by the `open-pr` skill when the pull request is created, which is also where an iteration's serial comes from: this file's highest `iter` plus one. `test_change_index` guards its shape and its completeness against git.
+One row per merged pull request that carries at least one key. A key is an `iter-NNN` iteration serial, a 5-digit spec serial, or a `T<NNNN>` topic id, an iteration serial read from the pull request's own title and branch name, a spec serial or topic id from those and its `## Spec / Plan` section — never from a sentence citing an earlier iteration as a precedent, which is a cross-reference, not a delivery — a topic key case-insensitively, since a branch spells it `t0189`, and written with an upper-case T; a cell with no key of that kind is an em dash. The backfilled rows also drew on two sources a pull request does not hold — the iterations-history entry git keeps for the row's iteration, and the trial registry's `spec_hash` resolved through the digest of the spec file it pins — so a cell can name a spec or topic the title does not spell. No file path appears in this file (`test_change_index` asserts it), so a rename sweep has nothing to edit here — a path-shaped title has its `/` written as `-`, a bare `long/flat` keeps it, and titles are truncated to 72 characters. `date` is the date the pull request was created, UTC — the day the row is written. Rows are sorted by pull-request number ascending. The row is written by the `open-pr` skill when the pull request is created, which is also where an iteration's serial comes from: this file's highest `iter` plus one. `test_change_index` guards its shape and its completeness against git.
 
 | PR | date | title | iter | spec | topic |
 |---|---|---|---|---|---|
@@ -45,12 +45,12 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #49 | 2026-07-08 | feat(features): iter-40 — A1 causal feature primitives | iter-040 | 00029 | — |
 | #50 | 2026-07-08 | feat(features): iter-41 — complete A1 feature substrate (trend_agreement | iter-041 | 00030 | — |
 | #51 | 2026-07-08 | feat(tick): iter-42 — complete-dataset reader + full-history BTC/EUR rec | iter-042 | 00028 | T0004 |
-| #52 | 2026-07-08 | docs(tick): iter-43 — full-universe full-history tick reconciliation | iter-042, iter-043 | — | T0004 |
+| #52 | 2026-07-08 | docs(tick): iter-43 — full-universe full-history tick reconciliation | iter-043 | — | T0004 |
 | #53 | 2026-07-08 | docs(alpha): iter-44 — spec the A1 vol-targeted long/flat/short trend bo | iter-044 | — | T0004, T0007, T0010 |
 | #54 | 2026-07-08 | docs(capture): T0003 incident resolved + host re-aligned to CI GHCR imag | — | — | T0003 |
 | #61 | 2026-07-08 | docs(open-topics): resolve T0004 (reconciliation exit-bar confirmed) | — | — | T0004 |
 | #62 | 2026-07-09 | feat(benchmark): iter-44 — full-history dynamic-composition basket + fin | iter-044 | 00032 | T0004, T0007, T0010 |
-| #63 | 2026-07-09 | feat(alpha): iter-45 — A1 book assembler + kill-bar harness | iter-045, iter-046 | 00031 | T0009 |
+| #63 | 2026-07-09 | feat(alpha): iter-45 — A1 book assembler + kill-bar harness | iter-045 | 00031 | T0009 |
 | #64 | 2026-07-09 | feat(alpha): iter-46 — A1 kill-bar verdict (first validated Bucket-A sur | iter-046 | 00031 | T0009 |
 | #65 | 2026-07-09 | docs(research): iter-47 — A1 net-of-cost reality (gated-B1 stays deploya | iter-047 | 00031 | T0009 |
 | #66 | 2026-07-09 | docs(research): iter-48 — cost-optimized A1 (the short's carry is the ki | iter-048 | — | — |
@@ -65,9 +65,9 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #76 | 2026-07-09 | docs(research): iter-57 — phase-4 close-out, decisions drain, T0016 | iter-057 | — | T0016 |
 | #77 | 2026-07-09 | feat(risk): iter-58 — §10 drawdown governor + threshold backtest on the | iter-058 | 00034 | — |
 | #78 | 2026-07-09 | feat(risk): iter-59 — combination trial P1 adopted (cap + governor on th | iter-059 | 00035 | T0016 |
-| #79 | 2026-07-09 | docs(research): iter-60 — phase-5 stress suite on the adopted combined s | iter-055, iter-060 | — | T0010, T0016 |
+| #79 | 2026-07-09 | docs(research): iter-60 — phase-5 stress suite on the adopted combined s | iter-060 | — | T0010, T0016 |
 | #80 | 2026-07-09 | docs(research): iter-61 — final system spec, runbook draft & pre-registe | iter-061 | — | T0017 |
-| #81 | 2026-07-09 | feat(registry): iter-62 — exact key-set validation (T0015) | iter-056, iter-062 | — | T0013, T0015 |
+| #81 | 2026-07-09 | feat(registry): iter-62 — exact key-set validation (T0015) | iter-062 | — | T0013, T0015 |
 | #82 | 2026-07-09 | feat(portfolio): iter-63 — combined-system builder (record 33's pipeline | iter-063 | 00036 | — |
 | #83 | 2026-07-09 | docs(research): iter-64 — holdout-procedure dry-run; paired-index CI con | iter-064 | — | — |
 | #84 | 2026-07-09 | docs(research): iter-65 — 2026 partial-year-stub probe (feeds T0009) | iter-065 | — | T0009, T0011 |
@@ -78,13 +78,13 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #90 | 2026-07-09 | docs(research): iter-71 — night-audit fixes across iters 057-070 | iter-071 | — | T0016 |
 | #91 | 2026-07-09 | feat(alpha): iter-72 — ratified kill bar, trials 34/35, holdout look pre | iter-072 | 00037 | T0009, T0017 |
 | #92 | 2026-07-09 | docs(research): iter-73 — holdout look (EQUALS), GO to paper, phase-5 cl | iter-073 | — | T0017, T0018 |
-| #95 | 2026-07-10 | docs(research): iter-74 — A2 native-4h arms: three adopts, first family- | iter-053, iter-074 | 00033 | T0009, T0011 |
+| #95 | 2026-07-10 | docs(research): iter-74 — A2 native-4h arms: three adopts, first family- | iter-074 | 00033 | T0009, T0011 |
 | #96 | 2026-07-10 | docs(research): iter-75 — cadence sweep closes the A family at 40/40 | iter-075 | 00033 | — |
 | #97 | 2026-07-10 | docs(research): iter-76 — cross-frequency combination design (T0011 unbl | iter-076 | 00038 | T0011 |
 | #98 | 2026-07-10 | feat(portfolio): iter-77 — cross-frequency helpers (daily→intraday expan | iter-077 | 00038 | — |
 | #99 | 2026-07-10 | docs(research): iter-78 — night-audit fixes (T0011 index sync) | iter-078 | — | T0011 |
 | #101 | 2026-07-10 | feat(config): iter-079 — phase-6 kickoff: adapter verification, key cere | iter-079 | 00039 | T0005, T0014, T0018 |
-| #102 | 2026-07-10 | feat(portfolio): iter-080 — cross-frequency combination adopted (trial 4 | iter-072, iter-076, iter-080 | 00037, 00038 | T0009, T0011, T0017, T0018, T0019 |
+| #102 | 2026-07-10 | feat(portfolio): iter-080 — cross-frequency combination adopted (trial 4 | iter-080 | 00037, 00038 | T0009, T0011, T0017, T0018, T0019 |
 | #103 | 2026-07-10 | feat(portfolio): iter-081 — fixed-weight combination adopted (trial 44) | iter-081 | 00038 | T0018, T0019 |
 | #104 | 2026-07-10 | feat(portfolio): iter-082 — record-44 builder + concordance core | iter-082 | 00040 | — |
 | #105 | 2026-07-10 | feat(engine): iter-083 — the shadow node (store, cycle, node, CLI) + wor | iter-083 | 00041 | T0018 |
@@ -192,7 +192,7 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #247 | 2026-08-02 | docs(research): ratify the §12 Stage-6b amendment — the three-rung ladde | — | 00081 | T0116, T0124 |
 | #248 | 2026-08-02 | feat(cli): iter-119 — wire the §10 whole-book limits, ZEUR spot reportin | iter-119 | — | T0120, T0121, T0122, T0124 |
 | #250 | 2026-08-03 | refactor(portfolio): iter-120 — rule the deployable's cost basis, split | iter-120 | — | T0090 |
-| #251 | 2026-08-03 | docs(reference): iter-119 converge record — the sleeve gauge is live and | iter-118, iter-119 | — | T0120, T0121, T0124 |
+| #251 | 2026-08-03 | docs(reference): iter-119 converge record — the sleeve gauge is live and | iter-119 | — | T0120, T0121, T0124 |
 | #252 | 2026-08-03 | docs(research): amend §12 — the go/no-go band carries two uncertainties, | — | — | T0116 |
 | #253 | 2026-08-03 | feat(registry): require run_ref to name provenance that exists (T0125 pa | — | — | T0125 |
 | #254 | 2026-08-03 | docs(research): T0064 — accept the missing out-of-time evidence, narrow | — | — | T0064 |
@@ -252,7 +252,7 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #345 | 2026-08-28 | feat(snapshot): iter-151 — the refdata sweep refuses on a corporate acti | iter-151 | — | T0025 |
 | #346 | 2026-08-29 | feat(archive): iter-152 — bound the NAS pull's verify cost, and measure | iter-152 | 00102 | T0028 |
 | #347 | 2026-08-29 | feat(capture): iter-153 — make T0037's accepted residuals observable | iter-153 | 00103 | T0037 |
-| #348 | 2026-08-29 | feat(engine): iter-154 — decompose keeps the whole-book limits' share | iter-119, iter-154 | — | T0120, T0121, T0124 |
+| #348 | 2026-08-29 | feat(engine): iter-154 — decompose keeps the whole-book limits' share | iter-154 | — | T0120, T0121, T0124 |
 | #349 | 2026-08-29 | docs(research): iter-155 — the sleeve-promotion path, ruled and then re- | iter-155 | — | T0123 |
 | #350 | 2026-08-29 | docs(open-topics): split T0049 — the drill program (spec 00105) and day- | — | 00104, 00105 | T0049, T0157 |
 | #351 | 2026-08-29 | docs(specs): 00106 — zcrypto engine flatten, the red button; T0158/T0159 | — | 00104, 00105, 00106 | T0158, T0159 |
