@@ -1,0 +1,103 @@
+"""The merge-pr gate: every reason a pull request is not ready to merge, or GATE PASSED."""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+
+REPO = "zhaow-de/zcrypto-kraken"
+INDEX = "docs/reference/change-index.md"
+FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid"
+READ_LINE = re.compile(r"^Read before push by: *(.+?) +at +([0-9a-f]{7,40}) *$", re.M)
+_DONE = ("SUCCESS", "NEUTRAL", "SKIPPED")
+_BAD = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE")
+
+
+def _state(check: dict) -> str:
+    return (check.get("conclusion") or check.get("state") or "").upper()
+
+
+def read_line_fails(pr: dict, head_commit: dict | None) -> list[str]:
+    """The read must name the head, or the head is the one change-index row commit past the tip it names."""
+    if pr.get("headRefName") == "ops-journal":
+        return []  # the month PR is exempt from the pre-push read (docs/reference/ops-journal/README.md)
+    body = pr.get("body") or ""
+    head = pr.get("headRefOid") or ""
+    m = READ_LINE.search(body)
+    if not m or m.group(1).strip().startswith("<"):
+        return ["no 'Read before push by: <model> at <sha>' line in the body: the whole-branch read is unrecorded"]
+    sha = m.group(2)
+    if head.startswith(sha):
+        return []
+    if head_commit is not None:
+        parents = [p.get("sha") or "" for p in head_commit.get("parents") or []]
+        files = [f.get("filename") for f in head_commit.get("files") or []]
+        if len(parents) == 1 and parents[0].startswith(sha) and files == [INDEX]:
+            return []
+    return [
+        f"the read named in the body covers {sha[:8]}, not the head {head[:8]}: read the delta or re-read, then update the line"
+    ]
+
+
+def evaluate(pr: dict, head_commit: dict | None = None) -> list[str]:
+    fails: list[str] = []
+    base = pr.get("baseRefName")
+    state = pr.get("state")
+    mergeable = pr.get("mergeable")
+    rollup = pr.get("statusCheckRollup") or []
+    body = pr.get("body") or ""
+    if base != "develop":
+        fails.append(f"base branch is {base!r}, not develop (feature PRs never merge to main)")
+    if state != "OPEN":
+        fails.append(f"state is {state!r}, expected OPEN")
+    if pr.get("isDraft"):
+        fails.append("PR is a draft")
+    if mergeable == "CONFLICTING":
+        fails.append("mergeable=CONFLICTING (conflicts) — update the branch and resolve first")
+    elif mergeable != "MERGEABLE":
+        fails.append(f"mergeable={mergeable!r} — GitHub is still computing; re-run in a moment, never merge on UNKNOWN")
+    if pr.get("mergeStateStatus") == "BLOCKED":
+        fails.append("mergeStateStatus=BLOCKED (branch protection: a required review or required check is unsatisfied)")
+    if pr.get("reviewDecision") == "CHANGES_REQUESTED":
+        fails.append("reviewDecision=CHANGES_REQUESTED (a reviewer requested changes)")
+    bad = [c for c in rollup if _state(c) in _BAD]
+    if bad:
+        fails.append(f"{len(bad)} CI check(s) failing")
+    pending = [c for c in rollup if _state(c) not in _DONE + _BAD]
+    if pending:
+        fails.append(f"{len(pending)} CI check(s) still running — wait; nothing else blocks a merge on pending")
+    if not rollup:
+        fails.append("no CI checks reported yet — wait for coverage.yml to register")
+    if "- [ ]" in body:
+        fails.append("PR description has unchecked checklist item(s) (- [ ])")
+    fails.extend(read_line_fails(pr, head_commit))
+    return fails
+
+
+def _gh(*args: str) -> dict:
+    done = subprocess.run(["gh", *args], check=True, capture_output=True, text=True, timeout=60)
+    return json.loads(done.stdout)
+
+
+def main(argv: list[str]) -> int:
+    number = argv[1:2]
+    pr = _gh("pr", "view", *number, "--json", FIELDS)
+    head_commit = None
+    m = READ_LINE.search(pr.get("body") or "")
+    head = pr.get("headRefOid") or ""
+    if m and head and not head.startswith(m.group(2)):
+        head_commit = _gh("api", f"repos/{REPO}/commits/{head}")
+    fails = evaluate(pr, head_commit)
+    if fails:
+        print("GATE FAILED:")
+        for fail in fails:
+            print("  - " + fail)
+        return 1
+    print("GATE PASSED — ready to merge")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
