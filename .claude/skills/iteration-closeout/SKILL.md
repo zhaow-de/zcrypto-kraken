@@ -1,20 +1,16 @@
 ---
 name: iteration-closeout
-description: Use at an iteration's closeout — appending the iterations-history entry, appending decisions-log entries, syncing dataset catalogs — and whenever recording a subject-matter research decision mid-iteration. Load BEFORE writing either entry.
+description: Use at an iteration's closeout — appending decisions-log entries, syncing dataset catalogs — and whenever recording a subject-matter research decision mid-iteration. Load BEFORE writing the entry.
 disable-model-invocation: false
 ---
 
 # iteration-closeout
 
-The closeout file mechanics. The ambient rules keep the WHEN (`.claude/rules/prose.md` — the entry is every plan's final task, and its bar; `.claude/rules/decisions-log.md` — the logging gate) and the closeout-doc discipline; this skill is the HOW.
+The closeout file mechanics — what each entry says and where it goes.
 
-## The iterations-history entry
+The change-index row is **not** this skill's: `open-pr` writes it into `docs/reference/change-index.md` when the pull request is created, which now precedes closeout.
 
-**Which file:** append to the changelog of the iteration's **subject-matter phase** — the same routing as the decisions logs (`decisions-log.md`), so an iteration doing Phase-4 backlog while Phase 6 is active lands in `iterations-history-phase4.md`, and a Phase-5 decision made during that work lands in `phase5`. The changelog and the per-phase decision logs (`decisions-log.md`) now follow the **same** model: one file per phase, appended **live per iteration**, never drained into a separate serial file — so no continuation *file* is minted: a **closed** phase that receives later backlog entries just keeps appending them under a one-line `**Continuation — …**` divider (between two `______` rules) marking where the post-close backlog begins.
-
-Each entry is a new section appended at the bottom of its phase file (`## <YYYY-MM-DD> — <heading>`) followed by one-line bullets, one per surface that changed, each saying what an operator or agent now does differently — no code detail, counts, measurements or review narrative (`prose.md`'s bar; the commit messages hold the detail).
-
-Entries and branch-end status claims name the CLASS they cover ("every spec/plan commit on this branch"), never an enumeration or a count — an enumeration is falsified by the next commit that lands beside it.
+A branch-end status claim names the CLASS it covers ("every spec/plan commit on this branch"), never an enumeration or a count — an enumeration is falsified by the next commit that lands beside it.
 
 ## Dataset-catalog sync (every dataset-introducing closeout)
 
@@ -43,7 +39,7 @@ Each decision appends to its phase's single decision log; there is no draining a
 1. **Determine its subject-matter phase `N`** — the §12 phase whose subject matter it concerns, *not* the iteration's home phase (phases run concurrently: iter-088 was Phase-4 backlog but its §10 risk-layer decision is Phase 5). The §12 phases: 1 data foundation, 2 validation harness, 3 benchmarks, 4 alpha sprints, 5 portfolio assembly & risk layer, 6 execution — so alpha-family research → 4, combining validated sleeves into a deployable + the §10 risk layer → 5, execution/paper-trading → 6.
 2. **Find the phase's decisions-log serial.** A phase has exactly ONE decisions log: if `docs/research/<serial>.phase<N>-decisions.md` exists, append there (Phase 1 `02`, Phase 4 `10`, Phase 5 `13`, Phase 6 `14`). A phase's research docs may span several serials (Phase 4 runs `05`–`10`), so never derive the log's serial from the phase's other docs. No decisions log yet → create it at the next-free serial: the highest serial BELOW 90 across `docs/research/` + 1 — the 90-series is the meta band (protocols, assessments) and never mints a phase log's serial.
 3. **Append the `[iter-<NNN>]` entry** to `docs/research/<serial>.phase<N>-decisions.md` (create it if absent), committed with the iteration's closing commit.
-4. **Post-close backlog:** when a **closed** phase (its `<serial>.phase<N>-…closeout…`/exit-bar report exists) receives its first entry after that close-out, precede it with a one-line `**Continuation — …**` divider between two `______` rules — cosmetic, the changelog's own convention. Pre-close entries stay verbatim above it, never edited.
+4. **Post-close backlog:** when a **closed** phase (its `<serial>.phase<N>-…closeout…`/exit-bar report exists) receives its first entry after that close-out, precede it with a one-line `**Continuation — …**` divider between two `______` rules — cosmetic, marking where the post-close backlog begins. Pre-close entries stay verbatim above it, never edited.
 
 **A decision bound to no phase** (rare — e.g. one that opens a brand-new phase) routes to the phase it concerns: a decision that *creates* a specific new phase is that new phase's founding entry (step 2, first doc). A decision that restructures §12 without a single target phase is a **master-plan revision** — captured by the `00.master-plan.md` edit and its commit, not a decisions-log entry.
 
