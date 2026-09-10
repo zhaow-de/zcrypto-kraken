@@ -113,8 +113,7 @@ def evaluate(
         fails.append(
             "the branch's ambient growth was not checked commit by commit: `guidance-guard.py --range <base>..<head>` did not run"
         )
-    for growth in branch_growth or []:
-        fails.append(f"a commit fails the guidance guard against its parent — {growth}")
+    fails.extend(branch_growth or [])
     return fails
 
 
@@ -123,7 +122,7 @@ def _gh(*args: str) -> str:
 
 
 def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
-    """Fetch both branches, then judge every commit past the merge base against its parent through the guard's range mode; a branch that cannot be fetched or based is one refusal, never a crash."""
+    """Fetch both branches, then judge every commit past the merge base against its parent through the guard's range mode; each of its refusals names the commit, and a branch that cannot be fetched or based is one refusal, never a crash."""
     try:
         subprocess.run(
             ["git", "fetch", "-q", "origin", base_ref, head_ref], check=True, capture_output=True, text=True, timeout=120
@@ -131,14 +130,20 @@ def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
         merge_base = subprocess.run(
             ["git", "merge-base", f"origin/{base_ref}", head], check=True, capture_output=True, text=True
         ).stdout.strip()
-    except subprocess.CalledProcessError as exc:
-        return [f"the branch could not be checked commit by commit: {(exc.stderr or exc.stdout or str(exc)).strip()}"]
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        detail = ((getattr(exc, "stderr", None) or getattr(exc, "stdout", None) or "") or str(exc)).strip()
+        return [f"the branch could not be checked commit by commit: {detail}"]
+    if not merge_base:
+        return [f"the branch could not be checked commit by commit: no merge base between origin/{base_ref} and {head[:8]}"]
     done = subprocess.run(
         [sys.executable, str(GUARD), "--range", f"{merge_base}..{head}"], capture_output=True, text=True, timeout=300
     )
     if done.returncode == 0:
         return []
-    return [line[4:] for line in done.stdout.splitlines() if line.startswith("  - ")] or [(done.stdout + done.stderr).strip()]
+    refusals = [line[4:] for line in done.stdout.splitlines() if line.startswith("  - ")]
+    if refusals:
+        return [f"a commit fails the guidance guard against its parent — {r}" for r in refusals]
+    return [f"the branch could not be checked commit by commit: {(done.stdout + done.stderr).strip()}"]
 
 
 def main(argv: list[str]) -> int:

@@ -180,12 +180,42 @@ def test_a_commit_growing_the_guidance_unstated_fails_the_gate():
     growth = [
         "1a2b3c4d claude(rules): x: the always-loaded guidance grows by 40 bytes against its parent and the message does not say so"
     ]
-    fails = _eval(_pr(), branch_growth=growth)
-    assert (
-        len(fails) == 1
-        and fails[0].endswith(growth[0])
-        and fails[0].startswith("a commit fails the guidance guard against its parent")
-    )
+    assert _eval(_pr(), branch_growth=growth) == growth
+
+
+def test_the_range_mode_s_refusals_are_prefixed_with_the_commit_and_a_run_failure_is_not(monkeypatch):
+    def fake_run(args, **kwargs):
+        if args[:2] == ["git", "fetch"]:
+            return gate.subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["git", "merge-base"]:
+            return gate.subprocess.CompletedProcess(args, 0, "a" * 40 + "\n", "")
+        return gate.subprocess.CompletedProcess(
+            args,
+            1,
+            "guidance-guard: refused over a..b\n  - 1a2b3c4d claude(rules): x: the always-loaded guidance grows by 40 bytes\n",
+            "",
+        )
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    assert gate.branch_growth("develop", "feat/x", "b" * 40) == [
+        "a commit fails the guidance guard against its parent — 1a2b3c4d claude(rules): x: the always-loaded guidance grows by 40 bytes"
+    ]
+
+
+def test_a_timeout_and_an_empty_merge_base_are_refusals_too(monkeypatch):
+    def timing_out(args, **kwargs):
+        raise gate.subprocess.TimeoutExpired(args, 120)
+
+    monkeypatch.setattr(gate.subprocess, "run", timing_out)
+    assert gate.branch_growth("develop", "feat/x", "b" * 40)[0].startswith("the branch could not be checked commit by commit: ")
+
+    def no_base(args, **kwargs):
+        return gate.subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(gate.subprocess, "run", no_base)
+    assert gate.branch_growth("develop", "feat/x", "b" * 40) == [
+        "the branch could not be checked commit by commit: no merge base between origin/develop and bbbbbbbb"
+    ]
 
 
 def test_a_branch_that_cannot_be_fetched_is_one_refusal_not_a_crash(monkeypatch):
