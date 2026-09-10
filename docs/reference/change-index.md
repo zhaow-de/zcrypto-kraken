@@ -15,7 +15,7 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #13 | 2026-07-07 | docs: iter-9 — full-history dataset QA report + gap characterization | iter-009 | — | — |
 | #14 | 2026-07-07 | feat(ohlc): iter-10 — corporate-action ledger + price-discontinuity audi | iter-010 | — | — |
 | #15 | 2026-07-07 | feat(ohlc): iter-11 — empty-interval reconstruction (fill_gaps) | iter-011 | — | — |
-| #16 | 2026-07-07 | feat(xcheck): iter-12 — Binance cross-venue cross-check | iter-009, iter-012 | — | — |
+| #16 | 2026-07-07 | feat(xcheck): iter-12 — Binance cross-venue cross-check | iter-012 | — | — |
 | #18 | 2026-07-07 | feat(validation): iter-13 — CPCV splitter (purge + embargo) | iter-013 | 00006 | — |
 | #19 | 2026-07-07 | feat(validation): iter-14 — deflated & probabilistic Sharpe ratio | iter-014 | 00007 | — |
 | #20 | 2026-07-07 | feat(validation): iter-15 — PBO (probability of backtest overfitting) | iter-015 | 00008 | — |
