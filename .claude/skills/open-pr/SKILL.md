@@ -64,7 +64,7 @@ On a mismatch, **refuse to create the PR** and print both numbers — the one in
 
 **Step 3 — `gh pr create`.** The PR number comes back in the URL it prints; keep it.
 
-**Step 4 — the change-index row.** Parse the three key kinds out of the branch name, the PR title, and the body's `## Spec / Plan` section — iterations `\biter-(\d{1,3})\b`, spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
+**Step 4 — the change-index row.** Parse the keys — iterations `\biter-(\d{1,3})\b` from the branch name and the PR title only, since a `## Spec / Plan` sentence naming an earlier iteration as its precedent is a cross-reference, not a delivery; spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`, from the branch name, the title and the body's `## Spec / Plan` section. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
 
 ```
 | #<PR number> | <today, UTC> | <title, at most 72 chars> | <iters> | <specs> | <topics> |
