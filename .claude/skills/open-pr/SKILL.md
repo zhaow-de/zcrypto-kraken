@@ -31,7 +31,7 @@ Open PRs using the template at `.github/pull_request_template.md`. Because `gh p
 
 1. `## Summary` — one or two sentences mirroring the spec's goal.
 2. `## Spec / Plan` — links to the `docs/specs/…` and `docs/plans/…` that produced the PR (`N/A — <reason>` if there was none).
-3. `Read before push by: <model>` — one line naming the agent that read the whole branch before push, a different agent from the author (CLAUDE.md's PR bullet requires the body to name who read it).
+3. `Read before push by: <model> at <sha>` — one line naming the agent that read the whole branch before push, a different agent from the author, and the tip it read; `merge-pr`'s gate refuses a body whose sha is not the PR head, so a commit pushed after the read takes a read of the delta and an updated line.
 4. `## Guidance changes` — when `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` prints a line, that output verbatim under this heading, one commit per line; omitted when it prints nothing.
 5. the flexible middle (below),
 6. `## Checklist`.

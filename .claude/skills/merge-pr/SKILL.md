@@ -23,7 +23,7 @@ PRs handled by this skill **always merge with a merge commit** (`--merge`) — n
 ## Step 1 — Identify the PR
 
 ```bash
-gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body
+gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid
 ```
 
 (Omit `<number>` to use the current branch's PR.) Record `number`, `headRefName`, `baseRefName`, and the gate fields below.
@@ -35,9 +35,9 @@ Base correctness (`develop`, never `main`) is the Step-2 gate's first check.
 GitHub has no single ready-to-merge field; readiness is spread across several fields. Pipe the Step 1 JSON through this evaluator — it prints `GATE PASSED` or lists every failing gate:
 
 ```bash
-gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body \
+gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid \
   | python3 -c '
-import sys, json
+import sys, json, re
 d = json.load(sys.stdin)
 fails = []
 base = d.get("baseRefName")
@@ -72,6 +72,12 @@ if not rollup:
     fails.append("no CI checks reported yet — wait for coverage.yml to register")
 if "- [ ]" in body:
     fails.append("PR description has unchecked checklist item(s) (- [ ])")
+m = re.search(r"^Read before push by: *(.+?) +at +([0-9a-f]{7,40}) *$", body, re.M)
+head = d.get("headRefOid") or ""
+if not m or m.group(1).strip().startswith("<"):
+    fails.append("no 'Read before push by: <model> at <sha>' line in the body: the whole-branch read is unrecorded")
+elif not head.startswith(m.group(2)):
+    fails.append("the read named in the body covers " + m.group(2)[:8] + ", not the head " + head[:8] + ": read the delta or re-read, then update the line")
 if fails:
     print("GATE FAILED:")
     for f in fails:
@@ -89,6 +95,7 @@ What each gate covers:
 4. **`reviewDecision != "CHANGES_REQUESTED"`** — if reviews aren't required by the repo, `reviewDecision` comes back empty and the user's go-ahead (why this skill was invoked) is the approval. If reviews ARE required, gate 3 (`BLOCKED`) enforces them.
 5. **No failing and no still-running CI** — the gate blocks both: `develop` requires the **`Full test suite`** check (`.github/settings.yml`), so GitHub now refuses a red or unfinished run by itself — this evaluator is defense in depth, not the only gate, and it still catches what GitHub does not: an unchecked checklist, a wrong base, a draft. Do not relax it on the strength of the branch rule; the rule lives in a file one PR can change. `coverage.yml` runs the suite on **`pull_request` into `develop`/`main`** (only — no `push` trigger, so no redundant post-merge run), and a failing suite fails that check; an empty rollup means it has not registered yet, which is also a wait. CI is the only place the whole suite runs (`CLAUDE.md`).
 6. **Checklist complete** — the PR description has no unchecked `- [ ]` task-list items (GitHub does not enforce these, so the gate parses the body).
+7. **The whole-branch read covers the head** — the body's `Read before push by: <model> at <sha>` line names a model and a sha that is the PR head; a line missing, still carrying the `<model>` placeholder, or naming an earlier tip fails. A commit pushed after the read moves the head off the line, so the delta is read (or the branch re-read) and the line updated before merge.
 
 **If any gate fails:** report which one and why, ask the user to resolve it manually (update the branch, fix CI, get the review, check the boxes), then **STOP**. Do not merge.
 
