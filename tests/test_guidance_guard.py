@@ -131,6 +131,10 @@ def test_a_workflow_s_listed_text_is_ambient_and_its_body_is_not():
     quoted = 'export const meta = {\n  name: "review",\n  description: \'the caller\\\'s model\',\n  whenToUse: "a \\"quoted\\" range",\n}\nreturn 1\n'
     listed = ("review", "the caller's model", 'a "quoted" range')
     assert guard.ambient_bytes(WORKFLOW, quoted) == sum(len(v.encode()) + 1 for v in listed)
+    one_line = "export const meta = { name: 'x', description: 'a one-line meta', whenToUse: `now` }\nreturn 1\n"
+    assert guard.ambient_bytes(WORKFLOW, one_line) == sum(len(v.encode()) + 1 for v in ("x", "a one-line meta", "now"))
+    escapes = "export const meta = {\n  name: 'x',\n  description: 'caf\\u00e9 \\x41\\n',\n}\n"
+    assert guard.ambient_bytes(WORKFLOW, escapes) == len("x".encode()) + 1 + len("café A\n".encode()) + 1
 
 
 def test_a_new_corpus_file_counts_whole_and_a_deleted_one_counts_as_a_shrink():

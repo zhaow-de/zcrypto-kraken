@@ -12,7 +12,21 @@ SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
-META_FIELD = re.compile(r"^\s*(name|description|whenToUse):\s*(['\"])((?:(?!\2)[^\\]|\\.)*)\2", re.M)
+META_FIELD = re.compile(r"(?:^|[{,])\s*(name|description|whenToUse):\s*(['\"`])((?:(?!\2)[^\\]|\\.)*)\2", re.M | re.S)
+JS_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", re.S)
+_SIMPLE = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
+
+
+def _unescape(value: str) -> str:
+    """A JavaScript string literal's escapes resolved to the characters the harness lists."""
+    return JS_ESCAPE.sub(
+        lambda m: (
+            chr(int(m.group(1)[1:], 16)) if m.group(1)[0] in "ux" and len(m.group(1)) > 1 else _SIMPLE.get(m.group(1), m.group(1))
+        ),
+        value,
+    )
+
+
 GROWTH_LINE = re.compile(r"^Ambient grows by (\d+) bytes: \S", re.M)
 UNIVERSAL = re.compile(r"\b(every|never|always|only|any|cannot)\b", re.I)
 CODE_SPAN = re.compile(r"`[^`]*`")
@@ -50,7 +64,7 @@ def ambient_bytes(path: str, text: str) -> int:
     if WORKFLOW_FILE.match(path):
         head, _, _ = text.partition("\n}")  # the meta literal is the file's first object; a pure literal by the authoring reference
         return sum(
-            len(re.sub(r"\\(.)", r"\1", value).encode()) + 1 for _, _, value in META_FIELD.findall(head)
+            len(_unescape(value).encode()) + 1 for _, _, value in META_FIELD.findall(head)
         )  # the listed text, escapes resolved
     return 0
 
