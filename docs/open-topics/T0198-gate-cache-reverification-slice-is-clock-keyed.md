@@ -76,8 +76,11 @@ reasoned about starvation in this exact spot and about a different mechanism.
    `ssh nas 'sudo /usr/local/bin/docker logs zcrypto-archive-pull --since 24h'` — the absolute path
    is not optional, since `docker` is off that host's non-interactive ssh PATH and a bare `docker`
    reads as "no containers". The loop logs one `pull complete` per
-   channel and five are wired, so take the timestamps of ONE channel — `grep 'pull complete
-   source=.*capture'` — whose consecutive gaps are the period. Read the distribution, not one gap. Under ~65 min the worst-case gap is ~48 h and inside the
+   channel and five are wired, so the gaps between consecutive lines are within-cycle, not the
+   period. The line carries `source=<user@host:>` and never the channel name, so pick one source
+   out of the output and filter on that — `awk '/pull complete source=/{print $3}' | sort | uniq -c`
+   lists which are present. One source's consecutive gaps are the period; read their distribution,
+   not one gap. Under ~65 min the worst-case gap is ~48 h and inside the
    alert bar; in the 72-90 min band a fixed set of slices is never visited.
 2. **Decide where the counter lives.** A counter in the cache file resets on a recreate; a counter
    derived from a persisted run ordinal does not, at the cost of another field in the cache schema
