@@ -1,6 +1,6 @@
 # Hosts — disk, load, reboots and the textfile transport
 
-You are here because **an alert fired in Slack**. These are the two capture VPSes as *machines* — `zcrypto` (primary, also the trade engine) and `zcrypto-red` (secondary) — not the venue feed and not the archive. Every signal below is produced by Alloy's embedded node-exporter (`prometheus.exporter.unix` in `infra/ansible/roles/capture/files/config.alloy`): the `filesystem`, `loadavg`/`cpu` and `textfile` collectors, the last of them reading `.prom` files that small systemd oneshots write into `/var/lib/zcrypto-node-textfile`. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack**. These are the two capture VPSes as *machines* — `zcrypto` (primary, also the trade engine) and `zcrypto-red` (secondary) — not the venue feed and not the archive. Every signal below is produced by Alloy's embedded node-exporter (`prometheus.exporter.unix` in `infra/ansible/roles/capture/files/config.alloy`): the `filesystem`, `loadavg`/`cpu` and `textfile` collectors, the last of them reading `.prom` files that small systemd oneshots write into `/var/lib/zcrypto-node-textfile`.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -32,14 +32,14 @@ The spool alone should not get you here: it is a bounded ring, pruned daily. Fir
 
 1. **Look at the filesystem.** `ssh zcrypto` (primary) or `ssh red` (secondary), then `df -h /`.
 2. **Find the consumer — with `sudo`.** `sudo du -xsh /var/lib/zcrypto-capture /var/log /tmp "$(sudo docker info --format '{{.DockerRootDir}}')" 2>/dev/null | sort -h`. The `sudo` is load-bearing: the spool is `0750 zcrypto-data:zcrypto-data`, so an unprivileged `du`/`find` reads it as **empty** and you conclude the spool is innocent when it is not. Ask docker for its own root dir rather than assuming `/var/lib/docker`.
-3. **Prove the prune ring is alive.** `systemctl list-timers 'zcrypto-*'`, then `journalctl -u zcrypto-capture-prune -n 3 --no-pager` and, on the primary, `journalctl -u zcrypto-engine-journal-prune -n 3 --no-pager`. `deleted=0` on a single day is normal; `deleted=0` day after day while the tree grows means the ring is broken. The capture prune publishes no metric, so that journal line is its whole evidence; the engine-journal prune also publishes `zcrypto_engine_journal_prune_deleted_days` and `zcrypto_engine_journal_prune_last_run_timestamp_seconds`, readable by value.
+3. **Prove the prune ring is alive.** `systemctl list-timers 'zcrypto-*'`, then `journalctl -u zcrypto-capture-prune -n 3 --no-pager` and, on the primary, `journalctl -u zcrypto-engine-journal-prune -n 3 --no-pager`. `deleted=0` on a single day is normal; `deleted=0` day after day while the tree grows means the ring is broken. The capture prune publishes no metric, so there is nothing of it to read by value; the engine-journal prune also publishes `zcrypto_engine_journal_prune_deleted_days` and `zcrypto_engine_journal_prune_last_run_timestamp_seconds`, readable by value.
 4. **Images dominating: use the script, never a blanket prune.** From the workstation, `uv run python infra/scripts/prune-host-images.py <host>`, then the same command with `--apply`; its `--help` states the keep-set and when to pass `--keep`. **Never `docker image prune -a`**: it takes the recorded rollback digests, which is how a bad re-pin becomes unrecoverable.
 5. **Never hand-delete inside `/var/lib/zcrypto-capture`.** The prune script's name globs are the entire safety argument: `<HH>.part####.parquet` (the live hour), `<HH>.held####.parquet` (quarantined rows), `<HH>.parquet.merging` and `*.corrupt*` all end up looking deletable and none of them is. If the spool must shrink now, run the sanctioned deleter: `sudo systemctl start zcrypto-capture-prune.service`.
 6. **Confirm by value, not by silence.** From the workstation: `uv run python infra/scripts/grafana-query.py 'node_filesystem_avail_bytes{host="<host>",mountpoint="/"} / node_filesystem_size_bytes{host="<host>",mountpoint="/"}'` and read a number above `0.1`. **`(no series)` is a FAIL, not a zero** — it means the filesystem collector or the host's telemetry is gone, and this rule is `noDataState: OK`, so it would sit green through exactly that.
 
 ### Retire when
 
-`zcrypto-capture-disk-low` is absent from `infra/grafana/alerts.yaml`, or `capture_data_dir` (`infra/ansible/group_vars/capture_host/vars.yml`) is no longer on the root filesystem — the rule's `mountpoint="/"` selector then no longer names the spool and the section describes the wrong disk.
+`zcrypto-capture-disk-low` is absent from `infra/grafana/alerts.yaml`, or `df --output=target /var/lib/zcrypto-capture | tail -n 1` on a capture host prints anything but `/` — the rule's `mountpoint="/"` selector then no longer names the spool (`capture_data_dir`, `infra/ansible/group_vars/capture_host/vars.yml`) and the section describes the wrong disk.
 
 ______________________________________________________________________
 
@@ -55,7 +55,7 @@ The value is already normalized — the rule divides `node_load1` by that host's
 
 ### What it means
 
-Sustained saturation, not a spike. The hourly NAS archive pull (an `rrsync` forced-command session against the spool) lasts seconds, and the rule's 10-minute hold outlasts it by construction, so this is a runaway or a thrashing host.
+Sustained saturation, not a spike. The hourly NAS archive pull (an `rrsync` forced-command session against the spool) is short enough that the rule's 10-minute hold outlasts it, so this is a runaway or a thrashing host; if the pull itself is the consumer, step 4 finds it.
 
 **Do not take core counts, baselines or container CPU limits from any prose — read them.** The two hosts differ in core count, and their capture containers carry different `capture_cpu_limit`/`capture_memory_limit` values (a `host_vars/zcrypto-red` override of the role default); every one of those numbers rots without the file that states it changing. The series answer today's question:
 
@@ -67,7 +67,7 @@ Sustained saturation, not a spike. The hourly NAS archive pull (an `rrsync` forc
 1. **See who is spending the CPU.** `ssh <host>`, then `uptime; top -b -n1 -o %CPU | head -20; sudo docker stats --no-stream`.
 2. **Is it the capture daemon?** If `zcrypto-capture` is pinned at its own CPU limit, read its log for a storm rather than restarting it — Grafana Explore, Loki `{host="<host>", container="capture", level=~"WARNING|ERROR"}` over the last hour. **A restart is not a load remedy**: it drops every pair and re-snapshots, which costs a gap on an unbackfillable stream.
 3. **Is it patching?** `ps -eo pid,etime,cmd | grep -E '[a]pt|[d]pkg|[u]nattended'`. Wait it out; then expect `zcrypto-capture-reboot-pending` to follow.
-4. **Is it the hourly pull?** `ps -eo etime,cmd | grep '[r]sync'`. Seconds is normal; a session that has been running for many minutes is a stuck pull, and the finding belongs to the NAS side.
+4. **Is it the hourly pull?** `ps -eo etime,cmd | grep '[r]sync'`. A session whose `etime` has outlived the rule's 10-minute hold is a stuck pull, and the finding belongs to the NAS side.
 5. **Is it I/O rather than CPU?** `vmstat 1 5` — a high `wa` column with modest CPU means the disk, and the next thing to read is `zcrypto-capture-disk-low` above.
 6. **Confirm capture never actually degraded**, which is the only question that matters here: `uv run python infra/scripts/grafana-query.py 'zcrypto_capture_seconds_since_last_book_message{host="<host>"}'` — every pair small and moving. `(no series)` is a FAIL.
 
@@ -87,8 +87,6 @@ A warning-severity Grafana alert (*Capture · reboot pending (attended)*), one i
 
 The gauge is published every 15 minutes by `zcrypto-reboot-check.timer` as an **explicit 0 or 1**, never as an absent series. It will keep firing until a human reboots the host. That persistence is the design, not a nuisance.
 
-**The reboot discipline lives in `docs/reference/fleet.md` § Reboots**, which the alert summary names. The procedure is restated below so you need neither file at 03:00.
-
 ### What it means
 
 A kernel or other critical patch installed. Nothing is broken and nothing is degrading. The capture VPSes run unattended-upgrades with `Automatic-Reboot "false"` (`base_unattended_upgrades_automatic_reboot: "false"` in `infra/ansible/group_vars/capture_host/vars.yml`), so patches install themselves and the reboot is a human act — precisely so that unbackfillable L2 capture, and on the primary the live trade engine, are never restarted unwatched. This rule is what makes that flip safe: it is the only thing that notices the flag.
@@ -99,18 +97,10 @@ A kernel or other critical patch installed. Nothing is broken and nothing is deg
 
 **Rebooting is an attended action.** Schedule it; do not fire it off from the page.
 
-1. **Check the venue's published maintenance calendar first** — `https://status.kraken.com/api/v2/scheduled-maintenances.json`, the entries carrying `WebSocket` or `REST` in `components` **or in the entry's `name` (an API, not a ticker)**; an empty `components` array is not an absent impact. Never reboot inside one: the reboot gap landing inside a venue outage conflates two loss sources exactly where the ledger is least readable. Windows are published only days ahead, so an empty feed is never evidence the window is clear — check at planning time **and again immediately before**.
-2. **Secondary first, primary second** — `ssh red`, then `ssh zcrypto`. Same canary logic as an image rollout: if the kernel bricks the secondary, the primary is never touched.
-3. **Pick the slot**: at least 1 h from any 4-hourly engine boundary (00/04/08/12/16/20 UTC), off the hour boundary itself, the primary in the measured book-traffic trough and right after a completed engine cycle, and the two hosts at least 1 h apart. Measure the trough from the archive; do not guess it.
-4. **On the primary, additionally read the engine's state before you go**: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_armed' 'zcrypto_exec_kill_tripped'`. A reboot landing mid-order-submission is an untested path — that is the open sub-item of `T0027` — so with live order submission armed, wait for the gap after a completed cycle rather than reasoning about it.
-5. **Expect a ~83 s capture gap.** Both containers come back on their own: `zcrypto-capture.service` runs compose attached with `Restart=always`, and the containers themselves are `restart: unless-stopped`.
-6. **Verify by outcome before touching the next host** — this is what makes secondary-first mean anything:
-   - every book stream's next `<HH>.parquet` begins at `:00:00.0x`, read from a **pulled** copy (the hosts have no parquet reader);
-   - the NAS archive-pull's next hourly loop reports `failed=0` — that is the manifest verification;
-   - `infra/scripts/continuity.py` on a pulled copy shows no new truncated hours;
-   - on the primary additionally, the next `cycle-<HH>.json` lands with `completed_at` inside `[boundary, boundary+30 min]`;
-   - the restart marker is the container's own timestamp — `sudo docker inspect zcrypto-capture --format 'started={{.State.StartedAt}} restarts={{.RestartCount}}'`, scoped fields only — never the time your `reboot` command returned.
-7. **The alert clears itself.** The timer's `OnBootSec=2min` republishes a `0` within about two minutes of boot. If it does not clear, the probe has stopped publishing rather than the flag persisting — go to the textfile-transport section below.
+1. **The procedure is `docs/reference/fleet.md` § Reboots** — the venue's maintenance calendar, read at planning time and again immediately before; secondary first, then primary; the slot; and the verify-by-outcome list owed before the next host. It is the contract and is not restated here.
+2. **On the primary, additionally read the engine's state before you go**: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_armed' 'zcrypto_exec_kill_tripped'`. A reboot landing mid-order-submission is an untested path, so with live order submission armed, wait for the gap after a completed cycle rather than reasoning about it.
+3. **Expect a ~83 s capture gap.** Both containers come back on their own: `zcrypto-capture.service` runs compose attached with `Restart=always`, and the containers themselves are `restart: unless-stopped`.
+4. **The alert clears itself.** The timer's `OnBootSec=2min` republishes a `0` within about two minutes of boot. If it does not clear, the probe has stopped publishing rather than the flag persisting — go to the textfile-transport section below.
 
 ### Retire when
 
@@ -144,7 +134,7 @@ Dashboards: `zcrypto-fleet` panels 501 *Textfile age — did the timer run (capt
 
 The path, end to end:
 
-- a systemd **oneshot** writes a `.prom` atomically (`mktemp` beside the target, then `mv`) into `/var/lib/zcrypto-node-textfile` — `0755 root:root`;
+- a systemd **oneshot** writes a `.prom` atomically (`mktemp` beside the target, then `mv`) into `/var/lib/zcrypto-node-textfile` — `0755 root:root`. Three publish there: `reboot.prom` (every 15 min), `clock-offset.prom` (every 5 min) and, on the primary only, `engine-journal-prune.prom` (daily). `clock-offset.prom` is watched by its own **critical** rule on its own page, [`capture.md#zcrypto-capture-clock-exporter-stale`](capture.md#zcrypto-capture-clock-exporter-stale), and while it is stale the leading-clock detector is blind;
 - **Alloy's node-exporter textfile collector** reads that directory through the read-only `/:/host/root:ro` mount, running as the non-root `zcrypto-alloy` user;
 - a **keep-regex** in `infra/ansible/roles/capture/files/config.alloy` decides which series reach Grafana Cloud at all.
 
@@ -157,19 +147,19 @@ What is at stake: the **attended-reboot safety net** — `node_reboot_required`,
 - A **deleted** `.prom` makes its mtime series vanish rather than go stale. `max by (host)` simply drops that dimension and `noDataState: OK` swallows the empty result, so neither staleness rule fires. For `reboot.prom` the deletion is still caught, because `node_reboot_required` disappears with it and the `count()` rule sees that. For `engine-journal-prune.prom` the section below catches it: `zcrypto-engine-journal-prune-dead` reads the prune's own completion gauge under `noDataState: Alerting`.
 - `zcrypto-capture-textfile-missing` has no `or vector(0)` fallback, so it catches **one** host going silent. If both stop publishing `node_reboot_required`, the query returns nothing and `noDataState: OK` keeps it green. If both hosts' telemetry is dark, the alloy-dark canaries page instead; if the whole textfile collector failed, `zcrypto-node-collector-failed` does.
 
-`zcrypto-capture-prune` publishes no `.prom` at all and is outside all four rules — its only liveness trace is its journald line in Loki (`{host="<host>", container="zcrypto-capture-prune"}`).
+`zcrypto-capture-prune` publishes no `.prom` at all and is outside all four rules — it has **no metric-plane trace**. Its evidence is its journald line, in Loki (`{host="<host>", container="zcrypto-capture-prune"}`) or on the host (`journalctl -u zcrypto-capture-prune -n 3 --no-pager`), and the unit's own result: `systemctl show -p Result,ExecMainExitTimestamp zcrypto-capture-prune.service`.
 
 ### What to do
 
 1. **Name the host and the file.** `unreadable` and both staleness rules carry `host`; `missing` gives you a count, so compare both hosts. `oneoff-textfile-stale` is the primary.
 2. **Ask whether the timer ran.** `ssh <host>`, then `systemctl list-timers 'zcrypto-*'` and `systemctl status zcrypto-reboot-check.timer zcrypto-reboot-check.service --no-pager`. For the daily one, on the primary: `systemctl status zcrypto-engine-journal-prune.timer --no-pager` and `journalctl -u zcrypto-engine-journal-prune -n 3 --no-pager`.
 3. **Look at the files.** `ls -la /var/lib/zcrypto-node-textfile/` — every `.prom` must be world-readable (`0644`). `mktemp` creates `0600` and `mv` preserves it, so a publisher missing an explicit `chmod` publishes root-only and the non-root collector gets EACCES: the metric vanishes while everything else looks fine.
-   **Do not fix that with `chmod` on the host.** The next run of the timer recreates the file at whatever mode its script sets, so a host `chmod` buys you one interval and hides the defect. The fix is the **script in the repo** — `infra/ansible/roles/capture/files/zcrypto-reboot-check.sh` and `infra/ansible/roles/engine/files/zcrypto-engine-journal-prune.sh`, both of which `chmod 0644` their temp file today — followed by an attended converge.
-4. **Read the content**: `cat /var/lib/zcrypto-node-textfile/*.prom`. Malformed text is the parse leg of the unreadable rule; `node_reboot_required 0` or `1` plus its `# HELP`/`# TYPE` lines is what healthy looks like.
+   **Do not fix that with `chmod` on the host.** The next run of the timer recreates the file at whatever mode its script sets, so a host `chmod` buys you one interval and hides the defect. The fix is the **script in the repo** — `infra/ansible/roles/capture/files/zcrypto-reboot-check.sh`, `infra/ansible/roles/capture/files/zcrypto-clock-offset.sh` or `infra/ansible/roles/engine/files/zcrypto-engine-journal-prune.sh`, all three of which `chmod 0644` their temp file today — followed by an attended converge.
+4. **Read the content**: `cat /var/lib/zcrypto-node-textfile/*.prom`. Malformed text is the parse leg of the unreadable rule. Healthy is a value line under each `# HELP`: `node_reboot_required 0` or `1` from `reboot.prom`; `zcrypto_clock_offset_seconds` and `zcrypto_clock_synchronised` from `clock-offset.prom`, the file `zcrypto-capture-clock-exporter-stale` watches; on the primary, the four `zcrypto_engine_journal_prune_*` from `engine-journal-prune.prom`.
 5. **Force a fresh publish of the reboot probe**: `sudo systemctl start zcrypto-reboot-check.service`. It is a `stat` plus a three-line atomic write under `ProtectSystem=strict` with only the textfile directory writable — safe at any hour. Then re-read the result from the workstation: `uv run python infra/scripts/grafana-query.py 'node_reboot_required{host="<host>"}' 'node_textfile_mtime_seconds{host="<host>", file=~".*/reboot.prom"}'`. **`(no series)` is a FAIL, never a zero.**
    **Do not casually start `zcrypto-engine-journal-prune.service` just to refresh its file** — that is a real delete of aged journal day-dirs on the engine host. It is idempotent and floored at the newest `engine_journal_retention_days`, but read its journal line first and know what you are running.
-6. **File fresh and `0644`, series still absent → suspect the keep-regex.** Compare the deployed config with the repo: `sha256sum /etc/zcrypto-capture/alloy/conf/config.alloy` on the host against `sha256sum infra/ansible/roles/capture/files/config.alloy` in the checkout. The names that must be in the keep list are `node_reboot_required`, `node_textfile_scrape_error`, `node_textfile_mtime_seconds` and the four `zcrypto_engine_journal_prune_*`. A repo edit reaches the host only through an **attended converge** of that host, and the capture role's Alloy block is gated on `capture_alloy_digest`, which has no default — a converge that omits it skips the config copy silently. (Any converge of the host also asserts this checksum, so a drift you find here is a drift a converge would have refused.)
-7. **Read the collector's own complaint**: `sudo docker logs grafana-alloy --since 1h 2>&1 | grep -i textfile`. If the collector itself is failing rather than one file, `zcrypto-node-collector-failed` will be firing too and every one-off timer's metrics are gone at once.
+6. **File fresh and `0644`, series still absent → suspect the keep-regex.** Compare the deployed config with the repo: `sha256sum /etc/zcrypto-capture/alloy/conf/config.alloy` on the host against `sha256sum infra/ansible/roles/capture/files/config.alloy` in the checkout. The names that must be in the keep list are `node_reboot_required`, `node_textfile_scrape_error`, `node_textfile_mtime_seconds`, the four `zcrypto_engine_journal_prune_*`, and `zcrypto_clock_offset_seconds` / `zcrypto_clock_synchronised`, without which `zcrypto-capture-clock-skew` (critical) is blind. A repo edit reaches the host only through an **attended converge** of that host, and the capture role's Alloy block is gated on `capture_alloy_digest`, which has no default — a converge that omits it skips the config copy silently. (Only a converge that **omits** the digest asserts this checksum, refusing the host on a mismatch; one carrying the digest copies the file instead of checking, and a host that has never run Alloy asserts nothing — so the converge that clears the drift is the one carrying the digest.)
+7. **Read the collector's own complaint**: `sudo docker logs grafana-alloy --since 1h 2>&1 | grep -i textfile`. If the collector itself is failing rather than one file, `zcrypto-node-collector-failed` fires too, after its own 15-minute hold, and every publisher's metrics are gone at once — `reboot.prom`, `engine-journal-prune.prom` and `clock-offset.prom`. An absent clock pair reads as healthy to `zcrypto-capture-clock-skew` and as NoData → OK to `zcrypto-capture-clock-exporter-stale` (both critical), so the leading-clock detector is blind, silently, until the collector is back.
 8. **Scope every inspect.** `sudo docker inspect grafana-alloy --format '{{json .Mounts}}'`, `--format '{{.State.Status}} {{.RestartCount}}'`. Never the whole `.Config` and never `docker exec … env`: the primary holds the live trade key and the Loki push password in container env.
 
 ### Retire when
@@ -184,7 +174,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** alert on the capture primary: `zcrypto_engine_journal_prune_last_run_timestamp_seconds` is either more than 26 hours behind the clock, or gone from Grafana entirely. The daily prune runs at 01:23 UTC, so 26 h is one missed run plus margin. The gauge is written only at the end of a completed run, which is why this rule reads it instead of the `.prom` file's mtime — a restore or an rsync refreshes an mtime over a prune that never ran.
+A **warning** alert on the capture primary: `zcrypto_engine_journal_prune_last_run_timestamp_seconds` is either more than 26 hours behind the clock, or gone from Grafana entirely. The daily prune runs at 01:23 UTC, so 26 h is one missed run plus margin. Dashboard: `zcrypto-engine`, panel 41 *Journal prune freshness — script clock vs published file age*. The gauge is written only at the end of a completed run, which is why this rule reads it instead of the `.prom` file's mtime — a restore or an rsync refreshes an mtime over a prune that never ran.
 
 ### What it means
 

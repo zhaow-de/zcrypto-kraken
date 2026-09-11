@@ -3887,7 +3887,7 @@ rules:
       # host's core count (count of idle-mode node_cpu_seconds_total series) makes one threshold mean
       # the same on both, and `on(host) group_left()` matches the per-host count onto load1's richer
       # label set. > 1.5 per core sustained 10m is clear saturation (a runaway or thrashing process),
-      # not the seconds-long hourly pull spike, which `for: 10m` outlasts.
+      # not the hourly pull spike, which `for: 10m` outlasts.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
