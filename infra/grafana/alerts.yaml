@@ -213,8 +213,9 @@ rules:
     # The gate cache (spec 00060) skips replay_cycle on a fingerprint hit -- and that replay is the
     # ONLY place the journal's parquet bytes are re-hashed (the NAS pull uses --no-verify and
     # delegates to it). Spec 00062 therefore force-replays a rotating ~1/24 slice each run, so the
-    # whole journal is re-verified within 24 runs -- about 26 h at the loop's measured 64-minute
-    # period. THIS RULE IS THAT MECHANISM'S ONLY WITNESS: if the rotation stops, a stalled cache is
+    # whole journal is re-verified within 24 runs while the container runs uninterrupted -- about
+    # 26 h at the loop's measured 64-minute period -- and within 47 across one restart, which keeps
+    # the cache but resets the run counter. THIS RULE IS THAT MECHANISM'S ONLY WITNESS: if the rotation stops, a stalled cache is
     # indistinguishable from a healthy one except through this number. Note save_cache logs a
     # warning and continues on write failure, so a full disk presents as a working cache with
     # invalidated=0 and a quietly-ageing age here (T0077).
@@ -243,11 +244,14 @@ rules:
           refId: C
           conditions:
             # 3d. A full rotation is 24 runs -- ~26 h at the measured 64-minute period -- so this is
-            # a little under three sweeps of slack: late enough that a container recreate (which
-            # resets the counter to 0) never pages, early enough that a genuinely stopped rotation
-            # surfaces long before the evidence is meaningfully stale. The slack is in RUNS, not
-            # hours, so it shrinks if the loop slows: past a ~3 h period one sweep exceeds 3 d and a
-            # healthy rotation would page. Re-derive this threshold if the pull interval changes.
+            # a little under three sweeps of slack while the container runs uninterrupted. The case
+            # that sets the limit is a plain RESTART: it keeps the cache but resets the run counter,
+            # and the worst gap across one is 47 runs (~50 h at 64 min) -- still inside 3 d. A
+            # recreate is the harmless case: it discards the cache and the cold replay re-stamps
+            # everything. The slack is in RUNS, not hours, so it shrinks as the loop slows: past a
+            # ~92-minute period one restart mid-sweep pages a healthy rotation, and past ~3 h no
+            # restart is needed. Early enough, at today's period, that a genuinely stopped rotation
+            # surfaces long before the evidence is stale. Re-derive this if the pull interval changes.
             - evaluator: {type: gt, params: [259200]}
     # OK, NOT Alerting -- deliberately unlike its zcrypto-gate siblings. gate-export emits this
     # metric only when --cache is active and non-empty (the NAS archive-pull loop passes `--cache`
@@ -258,7 +262,7 @@ rules:
     execErrState: Alerting
     # 15m rather than the 5m its zcrypto-gate siblings use: the underlying value is monotonic and the
     # threshold is 3-day-scale, so a longer window costs no meaningful detection time while absorbing
-    # a restart or a skipped hour without a transient page.
+    # a restart or a skipped run without a transient page.
     for: 15m
     annotations:
       summary: "The gate cache's oldest cycle has not been re-verified for over 3 days -- the rotating re-verification has stopped, so cached gate verdicts are being served against parquet bytes nobody has re-hashed. Check zcrypto_gate_cache_replayed (should be >0 every run) and the NAS disk. Runbook: infra/runbooks/gate.md#zcrypto-gate-cache-reverify-stalled"
