@@ -70,7 +70,7 @@ Neither counter carries a `pair` label.
 
 Both counters live in `cli/capture/ws_client.py` and describe the resubscribe leg the desync ladder depends on.
 
-**Rate.** `resubscribes_total` increments in `resubscribe_book()` on every unsubscribe frame sent, rung 1 and each rung-2 retry alike. The baseline is zero, so any resubscribe is a genuine venue or network event, and more than one a day means the rate is re-elevating or a pair is flapping desync/heal. A fast flapper is invisible to the stuck-pair gauge at a 60 s scrape; this rule sees it through the counter instead.
+**Rate.** `resubscribes_total` increments in `resubscribe_book()` on every unsubscribe frame sent, rung 1 and each rung-2 retry alike. The alert summary's `Post-2026-07-13` names the date the book was made congruent with Kraken's depth window (T0008), which ended the routine desync churn, so a rate above zero after it is a genuine event rather than the old background. The baseline is zero, so any resubscribe is a genuine venue or network event, and more than one a day means the rate is re-elevating or a pair is flapping desync/heal. A fast flapper is invisible to the stuck-pair gauge at a 60 s scrape; this rule sees it through the counter instead.
 
 **Failing.** Two distinct faults, summed because the response is the same:
 
