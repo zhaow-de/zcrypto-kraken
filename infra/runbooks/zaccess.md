@@ -1,36 +1,10 @@
 # Bridgehead runbooks — the internet access host
 
-You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to converge the bridgehead, revoke a client certificate or ship its Alloy config: the three procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to revoke a client certificate or ship its Alloy config: the two procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
 
 Everything here is one Linode VPS, `zaccess`, reached as `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; the other end of its WireGuard tunnel is `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages under systemd — and holds no capture data: everything on it is re-issuable.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
-
-______________________________________________________________________
-
-<a name="zaccess-converge"></a>
-
-## zaccess-converge — PROCEDURE: converging the bridgehead needs a single-identity SSH agent
-
-### What you are seeing
-
-Nothing fired. You are about to converge the bridgehead — `site.yml --limit zaccess --tags access` — or a converge of it died on `Too many authentication failures`.
-
-### What it means
-
-Every converge of this host needs an agent holding **only its own key**; `converge.sh`, both of whose passes go through `run.sh`, cannot reach it, so no converge here lands in `docs/reference/deploy-log.jsonl`. `ssh_hardening` leaves `ssh_max_auth_retries` at its `devsec.hardening` default, so sshd here offers `MaxAuthTries 2`, and `infra/ansible/scripts/run.sh` loads all five vaulted fleet deploy keys into one agent. Three of the five belong to hosts that run the `hardening` role — `zcrypto`, `zcrypto-red` and this one; the ops node and the NAS never run it, so their position does not matter — and two slots cannot serve three, so one always loses: `run.sh` elects this one by loading `files/deploy_zaccess_ed25519` **last**, both tries go to the capture hosts' keys, and the run dies.
-
-### What to do
-
-From `infra/ansible/`, where `ansible.cfg` supplies the vault password on its own:
-
-1. `eval "$(ssh-agent -s)"; uv run ansible-vault view --vault-password-file scripts/vault-pass.sh files/deploy_zaccess_ed25519 | ssh-add -`
-2. `ANSIBLE_SSH_EXTRA_ARGS="-o IdentitiesOnly=yes -o IdentityFile=$PWD/files/deploy_zaccess_ed25519.pub" uv run ansible-playbook site.yml --limit zaccess --tags access` — `IdentitiesOnly=yes` offers nothing without an `IdentityFile`, and the `.pub` is enough; name the tag: nothing refuses an un-tagged run on this host.
-3. `ssh-agent -k` — this agent has no exit trap the way `run.sh`'s does.
-
-### Retire when
-
-`infra/ansible/roles/hardening/` sets `ssh_max_auth_retries` explicitly above the number of keys `infra/ansible/scripts/run.sh` loads, or `run.sh` stops loading every fleet key into one agent — either one ends the collision this procedure exists for.
 
 ______________________________________________________________________
 
@@ -49,7 +23,7 @@ The pins are PEMs in `infra/ansible/roles/access/files/pinned-leaves/`: `access_
 ### What to do
 
 1. **If `<name>.pem` is the only PEM under `pinned-leaves/`, issue its replacement first** — `infra/scripts/zaccess-client-cert.sh issue <new-name>` (it refuses a name that exists) — and converge that in before revoking. **The vault holds one bundle**: before you vault `<new-name>`'s, which the issue script's own next-step line tells you to do, extract `<name>`'s with `infra/scripts/zaccess-extract-client-cert.sh --name <name> --out-dir <dir>`, `<dir>` absolute because the script changes directory first — step 4 needs the two files it writes, so keep them past the script's "DELETE both local files", which means `<new-name>`'s, until step 4 is done; re-vaulting the replacement overwrites the slot.
-2. **Delete the PEM from the repo and converge** — `infra/ansible/roles/access/files/pinned-leaves/<name>.pem`, then `site.yml --limit zaccess --tags access` from the single-identity agent: [`zaccess-converge`](#zaccess-converge). This is the revocation; the steps below tidy up and prove it.
+2. **Delete the PEM from the repo and converge** — `infra/ansible/roles/access/files/pinned-leaves/<name>.pem`, then `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` from the workstation — the bridgehead converges like any other host, and the line lands in `docs/reference/deploy-log.jsonl`. This is the revocation; the steps below tidy up and prove it.
 3. **Remove the host copy** — `sudo rm /etc/caddy/pinned-leaves/<name>.pem` on the bridgehead, for hygiene.
 4. **Confirm by value — the revoked leaf is refused at the handshake.** `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reading 0 proves the render only. Using the bundle step 1 extracted — `<name>`'s, not `<new-name>`'s, which is still pinned and would answer — `openssl pkcs12 -in <dir>/zaccess-<name>.p12 -passin file:<dir>/zaccess-<name>.p12.pass -nodes -out leaf.pem`, then `timeout 30 curl -sv --cert leaf.pem https://tmux.zaccess.zhaow.me/ -o /dev/null 2>&1 | grep -c '^< HTTP/'` reads 0 and the trace ends in a TLS alert. A `< HTTP/` line means the running Caddy still pins the leaf: `sudo systemctl reload caddy`, re-run. Delete `leaf.pem` and the two extracted files after.
 
@@ -73,7 +47,7 @@ There is none: **the bridgehead's Alloy takes no digest operand and owes no bake
 
 ### What to do
 
-1. Edit `infra/ansible/roles/access/files/config.alloy`, then `site.yml --limit zaccess --tags access` from the single-identity agent: [`zaccess-converge`](#zaccess-converge).
+1. Edit `infra/ansible/roles/access/files/config.alloy`, then `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` from the workstation.
 2. Read the installed versions off the host: `dpkg-query -W alloy caddy`.
 
 ### Retire when
@@ -98,7 +72,7 @@ The bridgehead runs Alloy **natively** (an apt package, no docker) — the only 
 
 1. On the bridgehead: `systemctl status alloy` — is the unit running at all?
 2. `journalctl -u alloy --no-pager -n 100` — a config parse failure is the usual cause here: a hand edit the last converge overwrote, or a credentials rotation that never reached `/etc/default/alloy`. The config copy is ungated — every converge ships it, and no drift assert catches a bad render before it lands.
-3. `systemctl restart alloy` is the usual fix. If it will not stay up, `sudo grep -c '^GRAFANA_' /etc/default/alloy` — 6 means the credentials file is populated; fewer, or no file, means re-converge (`--limit zaccess --tags access`) to re-render it: [`zaccess-converge`](#zaccess-converge). Count that file, never print it — it carries the Grafana Cloud push passwords.
+3. `systemctl restart alloy` is the usual fix. If it will not stay up, `sudo grep -c '^GRAFANA_' /etc/default/alloy` — 6 means the credentials file is populated; fewer, or no file, means re-converge (`infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access`) to re-render it. Count that file, never print it — it carries the Grafana Cloud push passwords.
 4. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
 
 ### Retire when
