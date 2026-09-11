@@ -482,3 +482,21 @@ def test_the_uncounted_subcommand_lists_each_bullet_with_a_universal_and_no_coun
     proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted", str(page)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.splitlines() == [f"{page}:7 Never", f"{page}:12 Always"]
+
+
+def test_the_uncounted_subcommand_reads_every_page_it_is_given_and_refuses_none(tmp_path):
+    first, second = tmp_path / "a.md", tmp_path / "b.md"
+    first.write_text(BARE)
+    second.write_text(COUNTED + "- Always read the second page too.\n")
+    proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted", str(first), str(second)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [f"{first}:1 Never", f"{second}:2 Always"]
+
+
+def test_the_uncounted_subcommand_names_a_page_it_cannot_read_and_exits_2(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, str(_SCRIPT), "--uncounted", str(tmp_path / "missing.md")], capture_output=True, text=True
+    )
+    assert proc.returncode == 2 and "cannot read" in proc.stderr and "Traceback" not in proc.stderr
+    proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted"], capture_output=True, text=True)
+    assert proc.returncode == 2 and proc.stderr.startswith("usage:")

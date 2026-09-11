@@ -1,4 +1,4 @@
-"""The commit-msg guard over the always-loaded guidance: growth is stated in the message, and a universal is counted."""
+"""The commit-msg guard over the always-loaded guidance: growth is stated in the message, and a universal is counted. `--uncounted` reads the same universal test over any page as an instrument, refusing nothing."""
 
 from __future__ import annotations
 
@@ -269,9 +269,17 @@ def main(argv: list[str]) -> int:
             print(f"guidance-guard: a workflow the guard cannot measure -- {exc}", file=sys.stderr)
             return 2
         return 0
-    if argv[1:2] == ["--uncounted"] and len(argv) > 2:
-        for path in argv[2:]:  # the runbook instrument: one line per bullet, counted by the caller, never a refusal
-            for i, word in universals_without_a_count(pathlib.Path(path).read_text()):
+    if argv[1:2] == ["--uncounted"]:
+        if len(argv) == 2:
+            print("usage: guidance-guard.py --uncounted <page>...", file=sys.stderr)
+            return 2
+        for path in argv[2:]:  # the runbook instrument: one line per bullet carrying an uncounted universal, never a refusal
+            try:
+                text = pathlib.Path(path).read_text()
+            except OSError as exc:
+                print(f"guidance-guard: cannot read {path}: {exc.strerror or exc}", file=sys.stderr)
+                return 2
+            for i, word in universals_without_a_count(text):
                 print(f"{path}:{i} {word}")
         return 0
     if argv[1:2] == ["--range"] and len(argv) == 3 and ".." in argv[2] and "..." not in argv[2]:

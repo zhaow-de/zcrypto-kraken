@@ -148,8 +148,8 @@ c_runbook_sections_without_a_trigger() { uv run python infra/scripts/runbook-tri
 c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook-triggers.py retire-when; }
 
 # The runbook pages take the corpus's universal test (the owner, 2026-09-11): the guard's own bullet reader over the
-# sixteen pages, the README aside since the guard already judges it as a contract. An instrument until it reads 0.
-c_runbook_universals_without_a_count() { ls infra/runbooks/*.md | grep -v '/README\.md$' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }
+# tracked pages, the README aside since the guard already judges it as a contract. An instrument until it reads 0.
+c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | grep -v '/README\.md$' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }
 
 # Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
 # restart event per capture host it limits to (the capture_host group is both), and the count is the
