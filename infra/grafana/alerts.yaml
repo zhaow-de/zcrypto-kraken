@@ -4146,7 +4146,7 @@ rules:
       # near its ceiling where these do not. DELIBERATELY ABSENT: the ops liquidations poller
       # (`liquidations_app`), whose compose sets no memory limit, so there is no ceiling to measure
       # headroom against; it is covered by the leak and restart rules below. The NAS archive-pull
-      # container exposes no metrics at all.
+      # container is textfile-only -- not scraped as a process -- and carries no memory cap.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}

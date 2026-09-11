@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**. Find the section whose anchor matches the alert `uid`. Each section is written to be actioned without opening any other document.
 
-These four rules are one routine — memory watched continuously across the fleet, regardless of converges — and they cover every long-lived process the fleet scrapes: both capture daemons, the engine, the ops liquidations poller, and Alloy on all four hosts. They replaced the hand-scheduled RSS reads the capture-image bake used to carry.
+These four rules are one routine — memory watched continuously across the fleet, regardless of converges. They cover both capture daemons, the engine, the ops liquidations poller, and Alloy on the four containerised hosts; the bridgehead's Alloy runs as an apt package with no memory cap and ships no `process_*` series, so it is outside all four.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -14,11 +14,11 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's resident memory has been above **70 % of its container limit** for five minutes. The limits: `2g` for capture on `zcrypto`, `1g` for capture on `zcrypto-red`, and `1g` for the engine — the ansible vars that render each compose file. **Not covered by this rule**: Alloy, which has its own rule and its own bar (see the `zcrypto-fleet-alloy-memory-headroom` section below); the ops liquidations poller, whose compose sets no memory limit, so there is no ceiling to measure against — the leak and restart rules below do cover it; and the NAS `archive-pull` container, which exposes no metrics at all.
+A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's resident memory has been above **70 % of its container limit** for five minutes. The limits: `2g` for capture on `zcrypto`, `1g` for capture on `zcrypto-red`, and `1g` for the engine — the ansible vars that render each compose file. **Not covered by this rule**: Alloy, which has its own rule and its own bar (see the `zcrypto-fleet-alloy-memory-headroom` section below); the ops liquidations poller, whose compose sets no memory limit, so there is no ceiling to measure against — the leak and restart rules below do cover it; and the NAS `archive-pull` container, which is not scraped as a process — its only series are textfile ones — and carries no memory cap.
 
 ### What it means
 
-This is the slow-leak alarm, and it is the only one that matters: a leak's one real harm is the OOM-kill, and this says so before it happens, on any image, at any process age. The capture daemons sit near 7 % of their limit on a healthy day, so being here means a long climb. **Memory is watched as a fleet-wide routine, not as part of a rollout** — no bake owes a memory read, and this rule is what replaced those reads.
+This is the slow-leak alarm, and it is the only one that matters: a leak's one real harm is the OOM-kill, and this says so before it happens, on any image, at any process age. The capture daemons sit near 7 % of their limit on a healthy day, so being here means a long climb. **Memory is watched as a fleet-wide routine, not as part of a rollout** — no bake owes a memory read.
 
 ### What to do
 
@@ -43,13 +43,13 @@ A **warning** Grafana alert, one instance per host: Grafana Alloy there has been
 
 ### What it means
 
-**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Each host is read against **its own** cap — ops's is 1 GiB, the other three's is 512 MiB — so a raw RSS number means nothing until it is divided by that host's cap; panel 601 plots raw RSS, so do that division before judging. Ops's cap is twice the other three's, so a larger cap does not mean more headroom and raw MiB alone does not rank proximity to the bar. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
+**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Each host is read against **its own** cap — 1 GiB on ops, 512 MiB on the other three — and panel 601 plots raw RSS, so divide before judging: a larger cap is not more headroom, and raw MiB does not rank proximity to the bar. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
 
 If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark` reports it within ~10 min. **This is the warning before that**, not the detector for it.
 
 ### What to do
 
-1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. Steady state sits well below the bar on every host, and a host climbing toward 0.9 is RSS approaching the Go soft limit, heading for the cgroup limit — read the trend on panel 601 against that host's cap.
+1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. Steady state sits well below the bar on every host, and a host climbing toward 0.9 is RSS approaching the Go soft limit, heading for the cgroup limit.
 2. **Restart Alloy if it is climbing** — `sudo docker restart grafana-alloy` (on the NAS: `sudo /usr/local/bin/docker restart grafana-alloy`). Telemetry-only, seconds, and the `alloy-data` WAL and journal cursor survive it, so no backlog is re-shipped and no log tail is lost.
 3. **Repeated firing on one host is a capacity finding, not an incident** — its Alloy needs a larger `memory:` in that host's Alloy compose, which is an ansible change and a converge, not a restart.
 
@@ -71,7 +71,7 @@ A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's 
 
 The early warning, a week or more ahead of the memory-limit page from a normal starting size. It reads floors so the hour-boundary sawtooth cannot cause it, compares a day apart so a ~4 h step and its trough are both inside the window, and is switched off for the first 30 hours after a restart — so a new image's larger working set never pages as a leak during a bake, and the day-one warm-up ramp is never compared against a converge-time cold floor.
 
-The bar is provisional: no real leak has ever been measured on this fleet. Healthy day-scale drift measured 2026-08-23/24 was 2.7–3.6 MiB per 8 h, an order below it.
+The bar is provisional: no real leak has ever been measured on this fleet, and healthy drift sits well inside it.
 
 ### What to do
 
@@ -95,14 +95,14 @@ A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's 
 
 ### What it means
 
-**If a converge or an Alloy bump just ran on that host, this is that action.** `job` names the daemon — a capture or engine daemon, the ops poller, or Alloy itself (`integrations/self`) — and the action's own record in the channel needs nothing. **If nothing was converged, the daemon was OOM-killed or crashed and came back on its own** — and this is the only signal for that: the container is back in seconds, the dead-man keeps pinging, and the log-dead rules never see a gap that short. There is no container-restart metric on these hosts, so this rule reads the same fact from inside the process.
+**If a converge or an Alloy bump just ran on that host, this is that action.** `job` names the daemon — a capture or engine daemon, the ops poller, or Alloy itself (`integrations/self`). It fires ≈2–3 min after the restart and clears on its own ≈15 min after it, once `changes(…[15m])`'s window holds no sample from before the restart: one firing that clears is the action's own record and needs nothing; a second firing on the same host with no action from you is a crash loop. **If nothing was converged, the daemon was OOM-killed or crashed and came back on its own** — and this is the only signal for that: the container is back in seconds, the dead-man keeps pinging, and the log-dead rules never see a gap that short. There is no container-restart metric on these hosts, so this rule reads the same fact from inside the process.
 
 ### What to do
 
 1. **Check the deploy log first** — `docs/reference/deploy-log.jsonl`'s last line, or the channel: a converge in the last 15 minutes explains it completely.
 2. **Otherwise read the container**: `sudo docker inspect --format '{{.RestartCount}} {{.State.OOMKilled}}' <name>` — `zcrypto-capture`, `zcrypto-engine`, `grafana-alloy`, or the ops poller `zcrypto-ops-liquidations` (`ssh hp`); on the NAS docker is `/usr/local/bin/docker`. `OOMKilled=true` names the cause; read the memory panels for how it got there and treat it as the headroom page that did not get a chance to fire.
 3. **For a capture daemon, confirm capture recovered**: `sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | head` shows files advancing. A single-host restart costs seconds and the peer's copy heals it; the reconciler will book whatever was not.
-4. **A repeating restart** — this rule firing again within the hour with no converge — is a crash loop; read `sudo docker logs --since 20m zcrypto-capture` before anything else.
+4. **A second firing with no action from you is a crash loop** — read `sudo docker logs --since 20m zcrypto-capture` before anything else.
 
 ### Retire when
 
