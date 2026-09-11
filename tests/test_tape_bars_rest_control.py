@@ -57,6 +57,16 @@ def test_tape_bars_match_kraken_rest_ohlc() -> None:
         pytest.fail(f"Kraken REST returned no {PAIR_KEY} candles at {BASE_INTERVAL_MINUTES}m")
 
     stamps = sorted(datetime.fromtimestamp(int(row[_TIME]), UTC) for row in rows)
+    # A window shorter than the one day this test compares is a venue answer too short to mean
+    # anything, whatever the archive holds -- and downstream it is not separable from an old archive,
+    # because `covered` comes back empty under both and telling them apart needs Kraken's candle-count
+    # contract, which this tree does not hold. It belongs beside the `not rows` fail above: with the
+    # opt-in set, a venue answer short of the expected one fails rather than skipping.
+    if stamps[-1] - stamps[0] < timedelta(days=1):
+        pytest.fail(
+            f"Kraken REST returned {PAIR_KEY} {BASE_INTERVAL_MINUTES}m candles spanning only "
+            f"{stamps[0]} to {stamps[-1]}, less than the day this test compares"
+        )
     # The newest row is the still-forming candle, so `day_end <= stamps[-1]` is exactly the condition
     # that every one of the day's candles is present AND closed.
     covered = [
