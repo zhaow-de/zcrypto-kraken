@@ -1,8 +1,8 @@
 """Count the runbook sections with no trigger, and the ones owed a `Retire when`.
 
 A section's kind marker is its trigger: an ALERT is named by a rule's `Runbook:` link in alerts.yaml, a KNOWN
-LIMITATION or SCHEDULED REMINDER by a guard, comment or reminder -- a tracked file under cli/, infra/ or .claude/
-other than its own -- naming it by file and anchor, a PROCEDURE by the intent its heading states. A section
+LIMITATION or SCHEDULED REMINDER by a guard, comment, test or reminder -- a tracked file under cli/, infra/,
+tests/ or .claude/ other than its own -- naming it by file and anchor, a PROCEDURE by the intent its heading states. A section
 with no kind marker, or a fired kind nothing names, counts.
 
 Usage: runbook-triggers.py [--list] {triggers|retire-when}  -- the count; --list prints each section first.
@@ -25,8 +25,9 @@ RETIRING = ("ALERT", "KNOWN LIMITATION", "SCHEDULED REMINDER")
 NAMERS = (
     "cli/",
     "infra/",
+    "tests/",
     ".claude/",
-)  # where a guard, a comment, a reminder or a skill step lives; a topic, spec or plan is not a trigger
+)  # where a guard, a comment, a test, a reminder or a skill step lives; a topic, spec or plan is not a trigger
 ANCHOR_CHARS = "[A-Za-z0-9_-]+"  # no dot: a citation that ends a sentence must not swallow the full stop
 ANCHOR = re.compile(rf'^<a name="({ANCHOR_CHARS})"></a>$')  # matched on the stripped line, so an indented tag counts
 KIND = re.compile(
@@ -111,7 +112,9 @@ def untriggered(repo: pathlib.Path, files: list[str] | None = None) -> list[tupl
         elif s.kind in FIRED and not any(
             f == s.path and a in s.anchors and src != s.path and src.startswith(NAMERS) for f, a, src in tree
         ):
-            out.append((s, "no guard, comment or reminder under cli/, infra/ or .claude/ names it by file and anchor"))
+            out.append(
+                (s, "no guard, comment, test or reminder under cli/, infra/, tests/ or .claude/ names it by file and anchor")
+            )
     return out
 
 

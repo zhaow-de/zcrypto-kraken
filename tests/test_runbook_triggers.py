@@ -61,16 +61,25 @@ steps
 ALERTS = "groups:\n- rules:\n  - annotations:\n      summary: 'Runbook: infra/runbooks/capture.md#cap-alert'\n"
 
 
-def _tree(tmp_path: Path, *, alerts: str = ALERTS, namer: str = "", topic: str = "") -> list[str]:
+def _tree(tmp_path: Path, *, alerts: str = ALERTS, namer: str = "", topic: str = "", test: str = "") -> list[str]:
     (tmp_path / "infra" / "runbooks").mkdir(parents=True, exist_ok=True)
     (tmp_path / "infra" / "grafana").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docs").mkdir(exist_ok=True)
+    (tmp_path / "tests").mkdir(exist_ok=True)
     (tmp_path / "infra" / "runbooks" / "capture.md").write_text(RUNBOOK)
     (tmp_path / "infra" / "runbooks" / "README.md").write_text("# Runbooks\n\n## Scope\n")
     (tmp_path / "infra" / "grafana" / "alerts.yaml").write_text(alerts)
     (tmp_path / "infra" / "namer.md").write_text(namer)
     (tmp_path / "docs" / "topic.md").write_text(topic)
-    return ["infra/runbooks/capture.md", "infra/runbooks/README.md", "infra/grafana/alerts.yaml", "infra/namer.md", "docs/topic.md"]
+    (tmp_path / "tests" / "test_guard.py").write_text(test)
+    return [
+        "infra/runbooks/capture.md",
+        "infra/runbooks/README.md",
+        "infra/grafana/alerts.yaml",
+        "infra/namer.md",
+        "docs/topic.md",
+        "tests/test_guard.py",
+    ]
 
 
 def test_sections_take_the_anchors_above_them_and_end_before_the_next_run():
@@ -92,16 +101,21 @@ def test_a_fired_kind_is_untriggered_until_something_else_names_it(tmp_path):
     assert found == {
         (
             "a thing you meet — KNOWN LIMITATION",
-            "no guard, comment or reminder under cli/, infra/ or .claude/ names it by file and anchor",
+            "no guard, comment, test or reminder under cli/, infra/, tests/ or .claude/ names it by file and anchor",
         ),
         (
             "the sweep is due — SCHEDULED REMINDER",
-            "no guard, comment or reminder under cli/, infra/ or .claude/ names it by file and anchor",
+            "no guard, comment, test or reminder under cli/, infra/, tests/ or .claude/ names it by file and anchor",
         ),
         ("Standing rules — no kind", "no kind marker in the heading"),
     }
     files = _tree(tmp_path, namer="see `infra/runbooks/capture.md`'s `cap-limit`, and infra/runbooks/capture.md#cap-reminder. Next")
     assert [s.heading for s, _ in rt.untriggered(tmp_path, files)] == ["Standing rules — no kind"]
+
+
+def test_a_test_naming_a_fired_section_is_its_trigger(tmp_path):
+    files = _tree(tmp_path, test='assert ok, "see infra/runbooks/capture.md#cap-limit"\n')
+    assert "a thing you meet — KNOWN LIMITATION" not in {s.heading for s, _ in rt.untriggered(tmp_path, files)}
 
 
 def test_a_topic_or_plan_naming_a_fired_section_is_not_its_trigger(tmp_path):

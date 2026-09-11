@@ -58,7 +58,7 @@ def test_every_topic_link_in_the_index_resolves():
 
 
 def test_the_index_has_one_title_and_no_blockquote_line():
-    """A conflict marker left in the file reads as an extra H1 (`=======` under a line, once formatted) or a blockquote (`>>>>>>>`)."""
+    """A second `# ` line or a `>` line is a conflict marker's residue or a hand edit; the render has one title and no blockquote."""
     lines = (TOPICS / "README.md").read_text().split("\n")
     titles = [n for n, line in enumerate(lines, 1) if line.startswith("# ")]
     quoted = [n for n, line in enumerate(lines, 1) if line.startswith(">")]

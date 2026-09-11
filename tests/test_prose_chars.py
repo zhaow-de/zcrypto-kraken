@@ -39,6 +39,7 @@ def test_yaml_counts_comments_and_task_names_but_not_module_arguments(tmp_path):
     text = "# top\n- name: install the thing\n  apt:\n    name: pkg\n  # nested\n"
     assert _count(tmp_path, "a.yml", text) == len("# top") + len("install the thing") + len("# nested")
     assert _count(tmp_path, "b.yaml", "- name: a play\n") == len("a play")
+    assert _count(tmp_path, "requirements.yml", "collections:\n  - name: community.docker\n") == 0
 
 
 def test_a_template_counts_hash_lines_and_jinja_blocks(tmp_path):
@@ -57,6 +58,11 @@ def test_an_alloy_config_a_dockerfile_and_a_shebang_script_count(tmp_path):
     assert _count(tmp_path, "Dockerfile", "# base\nFROM x\n") == len("# base")
     assert _count(tmp_path, "rrsync", "#!/usr/bin/python3\n# a wrapper\n") == len("# a wrapper")
     assert _count(tmp_path, "notes", "# no shebang, no suffix\n") == 0
+
+
+def test_a_go_template_counts_its_comment_blocks(tmp_path):
+    text = "{{/* Slack mrkdwn is not Markdown */}}\n{{- /* trimmed */ -}}\n{{ .Alerts }}\n"
+    assert _count(tmp_path, "slack.tmpl", text) == len(" Slack mrkdwn is not Markdown ") + len(" trimmed ")
 
 
 def test_a_key_or_certificate_reads_as_no_prose(tmp_path):
