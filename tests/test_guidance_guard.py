@@ -465,3 +465,20 @@ def test_the_ambient_bytes_subcommand_is_the_function_over_the_tree(tmp_path):
     assert done.returncode == 0 and done.stdout.strip() == str(expected), done.stdout + done.stderr
     here = subprocess.run([sys.executable, str(_SCRIPT), "--ambient-bytes"], cwd=_ROOT, capture_output=True, text=True)
     assert here.returncode == 0 and here.stdout.strip() == str(guard.tree_ambient_bytes(_ROOT))
+
+
+def test_the_uncounted_subcommand_lists_each_bullet_with_a_universal_and_no_count(tmp_path):
+    page = tmp_path / "engine.md"
+    page.write_text(
+        "# engine\n\n"
+        "A paragraph that is never a bullet is not read.\n\n"
+        + COUNTED
+        + DECLARED
+        + BARE
+        + "- The flag `--every-cycle` sits in a code span and its prose carries no universal.\n"
+        + "```\n- never inside a fence\n```\n"
+        + "1. Always read the counters first\n   and the continuation line is the same bullet.\n"
+    )
+    proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted", str(page)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [f"{page}:7 Never", f"{page}:12 Always"]

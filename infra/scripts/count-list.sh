@@ -147,6 +147,10 @@ c_runbook_sections_without_a_trigger() { uv run python infra/scripts/runbook-tri
 
 c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook-triggers.py retire-when; }
 
+# The runbook pages take the corpus's universal test (the owner, 2026-09-11): the guard's own bullet reader over the
+# sixteen pages, the README aside since the guard already judges it as a contract. An instrument until it reads 0.
+c_runbook_universals_without_a_count() { ls infra/runbooks/*.md | grep -v '/README\.md$' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }
+
 # Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
 # restart event per capture host it limits to (the capture_host group is both), and the count is the
 # pairs of events on different hosts within an hour of each other; a group row pairs with itself.
@@ -207,6 +211,7 @@ main() {
   emit "capture-hosts-converged-within-an-hour" c_capture_hosts_converged_within_an_hour
   emit "runbook-sections-without-a-trigger" c_runbook_sections_without_a_trigger
   emit "runbook-sections-without-a-retire-when" c_runbook_sections_without_a_retire_when
+  emit "runbook-universals-without-a-count" c_runbook_universals_without_a_count
   emit "converge-sh-wrapped-in-timeout" c_converge_sh_wrapped_in_timeout
   emit "topic-only-merges" c_micro_prs
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed
