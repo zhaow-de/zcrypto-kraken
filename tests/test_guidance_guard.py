@@ -500,3 +500,16 @@ def test_the_uncounted_subcommand_names_a_page_it_cannot_read_and_exits_2(tmp_pa
     assert proc.returncode == 2 and "cannot read" in proc.stderr and "Traceback" not in proc.stderr
     proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted"], capture_output=True, text=True)
     assert proc.returncode == 2 and proc.stderr.startswith("usage:")
+
+
+def test_a_steps_prose_under_its_own_command_block_is_still_the_step(tmp_path):
+    """An indented fence belongs to the list item it sits in -- the shape every runbook step with a command has -- so the prose under the block is read; a fence at the margin ends the item."""
+    page = tmp_path / "p.md"
+    page.write_text(
+        "1. A step with a block:\n   ```bash\n   grep -c only /dev/null\n   ```\n   An empty result is never a zero.\n"
+        "2. A counted step:\n   ```bash\n   true\n   ```\n   Always read the count (no count command: the operator's shell).\n\n"
+        "- A bullet, then a fence at the margin:\n```bash\nalways\n```\nA paragraph that only looks like a continuation.\n"
+    )
+    proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted", str(page)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [f"{page}:1 never"]
