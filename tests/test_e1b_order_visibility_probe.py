@@ -146,7 +146,8 @@ def test_the_client_is_built_exactly_as_flatten_builds_it():
 # Gated on a variable, never on reachability: a skip on an unreachable venue reads as coverage. It
 # gives an attended operator one command exercising the probe's own `__main__` path. The opt-in is
 # the repo's one venue flag -- an order-placing probe gets no flag of its own, because the
-# granularity buys nothing a reader can act on.
+# granularity buys nothing a reader can act on. `tests/test_live_venue_opt_in.py` keeps it the only
+# name, and keeps every skip in `tests/` off the question of whether the venue answers.
 LIVE_OPT_IN = "ZCRYPTO_LIVE_VENUE_TESTS"
 
 

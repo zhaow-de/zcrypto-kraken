@@ -2256,7 +2256,8 @@ def test_the_client_is_built_key_first_then_secret(monkeypatch, tmp_path):
 # every venue-reaching test, so an agent that sets it gets all of them and none stay behind. An
 # explicit variable, never reachability: gated on reachability it would run in CI, be a flake source
 # there, and go silently green-by-skip the day Kraken blocks the runner -- a skip read as coverage.
-# Set it to "1" to run.
+# Set it to "1" to run. `tests/test_live_venue_opt_in.py` keeps both halves true: one name for the
+# whole class, and no skip in `tests/` keyed on whether the venue answers.
 _LIVE_OPT_IN = "ZCRYPTO_LIVE_VENUE_TESTS"
 
 
