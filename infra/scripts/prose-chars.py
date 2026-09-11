@@ -1,16 +1,18 @@
-"""Print the mass of comments and docstrings, in characters, under cli/, tests/ and infra/ -- Python docstrings and comments; the full-line comments of YAML, shell, Jinja templates and systemd units; Jinja comment blocks; Ansible `name:` fields -- a number to watch, not a gate."""
+"""Print the mass of comments and docstrings, in characters, over the tracked files under cli/, tests/ and infra/ -- Python docstrings and comments; the full-line comments of YAML, shell, Jinja templates, systemd units, Dockerfiles, Alloy configs and shebang scripts; Jinja comment blocks; Ansible play and task names -- a number to watch, not a gate."""
 
 import ast
 import io
 import pathlib
 import re
+import subprocess
 import sys
 import tokenize
 
 ROOTS = ("cli", "tests", "infra")
-HASHED = {".yml", ".yaml", ".sh", ".j2", ".timer", ".service"}
+HASHED = {".yml", ".yaml", ".sh", ".zsh", ".j2", ".timer", ".service", ".cfg"}
 HASH_COMMENT = re.compile(r"^\s*(#(?!!).*?)\s*$", re.M)  # a full-line comment; a shebang is not prose
-NAME_FIELD = re.compile(r"^\s*-?\s*name:\s*(\S.*?)\s*$", re.M)  # an Ansible play or task name
+SLASH_COMMENT = re.compile(r"^\s*(//.*?)\s*$", re.M)  # Alloy's comment
+NAME_FIELD = re.compile(r"^\s*- name:\s*(\S.*?)\s*$", re.M)  # an Ansible play or task name -- a list item, never a module argument
 JINJA_COMMENT = re.compile(r"\{#(.*?)#\}", re.S)
 
 
@@ -41,18 +43,26 @@ def hashed_chars(source: str, suffix: str) -> int:
 
 
 def prose_chars(path: pathlib.Path) -> int:
-    source = path.read_text(encoding="utf-8")
+    try:
+        source = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return 0  # a key, a certificate: no prose
     if path.suffix == ".py":
         return python_chars(source)
-    if path.suffix in HASHED:
+    if path.suffix in HASHED or path.name == "Dockerfile":
         return hashed_chars(source, path.suffix)
+    if path.suffix == ".alloy":
+        return sum(len(m.group(1)) for m in SLASH_COMMENT.finditer(source))
+    if not path.suffix and source.startswith("#!"):
+        return hashed_chars(source, "")  # a script named without a suffix, its comments the shebang's language's
     return 0
 
 
 def main() -> int:
     repo = pathlib.Path(__file__).resolve().parents[2]
-    files = [p for root in ROOTS for p in (repo / root).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
-    print(sum(prose_chars(p) for p in files))
+    listed = subprocess.run(["git", "-C", str(repo), "ls-files", "-z", "--", *ROOTS], capture_output=True, text=True, check=True)
+    files = [repo / rel for rel in listed.stdout.split("\0") if rel]  # tracked files alone, so a reading is a property of a commit
+    print(sum(prose_chars(p) for p in files if p.is_file()))
     return 0
 
 

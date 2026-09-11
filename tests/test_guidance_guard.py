@@ -236,7 +236,7 @@ def test_a_skill_file_is_not_read_for_universals():
 
 
 def test_a_contract_is_read_for_universals_and_is_not_ambient():
-    """The three contracts the skills load whole take the universal test; their bytes are not paid on every turn, so growth there needs no line."""
+    """The four contracts read whole by the sessions and skills that act on them take the universal test; their bytes are not paid on every turn, so growth there needs no line."""
     contract = "docs/reference/fleet-pins.md"
     fails = guard.evaluate({}, {contract: "- Never re-pin the NAS to an AVX build.\n"}, "x\n")
     assert len(fails) == 1 and fails[0].startswith(f"{contract}:1 carries a universal ('Never')"), fails

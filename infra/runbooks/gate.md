@@ -2,7 +2,7 @@
 
 Every signal below comes from one step: the NAS archive-pull loop (`infra/nas/pull-entrypoint.sh`) pulls the engine journal from the engine host with `zcrypto archive pull --no-verify`, which delegates hashing to the replay, then runs `zcrypto engine gate-export --journal-dir /archive/engine-journal --textfile /textfile/gate.prom --cache /tmp/gate-cache.json --lag-fail-seconds 21600` once per loop iteration (`ARCHIVE_PULL_INTERVAL`, 3600 s, plus work), which replays every journaled cycle, scores the ≥ 14-clean-day gate, atomically writes `/volume1/docker/zcrypto-archive/textfile/gate.prom` on the NAS, and pings the healthchecks.io `zcrypto-gate-verify` dead-man. The NAS Alloy scrapes that textfile and ships it, so **every one of these numbers is about the engine's journal but is published by the NAS** — when the NAS telemetry plane is dark (`zcrypto-alloy-dark-nas`) all five rules below are blind, and a page carrying no value means the series is gone rather than the number being bad.
 
-`README.md` beside this file is the index, and states what belongs in a runbook at all.
+`README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
 ______________________________________________________________________
 

@@ -2,7 +2,7 @@
 
 You are here because the daily pass's report listed a reminder as **OWED** under `## Reminders`, or a **scheduled reminder came due** in Slack. Nothing is wrong and nothing fired: these routines re-confirm facts nobody here controls, which move without emitting any signal we could alert on. Each section is written to be actioned without opening any other document.
 
-`README.md` beside this file is the index, and states what belongs in a runbook at all.
+`README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
 ______________________________________________________________________
 

@@ -4,7 +4,7 @@ You are here because **an alert fired in Slack**, because **a guard in the code 
 
 These sections cover the instruments, not the things they measure: the four `grafana-alloy` containers that ship every metric and every journal line to Grafana Cloud, the node-exporter collectors inside them, and the direct-ship path (`cli/logging/ship.py`) by which the capture daemon, the engine and the liquidations poller push their own logs to Loki without touching Alloy at all. A rule here firing means a *signal* is missing or dishonest — read every other rule's silence as meaningless until it clears. The healthchecks.io dead-man checks are a separate, independent failure domain and are **not** part of this stack; the map of which check watches which daemon is in [`#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog).
 
-`README.md` beside this file is the index, and states what belongs in a runbook at all.
+`README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
 ______________________________________________________________________
 

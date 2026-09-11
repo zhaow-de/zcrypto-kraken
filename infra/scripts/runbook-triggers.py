@@ -1,8 +1,9 @@
 """Count the runbook sections with no trigger, and the ones owed a `Retire when`.
 
 A section's kind marker is its trigger: an ALERT is named by a rule's `Runbook:` link in alerts.yaml, a KNOWN
-LIMITATION or SCHEDULED REMINDER by some other tracked file naming it by file and anchor, a PROCEDURE by the
-intent its heading states. A section with no kind marker, or a fired kind nothing names, counts.
+LIMITATION or SCHEDULED REMINDER by a guard, comment or reminder -- a tracked file under cli/, infra/ or .claude/
+other than its own -- naming it by file and anchor, a PROCEDURE by the intent its heading states. A section
+with no kind marker, or a fired kind nothing names, counts.
 
 Usage: runbook-triggers.py [--list] {triggers|retire-when}  -- the count; --list prints each section first.
 """
@@ -21,12 +22,18 @@ ALERTS = "infra/grafana/alerts.yaml"
 KINDS = ("ALERT", "KNOWN LIMITATION", "PROCEDURE", "SCHEDULED REMINDER")
 FIRED = ("KNOWN LIMITATION", "SCHEDULED REMINDER")  # named by a guard or a reminder, somewhere in the tree
 RETIRING = ("ALERT", "KNOWN LIMITATION", "SCHEDULED REMINDER")
-ANCHOR = re.compile(r'^<a name="([A-Za-z0-9._-]+)"></a>\s*$')
+NAMERS = (
+    "cli/",
+    "infra/",
+    ".claude/",
+)  # where a guard, a comment, a reminder or a skill step lives; a topic, spec or plan is not a trigger
+ANCHOR_CHARS = "[A-Za-z0-9_-]+"  # no dot: a citation that ends a sentence must not swallow the full stop
+ANCHOR = re.compile(rf'^<a name="({ANCHOR_CHARS})"></a>$')  # matched on the stripped line, so an indented tag counts
 KIND = re.compile(
     r"— (ALERT|KNOWN LIMITATION|PROCEDURE|SCHEDULED REMINDER)(?:\s*$|:)"
 )  # the marker ends the heading, or a colon follows it
-REF = re.compile(r"(infra/runbooks/[A-Za-z0-9._-]+\.md)(?:#|`'s `)([A-Za-z0-9._-]+)")  # file#anchor, or `file`'s `anchor`
-ALERT_REF = re.compile(r"Runbook: (infra/runbooks/[A-Za-z0-9._-]+\.md)#([A-Za-z0-9._-]+)")
+REF = re.compile(rf"(infra/runbooks/[A-Za-z0-9._-]+\.md)(?:#|`'s `)({ANCHOR_CHARS})")  # file#anchor, or `file`'s `anchor`
+ALERT_REF = re.compile(rf"Runbook: (infra/runbooks/[A-Za-z0-9._-]+\.md)#({ANCHOR_CHARS})")
 RETIRE = re.compile(r"^#{2,4} Retire when\b|\*\*Retire when\*\*", re.M)
 
 
@@ -49,16 +56,16 @@ def sections(rel: str, text: str) -> list[Section]:
         end = heads[n + 1] if n + 1 < len(heads) else len(lines)
         lead: list[str] = []
         j = h - 1
-        while j >= 0 and (not lines[j].strip() or ANCHOR.match(lines[j])):
-            m = ANCHOR.match(lines[j])
+        while j >= 0 and (not lines[j].strip() or ANCHOR.match(lines[j].strip())):
+            m = ANCHOR.match(lines[j].strip())
             if m:
                 lead.insert(0, m.group(1))
             j -= 1
         k = end - 1
-        while k > h and (not lines[k].strip() or ANCHOR.match(lines[k])):
+        while k > h and (not lines[k].strip() or ANCHOR.match(lines[k].strip())):
             k -= 1
         body = lines[h + 1 : k + 1]
-        inner = [m.group(1) for line in body if (m := ANCHOR.match(line))]
+        inner = [m.group(1) for line in body if (m := ANCHOR.match(line.strip()))]
         kind = KIND.search(lines[h])
         out.append(Section(rel, h + 1, lines[h][3:].strip(), kind.group(1) if kind else None, (*lead, *inner), "\n".join(body)))
     return out
@@ -101,8 +108,10 @@ def untriggered(repo: pathlib.Path, files: list[str] | None = None) -> list[tupl
             out.append((s, "no kind marker in the heading"))
         elif s.kind == "ALERT" and not any((s.path, a) in alerts for a in s.anchors):
             out.append((s, "no rule in alerts.yaml links it as its Runbook"))
-        elif s.kind in FIRED and not any(f == s.path and a in s.anchors and src != s.path for f, a, src in tree):
-            out.append((s, "nothing outside its own file names it by file and anchor"))
+        elif s.kind in FIRED and not any(
+            f == s.path and a in s.anchors and src != s.path and src.startswith(NAMERS) for f, a, src in tree
+        ):
+            out.append((s, "no guard, comment or reminder under cli/, infra/ or .claude/ names it by file and anchor"))
     return out
 
 

@@ -143,13 +143,13 @@ c_capture_hosts_with_automatic_reboot() {
   echo "$n"
 }
 
-# Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
-# restart event per capture host it limits to (the capture_host group is both), and the count is the
-# pairs of events on different hosts within an hour of each other; a group row pairs with itself.
 c_runbook_sections_without_a_trigger() { uv run python infra/scripts/runbook-triggers.py triggers; }
 
 c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook-triggers.py retire-when; }
 
+# Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
+# restart event per capture host it limits to (the capture_host group is both), and the count is the
+# pairs of events on different hosts within an hour of each other; a group row pairs with itself.
 c_capture_hosts_converged_within_an_hour() { jq -s '[.[] | select(.rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600)] | length' docs/reference/deploy-log.jsonl; }
 
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }

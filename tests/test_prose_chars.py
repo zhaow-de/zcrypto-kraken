@@ -35,9 +35,10 @@ def test_a_shell_script_counts_its_comments_but_not_the_shebang(tmp_path):
     assert _count(tmp_path, "a.sh", "#!/usr/bin/env bash\n# why\nrun  # trailing is not counted\n") == len("# why")
 
 
-def test_yaml_counts_comments_and_ansible_names(tmp_path):
+def test_yaml_counts_comments_and_task_names_but_not_module_arguments(tmp_path):
     text = "# top\n- name: install the thing\n  apt:\n    name: pkg\n  # nested\n"
-    assert _count(tmp_path, "a.yml", text) == len("# top") + len("install the thing") + len("pkg") + len("# nested")
+    assert _count(tmp_path, "a.yml", text) == len("# top") + len("install the thing") + len("# nested")
+    assert _count(tmp_path, "b.yaml", "- name: a play\n") == len("a play")
 
 
 def test_a_template_counts_hash_lines_and_jinja_blocks(tmp_path):
@@ -47,4 +48,18 @@ def test_a_template_counts_hash_lines_and_jinja_blocks(tmp_path):
 
 def test_a_systemd_unit_counts_and_other_kinds_do_not(tmp_path):
     assert _count(tmp_path, "a.timer", "# every hour\n[Timer]\n") == len("# every hour")
+    assert _count(tmp_path, "a.service", "# once\n[Service]\n") == len("# once")
     assert _count(tmp_path, "a.json", '{"#": "not a comment"}\n') == 0
+
+
+def test_an_alloy_config_a_dockerfile_and_a_shebang_script_count(tmp_path):
+    assert _count(tmp_path, "config.alloy", "// the stack\nlogging {}\n") == len("// the stack")
+    assert _count(tmp_path, "Dockerfile", "# base\nFROM x\n") == len("# base")
+    assert _count(tmp_path, "rrsync", "#!/usr/bin/python3\n# a wrapper\n") == len("# a wrapper")
+    assert _count(tmp_path, "notes", "# no shebang, no suffix\n") == 0
+
+
+def test_a_key_or_certificate_reads_as_no_prose(tmp_path):
+    path = tmp_path / "deploy_ed25519"
+    path.write_bytes(b"#!\xff\xfe binary")
+    assert pc.prose_chars(path) == 0

@@ -24,7 +24,6 @@ HEADER = (
     "A bullet is the topic's serial and title; a live topic's bullet carries its `ripe_when`.\n"
 )
 SERIAL = re.compile(r"^T(\d{4})-")
-TITLE_PREFIX = re.compile(r"^T\d{4}\s*[—:-]\s*")
 
 
 @dataclass(frozen=True)
@@ -47,10 +46,11 @@ def frontmatter(text: str) -> dict:
     return {}
 
 
-def title(text: str) -> str:
+def title(text: str, serial: str) -> str:
+    """The H1, with the file's own serial stripped when the H1 opens with it; another topic's serial is a cross-reference and stays."""
     for line in text.split("\n"):
         if line.startswith("# "):
-            return TITLE_PREFIX.sub("", line[2:].strip())
+            return re.sub(rf"^T{serial}\s*[—:-]\s*", "", line[2:].strip())
     raise ValueError("no H1 title")
 
 
@@ -64,7 +64,7 @@ def topic(path: pathlib.Path, topics_dir: pathlib.Path) -> Topic:
     if status not in {s for s, _ in SECTIONS}:
         raise ValueError(f"{path.name}: status {status!r} is not one of open, partial, resolved")
     ripe = meta.get("ripe_when")
-    heading = title(text)
+    heading = title(text, m.group(1))
     if "]" in heading or "[" in heading:
         raise ValueError(f"{path.name}: a bracket in the title breaks the index link")
     return Topic(m.group(1), status, heading, " ".join(str(ripe).split()) if ripe else "", path.relative_to(topics_dir).as_posix())
