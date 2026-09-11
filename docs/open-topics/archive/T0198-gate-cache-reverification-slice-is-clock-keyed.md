@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: "Ripe now, and stays ripe until the key moves: `grep -c 'return slice_of(cycle_ts) == now.hour' cli/engine/gate_cache.py` is non-zero — the code line alone, since the loose pattern also matches the comment, the assert's message and the docstring."
+status: resolved
 ---
 
 # Gate cache reverification slice is clock keyed
@@ -70,29 +69,55 @@ reasoned about starvation in this exact spot and about a different mechanism.
   persist here is the cache file, which is discarded on a container recreate, so the obvious fix
   reintroduces a weaker form of the same reset.
 
-## Suggested next steps
+## Resolution
 
-1. **Measure the loop's real period** from the NAS, which decides how bad this is today.
-   `ssh nas 'sudo /usr/local/bin/docker logs zcrypto-archive-pull --since 24h'` — the absolute path
-   is not optional, since `docker` is off that host's non-interactive ssh PATH and a bare `docker`
-   reads as "no containers". The loop logs one `pull complete` per
-   channel and five are wired, so the gaps between consecutive lines are within-cycle, not the
-   period. The line carries `source=<user@host:>` and never the channel name, so list the
-   sources with `grep -o 'source=[^ ]*' | sort | uniq -c` — run against a real line, unlike the two
-   selectors this step shipped before it. **Three of the five verified channels share one host**, so
-   that source appears three times a cycle; take one whose count is lowest, filter the log on it,
-   and read the distribution of its consecutive gaps. That is the period; a gap between any two
-   adjacent lines is not. Under ~65 min the worst-case gap is ~48 h and inside the
-   alert bar; in the 72-90 min band a fixed set of slices is never visited.
-2. **Decide where the counter lives.** A counter in the cache file resets on a recreate; a counter
-   derived from a persisted run ordinal does not, at the cost of another field in the cache schema
-   (`CACHE_SCHEMA_VERSION` is 2 today). Weigh against simply keying the slice on a monotonic run
-   count stored beside the checkpoint the verify-replay runner already keeps.
-3. **Write the guard before the fix.** The property is that over N consecutive runs at a given
-   period every slice is visited at least once. That is testable with a simulated clock and no NAS,
-   and it is the check the current code has never had — its existing assert covers a different
-   failure.
-4. **Cost the cold replay into the change.** Editing `gate_cache.py` invalidates every cache
-   (`zcrypto_gate_cache_invalidated` goes to 1) and the next run replays the whole journal, which
-   `infra/runbooks/gate.md` records as the better part of an hour and growing. Schedule it where
-   that is acceptable and expect `zcrypto-gate-exporter-stale` to be close to its bar on that run.
+Fixed on branch `fix/t0198-gate-cache-slice-counter` — `f7a148f1f` the guard, `c5c1b388e` the fix,
+three carrier commits after it. The re-verification slice is the
+caller's run counter, `due_for_reverification(cycle_ts, slice_index)`, and `now` has left the
+signature. `gate-export` gained `--slice`, validated `[0, 24)` and required with `--cache` (either
+flag alone is refused); `infra/nas/pull-entrypoint.sh` passes `--slice "$slice"` — the same
+`slice=$((cycle % 24))` the five `archive pull` calls in the same loop body already read, so this is
+a sixth reader of one variable rather than a second rotation.
+
+**Step 1, the measurement, as the baseline this was fixed against.** Read from the NAS on
+2026-09-11 over 67 consecutive cycles: the loop's period is **64.3 min mean**, and the worst gap
+between two re-verifications of one slice was **48.3 h** — inside the alert's 3-day bar, which is
+why nothing had ever fired. 64 min is not one of the periods that starve a slice outright, so the
+exposure was latent rather than active: a change to the pull interval, or enough extra work per
+cycle to drift the period into the 72-90 min band, would have starved a fixed set of slices with
+every signal green. The guard now reproduces that band and names the starved slices per period, so
+the defect is held rather than remembered.
+
+**A least-recently-verified key was designed, simulated, and withdrawn before it was proposed.**
+The idea was to drop the rotation index entirely and re-verify whichever cached cycle carried the
+oldest `verified_at` — appealing because the cache already stores that stamp for the staleness
+metric, so it looked like a key with no new state.
+
+It dies on a clock step. `verified_at` is written from the run's `now`; a container that starts with
+a wrong clock, or an NTP correction that steps forward, stamps whatever slice it touched with a time
+far in the future. That slice is then never the oldest again and is never re-verified — and the one
+rule that would notice, `zcrypto-gate-cache-reverify-stalled`, computes an age from the same stamps,
+so a future stamp reads as a *young* entry and the alert stays quiet. The starvation is invisible to
+its only witness, which is the precise failure this topic exists to close, reintroduced through a
+different door.
+
+It dies a second time on a save failure. `save_cache` logs a warning and continues, by design, so a
+full disk presents as a working cache — the runbook already names that shape. Under an LRU key the
+on-disk stamps then stop advancing, the same entry is "oldest" on every subsequent run, and the
+rotation re-verifies that one slice forever while every other entry ages without bound.
+`zcrypto_gate_cache_replayed` stays above 0 run after run, which is exactly the shape an operator
+reads as a healthy rotation.
+
+The advantage claimed for it was not real either. LRU was argued to give a tighter worst-case age
+than a fixed rotation; in the healthy case its bound is also 24 runs, because 24 slices each get
+their turn, and in the two unhealthy cases above it has no bound at all. It was more state, one
+extra failure mode per piece of that state, and no better bound — so the counter was ruled instead.
+
+**What the fix costs, stated rather than paid here.** `gate_cache.py` sits inside its own
+`replay_fingerprint` closure (81 files), so this change invalidates every cache:
+`zcrypto_gate_cache_invalidated` goes to 1 on the first run after the deploy and that run replays
+the whole journal — the better part of an hour and growing. Expect `zcrypto-gate-exporter-stale` to
+sit near its bar on that run. The converge is the fleet's concern, not this topic's, and it has one
+ordering constraint worth carrying into it: the NAS image pin and the entrypoint land in the SAME
+converge, because a new image with an old entrypoint means `--cache` with no `--slice`, which the
+CLI refuses and which fails gate-export outright.

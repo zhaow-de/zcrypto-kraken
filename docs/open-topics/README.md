@@ -14,7 +14,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0187 — The dark-with-exposure page reads no exposure over a position it never observed](T0187-dark-with-exposure-reads-zero-over-an-unmade-observation.md) — ripe when: any one arm: RUNG 2 starts — the memo's `**RUNG 2 — concentrated, time-boxed` entry records a start and not only its `DependsOn`; or an engine restart is planned while a position is open with nobody attending it; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference.
 - [T0193 — A non-finite snapshot close escapes the soak report as a traceback](T0193-nonfinite-snapshot-close-escapes-the-soak-report.md)
 - [T0194 — Several journal readers never validate the record they read](T0194-journal-readers-that-never-validate-the-record.md)
-- [T0198 — Gate cache reverification slice is clock keyed](T0198-gate-cache-reverification-slice-is-clock-keyed.md) — ripe when: Ripe now, and stays ripe until the key moves: `grep -c 'return slice_of(cycle_ts) == now.hour' cli/engine/gate_cache.py` is non-zero — the code line alone, since the loose pattern also matches the comment, the assert's message and the docstring.
 
 ## Partially done
 
@@ -207,3 +206,4 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0195 — `--write-baseline` truncates the whole baseline to whatever paths are scanned](archive/T0195-write-baseline-truncates-to-the-scanned-subset.md)
 - [T0196 — Two `..._can_fail_alone` test names claim isolation their shared fixture value does not pin](archive/T0196-cost-stress-alone-test-name-does-not-isolate.md)
 - [T0197 — The OI level-column null-density guard is unscoped, unlike its sibling zero-population guard](archive/T0197-oi-null-density-guard-is-unscoped-against-forward-refresh.md)
+- [T0198 — Gate cache reverification slice is clock keyed](archive/T0198-gate-cache-reverification-slice-is-clock-keyed.md)
