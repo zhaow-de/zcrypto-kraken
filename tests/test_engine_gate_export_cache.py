@@ -630,6 +630,48 @@ def test_evaluate_journal_refuses_a_cache_without_a_slice(tmp_path):
         command._evaluate_journal(tmp_path / "journal", cache_path=None, slice_index=0, now=CYCLE_TS)
 
 
+def test_gate_export_forwards_the_slice_it_was_given(tmp_path, monkeypatch):
+    """The CLI seam itself. `gate_export` must hand `_evaluate_journal` the `--slice` it was GIVEN --
+    not the clock, not a constant. Both of those survived a mutation probe against the rest of this
+    file: every other CLI test here passes a quiet slice that computes to 0 and asserts only what a
+    quiet run does, so a forwarded `now.hour` or `0` was indistinguishable from the real thing. That
+    is T0198's own defect, reachable at the one Python seam the fix added.
+
+    Read through the metrics, the only place a caller can see WHICH cycles were re-verified. `--slice`
+    is the cycle's own slice while the patched clock reads a different hour, so a forwarded clock or
+    constant forces nothing and the warm run reads a hit where a replay is owed."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    _write_success_record(journal, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    now = CYCLE_TS + timedelta(minutes=10)
+    monkeypatch.setattr(command, "_utc_now", lambda: now)
+
+    own_slice, quiet = slice_of(CYCLE_TS), _quiet_slice(CYCLE_TS)
+    # Without these the test could pass against a forwarded clock by coincidence.
+    assert own_slice != now.hour, f"the clock's hour is the cycle's own slice ({own_slice}); pick another CYCLE_TS"
+    assert own_slice != quiet, (own_slice, quiet)
+
+    out = tmp_path / "gate.prom"
+    cache_path = tmp_path / "gate-cache.json"
+
+    def run(slice_index: int) -> tuple[float, float]:
+        result = runner.invoke(
+            app,
+            ["engine", "gate-export", "--journal-dir", str(journal), "--textfile", str(out), "--cache", str(cache_path), "--slice", str(slice_index)],
+        )
+        assert result.exit_code == 0, result.output
+        m = _prom(out.read_text())
+        return m["zcrypto_gate_cache_hits"], m["zcrypto_gate_cache_replayed"]
+
+    run(quiet)  # cold: populates the cache, replaying everything whatever the slice
+    assert run(quiet) == (1.0, 0.0), "a slice no cycle holds must leave the warm run a pure cache hit"
+    assert run(own_slice) == (0.0, 1.0), (
+        "the cycle's own slice must force a replay: the CLI did not forward --slice (a clock or a "
+        "constant reaches due_for_reverification instead)"
+    )
+
+
 def test_gate_export_no_cache_option_reports_zero_cached(tmp_path, monkeypatch):
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
