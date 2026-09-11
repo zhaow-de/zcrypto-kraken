@@ -2252,10 +2252,12 @@ def test_the_client_is_built_key_first_then_secret(monkeypatch, tmp_path):
 
 # --- the venue client's contract ------------------------------------------------------------------
 
-# The opt-in that lets the ONE network-touching pin below run. An explicit variable, never
-# reachability: gated on reachability it would run in CI, be a flake source there, and go silently
-# green-by-skip the day Kraken blocks the runner -- a skip read as coverage. Set it to "1" to run.
-_VENUE_CONTRACT_OPT_IN = "ZCRYPTO_VENUE_CONTRACT"
+# The repo's one venue opt-in, here letting the ONE network-touching pin below run: one name covers
+# every venue-reaching test, so an agent that sets it gets all of them and none stay behind. An
+# explicit variable, never reachability: gated on reachability it would run in CI, be a flake source
+# there, and go silently green-by-skip the day Kraken blocks the runner -- a skip read as coverage.
+# Set it to "1" to run.
+_LIVE_OPT_IN = "ZCRYPTO_LIVE_VENUE_TESTS"
 
 
 def _real_client():
@@ -2314,8 +2316,8 @@ def test_every_client_call_the_red_button_makes_needs_a_running_loop():
 
 
 @pytest.mark.skipif(
-    os.environ.get(_VENUE_CONTRACT_OPT_IN) != "1",
-    reason=f"reaches Kraken's public listing endpoint -- set {_VENUE_CONTRACT_OPT_IN}=1 to run it",
+    os.environ.get(_LIVE_OPT_IN) != "1",
+    reason=f"reaches Kraken's public listing endpoint -- set {_LIVE_OPT_IN}=1 to run it",
 )
 def test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_await():
     """The half no introspection can reach: `iscoroutinefunction` is False, so only a call inside a
