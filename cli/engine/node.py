@@ -448,7 +448,9 @@ def _data_client_config() -> KrakenDataClientConfig:
     is subscribed on this socket, so the timer can only ever detect the absence of data it was never
     sent; a dead peer is still caught by the heartbeat, which is why that field is left alone.
     D5: if a standing subscription ever lands (spec 00101 D3), restore this to the adapter default in
-    the same change -- a permanently-subscribed client is the shape that default assumes."""
+    the same change -- a permanently-subscribed client is the shape that default assumes. What the
+    socket's log lines mean once it is idle by design, and the reconnect budget the capture daemon
+    on this host needs, are `infra/runbooks/engine.md#engine-data-socket-idle`."""
     return KrakenDataClientConfig(
         product_type=KrakenProductType.SPOT,
         environment=KrakenEnvironment.LIVE,
